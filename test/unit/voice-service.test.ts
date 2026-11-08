@@ -48,7 +48,7 @@ import { VOICE, type MicState } from "../../app/shared/voice";
 import { micBadge } from "../../app/shared/mic";
 import crypto from "node:crypto";
 import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
-import type { VoiceEvent } from "../../app/voice/engine";
+import { withoutAnnounced, type VoiceEvent } from "../../app/voice/engine";
 import type { Logger } from "../../app/main/logger";
 
 const log: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => log, file: "" };
@@ -451,6 +451,31 @@ describe("VoiceService", () => {
     expect(micBadge("active")!.label).toBe("Listening");
   });
 
+  it.each(["heard", "checked", "timeout", "cancel"] as const)("never says it listens for “Ember” as a Listen once with wake listening off opens or ends (%s; voice-listening-r3-1)", async end => {
+    // "Listening for “Ember” through …" was up for a moment as the window opened and as it closed, though Ember wasn't
+    // listening for its name, and a screen reader said it over the microphone as the request began.
+    const { v, states } = service();
+    expect(v.listenOnce()).toBe(true);
+    await flush();
+    const proc = electron.procs.at(-1)!;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    const generation = (posted(proc, "listen-once")[0] as { generation?: number }).generation;
+    const request = { generation, type: "utterance", window: "manual", text: "One request.", ms: 0 };
+    proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
+    if (end === "heard") proc.emit("message", request);
+    if (end === "checked") {
+      // Voice Match checks it after the window: the microphone is closed meanwhile, and it is still this request's.
+      proc.emit("message", { generation, type: "listening", on: false, reason: "done", window: "manual" });
+      expect(states.at(-1)).toEqual({ s: "active", detail: "Listening…" });
+      proc.emit("message", request);
+    }
+    if (end === "timeout") proc.emit("message", { generation, type: "listening", on: false, reason: "timeout", window: "manual" });
+    if (end === "cancel") v.cancelListenOnce();
+    expect(states.map(s => s.s)).toEqual(["starting", "active", "off"]);
+    expect(v.listenOnceStatus.phase).toBe("ready");
+  });
+
   it("tells the voice process what a screen reader will say as Listen once opens, only while one runs (voice-listening-c2-1)", async () => {
     for (const reader of [true, false]) {
       const { v } = service(true, { screenReaderOn: () => reader });
@@ -463,7 +488,13 @@ describe("VoiceService", () => {
       const posted0 = posted(proc, "listen-once")[0] as { announced?: string[]; generation?: number };
       proc.emit("message", { generation: posted0.generation, type: "listening", on: true, reason: "manual", window: "manual" });
       if (!reader) { expect(posted0.announced).toBeUndefined(); continue; }
-      expect(posted0.announced).toEqual(LISTEN_ONCE_ANNOUNCED);
+      // (With what the voice line said while Ember listened for its name, with the microphone's name: voice-listening-r3-1.)
+      expect(posted0.announced).toEqual([...LISTEN_ONCE_ANNOUNCED, "Listening for “Ember” through Test microphone"]);
+      // As the recognizer wrote a screen reader saying them before the request, on the real models.
+      expect(withoutAnnounced("Listening for ember. Listening for one request. Listening. And turn on Do Not Disturb 2.", posted0.announced!)).toBe("And turn on Do Not Disturb 2.");
+      expect(withoutAnnounced("Listening for ember, listening for one request, listening, and turn on do not disturb to.", posted0.announced!)).toBe("And turn on do not disturb to.");
+      expect(withoutAnnounced("Listening for Amber through test microphone. Listening for one request. What's on my calendar?", posted0.announced!)).toBe("What's on my calendar?");
+      expect(withoutAnnounced("Listening for ember. Listening for one request. Listening.", posted0.announced!)).toBe("");
       // Each is what a window says then: the status line, the voice line, and the button's new name.
       expect(starting).not.toBe("Listening for one request…");
       expect(LISTEN_ONCE_ANNOUNCED).toContain(v.listenOnceStatus.detail);
@@ -474,6 +505,9 @@ describe("VoiceService", () => {
       expect(button).toContain('pending.on ? "Checking the microphone…" : "Cancelling…"');
       expect(LISTEN_ONCE_ANNOUNCED).toContain("Checking the microphone…");
       expect(readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8")).toContain('starting: "Starting…"');
+      expect(LISTEN_ONCE_ANNOUNCED).toContain("Listening for “Ember”");
+      expect(readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8")).toContain('waiting: "Listening for “Ember”"');
+      expect(readFileSync(path.resolve("app/renderer/home/copy.ts"), "utf8")).toContain("? `${text} through ${micLabel}` : text;");
       v.stop();
     }
   });

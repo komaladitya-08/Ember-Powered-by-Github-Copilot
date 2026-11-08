@@ -76,13 +76,19 @@ const LISTEN_ONCE_CHECK_MS = 3000;
  */
 const LISTEN_ONCE_LISTENING = "Listening…";
 /**
+ * Settings' voice line while Ember listens for its name (Home's VOICE_TEXT.waiting), with " through <microphone>" after
+ * it while the microphone has a name (copy.ts heardThrough).
+ */
+const WAITING_TEXT = "Listening for “Ember”";
+/**
  * What Ember's windows announce as Listen once opens, which a screen reader says through the speakers, outside the echo
  * canceller, as the microphone opens: its status line in Home and Ask (listenOnceStatus, and the button's own
  * "Checking the microphone…" as it is pressed), the button's new name (renderer/shared/listen-once.ts) and Settings'
- * voice line. The voice process takes them off the start of what it
- * hears (engine.ts withoutAnnounced): they were sent as the request, or before it (voice-listening-c2-1).
+ * voice line (and, said a moment before, what it said while Ember listened for its name: armListenOnce adds the
+ * microphone's name). The voice process takes them off the start of what it
+ * hears (engine.ts withoutAnnounced): they were sent as the request, or before it (voice-listening-c2-1, voice-listening-r3-1).
  */
-export const LISTEN_ONCE_ANNOUNCED = ["Checking the microphone…", "Starting to listen…", "Listening for one request…", "Cancel listening", "Starting…", LISTEN_ONCE_LISTENING];
+export const LISTEN_ONCE_ANNOUNCED = ["Checking the microphone…", "Starting to listen…", "Listening for one request…", "Cancel listening", "Starting…", LISTEN_ONCE_LISTENING, WAITING_TEXT];
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /**
@@ -486,7 +492,8 @@ export class VoiceService {
     // The voice process ends the window itself, by MANUAL_MAX_MS at the latest: this catches one that never says so.
     manual.timer = setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), MANUAL_MAX_MS + LISTEN_ONCE_CHECK_MS);
     manual.timer.unref();
-    this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS, ...(this.o.screenReaderOn?.() ? { announced: LISTEN_ONCE_ANNOUNCED } : {}) });
+    const announced = this.micLabel ? [...LISTEN_ONCE_ANNOUNCED, `${WAITING_TEXT} through ${this.micLabel}`] : LISTEN_ONCE_ANNOUNCED;
+    this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS, ...(this.o.screenReaderOn?.() ? { announced } : {}) });
   }
 
   cancelListenOnce(detail = "Listening cancelled."): void {
@@ -860,7 +867,7 @@ export class VoiceService {
     this.cancelEnrol("stopped");
     this.proc?.postMessage({ type: "cancel", generation: this.listeningGeneration });
     if (!this.manual) return;
-    if (this.state === "active") this.setState("waiting");
+    if (this.state === "active" && !this.manual.temporary) this.setState("waiting");
     this.finishListenOnce(detail);
   }
 
@@ -1442,7 +1449,9 @@ export class VoiceService {
           this.setClear({ state: b?.clear ? "on" : this.rootOf("clear") === null ? "starting" : "wont-load" });
           if (!b?.clear && this.rootOf("clear") === null) this.checkClear();
         }
-        this.readyAt = Date.now(); this.watchAlive(proc); this.setState("waiting");
+        // (A Listen once with wake listening off stays "Starting…" until its window opens: "Listening for “Ember”" was up
+        // a moment, untrue, and a screen reader said it over the microphone as the request began: voice-listening-r3-1.)
+        this.readyAt = Date.now(); this.watchAlive(proc); if (!temporary) this.setState("waiting");
         connectTemporaryMic?.();
         connectTemporaryMic = undefined;
         this.armListenOnce();
@@ -1518,7 +1527,8 @@ export class VoiceService {
         if (!manual) return;
         if (m.type === "utterance") {
           this.o.onEvent(event, { utterance: this.utterances });
-          if (this.state === "active") this.setState("waiting");
+          // (Its microphone off once it is done: straight to "off", never "Listening for “Ember”".)
+          if (this.state === "active" && !temporary) this.setState("waiting");
           this.finishListenOnce("Request heard.", true);
           return;
         }
@@ -1531,7 +1541,8 @@ export class VoiceService {
           manual.timer.unref();
           if (temporary) { this.capturing = false; this.closeMic(); }
         }
-        this.setState(m.on ? "active" : "waiting", m.on ? LISTEN_ONCE_LISTENING : undefined);
+        // (Checked by Voice Match after it is done, a temporary one's window stays as it was until its end says "off".)
+        if (m.on || !temporary) this.setState(m.on ? "active" : "waiting", m.on ? LISTEN_ONCE_LISTENING : undefined);
         this.o.onEvent(event);
         if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? (this.manualSilent ? SILENT_TEXT : "No request heard. Try again.") : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
         else this.o.onListenOnce?.();
