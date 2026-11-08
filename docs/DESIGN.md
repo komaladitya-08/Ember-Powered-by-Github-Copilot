@@ -494,7 +494,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
 - **First run's connection** (FE #2–#6; first-run-copy.ts, welcome.ts). The sign-in step offers “Use my own provider”
   beside GitHub's sign-in (hidden, with its reason, when the organisation fixes or forbids a provider of the user's own),
   which opens an optional detour (same position, “Step 3 of 6”): the provider's type, address, API key (not needed for
-  a model server on this computer, also where there is no keyring) and model names,
+  a model server on this computer, also where there is no keyring, when the button waits with “I can't keep a key
+  safely on this computer.” beside it; its field says a key is saved only while the address typed is the one it was
+  saved for) and model names,
   the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.

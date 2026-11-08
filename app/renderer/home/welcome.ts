@@ -21,7 +21,7 @@ import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
 import { noteProviderChoice, onProviderChoice, providerChoice } from "./provider-choice";
 import {
-  ACTION_LABEL, failureView, inMyVoice, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices, type FailureAction,
+  ACTION_LABEL, failureView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
@@ -578,9 +578,11 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       provField("w-p-url").value = settings.provider.baseUrl;
       provField("w-p-conductor").value = settings.provider.conductor ?? "";
       provField("w-p-worker").value = settings.provider.worker ?? "";
-      provField("w-p-key").placeholder = ownState?.keySaved ? "A key is saved. Paste a new one to replace it" : "Paste your key";
     }
     const host = endpointHost(provField("w-p-url").value.trim());
+    // A saved key is said only for the address typed, as main's state says it now (that may come later in the visit).
+    const keyHint = keyPlaceholder({ keySaved: !!ownState?.keySaved, keyHost: ownState?.host ?? null, host });
+    if (provField("w-p-key").placeholder !== keyHint) provField("w-p-key").placeholder = keyHint;
     const consent = host ? providerConsentText(host, visitInUse ? "in-use" : "first-run") : "Once you enter the address, I'll say here exactly what is sent to it.";
     if ($("w-p-consent").textContent !== consent) $("w-p-consent").textContent = consent;
     const result = $("w-p-result");
@@ -605,7 +607,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (ownState && ownState.keyring === false && !ownState.keySaved && (!!typed.key.trim() || (!!typed.baseUrl && keyNeeded(typed.baseUrl)))) {
       result.textContent = PROVIDER_STEP.noKeyring;
       result.className = "w-status error";
-      return { label: PROVIDER_STEP.check, why: PROVIDER_STEP.noKeyring };
+      return { label: PROVIDER_STEP.check, why: PROVIDER_STEP.noKeyringWhy };
     }
     if (providerCheck.phase === "checking") return { label: PROVIDER_STEP.check, why: PROVIDER_STEP.checking };
     if (providerCheck.phase === "ok") {

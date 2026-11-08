@@ -729,6 +729,13 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await next(p).innerText()).toBe("Agree and check the models");
     await p.waitForTimeout(100);
     expect(await calls(p)).not.toContain(off);
+    // The saved key is said only for the address it was saved for: another one asks for its own (first-run follow-up:
+    // key placeholder).
+    expect(await p.getAttribute("#w-p-key", "placeholder")).toBe("A key is saved. Paste a new one to replace it");
+    await p.fill("#w-p-url", "https://api2.example.com/v1");
+    expect(await p.getAttribute("#w-p-key", "placeholder")).toBe("Paste your key");
+    await p.fill("#w-p-url", "https://api.example.com/v1");
+    expect(await p.getAttribute("#w-p-key", "placeholder")).toBe("A key is saved. Paste a new one to replace it");
     // Left unchecked, the edit isn't shown as the details in use on the next visit.
     await p.locator("#w-back").click();
     await next(p).click();
@@ -1283,7 +1290,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await r.locator("#w-why").innerText()).not.toContain("keyring");
     await r.fill("#w-p-key", "sk-x");
     await expect.poll(() => next(r).getAttribute("aria-disabled")).toBe("true");
-    expect(await r.locator("#w-why").innerText()).toContain("A model server on this computer that needs no key still works");
+    // The line says it whole; the waiting button, in short (first-run follow-up: w-why).
+    expect(await r.locator("#w-p-result").innerText()).toContain("A model server on this computer that needs no key still works");
+    expect(await r.locator("#w-why").innerText()).toBe("I can't keep a key safely on this computer.");
     await r.fill("#w-p-key", "");
     await r.fill("#w-p-url", "https://api.example.com/v1");
     await expect.poll(() => next(r).getAttribute("aria-disabled")).toBe("true");

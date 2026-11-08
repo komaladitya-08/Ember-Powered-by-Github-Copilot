@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, homeConnectionView, inMyVoice, modelRows, ownProviderOffer, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
 import { tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 import { KEY_NO_KEYRING, KEY_WRITE_FAILED, PROVIDER_MANAGED, PROVIDER_NO_CONSENT, providerDown, providerNotAgreed, testConnection } from "../../app/main/provider";
@@ -236,5 +236,20 @@ describe("first run says main's connection words as mine, on every visit (first-
     expect(inMyVoice("Your organisation doesn't allow Ember to connect to build-01.")).toBe("Your organisation doesn't allow Ember to connect to build-01.");
     // Said once: a line already in my voice stays as it is.
     for (const s of ["I can't reach GitHub right now. I'll try again when the network is back.", "Connected to your own provider (127.0.0.1:11434)."]) expect(inMyVoice(s)).toBe(s);
+  });
+});
+
+describe("first run: the provider step's key field and its waiting reason", () => {
+  it("says a key is saved only for the address it was saved for, as main's state says it now (first-run follow-up: key placeholder)", () => {
+    expect(keyPlaceholder({ keySaved: true, keyHost: "api.example.com", host: "api.example.com" })).toBe("A key is saved. Paste a new one to replace it");
+    // Another address typed: the saved key never goes there, so it asks for that address's own.
+    expect(keyPlaceholder({ keySaved: true, keyHost: "api.example.com", host: "api2.example.com" })).toBe("Paste your key");
+    expect(keyPlaceholder({ keySaved: true, keyHost: "api.example.com", host: null })).toBe("Paste your key");
+    expect(keyPlaceholder({ keySaved: false, keyHost: "api.example.com", host: "api.example.com" })).toBe("Paste your key");
+  });
+  it("gives the waiting button a short reason of its own beside the no-keyring line, not that line again (first-run follow-up: w-why)", () => {
+    expect(PROVIDER_STEP.noKeyringWhy).toBe("I can't keep a key safely on this computer.");
+    expect(PROVIDER_STEP.noKeyring).not.toBe(PROVIDER_STEP.noKeyringWhy);
+    expect(PROVIDER_STEP.noKeyring.length).toBeGreaterThan(2 * PROVIDER_STEP.noKeyringWhy.length);
   });
 });

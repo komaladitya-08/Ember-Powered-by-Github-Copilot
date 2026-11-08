@@ -139,8 +139,18 @@ export const PROVIDER_STEP = {
   needModel: "Enter the name of a model first.",
   waiting: "Check the provider first.",
   noKeyring: "This computer has no keyring for passwords, so I can't keep an API key safely here. A model server on this computer that needs no key still works; for any other service, go back to use GitHub Copilot.",
+  /** Beside the button that waits for it: the reason in short, as the line above says it whole. */
+  noKeyringWhy: "I can't keep a key safely on this computer.",
   back: "Use GitHub Copilot instead",
 } as const;
+
+/**
+ * The key field's placeholder. A saved key is said only for the address it was saved for (`keyHost`, main's state now:
+ * main keeps it for that host alone and sends it nowhere else), so another address typed asks for its own key.
+ */
+export function keyPlaceholder(o: { keySaved: boolean; keyHost: string | null; host: string | null }): string {
+  return o.keySaved && !!o.host && o.keyHost === o.host ? "A key is saved. Paste a new one to replace it" : "Paste your key";
+}
 
 /**
  * The own-provider step when the provider was already in use as the step opened (first run resumed, Back from the
