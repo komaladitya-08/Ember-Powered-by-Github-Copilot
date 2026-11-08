@@ -498,6 +498,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
+  Main's words for a check or a connection (written for Models & connections, which speaks of Ember) are said in first
+  run's own voice on every visit, on the sign-in step too: “I can't reach <host>…”, “…and I'll connect in a moment.”
+  (`inMyVoice`, first-run-r4-2).
   A failed connection offers what its reason calls for (`failureView`): an entitlement failure leads with the user's own
   provider or a different GitHub account, never the same sign-in. A failure of the user's own provider leads with
   “Check my provider's details” (or Try again for the network), with no GitHub account, sign-in or Copilot words, in

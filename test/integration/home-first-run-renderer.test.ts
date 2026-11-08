@@ -152,6 +152,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => calls(p)).toContain("signIn");
     await fail(p, "signIn", "GitHub didn't answer.");
     await expect.poll(() => p.locator("#w-signin-line").innerText()).toContain("didn't answer");
+    // Main's own words for a sign-in that failed, said as mine (first-run-r4-2).
+    await emit(p, "onSignInProgress", { state: "error", message: "Ember can't reach GitHub right now. Check the network, then sign in again." });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe("I can't reach GitHub right now. Check the network, then sign in again.");
     expect(await p.locator("#w-models").isHidden()).toBe(true);
     // Retry: the same primary button; the connection then comes up and the models are shown, not assumed.
     await next(p).click();
@@ -224,6 +227,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("Connected to api.example.com. It lists 2 models.");
     // Connected, but Ember is not yet: Continue says it is waiting.
     expect(await p.locator("#w-why").innerText()).toContain("Connecting to api.example.com");
+    // It can't connect yet: why, beside the waiting Continue, said as mine (first-run-r4-2).
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...SIGNED_OUT, phase: "error", reason: "network", detail: "Ember can't reach api.example.com. Check the address and the network: Ember will try again in a moment.", service: { kind: "user", host: "api.example.com" } });
+    await expect.poll(() => p.locator("#w-why").innerText()).toBe("I can't reach api.example.com. Check the address and the network: I'll try again in a moment.");
     await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service: { kind: "user", host: "api.example.com" } }));
     await expect.poll(() => next(p).getAttribute("aria-disabled")).toBeNull();
     await next(p).click();
@@ -734,14 +740,16 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#w-alt").click();
     await expect.poll(() => calls(p)).toContain(off);
     expect(await p.locator("#welcome").getAttribute("data-step")).toBe("sign-in");
-    // Failing: its details, opened from the sign-in step, show the connection's own words; Back leaves it on.
+    // Failing: its details, opened from the sign-in step, show the connection's own words, as mine (first-run-r4-2);
+    // Back leaves it on.
     const detail = "Ember can't reach the model server on this computer (localhost:11434). Start it, and Ember will connect in a moment.";
+    const mine = "I can't reach the model server on this computer (localhost:11434). Start it, and I'll connect in a moment.";
     const local = { ...provider, baseUrl: "http://localhost:11434/v1", consent: { ...provider.consent, host: "localhost:11434" } };
     const q = await open({ provider: local, providerState: { ...inForce, host: "localhost:11434", keySaved: false }, agent: { ...SIGNED_OUT, phase: "error", reason: "network", detail, service: { kind: "user", host: "localhost:11434" } } });
     await expect.poll(() => buttons(q)).toContain("Check my provider's details");
     await q.getByRole("button", { name: "Check my provider's details" }).click();
     expect(await q.locator("#w-title").innerText()).toBe("Your own model provider's details");
-    expect(await q.locator("#w-p-result").innerText()).toBe(detail);
+    expect(await q.locator("#w-p-result").innerText()).toBe(mine);
     expect(await q.locator("#w-lead").innerText()).not.toContain("Nothing is sent");
     await q.locator("#w-back").click();
     expect(await q.locator("#w-title").innerText()).toBe("Your own model provider");
@@ -875,7 +883,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await calls(p)).not.toContain("test-draft:api3.example.com");
     const why = "Ember can't reach api3.example.com. Check the address and the network.";
     await settle(p, "test", { ok: false, why, cause: "unreachable" });
-    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe(why);
+    // In my voice, as after a failed edit of the provider in use (first-run-r4-2).
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("I can't reach api3.example.com. Check the address and the network.");
     // Not verified: nothing stays pointed at it, and nothing says it is in use.
     await expect.poll(() => p.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
     expect((await calls(p)).lastIndexOf(off)).toBeGreaterThan((await calls(p)).indexOf("test"));
@@ -1016,7 +1025,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // The local server isn't running: the provider's own words, and what can be done about it.
     const detail = "Ember can't reach the model server on this computer (localhost:11434). Start it, and Ember will connect in a moment.";
     await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...SIGNED_OUT, phase: "error", reason: "network", detail, service });
-    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe(detail);
+    // Said as mine, under a lead that is (first-run-r4-2).
+    const mine = "I can't reach the model server on this computer (localhost:11434). Start it, and I'll connect in a moment.";
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe(mine);
     expect(await p.locator("#w-lead").innerText()).toBe("I can't connect to the model provider you set up (localhost:11434) yet: the line below says why. You can check its details here, or later in Settings › Models & connections.");
     expect(await words()).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
     const shown = await buttons(p);
@@ -1029,7 +1040,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await settle(p, "retry", { found: false, source: null, hint: "Ember signs in through the GitHub CLI. Install it, then press Check again." });
     await p.waitForTimeout(50);
     expect(await words()).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
-    expect(await p.locator("#w-signin-line").innerText()).toBe(detail);
+    expect(await p.locator("#w-signin-line").innerText()).toBe(mine);
     // Skip, then on to Your Ember: the provider by name, not "Not signed in yet" (first-run-c1-3).
     await p.locator("#w-alt").click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");

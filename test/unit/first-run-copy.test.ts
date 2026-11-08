@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { costWords, failureView, homeConnectionView, inMyVoice, modelRows, ownProviderOffer, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
 import { tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
+import { KEY_NO_KEYRING, KEY_WRITE_FAILED, PROVIDER_MANAGED, PROVIDER_NO_CONSENT, providerDown, providerNotAgreed, testConnection } from "../../app/main/provider";
+import { explainSignInError, explainStartError, START_TIMEOUT_DETAIL } from "../../app/main/agent/host";
+import { cliTimedOutMessage } from "../../app/main/agent/github-app";
+import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 
 describe("first run: own provider offer (FE #2)", () => {
   const base = { bridge: true, managedProvider: false, locked: false, userProviderOff: false };
@@ -189,5 +194,47 @@ describe("first run: a failed check of new details for a provider in use (first-
     expect(providerFailField({ why: "b.example didn't accept the API key. Check it, or replace it." })).toBe("key");
     expect(providerFailField({ why: "b.example needs an API key." })).toBe("key");
     expect(providerFailField({ why: "Ember can't keep the key safely here: this computer has no keyring for passwords." })).toBe("key");
+  });
+});
+
+describe("first run says main's connection words as mine, on every visit (first-run-r4-2)", () => {
+  // main's own sentences (shared with Models & connections, which speaks of Ember), as the steps receive them.
+  const agreed = (baseUrl: string, host: string) => ({ ...DEFAULT_SETTINGS.provider, on: true, baseUrl, consent: { version: FEATURE_CONSENT_VERSION.provider, at: "2026-11-08T12:00:00Z", host } });
+  const failing = (err: Error) => async () => { throw err; };
+  const refused = Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  it("says a failed check of the provider's details as mine, on a first visit as after a failed edit of the one in use", async () => {
+    const down = await testConnection(agreed("http://127.0.0.1:18397/v1", "127.0.0.1:18397"), null, failing(refused));
+    expect(providerCheckLine(down)).toBe("I can't reach 127.0.0.1:18397. Check the address and the network.");
+    expect(providerKeptLine(providerCheckLine(down), "127.0.0.1:18300")).toBe("I can't reach 127.0.0.1:18397. Check the address and the network. Nothing has changed: I'm still using 127.0.0.1:18300.");
+    const moved = await testConnection(agreed("https://b.example/v1", "b.example"), null, failing(new TypeError("fetch failed: redirect mode is set to error")));
+    expect(providerCheckLine(moved)).toBe("b.example sent me to another address. Enter the address it moved to.");
+    const cert = await testConnection(agreed("https://b.example/v1", "b.example"), null, failing(new Error("self signed certificate in certificate chain")));
+    expect(providerCheckLine(cert)).toBe("I can't verify b.example's certificate.");
+    expect(providerCheckLine({ ok: false, why: KEY_NO_KEYRING })).toBe("I can't keep the key safely here: this computer has no keyring for passwords, so the key would be saved as plain text. Set up a keyring (GNOME Keyring or KWallet), then try again.");
+    expect(providerCheckLine({ ok: false, why: KEY_WRITE_FAILED })).toBe("I couldn't save the key: my data folder can't be written. Try again.");
+    expect(providerCheckLine({ ok: false, why: PROVIDER_MANAGED })).toBe("Your organisation decides which model service I use.");
+    expect(providerCheckLine({ ok: false, why: PROVIDER_NO_CONSENT })).toBe("Finish setting me up first.");
+    expect(providerCheckLine({ ok: false, why: providerNotAgreed("b.example") })).toBe("Agree to the note above first: I send nothing to b.example until you do.");
+  });
+  it("says why the provider in use can't connect as mine, under “I'm using the model provider you set up”", () => {
+    const down = { ok: false as const, why: "Ember can't reach 127.0.0.1:18397. Check the address and the network.", cause: "refused" as const };
+    expect(providerInUseLine({ host: "127.0.0.1:18397", phase: "error", detail: providerDown(down, "127.0.0.1:18397", true)! })).toEqual({ line: "I can't reach the model server on this computer (127.0.0.1:18397). Start it, and I'll connect in a moment.", tone: "error" });
+    expect(providerInUseLine({ host: "api.example.com", phase: "error", detail: providerDown({ ...down, cause: "unreachable" }, "api.example.com", false)! }).line).toBe("I can't reach api.example.com. Check the address and the network: I'll try again in a moment.");
+    expect(providerInUseLine({ host: "api.example.com", phase: "error", detail: providerDown({ ok: false, why: "api.example.com didn't answer within 10 seconds.", cause: "timeout" }, "api.example.com", false)! }).line).toBe("api.example.com didn't answer within 10 seconds. I'll try again in a moment.");
+  });
+  it("says the sign-in step's connection words as mine too, leaving Ember's name where it names the app", () => {
+    expect(inMyVoice(START_TIMEOUT_DETAIL)).toBe("Copilot isn't answering. I'll try again in a moment.");
+    expect(inMyVoice(explainStartError(new Error("net::ERR_INTERNET_DISCONNECTED")))).toBe("I can't reach GitHub right now. I'll try again when the network is back.");
+    expect(inMyVoice(explainStartError(new Error("503 Service Unavailable")))).toBe("Copilot had a problem on its side while I connected. I'll try again in a moment.");
+    expect(inMyVoice(explainStartError(new Error("client not connected")))).toBe("My Copilot runtime stopped while connecting. Press Check again.");
+    expect(inMyVoice(explainStartError(new Error("401 Unauthorized"), { proxy: { url: "http://proxy.corp:3128" } }))).toBe("Copilot didn't accept the GitHub sign-in I found. It may have expired, or this account may not have Copilot. Sign in again. I sent Copilot through your system proxy (http://proxy.corp:3128); if that proxy needs its own sign-in, set HTTPS_PROXY for Ember with it.");
+    expect(inMyVoice(explainSignInError(new Error("getaddrinfo ENOTFOUND github.com")))).toBe("I can't reach GitHub right now. Check the network, then sign in again.");
+    expect(inMyVoice(explainStartError(new Error("unable to verify the first certificate")))).toBe("I can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember.");
+    expect(inMyVoice(cliTimedOutMessage("linux", true))).toMatch(/^I didn't see a new GitHub sign-in\. /);
+    expect(inMyVoice("Your model service refused the request. Check its API key in Ember's settings (Ctrl+Alt+E).")).toBe("Your model service refused the request. Check its API key in Ember's settings (Ctrl+Alt+E).");
+    expect(inMyVoice("GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date.")).toBe("GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date.");
+    expect(inMyVoice("Your organisation doesn't allow Ember to connect to build-01.")).toBe("Your organisation doesn't allow Ember to connect to build-01.");
+    // Said once: a line already in my voice stays as it is.
+    for (const s of ["I can't reach GitHub right now. I'll try again when the network is back.", "Connected to your own provider (127.0.0.1:11434)."]) expect(inMyVoice(s)).toBe(s);
   });
 });

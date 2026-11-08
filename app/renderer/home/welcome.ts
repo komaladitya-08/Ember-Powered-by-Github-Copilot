@@ -21,7 +21,7 @@ import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
 import { noteProviderChoice, onProviderChoice, providerChoice } from "./provider-choice";
 import {
-  ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices, type FailureAction,
+  ACTION_LABEL, failureView, inMyVoice, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
@@ -868,7 +868,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     render();
     const show = (text: string, tone: string) => {
       if (signInMessage !== checking) return;
-      signInMessage = { text, tone };
+      signInMessage = { text: inMyVoice(text), tone };
       render();
     };
     window.ember.retrySignIn().then(r => {
@@ -906,11 +906,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   window.ember.onSignInProgress(p => {
     if (!active) return;
     if (p.state === "code") { signingIn = true; showCode(p.userCode ?? "", p.verificationUri ?? ""); return; }
-    if (p.state === "waiting") { signingIn = true; waitLink = p.link ?? null; signInMessage = p.message ? { text: p.message, tone: "" } : null; render(); return; }
+    if (p.state === "waiting") { signingIn = true; waitLink = p.link ?? null; signInMessage = p.message ? { text: inMyVoice(p.message), tone: "" } : null; render(); return; }
     signingIn = false;
     waitLink = null;
     $("w-code").replaceChildren();
-    signInMessage = p.message ? { text: p.message, tone: p.state === "error" || p.state === "unavailable" ? "error" : "warn" } : null;
+    // Main's sign-in words, as mine (first-run-r4-2).
+    signInMessage = p.message ? { text: inMyVoice(p.message), tone: p.state === "error" || p.state === "unavailable" ? "error" : "warn" } : null;
     render();
     // Signed in: Continue takes focus, so the next step is one key away.
     if (p.state === "done" && step === "sign-in") next.focus();
@@ -995,7 +996,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     toCopilotLater = leaving && reported?.switchPending === true;
     agent = leaving && reported ? { ...reported, phase: "starting", detail: "", reason: undefined, login: undefined, service: undefined, models: [], conductorModel: null, workerModel: null } : reported;
   }
-  const onAgent = (a: AgentStatus) => { reported = a; see(); if (active && (step === "sign-in" || step === "provider" || step === "try" || step === "done")) render(); };
+  // Main's words for the connection are Models & connections', which speak of Ember: first run says them as its own (first-run-r4-2).
+  const onAgent = (a: AgentStatus) => { reported = typeof a.detail === "string" ? { ...a, detail: inMyVoice(a.detail) } : a; see(); if (active && (step === "sign-in" || step === "provider" || step === "try" || step === "done")) render(); };
   void window.ember.agentStatus().then(onAgent, () => { /* the next status brings it */ });
   window.ember.onAgentStatus(onAgent);
   const onVoice = (v: VoiceStatus) => {

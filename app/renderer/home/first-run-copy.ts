@@ -151,14 +151,40 @@ export function providerInUse(host: string): { title: string; lead: string } {
   return { title: "Your own model provider's details", lead: `I'm using the model provider you set up (${host}) instead of GitHub Copilot. You can change its details here.` };
 }
 
+/** Where a sentence or a clause starts: the text's start, after a full stop, colon or semicolon, or after "and", "so", "but". */
+const CLAUSE = String.raw`(^|[.!?:;]\s+|\b(?:and|so|but)\s+)`;
+/** Ember as the subject of a clause, as I (first-run-r4-2). */
+const AS_ME: readonly (readonly [RegExp, string])[] = ([
+  ["can't", "I can't"], ["couldn't", "I couldn't"], ["won't", "I won't"], ["didn't", "I didn't"], ["doesn't", "I don't"], ["isn't", "I'm not"],
+  ["will", "I'll"], ["needs", "I need"], ["sends", "I send"], ["sent", "I sent"], ["connects", "I connect"], ["uses", "I use"], ["signs", "I sign"],
+] as const).map(([verb, mine]) => [new RegExp(`${CLAUSE}Ember ${verb}\\b`, "g"), `$1${mine}`] as const);
+/** Ember named inside one of main's connection sentences as the one acting or acted on, as me (first-run-r4-2). */
+const AS_ME_WITHIN: readonly (readonly [RegExp, string])[] = [
+  [/(^|[.!?:;]\s+)Ember's Copilot runtime\b/g, "$1My Copilot runtime"], [/\bwhich Ember's Copilot runtime\b/g, "which my Copilot runtime"],
+  [/(^|[.!?:;]\s+)It will try again\b/g, "$1I'll try again"], [/\bsent Ember to\b/g, "sent me to"], [/\bsetting Ember up\b/g, "setting me up"],
+  [/\brestart Ember\b/g, "restart me"], [/\bwhich model( service)? Ember uses\b/g, "which model$1 I use"], [/\bwhile Ember connected\b/g, "while I connected"],
+  [/\bthe GitHub sign-in Ember found\b/g, "the GitHub sign-in I found"], [/\b(I couldn't save [^.:]+: )its data folder\b/g, "$1my data folder"],
+];
+
 /**
- * That step's status line, from the connection's (`phase`, and main's `detail` when it failed). Ready, a server on this
- * computer was asked at the start and is "Connected"; a host elsewhere wasn't, so it is only "Using", as Home's status
- * says (integrations-r3, integrations-r2-6).
+ * Main's connection and check sentences (provider.ts's, the agent's status), written for Models & connections, which
+ * speaks of Ember, as first run says them: in Ember's own voice, as every other line of first run is ("Ember can't
+ * reach…" → "I can't reach…", "and Ember will connect" → "and I'll connect"), on every visit (first-run-r4-2). Ember
+ * named as the app, its settings or its environment ("in Ember's settings", "for Ember") stays. Said once: a line
+ * already in my voice is left as it is.
+ */
+export function inMyVoice(line: string): string {
+  return [...AS_ME, ...AS_ME_WITHIN].reduce((s, [re, to]) => s.replace(re, to), line);
+}
+
+/**
+ * That step's status line, from the connection's (`phase`, and main's `detail` when it failed, said as mine:
+ * first-run-r4-2). Ready, a server on this computer was asked at the start and is "Connected"; a host elsewhere wasn't,
+ * so it is only "Using", as Home's status says (integrations-r3, integrations-r2-6).
  */
 export function providerInUseLine(o: { host: string; phase: string | null; detail?: string }): { line: string; tone: "" | "ok" | "error" } {
   if (o.phase === "ready") return { line: `${onThisComputer(o.host) ? "Connected to" : "Using"} your own provider (${o.host}).`, tone: "ok" };
-  if (o.phase === "error") return { line: o.detail ?? "", tone: "error" };
+  if (o.phase === "error") return { line: inMyVoice(o.detail ?? ""), tone: "error" };
   return { line: `Connecting to your own provider (${o.host})…`, tone: "" };
 }
 
@@ -168,8 +194,7 @@ export function providerInUseLine(o: { host: string; phase: string | null; detai
  * run's: main's sentence about Ember is said as Ember's own (first-run-c3-1).
  */
 export function providerKeptLine(line: string, host: string): string {
-  const mine = line.replace(/^Ember can't /, "I can't ").replace(/ sent Ember to /, " sent me to ");
-  return `${mine} Nothing has changed: I'm still using ${host}.`;
+  return `${inMyVoice(line)} Nothing has changed: I'm still using ${host}.`;
 }
 
 /** The way on after that failure: the details in use come back, and Continue goes on with them (first-run-c3-1). */
@@ -186,9 +211,12 @@ export function providerFailField(r: { why: string; cause?: string }): "address"
   return /\bkey(ring)?\b/i.test(r.why) ? "key" : "address";
 }
 
-/** What the provider check found, as a status line (the real answer only; `why` is main's sentence). */
+/**
+ * What the provider check found, as a status line (the real answer only; `why` is main's sentence, said as mine on
+ * every visit, as after a failed edit of the provider in use: first-run-r4-2).
+ */
 export function providerCheckLine(r: { ok: true; host: string; models: number | null } | { ok: false; why: string }): string {
-  if (!r.ok) return r.why;
+  if (!r.ok) return inMyVoice(r.why);
   if (r.models === null) return `Connected to ${r.host}.`;
   return `Connected to ${r.host}. It lists ${r.models} ${r.models === 1 ? "model" : "models"}.`;
 }
