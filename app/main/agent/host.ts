@@ -688,14 +688,16 @@ export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTa
   if (s.phase === "starting") return "Connecting…";
   if (s.phase === "signed-out") return "Not connected";
   if (s.waitingForTasks) return "Waiting for tasks";
+  // Another model service in use is never called Copilot (accessibility-visual-c1-2: the Ask box said "Copilot problem").
+  const kind = s.service?.kind;
   switch (s.reason) {
-    case "network": return s.service?.kind === "user" ? "Can't connect" : "Offline";
-    case "sign-in": return "Sign-in refused";
-    case "no-access": return "No Copilot access";
+    case "network": return kind === "user" ? "Can't connect" : "Offline";
+    case "sign-in": return kind ? "Access refused" : "Sign-in refused";
+    case "no-access": return kind ? "Access refused" : "No Copilot access";
     case "models": return "No model";
     case "not-answering": return "Reconnecting…";
     case "policy": return "Locked down";
-    default: return "Copilot problem";
+    default: return kind === "user" ? "Provider problem" : kind ? "Service problem" : "Copilot problem";
   }
 }
 

@@ -105,6 +105,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
 
 import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import type { ActiveProvider } from "../../app/main/provider";
+import { unavailableLine } from "../../app/renderer/ask/chips";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
 import { Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
@@ -721,6 +722,22 @@ describe("live test: what Ember says when it can't take a request", () => {
     expect(unansweredWord({ phase: "error", reason: "network" })).toBe("Offline");
     expect(unansweredWord({ phase: "error", reason: "not-answering" })).toBe("Reconnecting…");
     expect(unansweredWord({ phase: "error", reason: "policy" })).toBe("Locked down");
+  });
+
+  it("never blames Copilot in the handle or the Ask box while another model service is in use (accessibility-visual-c1-2)", () => {
+    const own = { kind: "user" as const, host: "localhost" }, org = { kind: "admin" as const, host: "models.example.com" };
+    for (const reason of ["runtime", "other"] as const) {
+      expect(idleWord({ phase: "error", reason }), reason).toBe("Copilot problem");
+      expect(unansweredWord({ phase: "error", reason, service: own }), reason).toBe("Provider problem");
+      expect(unansweredWord({ phase: "error", reason, service: org }), reason).toBe("Service problem");
+    }
+    expect(idleWord({ phase: "error", reason: "no-access" })).toBe("No Copilot access");
+    expect(idleWord({ phase: "error", reason: "no-access", service: own })).toBe("Access refused");
+    expect(idleWord({ phase: "error", reason: "sign-in", service: org })).toBe("Access refused");
+    expect(idleWord({ phase: "error", reason: "sign-in" })).toBe("Sign-in refused");
+    // What the Ask box says under its field.
+    expect(unavailableLine(unansweredWord({ phase: "error", reason: "runtime", service: own }) ?? undefined)).toBe("Provider problem: I can't answer yet");
+    expect(unavailableLine(unansweredWord({ phase: "error", reason: "other" }) ?? undefined)).toBe("Copilot problem: I can't answer yet");
   });
 
   it("the reason goes once Ember is connected again", async () => {
