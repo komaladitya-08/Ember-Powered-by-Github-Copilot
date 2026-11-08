@@ -855,6 +855,25 @@ describe("loops and ifs (commands-remote-2)", () => {
     expect(cls("ren notes.txt y.py", "cmd").downloads).toEqual([]);
   });
 
+  it("keeps a download a download when a pipeline or xargs copies, moves or renames it (commands-remote-v4-5)", () => {
+    const P = "C:\\Users\\ana\\proj";
+    const cls = (cmd: string, downloaded = [`${P}\\x.exe`, `${P}\\tools\\x.exe`]) => classifyCommand(cmd, "powershell", contextOf("win32", downloaded)) as ClassificationExtra;
+    for (const [cmd, as] of [
+      ["Get-ChildItem x.exe | Copy-Item -Destination y.exe", `${P}\\y.exe`], ["Get-Item .\\x.exe | Move-Item -Destination y.exe", `${P}\\y.exe`],
+      ["gci x.exe | cpi -Destination y.exe", `${P}\\y.exe`], ["Get-Item x.exe | Rename-Item -NewName y.exe", `${P}\\y.exe`],
+      // A listed folder's files land in the destination; items Ember can't name may be the download.
+      ["Get-ChildItem tools | Copy-Item -Destination out", `${P}\\out`], ["$items | Copy-Item -Destination y.exe", `${P}\\y.exe`],
+    ]) expect(cls(cmd).downloads, cmd).toContain(as);
+    // Nothing downloaded, or a file that isn't a download: nothing passes on.
+    expect(cls("$items | Copy-Item -Destination y.exe", []).downloads).toEqual([]);
+    expect(cls("Get-ChildItem notes.txt | Copy-Item -Destination y.txt").downloads).toEqual([]);
+    const posix = (cmd: string, downloaded: string[]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)) as ClassificationExtra;
+    for (const cmd of ["ls x.sh | xargs -I{} cp {} y.sh", "cp \"$f\" y.sh", "ls x.sh | xargs -I{} mv {} y.sh"]) {
+      expect(posix(cmd, ["/home/ana/proj/x.sh"]).downloads, cmd).toContain("/home/ana/proj/y.sh");
+      expect(posix(cmd, []).downloads, cmd).toEqual([]);
+    }
+  });
+
   it("asks before a tool runs a download it picks up by name: a Makefile, tests, package.json, a module, a preload (commands-remote-c2-2)", () => {
     const P = "/home/ana/proj";
     const ran = (cmd: string, downloaded: string[]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)).findings.map(f => f.rule);

