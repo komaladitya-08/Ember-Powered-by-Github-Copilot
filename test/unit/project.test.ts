@@ -186,6 +186,15 @@ it("holds back a mailer's hash, a pretty-printed config, a dict of passwords, a 
   for (const line of ["minlength: 8", "(if|else)", "key: password"]) expect(result).toContain(line);
 });
 
+it("holds back a deploy script and a README that give a password to a program's short option, and sends one that reads it from a variable (safety-privacy-c5-2)", async () => {
+  const deploy = await file("deploy.sh", "#!/bin/sh\nmysqldump -u root -pWint3r!Sh0p shop > shop.sql\ncurl -u admin:Wint3r!Sh0p https://nexus.example.com/upload -T shop.sql\n");
+  await expect(prompt([deploy])).rejects.toThrow(new Error("deploy.sh appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+  const readme = await file("README.md", "# Shop\n\nLog in to the registry first:\n\n    docker login registry.example.com -u deploy -p Wint3r!Sh0p\n");
+  await expect(prompt([readme])).rejects.toThrow(new Error("README.md appears to contain a password, token or key on line 5. Remove that file or the value, then send again."));
+  const safe = await file("backup.sh", "#!/bin/sh\nmysqldump -u root -p\"$DB_PASS\" shop > shop.sql\ncurl -u \"$USER:$PASS\" https://nexus.example.com/upload\n");
+  expect(await prompt([safe])).toContain("mysqldump -u root -p");
+});
+
 it("takes a request about user scripts passing a check and sends a path built into root, beside a user's name and password (memory-w5-4, memory-w5-5)", async () => {
   const app = await file("app.py", "print(1)\n");
   for (const q of ["Why don't the user scripts pass linting?", "How do I make user uploads pass scanning?", "Do the user queries pass sanitisation?"]) {

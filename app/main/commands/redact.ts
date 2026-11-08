@@ -62,6 +62,35 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   /((?:^|[\s"'])--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)=)[^\s"',;]+/gi,
 ];
 
+/**
+ * A value that is a password itself, never a variable, a template or a placeholder: not `$DB_PASS`, `%PW%`, `{{ pw }}`,
+ * `<password>`, `*` (a prompt), capitals alone (`-pPASSWORD` in a README) or a word for one (`yourpassword`).
+ */
+const OPTION_VALUE = String.raw`(?![$%{<*[])(?![A-Z][A-Z_]*(?![^\s"'|;&]))(?!(?:your[-_]?|my[-_]?)?(?:password|passwd|pass|pwd|secret|token|key)(?![^\s"'|;&]))[^\s"'|;&]+`;
+/** What may stand between a program and its option on one line: other words, at most 200 characters, never a pipe or `;`. */
+const ARGS = String.raw`(?:[ \t]+[^\s|;&]+){0,12}?`;
+/**
+ * Programs whose short option carries a password (safety-privacy-c5-2): each pattern's first group is kept, its second is
+ * the value's quote and its third the value, which is hidden. `mysql -pWint3r!Sh0p` and `mysql -p'…'` (attached; a
+ * bare `-p` prompts), `curl -u admin:…` and `--user admin:…` (after the colon), `docker login -p …`, `mongo -p …`,
+ * `sshpass -p …`, `redis-cli -a …`, `smbclient -U admin%…`, `htpasswd -b file user …`, `openssl … -k …` and `-pass
+ * pass:…`, `net use \\srv\share … /user:admin …`, and `echo '…' | sudo -S`.
+ */
+const OPTION_PASSWORDS: readonly RegExp[] = [
+  new RegExp(String.raw`(\b(?:mysql\w*|mariadb\w*)${ARGS}[ \t]+-p)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\b(?:curl|wget)${ARGS}[ \t]+(?:-u|--user)(?:[ \t]+|=)["']?[^\s"':|;&]*:)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\b(?:docker|podman|nerdctl|buildah|helm)${ARGS}[ \t]+login${ARGS}[ \t]+(?:-p|--password)[ \t]+)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\b(?:mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport)${ARGS}[ \t]+-p[ \t]*)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\bsshpass${ARGS}[ \t]+-p[ \t]*)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\bredis-cli${ARGS}[ \t]+-a[ \t]+)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\bsmbclient${ARGS}[ \t]+-U[ \t]*["']?[^\s"'%|;&]+%)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\bhtpasswd(?:[ \t]+-\w+)*[ \t]+-\w*b\w*(?:[ \t]+-\w+)*[ \t]+\S+[ \t]+\S+[ \t]+)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\bopenssl${ARGS}[ \t]+(?:-k[ \t]+|-pass(?:in|out)?[ \t]+pass:))(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\bnet[ \t]+use${ARGS}[ \t]+/user:\S+[ \t]+)(["']?)(${OPTION_VALUE})\2`, "gi"),
+  new RegExp(String.raw`(\bnet[ \t]+use(?:[ \t]+[A-Za-z]:)?[ \t]+\\\\\S+[ \t]+)(["']?)((?!/)${OPTION_VALUE})\2`, "gi"),
+  new RegExp(String.raw`(\b(?:echo|printf)[ \t]+(?:-\w+[ \t]+)*)(["']?)(${OPTION_VALUE})\2([ \t]*\|[ \t]*sudo(?:[ \t]+-\w+)*[ \t]+-\w*S)`, "g"),
+];
+
 /** URL credentials: `://user:pass@` becomes `://[secret hidden]@`. */
 const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/g;
 
@@ -80,12 +109,16 @@ const KEY_VALUE =
 /**
  * Replaces what looks like a secret in `text` with "[secret hidden]" (§3.11 step 4): GitHub, AWS, Slack, Google, npm,
  * OpenAI, Anthropic, Stripe, Hugging Face and GitLab tokens and keys, private key blocks, JWTs, Azure account keys and SAS signatures, Authorization headers, credentials in
- * URLs, and the values of keys named like passwords, tokens or keys. Best effort: it can miss secrets.
+ * URLs, a password given to a program's short option (OPTION_PASSWORDS), and the values of keys named like passwords, tokens or
+ * keys. Best effort: it can miss secrets.
  */
 export function redactSecrets(text: string): string {
   let out = text;
   for (const re of TOKEN_PATTERNS) out = re === PRIVATE_KEY ? hidePrivateKeys(out) : out.replace(re, SECRET_HIDDEN);
   for (const re of VALUE_PATTERNS) out = out.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN);
+  for (const re of OPTION_PASSWORDS) {
+    out = out.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`);
+  }
   out = out.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`);
   out = out.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
   return out;
