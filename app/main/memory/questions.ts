@@ -220,8 +220,9 @@ function statesSomething(rest: string): boolean {
     const next = words[v + 1];
     const ed = (x = "") => /^\p{Ll}{2,}ed$/u.test(x) || PAST.has(x);
     // "Remember Sam drives": a name and its verb, the request's last word (memory-r3-2), never an app's, a tool's or a
-    // day's ("Remember Chrome updates", "Remember Monday standups": memory-v5-6).
-    const named = v === 1 && words.length === 2 && /^\p{Lu}\p{Ll}+$/u.test(words[0]!) && isName(words[0]!);
+    // day's ("Remember Chrome updates", "Remember Monday standups": memory-v5-6), but a month's that names someone
+    // before their verb ("Remember June drives": memory-w5-6).
+    const named = v === 1 && words.length === 2 && /^\p{Lu}\p{Ll}+$/u.test(words[0]!) && isName(words[0]!, true);
     // "the issues users reported": who did what to the thing named, a description (memory-r8).
     if (v + 2 === words.length && /^\p{Ll}+s$/u.test(w) && !MODAL.test(w) && ed(next)) return false;
     // "my car keys on the table": a plural before a place, not a verb.
@@ -322,11 +323,11 @@ const FORGET_ASK = new RegExp(String.raw`${LEAD}(?:(?:forget|don'?t\s+remember|d
 /** "Remove Priya from memory": a name, as FORGET_NAME takes one (memory-c4-1). */
 const FORGET_FROM = new RegExp(String.raw`${LEAD}(?:remove|delete|erase|drop|clear|wipe)\s+(\S+(?:\s+\S+)?)\s+from\s+(?:memory|memories)${END}`, "i");
 /**
- * A photo app's or a social site's memories ("my memories of Paris in Photos", "…on Facebook"): never Ember's
- * (memory-c4-1). Only by that app's name, never a place, a company or a month after "in", "on" or "from", and never
- * "your" or "Ember's" memories ("Delete your memories about Priya from Acme" is Ember's: memory-v5-5).
+ * A photo app's or a social site's memories ("my memories of Paris in Photos", "…in Microsoft Photos", "…on
+ * Pinterest"): a capitalised word after "in", "on" or "from", never Ember (memory-c4-1, memory-w5-6), and never "your"
+ * or "Ember's" memories ("Delete your memories about Priya from Acme" is Ember's: memory-v5-5).
  */
-const APP_MEMORIES = /(?<!\b(?:[Yy]our|[Ee]mber['’]s)\s+)\bmemor(?:y|ies)\s+(?:of|about)\s+.*\s(?:in|on|from)\s+(?:the\s+)?(?:(?:Google|Apple|Amazon)\s+)?(?:Photos|iCloud|Facebook|Instagram|Snapchat|Flickr|OneDrive|Gallery|Timehop)\b/u;
+const APP_MEMORIES = /(?<!\b(?:[Yy]our|[Ee]mber['’]s)\s+)\bmemor(?:y|ies)\s+(?:of|about)\s+.*\s(?:in|on|from)\s+(?:the\s+)?(?!Ember\b)\p{Lu}/u;
 /**
  * "Forget Priya", "forget Priya Shah", "forget Priya's birthday", "forget everything about Priya": a name, capitalised as
  * names are, never a word of the conversation ("Forget It", "Forget The last part"): memory-v1. Never an app, a day, a

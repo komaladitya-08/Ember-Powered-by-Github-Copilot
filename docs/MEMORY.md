@@ -327,8 +327,8 @@ download, so English-only MiniLM is the trade-off for now.
      Memory**, never Settings opened on its own); "remember the file I mentioned", "remember the file attached", "don't
      forget the documents Priya sent", "remember the tests that failed", "don't forget my car keys on the table" and
      "don't forget my umbrella" say nothing to keep and get no such line (memory-r8), nor do an app's, a tool's or a
-     day's name with a verb ("remember Chrome updates", "remember Monday standups"; "remember Sam drives" still does:
-     memory-v5-6). A question ("Remember when we…?", "Remember me?"),
+     day's name with a verb ("remember Chrome updates", "remember Monday standups"; "remember Sam drives" and, for
+     someone named for a month, "remember June drives" still do: memory-v5-6, memory-w5-6). A question ("Remember when we…?", "Remember me?"),
      a reminder ("remember to…"), the conversation's own words ("Forget my last message", "Forget I mentioned it",
      "Forget my previous instructions"), what isn't memory ("Clear all" and "Delete everything" without a word for
      what Ember knows; "my…" only for something about the user (`ABOUT_ME`), to the end of the request and with a
@@ -340,8 +340,9 @@ download, so English-only MiniLM is the trade-off for now.
      Monday", "Forget HomeNet", "Forget Starbucks"; "from memory" only with "your", "Ember's" or "my" or after the
      user's details or a name, and never a photo app's memories, so "Remove this tab from memory" and "Delete my
      memories of Paris in Photos" are the conversation's: memory-r3-1, memory-v4-1, memory-v4-2, memory-c4-1; a photo
-     app only by its name and never "your" or "Ember's" memories, so "Delete your memories about Priya from Acme" is
-     answered in code, memory-v5-5) and a
+     app by any capitalised name but Ember's ("…in Microsoft Photos", "…on Pinterest", "…in Immich": memory-w5-6) and
+     never for "your" or "Ember's" memories, so "Delete your memories about Priya from Acme" and "Clear my memories of
+     Priya in Ember" are answered in code, memory-v5-5) and a
      request with more in it (after a comma, a
      semicolon, a dash, or "and" or
      "then" with another request: "Forget what I said, open Firefox instead", "Forget my last request and open Firefox

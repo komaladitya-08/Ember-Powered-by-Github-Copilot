@@ -834,6 +834,22 @@ describe("“forget that”, the instruction check and the conversation's line",
     }
   });
 
+  it("leaves any photo app's or site's memories to the conversation, and notes a statement about someone named for a month (memory-w5-6)", () => {
+    const off = learning({ inForce: () => false });
+    for (const text of [
+      "Delete my memories of Paris in Microsoft Photos", "Delete my memories of the trip on Pinterest", "Delete my memories of Rome in Samsung Gallery",
+      "Delete my memories of the beach in Immich", "Delete my memories of the trip on Twitter", "Delete my memories of Lisbon in Shotwell",
+    ]) {
+      expect(memoryAsk(text), text).toBeNull();
+      expect(off.l.intent(text, { own: true }), text).not.toBe(FORGET_OFF);
+    }
+    for (const text of ["Clear my memories of Priya in Ember", "Delete your memories about Priya from Acme"]) expect(memoryAsk(text), text).toBe("forget");
+    for (const text of ["Remember June drives", "Remember May cooks", "Remember August drives"]) {
+      expect(off.l.rememberNote(text)?.text, text).toBe("Memory is off, so I won't keep this after Ember closes.");
+    }
+    for (const text of ["Remember Chrome updates", "Remember Monday standups"]) expect(off.l.rememberNote(text), text).toBeNull();
+  });
+
   it("opens Settings › Memory at its list from Open Memory after a forget request with more in it, and at its note after a remember (memory-r3-4)", () => {
     const off = learning({ inForce: () => false });
     const forget = off.l.rememberNote("Forget my address and open Firefox")!;
