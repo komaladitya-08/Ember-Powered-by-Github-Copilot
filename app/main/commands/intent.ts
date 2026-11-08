@@ -563,14 +563,15 @@ const HERE_FOLDER = new Set(["folder", "directory", "dir", "repo", "repository",
  * the list in out.txt", "copy it onto build-01", "discard the changes in a.ts"), and `heads`, the words that may follow
  * one as the end of its name ("my feature-x changes", "the build-01 server", "the node processes").
  */
-interface RowShape { places?: readonly string[]; heads?: readonly string[] }
+interface RowShape { places?: readonly string[]; heads?: readonly string[]; contents?: readonly string[] }
 const PUSHED: RowShape = { places: ["into"], heads: ["changes", "commits", "work", "fixes", "edits", "code"] };
 const ROW_SHAPE: Readonly<Record<string, RowShape>> = {
   "git.push": PUSHED,
   "git.push.force": PUSHED,
   "git.discard": { places: ["in", "inside", "within", "under", "of"] },
   "git.clean": { places: ["in", "inside", "within", "under"] },
-  "overwrite.file": { places: ["in", "inside", "within", "under", "into", "onto"] },
+  // "replace the contents of out.txt with hi" names out.txt (commands-remote-v5-5).
+  "overwrite.file": { places: ["in", "inside", "within", "under", "into", "onto"], contents: ["contents", "content", "text"] },
   "p4.revert": { places: ["in", "inside", "within", "under"] },
   "pkg.install": { heads: ["library", "libraries", "module", "modules", "dependency", "dependencies", "version"] },
   "service.restart": { heads: ["server", "daemon", "unit", "units"] },
@@ -631,10 +632,31 @@ const AFTER_NAME = new Set([
   ...OF_THING, ...AFTER_OBJECT, ...FILLERS, "folders", "directories", "dirs", "files", "branches", "stashes", "packages",
   "images", "changelists", "prs", "processes", "services", "tree", "again", "already", "here", "anyway", "well", "away",
   "asap", "thanks", "thank", "today", "altogether", "forever", "quick", "fast", "up", "down", "out", "off", "back",
-  "both", "all", "each",
+  "both", "all", "each", "instead",
 ]);
 /** Marks a folder the words only place a thing in ("in the ǂfrontend folder"): folderNamed reads it, no row names it. */
 const PLACED = "\u01c2";
+/** Words for a running program before "for pid 1234". */
+const PROCESS_WORDS = new Set(["process", "processes", "program", "programs", "job", "jobs", "task", "tasks", "app", "instance"]);
+
+/**
+ * Where a phrase that only says the folder goes with what is in it ends ("with everything in it", "along with its
+ * contents", "with all its files": commands-remote-v5-5), or -1 when the phrase at `k` isn't one.
+ */
+function contentsEnd(tokens: readonly string[], k: number): number {
+  const word = (j: number) => userWordList(tokens[j] ?? "")[0] ?? "";
+  let j = k;
+  if (word(j) === "along") j++;
+  if (word(j) !== "with") return -1;
+  j++;
+  if (word(j) === "all") j++;
+  if (word(j) === "of") j++;
+  if (word(j) === "everything") j++;
+  else if ((word(j) === "its" || word(j) === "their") && /^(contents?|files)$/.test(word(j + 1))) j += 2;
+  else return -1;
+  if (["in", "inside", "within"].includes(word(j)) && ["it", "them", "there"].includes(word(j + 1))) j += 2;
+  return j;
+}
 
 /**
  * Where the clause's words stop naming what the verb acts on (commands-remote-c3-1, r3-x1): at a reason, a time or a
@@ -657,6 +679,8 @@ function objectEnd(tokens: readonly string[], names: (t: string) => boolean, nou
     return AFTER_NAME.has(w0) || heads.has(w0) || PREPOSITION.has(w0) || RELATIVE_CUT.has(w0) || SUBORDINATE_CUT.has(w0) || JOINERS.has(w0) || /ly$/.test(w0) || another(t);
   };
   for (let k = 1; k < tokens.length; k++) {
+    const with_ = contentsEnd(tokens, k);
+    if (with_ > k) { k = with_ - 1; continue; }
     if (SUBORDINATE_CUT.has(word(k))) return k;
     // Past the verb (at `from`), what a free relative, a relative clause after any word or a participle describes isn't
     // what the verb acts on: "kill whatever is blocking 1234", "the services that depend on nginx", "the script that
@@ -686,8 +710,14 @@ function objectWords(tokens: readonly string[], shape: RowShape): string[] {
   const out: string[] = [];
   for (let k = 0; k < tokens.length; k++) {
     const w0 = word(k);
-    // "I'd like to delete build/" asks for it.
-    const names = (w0 === "of" && OF_WHAT.has(word(k - 1))) || (w0 === "with" && /^(pid|id|name|number|process)$/.test(word(k + 1) === "the" ? word(k + 2) : word(k + 1)))
+    // "with everything in it", "along with its contents": the folder with what is in it (commands-remote-v5-5).
+    const with_ = contentsEnd(tokens, k);
+    if (with_ > k) { k = with_ - 1; continue; }
+    const next = word(k + 1) === "the" ? word(k + 2) : word(k + 1);
+    // "I'd like to delete build/" asks for it; "kill the process for pid 1234" names it as "with pid 1234" does, but
+    // never "the parent of pid 1234".
+    const names = (w0 === "of" && (OF_WHAT.has(word(k - 1)) || (shape.contents ?? []).includes(word(k - 1)))) || (w0 === "with" && /^(pid|id|name|number|process)$/.test(next))
+      || (w0 === "for" && /^(pid|id)$/.test(next) && PROCESS_WORDS.has(word(k - 1)))
       || (w0 === "like" && (word(k + 1) === "to" || word(k + 1) === "you"));
     // "the build folder of the frontend app", "… for the docs": the folder it is in (placeWord).
     const places = (w0 === "of" || w0 === "for") && FOLDER_WORDS.has(word(k - 1));
@@ -803,6 +833,72 @@ const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn[
 const CONDITION = /(^|[^\p{L}\p{N}])(if|when|whenever|once|after|until|till|as\s+soon\s+as|as\s+long\s+as|so\s+long\s+as|provided|providing|assuming|depending\s+on|in\s+case|supposing|suppose|on\s+condition|in\s+the\s+event)(?=$|[^\p{L}\p{N}])/giu;
 /** Words before a condition that make it what to report, not when to act ("tell me if it worked", "let me know when"). */
 const REPORTS = /(^|[^\p{L}\p{N}])((tell|show|warn|notify|ping|let)\s+(me|us)(\s+know)?|check|see|find\s+out|report)\s+$/iu;
+/** A condition that only says to skip what isn't there ("if it exists", "if it's there", "if there is one", "if any"). */
+const IF_THERE = /^\s+((it|they|that|one)\s+exists?|(it|they)\s*(['’]s|['’]re|\s+is|\s+are)\s+(still\s+)?there|there\s+(is|are|['’]s)\s+(one|any|some)|any)(?=\s*([,;:.!?)]|$))/iu;
+/** "as soon as possible", "as soon as you can": now, not a condition or a later time (commands-remote-v5-5). */
+const SOON_AS_ASKED = /(^|[^\p{L}\p{N}])as\s+soon\s+as\s+(possible|you\s+(can|could|are\s+able)|you['’]re\s+able)(?=$|[^\p{L}\p{N}])/giu;
+/**
+ * Verbs that start another step of the user's after the one asked for ("I'll rebuild later", "then run the tests once
+ * it's gone"): a later time or a condition in that step's clause is that step's (commands-remote-v5-5). Only these; a
+ * clause that starts any other way ("only after lunch", "do it later", "check with the team tomorrow") still holds the
+ * step back.
+ */
+const OTHER_STEP = new Set([
+  "rebuild", "build", "run", "rerun", "test", "retest", "compile", "recompile", "install", "reinstall", "commit", "open",
+  "restart", "start", "deploy", "redeploy", "create", "recreate", "regenerate", "generate", "write", "update", "upgrade",
+  "clone", "fetch", "pull", "push", "merge", "rebase", "fix", "format", "lint", "reload", "refresh", "sync", "upload",
+  "download", "email", "copy", "move", "rename", "add", "edit", "publish", "release", "make", "set",
+]);
+/**
+ * Of OTHER_STEP, the verbs that can stand for the step itself ("run it later", "make that happen", "start tomorrow"):
+ * another step only with one of these after them ("run the tests", "start the server").
+ */
+const STEP_ITSELF = new Set(["run", "rerun", "make", "set", "start"]);
+const STEP_OBJECT = new Set(["the", "a", "an", "my", "our", "your", "all", "some", "tests", "test", "server", "app", "linter", "script", "build"]);
+/** Words between a subject and its verb ("I'll rebuild", "we can redeploy", "I'm going to rebuild"). */
+const STEP_MODALS = new Set(["ll", "will", "shall", "can", "could", "d", "would", "should", "might", "may", "must", "m", "am", "are", "re", "going", "gonna", "to", "want", "wanna", "need", "have", "ve", "got", "also", "probably"]);
+
+/** Whether a clause's plain words start another step of the user's own (OTHER_STEP), after fillers and a subject. */
+function otherStep(words: readonly string[]): boolean {
+  let k = 0;
+  while (k < words.length && FILLERS.has(words[k])) k++;
+  if (["i", "we", "you", "u"].includes(words[k] ?? "")) {
+    k++;
+    while (k < words.length && STEP_MODALS.has(words[k])) k++;
+  }
+  const v = words[k] ?? "";
+  if (!OTHER_STEP.has(v)) return false;
+  return !STEP_ITSELF.has(v) || STEP_OBJECT.has(words[k + 1] ?? "");
+}
+
+/**
+ * The words with every clause of another step of the user's that comes after a clause asking for the row's verb blanked
+ * out (otherStep), so a later time or a condition there isn't read as holding this step back ("delete build/ now,
+ * I'll rebuild later": commands-remote-v5-5). The rest keeps its place, for holdsBack's look before and after a word.
+ */
+function ownSteps(text: string, verbs: readonly string[]): string {
+  let out = text;
+  let asked = false;
+  const sentence = /[^\n]+?(?:[.!?;]+(?=\s|$)|$)/gmu;
+  for (const s of text.matchAll(sentence)) {
+    const question = /\?["'”’)\]]*\s*$/.test(s[0]);
+    const polite: SentenceState = { first: false };
+    const cut = /[,:;]\s+|\s+[-–—]\s+|(?<![\p{L}\p{N}])(?:and|then|but|or|so|plus)(?![\p{L}\p{N}])/giu;
+    let from = 0;
+    let n = 0;
+    const clause = (start: number, end: number) => {
+      const words = userWordList(s[0].slice(start, end));
+      if (words.length === 0) return;
+      const starts = clauseStarts(words, n++, question, polite);
+      if (verbs.some(v => { const parts = v.split(" "); return starts.some(c => parts.every((p, j) => c[j] === p)); })) { asked = true; return; }
+      if (asked && otherStep(words)) out = out.slice(0, s.index + start) + " ".repeat(end - start) + out.slice(s.index + end);
+    };
+    for (const m of s[0].matchAll(cut)) { clause(from, m.index); from = m.index + m[0].length; }
+    clause(from, s[0].length);
+  }
+  return out;
+}
+
 /** A condition that is only a way of asking ("if you can", "if possible", "if that's okay"). */
 const POLITE_IF = /^\s+(you\s+(can|could|would|will|please|like|want)|possible|(that|it)['’]?s\s+(ok|okay|alright|all\s+right|fine))(?=$|[^\p{L}\p{N}])/iu;
 /** A later time ("tomorrow", "next week", "in 5 minutes", "at 5pm", "on Friday", "later"). */
@@ -826,16 +922,21 @@ const ASK_FIRST = /(^|[^\p{L}\p{N}])(ask\s+(me|us|first|before)|(check|confirm|c
  * anywhere in them. An announcement runs the step now, as asked, so these always ask; "tell me if it worked", "let me
  * know when it's done", "if you can", "at once" and "after that," hold nothing back.
  */
-function holdsBack(userWords: string): boolean {
-  const text = userWords.normalize("NFKC");
-  if (LATER.test(text) || LATER_TOO.test(text) || ASK_FIRST.test(text) || HELD_FIRST.test(text)) return true;
+function holdsBack(userWords: string, verbs: readonly string[]): boolean {
+  // "as soon as possible" asks for it now, and a leading "wait," only interrupts ("wait, delete build/ instead":
+  // commands-remote-v5-5).
+  const said = userWords.normalize("NFKC").replace(SOON_AS_ASKED, "$1now").replace(/^\s*wait\s*[,!.:;–—-]+\s*/iu, "");
+  if (ASK_FIRST.test(said) || HELD_FIRST.test(said)) return true;
+  const text = ownSteps(said, verbs);
+  if (LATER.test(text) || LATER_TOO.test(text)) return true;
   for (const m of text.matchAll(CONDITION)) {
     const at = m.index + m[1].length;
-    const word = m[2].toLowerCase();
+    const word = m[2].toLowerCase().replace(/\s+/g, " ");
     const before = text.slice(0, at);
     const after = text.slice(at + m[2].length);
     if (REPORTS.test(before)) continue;
     if (word === "if" && POLITE_IF.test(after)) continue;
+    if ((word === "if" || word === "in case") && IF_THERE.test(after)) continue;
     if (word === "once" && (/(^|[^\p{L}\p{N}])at\s+$/iu.test(before) || /^\s+(more|again|and\s+for\s+all)(?=$|[^\p{L}\p{N}])/iu.test(after))) continue;
     if (word === "after" && /^\s+(all(?=$|[^\p{L}\p{N}])|(that|this)\s*([,;:.!]|$))/iu.test(after)) continue;
     // "the file you provided" names a file, not a condition.
@@ -1204,8 +1305,6 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
   if (F.some(f => ALWAYS_ASK.has(f.cls))) return null;
   if (F.some(f => f.widening.some(x => ALWAYS_BROADER.has(x)))) return null;
   if (NEGATION.test(userWords.normalize("NFKC")) || KEEPS.test(userWords.normalize("NFKC"))) return null;
-  // Words that hold the step back: an announcement would run it now (commands-remote-c4-4).
-  if (holdsBack(userWords)) return null;
   const groups = new Map<string, Finding[]>();
   for (const f of F) {
     const row = rowOf(f, F);
@@ -1221,6 +1320,9 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     // `kill 1234`, nor "stop apache and check nginx" `systemctl stop nginx`.
     const names = (t: string) => fs.some(f => f.objects.some(o => namesObject(o, t)));
     const verbs = row.startsWith("git.push") ? ["push", "force push"] : ROW_VERBS[row] ?? [];
+    // Words that hold the step back: an announcement would run it now (commands-remote-c4-4); a time or a condition of
+    // another step said after this one's is that step's (v5-5).
+    if (holdsBack(userWords, verbs)) return null;
     let m: IntentMatch | null = null;
     const acted = actedOn(w.raw, verbs, names, ROW_SHAPE[row]);
     for (const part of acted) if ((m = fn(fs, wordsOf(part), ctx, F, w))) break;

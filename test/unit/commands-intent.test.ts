@@ -663,6 +663,44 @@ describe("matchIntent: words that hold the step back (commands-remote-c4-4)", ()
   });
 
   it.each([
+    // Now, a thing that may not be there, an interjection, another step's own time or condition, the folder with what
+    // is in it, the contents of a file and a process by its pid.
+    ["rm -rf build", "delete build/ as soon as possible", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ as soon as you can", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ if it exists", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ if it's there", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ if there is one", "Deleting build, as you asked."],
+    ["rm -rf build", "wait, delete build/ instead", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ now, I'll rebuild later", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ and rebuild it after", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/, then run the tests once it's gone", "Deleting build, as you asked."],
+    ["kill 1234", "kill 1234 and restart it later", "Stopping 1234, as you asked."],
+    ["rm -rf build", "delete the build folder with everything in it", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder along with its contents", "Deleting build, as you asked."],
+    ["echo hi > out.txt", "replace the contents of out.txt with hi", "Overwriting out.txt, as you asked."],
+    ["kill 1234", "kill the process for pid 1234", "Stopping 1234, as you asked."],
+  ])("announces `%s` after %j (commands-remote-v5-5)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // The same words with the step itself held back, or a condition that goes on.
+    ["rm -rf build", "delete build/, but do it later"],
+    ["rm -rf build", "delete build/, but run it tomorrow"],
+    ["rm -rf build", "delete build/, but start tomorrow"],
+    ["rm -rf build", "delete build/ and rebuild it, but only after lunch"],
+    ["rm -rf build", "delete build/ and check with the team tomorrow"],
+    ["rm -rf build", "delete build/ if it exists and the tests pass"],
+    ["rm -rf build", "delete build/ as soon as the tests pass"],
+    ["rm -rf build", "wait until it's done, delete build/"],
+    ["rm -rf build", "rebuild the app later and delete build/ now"],
+    ["kill 1234", "kill the parent of pid 1234"],
+    ["rm -rf build", "delete the build folder with everything in dist"],
+  ])("still asks for `%s` after %j (commands-remote-v5-5)", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
     // Asking for the step now, with words that only ask for something else or say why, still announces.
     ["rm -rf src", "delete src/", "Deleting src, as you asked."],
     ["rm -rf src", "can you delete src/?", "Deleting src, as you asked."],
