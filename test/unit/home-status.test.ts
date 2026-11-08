@@ -79,6 +79,12 @@ describe("Home's status panel", () => {
     expect(todaySummary([], { tasks: 0, approvals: 0 }, NOW)).toBe("No tasks yet");
   });
 
+  it("never counts a task whose question went unanswered as one I stopped, as its row says (tasks-approvals-r3-1)", () => {
+    const unanswered: TaskEntry = { ...task("stopped"), unanswered: true };
+    expect(todaySummary([unanswered], { tasks: 0, approvals: 0 }, NOW)).toBe("1 no answer in time");
+    expect(todaySummary([unanswered, task("stopped"), { ...unanswered, id: "again" }], { tasks: 0, approvals: 0 }, NOW)).toBe("1 stopped · 2 no answer in time");
+  });
+
   it("counts today's tasks and approvals in the audit", () => {
     const t = NOW.toISOString();
     const entries = [{ t, event: "task", phase: "asked" }, { t, event: "confirm", answer: "once" }, { t, event: "confirm", answer: "deny" }, { t: new Date(2026, 9, 1).toISOString(), event: "task", phase: "asked" }];
