@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, pressOnStep, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices } from "../../app/renderer/home/first-run-copy";
 import { retryMessage, tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 import { KEY_NO_KEYRING, KEY_WRITE_FAILED, PROVIDER_MANAGED, PROVIDER_NO_CONSENT, providerDown, providerNotAgreed, testConnection } from "../../app/main/provider";
@@ -258,7 +258,8 @@ describe("first run says main's connection words as mine, on every visit (first-
     const own = runtimeWords("user");
     const line = (detail: string) => providerInUseLine({ host: "localhost:11434", phase: "error", detail }).line;
     expect(line(own.stopped)).toBe("My model connection stopped unexpectedly. Reconnecting…");
-    expect(line(own.keepsStopping)).toBe("My model connection keeps stopping. Press Check again to retry, or restart me.");
+    // The provider step has no Check again: it says the way to the sign-in step's Try again (first-run-w5-2).
+    expect(line(own.keepsStopping)).toBe("My model connection keeps stopping. Go back and press Try again, or restart me.");
     expect(line(own.noWatchersWhy)).toBe("My model connection isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.");
     expect(inMyVoice(runtimeWords(true).keepsStopping)).toBe("My model connection keeps stopping. Press Check again to retry, or restart me.");
     // A cut-off task's words are main's own, in my voice already: only ever a task's outcome (first-run-w5-1).
@@ -266,6 +267,44 @@ describe("first run says main's connection words as mine, on every visit (first-
     expect(inMyVoice(own.cutOff)).toBe(own.cutOff);
     // Said once: welcome.ts says the status' detail as mine, and the line says it again.
     expect(line(inMyVoice(own.keepsStopping))).toBe(line(own.keepsStopping));
+  });
+});
+
+describe("first run's lines name only a button the step shows (first-run-w5-2)", () => {
+  const files = ["EACCES: permission denied, mkdir", "ENOENT: no such file or directory", "ENOSPC: no space left on device, write", "EBUSY: resource busy or locked", "EROFS: read-only file system, open '/home/u/.config/ember/a.json'"].map(m => inMyVoice(explainStartError(new Error(m))));
+  it("says the sign-in step's Try again for main's Check again, which the step shows only for the GitHub CLI", () => {
+    const tried = (line: string) => signInWays({ line, checkAgain: false, primary: "retry", others: ["own-provider"] });
+    expect(files.map(l => tried(l).line)).toEqual([
+      "I'm not allowed to use one of my files. Check that its folder belongs to you, then press Try again.",
+      "I couldn't find one of my files. Press Try again; if it keeps happening, restart me.",
+      "I couldn't save one of my files: the disk (or your storage quota) is full. Free some space, then press Try again.",
+      "One of my files is in use by another program. Close it, then press Try again.",
+      "I couldn't save /home/u/.config/ember/a.json: the disk is read-only. Ask IT to check Ember's data folder, then press Try again.",
+    ]);
+    // Try again leads already: nothing is added beside it.
+    expect(tried(files[1]).others).toEqual(["own-provider"]);
+    for (const service of ["user", true, false] as const) expect(tried(inMyVoice(runtimeWords(service).keepsStopping)).line).toMatch(/^(My model connection|Copilot) keeps stopping\. Press Try again, or restart me\.$/);
+    expect(tried(inMyVoice("Ember's Copilot runtime stopped while connecting. Press Check again.")).line).toBe("My Copilot runtime stopped while connecting. Press Try again.");
+    // The GitHub CLI's Check again is shown: the line says it as main does.
+    for (const l of files) expect(signInWays({ line: l, checkAgain: true, primary: "retry", others: [] })).toEqual({ line: l, others: [] });
+  });
+  it("shows Try again when the line asks to check again and nothing on the step does it: a refused token, my organisation's service", () => {
+    const token = inMyVoice(explainStartError(new Error("not authenticated"), { source: "environment", sourceName: "COPILOT_GITHUB_TOKEN" }));
+    expect(signInWays({ line: token, checkAgain: false, primary: "sign-in", others: ["own-provider"] })).toEqual({
+      line: "Copilot didn't accept the GitHub token in COPILOT_GITHUB_TOKEN (set in Ember's environment). It may have expired, lack the Copilot permission, or belong to an account without Copilot. Replace it or remove COPILOT_GITHUB_TOKEN, then restart me; or run “gh auth login” in a terminal and press Try again.",
+      others: ["own-provider", "retry"],
+    });
+    expect(signInWays({ line: inMyVoice(runtimeWords(true).keepsStopping), checkAgain: false, primary: "continue", others: [] }).others).toEqual(["retry"]);
+    // A line that asks for no check adds nothing; Try again already among the others isn't added twice.
+    expect(signInWays({ line: "Signed in as octo.", checkAgain: false, primary: "sign-in", others: ["own-provider"] })).toEqual({ line: "Signed in as octo.", others: ["own-provider"] });
+    expect(signInWays({ line: files[0], checkAgain: false, primary: "provider", others: ["retry"] }).others).toEqual(["retry"]);
+  });
+  it("leaves Models & connections' own Check again as it is, and says the way back on the provider step", () => {
+    const gaveUp = "My model connection stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.";
+    expect(pressOnStep(gaveUp, "try-again")).toBe(gaveUp);
+    expect(pressOnStep(files[0], "go-back")).toBe("I'm not allowed to use one of my files. Check that its folder belongs to you, then go back and press Try again.");
+    expect(pressOnStep(files[1], "go-back")).toBe("I couldn't find one of my files. Go back and press Try again; if it keeps happening, restart me.");
+    expect(pressOnStep(files[1], "check-again")).toBe(files[1]);
   });
 });
 

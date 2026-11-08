@@ -192,14 +192,40 @@ export function inMyVoice(line: string): string {
   return [...AS_ME, ...AS_ME_WITHIN].reduce((s, [re, to]) => s.replace(re, to), line);
 }
 
+/** Main's "press Check again" (Home's button), but where it names Models & connections, whose button it is there. */
+const PRESS_CHECK_AGAIN = /\b([Pp])ress Check again(?! in Models)(?: to retry)?/g;
+
+/**
+ * Main's line as a first-run step says it, naming only a button the step shows (first-run-w5-2): main's "press Check
+ * again" is Home's button. The sign-in step shows it only for a sign-in made with the GitHub CLI (`"check-again"`: the
+ * line stays); otherwise the step's own button for the same check is Try again (`"try-again"`). The provider step in
+ * use has neither, so it says the way to it (`"go-back"`: its Back is the sign-in step, which shows Try again).
+ */
+export function pressOnStep(line: string, button: "check-again" | "try-again" | "go-back"): string {
+  if (button === "check-again") return line;
+  return line.replace(PRESS_CHECK_AGAIN, (_m, p: string) => `${button === "go-back" ? `${p === "P" ? "Go" : "go"} back and press` : `${p}ress`} ${ACTION_LABEL.retry}`);
+}
+
+/**
+ * The sign-in step's line and the ways on beside its primary button (first-run-w5-2): a line that asks to check again
+ * names the button the step shows for it (`checkAgain`: the GitHub CLI's Check again is shown), and when nothing on the
+ * step does that check, the step shows Try again too, so the line never names a button that isn't there.
+ */
+export function signInWays(o: { line: string; checkAgain: boolean; primary: FailureAction | "continue"; others: readonly FailureAction[] }): { line: string; others: FailureAction[] } {
+  const line = pressOnStep(o.line, o.checkAgain ? "check-again" : "try-again");
+  const offer = line !== o.line && o.primary !== "retry" && !o.others.includes("retry");
+  return { line, others: offer ? [...o.others, "retry"] : [...o.others] };
+}
+
 /**
  * That step's status line, from the connection's (`phase`, and main's `detail` when it failed, said as mine:
  * first-run-r4-2). Ready, a server on this computer was asked at the start and is "Connected"; a host elsewhere wasn't,
- * so it is only "Using", as Home's status says (integrations-r3, integrations-r2-6).
+ * so it is only "Using", as Home's status says (integrations-r3, integrations-r2-6). Failed, it names the way to the
+ * sign-in step's Try again for main's "press Check again", a button this step doesn't have (first-run-w5-2).
  */
 export function providerInUseLine(o: { host: string; phase: string | null; detail?: string }): { line: string; tone: "" | "ok" | "error" } {
   if (o.phase === "ready") return { line: `${onThisComputer(o.host) ? "Connected to" : "Using"} your own provider (${o.host}).`, tone: "ok" };
-  if (o.phase === "error") return { line: inMyVoice(o.detail ?? ""), tone: "error" };
+  if (o.phase === "error") return { line: pressOnStep(inMyVoice(o.detail ?? ""), "go-back"), tone: "error" };
   return { line: `Connecting to your own provider (${o.host})…`, tone: "" };
 }
 

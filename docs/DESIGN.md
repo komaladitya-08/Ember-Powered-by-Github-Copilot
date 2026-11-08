@@ -503,7 +503,11 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   Main's words for a check or a connection (written for Models & connections, which speaks of Ember) are said in first
   run's own voice on every visit, on the sign-in step too: “I can't reach <host>…”, “…and I'll connect in a moment.”
   (`inMyVoice`, first-run-r4-2), and what they call Ember's comes along: “…the GitHub sign-in I found (my saved
-  sign-in)”, “I couldn't find one of my files”, “My model connection keeps stopping…” (first-run-v5-1, v5-2).
+  sign-in)”, “I couldn't find one of my files”, “My model connection keeps stopping…” (first-run-v5-1, v5-2). Their
+  “press Check again” is Home's button: the sign-in step says its own, “…then press Try again.”, and shows Try again
+  wherever nothing else on it does that check (a refused token, the organisation's service), keeping Check again only
+  where the GitHub CLI's button is shown; the in-use provider step, which has neither, says “Go back and press Try
+  again” (`signInWays`, `pressOnStep`, first-run-w5-2).
   A failed connection offers what its reason calls for (`failureView`): an entitlement failure leads with the user's own
   provider or a different GitHub account, never the same sign-in. A failure of the user's own provider leads with
   “Check my provider's details” (or Try again for the network), with no GitHub account, sign-in or Copilot words, in

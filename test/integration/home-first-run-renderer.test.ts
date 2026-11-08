@@ -1071,6 +1071,51 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((q as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(al) the sign-in step's line names only buttons the step shows: Try again for main's Check again, the GitHub CLI's Check again where it is shown (first-run-w5-2)", async () => {
+    /** Every button the line tells me to press is on the step. */
+    const pressable = async (p: Page) => {
+      const said = await p.locator("#w-signin-line").innerText();
+      const shown = await buttons(p);
+      for (const [, name] of said.matchAll(/\b[Pp]ress (Try again|Check again|Sign in with GitHub)\b/g)) expect(shown, `${said} | ${shown.join(", ")}`).toContain(name);
+      return said;
+    };
+    // A file of mine that can't be found, on a build with Ember's own GitHub App: no Check again here, so Try again.
+    const files = await open({ agent: { ...SIGNED_OUT, phase: "error", reason: "other", detail: "Ember couldn't find one of its files. Press Check again; if it keeps happening, restart Ember." } });
+    await expect.poll(() => files.locator("#w-signin-line").innerText()).toBe("I couldn't find one of my files. Press Try again; if it keeps happening, restart me.");
+    await pressable(files);
+    expect(await buttons(files)).not.toContain("Check again");
+    // A token in the environment that Copilot refused: Sign in with GitHub leads, and Try again is there for the line.
+    const token = await open({ agent: { ...SIGNED_OUT, phase: "error", reason: "sign-in", detail: "Copilot didn't accept the GitHub token in COPILOT_GITHUB_TOKEN (set in Ember's environment). It may have expired, lack the Copilot permission, or belong to an account without Copilot. Replace it or remove COPILOT_GITHUB_TOKEN, then restart Ember; or run “gh auth login” in a terminal and press Check again." } });
+    await expect.poll(() => token.locator("#w-signin-line").innerText()).toContain("then restart me; or run “gh auth login” in a terminal and press Try again.");
+    await pressable(token);
+    expect(await next(token).innerText()).toBe("Sign in with GitHub");
+    await token.getByRole("button", { name: "Try again" }).click();
+    await expect.poll(() => calls(token)).toContain("retry");
+    // My own provider in use, its connection that keeps stopping: Try again, and its details' step says the way to it.
+    const service = { kind: "user", host: "localhost:11434" };
+    const local = { on: true, baseUrl: "http://localhost:11434/v1", conductor: "llama3.2:3b", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "localhost:11434" } };
+    const own = await open({ provider: local, providerState: { inForce: true, host: "localhost:11434", agreed: true }, agent: { ...SIGNED_OUT, phase: "error", reason: "runtime", detail: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.", service } });
+    await expect.poll(() => own.locator("#w-signin-line").innerText()).toBe("My model connection keeps stopping. Press Try again, or restart me.");
+    await pressable(own);
+    await own.getByRole("button", { name: "Check my provider's details" }).click();
+    expect(await own.locator("#w-title").innerText()).toBe("Your own model provider's details");
+    expect(await own.locator("#w-p-result").innerText()).toBe("My model connection keeps stopping. Go back and press Try again, or restart me.");
+    expect(await buttons(own)).toContain("Back");
+    await own.locator("#w-back").click();
+    expect(await own.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await buttons(own)).toContain("Try again");
+    // The organisation's service that keeps stopping: nothing to sign in to, and Try again for the line.
+    const org = await open({ admin: { provider: "https://models.corp.example/v1" }, agent: { ...SIGNED_OUT, phase: "error", reason: "runtime", detail: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.", service: { kind: "admin", host: "models.corp.example" } } });
+    await expect.poll(() => org.locator("#w-signin-line").innerText()).toBe("My model connection keeps stopping. Press Try again, or restart me.");
+    await pressable(org);
+    // A build that signs in through the GitHub CLI shows Check again: the line keeps it, and no second button is added.
+    const cli = await open({ agent: { ...SIGNED_OUT, signInWith: "github-cli", phase: "error", reason: "other", detail: "Ember couldn't find one of its files. Press Check again; if it keeps happening, restart Ember." } });
+    await expect.poll(() => cli.locator("#w-signin-line").innerText()).toBe("I couldn't find one of my files. Press Check again; if it keeps happening, restart me.");
+    await pressable(cli);
+    expect((await buttons(cli)).filter(b => b === "Try again")).toHaveLength(1);
+    for (const p of [files, token, own, org, cli]) expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
   it("(o) under the organisation's lockdown the steps say so, never that a service runs or to sign in (first-run-v1)", async () => {
     const p = await open({ admin: { error: "The policy file is writable by others.", provider: null }, agent: { ...SIGNED_OUT, phase: "error", reason: "policy", detail: "Your organisation's policy stops me from connecting." } });
     expect(await p.locator("#w-title").innerText()).toBe("Your organisation has locked me down");

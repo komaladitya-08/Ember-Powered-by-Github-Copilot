@@ -21,7 +21,7 @@ import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
 import { noteProviderChoice, onProviderChoice, providerChoice } from "./provider-choice";
 import {
-  ACTION_LABEL, failureView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices, type FailureAction,
+  ACTION_LABEL, failureView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
@@ -294,7 +294,6 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const line = $("w-signin-line");
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
     const detail = signInMessage?.text ?? (agent?.phase === "error" && !signingIn ? agent.detail : v.line);
-    if (line.textContent !== detail) line.textContent = detail;
     line.className = `w-status ${signInMessage?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
     $("w-signin-later").hidden = v.primary === "continue" && !v.why;
     // The user's own provider has nothing to sign in to, later or now (first-run-1).
@@ -326,7 +325,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const helpEl = $("w-signin-help");
     helpEl.hidden = !help;
     if (helpEl.textContent !== help) helpEl.textContent = help;
-    renderActions(extras);
+    // Main's "press Check again" is Home's button: the line names the one this step shows, and the step shows it (first-run-w5-2).
+    const ways = signInWays({ line: detail, checkAgain: !$("w-check-again").hidden, primary: signInPrimary, others: extras });
+    if (line.textContent !== ways.line) line.textContent = ways.line;
+    renderActions(ways.others);
     renderModels();
     const label = signInPrimary === "continue" ? NAV.next : signInPrimary === "sign-in" ? signInLabel(agent?.signInWith) : ACTION_LABEL[signInPrimary];
     return { label, why: v.why, alt: v.cancel ? "Cancel" : v.skip ? NAV.skip : "" };
