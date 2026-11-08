@@ -368,6 +368,22 @@ describe("SpeechStream", () => {
     }
   });
 
+  it.each([
+    ["Step 1: Open Settings, then go to Privacy\nStep 2: Turn off Location", ["Step 1: Open Settings,", "then go to Privacy.", "Step 2: Turn off Location."]],
+    ["Step 1: Open Settings, then go to Privacy\nStep 2: Choose Location.\nStep 3: Turn it off.", ["Step 1: Open Settings,", "then go to Privacy.", "Step 2: Choose Location.", "Step 3: Turn it off."]],
+    ["Step 1: Open Settings. Then go to Privacy\nStep 2: Turn off Location", ["Step 1: Open Settings.", "Then go to Privacy.", "Step 2: Turn off Location."]],
+    ["Option A: Keep the file, and rename the copy\nOption B: Delete the copy", ["Option A: Keep the file,", "and rename the copy.", "Option B: Delete the copy."]],
+  ])("ends a labelled step cut at its comma or full stop before the next label when %j streams (voice-speaking-v4-4)", (answer, pieces) => {
+    for (const delta of [1, 4, 16]) {
+      const chunks = streamed(answer, delta).flatMap(speechChunks);
+      expect(chunks, `${delta}`).toEqual(pieces);
+      for (const chunk of chunks) expect(chunk, `${delta}`).not.toMatch(/\S (?:Step \d|Option [AB]):/);
+    }
+    // A label line with a line of other words after it is still a paragraph, streamed as said whole.
+    const note = "Note: I opened the report, and the totals are at the bottom of it\nThey look right to me";
+    expect(streamed(note, 4).flatMap(speechChunks).join(" ")).toBe(speechChunks(spokenText(note)).join(" "));
+  });
+
   it("says a long menu path cut at a space before an arrow with that arrow's 'to', not as a bullet (voice-speaking-v4-3)", () => {
     const path = "Go to Network → Privacy & Security → Display → Additional mouse settings → System Services → Accessibility → Advanced and turn it off.";
     for (const delta of [1, 4, 16]) {

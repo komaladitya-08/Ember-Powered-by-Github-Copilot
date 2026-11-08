@@ -823,7 +823,8 @@ it. A Markdown list is said item by item: each item, a heading (a line that is a
 a list, three or more short lines in a row that each start with a capital (a list without its markers), two or more
 such lines of any length after a line ending with a colon ("Here is the plan:\nStep one is…\nStep two is…", also
 after a blank line, and when that line was said on its own as the answer streamed), two or more lines in a row that
-each start with a short label and its colon ("Step 1: Open Settings", "**Option A:** Keep it") and a
+each start with a short label and its colon ("Step 1: Open Settings", "**Option A:** Keep it", also when a streamed
+step was cut at its comma: "Step 1: Open Settings,", then "then go to Privacy.") and a
 paragraph end with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
 its number ("2. Choose Privacy", never "Open Settings 2."), a line ending with a colon ends its piece, so a label is
 never cut from its step ("To do this:", then "Step 1: Open Settings…"), and a streamed list is said as each item's line

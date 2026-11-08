@@ -218,7 +218,7 @@ export class SpeechStream {
     this.raw += delta;
     const cut = this.safeCut();
     if (cut <= this.said) return [];
-    const spoken = spokenText(this.raw.slice(this.said, cut), { ledIn: this.ledIn(), midLine: this.midLine() });
+    const spoken = spokenText(this.raw.slice(this.said, cut), { ledIn: this.ledIn(), lineStart: this.lineStart() });
     this.said = cut;
     return spoken.trim() ? this.budget(spoken) : [];
   }
@@ -262,7 +262,7 @@ export class SpeechStream {
     if (!this.said) rest = text;
     else if (text.startsWith(this.raw.slice(0, this.said))) rest = text.slice(this.said);
     else rest = full === undefined ? this.raw.slice(this.said) : "";
-    const spoken = spokenText(rest, { ledIn: this.ledIn(), midLine: this.midLine() });
+    const spoken = spokenText(rest, { ledIn: this.ledIn(), lineStart: this.lineStart() });
     const out = spoken.trim() ? this.budget(spoken) : [];
     const question = this.closingQuestion();
     if (question) out.push(question);
@@ -280,11 +280,13 @@ export class SpeechStream {
   }
 
   /**
-   * Whether what is said next starts inside a line whose start was said already: a long first sentence cut at a space
-   * before an arrow ("…System Services" | " → Accessibility…") goes on with its "to" (voice-speaking-v4-3).
+   * The start of the line what is said next starts inside, said already ("" at a line's start): a long first sentence
+   * cut at a space before an arrow ("…System Services" | " → Accessibility…") goes on with its "to" (voice-speaking-v4-3),
+   * and the rest of a labelled step cut at its comma ("Step 1: Open Settings," | "then go to Privacy\nStep 2: …") ends
+   * before the next label (voice-speaking-v4-4).
    */
-  private midLine(): boolean {
-    return this.said > 0 && this.raw[this.said - 1] !== "\n";
+  private lineStart(): string {
+    return this.said ? this.raw.slice(this.raw.lastIndexOf("\n", this.said - 1) + 1, this.said) : "";
   }
 
   /** Whether any of the answer has been spoken. */
