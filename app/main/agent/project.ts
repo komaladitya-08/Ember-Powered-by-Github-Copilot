@@ -48,6 +48,16 @@ export function projectMay(kind: "send" | "local", o: { consented: boolean; lock
   return o.consented && !o.locked && o.actions && o.shown && (kind === "local" || o.ready);
 }
 
+/**
+ * Whether a change of Ember's connection stops the Projects job under way: one that reaches the model service (`send`)
+ * stops as soon as Ember isn't ready; Apply patch's confirmation (`local`) sends nothing, so a reconnect try (Copilot's
+ * retries post "starting" while offline) leaves it up. Stop everything, the screen lock, Sign out and the lockdown stop
+ * either (integrations-v4-2).
+ */
+export function projectJobStops(kind: "send" | "local", phase: string): boolean {
+  return kind === "send" && phase !== "ready";
+}
+
 /** Said instead of sending a previous answer to another model service or account than the one that gave it (integrations-r1). */
 export const PROJECT_PREVIOUS_ELSEWHERE = "The previous answer came from another model service or account, so Ember didn't send it there. Send again without it.";
 

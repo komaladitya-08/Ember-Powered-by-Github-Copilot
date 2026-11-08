@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { projectAfterStatus, projectCommandFolder, projectCommandText, projectFailureText, projectMay, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM } from "../../app/main/agent/project";
+import { projectAfterStatus, projectCommandFolder, projectCommandText, projectFailureText, projectJobStops, projectMay, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM } from "../../app/main/agent/project";
 import { readFileSync } from "node:fs";
 import { applyProjectPatch, draftProjectPatch } from "../../app/main/agent/project-patch";
 import type { ProjectSource } from "../../app/main/agent/project";
@@ -226,6 +226,24 @@ describe("Projects' work as Ember's connection changes", () => {
       expect(body, channel).toContain("projectLocal()");
       expect(body, channel).not.toContain("projectAvailable()");
     }
+  });
+  it("leaves Apply patch's confirmation up while Ember reconnects, and stops only work that sends when the connection changes (integrations-v4-2)", () => {
+    // Copilot's reconnect tries post "starting" (15 s, 30 s, then every minute) while offline.
+    for (const phase of ["starting", "error", "signed-out"]) {
+      expect(projectJobStops("local", phase), phase).toBe(false);
+      expect(projectJobStops("send", phase), phase).toBe(true);
+    }
+    for (const kind of ["send", "local"] as const) expect(projectJobStops(kind, "ready"), kind).toBe(false);
+    // Main marks Apply patch's job as local, and a status asks projectJobStops before it stops the job under way; Stop
+    // everything, the screen lock, Sign out and the lockdown still stop it.
+    const main = readFileSync("app/main/main.ts", "utf8");
+    const apply = main.slice(main.indexOf("ipcMain.handle(IPC.projectApply,"), main.indexOf("ipcMain.handle(IPC.projectChooseFolder,"));
+    expect(apply).toContain("projectLocalJobs.add(run);");
+    const onStatus = main.slice(main.indexOf("      onStatus: status => {"), main.indexOf("broadcast(IPC.agentStatusChanged, status);"));
+    expect(onStatus).toContain("projectJobStops(projectLocalJobs.has(projectJob) ? \"local\" : \"send\", status.phase)");
+    expect(onStatus).not.toContain("if (status.phase !== \"ready\") projectJob?.abort();");
+    expect(main).toContain("{ name: \"project\", stop: () => projectJob?.abort() }");
+    expect(main).toContain("setLocked: locked => { if (locked) projectJob?.abort();");
   });
   it("says a request stopped because the connection dropped, not that it was cancelled (integrations-r1)", () => {
     expect(projectStopped(false)).toBe("Project request cancelled.");

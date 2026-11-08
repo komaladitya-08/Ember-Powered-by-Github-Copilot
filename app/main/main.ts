@@ -67,7 +67,7 @@ import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
-import { projectAfterStatus, projectMay, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
+import { projectAfterStatus, projectJobStops, projectMay, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent/project-patch";
@@ -447,6 +447,8 @@ function start(): void {
   let projectFiles: string[] = [];
   let projectPicking = false;
   let projectJob: AbortController | null = null;
+  /** Jobs that send nothing (Apply patch): a connection that isn't ready doesn't stop them (projectJobStops). */
+  const projectLocalJobs = new WeakSet<AbortController>();
   let projectPatch: ProjectPatch | null = null;
   let projectFolder: ReturnType<typeof projectCommandFolder> | null = null;
   let projectExchange: ProjectExchange | null = null;
@@ -2408,6 +2410,7 @@ function start(): void {
       return { done: false, message: "Draft an applicable patch before trying to apply it." };
     }
     const run = projectJob = new AbortController();
+    projectLocalJobs.add(run);
     try {
       const { response } = await dialog.showMessageBox(owner, {
         type: "warning", title: "Apply project patch", message: `Apply the reviewed patch to ${patch.source.name}?`,
@@ -3437,7 +3440,8 @@ function start(): void {
         // Projects' work goes only where it must (integrations-r1): a reconnect stops a request under way, but keeps the
         // files, the request, the answer and its diff; the lockdown forgets it all (Sign out and an account change do
         // where they happen: integrations-c2-1); another service or account, only the previous answer as context.
-        if (status.phase !== "ready") projectJob?.abort();
+        // Apply patch's confirmation sends nothing, so a reconnect try leaves it up (integrations-v4-2).
+        if (projectJob && projectJobStops(projectLocalJobs.has(projectJob) ? "local" : "send", status.phase)) projectJob.abort();
         const forget = projectAfterStatus(status, projectExchange ? { scope: projectExchangeScope } : null, status.phase === "ready" ? agent?.projectWorkspaceScope() ?? null : null);
         if (forget !== "keep") forgetProject(forget);
         // Copilot refused the sign-in in use (at a start, or mid-session): Check again passes over it to the next one.

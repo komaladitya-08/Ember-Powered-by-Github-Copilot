@@ -2197,7 +2197,8 @@ reaches the model service waits: choosing files, sending, saved workspaces and t
 app/main/agent/project.ts). **Export answer…**, **Export diff…**, **Apply patch…** and a file's **Remove** work on
 what is kept here and send nothing, so they go on working (`projectMay`'s `local`, integrations-r3-2); consent, the
 screen lock, the organisation's actions switch and the settings window in view still hold. A request under way then stops and
-says the connection dropped. Sign out, another account and the organisation's lockdown clear it all. Once another
+says the connection dropped; Apply patch…'s confirmation stays up through Copilot's reconnect tries while offline, and
+only Stop everything, the screen lock, Sign out and the lockdown close it (`projectJobStops`, integrations-v4-2). Sign out, another account and the organisation's lockdown clear it all. Once another
 model service, address, key or GitHub account is in force, the previous request and answer stay in view but are no
 longer offered as context, so an answer from one service is never sent to another.
 
