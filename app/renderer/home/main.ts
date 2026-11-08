@@ -277,7 +277,7 @@ function renderStatus(): void {
   const listening = !!settings?.wakeWord && !!settings?.voice.consent;
   setText("whats-on", whatsOnText({
     voice: !listening ? "off" : v === "muted" ? "muted" : "listening",
-    memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner),
+    memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner, memoryTrouble),
     commands: Object.values(settings?.commands ?? {}).filter(c => c?.on).length,
     computers: settings?.targets.hosts.length ?? 0,
     wsl: !!settings?.targets.wsl.on,
@@ -1502,6 +1502,8 @@ const agreeArmed = (agree: string) => performance.now() - (agreeShownAt.get(agre
 const memoryRest = () => $("memory-h");
 let memoryOwner: MemoryView["ownership"] = "waiting";
 let memoryReason: MemoryView["reason"];
+/** What is wrong with memory.json this run (memory-r2): Home's status line says "Memory paused" while it can't be read. */
+let memoryTrouble: MemoryView["trouble"] = null;
 let memoryEpoch = 0;
 /** Where focus was in the search when memory went to be checked again, and under which epoch (memory-8). */
 let memoryFocusBack: { el: HTMLElement; epoch: number } | null = null;
@@ -1672,7 +1674,7 @@ $("memory-undo").addEventListener("click", () => {
   });
 });
 const showMemory = (view: MemoryView) => {
-  memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0;
+  memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0; memoryTrouble = view.trouble ?? null;
   // memory.json couldn't be read, was set aside or couldn't be saved: said, never an empty list alone (memory-r2).
   const trouble = memoryTroubleText(view.trouble);
   setText("memory-trouble", trouble);

@@ -627,7 +627,8 @@ describe("the memory file", () => {
       const unreadable = new MemoryService({ dir: locked, log: quietLog });
       expect(unreadable.list()).toEqual([]);
       expect(unreadable.trouble).toBe("unreadable");
-      expect(memoryTroubleText("unreadable")).toBe("Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again.");
+      // With what to do about it: a file left by running Ember as another user is the usual cause (memory-r2).
+      expect(memoryTroubleText("unreadable")).toBe("Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again. Check that your account can open memory.json in Ember's data folder, then restart Ember.");
       expect(memoryTroubleText(null)).toBe("");
     } finally { vi.useRealTimers(); }
   });

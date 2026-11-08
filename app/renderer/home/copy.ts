@@ -496,7 +496,7 @@ export const MEMORY_PAUSED_TEXT = "Memory is paused until you review its updated
 /** What Settings › Memory says when memory.json couldn't be read, was set aside or couldn't be saved (memory-r2). */
 export function memoryTroubleText(trouble: "unreadable" | "reset" | "unsaved" | null | undefined): string {
   switch (trouble) {
-    case "unreadable": return "Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again.";
+    case "unreadable": return "Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again. Check that your account can open memory.json in Ember's data folder, then restart Ember.";
     case "reset": return "Your saved memory couldn't be read, so Ember set it aside as memory.json.broken in its data folder and started afresh.";
     case "unsaved": return "Ember couldn't save memory on this computer, so what it keeps now may be gone when Ember closes.";
     default: return "";

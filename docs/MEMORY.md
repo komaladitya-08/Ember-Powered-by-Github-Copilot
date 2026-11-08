@@ -76,8 +76,8 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
-  (`MemoryService.trouble`, in every `MemoryView`), and the remember tool tells the model while saving fails
-  (memory-r2).
+  (`MemoryService.trouble`, in every `MemoryView`; one that can't be read also makes Home's status line say "Memory
+  paused"), and the remember tool tells the model while saving fails (memory-r2).
 
 **Better recall** (step 8) adds matching by meaning, once the user downloads its model:
 - `embed-model.ts`: all-MiniLM-L6-v2 (int8, 23 MB, Apache-2.0) on onnxruntime-web's WebAssembly with one thread, the

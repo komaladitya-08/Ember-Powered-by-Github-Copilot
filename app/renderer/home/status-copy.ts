@@ -99,13 +99,14 @@ export interface WhatsOn {
 
 /**
  * Memory as Home's status line says it: on only while its owner is verified too, so memory that is on but can't be
- * opened (connecting, a model provider in force, another account's) reads "paused", never "on" (memory-2).
+ * opened (connecting, a model provider in force, another account's) reads "paused", never "on" (memory-2), and so does
+ * memory whose saved file can't be read (`trouble` "unreadable": nothing new is kept, memory-r2).
  * `notePaused`: on under an earlier note (memoryPaused).
  */
-export function memoryWhatsOn(on: boolean, notePaused: boolean, ownership: "waiting" | "ready" | "locked"): WhatsOn["memory"] {
+export function memoryWhatsOn(on: boolean, notePaused: boolean, ownership: "waiting" | "ready" | "locked", trouble?: "unreadable" | "reset" | "unsaved" | null): WhatsOn["memory"] {
   if (notePaused) return "paused";
   if (!on) return false;
-  return ownership === "ready" ? true : "paused";
+  return ownership === "ready" && trouble !== "unreadable" ? true : "paused";
 }
 
 /**
