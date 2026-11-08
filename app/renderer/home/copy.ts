@@ -89,12 +89,16 @@ export const COMPOSER_SAYS = {
 } as const;
 /**
  * A Problem line as Home shows it (home-7): Home is Ember's settings, so where the line sends the user to "Ember's
- * settings (Ctrl+Alt+E)" it names the section that helps, Models & connections, and `settings` says the row offers a
- * way there (PROBLEM_SETTINGS). Its words are Ember's own (friendlyError, the connection's notices), never a model's.
+ * settings (Ctrl+Alt+E)" it names the section that helps, Models & connections (once: home-r3-2), and `settings` says
+ * the row offers a way there (PROBLEM_SETTINGS). Only where the line sends the user there: a setting, a sign-in, Check
+ * again (accessibility-visual-c3-2); never a line for their administrator, whoever manages their plan, IT or GitHub,
+ * where nothing in Ember's settings helps (home-r3-2). Its words are Ember's own (friendlyError, the connection's
+ * notices), never a model's.
  */
 export function problemInHome(text: string): { text: string; settings: boolean } {
-  const settings = /\bsettings\b/i.test(text);
-  return { text: text.replace(/\bOpen settings\b/g, "Open Models & connections").replace(/\bin (?:Ember's )?settings(?: \([^)]*\))?/g, "in Models & connections"), settings };
+  const there = /\bin (?:Ember's )?settings\b|\bOpen settings\b|\bin Models & connections\b|\bCheck again\b|\bsign(?:-| )?in\b|\bConnect your GitHub account\b/i.test(text);
+  const elsewhere = /\badministrator\b|\bask whoever\b|\bask IT\b|\bon GitHub\b/i.test(text);
+  return { text: text.replace(/\bOpen settings\b/g, "Open Models & connections").replace(/\bin (?:Ember's )?settings(?: \([^)]*\))?(?:, under Models & connections\b)?/g, "in Models & connections"), settings: there && !elsewhere };
 }
 /** A Problem line's way to Models & connections, in Home (as the status panel's own button says it). */
 export const PROBLEM_SETTINGS = "Models & connections…";

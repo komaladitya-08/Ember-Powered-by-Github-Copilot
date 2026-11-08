@@ -743,6 +743,29 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  it("offers Models & connections on the line that says to press Check again there, never on one for my administrator (home-r3-2, accessibility-visual-c3-2)", async () => {
+    const seed: TranscriptEntry[] = [
+      { t: at(0), who: "you", text: "What's the weather?" },
+      { t: at(1), who: "problem", text: "Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings." },
+      { t: at(2), who: "you", text: "And now?" },
+      { t: at(3), who: "problem", text: "My model connection stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me." },
+    ];
+    const { page, errors } = await home(seed);
+    try {
+      const rows = page.locator("#conversation > li.problem");
+      await expect.poll(() => rows.count()).toBe(2);
+      // The administrator's setting: nothing here to press.
+      expect(await rows.nth(0).locator("button").count()).toBe(0);
+      // Check again is there: the way to it, from the keyboard, lands with a ring on the section's heading.
+      const go = rows.nth(1).getByRole("button", { name: /^Models & connections…/ });
+      await go.focus();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("copilot-h");
+      expect(await page.evaluate(() => document.activeElement?.matches(":focus-visible"))).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("says under Stop response that Ember is still waiting for a request from the Ask box or by voice, not an older message's outcome (home-r2-3)", async () => {
     const { page, errors } = await home([]);
     try {
