@@ -232,7 +232,7 @@ export function forgetReply(why: MemoryNotNow): { text: string; open: boolean } 
   return { text: `${NOT_NOW[why]}, so I can't change what's saved.${open ? " I've opened Memory in Settings." : ""}`, open };
 }
 
-/** What Ember says to "forget…" while memory is off; Settings › Memory opens at its switch. */
+/** What Ember says to "forget…" while memory is off; Settings › Memory opens at its list. */
 export const FORGET_OFF = forgetReply("off").text;
 /** And to "forget…" while the organisation has turned memory off. */
 export const FORGET_MANAGED = forgetReply("managed").text;

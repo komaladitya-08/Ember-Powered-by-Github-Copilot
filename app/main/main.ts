@@ -985,8 +985,11 @@ function start(): void {
     if (where) sendToHome(IPC.focusSection, where);
   };
 
-  /** Settings › Memory, at its switch. */
-  const openMemory = () => { showHome(); sendToHome(IPC.focusSection, "memory:memory-yes"); };
+  /**
+   * Settings › Memory: at its list for a forget request, else at its note's words (shown while memory is off or waits
+   * for it). Never at the note's "I agree, remember", where an Enter or a space typed on would agree (memory-r7).
+   */
+  const openMemory = (at: "list" | "note" = "note") => { showHome(); sendToHome(IPC.focusSection, at === "list" ? "memory:memory-query" : "memory:memory-consent-text"); };
 
   const sendToHome = (channel: string, value: unknown) => {
     const send = () => { if (home && !home.isDestroyed()) home.webContents.send(channel, value); };

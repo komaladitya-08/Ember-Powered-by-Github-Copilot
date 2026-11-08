@@ -55,8 +55,11 @@ export interface LearningDeps {
   locked: () => boolean;
   /** Says Ember's question in the conversation (and aloud when replies are spoken). False when it couldn't now. */
   say: (text: string) => boolean;
-  /** Opens Settings › Memory (the interview asked for while memory is off). */
-  openMemory?: () => void;
+  /**
+   * Opens Settings › Memory: at its list for a forget request (`list`), at its note's words for the interview asked for
+   * while memory is off (`note`). Never at the note's agree button (memory-r7).
+   */
+  openMemory?: (at: "list" | "note") => void;
   /**
    * Memory is on and agreed to, but its saved memory can't be opened now: why (memory-2); or memory is on under an
    * earlier note the user hasn't reviewed (`note`, memory-r4). Ember says so rather than asking for memory to be turned
@@ -373,22 +376,23 @@ export class MemoryLearning {
 
   /**
    * What Ember says when asked for something only memory can do (get to know the user, forget) while it isn't in force:
-   * managed by the organisation, on but paused (and why), or off (Settings › Memory opens at its switch).
+   * managed by the organisation, on but paused (and why), or off (Settings › Memory opens: at its list to forget, else
+   * at its note).
    */
   private notInForce(asked: "introduce" | "forget" = "introduce"): string {
     const why = this.notNow();
     if (asked === "forget") {
       const reply = forgetReply(why);
-      if (reply.open) this.d.openMemory?.();
+      if (reply.open) this.d.openMemory?.("list");
       return reply.text;
     }
     if (why === "managed") return INTRO_MANAGED;
     if (why === "off" || why === "note") {
-      this.d.openMemory?.();
+      this.d.openMemory?.("note");
       return why === "off" ? INTRO_OFF : INTRO_NOTE;
     }
     const reply = memoryPausedReply(why);
-    if (reply.open) this.d.openMemory?.();
+    if (reply.open) this.d.openMemory?.("note");
     return reply.text;
   }
 

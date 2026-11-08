@@ -244,7 +244,8 @@ download, so English-only MiniLM is the trade-off for now.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
      only for Ember to forget something about the user ("forget that I…", "forget my…", "forget where I live";
-     `memoryAsk`) is answered in code with the truth: memory is off (and Memory opens), why it is paused, or that the
+     `memoryAsk`) is answered in code with the truth: memory is off (and Memory opens at its search, never at its
+     note's "I agree, remember": memory-r7), why it is paused, or that the
      organisation turned it off. A request that is only "remember that…" or "keep in mind…" goes to the conversation,
      which knows it until Ember closes, and Ember says behind the answer that memory won't keep it (`rememberNote`:
      a line in the conversation and a bubble with **Open Memory**, never Settings opened on its own). A question
@@ -289,7 +290,8 @@ where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept.
 except that the name question keeps only the name: "Call me Ram", "My name is Ram", "It's Ram" and "Ram, please"
 all keep "Likes to be called Ram" (`nameFrom`), and "call me <a short name>" answers it rather than ending the
 interview as a request would (memory-6). Asked while memory is off, it opens
-Settings at memory's note.
+Settings at memory's note, focused on its words; its "I agree, remember" takes no press for `AGREE_ARM_MS` after the
+note comes up, so an Enter or a space typed on can't agree (memory-r7).
 
 **Consent.** The note now says Ember learns as you go and that your words, its replies and its tasks' results go to
 Copilot in short requests of their own, so `FEATURE_CONSENT_VERSION.memory` went to 2: someone who agreed to the

@@ -17,7 +17,10 @@ describe("a section request from main", () => {
     // Opened from the keyboard while another app holds the ask or stop shortcut: at that button (review #45).
     expect(sectionRequest("access:ask")).toEqual({ section: "home", control: "p-ask" });
     expect(sectionRequest("access:stop")).toEqual({ section: "home", control: "p-stop" });
-    expect(sectionRequest("memory:memory-yes")).toEqual({ section: "memory", control: "memory-yes" });
+    // Memory's note opens at its words, never its "I agree, remember", however it is asked for (memory-r7).
+    expect(sectionRequest("memory:memory-yes")).toEqual({ section: "memory", control: "memory-consent-text" });
+    expect(sectionRequest("memory:memory-consent-text")).toEqual({ section: "memory", control: "memory-consent-text" });
+    expect(sectionRequest("memory:memory-query")).toEqual({ section: "memory", control: "memory-query" });
     // The settings key while the bubble says Ember is still waiting: at Stop response, as its step says (accessibility-visual-2).
     expect(sectionRequest("conversation:stop")).toEqual({ section: "conversation", control: "conversation-stop" });
   });

@@ -24,6 +24,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
+import { AGREE_ARM_MS } from "../../shared/provider";
 import { useAppNames } from "../../shared/apps";
 import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
 import type { Settings, SettingsPatch } from "../../main/settings";
@@ -1485,12 +1486,26 @@ $("conversation-stop").addEventListener("click", () => {
 // ───── Memory (docs/MEMORY.md): kept between runs, only once the user turns it on and agrees to its note ─────
 $("memory-consent-text").textContent = MEMORY_CONSENT_TEXT;
 const memoryOn = () => !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION;
+/**
+ * When a consent card came up (performance.now(), by its agree button): a press on that button sooner than
+ * AGREE_ARM_MS is dropped, as first run's is (first-run-c1-1), so a repeating Space from the switch, or an Enter typed
+ * for another app as the card opens, agrees to nothing (memory-r7).
+ */
+const agreeShownAt = new Map<string, number>();
+const showConsentCard = (card: string, agree: string) => { $(card).hidden = false; agreeShownAt.set(agree, performance.now()); };
+const agreeArmed = (agree: string) => performance.now() - (agreeShownAt.get(agree) ?? -Infinity) >= AGREE_ARM_MS;
+/**
+ * Where focus waits while Memory's list is out of sight (a reconnect's account check) or a control in it goes: the
+ * section's heading, which does nothing on a key. Never the switch, where a typed space turns memory off, or on again
+ * under a note already agreed to (memory-c2-1).
+ */
+const memoryRest = () => $("memory-h");
 let memoryOwner: MemoryView["ownership"] = "waiting";
 let memoryReason: MemoryView["reason"];
 let memoryEpoch = 0;
 /** Where focus was in the search when memory went to be checked again, and under which epoch (memory-8). */
 let memoryFocusBack: { el: HTMLElement; epoch: number } | null = null;
-const memoryCorrection = mountMemoryCorrection(window.ember, () => $("memory-on"), (expected, corrected) => {
+const memoryCorrection = mountMemoryCorrection(window.ember, memoryRest, (expected, corrected) => {
   const current = memoryRows.find(row => row.id === expected.id);
   // A newer push wins; a successful IPC reply can fill in a missed view notification without resurrecting a deletion.
   if (!current || current.text !== expected.text || current.source !== expected.source || current.at !== expected.at || (current.revision ?? 0) !== (expected.revision ?? 0)) return;
@@ -1506,7 +1521,7 @@ $("memory-more").textContent = MEMORY_SHOW_MORE;
 const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
   key: row => row.id,
   empty: () => memoryQuery.value.trim() || memorySource.value ? MEMORY_NO_MATCHES : memoryEmptyText(memoryOn()),
-  fallback: () => $("memory-on"),
+  fallback: memoryRest,
   create: read => {
     const row = read();
     const li = document.createElement("li");
@@ -1545,14 +1560,14 @@ function renderMemory(rows: MemoryRow[]): void {
   memoryList.render(page.rows);
   const filters = $("memory-filters");
   const unavailable = memoryOwner !== "ready";
-  // Focus in the search while the same account is checked again (a reconnect) waits on the switch, and goes back if it
+  // Focus in the search while the same account is checked again (a reconnect) waits on the heading, and goes back if it
   // is still there when the list returns (memory-8); another account's list (a new epoch) never gets it back.
   if (memoryFocusBack && memoryFocusBack.epoch !== memoryEpoch) memoryFocusBack = null;
-  if (unavailable && filters.contains(document.activeElement)) { memoryFocusBack = { el: document.activeElement as HTMLElement, epoch: memoryEpoch }; $("memory-on").focus(); }
+  if (unavailable && filters.contains(document.activeElement)) { memoryFocusBack = { el: document.activeElement as HTMLElement, epoch: memoryEpoch }; memoryRest().focus(); }
   filters.hidden = unavailable;
   $("memory-list").hidden = unavailable;
   if (!unavailable && memoryFocusBack) {
-    if (document.activeElement === $("memory-on")) memoryFocusBack.el.focus();
+    if (document.activeElement === memoryRest()) memoryFocusBack.el.focus();
     memoryFocusBack = null;
   }
   // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause), and
@@ -1563,21 +1578,21 @@ function renderMemory(rows: MemoryRow[]): void {
     if (memoryUndo && forgottenEpoch === memoryEpoch) {
       forgottenHeld = { epoch: memoryEpoch, focused: box.contains(document.activeElement) };
       box.hidden = true;
-      if (forgottenHeld.focused) $("memory-on").focus();
+      if (forgottenHeld.focused) memoryRest().focus();
     } else hideForgotten();
   }
   if (!unavailable && forgottenHeld) {
     const held = forgottenHeld;
     forgottenHeld = null;
     $("memory-forgotten").hidden = false;
-    if (held.focused && document.activeElement === $("memory-on")) $("memory-forgotten-text").focus();
+    if (held.focused && document.activeElement === memoryRest()) $("memory-forgotten-text").focus();
   }
   // An empty list says so in its own row, never "0 of 0 memories" above it (memory-13).
   $("memory-count").textContent = unavailable || !rows.length ? "" : memoryCountText(page.rows.length, page.total, rows.length);
   const more = $("memory-more");
   const moreWasFocused = document.activeElement === more;
   more.hidden = page.rows.length >= page.total;
-  if (moreWasFocused && more.hidden) ($("memory-list").querySelector<HTMLElement>("li:last-child button") ?? (unavailable ? $("memory-on") : memoryQuery)).focus();
+  if (moreWasFocused && more.hidden) ($("memory-list").querySelector<HTMLElement>("li:last-child button") ?? (unavailable ? memoryRest() : memoryQuery)).focus();
   // Why memory isn't open, never advice to erase memory that only waits (a model provider, a reconnect: memory-2).
   const ownerText = memoryOwnerText(memoryReason, memoryOwner === "locked");
   $("memory-owner").textContent = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn()) ? "" : ownerText;
@@ -1589,7 +1604,7 @@ function renderMemory(rows: MemoryRow[]): void {
   const all = $("memory-forget-all");
   const wasFocused = document.activeElement === all;
   all.hidden = !rows.length && !memoryOwnerOffersErase(memoryReason, memoryOwner === "locked");
-  if (wasFocused && all.hidden) $("memory-on").focus();
+  if (wasFocused && all.hidden) memoryRest().focus();
 }
 for (const control of [memoryQuery, memorySource]) control.addEventListener("input", () => {
   memoryShown = MEMORY_PAGE_SIZE;
@@ -1626,7 +1641,7 @@ function showForgotten(text: string, gone: MemoryForgotten | null): void {
   forgottenEpoch = memoryEpoch;
   forgottenHeld = null;
   said.focus();
-  // Main lets go of what Undo needs after MEMORY_UNDO_MS: the line goes a little before, and focus with it to the switch.
+  // Main lets go of what Undo needs after MEMORY_UNDO_MS: the line goes a little before, and focus with it to the heading.
   memoryUndoTimer = setTimeout(() => hideForgotten(), MEMORY_UNDO_MS - 2000);
 }
 function hideForgotten(): void {
@@ -1636,7 +1651,7 @@ function hideForgotten(): void {
   const box = $("memory-forgotten");
   const had = box.contains(document.activeElement);
   box.hidden = true;
-  if (had) $("memory-on").focus();
+  if (had) memoryRest().focus();
 }
 $("memory-undo").addEventListener("click", () => {
   const undo = $("memory-undo") as HTMLButtonElement, said = $("memory-forgotten-text");
@@ -1668,7 +1683,7 @@ const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, 
 /** "Tell Ember about you" (about-you.ts): its Turn on memory… opens the switch's own note. */
 const aboutYou = mountAboutYou($("about-you"), {
   id: "ay", save, ownSave: true,
-  askConsent: () => { $("memory-consent").hidden = false; $("memory-yes").focus(); },
+  askConsent: () => { showConsentCard("memory-consent", "memory-yes"); $("memory-yes").focus(); },
 });
 $("memory-questions-hint").textContent = MEMORY_QUESTIONS_HINT;
 /** The paused note was shown (once a session: Not now hides it). */
@@ -1686,18 +1701,19 @@ function applyMemorySettings(s: Settings): void {
   const paused = memoryPaused(s.memory) && !managed.has("memory");
   $("memory-paused").textContent = MEMORY_PAUSED_TEXT;
   $("memory-paused").hidden = !paused;
-  if (paused && !pausedSeen) { pausedSeen = true; $("memory-consent").hidden = false; }
+  if (paused && !pausedSeen) { pausedSeen = true; showConsentCard("memory-consent", "memory-yes"); }
   renderMemory(memoryRows);
 }
 $("memory-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   const consent = settings?.memory.consent ?? { version: 0, at: null };
   // First time (or the note changed since it was agreed to): the note comes first, and focus moves to it so it is read and answered.
-  if (on && consent.version < MEMORY_VERSION) { $("memory-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("memory-yes").focus(); return; }
+  if (on && consent.version < MEMORY_VERSION) { showConsentCard("memory-consent", "memory-yes"); (e.target as HTMLInputElement).checked = false; $("memory-yes").focus(); return; }
   void save({ memory: { ...memoryNow(), consent, on } });
 });
 $("memory-questions").addEventListener("change", e => { void save({ memory: { ...memoryNow(), questions: (e.target as HTMLInputElement).checked } }); });
 $("memory-yes").addEventListener("click", () => {
+  if (!agreeArmed("memory-yes")) return;
   $("memory-consent").hidden = true;
   void save({ memory: { ...memoryNow(), on: true, consent: { version: MEMORY_VERSION, at: new Date().toISOString() } } });
   $("memory-on").focus();
@@ -1832,11 +1848,12 @@ function applyAutonomySettings(s: Settings): void {
 $("autonomy-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   const a = settings?.autonomy ?? { on: false, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 0, at: null } };
-  if (on && a.consent.version < AUTONOMY_VERSION) { $("autonomy-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("autonomy-yes").focus(); return; }
+  if (on && a.consent.version < AUTONOMY_VERSION) { showConsentCard("autonomy-consent", "autonomy-yes"); (e.target as HTMLInputElement).checked = false; $("autonomy-yes").focus(); return; }
   // Turned on: all four of what it covers (using apps, commands, the mouse and keyboard, moving text between apps).
   void save({ autonomy: { ...a, on, ...(on ? { scopes: { apps: true, commands: true, cursor: true, crossWindow: true } } : {}) } });
 });
 $("autonomy-yes").addEventListener("click", () => {
+  if (!agreeArmed("autonomy-yes")) return;
   $("autonomy-consent").hidden = true;
   void save({ autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: AUTONOMY_VERSION, at: new Date().toISOString() } } });
   $("autonomy-on").focus();
@@ -1864,10 +1881,12 @@ function showSection(value: string): void {
   const inPane = paneOf(h);
   const opened = !document.body.classList.contains("first-run") && !!inPane && inPane !== pane;
   if (opened && inPane) { restoring = null; showPane(inPane, true); }
-  // Asked for by voice ("work without asking" before its card was agreed to): the card shows, focused on its agree button.
-  if (control === "autonomy-yes" && !managed.has("autonomy")) $("autonomy-consent").hidden = false;
-  // Asked for by voice ("get to know me" while memory is off): its note shows, focused on its agree button.
-  if (control === "memory-yes" && !managed.has("memory")) $("memory-consent").hidden = false;
+  // Asked for by voice ("work without asking" before its card was agreed to): the card shows, focused on its agree
+  // button, which takes no press for AGREE_ARM_MS.
+  if (control === "autonomy-yes" && !managed.has("autonomy")) showConsentCard("autonomy-consent", "autonomy-yes");
+  // "Get to know me" or Open Memory while memory is off or waits for its note: the note shows, focused on its words,
+  // never its agree button (memory-r7). Memory already agreed to (saved under another account) gets the section alone.
+  if (control === "memory-consent-text" && !managed.has("memory") && !memoryOn()) showConsentCard("memory-consent", "memory-yes");
   const fold = h.closest("details");
   if (fold) fold.open = true;
   const target = (fold?.querySelector("summary") ?? h) as HTMLElement;

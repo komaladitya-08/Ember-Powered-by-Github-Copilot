@@ -415,6 +415,8 @@ describe("getting to know you", () => {
     const { l, opened } = learning({ inForce: () => false });
     expect(l.intent("get to know me", { own: true })).toBe(INTRO_OFF);
     expect(opened).toHaveBeenCalledOnce();
+    // At the note's words, never its "I agree, remember" (memory-r7).
+    expect(opened).toHaveBeenCalledWith("note");
   });
 
   it("says why when memory is on but paused, instead of asking to turn it on (memory-2)", () => {
@@ -515,6 +517,8 @@ describe("“forget that”, the instruction check and the conversation's line",
     expect(off.l.intent("Ember, please forget that I work at Globex", { own: true })).toBe(FORGET_OFF);
     expect(FORGET_OFF).toBe("Memory is off, so I can't change what's saved. I've opened Memory in Settings.");
     expect(off.opened).toHaveBeenCalledOnce();
+    // At the list, where Forget is, never at the note and its "I agree, remember" (memory-r7).
+    expect(off.opened).toHaveBeenCalledWith("list");
     // A bare "forget that" is as likely "never mind" while memory is off: the conversation's.
     expect(off.l.intent("forget that", { own: true })).toBeNull();
     const paused = learning({ inForce: () => false, paused: () => "own-provider" });
@@ -567,6 +571,7 @@ describe("“forget that”, the instruction check and the conversation's line",
     expect(l.intent("get to know me", { own: true })).toBe(INTRO_NOTE);
     expect(INTRO_NOTE).toBe("Memory is paused until you review its updated note. I've opened Memory in Settings.");
     expect(opened).toHaveBeenCalledTimes(2);
+    expect(opened.mock.calls).toEqual([["list"], ["note"]]);
     expect(rememberNote("checking").text).toBe("I'm still checking your GitHub account, so I won't keep this after Ember closes.");
   });
 

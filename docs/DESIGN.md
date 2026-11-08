@@ -520,7 +520,11 @@ Memory has query/source filters, counts and pages of 50 (no count over an empty 
 a `--red-text` text button, and Correct… in the words' colour, side by side on one line however long the fact,
 and apart, inside the group, when forced colours give them an edge. Surviving memory and learned-word controls
 keep their DOM identity and keyboard focus through background updates. Undo acknowledges only successful deletion and stays
-retryable on failure. An unavailable account hides facts and returns focus to the memory switch. Correct… opens
+retryable on failure. An unavailable account hides facts and parks focus on Memory's heading, never the memory
+switch, where a typed space would turn memory off; it goes back to the search, the draft or the Forgotten line when
+the same account's list returns (memory-c2-1). A request opens Memory at its search ("forget…") or at its note's
+words ("get to know me", Open Memory), never at "I agree, remember", and the note's agree button, like Work without
+asking's, takes no press for `AGREE_ARM_MS` after the card comes up (memory-r7). Correct… opens
 one local draft (up to 400 characters); Save correction is explicit, checks the exact account/revision and saves
 durably before publication. Correction preserves original source/authority and adds Corrected by you. It invalidates
 stale recall/learning/vector work; failures keep the draft and account reset clears it.

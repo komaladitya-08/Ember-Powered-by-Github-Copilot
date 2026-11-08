@@ -120,9 +120,10 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
     await page.locator("#forget-all-yes").click();
     await expect.poll(calls).toEqual(["signOut", "forgetAll"]);
     expect(await focusedId()).toBe("memory-forget-all");
-    // The memory switch is where focus goes if the button goes with the last fact.
+    // Memory's heading is where focus goes if the button goes with the last fact, never the switch, where a stray space
+    // would turn memory off (memory-c2-1).
     await page.evaluate(() => { (document.getElementById("memory-forget-all") as HTMLElement).hidden = true; });
-    await expect.poll(focusedId).toBe("memory-on");
+    await expect.poll(focusedId).toBe("memory-h");
     await page.evaluate(() => { (document.getElementById("memory-forget-all") as HTMLElement).hidden = false; });
 
     // A failed read is unknown, not "0 saved facts"; Cancel is focused straight away.
@@ -201,18 +202,18 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
     await page.evaluate(() => { (document.getElementById("forget-all-confirm") as HTMLElement).hidden = true; });
     await expect.poll(() => page.evaluate(() => document.querySelectorAll("[inert]").length)).toBe(0);
 
-    // P2-2: the last fact goes (a real onMemory push) while the question is up; Cancel lands on the memory switch.
+    // P2-2: the last fact goes (a real onMemory push) while the question is up; Cancel lands on Memory's heading.
     await page.locator("#memory-forget-all").click();
     await page.evaluate(() => window.__emit("onMemory", { rows: [], ownership: "ready" }));
     await expect.poll(() => page.locator("#memory-forget-all").isHidden()).toBe(true);
     await page.locator("#forget-all-no").click();
-    expect(await focusedId()).toBe("memory-on");
+    expect(await focusedId()).toBe("memory-h");
     await page.evaluate(() => window.__emit("onMemory", { rows: [{ id: "z", text: "x", source: "user", at: "2026-11-04" }], ownership: "ready" }));
     await expect.poll(() => page.locator("#memory-forget-all").isVisible()).toBe(true);
     await page.locator("#memory-forget-all").click();
     await page.evaluate(() => window.__emit("onMemory", { rows: [], ownership: "ready" }));
     await page.keyboard.press("Escape");
-    expect(await focusedId()).toBe("memory-on");
+    expect(await focusedId()).toBe("memory-h");
     await page.evaluate(() => window.__emit("onMemory", { rows: [{ id: "z", text: "x", source: "user", at: "2026-11-04" }], ownership: "ready" }));
 
     // Managed memory: its switch is disabled, so Cancel after the last fact goes lands on an enabled, visible control or the heading.
