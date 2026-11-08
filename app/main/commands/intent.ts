@@ -1552,8 +1552,13 @@ export function ruledOut(findings: readonly Finding[], userWords: string): boole
     // push's remote is only where it goes) and each option that widens it, by its word ("force"; a one-letter one can't
     // be named), so `kill 1234 5678` after "kill 5678 and nothing else" is ruled out (commands-remote-r4-6, v5-4).
     const widens = f.widening.filter(x => /^[-+?]/.test(x)).map(x => userWordList(x)[0] ?? "");
-    const named = f.objects.filter(o => o.text !== "" && o.kind !== "remote").every(o => nameNamed(o.text, asked.raw) || pathTokenLoose(o, asked) >= 0)
-      && widens.every(x => x.length > 2 && asked.list.includes(x));
+    const things = f.objects.filter(o => o.text !== "" && o.kind !== "remote");
+    // A step that acts on nothing named and widens nothing is named only by its kind: the row's verbs, its rule's, or
+    // its program and subcommand said whole, so "show my crontab and nothing else" rules out `crontab -r` and "run git
+    // stash list …" `git stash drop`, while "publish it and nothing else" names `npm publish` (commands-remote-w5-4).
+    const named = things.length === 0 && widens.length === 0
+      ? hasVerb(asked.list, [...(row ? ROW_VERBS[row] ?? [] : []), ...(RULE_KIND_VERBS[f.rule] ?? [])]) || subcommandWhole(f, asked)
+      : things.every(o => nameNamed(o.text, asked.raw) || pathTokenLoose(o, asked) >= 0) && widens.every(x => x.length > 2 && asked.list.includes(x));
     return parts.some(p => {
       const ws = userWordList(p);
       const kindSaid = hasVerb(ws, verbs) || ws.some(x => flags.includes(x));
@@ -1576,6 +1581,21 @@ const OTHER_THAN = new Set(["else", "more", "other", "others"]);
 function subcommandNamed(f: Finding, w: Words): boolean {
   const parts = userWordList(f.program);
   return parts.length >= 2 && hasWord(w.list, [parts.join(" ")]);
+}
+
+/**
+ * Whether the words name a finding's program and subcommand whole (subcommandNamed), with no further subcommand after
+ * them: "run npm ci", "npm ci for me", never "git stash list" for `git stash drop`, whose program is `git stash`.
+ */
+function subcommandWhole(f: Finding, w: Words): boolean {
+  const parts = userWordList(f.program);
+  if (parts.length < 2) return false;
+  for (let k = 0; k + parts.length <= w.list.length; k++) {
+    if (!parts.every((p, j) => w.list[k + j] === p)) continue;
+    const next = w.list[k + parts.length];
+    if (next === undefined || FILLERS.has(next) || JOINERS.has(next) || PREPOSITION.has(next) || OWN_DETERMINER.has(next) || PRONOUN.has(next)) return true;
+  }
+  return false;
 }
 
 /**

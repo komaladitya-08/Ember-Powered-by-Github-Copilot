@@ -328,6 +328,27 @@ describe("decideCommand: the rules in order", () => {
     expect(decide("kill 1234 5678", { words: "kill 1234 and 5678 and nothing else" }).says).not.toContain(LINES.unasked);
   });
 
+  it("says \"You didn't ask for this.\" after \"and nothing else\" on a step that names nothing of its own when the words ask only to look (commands-remote-w5-4)", () => {
+    for (const [cmd, words] of [
+      ["crontab -r", "show my crontab and nothing else"],
+      ["git stash drop", "run git stash list and nothing else"],
+      ["docker system prune -f", "list docker images and nothing else"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.unasked, `${cmd} / ${words}`).toBe(true);
+    }
+    // Words that ask for that kind of step, or name its program and subcommand whole, keep the line off.
+    for (const [cmd, words] of [
+      ["crontab -r", "remove my crontab and nothing else"],
+      ["git stash drop", "drop the stash and nothing else"],
+      ["npm ci", "run npm ci and nothing else"],
+      ["npm publish", "publish it and nothing else"],
+    ]) expect(decide(cmd, { words }).says, `${cmd} / ${words}`).not.toContain(LINES.unasked);
+    expect(decide("npm publish", { words: "publish it and nothing else" }).says).toContain(LINES.inexact);
+  });
+
   it("says the words ask for that kind of step when they schedule jobs or prune packages in plain words; it still asks (commands-remote-r3-2)", () => {
     for (const [cmd, words] of [
       ["crontab jobs.txt", "schedule the jobs in jobs.txt"],

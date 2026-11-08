@@ -238,7 +238,8 @@ this.", typed or spoken, and so does a step on what your words leave out ("delet
 (don't publish)" for `npm publish`, "don't (ever) delete build") or one they say not to do by name ("delete build/
 but don't delete src/" for `rm -r src`, "kill 5678 but don't kill 1234"); "delete build/ and don't delete anything
 else" says it of every step but the one you named, and of one that does that and more (`rm -rf build dist`, or a
-force you didn't ask for). A "not" in a condition, an exception or a reminder leaves the rest as you asked it ("push my changes if
+force you didn't ask for), and "show my crontab and nothing else" says it of `crontab -r`, since a step that names
+nothing of its own counts as named only by its kind ("remove my crontab") or its command in full. A "not" in a condition, an exception or a reminder leaves the rest as you asked it ("push my changes if
 the tests don't fail", "delete everything in build except .gitkeep", "don't forget to push"); any "not" in your words
 still keeps Ember from announcing a step instead of asking. A
 command that asks for what it does (deleting, publishing, secrets, system changes, downloading and running code, or
