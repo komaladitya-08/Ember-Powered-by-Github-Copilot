@@ -297,8 +297,9 @@ something else ("fix the script that deletes build/") don't, so the command asks
 back, since the announcement runs it now: a condition ("delete src/ only if I say so", "if the build fails, delete
 src/", "once the tests pass", "when I tell you", "in case the tests fail"), a later time ("tomorrow", "next week", "in 5
 minutes", "in 1h", "at 5pm", "at 5.30pm", "at the end of the task"), asking to be asked first ("ask me first", "check
-with me", "wait for my ok", "show me the command first", "run it by me", "on my go", "hold off", "I'll say when") or
-asking how ("explain how to delete build/ and delete src/"); "tell me if it worked", "let me know when it's done", "if you can", "as soon as possible", "if it exists" and a time or
+with me", "wait for my ok", "show me the command first", "let me see the command", "run it by me", "on my go", "hold
+off", "I'll say when") or asking how ("explain how to delete build/ and delete src/"); "tell me if it worked", "say if it
+worked", "let me know when it's done", "let me see the output", "if you can", "as soon as possible", "if it exists" and a time or
 a condition of another step of yours said after it ("delete build/ now, I'll rebuild later", "then run the tests once
 it's gone") hold nothing back, but the step itself said again with a time does ("delete build/, but run the command
 tomorrow", "… start the cleanup tomorrow"), and so does "wait, then delete build/". So do words that say not to, or

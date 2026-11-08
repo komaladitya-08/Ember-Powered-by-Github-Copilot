@@ -841,8 +841,12 @@ const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn[
 
 /** A condition the step waits on ("if the build fails", "only after I confirm", "once the tests pass", "when I tell you"). */
 const CONDITION = /(^|[^\p{L}\p{N}])(if|when|whenever|once|after|until|till|as\s+soon\s+as|as\s+long\s+as|so\s+long\s+as|provided|providing|assuming|depending\s+on|in\s+case|supposing|suppose|on\s+condition|in\s+the\s+event)(?=$|[^\p{L}\p{N}])/giu;
-/** Words before a condition that make it what to report, not when to act ("tell me if it worked", "let me know when"). */
-const REPORTS = /(^|[^\p{L}\p{N}])((tell|show|warn|notify|ping|let)\s+(me|us)(\s+know)?|check|see|find\s+out|report)\s+$/iu;
+/**
+ * Words before a condition that make it what to report, not when to act ("tell me if it worked", "let me know when",
+ * "say if it worked", "say when it's done"); never the user's own "I'll say when", which HELD_FIRST holds back
+ * (commands-remote-w5-5).
+ */
+const REPORTS = /(^|[^\p{L}\p{N}])((tell|show|warn|notify|ping|let)\s+(me|us)(\s+know)?|check|see|find\s+out|report|(?<!(^|[^\p{L}\p{N}])(i|we)(\s*['’]ll|\s+will|\s+shall|\s*['’]d|\s+would|\s+can|\s+may|\s+might)?\s+)say)\s+$/iu;
 /** A condition that only says to skip what isn't there ("if it exists", "if it's there", "if there is one", "if any"). */
 const IF_THERE = /^\s+((it|they|that|one)\s+exists?|(it|they)\s*(['’]s|['’]re|\s+is|\s+are)\s+(still\s+)?there|there\s+(is|are|['’]s)\s+(one|any|some)|any)(?=\s*([,;:.!?)]|$))/iu;
 /** "as soon as possible", "as soon as you can": now, not a condition or a later time (commands-remote-v5-5). */
@@ -935,9 +939,10 @@ const LATER_TOO = /(^|[^\p{L}\p{N}])((at|by|towards?|near|until|till)\s+the\s+(v
 /**
  * More ways of holding the step back until the user says so (commands-remote-v5-3): "but first show me what's in it",
  * "show me the command first", "run it by me", "on my go", "upon confirmation", "hold off", "hang on", "I'll say when",
- * "I'll confirm".
+ * "I'll confirm"; "let me see" only with what holds it back ("let me see it", "… the command", "… what you'll run", "…
+ * first"), never what comes of it ("let me see the output": commands-remote-w5-5).
  */
-const HELD_FIRST = /(^|[^\p{L}\p{N}])(but\s+first|first\s+(show|tell|let|ask|check|run|give|send|list|explain|describe|walk)|(show|tell|give|send|list|explain|describe)\s+(me|us)(?=\s)[^.;!?]{0,80}?\s(first|beforehand)|run\s+(it|this|that|them|these|those|the\s+commands?|everything)\s+(by|past)\s+(me|us)|(on|at|upon)\s+my\s+(go|word|signal|mark|command|cue|count|say|call)|on\s+go|get\s+(the|my|an?)\s+(ok|okay|go[-\s]?ahead|approval|green\s+light|nod|sign[-\s]?off)|prompt\s+(me|us)|let\s+(me|us)\s+see|(upon|on|after|pending|awaiting|with|subject\s+to)\s+(the\s+|a\s+|my\s+|your\s+)?(confirmation|approval|review|sign[-\s]?off)|hold\s+(off|on|it|up|fire)|hang\s+(on|tight|fire)|stand\s+by|sit\s+tight|(i|we)(\s*['’]ll|\s+will|\s+shall|\s*['’]d|\s+can)?\s+(confirm|approve|decide|sign\s+off|give\s+(you\s+)?the\s+(word|go|signal|nod|green\s+light)|say\s+(go|when|so|the\s+word)|let\s+you\s+know))(?=$|[^\p{L}\p{N}])/iu;
+const HELD_FIRST = /(^|[^\p{L}\p{N}])(but\s+first|first\s+(show|tell|let|ask|check|run|give|send|list|explain|describe|walk)|(show|tell|give|send|list|explain|describe)\s+(me|us)(?=\s)[^.;!?]{0,80}?\s(first|beforehand)|run\s+(it|this|that|them|these|those|the\s+commands?|everything)\s+(by|past)\s+(me|us)|(on|at|upon)\s+my\s+(go|word|signal|mark|command|cue|count|say|call)|on\s+go|get\s+(the|my|an?)\s+(ok|okay|go[-\s]?ahead|approval|green\s+light|nod|sign[-\s]?off)|prompt\s+(me|us)|let\s+(me|us)\s+see\s+((it|this|that|them|these|those)(?=\s*([,;:.!?]|$))|the\s+(commands?|script|plan)(?=$|[^\p{L}\p{N}])|what\s+(you|it|ember)(\s*['’]ll|\s+will|\s+would|\s*['’]d|\s*['’]re\s+going|\s+are\s+going|\s+plan|\s+intend|\s+want|\s+mean)|[^.;!?]{0,80}?\s(first|beforehand|before))|(upon|on|after|pending|awaiting|with|subject\s+to)\s+(the\s+|a\s+|my\s+|your\s+)?(confirmation|approval|review|sign[-\s]?off)|hold\s+(off|on|it|up|fire)|hang\s+(on|tight|fire)|stand\s+by|sit\s+tight|(i|we)(\s*['’]ll|\s+will|\s+shall|\s*['’]d|\s+can)?\s+(confirm|approve|decide|sign\s+off|give\s+(you\s+)?the\s+(word|go|signal|nod|green\s+light)|say\s+(go|when|so|the\s+word)|let\s+you\s+know))(?=$|[^\p{L}\p{N}])/iu;
 /**
  * A leading "wait," that only interrupts ("wait, delete build/ instead"), never one a word of sequence follows ("wait,
  * then delete build/", "Wait. Then delete build/.", "wait, and after that …": commands-remote-w5-2).

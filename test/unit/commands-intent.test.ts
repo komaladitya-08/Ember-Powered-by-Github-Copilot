@@ -780,6 +780,29 @@ describe("matchIntent: words that hold the step back (commands-remote-c4-4)", ()
   ])("announces `%s` after %j", (cmd, words, said) => {
     expect(announce(cmd, words, { git: FEATURE })).toBe(said);
   });
+
+  it.each([
+    // What to report once it is done.
+    ["rm -rf build", "delete build/ and let me see the output", "Deleting build, as you asked."],
+    ["kill 1234", "kill 1234 and let me see the result", "Stopping 1234, as you asked."],
+    ["rm -rf build", "delete build/ and say if it worked", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ and say when it's done", "Deleting build, as you asked."],
+  ])("announces `%s` after %j, which only asks to hear how it went (commands-remote-w5-5)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // Seeing the step before it runs, and the user's own word to go.
+    "delete src/, I'll say when",
+    "delete src/ and we will say when",
+    "delete src/ but let me see the command first",
+    "delete src/ but let me see the command",
+    "delete src/ but let me see what you'll run",
+    "delete src/ and let me see it",
+    "let me see the command, then delete src/",
+  ])("still asks for `rm -rf src` after %j (commands-remote-w5-5)", words => {
+    expect(announce("rm -rf src", words)).toBeNull();
+  });
 });
 
 describe("matchIntent: plain chains and a hung thing referred back to (commands-remote-r4-4)", () => {
