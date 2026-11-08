@@ -13,7 +13,7 @@ import { MemoryGraph } from "../../app/main/memory/graph";
 import { IntroSchema, Interview, INTRO_DONE, INTRO_OFF, answerFacts, introFacts, isGetToKnowMe, styleOf } from "../../app/main/memory/intro";
 import { CallBudget, EXTRACT_SYSTEM, Learner, MAX_ANSWER_CHARS, extractPrompt, learnedFacts, parseExtraction, soundsLikeInstruction, subjectOf, turnSource, type OneShot } from "../../app/main/memory/learn";
 import { IDLE_MS, MemoryLearning, REFINE_PER_DAY, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "../../app/main/memory/learning";
-import { FORGET_OFF, Gaps, INTRO_NOTE, NOTHING_TO_FORGET, answersQuestion, describes, forgetReply, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk, namesIn, rememberNote } from "../../app/main/memory/questions";
+import { FORGET_OFF, Gaps, INTRO_NOTE, NOTHING_TO_FORGET, answersQuestion, describes, forgetReply, gapQuestion, isForgetThat, looksLikeRequest, memoryActionOpens, memoryAsk, memoryNoteActions, namesIn, rememberNote } from "../../app/main/memory/questions";
 import { negated, samePolarity } from "../../app/main/memory/text";
 import { REFINE_FACTS, REFLECTION_CONFIDENCE, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "../../app/main/memory/refine";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
@@ -583,10 +583,10 @@ describe("“forget that”, the instruction check and the conversation's line",
     // that memory can't change what's saved, so neither half is lost and nothing claims it was forgotten.
     for (const text of ["Forget my address and open Firefox", "Forget that I work at Globex, then open Thunderbird"]) {
       expect(off.l.intent(text, { own: true }), text).toBeNull();
-      expect(off.l.rememberNote(text), text).toEqual({ title: "Memory is off", text: "Memory is off, so I can't change what's saved.", open: true });
+      expect(off.l.rememberNote(text), text).toEqual({ title: "Memory is off", text: "Memory is off, so I can't change what's saved.", open: true, at: "list" });
     }
     const paused = learning({ inForce: () => false, paused: () => "own-provider" });
-    expect(paused.l.rememberNote("Forget my address and open Firefox")).toEqual({ title: "Memory paused", text: "Memory is paused while I use your own model provider, so I can't change what's saved.", open: false });
+    expect(paused.l.rememberNote("Forget my address and open Firefox")).toEqual({ title: "Memory paused", text: "Memory is paused while I use your own model provider, so I can't change what's saved.", open: false, at: "list" });
     expect(off.opened).not.toHaveBeenCalled();
   });
 
@@ -684,6 +684,18 @@ describe("“forget that”, the instruction check and the conversation's line",
       expect(off.l.rememberNote(text), text).toBeNull();
     }
     expect(off.opened).not.toHaveBeenCalled();
+  });
+
+  it("opens Settings › Memory at its list from Open Memory after a forget request with more in it, and at its note after a remember (memory-r3-4)", () => {
+    const off = learning({ inForce: () => false });
+    const forget = off.l.rememberNote("Forget my address and open Firefox")!;
+    expect(memoryNoteActions(forget)).toEqual([{ id: "ui:memory-list", label: "Open Memory" }]);
+    expect(memoryActionOpens("ui:memory-list")).toBe("list");
+    expect(memoryNoteActions(off.l.rememberNote("Remember that my manager is Priya")!)).toEqual([{ id: "ui:memory", label: "Open Memory" }]);
+    expect(memoryActionOpens("ui:memory")).toBe("note");
+    expect(memoryActionOpens("ui:settings")).toBeNull();
+    // Turned off by the organisation: nothing to open.
+    expect(memoryNoteActions(rememberNote("managed"))).toEqual([]);
   });
 
   it("says memory waits for its updated note, as Home does, rather than that it is off (memory-r4)", () => {

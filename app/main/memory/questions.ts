@@ -361,6 +361,17 @@ export interface MemoryNote {
   text: string;
   /** The bubble offers Open Memory (Settings › Memory): never when the organisation turned memory off. */
   open: boolean;
+  /** Where Open Memory opens Settings › Memory: at its list (and Forget) after a forget request, else at its note. */
+  at?: "list";
+}
+
+/** The bubble's Open Memory after a note, by where it opens Settings › Memory (memory-r3-4). */
+const OPEN_MEMORY = { note: "ui:memory", list: "ui:memory-list" } as const;
+/** The bubble's button after `n`: Open Memory where the note says, or none. */
+export const memoryNoteActions = (n: MemoryNote) => (n.open ? [{ id: OPEN_MEMORY[n.at ?? "note"], label: "Open Memory" }] : []);
+/** Where a bubble action opens Settings › Memory, or null for any other action. */
+export function memoryActionOpens(id: string): "list" | "note" | null {
+  return id === OPEN_MEMORY.list ? "list" : id === OPEN_MEMORY.note ? "note" : null;
 }
 
 /**
@@ -377,10 +388,11 @@ export function rememberNote(why: MemoryNotNow): MemoryNote {
 
 /**
  * The truth after the conversation answered a forget request with more in it while memory can't change what's saved
- * (memory-c1-1): the bubble offers Open Memory where `forgetReply` would open it.
+ * (memory-c1-1): the bubble offers Open Memory where `forgetReply` would open it, at the list and its Forget, never at
+ * the note (memory-r3-4).
  */
 export function forgetNote(why: MemoryNotNow): MemoryNote {
-  return { title: rememberNote(why).title, text: `${NOT_NOW[why]}, so I can't change what's saved.`, open: forgetReply(why).open };
+  return { title: rememberNote(why).title, text: `${NOT_NOW[why]}, so I can't change what's saved.`, open: forgetReply(why).open, at: "list" };
 }
 
 /**

@@ -110,6 +110,7 @@ import { MemoryService } from "./memory/service";
 import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
 import { MemoryLearning, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
+import { memoryActionOpens } from "./memory/questions";
 import { BetterRecall } from "./memory/better-recall";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { installKind, releasePage, UpdateChecker, updateNotice } from "./updates";
@@ -2765,8 +2766,10 @@ function start(): void {
       return;
     }
     if (id === "ui:settings") { openSettings(); return; }
-    // "Memory is off" behind the answer to a "remember…" memory couldn't keep (memory-c1-1): Settings › Memory.
-    if (id === "ui:memory") { openMemory(); return; }
+    // "Memory is off" behind the answer to a "remember…" memory couldn't keep (memory-c1-1): Settings › Memory, at its
+    // list after a forget request (memory-r3-4).
+    const memoryAt = memoryActionOpens(id);
+    if (memoryAt) { openMemory(memoryAt); return; }
     if (id === "ui:setup-check") { showHome(); sendToHome(IPC.focusSection, "checks"); agent?.releaseBubble(lastState.bubble); return; }
     if (id === "ui:more") { expandAnswer(); return; }
     if (id === "ui:conversation") { readLastAnswer(); return; }

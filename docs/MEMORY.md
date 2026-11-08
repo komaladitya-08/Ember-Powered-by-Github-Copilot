@@ -271,7 +271,8 @@ download, so English-only MiniLM is the trade-off for now.
      memory-r3-1) and a request with more in it (after a comma, a semicolon, a dash, or "and" or
      "then" with another request: "Forget what I said, open Firefox instead", "Forget my last request and open Firefox
      instead") are the conversation's like any other (memory-c1-1). When the first part was a forget request ("Forget
-     my address and open Firefox"), Ember says behind the answer that memory can't change what's saved (`forgetNote`).
+     my address and open Firefox"), Ember says behind the answer that memory can't change what's saved (`forgetNote`),
+     and its **Open Memory** opens Settings › Memory at the list and its Forget, never at the note (memory-r3-4).
 4. **Sleep-time refinement** (done; `refine.ts`). After 5 minutes idle (no turn, no task, the screen unlocked; an
    unknown lock counts as locked), `MemoryLearning` runs `consolidate()`, then one model pass (the same one-shot
    session) over up to 40 facts changed or used since the last pass:
