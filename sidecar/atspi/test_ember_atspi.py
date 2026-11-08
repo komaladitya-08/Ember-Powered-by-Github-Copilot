@@ -3061,6 +3061,44 @@ class Protocol(unittest.TestCase):
             del e.METHODS["echo"]
             e.pyatspi, e.Atspi, e.configure_atspi, e.LOAD_TRIED["at"] = saved
 
+    def test_pyatspi_installed_after_it_started_acts_on_links(self):
+        """Bindings installed while Ember runs also bring Gio and GLib, so a click or typed text after the late install
+        goes on a link, never on Ember's own connection, which hangs a GTK app in a modal dialog
+        (reliability-performance-r3-1)."""
+        names = ("gi", "gi.repository")
+        saved = (e.pyatspi, e.Atspi, e.Gio, e.GLib, e.configure_atspi, e.LOAD_TRIED["at"])
+        saved_modules = dict((n, sys.modules.get(n)) for n in names)
+        gi = types.ModuleType("gi")
+        repository = types.ModuleType("gi.repository")
+        repository.Atspi = types.ModuleType("Atspi")
+        repository.Gio = types.ModuleType("Gio")
+        repository.GLib = types.ModuleType("GLib")
+        gi.repository = repository
+        e.configure_atspi = lambda: True
+        e.pyatspi = e.Atspi = e.Gio = e.GLib = None  # as at a start without the bindings
+        e.LOAD_TRIED["at"] = None
+        sys.modules["pyatspi"] = None
+        for n in names:
+            sys.modules[n] = None
+        try:
+            self.assertFalse(e.load_atspi_again())
+            self.assertIsNone(e.open_link(object()))
+            sys.modules["pyatspi"] = FAKE  # installed now, with libatspi's own bindings
+            sys.modules["gi"], sys.modules["gi.repository"] = gi, repository
+            e.LOAD_TRIED["at"] -= e.LOAD_AGAIN_S + 1
+            self.assertTrue(e.load_atspi_again())
+            self.assertIs(e.Atspi, repository.Atspi)
+            self.assertIs(e.Gio, repository.Gio)
+            self.assertIs(e.GLib, repository.GLib)
+        finally:
+            sys.modules["pyatspi"] = FAKE
+            for n in names:
+                if saved_modules[n] is None:
+                    sys.modules.pop(n, None)
+                else:
+                    sys.modules[n] = saved_modules[n]
+            e.pyatspi, e.Atspi, e.Gio, e.GLib, e.configure_atspi, e.LOAD_TRIED["at"] = saved
+
 
 class Links(unittest.TestCase):
     """Requests that run the app's own code go on a link the holder keeps open until the app waits on none (PR10-1)."""

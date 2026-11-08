@@ -5185,8 +5185,9 @@ LOAD_TRIED = {"at": None}
 
 
 def load_atspi_again():
-    """pyatspi imported now if it was installed since the last look (at most every LOAD_AGAIN_S), with libatspi's
-    timeouts shortened as main() does at the start. Whether it is loaded."""
+    """pyatspi imported now if it was installed since the last look (at most every LOAD_AGAIN_S), with Gio and GLib
+    for the links (the module's own import of them ran while libatspi was missing) and libatspi's timeouts shortened as
+    main() does at the start. Whether it is loaded."""
     if pyatspi is not None:
         return True
     now = time.monotonic()
@@ -5201,6 +5202,9 @@ def load_atspi_again():
         pass
     if not load_atspi():
         return False
+    # Without them every action would go on Ember's own connection, which hangs a GTK app in a modal dialog for good
+    # (see on_link; reliability-performance-r3-1).
+    load_links()
     if not configure_atspi():
         sys.stderr.write("ember_atspi: could not shorten libatspi timeouts\n")
     return True
