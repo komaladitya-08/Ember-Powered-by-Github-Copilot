@@ -35,7 +35,10 @@ setup check in the terminal: it prints the report and exits with the check's cod
 judges Ember's own permissions). A plain `ember` starts Ember and returns after a few seconds; if Ember stops in that
 time (no display, for example), the launcher prints what it said and exits with its code instead of saying it started.
 What Ember prints after that goes to `.<v>-start.log` beside the version folder (a disk too full to write in it, or a
-cache folder you can't write in, doesn't stop Ember starting; one too full to make the file is said as such). If this
+cache folder you can't write in, doesn't stop Ember starting; one too full to make the file is said as such). An old
+log another user left there (after `sudo -E ember`, for example) is replaced. In a cache folder you can't write in,
+what Ember says in those first seconds goes to a private temporary file instead, removed before the launcher returns;
+where not even that can be made, the launcher says to run `ember doctor`, which shows what Ember says. If this
 computer doesn't let Ember start (a security policy such as fapolicyd, or antivirus), the launcher says so: ask
 whoever manages it to allow Ember, or set `EMBER_NPM_CACHE` to a folder where programs may run.
 On Linux without a display (an ssh

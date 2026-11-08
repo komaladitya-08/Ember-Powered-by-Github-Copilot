@@ -2399,9 +2399,12 @@ run attached (`runMode()`, `start()`: the report and the exit code reach the ter
 --stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an
 Ember that stops at once is reported with what it said and its exit code. The log's `pid` line is written best-effort,
 so a disk that filled since the install neither fails a start that worked nor holds the terminal until Ember quits; a
-disk too full to make the log is `noRoom()`'s sentence. A log it can't make in a folder this user can't write in
-(`EACCES`, `EPERM`, `EROFS`: another user's, an administrator's shared one, a read-only disk) is left out, so the copy
-there still starts, as a `--npm-reinstall` that stopped there says, only without what it said if it stops at once.
+disk too full to make the log is `noRoom()`'s sentence. A log it can't open (`EACCES`, `EPERM`, `EROFS`) doesn't stop
+the start, so the copy there still starts, as a `--npm-reinstall` that stopped there says (`openStartLog()`): an old
+log of another user's in this user's own folder (left by `sudo -E ember`) is removed and made again; in a folder this
+user can't write in (another user's, an administrator's shared one, a read-only disk) the watch's log is `start.log` in
+a private `mkdtemp` folder in the temporary folder (0700, the log 0600), removed once the watch has ended; and where
+not even that can be made, an Ember that stops at once is said with "Run '<name> doctor' to see what it says."
 This computer refusing to start Ember's program (`EPERM` or `EACCES` from starting it: a security policy such as
 fapolicyd, antivirus, a `noexec` disk) is `cantRun()`'s sentence, never `cantWrite()`'s.
 The AppImage's AppRun and the RPM's `ember`

@@ -961,12 +961,70 @@ export function runMode(args) {
 const EARLY_MS = 3000;
 
 /**
- * Starts `cmd`. Attached, it waits and passes on its output and exit code. Detached, its stderr goes to `log` (or
- * nowhere, where the log can't be made in a folder this user can't write in) and it is watched for `earlyMs`: if it stops in that time with an error, what it said is printed and its exit code
- * returned; otherwise it is left running and 0 returned. (A pipe would break once the launcher exits, and Ember's
- * writes to a closed pipe would fail.)
+ * Opens the start log for a detached Ember's stderr, mode 0600: `log`; else, where `log` is another user's file in this
+ * user's own folder (an earlier run with sudo leaves one), `log` made again; else, where the folder is another user's
+ * or on a read-only disk, `start.log` in a private folder in the temporary folder (`temp`, removed once the watch has
+ * ended); else none, and Ember starts all the same (install-docs-v5-2, install-docs-w5-2). A disk too full to make
+ * `log` throws, as that is said (install-docs-r4-2).
+ * @param {string} log
+ * @returns {{ fd: number | null; file: string; temp: string | null }}
+ */
+function openStartLog(log) {
+  const open = (/** @type {string} */ file) => {
+    try {
+      return fs.openSync(file, "w", 0o600);
+    } catch (err) {
+      if (!LOCKED.has(/** @type {any} */ (err)?.code)) throw err;
+      return null;
+    }
+  };
+  let fd = open(log);
+  if (fd === null) {
+    let gone = false;
+    try {
+      fs.unlinkSync(log);
+      gone = true;
+    } catch {
+      // Not there, or not this user's to remove (a folder this user can't write in): the temporary folder's, below.
+    }
+    // A full disk once the old log is gone is still said.
+    if (gone) fd = open(log);
+  }
+  if (fd !== null) return { fd, file: log, temp: null };
+  const tp = process.platform === "win32" ? pathWin32 : pathPosix;
+  let temp = null;
+  try {
+    temp = fs.mkdtempSync(tp.join(os.tmpdir(), "ember-start-"));
+    const file = tp.join(temp, "start.log");
+    return { fd: fs.openSync(file, "w", 0o600), file, temp };
+  } catch {
+    // No temporary folder either: Ember starts without a log, and the launcher says how to see what it said.
+    dropStartLog(temp);
+    return { fd: null, file: log, temp: null };
+  }
+}
+
+/**
+ * Removes a start log's temporary folder (openStartLog), if there is one.
+ * @param {string | null} temp
+ */
+function dropStartLog(temp) {
+  if (!temp) return;
+  try {
+    fs.rmSync(temp, { recursive: true, force: true });
+  } catch {
+    // Still open in Ember on Windows, which may not remove it until Ember quits: left to the temporary folder's clean-up.
+  }
+}
+
+/**
+ * Starts `cmd`. Attached, it waits and passes on its output and exit code. Detached, its stderr goes to `log` (or a
+ * private temporary file, or nowhere, where the log can't be made in a folder this user can't write in: openStartLog)
+ * and it is watched for `earlyMs`: if it stops in that time with an error, what it said is printed and its exit code
+ * returned (or, with no log, how to see it: `<name> doctor`); otherwise it is left running and 0 returned. (A pipe
+ * would break once the launcher exits, and Ember's writes to a closed pipe would fail.)
  * @param {{ file: string; args: string[] }} cmd
- * @param {{ attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
+ * @param {{ attached: boolean; log: string; earlyMs?: number; name?: string; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
  * @returns {Promise<number>}
  */
 export async function start(cmd, o) {
@@ -978,7 +1036,7 @@ export async function start(cmd, o) {
  * with 0 has handed its request to an Ember already running, as a second Ember does. (open(1) on a Mac always ends at
  * once, so there only what runs can tell.)
  * @param {{ file: string; args: string[] }} cmd
- * @param {{ attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
+ * @param {{ attached: boolean; log: string; earlyMs?: number; name?: string; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
  * @returns {Promise<{ code: number; stayed: boolean }>}
  */
 export async function startWatched(cmd, o) {
@@ -993,15 +1051,10 @@ export async function startWatched(cmd, o) {
       child.once("close", (code, signal) => resolve({ code: code ?? (signal ? 128 + (os.constants.signals[signal] ?? 0) : 1), stayed: false }));
     });
   }
-  let fd = null;
-  try {
-    fd = fs.openSync(o.log, "w", 0o600);
-  } catch (err) {
-    // A folder this user can't write in (another user's, as a run with sudo or an administrator's shared cache leaves
-    // it, or a read-only disk): the copy there still starts, only without a log of what it says, so a reinstall's
-    // "the copy you had is kept. Run 'ember' to start it" holds (install-docs-v5-2). A full disk is said (install-docs-r4-2).
-    if (!LOCKED.has(/** @type {any} */ (err)?.code)) throw err;
-  }
+  // A folder this user can't write in (another user's, as a run with sudo or an administrator's shared cache leaves
+  // it, or a read-only disk) doesn't stop the copy there starting, so a reinstall's "the copy you had is kept. Run
+  // 'ember' to start it" holds (install-docs-v5-2). A full disk is said (install-docs-r4-2).
+  const made = openStartLog(o.log), fd = made.fd;
   let child;
   try {
     child = await new Promise((resolve, reject) => {
@@ -1017,15 +1070,23 @@ export async function startWatched(cmd, o) {
     }
   } finally {
     if (fd !== null) fs.closeSync(fd);
+    // Not started: nothing will write in a temporary log.
+    if (!child) dropStartLog(made.temp);
   }
   const ended = await new Promise(resolve => {
     const timer = setTimeout(() => resolve(null), o.earlyMs ?? EARLY_MS);
     child.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
   });
   child.unref();
-  if (!ended || ended.code === 0) return { code: 0, stayed: !ended };
-  const said = fd === null ? "" : fs.readFileSync(o.log, "utf8").replace(/^pid \d+\n/m, "").trim();
-  stderr.write(`ember-copilot: Ember stopped as it started (${ended.code === null ? `signal ${ended.signal}` : `exit ${ended.code}`})${said ? `:\n${said.slice(-4000)}` : "."}\n`);
+  if (!ended || ended.code === 0) {
+    dropStartLog(made.temp);
+    return { code: 0, stayed: !ended };
+  }
+  const said = fd === null ? "" : fs.readFileSync(made.file, "utf8").replace(/^pid \d+\n/m, "").trim();
+  dropStartLog(made.temp);
+  // With no log at all, the setup check, which runs attached, shows what Ember says (install-docs-w5-2).
+  const none = fd === null ? `. Run '${o.name ?? "ember"} doctor' to see what it says.` : ".";
+  stderr.write(`ember-copilot: Ember stopped as it started (${ended.code === null ? `signal ${ended.signal}` : `exit ${ended.code}`})${said ? `:\n${said.slice(-4000)}` : none}\n`);
   return { code: ended.code ?? 1, stayed: false };
 }
 
@@ -1149,7 +1210,7 @@ export async function main(argv, o = {}) {
   const log = p.join(p.dirname(installed.dir), `.${version}-start.log`);
   if (mode.attached && platform === "darwin") return await doctorMac(installed, mode.args, log);
   const cmd = launchCommand(platform, installed, mode.args);
-  const { code, stayed } = await startWatched(cmd, { attached: mode.attached, log, earlyMs: o.earlyMs }).catch(err => {
+  const { code, stayed } = await startWatched(cmd, { attached: mode.attached, log, earlyMs: o.earlyMs, name }).catch(err => {
     // This computer refusing to run Ember's program (a security policy such as fapolicyd, antivirus), said as such,
     // not as a folder this user can't write in, which doesn't stop a start (install-docs-v5-1); a disk too full to make
     // the start log in the cache folder, said as this computer's (install-docs-r4-2).

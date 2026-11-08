@@ -932,10 +932,9 @@ describe("starting Ember from the launcher", () => {
     }
   });
 
-  /** A stand-in AppImage of this package's version in a new cache folder, served once; it says where it is and runs for 12 s. */
-  async function installedStandIn() {
+  /** A stand-in AppImage of this package's version in a new cache folder, served once; by default it says where it is and runs for 12 s. */
+  async function installedStandIn(body = "#!/bin/sh\necho $$ > \"$EMBER_TEST_PID\"\nexec sleep 12\n") {
     const v = packageVersion(), asset = `Ember-${v}-x86_64.AppImage`;
-    const body = "#!/bin/sh\necho $$ > \"$EMBER_TEST_PID\"\nexec sleep 12\n";
     const server = await serve({ [`/v${v}/${asset}`]: body, [`/v${v}/SHA256SUMS`]: `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` });
     const cache = tempDir();
     const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, DISPLAY: ":99", ...noNpmrc };
@@ -1039,6 +1038,86 @@ describe("starting Ember from the launcher", () => {
       }
     }
   }, 20_000);
+
+  // As an AppImage says on a RHEL 8 without fuse, as it stops at once.
+  const noFuse = "#!/bin/sh\necho 'dlopen(): error loading libfuse.so.2' >&2\necho 'AppImages require FUSE to run.' >&2\nexit 127\n";
+  const saidNoFuse = "ember-copilot: Ember stopped as it started (exit 127):\ndlopen(): error loading libfuse.so.2\nAppImages require FUSE to run.\n";
+
+  it.skipIf(process.platform === "win32")("prints what Ember said as it stopped when the old start log in this user's own cache folder is another user's (install-docs-w5-2)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const { v, cache, env } = await installedStandIn(noFuse);
+    // Left by an earlier 'sudo -E ember': root's, mode 0600, so it can't be opened, though the folder is this user's.
+    const log = path.join(cache, `.${v}-start.log`);
+    fs.writeFileSync(log, "pid 1\nleft by a run with sudo\n");
+    const realOpen = fs.openSync;
+    const open = vi.spyOn(fs, "openSync").mockImplementation(((file: fs.PathLike, flags?: unknown, ...rest: unknown[]) => {
+      if (String(file) === log && fs.existsSync(log) && fs.readFileSync(log, "utf8").includes("left by a run with sudo")) throw Object.assign(new Error(`EACCES: permission denied, open '${log}'`), { code: "EACCES", path: log });
+      return (realOpen as (...a: unknown[]) => number)(file, flags, ...rest);
+    }) as never);
+    try {
+      const r = await captured(() => main([], { platform: "linux", arch: "x64", env }).then(c => c, (e: Error) => e));
+      expect(r.result).toBe(127);
+      expect(r.err).toBe(saidNoFuse);
+      // The old log is replaced with this start's, this user's own again.
+      expect(fs.readFileSync(log, "utf8")).toContain("AppImages require FUSE to run.");
+    } finally {
+      open.mockRestore();
+    }
+  });
+
+  /** Makes nothing new in `cache` (another user's folder, or a read-only disk), and, with `noTemp`, in the temporary folder either; records what is made there. */
+  function lockedCache(cache: string, noTemp = false) {
+    const realOpen = fs.openSync, realTemp = fs.mkdtempSync;
+    const denied = (f: unknown) => Object.assign(new Error(`EACCES: permission denied, '${String(f)}'`), { code: "EACCES", path: String(f) });
+    const temps: string[] = [], opened: { file: string; mode: unknown }[] = [];
+    const spies = [
+      vi.spyOn(fs, "openSync").mockImplementation(((file: fs.PathLike, flags?: unknown, mode?: unknown) => {
+        if (String(file).startsWith(cache) && /[wa+]/.test(String(flags ?? "r"))) throw denied(file);
+        opened.push({ file: String(file), mode });
+        return (realOpen as (...a: unknown[]) => number)(file, flags, mode);
+      }) as never),
+      vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string, opts?: unknown) => {
+        if (String(prefix).startsWith(cache) || (noTemp && String(prefix).startsWith(os.tmpdir()))) throw denied(prefix);
+        const made = (realTemp as (...a: unknown[]) => string)(prefix, opts);
+        temps.push(made);
+        return made;
+      }) as never),
+    ];
+    return { temps, opened, restore: () => { for (const s of spies) s.mockRestore(); } };
+  }
+
+  it.skipIf(process.platform === "win32")("prints what Ember said as it stopped when the cache folder is another user's or on a read-only disk, from a private temporary log it then removes (install-docs-w5-2)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const { cache, env } = await installedStandIn(noFuse);
+    const locked = lockedCache(cache);
+    try {
+      const r = await captured(() => main([], { platform: "linux", arch: "x64", env }).then(c => c, (e: Error) => e));
+      expect(r.result).toBe(127);
+      expect(r.err).toBe(saidNoFuse);
+      expect(locked.temps.length).toBe(1);
+      const [temp] = locked.temps;
+      expect(path.dirname(temp)).toBe(os.tmpdir());
+      // Made for this user alone, and gone once the launcher has said it.
+      expect(locked.opened.filter(f => f.file.startsWith(temp))).toEqual([{ file: path.join(temp, "start.log"), mode: 0o600 }]);
+      expect(fs.existsSync(temp)).toBe(false);
+    } finally {
+      locked.restore();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("says how to see what Ember said when no start log can be made anywhere, instead of a bare stop (install-docs-w5-2)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const { cache, env } = await installedStandIn(noFuse);
+    const locked = lockedCache(cache, true);
+    try {
+      const r = await captured(() => main([], { platform: "linux", arch: "x64", env }).then(c => c, (e: Error) => e));
+      expect(r.result).toBe(127);
+      // 'ember doctor' runs attached, so what Ember says reaches the terminal.
+      expect(r.err).toBe("ember-copilot: Ember stopped as it started (exit 127). Run 'ember doctor' to see what it says.\n");
+    } finally {
+      locked.restore();
+    }
+  });
 });
 
 describe("the launcher's own answers", () => {
