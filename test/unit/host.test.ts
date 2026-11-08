@@ -108,7 +108,7 @@ import type { ActiveProvider } from "../../app/main/provider";
 import { unavailableLine } from "../../app/renderer/ask/chips";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
-import { LOST_RECONNECTED, Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
+import { LOST_GAVE_UP, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
@@ -727,18 +727,30 @@ describe("live test: what Ember says when it can't take a request", () => {
 
   it("never blames Copilot in the handle or the Ask box while another model service is in use (accessibility-visual-c1-2)", () => {
     const own = { kind: "user" as const, host: "localhost" }, org = { kind: "admin" as const, host: "models.example.com" };
-    for (const reason of ["runtime", "other"] as const) {
-      expect(idleWord({ phase: "error", reason }), reason).toBe("Copilot problem");
-      expect(unansweredWord({ phase: "error", reason, service: own }), reason).toBe("Provider problem");
-      expect(unansweredWord({ phase: "error", reason, service: org }), reason).toBe("Service problem");
-    }
+    expect(idleWord({ phase: "error", reason: "other" })).toBe("Copilot problem");
+    expect(unansweredWord({ phase: "error", reason: "other", service: own })).toBe("Provider problem");
+    expect(unansweredWord({ phase: "error", reason: "other", service: org })).toBe("Service problem");
     expect(idleWord({ phase: "error", reason: "no-access" })).toBe("No Copilot access");
     expect(idleWord({ phase: "error", reason: "no-access", service: own })).toBe("Access refused");
     expect(idleWord({ phase: "error", reason: "sign-in", service: org })).toBe("Access refused");
     expect(idleWord({ phase: "error", reason: "sign-in" })).toBe("Sign-in refused");
     // What the Ask box says under its field.
-    expect(unavailableLine(unansweredWord({ phase: "error", reason: "runtime", service: own }) ?? undefined)).toBe("Provider problem: I can't answer yet");
+    expect(unavailableLine(unansweredWord({ phase: "error", reason: "other", service: own }) ?? undefined)).toBe("Provider problem: I can't answer yet");
     expect(unavailableLine(unansweredWord({ phase: "error", reason: "other" }) ?? undefined)).toBe("Copilot problem: I can't answer yet");
+  });
+
+  it("says Reconnecting… while Ember starts the Copilot runtime again by itself, and never blames a provider for the runtime (reliability-performance-c2-3)", () => {
+    const own = { kind: "user" as const, host: "localhost" }, org = { kind: "admin" as const, host: "models.example.com" };
+    const lost = "Copilot stopped unexpectedly. Reconnecting…", stops = "Copilot keeps stopping. Press Check again to retry, or restart Ember.";
+    for (const service of [undefined, own, org]) {
+      expect(idleWord({ phase: "error", reason: "runtime", detail: lost, ...(service ? { service } : {}) })).toBe("Reconnecting…");
+      expect(unavailableLine(unansweredWord({ phase: "error", reason: "runtime", detail: lost, ...(service ? { service } : {}) }) ?? undefined)).toBe("Reconnecting: I can't answer yet");
+    }
+    // Given up (or it couldn't start): the runtime is Copilot's whatever the service, so no provider is blamed.
+    expect(idleWord({ phase: "error", reason: "runtime", detail: stops })).toBe("Copilot problem");
+    expect(idleWord({ phase: "error", reason: "runtime", detail: stops, service: own })).toBe("Connection problem");
+    expect(idleWord({ phase: "error", reason: "runtime", service: org })).toBe("Connection problem");
+    expect(unavailableLine(unansweredWord({ phase: "error", reason: "runtime", detail: stops, service: own }) ?? undefined)).toBe("Connection problem: I can't answer yet");
   });
 
   it("the reason goes once Ember is connected again", async () => {
@@ -1350,6 +1362,28 @@ describe("a runtime that dies or hangs", () => {
     sim.createGate = null;
     await vi.advanceTimersByTimeAsync(16_000);
     expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("says in the conversation and the bubble that Ember stopped reconnecting once it gives up, not that it still is (reliability-performance-c2-3)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const { host, screen } = makeHost({ healthMs: 1000 });
+    await host.start(TOKEN, "stored");
+    sim.ping = async () => { if (crashes < 5) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(crashes).toBe(5);
+    expect(host.getStatus().phase).toBe("ready");
+    // The sixth stop comes under a request: Ember says it is reconnecting, then gives up.
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(host.getStatus().detail).toBe("Copilot keeps stopping. Press Check again to retry, or restart Ember.");
+    const problems = host.getTranscript().filter(e => e.who === "problem").map(e => e.text);
+    expect(problems.at(-1)).toBe(LOST_GAVE_UP);
+    expect(problems).not.toContain(LOST_RECONNECTING);
+    expect(LOST_GAVE_UP).toBe("Copilot stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.");
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "error", thought: "Copilot keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.", actions: [{ id: "ui:settings", label: "Open settings" }] });
     await host.stop();
   });
 

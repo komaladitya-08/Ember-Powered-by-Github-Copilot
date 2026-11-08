@@ -15,7 +15,7 @@ import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { BubbleOwner, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, noAnswer, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
+import { BubbleOwner, LOST_GAVE_UP, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, noAnswer, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
 import { providerDown, type ActiveProvider, type TestResult } from "../provider";
 import { keyNeeded } from "../../shared/provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
@@ -694,13 +694,17 @@ export function stillConnectingTitle(service?: ActiveProvider["kind"]): string {
  * What Ember's handle says when nothing else is going on: a few words (the pill is narrow). The user's own provider
  * unreached is "Can't connect", not "Offline": a model server on this computer that isn't running (integrations-1).
  */
-export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks"> & { service?: AgentStatus["service"] }): string {
+export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks"> & { service?: AgentStatus["service"]; detail?: string }): string {
   if (s.phase === "ready") return "Ready";
   if (s.phase === "starting") return "Connecting…";
   if (s.phase === "signed-out") return "Not connected";
   if (s.waitingForTasks) return "Waiting for tasks";
   // Another model service in use is never called Copilot (accessibility-visual-c1-2: the Ask box said "Copilot problem").
   const kind = s.service?.kind;
+  // The Copilot runtime stopped and Ember starts it again by itself (lost(): a detail ending "Reconnecting…", as
+  // composerRefusal reads it); given up, or unable to start, it is the runtime's problem, never the provider's
+  // (reliability-performance-c2-3: "Provider problem" sent people to check a provider that was fine).
+  if (s.reason === "runtime") return s.detail?.endsWith("Reconnecting…") ? "Reconnecting…" : kind ? "Connection problem" : "Copilot problem";
   switch (s.reason) {
     case "network": return kind === "user" ? "Can't connect" : "Offline";
     case "sign-in": return kind ? "Access refused" : "Sign-in refused";
@@ -1650,13 +1654,18 @@ export class AgentHost {
    * (reliability-performance-c1-1: Home kept "ask me again in a moment" for good, under its own "Connected.").
    */
   private problemReconnected(): void {
-    const said = retainedConversationText(LOST_RECONNECTING).text;
+    this.problemNow(LOST_RECONNECTING, LOST_RECONNECTED);
+  }
+
+  /** The conversation's latest problem line that says `was` says `text` instead, in Home and the saved copy. */
+  private problemNow(was: string, text: string): void {
+    const said = retainedConversationText(was).text;
     const at = this.transcript.findLastIndex(e => e.who === "problem" && e.text === said);
     if (at < 0) return;
-    const was = this.transcript[at];
-    const now = { ...was, ...retainedConversationText(LOST_RECONNECTED) };
+    const old = this.transcript[at];
+    const now = { ...old, ...retainedConversationText(text) };
     this.transcript[at] = now;
-    if (this.unsaved.has(was)) this.unsaved.add(now);
+    if (this.unsaved.has(old)) this.unsaved.add(now);
     this.o.onTranscript?.(this.getTranscript());
     this.saveHistory();
   }
@@ -2374,6 +2383,12 @@ export class AgentHost {
       const recent = this.crashes.filter(t => Date.now() - t < 10 * 60_000);
       if (recent.length >= 5) {
         this.setStatus({ phase: "error", reason: "runtime", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." });
+        // What said Ember was reconnecting says it has stopped trying (reliability-performance-c2-3).
+        if (this.reconnectingShown) {
+          this.reconnectingShown = false;
+          this.presenter.gaveUp(LOST_RECONNECTING);
+          this.problemNow(LOST_RECONNECTING, LOST_GAVE_UP);
+        }
         void this.halt(false);
         return;
       }
