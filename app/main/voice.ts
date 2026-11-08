@@ -70,9 +70,10 @@ const ALIVE_MS = 15_000;
 const LISTEN_ONCE_MS = 8000;
 const LISTEN_ONCE_CHECK_MS = 3000;
 /**
- * What the voice line says while Listen once is open: "Hearing you…" was up from its first frame, though nobody had
- * spoken, and then turned into "No request heard." (voice-listening-c2-2). It stays as the user starts: a screen
- * reader announcing a change then would say it over their words (voice-listening-c2-1).
+ * What the voice line says while Listen once is open, or a follow-up's or a conversation's window: "Hearing you…" was
+ * up from its first frame, though nobody had spoken, and then turned into "No request heard." (voice-listening-c2-2,
+ * voice-listening-r3-2). It stays as the user starts: a screen reader announcing a change then would say it over their
+ * words (voice-listening-c2-1).
  */
 const LISTEN_ONCE_LISTENING = "Listening…";
 /**
@@ -1552,7 +1553,9 @@ export class VoiceService {
       }
       // A window whose request opens a conversation goes straight on into it: "Listening for “Ember”" for a moment between
       // them (Listen once's line with it) was said by a screen reader into the conversation, as a request (voice-listening-c3-1).
-      if (m.type === "listening" && (m.on || m.next !== "conversation")) this.setState(m.on ? "active" : "waiting");
+      // Only a wake's window hears the user from its start: a follow-up's or a conversation's waits for them, as Listen
+      // once does ("Hearing you…" was up for 30 s after each answer, the badge saying "Listening": voice-listening-r3-2).
+      if (m.type === "listening" && (m.on || m.next !== "conversation")) this.setState(m.on ? "active" : "waiting", m.on && m.window !== "wake" ? LISTEN_ONCE_LISTENING : undefined);
       if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason, ...(m.score !== undefined ? { score: m.score } : {}) });
       this.o.log.debug("voice.event", { type: m.type });
       this.o.onEvent(event, m.type === "utterance" ? { utterance: this.utterances } : undefined);

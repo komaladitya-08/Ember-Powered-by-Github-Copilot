@@ -511,6 +511,26 @@ describe("VoiceService", () => {
     expect(main).toContain(`if (manualCall && source !== manualCall.source) return { ...blocked("Ember is already listening."), reason: "listening" };`);
   });
 
+  it("says a follow-up's or a conversation's window is listening, and “Hearing you” only after a wake, where the user has just spoken (voice-listening-r3-2)", async () => {
+    // "Hearing you…" was up for up to 30 s after every answer though nobody spoke, while the handle's badge said "Listening".
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    const generation = (posted(proc, "init")[0] as { generation?: number }).generation;
+    for (const window of ["follow-up", "conversation"] as const) {
+      proc.emit("message", { generation, type: "listening", on: true, reason: window, window });
+      expect(states.at(-1), window).toEqual({ s: "active", detail: "Listening…" });
+      proc.emit("message", { generation, type: "listening", on: false, reason: "timeout", window });
+      expect(states.at(-1), window).toEqual({ s: "waiting", detail: undefined });
+    }
+    proc.emit("message", { generation, type: "listening", on: true, reason: "wake", window: "wake" });
+    expect(states.at(-1)).toEqual({ s: "active", detail: undefined });
+    expect(readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8")).toContain('active: "Hearing you…"');
+    expect(micBadge("active")!.label).toBe("Listening");
+  });
+
   it("tells the voice process what a screen reader will say as Listen once opens, only while one runs (voice-listening-c2-1)", async () => {
     for (const reader of [true, false]) {
       const { v } = service(true, { screenReaderOn: () => reader });
