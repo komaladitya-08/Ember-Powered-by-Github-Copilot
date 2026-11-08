@@ -291,14 +291,14 @@ describe("the ask box", () => {
 
   it("opens with room for an answer's follow-ups while the answer still comes in, so they land where the keyboard reaches them (accessibility-visual-c4-1)", async () => {
     const streaming = { ...IDLE_BUBBLE, visible: true, thought: "Tokyo is 9 hours", streaming: true };
-    expect(askSuggestionsComing({ bubble: streaming }, false)).toBe(true);
+    expect(askSuggestionsComing({ bubble: streaming }, false, true)).toBe(true);
     // An answer whole already (its follow-ups are offered, or none will be), nothing up, a step at work, or a question:
     // no room is kept for any.
-    expect(askSuggestionsComing({ bubble: { ...streaming, streaming: false } }, false)).toBe(false);
-    expect(askSuggestionsComing({ bubble: IDLE_BUBBLE }, false)).toBe(false);
-    expect(askSuggestionsComing({ bubble: { ...streaming, mood: "acting" as const } }, false)).toBe(false);
-    expect(askSuggestionsComing({ bubble: { ...streaming, actions: [{ id: "q1:once", label: "Allow" }] } }, false)).toBe(false);
-    expect(askSuggestionsComing({ bubble: streaming }, true)).toBe(false);
+    expect(askSuggestionsComing({ bubble: { ...streaming, streaming: false } }, false, true)).toBe(false);
+    expect(askSuggestionsComing({ bubble: IDLE_BUBBLE }, false, true)).toBe(false);
+    expect(askSuggestionsComing({ bubble: { ...streaming, mood: "acting" as const } }, false, true)).toBe(false);
+    expect(askSuggestionsComing({ bubble: { ...streaming, actions: [{ id: "q1:once", label: "Allow" }] } }, false, true)).toBe(false);
+    expect(askSuggestionsComing({ bubble: streaming }, true, true)).toBe(false);
     // The box keeps that room only where the answer coming in can still finish whole by Ember clear of it (as measured
     // live: 1280 x 800 at the default text size, Ember near the bottom; the box a row taller from the start, its bottom
     // where it was, so the field never moves when they come).
@@ -335,7 +335,30 @@ describe("the ask box", () => {
     // Main opens the box with it when nothing is offered yet (askOffers first).
     const { readFileSync } = await import("node:fs");
     const main = readFileSync("app/main/main.ts", "utf8");
-    expect(main).toContain("...(askOffers().length ? { suggestions: askOffers() } : askSuggestionsComing(lastState, !!confirmer?.waiting) ? { suggestionsComing: true } : {}),");
+    expect(main).toContain("...(askOffers().length ? { suggestions: askOffers() } : askSuggestionsComing(lastState, !!confirmer?.waiting, !!personalRef && settings.get().voice.suggest) ? { suggestionsComing: true } : {}),");
+  });
+
+  it("keeps no row for follow-ups with “Suggest what I might say next” off, where none can come: the box opens as it does once the answer is whole (companion-v5-2)", () => {
+    const streaming = { ...IDLE_BUBBLE, visible: true, thought: "Tokyo is 9 hours", streaming: true };
+    // Off, Ember offers nothing (PersonalVoice.current() is empty), so the row would stay blank for as long as the box
+    // is open: 188 px tall against 140 at 1280 x 800 Default, the field 48 px further from Ember.
+    expect(askSuggestionsComing({ bubble: streaming }, false, false)).toBe(false);
+    expect(askSuggestionsComing({ bubble: streaming }, false, true)).toBe(true);
+    const ask = new AskWindow();
+    ask.prepare();
+    const [win] = made;
+    win.emit("ready-to-show");
+    const opening = (suggests: boolean) => ({ sees: null, history: [], ...(askSuggestionsComing({ bubble: streaming }, false, suggests) ? { suggestionsComing: true } : {}) });
+    ask.show({ x: 640, y: 600, size: 60 }, { sees: null, history: [] });
+    const whole = { ...win.bounds };
+    ask.hide();
+    ask.show({ x: 640, y: 600, size: 60 }, opening(false));
+    expect(win.bounds).toEqual(whole);
+    ask.hide();
+    // On, the row is kept as before.
+    ask.show({ x: 640, y: 600, size: 60 }, opening(true));
+    expect(win.bounds.height).toBeGreaterThan(whole.height);
+    ask.hide();
   });
 
   it("tells an open box what it offers now on a channel of its own, and nothing while it is closed (companion-r2-1)", async () => {

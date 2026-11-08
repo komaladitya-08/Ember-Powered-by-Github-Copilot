@@ -1385,8 +1385,9 @@ function start(): void {
         sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened), listenOnce: listenOnceStatus("ask"),
         // Why a request would go unanswered now (not connected, offline): said before it is typed (companion-6).
         unavailable: unansweredWord(agent?.getStatus()) ?? undefined,
-        // None yet beside an answer still coming in: its row's room, for its follow-ups (accessibility-visual-c4-1).
-        ...(askOffers().length ? { suggestions: askOffers() } : askSuggestionsComing(lastState, !!confirmer?.waiting) ? { suggestionsComing: true } : {}),
+        // None yet beside an answer still coming in: its row's room, for its follow-ups (accessibility-visual-c4-1), only
+        // while Ember suggests any (companion-v5-2: with Suggest off the row stayed blank).
+        ...(askOffers().length ? { suggestions: askOffers() } : askSuggestionsComing(lastState, !!confirmer?.waiting, !!personalRef && settings.get().voice.suggest) ? { suggestionsComing: true } : {}),
       }, source),
     });
     const read = askContextRead = callContext;
