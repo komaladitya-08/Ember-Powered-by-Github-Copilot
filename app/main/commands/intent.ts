@@ -11,7 +11,7 @@
  */
 
 import type { Classification, ClassifyContext, CommandObject, Finding, GitFacts } from "./types";
-import { ALWAYS_ASK, PKG_PRUNES, PKG_REMOVES } from "./types";
+import { ALWAYS_ASK, PKG_CLEANS, PKG_PRUNES, PKG_REMOVES } from "./types";
 import { hasVerb, hasWord, joinList, nameNamed, userTokens, userWordList, verbForms } from "./words";
 import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, resolveTargetPath, type PathEnv } from "./paths";
 
@@ -667,7 +667,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
   "pkg.install": (fs, w, ctx) => {
     // Words that install never cover a removal, nor words that remove an install (commands-remote-r1).
     const removes = fs.every(f => f.says === PKG_REMOVES);
-    if ((!removes && fs.some(f => f.says === PKG_REMOVES)) || fs.some(f => f.says === PKG_PRUNES)) return null;
+    if ((!removes && fs.some(f => f.says === PKG_REMOVES)) || fs.some(f => f.says === PKG_PRUNES || f.says === PKG_CLEANS)) return null;
     if (!asks(w, removes ? REMOVE_WORDS : ROW_VERBS["pkg.install"].filter(v => !REMOVE_WORDS.includes(v)))) return null;
     const pkgs: string[] = [];
     for (const f of fs) {
@@ -821,6 +821,7 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
     // Removing what the project doesn't list is named only as a prune (commands-remote-r3-2: "install the dependencies"
     // doesn't ask for it).
     if (f.says === PKG_PRUNES) return hasVerb(w.list, ["prune"]);
+    if (f.says === PKG_CLEANS) return hasVerb(w.list, ["autoclean"]);
     if (row) return hasVerb(w.list, ROW_VERBS[row] ?? []) && objectNamed;
     const program = f.program.split(" ").pop() ?? "";
     return (program !== "" && (w.list.includes(program.toLowerCase()) || nameNamed(program, w.raw))) || (f.objects.length > 0 && objectNamed);
@@ -1002,7 +1003,7 @@ export function namedKind(findings: readonly Finding[], userWords: string): bool
   const w = wordsOf(affirmed(userWords));
   return findings.some(f => {
     if (leftOut(f, userWords)) return false;
-    if (f.says === PKG_PRUNES) return hasVerb(w.list, PRUNE_KIND_VERBS);
+    if (f.says === PKG_PRUNES || f.says === PKG_CLEANS) return hasVerb(w.list, PRUNE_KIND_VERBS);
     if (KIND_PHRASES[f.rule]?.(w.list)) return true;
     const row = rowOf(f, findings);
     return hasVerb(w.list, [...(row ? KIND_VERBS[row] ?? [] : []), ...(RULE_KIND_VERBS[f.rule] ?? [])]);

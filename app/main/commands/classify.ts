@@ -11,7 +11,7 @@
 import type {
   Classification, ClassifyContext, CommandObject, DangerClass, Finding, ParsedCommand, ShellFamily, ShellId, WindowsContext,
 } from "./types";
-import { PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY } from "./types";
+import { PKG_CLEANS, PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY } from "./types";
 import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
@@ -4605,7 +4605,9 @@ function removesPackages(h: H): boolean {
 function languageInstall(h: H, specs: Arg[], widening: string[] = []): void {
   const objects = packageObjects(h, specs);
   // `npm prune` removes what package.json doesn't list (commands-remote-r1).
-  const says = removesPackages(h) ? PKG_REMOVES : packageVerb(h) === "prune" ? PKG_PRUNES : "Installs packages (they can run their own setup code).";
+  // `yarn autoclean --force` deletes files in node_modules (commands-remote-r1: it read "Installs packages").
+  const cleans = packageVerb(h) === "autoclean" && h.args.some(a => a.v === "--force" || a.v === "-F");
+  const says = removesPackages(h) ? PKG_REMOVES : packageVerb(h) === "prune" ? PKG_PRUNES : cleans ? PKG_CLEANS : "Installs packages (they can run their own setup code).";
   h.e.add("system", "pkg.language", says, { objects, widening, program: `${h.prog} ${h.args.find(a => !isOption(a))?.v ?? ""}`.trim() });
 }
 

@@ -278,6 +278,8 @@ describe("decideCommand: the rules in order", () => {
       expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.unasked);
     }
     expect(decide("npm prune", { words: "prune the packages" }).says).toEqual(["Removes packages the project doesn't list."]);
+    // yarn autoclean --force deletes files in the packages: never "Installs packages" (commands-remote-r1).
+    expect(decide("yarn autoclean --force", { words: "clean up node_modules" }).says).toEqual(["Deletes files in node_modules that .yarnclean lists.", LINES.inexact]);
     expect(decide("crontab jobs.txt", { words: "fix the readme" }).says).toContain(LINES.unasked);
     expect(decide("npm prune", { words: "fix the readme" }).says).toContain(LINES.unasked);
   });

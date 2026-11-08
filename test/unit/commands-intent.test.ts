@@ -164,6 +164,9 @@ describe("the other rows", () => {
     ["npm prune", "install the dependencies"],
     ["npm prune", "remove the unused packages"],
     ["npm prune", "prune the packages"],
+    // Nor is cleaning files out of the installed packages (commands-remote-r1).
+    ["yarn autoclean --force", "install the dependencies"],
+    ["yarn autoclean -F", "clean up node_modules"],
     // Words that install don't cover a removal, nor the other way round (commands-remote-r1).
     ["npm uninstall lodash", "install lodash"],
     ["npm install lodash", "uninstall lodash"],
