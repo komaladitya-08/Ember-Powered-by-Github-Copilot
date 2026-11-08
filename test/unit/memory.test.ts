@@ -122,6 +122,40 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBeNull();
   });
 
+  // The commonest ways to say a PIN or a device's code, which round two's guard still kept (memory-1, round three).
+  it.each([
+    ["My PIN number is 1234"], ["PIN code is 1234"], ["My PIN code: 1234"], ["The PIN number for my card is 1234"],
+    ["My SIM PIN number is 0000"], ["My passcode number is 123456"], ["My PIN no. is 4821"], ["pin no. 1234"], ["My phone code is 4821"],
+    ["My iPhone code is 4821"], ["The iPad code is 482193"], ["My laptop code is 4821"], ["The token for the API is abc123def456ghi789"],
+  ])("refuses %j, the way a PIN or a device's code is mostly said (memory-1)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+  });
+
+  // Ordinary words that round two's wider place codes refused (memory-r6): Projects' requests and files and task views
+  // share this guard, so each of these was refused there as if it held a password.
+  it.each([
+    ["Why does the backup exit code 255 happen?"], ["The server returns a security error code 403"], ["Access denied code 403 when I log in"],
+    ["Explain why the access control code 401 is returned"], ["The access log code 404 lines"], ["Our office zip code is 90210"],
+    ["Head office ZIP code 90210"], ["recovery mode code 123"], ["the building permit code 2021"], ["The alarm status code 200 means OK"],
+    ["Fix the gate timeout code 504 handling"], ["The cost code for the office is 4821"], ["The area code for the office is 0113"],
+    ["The project code for the London office is 12345"], ["Our office phone code is 0113"], ["The office extension code is 4821"],
+    ["Security update code 2024"], ["HTTP security error code 403"], ["The office cost code is 4821"], ["The office Teams code is 482193"],
+    ["The house style code 123"], ["The entry point code 0x400 loads"], ["The safe mode exit code 139 means a segfault"],
+    ["The area code for the building is 0113"], ["The phone code for Leeds is 0113"], ["The token count is 4096"],
+    ["The access token is short-lived"], ["My phone code is in the drawer"],
+  ])("keeps %j, which names a status, area or cost code and no lock (memory-r6)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // The codes that open something still go, said every way round two's fix was for (memory-1, memory-r6).
+  it.each([
+    ["The office door code is 4821"], ["Garage opener code 7734"], ["The garage remote code is 5512"], ["The house alarm code is 1234"],
+    ["The building entry code is 4821"], ["The code for the office door is 4821"], ["The office keycode is 4821"], ["The access code is 482193"],
+    ["My security code is 123"], ["Backup codes 1234-5678"], ["The recovery code is 482913"], ["The building code is 4821"],
+  ])("still refuses %j, a code that opens something (memory-r6)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+  });
+
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
     [`Stripe key sk_live_${run(24)}`], [`Restricted key rk_test_${run(24)}`], [`Webhook signing secret whsec_${run(32)}`],
