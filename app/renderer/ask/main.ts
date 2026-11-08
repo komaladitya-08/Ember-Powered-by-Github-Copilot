@@ -117,9 +117,9 @@ const field = input.parentElement!;
 const listenRow = document.getElementById("listen-once-row")!;
 let suggested: string[] = [];
 /**
- * The suggestions' row has its room in this opening (it opened with some): kept until the next opening, so the box keeps
- * its height and the field doesn't move while it is open (companion-r3-1: a question coming or going moved an empty
- * field 48 px).
+ * The suggestions' row has its room in this opening (it opened with some, or beside an answer still coming in whose
+ * follow-ups land there: accessibility-visual-c4-1): kept until the next opening, so the box keeps its height and the
+ * field doesn't move while it is open (companion-r3-1: a question coming or going moved an empty field 48 px).
  */
 let suggestRoom = false;
 /**
@@ -218,12 +218,13 @@ window.emberAsk.onListenOnce(showListenOnce);
  * room, so the box keeps its height and the field doesn't jump (companion-v1: main keeps the box's bottom by Ember, and
  * the first letter moved the field 48 px down).
  */
-function showSuggestions(list: string[], opening = false): void {
+function showSuggestions(list: string[], opening = false, coming = false): void {
   offered = null;
-  if (opening) suggestRoom = list.length > 0;
+  if (opening) suggestRoom = list.length > 0 || coming;
   const showing = suggested;
-  // Only into the room the box opened with: ones that come into a box that opened with none wait for its next opening
-  // (the bubble shows them under their answer meanwhile), and none puts the row away with its chips (companion-r3-1).
+  // Only into the room the box opened with: ones that come into a box that opened with none (nor beside an answer still
+  // coming in) wait for its next opening (the bubble shows them under their answer meanwhile), and none puts the row
+  // away with its chips (companion-r3-1).
   suggested = suggestRoom ? list.slice(0, 3) : [];
   if (!suggested.length && !opening) { syncSuggestions(); return; }
   drawSuggestions();
@@ -231,9 +232,10 @@ function showSuggestions(list: string[], opening = false): void {
   if (opening) holdSuggestRoom();
   // More rows than it opened with (the answer back with its offers, where the box opened beside "Okay, I won't."): the
   // ones it shows that are still offered stay and the others wait for its next opening, as for a box that opened with
-  // none, so the field doesn't move up either (companion-v4-1).
+  // none, so the field doesn't move up either (companion-v4-1). Into a row showing none (the room kept for follow-ups,
+  // or a question put them all away): those that fit it, in order.
   else if (pastSuggestRoom()) {
-    suggested = suggested.filter(t => showing.includes(t));
+    if (showing.length) suggested = suggested.filter(t => showing.includes(t));
     drawSuggestions();
     while (suggested.length && pastSuggestRoom()) { suggested.pop(); drawSuggestions(); }
     syncSuggestions();
@@ -251,10 +253,15 @@ function drawSuggestions(): void {
 }
 /** The row's layout height (the opening's scale doesn't count), to the fraction of a pixel. */
 const suggestHeight = (): number => parseFloat(getComputedStyle(suggest).height) || 0;
-/** The row's room as it is laid out now, held until the next opening (or a change of the box's width). */
+/**
+ * The row's room as it is laid out now, held until the next opening (or a change of the box's width): kept for follow-ups
+ * still to come (none in it yet), one row of chips, measured with one in it while it is out of sight.
+ */
 function holdSuggestRoom(): void {
   suggest.style.minHeight = "";
+  const probe = suggestRoom && !suggested.length ? suggest.appendChild(Object.assign(document.createElement("button"), { type: "button", textContent: "Yes", tabIndex: -1 })) : null;
   suggestHeld = { height: suggestRoom ? suggestHeight() : 0, width: form.clientWidth };
+  probe?.remove();
   suggest.style.minHeight = suggestHeld.height ? `${suggestHeld.height}px` : "";
 }
 const pastSuggestRoom = (): boolean => suggestHeld.height > 0 && suggestHeight() > suggestHeld.height + 0.5;
@@ -350,8 +357,9 @@ window.emberAsk.onContext(c => {
     setTimeout(grown, 250);
     tip.hidden = c.tip !== true;
     tip.textContent = tip.title = c.tip === true ? WAIT_TIP : "";
-    shownRows = boxRows(1, false, c.tip === true, c.suggestions?.length ? 1 : 0, listenOnceShown(c.listenOnce) ? 2 : 0);
-    showSuggestions(c.suggestions ?? [], true);
+    const coming = !c.suggestions?.length && c.suggestionsComing === true;
+    shownRows = boxRows(1, false, c.tip === true, c.suggestions?.length ? 1 : coming ? 2 : 0, listenOnceShown(c.listenOnce) ? 2 : 0);
+    showSuggestions(c.suggestions ?? [], true, coming);
   }
   if (c.listenOnce) showListenOnce(c.listenOnce);
   else fit();

@@ -1222,6 +1222,85 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, true))).toBe(false);
   });
 
+  it("keeps Edit's caution when a Stop gives my message back above the request I'm editing, and Cancel edit keeps it (home-r4-1)", () => {
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true })).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above the request you're editing. Sending that request again may repeat actions.");
+    expect(conv.composerEditCancelled(0, true)).toBe("Edit cancelled. Your previous draft is restored.");
+    expect(conv.composerEditCancelled(1, false)).toBe("Edit cancelled. The message that wasn't sent is back here to edit or send again.");
+    expect(conv.composerEditCancelled(2, false)).toBe("Edit cancelled. The 2 messages that weren't sent are back here to edit or send again.");
+    expect(conv.composerEditCancelled(1, true)).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent.");
+    // Notes about the draft: another request's wait leaves them be.
+    expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true }))).toBe(false);
+    expect(conv.composerLineYields(conv.composerEditCancelled(1, false))).toBe(false);
+  });
+
+  it("says when the messages a Stop gave back are together too long to send, never \"send again\" (home-c4-2)", () => {
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, false, { over: true })).toBe("Response stopped. Running tasks continue. Your 2 messages weren't sent, so they're back here. Together they're over 2,000 characters: send them one at a time.");
+    expect(conv.composerGivenBack(conv.COMPOSER_SAYS.stoppedAll, 1, true, { over: true })).toBe("Stopped everything, running tasks included. Your message wasn't sent, so it's back here, above what you were writing. Together they're over 2,000 characters: send them one at a time.");
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true, over: true })).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above the request you're editing. Together they're over 2,000 characters: send them one at a time. Sending that request again may repeat actions.");
+    expect(conv.composerEditCancelled(2, false, true)).toBe("Edit cancelled. The 2 messages that weren't sent are back here. Together they're over 2,000 characters: send them one at a time.");
+    expect(conv.composerEditCancelled(1, true, true)).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent. Together they're over 2,000 characters: send them one at a time.");
+    // Each goes, as the over-limit note does, once what is there fits: with no edit open, for an empty line; with one,
+    // for Edit's caution (home-v5-2).
+    for (const line of [conv.COMPOSER_OVER, conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, false, { over: true }), conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true, over: true }), conv.composerEditCancelled(2, false, true)]) {
+      expect(conv.composerSaysOver(line), line).toBe(true);
+      expect(conv.composerLineFits(line, false), line).toBe("");
+    }
+    for (const line of ["", conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2), conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true }), conv.composerEditCancelled(2, false), conv.CONVERSATION_EDIT]) {
+      expect(conv.composerSaysOver(line), line).toBe(false);
+      expect(conv.composerLineFits(line, true), line).toBeNull();
+    }
+  });
+
+  it("keeps Edit's caution when what a Stop gave back above my edit fits again, and clears the line only with no edit open (home-v5-2)", () => {
+    for (const line of [conv.COMPOSER_OVER, conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true, over: true }), conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true, over: true, draftOver: true })]) {
+      expect(conv.composerLineFits(line, true), line).toBe(conv.CONVERSATION_EDIT);
+      expect(conv.composerLineFits(line, false), line).toBe("");
+    }
+  });
+
+  it("says to shorten the draft or edited request that is over the limit by itself, never to send one at a time (home-v5-3)", () => {
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { over: true, draftOver: true })).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above what you were writing, which is longer than 2,000 characters: shorten it to send it.");
+    expect(conv.composerGivenBack(conv.COMPOSER_SAYS.stoppedAll, 2, true, { editing: true, over: true, draftOver: true })).toBe("Stopped everything, running tasks included. Your 2 messages weren't sent, so they're back here, above the request you're editing, which is longer than 2,000 characters: shorten it to send it. Sending that request again may repeat actions.");
+    // With no draft under them, each of the messages fits by itself: one at a time.
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, false, { over: true, draftOver: true })).toBe(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, false, { over: true }));
+    expect(conv.composerEditCancelled(1, true, true, { draftOver: true })).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent. That draft is longer than 2,000 characters: shorten it to send it.");
+    // Said over the limit: it goes once what is there fits, and another request's wait leaves it be.
+    for (const line of [conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { over: true, draftOver: true }), conv.composerEditCancelled(1, true, true, { draftOver: true })]) {
+      expect(conv.composerSaysOver(line), line).toBe(true);
+      expect(conv.composerLineYields(line), line).toBe(false);
+    }
+  });
+
+  it("says Cancel edit kept the messages a Stop gave back as I left them (home-v5-1)", () => {
+    expect(conv.composerEditCancelled(1, true, false, { changed: true })).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, and your previous draft is restored below it.");
+    expect(conv.composerEditCancelled(2, true, false, { changed: true })).toBe("Edit cancelled. The 2 messages that weren't sent stay here with your changes, and your previous draft is restored below them.");
+    expect(conv.composerEditCancelled(1, false, false, { changed: true })).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, to edit or send again.");
+    expect(conv.composerEditCancelled(2, false, true, { changed: true })).toBe("Edit cancelled. The 2 messages that weren't sent stay here with your changes. Together they're over 2,000 characters: send them one at a time.");
+    // None kept (the person deleted them): only the draft from before Edit (home-w5-2).
+    expect(conv.composerEditCancelled(0, true, false, { changed: true })).toBe("Edit cancelled. Your previous draft is restored.");
+    for (const line of [conv.composerEditCancelled(1, true, false, { changed: true }), conv.composerEditCancelled(2, false, true, { changed: true })]) {
+      expect(conv.composerLineYields(line), line).toBe(false);
+    }
+  });
+
+  it("says a second Edit keeps the messages a Stop gave back above it, and when they're over the limit with it (home-w5-3)", () => {
+    expect(conv.composerEditAgain(1)).toBe("Review this as a new request, then choose Send. The message that wasn't sent stays above it. Sending again may repeat actions; nothing is sent by choosing Edit.");
+    expect(conv.composerEditAgain(2, true)).toBe("Review this as a new request, then choose Send. The 2 messages that weren't sent stay above it. Together they're over 2,000 characters: send them one at a time. Sending again may repeat actions; nothing is sent by choosing Edit.");
+    // A note about the draft: another request's wait leaves it be; once what is there fits, Edit's caution stays.
+    for (const line of [conv.composerEditAgain(1), conv.composerEditAgain(2, true)]) expect(conv.composerLineYields(line), line).toBe(false);
+    expect(conv.composerLineFits(conv.composerEditAgain(2, true), true)).toBe(conv.CONVERSATION_EDIT);
+    expect(conv.composerLineFits(conv.composerEditAgain(1), true)).toBeNull();
+  });
+
+  it("never says the request I edited stayed after Cancel edit, since it never does (home-w5-4)", () => {
+    for (const messages of [0, 1, 2]) for (const draft of [false, true]) for (const over of [false, true]) for (const changed of [false, true]) {
+      const line = conv.composerEditCancelled(messages, draft, over, { changed });
+      expect(line, line).not.toMatch(/request you edited|repeat actions/);
+      // Said over the limit, it goes once what is there fits, as no edit is open: nothing it said is left unsaid.
+      expect(conv.composerLineFits(line, false), line).toBe(over && messages ? "" : null);
+    }
+  });
+
   it("lets another request's wait take the composer's line only from an earlier outcome, never from a note about my draft (home-c3-1)", () => {
     for (const line of ["", conv.COMPOSER_SAYS.replied, conv.COMPOSER_SAYS.replyFailed, conv.COMPOSER_SAYS.noReply, conv.COMPOSER_SAYS.stoppedAll, conv.COMPOSER_SAYS.copied, conv.COMPOSER_SAYS.editCancelled, conv.CONVERSATION_STOPPED, conv.CONVERSATION_NOTHING_TO_STOP]) {
       expect(conv.composerLineYields(line), line).toBe(true);

@@ -37,6 +37,24 @@ export interface StatusFacts {
   answering?: boolean;
   /** What was asked waits, unsent, for a switch of model service (main's "held" turn: home-r4-4). */
   switching?: boolean;
+  /** Ember's own model connection stopped: it reconnects by itself, or it stopped (runtimeState). */
+  runtime?: RuntimeState;
+}
+
+/** Ember's own model connection (its runtime) when it stopped: starting again by itself, or not (it gave up, or can't start). */
+export type RuntimeState = "reconnecting" | "stopped" | null;
+
+/**
+ * Whether the agent's status is Ember's own model connection that stopped, from its reason and words: "reconnecting"
+ * while lost() starts it again (a detail ending "Reconnecting…", as the handle's idleWord and composerRefusal read it;
+ * also when the service stopped answering a request), "stopped" when it gave up or can't start, else null. Never the
+ * provider's or Copilot's sign-in, which are fine then (accessibility-visual-c1-2: the panel said "Not connected" with
+ * "Check my provider…" while the handle and Ask said "Reconnecting…").
+ */
+export function runtimeState(a: { phase?: string | null; reason?: string; detail?: string } | null | undefined): RuntimeState {
+  if (a?.phase !== "error") return null;
+  if ((a.reason === "runtime" || a.reason === "not-answering") && a.detail?.endsWith("Reconnecting…")) return "reconnecting";
+  return a.reason === "runtime" ? "stopped" : null;
 }
 
 /** "1 task", "2 tasks". */
@@ -51,6 +69,7 @@ export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
   if (f.locked) return { word: f.held ? "Locked until a restart" : "Locked by your organisation", ring: "error" };
   if (f.failing) return { word: "Needs setting up", ring: "error" };
   if (f.phase === "error" && f.waitingForTasks) return { word: f.service ? "Waiting for the model service" : "Waiting for Copilot", ring: "starting" };
+  if (f.phase === "error" && f.runtime === "reconnecting") return { word: "Reconnecting…", ring: "starting" };
   if (f.phase === "signed-out" || f.phase === "error") return { word: "Not connected", ring: "error" };
   if (f.phase === "starting" || f.phase === null) return { word: "Connecting…", ring: "starting" };
   if (f.asking) return { word: f.asking === 1 ? "A task needs you" : `${f.asking} tasks need you`, ring: "needs" };
@@ -64,8 +83,11 @@ export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
  * The status panel's connect button while Ember isn't connected, by the service that isn't (the agent's status kind):
  * Copilot's sign-in, the user's own provider's details, or where the organisation's service says why (first-run-r1).
  * `waiting`: signed out while the user's own provider waits for its card, which is the way on (integrations-r3-1).
+ * `runtime`: Ember's own model connection stopped (runtimeState): where Check again is, never the provider's details or
+ * Copilot's sign-in, which are fine (accessibility-visual-c1-2).
  */
-export function connectLabel(service?: string, waiting = false): string {
+export function connectLabel(service?: string, waiting = false, runtime: RuntimeState = null): string {
+  if (runtime) return "Models & connections…";
   return service === "user" || waiting ? "Check my provider…" : service ? "Models & connections…" : "Connect Copilot…";
 }
 
@@ -141,8 +163,8 @@ export function todayCounts(entries: readonly ActivityEntry[], now = new Date())
 
 /**
  * Today, from the same tasks Task activity lists, so the panel and the list below it always agree: how many need the
- * user, are at work, are done, didn't finish, stopped or stopped with no answer in time (a question nobody answered,
- * in its row's words: tasks-approvals-r3-1), and the steps the user allowed ("1 needs you · 1 done · 1 didn't finish ·
+ * user, are at work, are done, didn't finish, stopped or got no answer in time (a question nobody answered, in its
+ * row's words: tasks-approvals-r3-1), and the steps the user allowed ("1 needs you · 1 done · 1 didn't finish ·
  * 1 approval"). Tasks of earlier runs today are only in the audit (`audit`): counted as "earlier" when the audit has
  * more than this run's list. Only the tasks begun today count.
  */
@@ -159,7 +181,8 @@ export function todaySummary(tasks: readonly Pick<TaskEntry, "status" | "activit
     by(["done"]) ? `${by(["done"])} done` : "",
     by(["failed"]) ? `${by(["failed"])} didn't finish` : "",
     by(["stopped"]) ? `${by(["stopped"])} stopped` : "",
-    unanswered ? `${unanswered} ${STATUS_WORDS.unanswered.toLowerCase()}` : "",
+    // A count reads as a clause, as its neighbours do, in the row's own words ("2 got no answer in time"): accessibility-visual-r4-1.
+    unanswered ? `${unanswered} got ${STATUS_WORDS.unanswered.toLowerCase()}` : "",
     earlier ? `${count(earlier, "earlier task")}` : "",
     approvals ? count(approvals, "approval") : "",
   ].filter(Boolean);

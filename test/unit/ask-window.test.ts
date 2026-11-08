@@ -18,7 +18,7 @@ interface FakeWindow {
 }
 
 vi.mock("electron", () => {
-  const display = { workArea: { x: 0, y: 0, width: 1280, height: 800 } };
+  const display = { workArea: { x: 0, y: 0, width: 1280, height: 800 }, bounds: { x: 0, y: 0, width: 1280, height: 800 } };
   class BrowserWindow implements FakeWindow {
     shown = 0; focused = 0; visible = false; handlers = new Map<string, (() => void)[]>();
     bounds = { x: 0, y: 0, width: 560, height: 92 };
@@ -60,8 +60,8 @@ vi.mock("electron", () => {
   };
 });
 
-const { AskWindow, MAC_SETTLE_MS, stepsAsideFor } = await import("../../app/main/ask");
-const { IDLE_BUBBLE, askSuggestions } = await import("../../app/shared/overlay");
+const { AskWindow, MAC_SETTLE_MS, roomForAnswer, stepsAsideFor } = await import("../../app/main/ask");
+const { IDLE_BUBBLE, askSuggestions, askSuggestionsComing } = await import("../../app/shared/overlay");
 
 afterEach(() => { made.length = 0; menus.length = 0; vi.useRealTimers(); });
 
@@ -230,6 +230,33 @@ describe("the ask box", () => {
     expect(win.bounds).toEqual(aside);
   });
 
+  it("steps aside again for the same question once it has grown under the field, and only then (companion-c4-1)", () => {
+    type Box = { x: number; y: number; width: number; height: number };
+    const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+    let bubble: Box | null = null;
+    const ask = new AskWindow({ bubble: () => bubble });
+    ask.prepare();
+    const [win] = made;
+    win.emit("ready-to-show");
+    ask.show({ x: 687, y: 113, size: 60 });
+    // A question comes up under the field, as wide as there is no room beside it: the box steps aside, under it.
+    bubble = { x: 380, y: 155, width: 520, height: 224 };
+    ask.bubbleChanged("q1:once,q1:always,q1:deny");
+    const aside = { ...win.bounds };
+    expect(overlaps(aside, bubble)).toBe(false);
+    // A spoken yes that wasn't taken adds its note: the same question (the same answers), 63 px taller, now under the
+    // field, which covered the note's end and the keys it names. The box steps aside again, clear of all of it.
+    bubble = { ...bubble, height: 287 };
+    expect(overlaps(aside, bubble)).toBe(true);
+    ask.bubbleChanged("q1:once,q1:always,q1:deny");
+    expect(overlaps(win.bounds, bubble), JSON.stringify(win.bounds)).toBe(false);
+    // Still once for each size: no dance after a question that only moved, or grew no further.
+    const again = { ...win.bounds };
+    bubble = { ...again, height: 287 };
+    ask.bubbleChanged("q1:once,q1:always,q1:deny");
+    expect(win.bounds).toEqual(again);
+  });
+
   it("steps aside for a question or Listen once's \"Listening…\", never for an answer it can be typed beside (companion-c1-1)", () => {
     const actions = (...ids: string[]) => ids.map(id => ({ id, label: id }));
     expect(stepsAsideFor({ visible: true, mood: "attention", actions: actions("q4:once", "q4:always", "q4:deny") })).toBe("q4:once,q4:always,q4:deny");
@@ -260,6 +287,78 @@ describe("the ask box", () => {
     expect(askSuggestions({ bubble: answer, suggest: null }, items, false)).toEqual(["Remind me in an hour"]);
     // An answer's own buttons (Read all, Try again) are no question.
     expect(askSuggestions({ ...s, bubble: { ...answer, actions: [{ id: "ui:more", label: "Read all" }] } }, items, false)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
+  });
+
+  it("opens with room for an answer's follow-ups while the answer still comes in, so they land where the keyboard reaches them (accessibility-visual-c4-1)", async () => {
+    const streaming = { ...IDLE_BUBBLE, visible: true, thought: "Tokyo is 9 hours", streaming: true };
+    expect(askSuggestionsComing({ bubble: streaming }, false, true)).toBe(true);
+    // An answer whole already (its follow-ups are offered, or none will be), nothing up, a step at work, or a question:
+    // no room is kept for any.
+    expect(askSuggestionsComing({ bubble: { ...streaming, streaming: false } }, false, true)).toBe(false);
+    expect(askSuggestionsComing({ bubble: IDLE_BUBBLE }, false, true)).toBe(false);
+    expect(askSuggestionsComing({ bubble: { ...streaming, mood: "acting" as const } }, false, true)).toBe(false);
+    expect(askSuggestionsComing({ bubble: { ...streaming, actions: [{ id: "q1:once", label: "Allow" }] } }, false, true)).toBe(false);
+    expect(askSuggestionsComing({ bubble: streaming }, true, true)).toBe(false);
+    // The box keeps that room only where the answer coming in can still finish whole by Ember clear of it (as measured
+    // live: 1280 x 800 at the default text size, Ember near the bottom; the box a row taller from the start, its bottom
+    // where it was, so the field never moves when they come).
+    const sent: [string, unknown][] = [];
+    const ask = new AskWindow();
+    ask.prepare();
+    const [win] = made;
+    win.webContents.send = (ch: string, t: unknown) => { sent.push([ch, t]); };
+    win.emit("ready-to-show");
+    const told = () => sent.filter(([ch]) => ch === "agent:ask-context").at(-1)?.[1] as { suggestionsComing?: boolean } | undefined;
+    ask.show({ x: 640, y: 600, size: 60 }, { sees: null, history: [] });
+    const plain = { ...win.bounds };
+    ask.hide();
+    ask.show({ x: 640, y: 600, size: 60 }, { sees: null, history: [], suggestionsComing: true });
+    expect(win.bounds.height).toBeGreaterThan(plain.height);
+    expect(win.bounds.y + win.bounds.height).toBe(plain.y + plain.height);
+    expect(told()?.suggestionsComing).toBe(true);
+    ask.hide();
+    // Where the row would take the room the finished answer needs (1024 x 768 at Larger text, Ember in the middle, the
+    // box above it: 58,080 px² of the answer went under the field with the row kept), none is kept, and the page isn't
+    // told to keep any: the follow-ups wait for the next opening, as before.
+    const display = { x: 0, y: 0, width: 1024, height: 768 };
+    const tall = { x: 195, y: 245, width: 728, height: 236 }, short = { x: 195, y: 308, width: 728, height: 173 };
+    expect(roomForAnswer(tall, { x: 512, y: 450, size: 60 }, display, 1.3)).toBe(false);
+    // Ember at the top, the box under it: the room below the box is the answer's (1024 x 768 Larger), yet at 1280 x 800
+    // Default there is room for both.
+    expect(roomForAnswer({ x: 195, y: 245, width: 728, height: 236 }, { x: 512, y: 110, size: 60 }, display, 1.3)).toBe(false);
+    expect(roomForAnswer({ x: 195, y: 245, width: 728, height: 173 }, { x: 512, y: 110, size: 60 }, display, 1.3)).toBe(true);
+    expect(roomForAnswer({ x: 360, y: 149, width: 560, height: 188 }, { x: 640, y: 110, size: 60 }, { x: 0, y: 0, width: 1280, height: 800 }, 1)).toBe(true);
+    // Lower on a 1024 x 768 screen at Larger text there is room above the box again, so it is kept there.
+    expect(roomForAnswer({ x: 195, y: 355, width: 728, height: 236 }, { x: 512, y: 560, size: 60 }, display, 1.3)).toBe(true);
+    // Opened without Ember to go by: none is assumed.
+    expect(roomForAnswer(short, null, display, 1)).toBe(false);
+    // Main opens the box with it when nothing is offered yet (askOffers first).
+    const { readFileSync } = await import("node:fs");
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("...(askOffers().length ? { suggestions: askOffers() } : askSuggestionsComing(lastState, !!confirmer?.waiting, !!personalRef && settings.get().voice.suggest) ? { suggestionsComing: true } : {}),");
+  });
+
+  it("keeps no row for follow-ups with “Suggest what I might say next” off, where none can come: the box opens as it does once the answer is whole (companion-v5-2)", () => {
+    const streaming = { ...IDLE_BUBBLE, visible: true, thought: "Tokyo is 9 hours", streaming: true };
+    // Off, Ember offers nothing (PersonalVoice.current() is empty), so the row would stay blank for as long as the box
+    // is open: 188 px tall against 140 at 1280 x 800 Default, the field 48 px further from Ember.
+    expect(askSuggestionsComing({ bubble: streaming }, false, false)).toBe(false);
+    expect(askSuggestionsComing({ bubble: streaming }, false, true)).toBe(true);
+    const ask = new AskWindow();
+    ask.prepare();
+    const [win] = made;
+    win.emit("ready-to-show");
+    const opening = (suggests: boolean) => ({ sees: null, history: [], ...(askSuggestionsComing({ bubble: streaming }, false, suggests) ? { suggestionsComing: true } : {}) });
+    ask.show({ x: 640, y: 600, size: 60 }, { sees: null, history: [] });
+    const whole = { ...win.bounds };
+    ask.hide();
+    ask.show({ x: 640, y: 600, size: 60 }, opening(false));
+    expect(win.bounds).toEqual(whole);
+    ask.hide();
+    // On, the row is kept as before.
+    ask.show({ x: 640, y: 600, size: 60 }, opening(true));
+    expect(win.bounds.height).toBeGreaterThan(whole.height);
+    ask.hide();
   });
 
   it("tells an open box what it offers now on a channel of its own, and nothing while it is closed (companion-r2-1)", async () => {

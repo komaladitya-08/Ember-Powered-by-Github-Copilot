@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
+import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage, shownText, type ShownNode } from "../../app/renderer/home/search-copy";
 import { checksNote, COMPOSER_HELD, COMPOSER_THINKING, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import { formatDoctor } from "../../app/main/doctor";
@@ -73,7 +73,31 @@ describe("Home's status panel", () => {
     expect(connectLabel("admin")).toBe("Models & connections…");
     // Signed out while my own provider's note waits: its details, never Copilot's sign-in (integrations-r3-1).
     expect(connectLabel(undefined, true)).toBe("Check my provider…");
-    expect(fs.readFileSync("app/renderer/home/main.ts", "utf8")).toContain("setText(\"p-connect\", connectLabel(agent?.service?.kind, !!waitingFor()));");
+    expect(fs.readFileSync("app/renderer/home/main.ts", "utf8")).toContain("setText(\"p-connect\", connectLabel(agent?.service?.kind, !!waitingFor(), runtimeState(agent)));");
+  });
+
+  it("says Ember is reconnecting while its model connection starts again, as the handle and Ask do, and never sends the person to a provider that is fine (accessibility-visual-c1-2)", () => {
+    // The runtime stopped under the user's own provider (lost(): runtimeWords("user").stopped), then gave up.
+    const crashed = { phase: "error", reason: "runtime", detail: "Ember's model connection stopped unexpectedly. Reconnecting…" };
+    const gaveUp = { phase: "error", reason: "runtime", detail: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember." };
+    expect(runtimeState(crashed)).toBe("reconnecting");
+    expect(runtimeState({ ...crashed, detail: "Copilot stopped unexpectedly. Reconnecting…" })).toBe("reconnecting");
+    expect(runtimeState({ phase: "error", reason: "not-answering", detail: "Your model provider isn't answering. Reconnecting…" })).toBe("reconnecting");
+    expect(runtimeState(gaveUp)).toBe("stopped");
+    for (const other of [{ phase: "error", reason: "network", detail: "" }, { phase: "error", reason: "not-answering", detail: "Your model provider isn't answering." }, { phase: "signed-out", detail: "" }, { phase: "ready", detail: "" }, null]) expect(runtimeState(other)).toBeNull();
+    const base = { phase: "error", failing: 0, running: 0, asking: 0, service: "user" };
+    // Before, "Not connected" (the error ring) whatever the reason, while the handle and Ask said "Reconnecting…".
+    expect(statusWord({ ...base, runtime: "reconnecting" })).toEqual({ word: "Reconnecting…", ring: "starting" });
+    expect(statusWord({ ...base, runtime: "stopped" })).toEqual({ word: "Not connected", ring: "error" });
+    // Still the most urgent things first, and the wait for running tasks as before.
+    expect(statusWord({ ...base, runtime: "reconnecting", failing: 1 }).word).toBe("Needs setting up");
+    expect(statusWord({ ...base, runtime: "reconnecting", locked: true }).word).toBe("Locked by your organisation");
+    expect(statusWord({ ...base, runtime: "reconnecting", waitingForTasks: true }).word).toBe("Waiting for the model service");
+    // The button goes where Check again and the true line are, never "Check my provider…" or Copilot's sign-in.
+    for (const service of ["user", "admin", undefined]) for (const state of ["reconnecting", "stopped"] as const) expect(connectLabel(service, false, state)).toBe("Models & connections…");
+    expect(connectLabel("user", false, null)).toBe("Check my provider…");
+    const source = fs.readFileSync("app/renderer/home/main.ts", "utf8");
+    expect(source).toContain("setText(\"p-connect\", connectLabel(agent?.service?.kind, !!waitingFor(), runtimeState(agent)));");
   });
 
   it("counts the tasks at work and those waiting from Task activity's list", () => {
@@ -90,10 +114,11 @@ describe("Home's status panel", () => {
     expect(todaySummary([], { tasks: 0, approvals: 0 }, NOW)).toBe("No tasks yet");
   });
 
-  it("never counts a task whose question went unanswered as one I stopped, as its row says (tasks-approvals-r3-1)", () => {
+  it("never counts a task whose question went unanswered as one I stopped, as its row says, in a count that reads as one (tasks-approvals-r3-1, accessibility-visual-r4-1)", () => {
     const unanswered: TaskEntry = { ...task("stopped"), unanswered: true };
-    expect(todaySummary([unanswered], { tasks: 0, approvals: 0 }, NOW)).toBe("1 no answer in time");
-    expect(todaySummary([unanswered, task("stopped"), { ...unanswered, id: "again" }], { tasks: 0, approvals: 0 }, NOW)).toBe("1 stopped · 2 no answer in time");
+    expect(todaySummary([unanswered], { tasks: 0, approvals: 0 }, NOW)).toBe("1 got no answer in time");
+    expect(todaySummary([unanswered, task("stopped"), { ...unanswered, id: "again" }], { tasks: 0, approvals: 0 }, NOW)).toBe("1 stopped · 2 got no answer in time");
+    expect(todaySummary([task("done", { approvals: 1 }), unanswered, { ...unanswered, id: "again" }], { tasks: 0, approvals: 0 }, NOW)).toBe("1 done · 2 got no answer in time · 1 approval");
   });
 
   it("counts today's tasks and approvals in the audit", () => {

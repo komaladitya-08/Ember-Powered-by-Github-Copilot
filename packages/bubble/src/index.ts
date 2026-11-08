@@ -1,5 +1,6 @@
 export {
   ReasoningBubble, BUBBLE_CSS, onPress, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, AUTONOMOUS_TAG, SUGGEST_CAPTION, STREAM_MS, chipLabel, growOrigin, snapToDevice, streamDelay, announcement, bubbleFit, bubblePosition, keyHintParts, questionParts, stepParts, thoughtScrolls, titleRepeatsChip, wholeReadNews,
+  ANSWER_MAX_HEIGHT, answerRoom,
   type BubbleAction, type BubbleMood, type BubbleSpot, type BubbleView, type Point, type Rect, type Size,
 } from "./bubble";
 export { plainMarkdown, plainStream } from "./markdown";

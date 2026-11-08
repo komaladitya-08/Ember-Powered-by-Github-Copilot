@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { announcement, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, stepParts, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, SUGGEST_CAPTION, type BubbleView } from "./bubble";
+import { announcement, answerRoom, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, stepParts, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, SUGGEST_CAPTION, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -279,6 +279,54 @@ describe("bubbleFit: room beside the settings window", () => {
   it("is the usual place when there is nothing in the way", () => {
     const screen = { width: 1280, height: 800 };
     expect(bubbleFit({ x: 400, y: 324 }, { width: 300, height: 100 }, screen, 60, [], heightAt)).toEqual({ x: 378, y: 342, width: 300, height: 100 });
+  });
+});
+
+describe("bubbleFit: across the open Ask box an answer grew into (companion-c3-1)", () => {
+  const screen = { width: 1024, height: 768 }, handle = { x: 752, y: 700, width: 260, height: 56 };
+  const answer = { width: 330, height: 277 }, tall = () => 277;
+  const covers = (p: { x: number; y: number; width: number; height: number }, r: { x: number; y: number; width: number; height: number }) =>
+    p.x < r.x + r.width && p.x + p.width > r.x && p.y < r.y + r.height && p.y + p.height > r.y;
+
+  it("goes below the box or above it, the side nearer Ember, where nothing by Ember is clear of it, never over Ember or the handle", () => {
+    // Ember at the top centre at Larger text, the box under it: no room by Ember, so below the box, slid past the handle.
+    const top = { x: 195, y: 245, width: 728, height: 173 };
+    expect(bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, top], tall)).toBeNull();
+    const below = bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, top], tall, [top])!;
+    expect(below).toEqual({ x: 416, y: 424, width: 330, height: 277 });
+    expect(covers(below, handle)).toBe(false);
+    // Ember at the bottom centre, the box over it: above the box, which is nearer Ember than nothing.
+    const bottom = { x: 195, y: 364, width: 728, height: 173 };
+    const ember = { x: 559, y: 704 };
+    const above = bubbleFit({ x: ember.x, y: ember.y + 24 }, answer, screen, 60, [handle, bottom], tall, [bottom])!;
+    expect(above.y + above.height).toBeLessThanOrEqual(bottom.y);
+    expect(covers(above, { x: ember.x - 45, y: ember.y - 66, width: 90, height: 102 })).toBe(false);
+  });
+
+  it("is still beside Ember, and never across the box, wherever there is room by Ember", () => {
+    // A 1280 x 800 screen: beside Ember, above the box, as before.
+    const wide = { width: 1280, height: 800 }, box = { x: 323, y: 297, width: 728, height: 173 };
+    const by = bubbleFit({ x: 640, y: 135 }, answer, wide, 60, [box], tall);
+    expect(by).not.toBeNull();
+    expect(bubbleFit({ x: 640, y: 135 }, answer, wide, 60, [box], tall, [box])).toEqual(by);
+    // Nothing to go across: no room is no room.
+    expect(bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, { x: 195, y: 245, width: 728, height: 173 }], tall, [])).toBeNull();
+    // No room above or below the box either (it fills the screen's height): none.
+    const full = { x: 195, y: 20, width: 728, height: 700 };
+    expect(bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, full], tall, [full])).toBeNull();
+  });
+
+  it("tells whether the tallest finished answer still has a place in Ember's column beside a box, for the Ask box to keep a row only then (accessibility-visual-c4-1)", () => {
+    // 1024 x 768 at Larger text, Ember in the middle and the box above it, a row taller: no room left for the answer.
+    expect(answerRoom({ x: 512, y: 474 }, 60, screen, { x: 195, y: 245, width: 728, height: 236 }, 1.3)).toBe(false);
+    // Lower down, room above the box; at the top with the box under Ember, room below a box a row shorter.
+    expect(answerRoom({ x: 512, y: 584 }, 60, screen, { x: 195, y: 355, width: 728, height: 236 }, 1.3)).toBe(true);
+    expect(answerRoom({ x: 512, y: 134 }, 60, screen, { x: 195, y: 245, width: 728, height: 236 }, 1.3)).toBe(false);
+    expect(answerRoom({ x: 512, y: 134 }, 60, screen, { x: 195, y: 245, width: 728, height: 173 }, 1.3)).toBe(true);
+    // Room below Ember (the bubble's own place), clear of a box above it, at the default text size on 1280 x 800.
+    expect(answerRoom({ x: 640, y: 474 }, 60, { width: 1280, height: 800 }, { x: 360, y: 243, width: 560, height: 188 }, 1)).toBe(true);
+    // Never over Ember: under a box at the top whose only room below is where Ember is.
+    expect(answerRoom({ x: 512, y: 450 }, 60, screen, { x: 195, y: 8, width: 728, height: 300 }, 1.3)).toBe(false);
   });
 });
 

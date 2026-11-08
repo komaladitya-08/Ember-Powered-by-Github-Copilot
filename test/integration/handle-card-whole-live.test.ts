@@ -27,7 +27,12 @@ interface Box { top: number; bottom: number; ch: number; sh: number; lh: number;
 interface Layout { vh: number; thought: Box; whole: Box; hint: Box; step: Box; actions: Box; task: Box }
 /** An ordinary question (no whole text, accessibility-visual-1): fitted, then squeezed, then fitted again; Allow's hold and what a click on it sent. */
 interface Plain { height: number; layout: Layout; keys: { caps: string[]; text: string; stepRight: number; hints: { top: number; bottom: number; right: number; text: string }[] }; held: string | null; squeezedHeld: string | null; squeezedClick: string[]; freedHeld: string | null; freedClick: string[] }
-interface Report { size: string; height: number; layout: Layout; before: string[]; scrolled: string[]; squeezed: Layout; squeezedSent: string[]; fits: string[]; plain: Plain }
+/**
+ * A question's key hints as drawn, measured by their text (Range.getClientRects), not their block's box, which is always
+ * the column's width: how far right each one's words reach, on how many lines, and the tops of its keycaps.
+ */
+interface Hints { stepRight: number; winWidth: number; hints: { text: string; right: number; lines: number; capTops: number[] }[] }
+interface Report { size: string; height: number; layout: Layout; before: string[]; scrolled: string[]; squeezed: Layout; squeezedSent: string[]; fits: string[]; plain: Plain; wholeKeys: Hints; shiftKeys: Hints }
 
 /** Ember's own HandleWindow and page prefs, in Electron: the card for one text size, the question, what the page sent. */
 const CHILD = `
@@ -69,10 +74,20 @@ app.whenReady().then(async () => {
     return { vh: innerHeight, thought: box("thought"), whole: box("whole"), hint: box("whole-hint"), step: box("step"), actions: box("actions"), task: box("task") };
   })()\`);
   const toEnd = () => wc.executeJavaScript('(() => { const b = document.getElementById("whole"); b.scrollTop = b.scrollHeight; })()');
+  const measureKeys = (): Promise<unknown> => wc.executeJavaScript(\`(() => {
+    const top = r => Math.round(r.top);
+    const hints = [...document.querySelectorAll("#step .key-hint")].map(h => {
+      const range = document.createRange(); range.selectNodeContents(h);
+      const rects = [...range.getClientRects()].filter(r => r.width > 0);
+      return { text: h.textContent, right: Math.max(...rects.map(r => r.right)), lines: new Set(rects.map(top)).size, capTops: [...h.querySelectorAll("kbd")].map(k => top(k.getBoundingClientRect())) };
+    });
+    return { stepRight: document.getElementById("step").getBoundingClientRect().right, winWidth: innerWidth, hints };
+  })()\`);
   card.sendState(state(1, LONG));
   await sleep(1200);
   const height = card.win.getContentSize()[1];
   const layout = await measure();
+  const wholeKeys = await measureKeys();
   const before = [...sent];
   await toEnd();
   await sleep(400);
@@ -125,7 +140,13 @@ app.whenReady().then(async () => {
   const freedHeld = await allowHeld();
   const freedClick = await clickAllow();
   const plain = { height: plainHeight, layout: plainLayout, keys: plainKeys, held, squeezedHeld, squeezedClick, freedHeld, freedClick };
-  process.stdout.write("RESULT " + JSON.stringify({ size, height, layout, before, scrolled, squeezed, squeezedSent, fits, plain }) + "\\n");
+  // The same whole text where another app holds the keys, so the hint names the Shift chords (accessibility-visual-c3-1).
+  const shiftState = state(5, LONG);
+  shiftState.bubble = { ...shiftState.bubble!, step: "Ctrl+Alt+Shift+Y shows the next part \\u00b7 Ctrl+Alt+Shift+N not now" };
+  card.sendState(shiftState);
+  await sleep(1200);
+  const shiftKeys = await measureKeys();
+  process.stdout.write("RESULT " + JSON.stringify({ size, height, layout, before, scrolled, squeezed, squeezedSent, fits, plain, wholeKeys, shiftKeys }) + "\\n");
   app.exit(0);
 });
 `;
@@ -233,6 +254,20 @@ describe.skipIf(!required && (!xvfb || !built))("the corner card with a question
       const [first, second] = plain.keys.hints;
       expect(second.top, "the second chord starts on a line of its own").toBeGreaterThanOrEqual(first.bottom - 0.5);
       for (const h of plain.keys.hints) expect(h.right, `${h.text} fits the card's column`).toBeLessThanOrEqual(plain.keys.stepRight + 0.5);
+    }, 90_000);
+
+    it(`keeps a whole text's key hint inside the card, its words wrapping under their keycaps, with the Shift chords too (accessibility-visual-c3-1, ${size} text)`, async () => {
+      const { wholeKeys, shiftKeys } = await report(size);
+      // Before, each hint was one unbroken line: at Larger with the Shift chords its words reached 401 px of a 360 px
+      // window ("Ctrl Alt Shift Y shows the nex"), at Large 374, and the plain chords' 358, into the card's padding.
+      for (const [keys, caps] of [[wholeKeys, ["CtrlAltYshows the next part", "CtrlAltNnot now"]], [shiftKeys, ["CtrlAltShiftYshows the next part", "CtrlAltShiftNnot now"]]] as const) {
+        expect(keys.hints.map(h => h.text)).toEqual(caps);
+        for (const h of keys.hints) {
+          expect(h.right, `${h.text}: its words end inside the card's column`).toBeLessThanOrEqual(keys.stepRight + 0.5);
+          expect(new Set(h.capTops).size, `${h.text}: its keycaps stay together on one line`).toBe(1);
+        }
+        expect(keys.stepRight).toBeLessThanOrEqual(keys.winWidth);
+      }
     }, 90_000);
   }
 });

@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSync } from "esbuild";
 import { electronBinary } from "./vocabulary-clipboard";
+import { ANSWER_MAX_HEIGHT } from "../../packages/bubble/src/bubble";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const xvfb = process.platform === "linux" && spawnSync("sh", ["-c", "command -v Xvfb"], { stdio: "ignore" }).status === 0;
@@ -150,6 +151,42 @@ function keyHints(): { name: string; over: number; textOver: number; seps: { sho
   return out;
 }
 /**
+ * How tall a finished answer gets at each text size, in the tallest ways it can be (ask.ts ANSWER_MAX_HEIGHT keeps room
+ * for it beside the Ask box): six lines cut short with Read all and the longest keyboard hint (a Mac's), and a whole
+ * six-line answer with three of Ember's suggestions under it.
+ */
+function answerHeights(): { name: string; scale: number; height: number }[] {
+  const out: { name: string; scale: number; height: number }[] = [];
+  const html = document.documentElement;
+  const long = "Tokyo is nine hours ahead of London, so it is evening there. ".repeat(8).trim();
+  const six = "One. Two.\\nThree.\\nFour.\\nFive.\\nSix.";
+  for (const [size, scale] of [["default", 1], ["large", 1.15], ["larger", 1.3]] as const) {
+    html.dataset.textSize = size;
+    html.style.setProperty("--text-scale", String(scale));
+    for (const kind of ["cut short", "with suggestions"]) {
+      const host = document.createElement("div");
+      host.style.cssText = "position:absolute;inset:0";
+      document.body.append(host);
+      const b = new ReasoningBubble(host);
+      if (kind === "cut short") {
+        b.setThought(long);
+        b.setActions([{ key: "ui:more", label: "Read all", onClick: () => undefined }]);
+        b.setStep("Or press Control+Shift+Command+E and go to Conversation.");
+      } else {
+        b.setThought(six);
+        b.setSuggestions(["Yes, please", "No, thanks", "What's the weather in London now"].map(label => ({ label, onClick: () => undefined })));
+      }
+      b.setVisible(true);
+      b.place({ x: 200, y: 120 }, { width: 900, height: 900 }, 60);
+      out.push({ name: kind + " at " + size + " text", scale, height: b.root.offsetHeight });
+      host.remove();
+    }
+  }
+  delete html.dataset.textSize;
+  html.style.removeProperty("--text-scale");
+  return out;
+}
+/**
  * Question hints left in the page for main to read from its accessibility tree: Linux's at the bubble's own width (the
  * two chords on one line) and a Mac's narrowed to 220 px (each chord on a line of its own). Their hosts' ids.
  */
@@ -181,6 +218,7 @@ function axHints(): string[] {
     answer: await answer(),
     chips: chips(),
     keyHints: keyHints(),
+    answerHeights: answerHeights(),
     axHints: axHints(),
     // Ember's own font, loaded: the key hints are measured in it, not in a fallback a runner happens to have.
     emberSans: [...document.fonts].some(f => f.family.replace(/"/g, "") === "Ember Sans" && f.status === "loaded"),
@@ -239,6 +277,8 @@ type Sample = { scale: string; translate: string; opacity: number };
 type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext" | "answer", Sample[]> & {
   chips: { row: { x: number; y: number; w: number; h: number } | null; covered: boolean; buttons: number; labelledBy: string };
   keyHints: { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[];
+  /** A finished answer's height in its tallest forms at each text size (answerHeights). */
+  answerHeights: { name: string; scale: number; height: number }[];
   /** What a screen reader reads of each hint left in the page (by its host's id). */
   axHints: Record<string, string | null>;
   /** Whether the bundled "Ember Sans" (Inter) had loaded when the hints were measured. */
@@ -339,6 +379,18 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
     // Where there is room, the two chords still share a line with the " · " between them.
     for (const name of ["linux at its own width at default text", "windows at its own width at larger text"]) {
       expect(all.find(k => k.name === name)!.seps, name).toEqual([{ shown: true, sameLine: true }]);
+    }
+  });
+
+  it("is never taller as a finished answer than the room the Ask box leaves for it beside itself (companion-c3-1, accessibility-visual-c4-1)", () => {
+    expect(result.answerHeights.length).toBe(6);
+    for (const a of result.answerHeights) {
+      expect(a.height, a.name).toBeLessThanOrEqual(Math.ceil(ANSWER_MAX_HEIGHT * a.scale));
+    }
+    // And the room is no bigger than it must be: the tallest is within 8 % of it at each text size.
+    for (const scale of [1, 1.15, 1.3]) {
+      const tallest = Math.max(...result.answerHeights.filter(a => a.scale === scale).map(a => a.height));
+      expect(tallest, String(scale)).toBeGreaterThan(ANSWER_MAX_HEIGHT * scale * 0.92);
     }
   });
 

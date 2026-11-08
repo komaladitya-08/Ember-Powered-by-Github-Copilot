@@ -85,14 +85,16 @@ They share one emotion rig, so switching never changes behaviour.
   the goal passed off as theirs);
   its title ("May I?") is the quieter lead-in, its keys show as keycaps under the buttons (under a
   note's line when a spoken answer wasn't taken, never replaced by it: `stepParts`; on the
-  no-compositor corner card too, above its buttons; on both each chord kept on one line with its word, and on the
-  bubble broken under its keycaps only where it alone is wider than the row, with the " · " between two only where
+  no-compositor corner card too, above its buttons; on both each chord kept on one line with its word, broken under
+  its keycaps only where it alone is wider than the row, and on the bubble with the " · " between two only where
   they share a line, and none before the first, which a screen reader read though it was clipped from sight), four corner
   brackets lock onto the bubble once (180 ms) and then hold still, and nothing about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
   install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
   than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. The
   no-compositor corner card marks it the same way: the tag beside Ember's name and the bordered
-  Allow; in its narrow column each chord is a line of its own, with no " · " left at a line's end.
+  Allow; in its narrow column each chord is a line of its own, with no " · " left at a line's end, its
+  keycaps together and its words wrapping under them where the column can't hold both (the Shift chords'
+  "shows the next part" at Large and Larger).
   The card grows for any question (up to 640 px, inside the work area) so its sentence shows
   whole at Large and Larger text too, and where even that can't hold it, its answers but Not now
   take no press until the sentence shows. A step Ember took **without asking** (Work without asking) shows its announcement with a
@@ -118,7 +120,12 @@ They share one emotion rig, so switching never changes behaviour.
   the box is open its row keeps the room it opened with, rows and all: none to offer puts the row out of sight, fewer
   keep its height, ones that would need more rows than it opened with wait for its next opening (those it shows that are
   still offered stay), and ones that come into a box that opened with none wait too, so a question coming or going never
-  moves the field. A question's
+  moves the field. A box that opens beside an answer still coming in, with none to offer yet, keeps their row's room,
+  empty and out of sight, so the answer's follow-ups land in it, where the keyboard reaches them (the bubble takes no
+  keyboard), and the field doesn't move (`askSuggestionsComing`), but only while **Suggest what I might say next** is
+  on (off, none can come, and the row would stay blank) and where the tallest finished answer still has
+  a place by Ember clear of the box with that row (`answerRoom`, `ANSWER_MAX_HEIGHT`): elsewhere the row would take the
+  room the answer needs once it finishes, so there they wait for the next opening. A question's
   answer ("Thanks! Carrying on.", "Okay, I won't.") stays 1.5 s; then what the question covered or held off shows
   again, or the bubble empties and the ring rests, so a task that ends on its card never leaves "Working" behind. A
   turn that only ran steps (it started a task and said nothing) leaves no "Working" bubble either, and one that
@@ -157,11 +164,16 @@ They share one emotion rig, so switching never changes behaviour.
   bubble, or over or under it where it fits beside neither (larger text, a 1024-wide screen), never
   on it nor on Ember (the bubble never moves for it). A bubble that comes up while the box is open
   keeps off it where it can (never hiding for it); a question, or its own Listen once's
-  "Listening…" (never a wake's), that finds no room moves the box aside once, and a bubble already
+  "Listening…" (never a wake's), that finds no room moves the box aside once (again only once it
+  has grown under the field: a spoken yes that wasn't taken adds its note), and a bubble already
   shown, a question or an answer being read, never moves for the box: where the box can't keep
-  clear of it whole (a small screen at Larger text), the box may come against it. An answer still
-  coming in when the box opened that grows into it keeps off it from there, so the field never
-  covers its last lines or its Read all. While the box is
+  clear of it whole (a small screen at Larger text), the box may come against it. An answer that
+  grows into the box on its own, as its words come in or as it finishes (its Read all, its hint
+  and Ember's suggestions come only then), keeps off it from there, going above or below the box
+  where nothing by Ember is clear of it, so the field never covers its last lines or its Read all;
+  so does one that started while the box was open (Ask opened during "Thinking…"), and anything
+  else still coming in that asks nothing (a step, "Listening…") and finds no room by Ember.
+  While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
   More time to read). Without a
@@ -320,14 +332,16 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
   character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
   state in a few words ("Ready", "Working on 2 tasks", "Thinking…" while it answers what you sent from Home, "A task
-  needs you" with **Open approval**, "Not connected",
+  needs you" with **Open approval**, "Not connected", "Reconnecting…" while Ember's own model connection starts again
+  by itself, as the handle and Ask say,
   "Needs setting up", "Locked by your organisation"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
   you, then two facts (which of listening, memory and commands are on; today's tasks by outcome, in their rows' words (a task
-  whose question went unanswered is "no answer in time", never "stopped": tasks-approvals-r3-1), and the steps you
+  whose question went unanswered "got no answer in time", never "stopped": tasks-approvals-r3-1), and the steps you
   allowed, from the same tasks Task activity lists) and **Ask Ember…** (the one prominent button; **Connect Copilot…**
   takes that place while Ember isn't connected, **Check my provider…** for the user's own provider and **Models &
-  connections…** for the organisation's service (first-run-r1), and nothing does while the organisation's policy locks
-  Ember down)
+  connections…** for the organisation's service (first-run-r1) or whenever Ember's own model connection stopped, which
+  is never the provider's or Copilot's sign-in (accessibility-visual-c1-2), and nothing does while the organisation's
+  policy locks Ember down)
   beside a quiet **Stop everything** and the stop chord. Under them two quiet links, **Write to Ember** (the
   composer, focused) and **Task activity**, keep both a step away however long the conversation grows.
 - **Home's setup check** says each row's state in first run's words beside its tint ("Ready", "Worth a look",
@@ -352,7 +366,17 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   reconnect at once, and every message of the composer's that it ended before it went (its own line never came) comes
   back in the composer, oldest first, never over anything typed since (above it, the caret kept where it was), with
   "Your message wasn't sent, so it's back here to edit or send again." ("Your 2 messages weren't sent…", "…back here,
-  above what you were writing, …": home-r3-1, home-v4-2); one whose line came (Ember answered it itself, or it went to
+  above what you were writing, …": home-r3-1, home-v4-2), said once however main tells the Stop (home-r4-3); a typed
+  "stop" still on its way to main is never taken for something being written (home-r4-2); above a request being
+  edited the line keeps Edit's caution (and says it again once what is there fits after being over: home-v5-2), and
+  Cancel edit keeps the words as the person left them (corrected, none once deleted: home-v5-1), followed through each
+  change in the field, so a word typed into the request being edited, or a fresh request under an emptied one, is
+  never kept with them, a deleted message never comes back and only those left are counted (home-w5-1, home-w5-2), and
+  that request never stays (home-w5-4), above the draft from before Edit (home-r4-1); Edit on another request keeps
+  them above it, as left and still words given back ("…The message that wasn't sent stays above it…"), so Cancel edit
+  still names them and says when they're over 2,000 characters with that draft (home-w5-3);
+  together over 2,000 characters, the line says to send them one at a time, never to send again (home-c4-2), but to
+  shorten what was being written or edited where that alone is over (home-v5-3); one whose line came (Ember answered it itself, or it went to
   the model) never does, however far the conversation has moved past it (home-v4-1); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's
   "Okay, I've stopped everything."; the status panel says "Thinking…" while Ember answers any request, from the Ask
   box and by voice too: main's `conversationTurn`, never a guess, home-c1-1), shows explicit per-answer truncation beyond

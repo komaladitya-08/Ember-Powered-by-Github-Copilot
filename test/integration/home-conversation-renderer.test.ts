@@ -841,6 +841,498 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  /** How often the composer's line (a role=status region: each write is read out) was written since the last call. */
+  const lineWrites = (page: Page) => page.evaluate(() => {
+    const w = window as unknown as { __lineWrites?: number };
+    if (w.__lineWrites === undefined) {
+      w.__lineWrites = 0;
+      new MutationObserver(records => { w.__lineWrites = (w.__lineWrites ?? 0) + records.length; }).observe(document.getElementById("conversation-compose-status")!, { childList: true, characterData: true, subtree: true });
+    }
+    const n = w.__lineWrites;
+    w.__lineWrites = 0;
+    return n;
+  });
+  /** Main has answered the composer's send (Send is no longer waiting for it). */
+  const sendAnswered = (page: Page) => expect.poll(() => page.locator("#conversation-send").getAttribute("aria-disabled")).toBeNull();
+
+  it("gives back only the waiting message when a typed \"stop\" stops everything, and keeps saying it wasn't sent (home-r4-2)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Q1" }, { t: at(1), who: "ember", text: "A1" }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      // Held while Ember reconnects (or for a switch of model service): main took it, and no line of it came.
+      await field.fill("Book the meeting room for Friday");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await expect.poll(() => field.inputValue()).toBe("");
+      // Then "stop" while a task is at work: main keeps it and its answer, stops everything (Home is told at once), and
+      // only then answers the send.
+      await page.evaluate(() => { window.__home.hold = true; window.__home.sendResult = "stopped"; });
+      await field.fill("stop");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent.at(-1))).toBe("stop");
+      await lineWrites(page);
+      const said: TranscriptEntry[] = [...seed, { t: at(2), who: "you", text: "stop" }, { t: at(3), who: "ember", text: "Okay, I've stopped everything." }];
+      await page.evaluate(e => {
+        window.__home.emit("onConversation", e.slice(0, 3));
+        window.__home.emit("onStopped", "typed");
+        window.__home.emit("onConversation", e);
+        window.__home.release();
+      }, said);
+      await sendAnswered(page);
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped-everything" }));
+      const back = "Stopped everything, running tasks included. Your message wasn't sent, so it's back here to edit or send again.";
+      // The "stop" went (its line is there): only the held message is back, and the line keeps saying so, once.
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday");
+      expect(await line.innerText()).toBe(back);
+      expect(await lineWrites(page)).toBe(1);
+      // A message on its way to main as Stop everything (its shortcut) comes, which main takes after it: it went, so only
+      // the held one is back.
+      await page.evaluate(() => { window.__home.sendResult = undefined; window.__home.hold = false; });
+      await field.fill("Order lunch");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => field.inputValue()).toBe("");
+      await turn(page, "thinking");
+      await page.evaluate(() => { window.__home.hold = true; });
+      await field.fill("And tell Sam");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent.at(-1))).toBe("And tell Sam");
+      await page.evaluate(() => {
+        window.__home.emit("onStopped", "hotkey");
+        window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped-everything" });
+        window.__home.release();
+      });
+      await sendAnswered(page);
+      expect(await field.inputValue()).toBe("Order lunch");
+      expect(await line.innerText()).toBe(back);
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...said, { t: at(4), who: "you" as const, text: "And tell Sam" }]);
+      // One main refused after a Stop gave words back in its place: back under them, unsent.
+      await field.fill("");
+      await page.evaluate(() => { window.__home.hold = false; });
+      await field.fill("Order lunch");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => field.inputValue()).toBe("");
+      await turn(page, "thinking");
+      const refused = "Ember is reconnecting to Copilot. Your message is still here: send it again in a moment.";
+      await page.evaluate(e => { window.__home.hold = true; window.__home.sendError = e; }, refused);
+      await field.fill("And tell Sam");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent.at(-1))).toBe("And tell Sam");
+      await page.evaluate(() => { window.__home.emit("onStopped", "hotkey"); window.__home.release(); });
+      await expect.poll(() => line.innerText()).toBe(refused);
+      expect(await field.inputValue()).toBe("Order lunch\n\nAnd tell Sam");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps Edit's caution and the words a Stop gave back while I edit, and Cancel edit keeps them (home-r4-1)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const waitThenEdit = async (text: string, draft: string) => {
+        await field.fill(text);
+        await page.locator("#conversation-send").click();
+        await turn(page, "thinking");
+        await expect.poll(() => field.inputValue()).toBe("");
+        await field.fill(draft);
+        await page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ }).click();
+        expect(await field.inputValue()).toBe("Empty the trash");
+      };
+      const stop = async () => {
+        await page.locator("#conversation-stop").click();
+        await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+        await expect.poll(() => page.evaluate(() => window.__home.stops)).toBeGreaterThan(0);
+        await expect.poll(() => page.locator("#conversation-stop").getAttribute("aria-disabled")).toBeNull();
+      };
+      // Sent while Ember reconnects, then Edit on an earlier request, then Stop response.
+      await waitThenEdit("Book the meeting room for Friday", "");
+      await stop();
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nEmpty the trash");
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above the request you're editing. Sending that request again may repeat actions.");
+      await page.getByRole("button", { name: "Cancel edit" }).click();
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday");
+      expect(await line.innerText()).toBe("Edit cancelled. The message that wasn't sent is back here to edit or send again.");
+      // With a draft before Edit: it comes back too, under the message.
+      await field.fill("");
+      await waitThenEdit("Order lunch", "Tell Sam");
+      await stop();
+      expect(await field.inputValue()).toBe("Order lunch\n\nEmpty the trash");
+      await page.getByRole("button", { name: "Cancel edit" }).click();
+      expect(await field.inputValue()).toBe("Order lunch\n\nTell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent.");
+      // The next edit starts afresh: Cancel edit gives back only its own draft.
+      await page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ }).click();
+      await page.getByRole("button", { name: "Cancel edit" }).click();
+      expect(await field.inputValue()).toBe("Order lunch\n\nTell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("says a Stop once under Send, however main tells it, and says a new Stop again (home-r4-3)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Q1" }, { t: at(1), who: "ember", text: "A1" }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      // The turn's end first, then Stop response's own answer: one write.
+      const stopEndFirst = async () => {
+        await page.evaluate(() => { window.__home.hold = true; });
+        await page.locator("#conversation-stop").click();
+        await page.evaluate(() => { window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }); window.__home.release(); window.__home.hold = false; });
+        await expect.poll(() => page.locator("#conversation-stop").getAttribute("aria-disabled")).toBeNull();
+      };
+      // (a) Its request went to the model (its line came).
+      await field.fill("Q2");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...seed, { t: at(2), who: "you" as const, text: "Q2" }]);
+      await lineWrites(page);
+      await stopEndFirst();
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue.");
+      expect(await lineWrites(page)).toBe(1);
+      // (b) It waited for a reconnect, and its words come back.
+      await field.fill("Book the meeting room for Friday");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await expect.poll(() => field.inputValue()).toBe("");
+      await lineWrites(page);
+      await stopEndFirst();
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here to edit or send again.");
+      expect(await lineWrites(page)).toBe(1);
+      // (c) A new Stop, of a spoken answer, with the same words already there: said again.
+      await field.fill("");
+      await page.locator("#conversation li.ember").first().getByRole("button", { name: /^Copy/ }).click();
+      await expect.poll(() => line.innerText()).toBe("Copied message.");
+      await turn(page, "thinking");
+      await stopEndFirst();
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue.");
+      await turn(page, "thinking");
+      await lineWrites(page);
+      await stopEndFirst();
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue.");
+      expect(await lineWrites(page)).toBe(1);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("says when the messages a Stop gave back are together too long to send, and how to send them (home-c4-2)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Q1" }, { t: at(1), who: "ember", text: "A1" }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      for (const c of ["a", "b"]) {
+        await field.fill(c.repeat(1500));
+        await page.locator("#conversation-send").click();
+        await turn(page, "thinking");
+        await expect.poll(() => field.inputValue()).toBe("");
+      }
+      await lineWrites(page);
+      await page.locator("#conversation-stop").click();
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      await expect.poll(() => page.locator("#conversation-stop").getAttribute("aria-disabled")).toBeNull();
+      expect(await field.inputValue()).toBe(`${"a".repeat(1500)}\n\n${"b".repeat(1500)}`);
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue. Your 2 messages weren't sent, so they're back here. Together they're over 2,000 characters: send them one at a time.");
+      expect(await page.locator("#conversation-count").innerText()).toBe("3,002 of 2,000 characters, 1,002 too many.");
+      expect(await field.getAttribute("aria-invalid")).toBe("true");
+      // Said once: not the over-limit note first, then this.
+      expect(await lineWrites(page)).toBe(1);
+      // Cut to one that fits: the line no longer says they're over, as the over-limit note goes.
+      await field.fill("a".repeat(1500));
+      expect(await line.innerText()).toBe("");
+      expect(await field.getAttribute("aria-invalid")).toBeNull();
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  /** A message sent while Ember reconnects (it waits), then `draft` typed and Edit on the earlier request, then Stop response. */
+  const waitEditStop = async (page: Page, text: string, draft: string) => {
+    const field = page.locator("#conversation-message");
+    await field.fill(text);
+    await page.locator("#conversation-send").click();
+    await turn(page, "thinking");
+    await expect.poll(() => field.inputValue()).toBe("");
+    await field.fill(draft);
+    await page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ }).click();
+    await page.locator("#conversation-stop").click();
+    await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+    await expect.poll(() => page.locator("#conversation-stop").getAttribute("aria-disabled")).toBeNull();
+  };
+
+  it("keeps the words a Stop gave back as I left them through Cancel edit: corrected, or gone once I deleted them (home-v5-1)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const cancel = page.getByRole("button", { name: "Cancel edit" });
+      // Deleted, as the person changed their mind: nothing comes back but the draft from before Edit.
+      await waitEditStop(page, "Book the meeting room for Friday", "Tell Sam");
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nEmpty the trash");
+      await field.fill("Empty the trash");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Tell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored.");
+      // Only the request being edited changed since: that change goes, as Cancel edit's do, and the message stays.
+      await waitEditStop(page, "Book the meeting room for Friday", "Tell Sam");
+      await field.fill("Book the meeting room for Friday\n\nEmpty the trash and the bin");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nTell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent.");
+      // Both changed: the message's changes stay, and the request's go, as Cancel edit's do (home-w5-4).
+      await waitEditStop(page, "Order lunch", "Tell Sam");
+      await field.fill("Order lunch for two\n\nEmpty the bin");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Order lunch for two\n\nTell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, and your previous draft is restored below it.");
+      // Corrected, Friday to Saturday: Saturday stays, and the next Send sends it.
+      await waitEditStop(page, "Book the meeting room for Friday", "Tell Sam");
+      await field.fill("Book the meeting room for Saturday\n\nEmpty the trash");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Book the meeting room for Saturday\n\nTell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, and your previous draft is restored below it.");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent.at(-1))).toBe("Book the meeting room for Saturday\n\nTell Sam");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps Edit's caution once the words a Stop gave back above my edit fit again (home-v5-2)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      // A message that fits by itself, over the limit only with the request being edited under it.
+      await waitEditStop(page, "b".repeat(1990), "");
+      expect(await page.locator("#conversation-count").innerText()).toBe("2,007 of 2,000 characters, 7 too many.");
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above the request you're editing. Together they're over 2,000 characters: send them one at a time. Sending that request again may repeat actions.");
+      // Done as told: the message cut out. The edit is still open, and so is its caution.
+      await field.fill("Empty the trash");
+      expect(await page.getByRole("button", { name: "Cancel edit" }).isVisible()).toBe(true);
+      expect(await line.innerText()).toBe("Review this as a new request, then choose Send. Sending again may repeat actions; nothing is sent by choosing Edit.");
+      // Over the limit by typing, then back within it, in the same edit: the caution again, not an empty line.
+      await field.fill("x".repeat(2001));
+      expect(await line.innerText()).toBe("This message is longer than 2,000 characters. Shorten it to send it.");
+      await field.fill("Empty the trash");
+      expect(await line.innerText()).toBe("Review this as a new request, then choose Send. Sending again may repeat actions; nothing is sent by choosing Edit.");
+      // With no edit open, the over-limit note goes as before.
+      await page.getByRole("button", { name: "Cancel edit" }).click();
+      await field.fill("x".repeat(2001));
+      await field.fill("Tell Sam");
+      expect(await line.innerText()).toBe("");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("says to shorten what I was writing, not to send one at a time, when it alone is over the limit (home-v5-3)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Q1" }, { t: at(1), who: "ember", text: "A1" }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      await field.fill("Book the meeting room for Friday");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await expect.poll(() => field.inputValue()).toBe("");
+      await field.fill("y".repeat(2300));
+      expect(await line.innerText()).toBe("This message is longer than 2,000 characters. Shorten it to send it.");
+      await page.locator("#conversation-stop").click();
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      await expect.poll(() => page.locator("#conversation-stop").getAttribute("aria-disabled")).toBeNull();
+      expect(await field.inputValue()).toBe(`Book the meeting room for Friday\n\n${"y".repeat(2300)}`);
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above what you were writing, which is longer than 2,000 characters: shorten it to send it.");
+      // It goes, as the over-limit note does, once what is there fits.
+      await field.fill("Book the meeting room for Friday");
+      expect(await line.innerText()).toBe("");
+      // Above a request being edited that is over by itself: shorten that, and Edit's caution stays.
+      await field.fill("Order lunch");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await expect.poll(() => field.inputValue()).toBe("");
+      await field.fill("w".repeat(2100));
+      await page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ }).click();
+      await field.fill(`Q1 ${"v".repeat(2100)}`);
+      await page.locator("#conversation-stop").click();
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      await expect.poll(() => page.locator("#conversation-stop").getAttribute("aria-disabled")).toBeNull();
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above the request you're editing, which is longer than 2,000 characters: shorten it to send it. Sending that request again may repeat actions.");
+      // Cancel edit: the draft from before Edit comes back under the message, and it alone is over.
+      await page.getByRole("button", { name: "Cancel edit" }).click();
+      expect(await field.inputValue()).toBe(`Order lunch\n\n${"w".repeat(2100)}`);
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent. That draft is longer than 2,000 characters: shorten it to send it.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  /** `text` typed with the keyboard over `from`–`to` of the composer (Delete pressed for ""), as a person does. */
+  const typeAt = async (page: Page, from: number, text: string, to = from) => {
+    const field = page.locator("#conversation-message");
+    await field.focus();
+    await field.evaluate((el: HTMLTextAreaElement, [a, b]) => el.setSelectionRange(a, b), [from, to]);
+    if (text) await page.keyboard.type(text); else await page.keyboard.press("Delete");
+  };
+
+  it("never keeps for Cancel edit words I typed into the request I was editing, in front of it or under an emptied one (home-w5-1)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "open Firefox" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const cancel = page.getByRole("button", { name: "Cancel edit" });
+      const given = "Book the meeting room for Friday";
+      // "Please " put in front of the request, on its own line: it is the request's, and goes with its edit.
+      await waitEditStop(page, given, "Tell Sam");
+      expect(await field.inputValue()).toBe(`${given}\n\nopen Firefox`);
+      await field.fill(`${given}\n\nPlease open Firefox`);
+      await cancel.click();
+      expect(await field.inputValue()).toBe(`${given}\n\nTell Sam`);
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent.");
+      // The same with the keyboard, and the message itself changed at its end: that change stays.
+      await waitEditStop(page, given, "Tell Sam");
+      await typeAt(page, given.length + 2, "Please ");
+      await typeAt(page, given.length, " at 10am");
+      expect(await field.inputValue()).toBe(`${given} at 10am\n\nPlease open Firefox`);
+      await cancel.click();
+      expect(await field.inputValue()).toBe(`${given} at 10am\n\nTell Sam`);
+      expect(await line.innerText()).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, and your previous draft is restored below it.");
+      // The edit emptied for a fresh request, the message given back, the request typed under it: still the request's.
+      await field.fill(given);
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await expect.poll(() => field.inputValue()).toBe("");
+      await field.fill("Tell Sam");
+      await page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ }).click();
+      await field.fill("");
+      await page.locator("#conversation-stop").click();
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      await expect.poll(() => field.inputValue()).toBe(given);
+      await typeAt(page, given.length, "\n\nDelete my downloads");
+      await cancel.click();
+      expect(await field.inputValue()).toBe(`${given}\n\nTell Sam`);
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps nothing of a message I deleted through Cancel edit, however I went on editing, and counts only those left (home-w5-2)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "open Firefox" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const cancel = page.getByRole("button", { name: "Cancel edit" });
+      const given = "Book the meeting room for Friday";
+      // Deleted, then the request changed: the edit is cancelled, and only the draft from before it comes back.
+      await waitEditStop(page, given, "Tell Sam");
+      await field.fill("open Firefox and Files");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Tell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored.");
+      expect(await cancel.isVisible()).toBe(false);
+      // The same with the keyboard: the message and its blank line deleted, then the request changed.
+      await field.fill("");
+      await waitEditStop(page, given, "Tell Sam");
+      await typeAt(page, 0, "", given.length + 2);
+      await typeAt(page, "open Firefox".length, " and Files");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Tell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored.");
+      // Two given back and one deleted: one is said to be there, and it is.
+      await field.fill("");
+      for (const text of ["Order lunch", "Tell Sam I'm late"]) {
+        await field.fill(text);
+        await page.locator("#conversation-send").click();
+        await turn(page, "thinking");
+        await expect.poll(() => field.inputValue()).toBe("");
+      }
+      await page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ }).click();
+      await page.locator("#conversation-stop").click();
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      await expect.poll(() => field.inputValue()).toBe("Order lunch\n\nTell Sam I'm late\n\nopen Firefox");
+      await field.fill("Order lunch\n\nopen Firefox");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Order lunch");
+      expect(await line.innerText()).toBe("Edit cancelled. The message that wasn't sent is back here to edit or send again.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps the words a Stop gave back above my edit through a second Edit, and Cancel edit still names them and their length (home-w5-3)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }, { t: at(2), who: "you", text: "Open Files" }, { t: at(3), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const cancel = page.getByRole("button", { name: "Cancel edit" });
+      const editSecond = () => page.locator("#conversation li.you").nth(1).getByRole("button", { name: /^Edit your message/ }).click();
+      // Edit on another request: the message stays above it, still the message that wasn't sent.
+      await waitEditStop(page, "Book the meeting room for Friday", "Tell Sam");
+      await editSecond();
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nOpen Files");
+      expect(await line.innerText()).toBe("Review this as a new request, then choose Send. The message that wasn't sent stays above it. Sending again may repeat actions; nothing is sent by choosing Edit.");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nTell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent.");
+      // Over the limit with the request a second Edit puts under it, and then with the draft: said each time.
+      await field.fill("");
+      await waitEditStop(page, "b".repeat(1990), "Tell Sam now");
+      await editSecond();
+      expect(await field.inputValue()).toBe(`${"b".repeat(1990)}\n\nOpen Files`);
+      expect(await line.innerText()).toBe("Review this as a new request, then choose Send. The message that wasn't sent stays above it. Together they're over 2,000 characters: send them one at a time. Sending again may repeat actions; nothing is sent by choosing Edit.");
+      await cancel.click();
+      expect(await field.inputValue()).toBe(`${"b".repeat(1990)}\n\nTell Sam now`);
+      expect(await page.locator("#conversation-count").innerText()).toBe("2,004 of 2,000 characters, 4 too many.");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent. Together they're over 2,000 characters: send them one at a time.");
+      // Corrected before the second Edit: the correction comes along, and Cancel edit says it stays with it.
+      await field.fill("");
+      await waitEditStop(page, "Order lunch", "");
+      await typeAt(page, "Order lunch".length, " for two");
+      await editSecond();
+      expect(await field.inputValue()).toBe("Order lunch for two\n\nOpen Files");
+      await cancel.click();
+      expect(await field.inputValue()).toBe("Order lunch for two");
+      expect(await line.innerText()).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, to edit or send again.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("never leaves the request I edited in the composer after Cancel edit, though I changed it and the words above it (home-w5-4)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const cancel = page.getByRole("button", { name: "Cancel edit" });
+      await waitEditStop(page, "b".repeat(1990), "Tell Sam I'm late");
+      await field.fill(`${"b".repeat(1989)}c\n\nEmpty the trash now`);
+      await cancel.click();
+      // The message's change stays, over the limit with the draft; the request's goes, and with it the need to caution.
+      expect(await field.inputValue()).toBe(`${"b".repeat(1989)}c\n\nTell Sam I'm late`);
+      expect(await cancel.isVisible()).toBe(false);
+      expect(await line.innerText()).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, and your previous draft is restored below it. Together they're over 2,000 characters: send them one at a time.");
+      // Trimmed as told: the line goes, and no request of an edit is left behind to send again.
+      await field.fill("Tell Sam I'm late");
+      expect(await line.innerText()).toBe("");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("says Ember is thinking in the status panel while it answers the Ask box or a spoken request (home-c1-1)", async () => {
     const { page, errors } = await home([]);
     try {

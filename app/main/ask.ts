@@ -5,6 +5,7 @@
 
 import { BrowserWindow, Menu, screen } from "electron";
 import path from "node:path";
+import { answerRoom } from "@ember/bubble";
 import { IPC, listenOnceShown, type AskContext, type ListenOnceStatus } from "../shared/ipc";
 import type { BubbleState } from "../shared/overlay";
 import type { OS } from "../shared/shortcuts";
@@ -39,10 +40,12 @@ export function showsWaitTip(holds: boolean, opened: number): boolean {
 }
 /**
  * The rows an opening reserves before the page measures them: the field's line, Listen once's two (none where the
- * organisation turned voice off: companion-3), and one each for the wait tip and the suggestions.
+ * organisation turned voice off: companion-3), and one each for the wait tip and the suggestions; the room kept for
+ * those still to come (AskContext.suggestionsComing) is one row of chips, two of the box's rows as the page measures it
+ * (auxiliaryRows), so the box opens as tall as it stays and roomForAnswer judges the box it will be.
  */
 export const askOpeningRows = (c: AskContext): number =>
-  1 + (listenOnceShown(c.listenOnce) ? 2 : 0) + (c.tip ? 1 : 0) + (c.suggestions?.length ? 1 : 0);
+  1 + (listenOnceShown(c.listenOnce) ? 2 : 0) + (c.tip ? 1 : 0) + (c.suggestions?.length ? 1 : c.suggestionsComing ? 2 : 0);
 
 /** Ember's size when the caller doesn't say (the default setting). */
 const EMBER_SIZE = 60;
@@ -201,6 +204,18 @@ export function openingBounds(near: { x: number; y: number; size?: number } | nu
 }
 
 /**
+ * Whether the box opening at `b` (global DIP) leaves the answer Ember streams beside it room to finish whole in Ember's
+ * column (`near`: Ember's centre and size; `display`: its display's bounds; `scale`: the text's): answerRoom, in the
+ * overlay's coordinates. Without Ember to go by, none is assumed.
+ */
+export function roomForAnswer(b: Box, near: { x: number; y: number; size?: number } | null, display: Box, scale: number): boolean {
+  if (!near) return false;
+  const size = near.size ?? EMBER_SIZE;
+  const anchor = { x: near.x - display.x, y: near.y + size * 0.4 - display.y };
+  return answerRoom(anchor, size, { width: display.width, height: display.height }, { ...b, x: b.x - display.x, y: b.y - display.y }, scale);
+}
+
+/**
  * The bubble the open box steps aside for when it comes up under it (companion-c1-1), by what it is: a question (its
  * answers' ids), which must be read and answered there, or the box's own Listen once's "Listening…" (`ownListen`: the
  * box's Listen once is under way). Null for the others (an answer, a reminder, a task's result, a wake's or a
@@ -257,6 +272,8 @@ export class AskWindow {
   private near: { x: number; y: number; size?: number } | null = null;
   /** The bubble (stepsAsideFor) the box last stepped aside for in this opening: once for each, so it never dances. */
   private steppedFor: string | null = null;
+  /** How tall that bubble was then: it steps aside again only for the same one grown taller (companion-c4-1). */
+  private steppedHeight = 0;
   /** Where main last heard the box is (onBounds), as JSON: said again only when it changed. */
   private told = "null";
   /** The field's right-click menu is open: the box keeps its place while the menu has the keyboard. */
@@ -455,6 +472,7 @@ export class AskWindow {
   show(near: { x: number; y: number; size?: number } | null, context?: AskContext, source = "open"): void {
     this.near = near;
     this.steppedFor = null;
+    this.steppedHeight = 0;
     this.context = { ...(context ?? this.context), opened: true };
     this.source = source;
     this.wanted = true;
@@ -464,7 +482,15 @@ export class AskWindow {
     const scale = this.scale();
     // Reserve the first rows before showing (the page measures any further wrapping at the work area's width), clear of
     // the answer or question Ember shows as well as its handle.
-    const { bounds, up } = openingBounds(near, display.workArea, this.keepOff(), scale, askOpeningRows(this.context), this.bubble());
+    let { bounds, up } = openingBounds(near, display.workArea, this.keepOff(), scale, askOpeningRows(this.context), this.bubble());
+    // Room for follow-ups still to come only where the answer coming in still has room to finish whole by Ember, clear
+    // of the box with it (answerRoom): the row would take what it needs once it finishes (companion-c3-1: the field
+    // covered its last lines and its Read all). Otherwise they wait for the next opening, as before.
+    if (this.context.suggestionsComing && !roomForAnswer(bounds, near, display.bounds, scale)) {
+      const { suggestionsComing: _kept, ...rest } = this.context;
+      this.context = rest;
+      ({ bounds, up } = openingBounds(near, display.workArea, this.keepOff(), scale, askOpeningRows(this.context), this.bubble()));
+    }
     this.up = up;
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
@@ -527,17 +553,21 @@ export class AskWindow {
    * Ember's bubble came up or moved while the box is open (`asideFor`: stepsAsideFor of what it shows). The bubble keeps
    * off the box where it can (onBounds); where it found no room, a question, or Listen once's "Listening…", under the box
    * moves the box off it, once for each (companion-c1-1: a question that came while the box was open showed under the
-   * field, and the box never moved). The question itself never moves for the box.
+   * field, and the box never moved), and again only for the same one grown taller under it since (companion-c4-1: a
+   * spoken yes that wasn't taken adds its note, and the field covered the keys it names). The question itself never
+   * moves for the box.
    */
   bubbleChanged(asideFor: string | null): void {
     const win = this.win;
-    if (!asideFor || asideFor === this.steppedFor || !win || win.isDestroyed() || !win.isVisible()) return;
+    if (!asideFor || !win || win.isDestroyed() || !win.isVisible()) return;
     const bubble = this.bubble();
+    if (!bubble || (asideFor === this.steppedFor && bubble.height <= this.steppedHeight)) return;
     const b = win.getBounds();
-    if (!bubble || !overlap(b, bubble)) return;
+    if (!overlap(b, bubble)) return;
     const next = clearOfBubble(b, screen.getDisplayMatching(b).workArea, bubble, this.keepOff(), this.near);
     if (next === b) return;
     this.steppedFor = asideFor;
+    this.steppedHeight = bubble.height;
     // It grows away from Ember from here: up when it is above Ember now.
     this.up = !this.near || next.y + next.height <= this.near.y;
     win.setBounds(next);
