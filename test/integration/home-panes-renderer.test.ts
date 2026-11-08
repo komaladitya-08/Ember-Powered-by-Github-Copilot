@@ -459,6 +459,28 @@ describe.skipIf(gate)("Home's status lines, to a screen reader (2026-11-07 produ
     expect(page.errors).toEqual([]);
     await page.close();
   });
+
+  it("shows the focus ring where a key lands in Home though the mouse was used last, and none on a section a click opened (accessibility-visual-r2-1)", async () => {
+    const page = await open("home");
+    await page.evaluate(() => window.__pane.emit("onAgentStatus", { phase: "ready", detail: "", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 } }));
+    // The person clicks their way to Voice: the heading a click lands on shows no ring, as before.
+    await page.locator("a[href='#voice-h']").first().click();
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("voice-h");
+    expect(await page.evaluate(() => document.activeElement!.matches(":focus-visible"))).toBe(false);
+    // Then the settings key while Ember still waits: Home lands on Stop response, ringed (it had no ring after a click).
+    await page.evaluate(() => window.__pane.emit("onConversationTurn", "slow"));
+    await page.evaluate(() => window.__pane.emit("onFocusSection", "conversation:stop"));
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("conversation-stop");
+    expect(await page.evaluate(() => document.activeElement!.matches(":focus-visible"))).toBe(true);
+    expect(await page.locator("#conversation-stop").evaluate(e => getComputedStyle(e).boxShadow)).not.toBe("none");
+    // Ask Ember… from its key while another app holds it, after another click: ringed too.
+    await page.locator("a[href='#voice-h']").first().click();
+    await page.evaluate(() => window.__pane.emit("onFocusSection", "access:ask"));
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("p-ask");
+    expect(await page.evaluate(() => document.activeElement!.matches(":focus-visible"))).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
 });
 
 describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product audit)", () => {

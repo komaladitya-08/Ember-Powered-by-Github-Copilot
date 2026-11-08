@@ -200,6 +200,8 @@ Name these patterns when you design something new. Vague direction such as "make
 - **Focus.** Show it with `:focus-visible { outline: none; box-shadow: var(--focus-ring); }`, after the control's own edge. When a state adds its own `box-shadow` edge (Increase Contrast's current-section edge), write the focused variant with both shadows, or Tab shows no focus. There are two exceptions:
   - the always-focused Ask field shows a firmer rim and the accent caret;
   - the desk picture uses an inset outline inside a black keyline.
+
+  Where Home focuses a control main asked for (a key, the launcher, voice: `onFocusSection`), it passes `focusVisible: true`: the key never reaches the page, so after a click there Chromium drew no ring (accessibility-visual-r2-1). Focus a click in the page moved keeps the browser's heuristic.
 - **Hidden elements.** A class that sets `display` overrides the `hidden` attribute, so give it a `[hidden] { display: none; }` rule.
 - **Questions.**
   - A question is unmistakable and still: the bubble's brackets lock on once (a 180 ms `scale`), the ring is full and steady, the state tag says "Needs you", and nothing about it pulses or counts down. Its sentence sets the decision (up to its "?") in weight 600, what the step does after it, and the task under it in the secondary label; its keys show as keycaps, on the bubble and on the no-compositor corner card (`stepParts`, each chord kept on one line with its word there; on the card's narrow column each chord is a line of its own, with no " · " between them: accessibility-visual-r2-2).

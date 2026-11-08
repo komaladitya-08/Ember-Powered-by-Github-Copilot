@@ -1287,7 +1287,7 @@ function renderConversation(raw: Entry[]): void {
   }
   // Requests Ember heard (not typed) offer “That's not what I said”.
   markHeard(list);
-  if (latestWanted && list.querySelector(":scope > li.ember")) queueMicrotask(() => { if (latestWanted) showSection("conversation:latest"); });
+  if (latestWanted && list.querySelector(":scope > li.ember")) queueMicrotask(() => { if (latestWanted) showSection("conversation:latest", true); });
   const earlier = $("conversation-earlier") as HTMLButtonElement;
   const label = earlierLabel(entries.length - shown.length);
   earlier.hidden = !label;
@@ -1853,13 +1853,14 @@ const pendingSection = new PendingSection();
 /**
  * Shows a section (opening it if folded) and moves focus there: to the control main named ("computers:host", the
  * field to add a computer), else to the heading. A hidden section is shown once it appears, unless the user moves on.
+ * `asked`: main asked for it (a key, the launcher, voice), never a click here, so its focus shows the ring.
  */
-function showSection(value: string): void {
+function showSection(value: string, asked = false): void {
   const { section, control } = sectionRequest(value);
   const h = document.getElementById(`${section}-h`);
   if (!h) return;
   // Hidden by the page itself (Computers before its list came, the first run): it waits until it shows.
-  if (hiddenHere(h)) { pendingSection.hold(value); return; }
+  if (hiddenHere(h)) { pendingSection.hold(value); pendingAsked = asked; return; }
   pendingSection.drop();
   const inPane = paneOf(h);
   const opened = !document.body.classList.contains("first-run") && !!inPane && inPane !== pane;
@@ -1880,12 +1881,16 @@ function showSection(value: string): void {
   // A pane just opened starts at its top (its heading, or the control, in view); within the pane, it scrolls there.
   if (opened && to === target) window.scrollTo({ top: 0 });
   else to.scrollIntoView({ block, behavior: calm || opened ? "auto" : "smooth" });
-  to.focus({ preventScroll: true });
+  // Chromium draws no ring for a script's focus after a click, and the key never reaches the page: after the mouse
+  // was used here, Stop response was focused unseen (accessibility-visual-r2-1). A click here keeps the heuristic.
+  to.focus(asked ? { preventScroll: true, focusVisible: true } as FocusOptions : { preventScroll: true });
   keptInView = { el: to, block, until: performance.now() + 3000 };
 }
 
 /** "Read the last answer" came before any answer had: it is shown once one comes, unless the user moves on first. */
 let latestWanted = false;
+/** The section that waits to show was asked for by main (showSection's `asked`), not by a click here. */
+let pendingAsked = false;
 /** The newest answer's row, focusable for "Read the last answer" (a search left typed in is cleared, so it shows). */
 function latestAnswer(): HTMLElement | null {
   if (conversationSearch.value.trim()) { conversationSearch.value = ""; renderConversation(conversationAll); }
@@ -1963,12 +1968,12 @@ new ResizeObserver(() => {
   if (r.top < 0 || r.bottom > innerHeight) keptInView.el.scrollIntoView({ block: keptInView.block, behavior: "auto" });
 }).observe(document.body);
 // Main asks for a section ("Read all" on a long answer, connecting after setup).
-window.ember.onFocusSection(showSection);
+window.ember.onFocusSection(value => showSection(value, true));
 // A section that was hidden when main asked for it shows itself once it appears; a click, key or scroll first drops it.
 new MutationObserver(() => {
   if (!pendingSection.waiting) return;
   const value = pendingSection.take(s => { const h = document.getElementById(`${s}-h`); return !!h && !hiddenHere(h); });
-  if (value) showSection(value);
+  if (value) showSection(value, pendingAsked);
 }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden", "class"] });
 for (const type of ["pointerdown", "keydown", "wheel"]) window.addEventListener(type, () => { pendingSection.drop(); keptInView = null; latestWanted = false; }, { capture: true, passive: true });
 const jumpLinks = [...document.querySelectorAll<HTMLAnchorElement>("#jump a")];
