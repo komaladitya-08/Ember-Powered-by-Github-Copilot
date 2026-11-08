@@ -219,7 +219,12 @@ export function spokenText(markdown: string): string {
     .replace(/\*\*(?=[^\s*])([^*\n]*[^\s*])\*\*/g, "$1")
     .replace(/(^|[\s(])__(?=[^\s_])([^_\n]*[^\s_])__(?=[.,!?;:)]*(?:\s|$))/g, "$1$2")
     .replace(/(^|[\s(])([*_])(?=[^\s*_])([^*_\n]*[^\s*_])\2(?=[\s.,!?;:)]|$)/g, "$1$3")
-    .replace(/~~([^~]+)~~/g, "$1");
+    .replace(/~~([^~]+)~~/g, "$1")
+    // A marker left alone at a word's edge, where a streamed piece was cut inside the bold or italic words it opens or
+    // closes ("I have **finished … folder" | "and the archive** so…": voice-speaking-c2-1); never "6 * 7", "*.tmp",
+    // "2**8", "_config.yml" or "__init__.py".
+    .replace(/(^|[\s(])(?:\*\*?|_(?=\p{L}+(?:[\s,;:!?)]|$)))(?=\p{L})/gu, "$1")
+    .replace(/(?<=[\p{L}\p{N}.,!?;:])(?:\*\*?|_)(?=[\s.,!?;:)]|$)/gu, "");
   const said = endLines(plain)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")

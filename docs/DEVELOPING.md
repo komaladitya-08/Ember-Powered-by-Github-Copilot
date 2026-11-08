@@ -799,7 +799,8 @@ character in WebAssembly. A list can be split after its first item that way ("Th
 field…" starts with "The bench has a name field,"). A first sentence of more than 90 characters with no comma is cut
 before its first joining word ("and", "which", "because"…, never "to", "for", "from" or "with", which follow verbs)
 once it has 4 words, or else at its last space before 90 ("I looked through the folder you mentioned | and found…"),
-streamed or whole, and never inside a code span or a link's words. No piece of speech is longer than 120
+streamed or whole, and never inside a code span or a link's words; a cut inside bold or italic words leaves no star
+or underscore to be said. No piece of speech is longer than 120
 characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of speech ahead of what has played
 (`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
 it. A Markdown list is said item by item: each item, a heading (a line that is all bold too), the line that leads into

@@ -229,6 +229,21 @@ describe("SpeechStream", () => {
     expect(link.all.join(" ")).toContain("the report that you wrote for the board last quarter");
   });
 
+  it.each([
+    "I have **finished updating every one of the documents in your shared folder and the archive** so nothing is left to do now.",
+    "I have **finished every one of the documents, and the old archive** too, so nothing is left.",
+    "I have _finished updating every one of the documents in your shared folder and the old archive_ so nothing is left to do now.",
+    "I have *finished every one of the documents, and the old archive* too, so nothing is left.",
+    "**Done. I closed the window and saved the file.** Anything else?",
+  ])("never says a bold or italic marker that a cut inside it leaves in a piece: %j (voice-speaking-c2-1)", text => {
+    const s = new SpeechStream();
+    const said: string[] = [];
+    for (let i = 0; i < text.length; i += 4) said.push(...s.push(text.slice(i, i + 4)));
+    said.push(...s.finish(text));
+    for (const p of said) expect(p, p).not.toMatch(/[*_]/);
+    expect(said.join(" ")).toBe(spokenText(text));
+  });
+
   it("keeps a long answer's streaming cheap, so Ember's main process stays free while it streams (voice-speaking-r4)", () => {
     let paragraph = "";
     for (let i = 0; paragraph.length < 6000; i++) paragraph += `The ${i}th report covers sales in the north region and the totals by month for last year. `;
