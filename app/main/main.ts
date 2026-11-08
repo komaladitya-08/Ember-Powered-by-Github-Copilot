@@ -67,7 +67,7 @@ import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
-import { projectAfterStatus, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
+import { projectAfterStatus, projectJobStops, projectMay, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent/project-patch";
@@ -116,7 +116,7 @@ import { installKind, releasePage, UpdateChecker, updateNotice } from "./updates
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
-import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
+import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
 import { recentLimit } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
@@ -447,6 +447,8 @@ function start(): void {
   let projectFiles: string[] = [];
   let projectPicking = false;
   let projectJob: AbortController | null = null;
+  /** Jobs that send nothing (Apply patch): a connection that isn't ready doesn't stop them (projectJobStops). */
+  const projectLocalJobs = new WeakSet<AbortController>();
   let projectPatch: ProjectPatch | null = null;
   let projectFolder: ReturnType<typeof projectCommandFolder> | null = null;
   let projectExchange: ProjectExchange | null = null;
@@ -761,7 +763,9 @@ function start(): void {
     const cannotWork = modelServiceRefusal(admin) ?? sessionGreeting(readEnvironment());
     // The user's own provider or the organisation's service is named, never GitHub or Copilot (first-run-r1).
     const service = agent?.getStatus().service;
-    const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: keyName("settings"), settingsOpen, rows: connected ? setupRows() : [], service, cannotWork });
+    // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-v4-3).
+    const providerWaiting = phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null;
+    const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: keyName("settings"), settingsOpen, rows: connected ? setupRows() : [], providerWaiting, service, cannotWork });
     const bubble = { ...IDLE_BUBBLE, visible: true, mood: h.mood, title: "Hi, I'm Ember!", thought: h.thought, actions: h.actions };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
@@ -2286,6 +2290,14 @@ function start(): void {
     agent?.getStatus().phase === "ready" && !!home && !home.isDestroyed();
   /** Project work may start: also with the settings window in view, where it is asked for. */
   const projectAvailable = () => projectContinues() && home?.isVisible() && !home.isMinimized();
+  /**
+   * Work on what Projects keeps here (export, a file's Remove, applying the reviewed patch) sends nothing, so it needs no
+   * connection: the rest of projectAvailable holds (integrations-r3-2).
+   */
+  const projectLocal = () => projectMay("local", {
+    consented: consented(), locked: screenLock?.locked !== false, actions: policy.features.actions !== false,
+    shown: !!home && !home.isDestroyed() && home.isVisible() && !home.isMinimized(), ready: agent?.getStatus().phase === "ready",
+  });
   ipcMain.handle(IPC.projectPick, guard(async (): Promise<ProjectSelection> => {
     const names = projectFiles.length ? projectNames(projectFiles) : [];
     const owner = home;
@@ -2314,13 +2326,13 @@ function start(): void {
   }));
   ipcMain.handle(IPC.projectRemove, guard(async (name: unknown): Promise<ProjectSelection> => {
     const files = projectFiles;
-    if (!projectAvailable() || projectPicking || projectJob) return { names: files.length ? projectNames(files) : [], error: "Project work is unavailable right now." };
+    if (!projectLocal() || projectPicking || projectJob) return { names: files.length ? projectNames(files) : [], error: "Project work is unavailable right now." };
     projectPicking = true;
     try {
       const next = removeProjectFile(files, name);
       const selection = await projectSelection(next);
       if (projectFiles !== files) return { names: [] };
-      if (!projectAvailable()) return { ...await projectSelection(files), error: "Project work is unavailable right now." };
+      if (!projectLocal()) return { ...await projectSelection(files), error: "Project work is unavailable right now." };
       projectFiles = next;
       projectPatch = null;
       projectExchange = null;
@@ -2332,13 +2344,13 @@ function start(): void {
   ipcMain.handle(IPC.projectExport, guard(async (kind: unknown): Promise<{ message: string }> => {
     const output = projectOutput;
     const owner = home;
-    if ((kind !== "answer" && kind !== "diff") || !output || !owner || !projectAvailable() || projectPicking || projectJob) {
+    if ((kind !== "answer" && kind !== "diff") || !output || !owner || !projectLocal() || projectPicking || projectJob) {
       return { message: "Choose an available project answer or diff to export." };
     }
     const text = kind === "diff" ? output.diff : output.answer;
     if (!text) return { message: "No project diff is available to export." };
     projectPicking = true;
-    const current = () => projectOutput === output && home === owner && projectAvailable() === true;
+    const current = () => projectOutput === output && home === owner && projectLocal() === true;
     try {
       const result = await dialog.showSaveDialog(owner, {
         title: kind === "diff" ? "Export project diff" : "Export project answer",
@@ -2397,16 +2409,17 @@ function start(): void {
     const patch = projectPatch;
     const owner = home;
     const record = audit;
-    if (!patch || !owner || !record || !projectAvailable() || projectJob || projectPicking) {
+    if (!patch || !owner || !record || !projectLocal() || projectJob || projectPicking) {
       return { done: false, message: "Draft an applicable patch before trying to apply it." };
     }
     const run = projectJob = new AbortController();
+    projectLocalJobs.add(run);
     try {
       const { response } = await dialog.showMessageBox(owner, {
         type: "warning", title: "Apply project patch", message: `Apply the reviewed patch to ${patch.source.name}?`,
         detail: patch.source.file, buttons: ["Cancel", "Apply patch"], cancelId: 0, defaultId: 0, signal: run.signal,
       });
-      if (response !== 1 || run.signal.aborted || !projectAvailable() || projectPatch !== patch || home !== owner) {
+      if (response !== 1 || run.signal.aborted || !projectLocal() || projectPatch !== patch || home !== owner) {
         return { done: false, message: "Patch application cancelled." };
       }
       applyProjectPatch(patch, run.signal, () => record.write({ event: "confirm", kind: "project-patch", answer: "once" }));
@@ -2661,7 +2674,7 @@ function start(): void {
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
   }, providers.api, { log: log.child("provider") });
   // Any settings change may move the endpoint in force (the switch, its address, its models, its card): the host
-  // reconnects when nothing would be cut off, else before the next request between turns.
+  // reconnects when nothing would be cut off, else as soon as the turn and the tasks under way are done.
   settings.onChange(() => { providers.settingsChanged(); void agent?.providerChanged(); });
   registerExtensionsIpc(ipcMain, event => {
     const url = event.senderFrame?.url ?? "";
@@ -3381,6 +3394,8 @@ function start(): void {
       describeScreen: () => seeing.describe(), screenLocked: () => screenLock?.locked ?? false, hands,
       // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
+      // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-r3-1).
+      providerWaiting: () => (fixedProvider ? null : providerWaitingHost(settings.get(), admin)),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
       onTurnStart: turn => {
@@ -3428,7 +3443,8 @@ function start(): void {
         // Projects' work goes only where it must (integrations-r1): a reconnect stops a request under way, but keeps the
         // files, the request, the answer and its diff; the lockdown forgets it all (Sign out and an account change do
         // where they happen: integrations-c2-1); another service or account, only the previous answer as context.
-        if (status.phase !== "ready") projectJob?.abort();
+        // Apply patch's confirmation sends nothing, so a reconnect try leaves it up (integrations-v4-2).
+        if (projectJob && projectJobStops(projectLocalJobs.has(projectJob) ? "local" : "send", status.phase)) projectJob.abort();
         const forget = projectAfterStatus(status, projectExchange ? { scope: projectExchangeScope } : null, status.phase === "ready" ? agent?.projectWorkspaceScope() ?? null : null);
         if (forget !== "keep") forgetProject(forget);
         // Copilot refused the sign-in in use (at a start, or mid-session): Check again passes over it to the next one.

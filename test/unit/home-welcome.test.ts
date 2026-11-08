@@ -162,6 +162,18 @@ describe("the sign-in step", () => {
     expect(signInView({ phase: "starting", signingIn: false, managedProvider: false })).toMatchObject({ primary: "continue", why: "Still connecting to Copilot.", skip: true });
   });
 
+  it("says I'll switch to Copilot once I've finished, with Continue open, while a switch waits for what I'm doing (first-run-v4-1)", () => {
+    expect(signInView({ phase: "starting", signingIn: false, managedProvider: false, switching: true }))
+      .toEqual({ line: "I'll switch to Copilot once I've finished what I'm doing.", tone: "", primary: "continue", why: "", cancel: false, skip: false, retry: false });
+    // Main's own status wins once it is ready again or the organisation locks Ember down.
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, switching: true }).line).toBe("Connected to Copilot.");
+    expect(signInView({ phase: "starting", signingIn: false, managedProvider: false, locked: true, switching: true }).line).toBe("Your organisation's policy locks me down, so I can't connect for now.");
+    // The try step's Ask waits for the switch, never for a sign-in the step doesn't offer yet.
+    expect(SCRIPT).toContain("noSignIn: !!status?.admin.provider || ownInUse() || toCopilotLater");
+    // Only while main leaves my own provider for Copilot: never for a switch the other way.
+    expect(SCRIPT).toContain("toCopilotLater = leaving && reported?.switchPending === true;");
+  });
+
   it("offers Check again while signed out, and shows the page main offers for a GitHub CLI sign-in (review of #124)", () => {
     expect(signInView({ phase: "signed-out", signingIn: false, managedProvider: false }).retry).toBe(true);
     expect(signInView({ phase: "ready", signingIn: false, managedProvider: false }).retry).toBe(false);
@@ -200,6 +212,16 @@ describe("the sign-in step", () => {
     expect(signInText({ managed: false, own: "localhost:11434", ownPhase: "ready" })).toEqual(signInText({ managed: false, own: "localhost:11434" }));
     expect(SKIP_SIGN_IN).toContain("sign in later");
     expect(SKIP_OWN).toBe("You can go on for now and check it later in Settings › Models & connections. Until I'm connected, I can't answer or act.");
+  });
+
+  it("says it is using a provider elsewhere, as the line under it does, and connected only to one on this computer (first-run-r3-2)", () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const away = signInText({ managed: false, own: "api.example.com", ownPhase: "ready" });
+    expect(away.lead).toBe("I'm using the model provider you set up (api.example.com), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.");
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service }).line).toBe("Using your own provider (api.example.com).");
+    const near = signInText({ managed: false, own: "localhost:11434", ownPhase: "ready" });
+    expect(near.lead).toBe("I'm connected to the model provider you set up (localhost:11434), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.");
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host: "localhost:11434" } }).line).toBe("Connected to your own provider (localhost:11434).");
   });
 
   it("never offers sign-in with the organisation's own service, under lockdown, or when the policy refused (review of #124)", () => {

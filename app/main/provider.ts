@@ -24,7 +24,7 @@ import { friendlyError } from "./agent/presenter";
 import type { Fields, Logger } from "./logger";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { endpointHost, MAX_API_KEY, MODEL_ID } from "../shared/provider";
-import type { ProviderDraft, ProviderState, RetryResult } from "../shared/ipc";
+import type { ProviderDraft, ProviderMove, ProviderState, RetryResult } from "../shared/ipc";
 
 /** The user's provider settings (SettingsSchema `provider`). */
 export type UserProviderSettings = Settings["provider"];
@@ -69,6 +69,16 @@ export function userProviderInForce(s: Settings, loaded: LoadedAdminPolicy): Use
   const p = s.provider;
   if (!p.on || !providerAgreed(p)) return null;
   return p;
+}
+
+/**
+ * The host whose card the user's own provider waits for: on and allowed, with a usable address that isn't agreed to;
+ * null otherwise. Signed out then, agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1).
+ */
+export function providerWaitingHost(s: Settings, loaded: LoadedAdminPolicy): string | null {
+  if (loaded.error !== undefined || !userProviderAllowed(loaded.policy)) return null;
+  const host = endpointHost(s.provider.baseUrl);
+  return s.provider.on && host && !providerAgreed(s.provider) ? host : null;
 }
 
 /**
@@ -511,11 +521,16 @@ export function createProviderService(d: ProviderServiceDeps) {
         d.changed();
         return { ok: true };
       },
-      agree: (host: string): KeySave => {
+      /**
+       * The card's yes for `host`, the endpoint's in settings; or, with `move` (Home's edit of the provider in force,
+       * held until its card was agreed and it answered: integrations-c3-1), the host those details name, written with
+       * the yes in one change, so the provider in force never leaves force for Copilot between the two.
+       */
+      agree: (host: string, move?: ProviderMove): KeySave => {
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
         const own = d.settings.own().provider;
-        if (endpointHost(own.baseUrl) !== host) return { ok: false, why: PROVIDER_HOST_CHANGED };
-        d.settings.update({ provider: { ...own, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host } } });
+        if (endpointHost(move?.baseUrl ?? own.baseUrl) !== host) return { ok: false, why: PROVIDER_HOST_CHANGED };
+        d.settings.update({ provider: { ...own, ...move, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host } } });
         d.log.info("provider.agreed", {});
         return { ok: true };
       },

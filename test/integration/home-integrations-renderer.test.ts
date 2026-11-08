@@ -88,6 +88,9 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
         const error = window.__ixProjectFails.shift();
         return error ? { error } : { answer: "```diff\n-hi\n+hello\n```", patch: { name: "greeting.ts", diff: "-hi\n+hello" }, canContinue: true };
       };
+      // What is kept here, saved or removed, as main does it with nothing sent (integrations-r3-2).
+      if (name === "projectExport") return async (kind: string) => { window.__ixCalls.push(`export:${kind}`); return { message: kind === "diff" ? "Project diff exported. Exporting does not apply changes." : "Project answer exported." }; };
+      if (name === "projectRemove") return async (file: string) => { window.__ixCalls.push(`remove:${file}`); return { names: [], sizes: [], changed: true }; };
       return () => new Promise(() => undefined);
     } }) as never;
     let changed = () => undefined as void;
@@ -188,7 +191,7 @@ describe.skipIf(gate)("Home's Projects, where the organisation turned commands o
 });
 
 describe.skipIf(gate)("Home's Projects, as Ember's connection changes (2026-11-07 product audit)", () => {
-  it("keeps the chosen files, the typed request, the answer and its diff while Ember reconnects, and says only sending waits (integrations-r1)", async () => {
+  it("keeps the chosen files, the typed request, the answer and its diff while Ember reconnects, says only sending waits, and exports, applies and removes meanwhile (integrations-r1, integrations-r3-2)", async () => {
     const page = await open("project");
     await page.locator("#project-pick").click();
     await expect.poll(() => page.locator("#project-files").innerText()).toContain("greeting.ts");
@@ -210,9 +213,14 @@ describe.skipIf(gate)("Home's Projects, as Ember's connection changes (2026-11-0
       await expect.poll(() => page.locator("#project-status").innerText(), { message: s.phase }).toBe("Ember isn't connected right now. Your work here stays, and you can send once it connects.");
       await kept(s.phase);
       expect(await page.locator("#project-send").isDisabled()).toBe(true);
-      expect(await page.locator("#project-apply").isDisabled()).toBe(true);
+      // What is kept here sends nothing, so it doesn't wait for a connection (integrations-r3-2).
+      for (const id of ["project-export-answer", "project-export-diff", "project-apply"]) expect(await page.locator(`#${id}`).isEnabled(), `${s.phase} ${id}`).toBe(true);
+      expect(await page.getByRole("button", { name: "Remove greeting.ts" }).isEnabled()).toBe(true);
     }
     await evidence(page, "project-reconnecting");
+    await page.locator("#project-export-answer").click();
+    await expect.poll(() => page.locator("#project-output-status").innerText()).toBe("Project answer exported.");
+    expect(await calls(page)).toContain("export:answer");
     await page.evaluate(st => window.__ixEmit("onAgentStatus", st), READY);
     await expect.poll(() => page.locator("#project-send").isDisabled()).toBe(false);
     await kept("ready again");
@@ -223,13 +231,23 @@ describe.skipIf(gate)("Home's Projects, as Ember's connection changes (2026-11-0
     await expect.poll(() => page.locator("#project-previous-control").isVisible()).toBe(false);
     expect(await page.locator("#project-include-previous").isChecked()).toBe(false);
     expect(await page.locator("#project-answer").isVisible()).toBe(true);
+    // Not connected again: a chosen file can still be removed, and the request stays.
+    await page.evaluate(st => window.__ixEmit("onAgentStatus", st), { ...READY, phase: "signed-out", detail: "Not connected." });
+    await page.getByRole("button", { name: "Remove greeting.ts" }).click();
+    await expect.poll(() => page.locator("#project-status").innerText()).toBe("Removed greeting.ts. Your request is kept.");
+    expect(await calls(page)).toContain("remove:greeting.ts");
+    // The last file gone, the focus goes to the request, since Choose files… waits for a connection (integrations-v4-4,
+    // WCAG 2.4.3).
+    expect(await page.locator("#project-pick").isDisabled()).toBe(true);
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id ?? "")).toBe("project-question");
+    await page.evaluate(st => window.__ixEmit("onAgentStatus", st), READY);
     // Sign-out or the organisation's lockdown: main forgot it all, and so does Home.
     await page.evaluate(() => window.__ixEmit("onProjectForgot", "all"));
     await expect.poll(() => page.locator("#project-files").isVisible()).toBe(false);
     expect(await page.locator("#project-answer").isVisible()).toBe(false);
     expect(await page.locator("#project-question").inputValue()).toBe("");
     await page.close();
-  });
+  }, 20_000);
 
   it("keeps a failed request's reason in view when the check it starts takes Ember off Ready (integrations-r2-5)", async () => {
     const page = await open("project");

@@ -270,14 +270,19 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
         : { id: "sandbox", status: "fail", label: "Window sandbox", detail: "User namespaces are off and chrome-sandbox isn't setuid root, so Ember's windows can't be sandboxed.", fix: "sudo chown root:root /opt/ember/chrome-sandbox && sudo chmod 4755 /opt/ember/chrome-sandbox (the RPM does this)" });
   }
   // The Copilot runtime needs a free file watcher for each conversation and task; with none left it takes requests
-  // and never answers them.
+  // and never answers them. Under another model service it is Ember's model connection, never "Copilot can't answer"
+  // (integrations-r3-3, as host.ts runtimeWords says it).
   const w = p.fileWatchers;
   const watchersFix = "sudo sysctl -w fs.inotify.max_user_instances=512, and put fs.inotify.max_user_instances=512 in /etc/sysctl.d/90-ember.conf to keep it";
+  const other = p.auth?.kind === "provider" || p.auth?.kind === "own-provider";
+  const watchers = other
+    ? { label: "Ember's file watchers", none: "so Ember can't answer: its model connection needs", low: "Ember's model connection needs" }
+    : { label: "Copilot's file watchers", none: "so Copilot can't answer: it needs", low: "Copilot needs" };
   if (w) out.push(w.max - w.used >= 8
-    ? { id: "file-watchers", status: "ok", label: "Copilot's file watchers", detail: `${w.used} of ${w.max} in use.` }
+    ? { id: "file-watchers", status: "ok", label: watchers.label, detail: `${w.used} of ${w.max} in use.` }
     : w.used >= w.max
-      ? { id: "file-watchers", status: "fail", label: "Copilot's file watchers", detail: `All ${w.max} are in use, so Copilot can't answer: it needs a free one for each conversation and task.`, fix: watchersFix }
-      : { id: "file-watchers", status: "warn", label: "Copilot's file watchers", detail: `${w.used} of ${w.max} in use: Copilot needs a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
+      ? { id: "file-watchers", status: "fail", label: watchers.label, detail: `All ${w.max} are in use, ${watchers.none} a free one for each conversation and task.`, fix: watchersFix }
+      : { id: "file-watchers", status: "warn", label: watchers.label, detail: `${w.used} of ${w.max} in use: ${watchers.low} a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
   return out;
 }
 

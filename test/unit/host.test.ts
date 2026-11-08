@@ -4302,6 +4302,83 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     await host.stop();
   });
 
+  it("switches once the turn under way ends, with no request asked meanwhile, and says till then that the switch waits (first-run-v4-1)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    await host.ask("tell me a long story");
+    await vi.waitFor(() => expect(before.sent.join("\n")).toContain("tell me a long story"));
+    // "Use GitHub Copilot instead" while the answer comes: nothing cuts it off, and the status says the switch waits.
+    now = null;
+    expect(host.providerChanged()).toBeNull();
+    expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "a.example" }, switchPending: true });
+    expect(before.disconnected).toBe(false);
+    // The turn ends: Ember moves to Copilot without waiting for another request (no sign-in yet, so signed out).
+    before.emit("assistant.turn_end");
+    before.emit("session.idle", {});
+    await vi.waitFor(() => expect(host.getStatus().phase).toBe("signed-out"), { timeout: 3000 });
+    expect(before.disconnected).toBe(true);
+    expect(host.getStatus().service).toBeUndefined();
+    expect(host.getStatus().switchPending).toBeUndefined();
+    await host.stop();
+  });
+
+  it("never says a switch waits when nothing is under way, though main tells it twice (first-run-v4-1)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host, statuses } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const seen = statuses.length;
+    now = null;
+    // Main tells the host from the settings' change and from the provider service's, one after the other.
+    const switching = host.providerChanged();
+    expect(switching).not.toBeNull();
+    expect(host.providerChanged()).toBeNull();
+    expect(await switching).toBe("signed-out");
+    expect(statuses.slice(seen).filter(s => s.switchPending)).toEqual([]);
+    await host.stop();
+  });
+
+  it("switches once the turn under way is stopped, though the runtime never confirms the stop (first-run-v4-1)", async () => {
+    sim.abortEnds = false;
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    await host.ask("tell me a long story");
+    await vi.waitFor(() => expect(before.sent.join("\n")).toContain("tell me a long story"));
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    await host.stopAnswer();
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "b.example" } }), { timeout: 3000 });
+    expect(before.disconnected).toBe(true);
+    await host.stop();
+  });
+
+  it("switches once the last task ends, and a switch undone meanwhile reconnects nothing (first-run-v4-1)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    expect(host.getStatus().switchPending).toBe(true);
+    // Put back before the task ends: nothing waits any more.
+    now = at("a.example");
+    expect(host.providerChanged()).toBeNull();
+    expect(host.getStatus().switchPending).toBeUndefined();
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    host.tasks!.cancel(t.id);
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 });
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "b.example" } }), { timeout: 3000 });
+    expect(conductorSession().config.provider.baseUrl).toBe("https://b.example/v1");
+    expect(host.getStatus().switchPending).toBeUndefined();
+    await host.stop();
+  });
+
   it("drops the held requests on Stop: none is sent afterwards", async () => {
     let now: ActiveProvider | null = at("a.example");
     const { host } = makeHost({ hands: hands(), provider: () => now });

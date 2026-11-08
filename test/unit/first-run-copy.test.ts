@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, providerFailField, providerInUseLine, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { costWords, failureView, homeConnectionView, modelRows, ownProviderOffer, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices } from "../../app/renderer/home/first-run-copy";
 import { tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 
@@ -174,7 +174,13 @@ describe("first run: the provider in use, as Home says it", () => {
 
 describe("first run: a failed check of new details for a provider in use (first-run-r2-1)", () => {
   it("says the details in use are still the ones used, after what failed", () => {
-    expect(providerKeptLine("Ember can't reach 127.0.0.1:18397. Check the address and the network.", "127.0.0.1:18300")).toBe("Ember can't reach 127.0.0.1:18397. Check the address and the network. Nothing has changed: I'm still using 127.0.0.1:18300.");
+    expect(providerKeptLine("Ember can't reach 127.0.0.1:18397. Check the address and the network.", "127.0.0.1:18300")).toBe("I can't reach 127.0.0.1:18397. Check the address and the network. Nothing has changed: I'm still using 127.0.0.1:18300.");
+  });
+  it("says it in one voice, mine, and offers to keep the details in use (first-run-c3-1)", () => {
+    expect(providerKeptLine("b.example sent Ember to another address. Enter the address it moved to.", "a.example")).toBe("b.example sent me to another address. Enter the address it moved to. Nothing has changed: I'm still using a.example.");
+    expect(providerKeptLine("Ember can't verify b.example's certificate.", "a.example")).toBe("I can't verify b.example's certificate. Nothing has changed: I'm still using a.example.");
+    expect(providerKeptLine("b.example didn't accept the API key. Check it, or replace it.", "a.example")).toBe("b.example didn't accept the API key. Check it, or replace it. Nothing has changed: I'm still using a.example.");
+    expect(providerKeepLabel("a.example")).toBe("Keep using a.example");
   });
   it("hands the focus to the field the failure names: the address when nothing answered, the key when the key failed", () => {
     expect(providerFailField({ why: "Ember can't reach b.example. Check the address and the network.", cause: "unreachable" })).toBe("address");

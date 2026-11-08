@@ -28,7 +28,12 @@ const READY_MODELS = [
 ];
 const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, signInWith: "github-app" };
 
-interface Seed { consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown> }
+/**
+ * `liveState`: as over IPC, the page holds its own copy of the settings; the provider's state follows them as main's
+ * does (in force while on and agreed for the address's host; a saved key kept only for its own host), and the card's
+ * yes is saved and broadcast.
+ */
+interface Seed { consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -61,14 +66,18 @@ async function open(seed: Seed = {}): Promise<Page> {
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
-  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff }) => {
+  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState }) => {
     window.__frFailOff = failOff;
     window.__frCalls = []; window.__frPend = {};
     window.__frState = { settings, agent };
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     window.__frEmit = (name, value) => { for (const fn of subs[name] ?? []) fn(value); };
     const defer = (name: string) => new Promise((resolve, reject) => { (window.__frPend[name] ??= []).push({ resolve, reject }); });
-    const status = () => ({ appVersion: "0.1.1", settings: window.__frState.settings, environment, logFile: "/test/ember.log", settingsNotice: null, admin });
+    const copy = <T>(v: T): T => (liveState ? structuredClone(v) : v);
+    const hostOf = (url: unknown) => { try { return new URL(String(url)).host; } catch { return null; } };
+    /** The host the saved key is for (liveState): main deletes a key saved for another host than the address. */
+    let keyHost = liveState && providerState.keySaved ? hostOf(settings.provider.baseUrl) : null;
+    const status = () => ({ appVersion: "0.1.1", settings: copy(window.__frState.settings), environment, logFile: "/test/ember.log", settingsNotice: null, admin });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return async () => status();
@@ -78,7 +87,8 @@ async function open(seed: Seed = {}): Promise<Page> {
         if (window.__frFailOff && (patch.provider as { on?: boolean } | undefined)?.on === false) throw new Error("disk full");
         const s = window.__frState.settings;
         for (const [k, v] of Object.entries(patch)) s[k] = v && typeof v === "object" && !Array.isArray(v) && typeof s[k] === "object" ? { ...(s[k] as object), ...v } : v;
-        window.__frEmit("onSettingsChanged", s);
+        if (keyHost && keyHost !== hostOf(s.provider.baseUrl)) keyHost = null;
+        window.__frEmit("onSettingsChanged", copy(s));
       };
       if (name === "signIn") return () => { window.__frCalls.push("signIn"); return defer("signIn"); };
       if (name === "retrySignIn") return () => { window.__frCalls.push("retry"); return defer("retry"); };
@@ -93,16 +103,31 @@ async function open(seed: Seed = {}): Promise<Page> {
     } }) as never;
     if (!noBridge) {
       window.emberProvider = {
-        state: async () => ({ allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false, ...providerState }),
+        state: async () => {
+          const p = window.__frState.settings.provider as { on: boolean; baseUrl: string; consent?: { host?: string } };
+          const host = hostOf(p.baseUrl);
+          const agreed = !!host && p.consent?.host === host;
+          const live = liveState ? { inForce: p.on && agreed, host, agreed, keySaved: !!host && keyHost === host } : {};
+          return { allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false, ...providerState, ...live };
+        },
         onChanged: () => () => undefined,
-        saveKey: () => { window.__frCalls.push("saveKey"); return Promise.resolve({ ok: true }); },
+        saveKey: () => { window.__frCalls.push("saveKey"); keyHost = hostOf(window.__frState.settings.provider.baseUrl); return Promise.resolve({ ok: true }); },
         removeKey: async () => ({ ok: true }),
-        agree: (host: string) => { window.__frCalls.push(`agree:${host}`); if (slowAgree) return (defer("agree") as Promise<unknown>).then(r => { window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return r; }) as never; window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return Promise.resolve({ ok: true }); },
+        agree: (host: string, move?: object) => {
+          window.__frCalls.push(`agree:${host}`);
+          // Home's held edit of the provider in use comes with its details, saved with the yes (integrations-c3-1).
+          if (move) window.__frCalls.push(`move:${JSON.stringify(move)}`);
+          if (liveState) {
+            window.__frState.settings.provider = { ...window.__frState.settings.provider, ...move, on: true, consent: { version: 1, at: "2026-11-08T12:00:00Z", host } };
+            window.__frEmit("onSettingsChanged", copy(window.__frState.settings));
+            return Promise.resolve({ ok: true });
+          }
+          if (slowAgree) return (defer("agree") as Promise<unknown>).then(r => { window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return r; }) as never; window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return Promise.resolve({ ok: true }); },
         // A draft of typed details (first-run-r2-1) is told apart by its host, and whether a key came with it (never the key).
         test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
@@ -418,13 +443,18 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     for (const id of ["sign-in", "own-provider", "retry", "switch-account", "provider-details"]) expect(await shown(id), id).toBe(false);
     // The card's I agree is the one prominent button in view.
     expect(await p.locator(".copilot .btn:not(.quiet):visible, #byok .btn:not(.quiet):visible").count()).toBe(1);
-    // Not now puts the note away and turns the switch off: signing in leads again, with the provider beside it.
+    // Nor does the rest of Home point to Copilot: the hint, the tagline and the status panel's button (integrations-r3-1).
+    expect(await p.locator("#byok-hint").innerText()).toBe("Ember can't answer until you agree to use 127.0.0.1:18409.");
+    expect(await p.evaluate(() => document.getElementById("tagline")?.textContent)).toBe("Ember is beside your cursor. Agree to use 127.0.0.1:18409 in Models & connections to start asking.");
+    expect(await p.evaluate(() => document.getElementById("p-connect")?.textContent)).toBe("Check my provider…");
     await p.locator("#byok-no").click();
     await expect.poll(() => shown("byok-consent")).toBe(false);
     await expect.poll(() => shown("sign-in")).toBe(true);
     expect(await p.locator("#agent-text").innerText()).toBe(signedOut.detail);
     expect(await shown("own-provider")).toBe(true);
     expect(await shown("connection-help")).toBe(false);
+    expect(await p.evaluate(() => document.getElementById("tagline")?.textContent)).toBe("Ember is beside your cursor. Connect Copilot to start asking.");
+    expect(await p.evaluate(() => document.getElementById("p-connect")?.textContent)).toBe("Connect Copilot…");
     // Turned on again with no address yet: no note, so signing in leads, and the switch already on isn't offered.
     await p.evaluate(() => { const s = window.__frState.settings as { provider: Record<string, unknown> }; s.provider = { ...s.provider, on: true, baseUrl: "" }; window.__frEmit("onSettingsChanged", s); });
     await expect.poll(() => shown("own-provider")).toBe(false);
@@ -473,6 +503,106 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18108.");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
+
+  it("(aj) Home holds an edit of my provider in use to another host until its note is agreed and it answers: requests stay with the one in use, and a failed check or Keep using changes nothing (integrations-c3-1)", async () => {
+    const using = "127.0.0.1:18308";
+    const service = { kind: "user", host: using };
+    const p = await open({ home: true, liveState: true, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
+    await expect.poll(() => p.locator("#byok-hint").innerText()).toBe(`Ember sends your requests to ${using} instead of Copilot. A change applies from your next message; tasks already running finish where they started.`);
+    const saves = async () => (await calls(p)).filter(c => c.startsWith("save:"));
+    const provider = () => p.evaluate(() => window.__frState.settings.provider as { baseUrl: string; conductor: string | null; consent: { host: string } });
+    // Another port: held, never saved, so the provider in use stays in force; the note comes up for the new host.
+    await p.locator("#byok-url").fill("http://127.0.0.1:18309/v1");
+    await p.keyboard.press("Tab");
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
+    expect(await p.locator("#byok-consent-text").innerText()).toContain("to 127.0.0.1:18309 instead");
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`Read the note above: Ember still uses ${using}, and sends nothing to 127.0.0.1:18309 until you agree.`);
+    expect(await p.locator("#byok-hint").innerText()).toBe(`Ember still uses ${using}. Agree to use 127.0.0.1:18309 to switch.`);
+    expect(await p.locator("#byok-no").innerText()).toBe(`Keep using ${using}`);
+    expect(await p.locator("#byok-test").isDisabled()).toBe(true);
+    // A model typed meanwhile is held with it.
+    await p.locator("#byok-conductor").fill("other-model");
+    await p.keyboard.press("Tab");
+    expect(await saves()).toEqual([]);
+    expect(await provider()).toMatchObject({ baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { host: using } });
+    // I agree asks the new details first; nothing answers there: nothing has changed, and the address takes the focus.
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    await p.locator("#byok-yes").click();
+    await expect.poll(() => calls(p)).toContain("test-draft:127.0.0.1:18309");
+    expect(await p.locator("#byok-msg").innerText()).toBe("Checking 127.0.0.1:18309…");
+    expect(await p.locator("#byok-yes").getAttribute("aria-disabled")).toBe("true");
+    await settle(p, "test", { ok: false, why: "Ember can't reach 127.0.0.1:18309. Check the address and the network.", cause: "refused" });
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`Ember can't reach 127.0.0.1:18309. Check the address and the network. Nothing has changed: Ember still uses ${using}.`);
+    expect(await focusedId(p)).toBe("byok-url");
+    expect(await p.locator("#byok-consent").isVisible()).toBe(true);
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      for (const scheme of ["light", "dark"] as const) {
+        await p.emulateMedia({ colorScheme: scheme });
+        await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `byok-held-${scheme}.png`), fullPage: true });
+      }
+    }
+    expect(await saves()).toEqual([]);
+    expect((await calls(p)).filter(c => c.startsWith("agree:"))).toEqual([]);
+    expect(await provider()).toMatchObject({ baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { host: using } });
+    // Again, and it answers: the details and the yes are saved together, and the note goes.
+    await p.locator("#byok-yes").click();
+    await expect.poll(async () => (await calls(p)).filter(c => c === "test-draft:127.0.0.1:18309").length).toBe(2);
+    await settle(p, "test", { ok: true, host: "127.0.0.1:18309", models: 1, ids: ["other-model"] }, 1);
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18309.");
+    expect(await calls(p)).toContain("agree:127.0.0.1:18309");
+    expect(await calls(p)).toContain(`move:${JSON.stringify({ type: "openai", baseUrl: "http://127.0.0.1:18309/v1", conductor: "other-model", worker: null, wireApi: null, azureApiVersion: null })}`);
+    expect(await saves()).toEqual([]);
+    expect(await provider()).toMatchObject({ baseUrl: "http://127.0.0.1:18309/v1", conductor: "other-model", consent: { host: "127.0.0.1:18309" } });
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(false);
+    expect(await focusedId(p)).toBe("byok-url");
+    // Another edit, put away with Keep using: the address in use comes back, nothing is asked or saved.
+    await p.locator("#byok-url").fill("http://127.0.0.1:18310/v1");
+    await p.keyboard.press("Tab");
+    await expect.poll(() => p.locator("#byok-no").innerText()).toBe("Keep using 127.0.0.1:18309");
+    await p.locator("#byok-no").click();
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(false);
+    expect(await p.locator("#byok-url").inputValue()).toBe("http://127.0.0.1:18309/v1");
+    expect(await p.locator("#byok-msg").innerText()).toBe("Nothing has changed: Ember still uses 127.0.0.1:18309.");
+    expect(await focusedId(p)).toBe("byok-url");
+    expect(await p.locator("#byok-on").isChecked()).toBe(true);
+    expect((await calls(p)).filter(c => c.startsWith("test-draft:127.0.0.1:18310"))).toEqual([]);
+    expect(await saves()).toEqual([]);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it("(ak) turning my provider off while an edit of it is held keeps the one in use, its address and its key, and its note never says turning off goes back to Copilot (integrations-v4-1)", async () => {
+    const using = "127.0.0.1:18308";
+    const service = { kind: "user", host: using };
+    const p = await open({ home: true, liveState: true, providerState: { keySaved: true }, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
+    await expect.poll(() => p.locator("#byok-key-saved").isVisible()).toBe(true);
+    const saves = async () => (await calls(p)).filter(c => c.startsWith("save:"));
+    const provider = () => p.evaluate(() => window.__frState.settings.provider as { on: boolean; baseUrl: string; consent: { host: string } });
+    // An edit to another host is held: its note says what goes there, and nothing about turning the switch off, which
+    // keeps the provider in use (as first run's step for it does).
+    await p.locator("#byok-url").fill("http://127.0.0.1:18309/v1");
+    await p.keyboard.press("Tab");
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
+    expect(await p.locator("#byok-consent-text").innerText()).toMatch(/goes only to 127\.0\.0\.1:18309\.$/);
+    expect(await p.locator("#byok-consent-text").innerText()).not.toMatch(/Copilot\.$|Turn this off/);
+    expect(await p.locator("#byok-no").innerText()).toBe(`Keep using ${using}`);
+    await p.locator("#byok-key").fill("sk-typed-for-the-new-host");
+    // Off: only the switch is saved; the address in use and its key stay, and nothing goes to the new host.
+    await p.locator("#byok-on").click();
+    await expect.poll(saves).toEqual([`save:${JSON.stringify({ provider: { on: false } })}`]);
+    expect(await provider()).toMatchObject({ on: false, baseUrl: `http://${using}/v1`, consent: { host: using } });
+    expect(await p.evaluate(() => window.emberProvider!.state().then(s => s.keySaved))).toBe(true);
+    expect((await calls(p)).filter(c => c.startsWith("test-draft:") || c.startsWith("agree:") || c === "saveKey")).toEqual([]);
+    // On again: the provider that was in use, as it was, with no note to agree to again and its key still saved.
+    await p.locator("#byok-on").click();
+    await expect.poll(() => p.locator("#byok-hint").innerText()).toBe(`Ember sends your requests to ${using} instead of Copilot. A change applies from your next message; tasks already running finish where they started.`);
+    expect(await p.locator("#byok-consent").isVisible()).toBe(false);
+    expect(await p.locator("#byok-url").inputValue()).toBe(`http://${using}/v1`);
+    expect(await p.locator("#byok-key-saved").isVisible()).toBe(true);
+    expect(await p.locator("#byok-key").inputValue()).toBe("");
+    expect(await saves()).toEqual([`save:${JSON.stringify({ provider: { on: false } })}`, `save:${JSON.stringify({ provider: { on: true } })}`]);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
 
   it("(x) Test connection names the provider's models and offers them in both model fields (integrations-9)", async () => {
     const consent = { version: 1, at: "2026-11-07T12:00:00Z", host: "127.0.0.1:11434" };
@@ -659,7 +789,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => calls(b)).toContain("test-draft:api2.example.com+key");
     expect(await changed(b)).toEqual([]);
     await settle(b, "test", { ok: false, why: "Ember can't reach api2.example.com. Check the address and the network.", cause: "unreachable" });
-    await expect.poll(() => b.locator("#w-p-result").innerText()).toBe("Ember can't reach api2.example.com. Check the address and the network. Nothing has changed: I'm still using api.example.com.");
+    await expect.poll(() => b.locator("#w-p-result").innerText()).toBe("I can't reach api2.example.com. Check the address and the network. Nothing has changed: I'm still using api.example.com.");
     // The failure names the address, so the address takes the focus.
     expect(await focusedId(b)).toBe("w-p-url");
     await b.waitForTimeout(100);
@@ -719,6 +849,158 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => f.locator("#w-lead").innerText()).not.toContain("I'm using");
     for (const page of [a, b, c, d, e, f]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
   }, 30_000);
+
+  it("(af) after “Use GitHub Copilot instead”, my provider's step opened again isn't in use: a failed check switches it off, never says “I'm using” it, and Back is Copilot's sign-in (first-run-r3-1)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const off = `save:${JSON.stringify({ provider: { on: false } })}`;
+    const p = await open({ provider, liveState: true, providerState: { keySaved: true }, agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }) });
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
+    await p.locator("#w-alt").click();
+    await expect.poll(() => calls(p)).toContain(off);
+    // The connection follows, as main's does: no Copilot sign-in yet.
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, SIGNED_OUT);
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    // No Copilot after all: my own provider again, as a step to set up, not one in use.
+    await p.getByRole("button", { name: "Use my own provider" }).click();
+    expect(await p.locator("#w-title").innerText()).toBe("Use your own model provider");
+    expect(await p.locator("#w-alt").isHidden()).toBe(true);
+    await p.fill("#w-p-url", "https://api3.example.com/v1");
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("test");
+    expect(await calls(p)).not.toContain("test-draft:api3.example.com");
+    const why = "Ember can't reach api3.example.com. Check the address and the network.";
+    await settle(p, "test", { ok: false, why, cause: "unreachable" });
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe(why);
+    // Not verified: nothing stays pointed at it, and nothing says it is in use.
+    await expect.poll(() => p.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
+    expect((await calls(p)).lastIndexOf(off)).toBeGreaterThan((await calls(p)).indexOf("test"));
+    expect(await p.locator("#w-title").innerText()).toBe("Use your own model provider");
+    expect(await p.locator("#w-lead").innerText()).not.toContain("I'm using");
+    // Back is the way to Copilot again.
+    await p.locator("#w-back").click();
+    expect(await p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    expect(await next(p).innerText()).toBe("Sign in with GitHub");
+    // Opened again, it goes on main's state as it is now: the key saved for the old address went with it.
+    await p.getByRole("button", { name: "Use my own provider" }).click();
+    expect(await p.inputValue("#w-p-url")).toBe("https://api3.example.com/v1");
+    expect(await p.getAttribute("#w-p-key", "placeholder")).toBe("Paste your key");
+    await next(p).click();
+    expect(await p.locator("#w-p-result").innerText()).toBe("Paste the API key first.");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it("(ah) after a failed edit of my provider in use, “Keep using <host>” puts back the details in use and Continue, and changes nothing (first-run-c3-1)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const p = await open({ provider, providerState: { inForce: true, host: "api.example.com", agreed: true, keySaved: true }, agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }) });
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    const keep = p.locator("#w-p-keep");
+    expect(await keep.isHidden()).toBe(true);
+    await p.fill("#w-p-url", "https://api2.example.com/v1");
+    await p.fill("#w-p-key", "sk-new-not-real");
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("test-draft:api2.example.com+key");
+    await settle(p, "test", { ok: false, why: "Ember can't reach api2.example.com. Check the address and the network.", cause: "unreachable" });
+    // One voice, mine, and a way on with the details that work.
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("I can't reach api2.example.com. Check the address and the network. Nothing has changed: I'm still using api.example.com.");
+    expect(await keep.innerText()).toBe("Keep using api.example.com");
+    expect(await next(p).innerText()).toBe("Check again");
+    await keep.click();
+    expect(await p.inputValue("#w-p-url")).toBe("https://api.example.com/v1");
+    expect(await p.inputValue("#w-p-key")).toBe("");
+    expect(await p.locator("#w-p-result").innerText()).toBe("Using your own provider (api.example.com).");
+    expect(await next(p).innerText()).toBe("Continue");
+    expect(await next(p).getAttribute("aria-disabled")).toBeNull();
+    // The button went, so the focus is on the way on, not on the page.
+    expect(await focusedId(p)).toBe("w-next");
+    expect(await keep.isHidden()).toBe(true);
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    expect((await calls(p)).filter(c => c.startsWith("save:") || c === "saveKey" || c.startsWith("agree:") || c === "test")).toEqual([]);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it("(ag) “Use GitHub Copilot instead” draws Copilot's sign-in as the focus lands on its title, before the connection follows; one that can't be saved says my provider is still in use (first-run-c3-2)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const inForce = { inForce: true, host: "api.example.com", agreed: true, keySaved: true };
+    const details = async (failOff = false) => {
+      const p = await open({ provider, providerState: inForce, failOff, agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }) });
+      await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+      await next(p).click();
+      await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+      await p.locator("#w-back").click();
+      expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
+      return p;
+    };
+    // What the step says the moment the press moves the focus (a screen reader reads it then), while main's status
+    // still names my provider: the mock sends none of its own.
+    const press = (p: Page) => p.evaluate(() => {
+      document.getElementById("w-alt")!.click();
+      const text = (id: string) => document.getElementById(id)!.textContent;
+      return { focus: document.activeElement?.id, title: text("w-title"), lead: text("w-lead"), line: text("w-signin-line"), next: text("w-next"), why: text("w-why") };
+    });
+    const p = await details();
+    const at = await press(p);
+    expect(at).toEqual({ focus: "w-title", title: "Sign in to GitHub", lead: expect.not.stringContaining("you set up") as unknown as string, line: "Connecting to Copilot…", next: "Continue", why: "Still connecting to Copilot." });
+    expect(await p.locator("#w-models").isHidden()).toBe(true);
+    // Main's status follows: Copilot's sign-in, the focus still on the title.
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, SIGNED_OUT);
+    await expect.poll(() => next(p).innerText()).toBe("Sign in with GitHub");
+    expect(await p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    expect(await focusedId(p)).toBe("w-title");
+    // A switch-off that couldn't be saved: my provider is still on and in use, and the step and the notice say so.
+    const q = await details(true);
+    expect((await press(q)).title).toBe("Sign in to GitHub");
+    await expect.poll(() => q.locator("#provider-off").isVisible()).toBe(true);
+    await expect.poll(() => q.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await q.locator("#w-signin-line").innerText()).toBe("Using your own provider (api.example.com).");
+    for (const page of [p, q]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it("(ai) “Use GitHub Copilot instead” while I'm busy says I'll switch once I've finished, keeps Continue, and offers Copilot's sign-in once the switch is made (first-run-v4-1)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const own = readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service });
+    const p = await open({ provider, providerState: { inForce: true, host: "api.example.com", agreed: true, keySaved: true }, agent: own });
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    await p.locator("#w-alt").click();
+    await expect.poll(() => calls(p)).toContain(`save:${JSON.stringify({ provider: { on: false } })}`);
+    // A turn or a task is under way: main puts the switch off and says so, and no other status comes until it's done.
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...own, switchPending: true });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe("I'll switch to Copilot once I've finished what I'm doing.");
+    expect(await p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    expect(await next(p).innerText()).toBe("Continue");
+    expect(await next(p).getAttribute("aria-disabled")).toBeNull();
+    expect(await p.locator("#w-why").innerText()).not.toContain("connecting");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
+    // Ask waits for the switch, never behind a sign-in nothing offers yet.
+    expect(await p.locator("#w-try-ask p").innerText()).toBe("Once I'm connected, you can ask me something.");
+    expect(await p.locator("#w-ask").getAttribute("aria-disabled")).toBe("true");
+    // The switch is made once main is done: Copilot, not signed in yet, and the sign-in step offers it.
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, SIGNED_OUT);
+    await expect.poll(() => p.locator("#w-try-ask p").innerText()).toBe("Sign in first, then you can ask me something.");
+    await p.locator("#w-back").click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    expect(await next(p).innerText()).toBe("Sign in with GitHub");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
 
   it("(z) resumed while the user's own provider connects or fails, the sign-in step names it, with no Copilot or sign-in words (first-run-1, first-run-c1-3)", async () => {
     const service = { kind: "user", host: "localhost:11434" };

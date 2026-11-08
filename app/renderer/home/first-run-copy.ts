@@ -164,10 +164,17 @@ export function providerInUseLine(o: { host: string; phase: string | null; detai
 
 /**
  * A check of new details for a provider in use that failed (first-run-r2-1): what failed, and that the details in use
- * are still the ones Ember uses, since nothing was saved before they answered.
+ * are still the ones Ember uses, since nothing was saved before they answered. One status line in one voice, first
+ * run's: main's sentence about Ember is said as Ember's own (first-run-c3-1).
  */
 export function providerKeptLine(line: string, host: string): string {
-  return `${line} Nothing has changed: I'm still using ${host}.`;
+  const mine = line.replace(/^Ember can't /, "I can't ").replace(/ sent Ember to /, " sent me to ");
+  return `${mine} Nothing has changed: I'm still using ${host}.`;
+}
+
+/** The way on after that failure: the details in use come back, and Continue goes on with them (first-run-c3-1). */
+export function providerKeepLabel(host: string): string {
+  return `Keep using ${host}`;
 }
 
 /**

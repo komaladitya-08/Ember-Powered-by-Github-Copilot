@@ -178,7 +178,8 @@ export function signInText(o: { managed: boolean; locked?: boolean; held?: boole
   if (o.own) {
     const lead = o.ownPhase === "starting" ? `I'm connecting to the model provider you set up (${o.own}). You can change it later in Settings › Models & connections.`
       : o.ownPhase === "error" ? `I can't connect to the model provider you set up (${o.own}) yet: the line below says why. You can check its details here, or later in Settings › Models & connections.`
-        : `I'm connected to the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.`;
+        // A host elsewhere wasn't contacted at the start: "using", as the line under it says (first-run-r3-2).
+        : `I'm ${onThisComputer(o.own) ? "connected to" : "using"} the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.`;
     return { title: "Your own model provider", lead };
   }
   if (o.ownOffered === false) return { ...STEP_TEXT["sign-in"], lead: STEP_TEXT["sign-in"].lead.replace(OWN_OFFER, "") };
@@ -208,9 +209,11 @@ export interface SignInView {
  * runs, `managedProvider` when the organisation's own model service answers instead of Copilot (nothing to sign in
  * to), `locked` while the organisation's policy locks Ember down (nothing connects; signing in can't help). `service`:
  * the model service the connection uses when it isn't Copilot (the agent's status), so the user's own provider is
- * never called Copilot (first-run-1).
+ * never called Copilot (first-run-1). `switching`: the user's own provider was switched off while Ember was busy, and
+ * Ember moves to Copilot once that is done (the agent's `switchPending`): nothing connects yet, and the way on is open
+ * (first-run-v4-1).
  */
-export function signInView(o: { phase: string | null; reason?: string; login?: string; signingIn: boolean; managedProvider: boolean; locked?: boolean; service?: { kind: string; host: string } }): SignInView {
+export function signInView(o: { phase: string | null; reason?: string; login?: string; signingIn: boolean; managedProvider: boolean; locked?: boolean; service?: { kind: string; host: string }; switching?: boolean }): SignInView {
   const none = { cancel: false, skip: false, retry: false };
   const own = o.service?.kind === "user" ? `your own provider (${o.service.host})` : o.service?.kind === "test" ? o.service.host : null;
   if (o.phase === "ready") {
@@ -223,12 +226,16 @@ export function signInView(o: { phase: string | null; reason?: string; login?: s
   if (o.locked) return { ...none, line: "Your organisation's policy locks me down, so I can't connect for now.", tone: "error", primary: "continue", why: "" };
   if (o.phase === "error" && o.reason === "policy") return { ...none, line: "", tone: "error", primary: "continue", why: "" };
   if (o.signingIn) return { ...none, line: "", tone: "", primary: "continue", why: "Waiting for you to approve the sign-in in your browser.", cancel: true };
+  if (o.switching) return { ...none, line: SWITCH_WAITS, tone: "", primary: "continue", why: "" };
   const service = o.managedProvider ? "your organisation's model service" : own ?? "Copilot";
   if (o.phase === "starting" || o.phase === null) return { ...none, line: `Connecting to ${service}…`, tone: "", primary: "continue", why: `Still connecting to ${service}.`, skip: true };
   // The organisation's service didn't answer: nothing to sign in to, so Continue (settings shows it again later).
   if (o.managedProvider) return { ...none, line: "", tone: "error", primary: "continue", why: "" };
   return { ...none, line: "", tone: "", primary: "sign-in", why: "", skip: true, retry: true };
 }
+
+/** The sign-in step's line while Ember finishes what it is doing before it moves to Copilot (first-run-v4-1). */
+export const SWITCH_WAITS = "I'll switch to Copilot once I've finished what I'm doing.";
 
 /** "Check again": looks for a sign-in made elsewhere (the GitHub CLI's) and connects with it. */
 export const CHECK_AGAIN = "Check again";

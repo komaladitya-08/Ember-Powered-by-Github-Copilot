@@ -35,7 +35,7 @@ import {
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
-import { onProviderDestination, ownProvider, providerCard, providerSettings, startProvider } from "./provider";
+import { onProviderDestination, ownProvider, providerCard, providerSettings, providerSignedOut, startProvider } from "./provider";
 import { modelDestination, privacyFoldWords, recipientWords, type ModelDestination } from "./copy";
 import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
@@ -244,6 +244,11 @@ function save(patch: SettingsPatch): Promise<boolean> {
 }
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
+/** Signed out while the user's own provider's card waits: the host it names, the way on instead of Copilot (integrations-r3-1). */
+const waitingFor = (): string | null => {
+  const own = providerCard();
+  return agent?.phase === "signed-out" && own.on ? own.card : null;
+};
 let failing = 0;
 /** Setup rows that don't fail but need the user: the status panel's link under the tagline names them (it opens the pane). */
 let toLook = 0;
@@ -254,7 +259,7 @@ function renderTagline(): void {
   const text = tagline({
     failing, look: 0, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
     hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true, corner: settings?.handlePosition,
-    locked: !!lastAdmin && lastAdmin.error !== null, held: !!lastAdmin?.held, service: agent?.service?.kind,
+    locked: !!lastAdmin && lastAdmin.error !== null, held: !!lastAdmin?.held, service: agent?.service?.kind, waitingFor: waitingFor(),
   }, platform?.shortcuts.ask.label);
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
   renderStatus();
@@ -287,7 +292,7 @@ function renderStatus(): void {
   const notConnected = (agent?.phase === "signed-out" || agent?.phase === "error") && agent?.waitingForTasks !== true;
   // Locked down, connecting can't help (safety-privacy-4): no Connect button.
   $("p-connect").hidden = !notConnected || locked;
-  setText("p-connect", connectLabel(agent?.service?.kind));
+  setText("p-connect", connectLabel(agent?.service?.kind, !!waitingFor()));
   $("p-ask").classList.toggle("quiet", notConnected);
   $("p-waiting").hidden = !asking;
   const setup = setupLinkText(failing, toLook, toFix);
@@ -925,6 +930,8 @@ function renderAgent(a: AgentStatus | null): void {
   // A button that just went away (Sign in, Check again…) hands focus to the one that took its place.
   if (had && COPILOT_BUTTONS.includes(had.id) && isHidden(had)) focusFirst([...COPILOT_BUTTONS, "copilot-h"]);
   renderTagline();
+  // The Model provider hint says whether anything answers while its card waits (integrations-r3-1).
+  providerSignedOut(a.phase === "signed-out");
 }
 for (const [id, key] of [["m-conductor", "conductor"], ["m-worker", "worker"]] as const) {
   $(id).addEventListener("change", e => {

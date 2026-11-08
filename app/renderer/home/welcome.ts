@@ -21,7 +21,7 @@ import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
 import { noteProviderChoice, onProviderChoice, providerChoice } from "./provider-choice";
 import {
-  ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeptLine, taskModelChoices, type FailureAction,
+  ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
@@ -71,7 +71,14 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let active = false;
   let settings: Settings | null = null;
   let status: Status | null = null;
+  /** The connection as the steps draw it (see()): main's status, except while it still names a provider switched off. */
   let agent: AgentStatus | null = null;
+  /** The connection as main last reported it. */
+  let reported: AgentStatus | null = null;
+  /** Switch-offs of the user's own provider being saved (turnOwnOff). */
+  let offPending = 0;
+  /** Main moves from the user's own provider to Copilot once what it is doing is done (see(), first-run-v4-1). */
+  let toCopilotLater = false;
   let voice: VoiceStatus | null = null;
   let signingIn = false;
   let signInMessage: { text: string; tone: string } | null = null;
@@ -96,13 +103,20 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let checkRun = 0;
   /** Setup fixes under way: their buttons stay disabled however often the rows are drawn again. */
   const fixPending = new Set<string>();
-  let providerCheck: { phase: "idle" | "checking" | "ok" | "failed" | "invalid"; line: string } = { phase: "idle", line: "" };
+  /** `kept`: the host still in use after a check of an edit to it failed (first-run-r2-1). */
+  let providerCheck: { phase: "idle" | "checking" | "ok" | "failed" | "invalid"; line: string; kept?: string } = { phase: "idle", line: "" };
   /**
    * The provider step's visit began with the user's own provider already in use (first-run-c1-2): it is shown as in use,
    * Back leaves it on, and only "Use GitHub Copilot instead" switches it off. `edited`: a field changed in this visit.
    */
   let visitInUse = false;
   let edited = false;
+  /**
+   * The newest check saved the typed details and gave the card's yes before it asked (any visit that didn't begin in
+   * use): its failure, or an edit after it, puts the provider away again. A check of an edit to a provider in use saved
+   * nothing, so its failure leaves that provider as it was (first-run-r3-1).
+   */
+  let checkSaves = true;
   /** The step's main button goes on (the provider answered, or is in use as it was): set as the step is drawn. */
   let providerGoesOn = false;
   /** The edit area of "Models I'll use" is open. */
@@ -165,10 +179,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // set up; one in use as the step opened stays on (first-run-c1-2).
     if (step === "provider" && to !== "provider") {
       checkEpoch++;
-      if (to === "sign-in" && !visitInUse) { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
+      if (to === "sign-in" && checkSaves) { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
     }
     if (to === "provider" && step !== "provider") {
-      visitInUse = ownInForce();
+      // In use now, by the settings as they are: a provider switched off ("Use GitHub Copilot instead") isn't in use,
+      // whatever an older read of main's state said (first-run-r3-1).
+      visitInUse = !!settings?.provider.on && !offPending && ownInForce();
+      checkSaves = !visitInUse;
       edited = false;
       // In use: its fields show the details it uses now, not an edit left unchecked on an earlier visit.
       if (visitInUse) { providerCheck = { phase: "idle", line: "" }; prefilled.done = false; }
@@ -272,6 +289,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const v = signInView({
       phase: agent?.phase ?? null, reason: agent?.reason, login: agent?.login, signingIn,
       managedProvider: !!status?.admin.provider, locked: !!status && status.admin.error !== null, service: agent?.service,
+      switching: toCopilotLater,
     });
     const line = $("w-signin-line");
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
@@ -431,6 +449,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       // In use (first-run-r2-1): nothing replaces the details that work until the new ones answer, with the card's yes
       // for their host given by this press. A check that fails, or that the user leaves or edits under, changes nothing.
       const keep = visitInUse && settings?.provider.on ? inUseHost() : null;
+      checkSaves = !keep;
       if (keep) {
         const since = providerChoice();
         const tried = await api.test({ type: f.type, baseUrl: f.baseUrl, host, ...(f.key.trim() ? { key: f.key } : {}) });
@@ -480,14 +499,14 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (r.value.epoch !== checkEpoch) return;
       const { result, kept } = r.value;
       const line = providerCheckLine(result);
-      finishCheck(result.ok, !result.ok && kept ? providerKeptLine(line, kept) : line, result.ok ? undefined : providerFailField(result));
+      finishCheck(result.ok, !result.ok && kept ? providerKeptLine(line, kept) : line, result.ok ? undefined : providerFailField(result), result.ok ? undefined : kept);
     },
   );
-  function finishCheck(ok: boolean, line: string, field: "address" | "key" = "key"): void {
-    providerCheck = { phase: ok ? "ok" : "failed", line };
+  function finishCheck(ok: boolean, line: string, field: "address" | "key" = "key", kept?: string): void {
+    providerCheck = { phase: ok ? "ok" : "failed", line, ...(kept ? { kept } : {}) };
     // Not verified: nothing stays pointed at a service that didn't answer. One in use as the step opened is left as it
-    // was: its edit was checked before it replaced anything (first-run-r2-1).
-    if (!ok && !visitInUse) void turnOwnOff();
+    // was: its edit was checked before it replaced anything (first-run-r2-1); one this check turned on goes (first-run-r3-1).
+    if (!ok && checkSaves) void turnOwnOff();
     render();
     // The field the failure names takes the focus: the address when nothing answered there (first-run-r2-1).
     if (!ok) provField(field === "address" ? "w-p-url" : "w-p-key").focus(); else next.focus();
@@ -502,8 +521,14 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (!force && !settings?.provider.on) return;
     if (since !== undefined && since !== providerChoice()) return;
     let ok = false;
+    offPending++;
+    see();
     try { ok = await deps.save({ provider: { on: false } } as SettingsPatch); } catch { /* counted as failed below */ }
+    offPending--;
+    see();
     showOffFailure(!ok);
+    // Not saved: the connection is the provider's again, and the step says so (first-run-c3-2).
+    if (!ok) render();
   }
   /** The notice above first run and Home alike (so it is seen on whichever is up): the provider is still on, with a retry. */
   function showOffFailure(failed: boolean): void {
@@ -526,6 +551,17 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     render();
     void checkProvider();
   }
+  $("w-p-keep").addEventListener("click", () => {
+    // The details in use, as they were: the fields show them again without the typed key, and Continue goes on with
+    // them; the button goes, so the focus goes to Continue (first-run-c3-1).
+    checkEpoch++;
+    edited = false;
+    providerCheck = { phase: "idle", line: "" };
+    prefilled.done = false;
+    provField("w-p-key").value = "";
+    render();
+    next.focus();
+  });
   $("provider-off-retry").addEventListener("click", () => {
     // The user's own click: not held back by an earlier choice. The notice stays until the write lands.
     void turnOwnOff(true);
@@ -548,6 +584,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const consent = host ? providerConsentText(host, visitInUse ? "in-use" : "first-run") : "Once you enter the address, I'll say here exactly what is sent to it.";
     if ($("w-p-consent").textContent !== consent) $("w-p-consent").textContent = consent;
     const result = $("w-p-result");
+    // A failed edit of the provider in use: the way on with the details that still work (first-run-c3-1).
+    const keep = providerCheck.phase === "failed" && visitInUse && settings?.provider.on ? providerCheck.kept ?? null : null;
+    $("w-p-keep-row").hidden = !keep;
+    if (keep && $("w-p-keep").textContent !== providerKeepLabel(keep)) $("w-p-keep").textContent = providerKeepLabel(keep);
     // In use as the step opened, and nothing changed since: the connection's own state, and Continue goes on without
     // agreeing or checking again (first-run-c1-2).
     const using = visitInUse && !edited && providerCheck.phase === "idle" && settings?.provider.on ? inUseHost() : null;
@@ -732,7 +772,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $("w-voice-later").textContent = TRY_TEXT.voiceLater;
     mark("w-try-voice", tried.voice, tried.voice ? TRY_TEXT.voice.done : vs === "listening" ? TRY_TEXT.voice.ask : TRY_TEXT.voiceWaiting);
     $("w-meter").classList.toggle("off", vs !== "listening");
-    mark("w-try-ask", tried.ask, tried.ask ? TRY_TEXT.ask.done : signedIn() ? TRY_TEXT.ask.ask : askWhy({ locked: locked(), noSignIn: !!status?.admin.provider || ownInUse() }));
+    // (While Ember finishes before it moves to Copilot, there is no sign-in to do yet: first-run-v4-1.)
+    mark("w-try-ask", tried.ask, tried.ask ? TRY_TEXT.ask.done : signedIn() ? TRY_TEXT.ask.ask : askWhy({ locked: locked(), noSignIn: !!status?.admin.provider || ownInUse() || toCopilotLater }));
     const ask = $("w-ask");
     ask.textContent = TRY_TEXT.ask.open;
     if (signedIn()) ask.removeAttribute("aria-disabled"); else ask.setAttribute("aria-disabled", "true");
@@ -899,7 +940,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       checkEpoch++;
       edited = true;
       // A provider in use as the step opened stays on: its edit is checked before it counts (first-run-r2-1).
-      if (providerCheck.phase !== "idle") { providerCheck = { phase: "idle", line: "" }; if (!visitInUse) void turnOwnOff(); }
+      if (providerCheck.phase !== "idle") { providerCheck = { phase: "idle", line: "" }; if (checkSaves) void turnOwnOff(); }
       if (active && step === "provider") render();
     });
   }
@@ -941,7 +982,20 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (!active || step !== "try" || heardBefore < 0 || tried.ask) return;
     if (c.slice(heardBefore).some(e => e.who === "you")) { tried.ask = true; live(TRY_TEXT.ask.done); render(); }
   });
-  const onAgent = (a: AgentStatus) => { agent = a; if (active && (step === "sign-in" || step === "provider" || step === "try" || step === "done")) render(); };
+  /**
+   * The user's own provider is switched off ("Use GitHub Copilot instead", or a check that put it away) but main's status
+   * still names it until it reconnects: the steps draw Copilot's connection as starting from the moment of the press, so
+   * the title the focus lands on is Copilot's sign-in, never "Your own model provider" (first-run-c3-2). A switch-off
+   * that couldn't be saved leaves it named, as it is still in use. It lasts until main's status follows: main reconnects
+   * at once, or says the switch waits for what it is doing (`switchPending`, which the steps say) and reconnects as
+   * soon as that is done, never only at the next request (first-run-v4-1).
+   */
+  function see(): void {
+    const leaving = reported?.service?.kind === "user" && (offPending > 0 || settings?.provider.on === false);
+    toCopilotLater = leaving && reported?.switchPending === true;
+    agent = leaving && reported ? { ...reported, phase: "starting", detail: "", reason: undefined, login: undefined, service: undefined, models: [], conductorModel: null, workerModel: null } : reported;
+  }
+  const onAgent = (a: AgentStatus) => { reported = a; see(); if (active && (step === "sign-in" || step === "provider" || step === "try" || step === "done")) render(); };
   void window.ember.agentStatus().then(onAgent, () => { /* the next status brings it */ });
   window.ember.onAgentStatus(onAgent);
   const onVoice = (v: VoiceStatus) => {
@@ -957,7 +1011,14 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   return {
     settings(s: Settings): boolean {
       const was = active;
+      // The provider switched on or off, or agreed for another host: main's state of it is read again (main says
+      // provider:changed only for its key), so nothing here goes on an older answer (first-run-r3-1). An address saved
+      // alone waits for its card's yes, so a check adopting new details never reads it as off between its steps.
+      const consentOf = (x: Settings | null) => JSON.stringify([x?.provider.on, x?.provider.consent]);
+      const providerMoved = active && consentOf(s) !== consentOf(settings);
       settings = s;
+      see();
+      if (providerMoved) void readOwn();
       about.refresh(s, memoryManaged());
       if (!s.onboarded && !active) begin();
       else if (s.onboarded && active) finish();

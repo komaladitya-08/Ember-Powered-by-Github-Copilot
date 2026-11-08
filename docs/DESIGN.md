@@ -399,7 +399,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **Labelled fields** (Models & connections' **Model provider**): a label, then its filled text field (`.field-row`, the never-look
   field's look and height), the field under the label below 480 px. A secret goes in a password field and is never
   shown again: once saved the row says **Key saved** with **Replace** (quiet) and **Remove** (a `--red-text` text
-  button). Rows a switch governs show only while it is on, and rarely needed ones fold under **Advanced**. A
+  button). Rows a switch governs show only while it is on, and rarely needed ones fold under **Advanced**. An edit of
+  the provider in force to another host waits in the fields until its card is agreed and it answers: the hint says the
+  host in force still answers, the card's quiet button is “Keep using <host>”, and a failed check says “Nothing has
+  changed” (integrations-c3-1). A
   disclosure inside a group (Projects' patch, command and saved workspaces) has the folds' chevron (`details.disclose`),
   a lone button (Refresh list, Choose command folder…) keeps its own size in a row of actions, and an empty status line
   takes no row: every status line in Home stays on the page while it says nothing, as a box of nothing out of the flow,
@@ -503,8 +506,8 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   provider's step (first-run-1). A provider already in use as that step opens is shown as in use (“Your own model
   provider's details”, its connection's status, the card without a last sentence about going back, and Continue with
   no new check); Back leaves it on, an edit is checked as typed before it replaces anything (one that fails, or is left
-  while it is checked, changes nothing: “Nothing has changed: I'm still using <host>.”, with the focus on the field
-  the failure names), and only “Use GitHub Copilot instead” switches it off (first-run-r2-1). Back puts away only a provider the visit itself set up, as its card says (first-run-c1-2). A service with nothing to sign in to that isn't connected yet (the user's own, the
+  while it is checked, changes nothing: “Nothing has changed: I'm still using <host>.”, in first run's voice throughout, with the focus on
+  the field the failure names and “Keep using <host>” under it to put back the details in use and go on: first-run-c3-1), and only “Use GitHub Copilot instead” switches it off (first-run-r2-1). Back puts away only a provider the visit itself set up, as its card says (first-run-c1-2). It is in use only while it is on: after “Use GitHub Copilot instead” its step opens again as one to set up, and a check there that fails switches it off again (first-run-r3-1). That press draws Copilot's sign-in at once, connecting, so the title the focus lands on is Copilot's before main's status follows; a switch-off that couldn't be saved shows the provider still in use, under the notice that says so (first-run-c3-2). While Ember is busy (a turn or a task under way) the step says “I'll switch to Copilot once I've finished what I'm doing.” with Continue open and no sign-in yet, and the try step's Ask “Once I'm connected, you can ask me something.”; main switches as soon as it is done, and the step then offers “Sign in with GitHub” (first-run-v4-1). A service with nothing to sign in to that isn't connected yet (the user's own, the
   organisation's) is named on **Your Ember** as “…, not connected yet”, never “Not signed in yet” (first-run-c1-3).
 - **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column (720 px in a window
   1,000 px wide or more), centred in the window's height in a box of one size (560 px), so the indicator and title stay

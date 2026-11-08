@@ -73,10 +73,12 @@ export function mountProject() {
   let failedAt = 0;
   const draw = () => {
     pick.disabled = !ready || !!busy;
-    apply.disabled = !ready || !!busy || !patchCurrent;
+    // Applying the reviewed patch, exporting and a file's Remove work on what is kept here and send nothing: they don't
+    // wait for a connection (integrations-r3-2).
+    apply.disabled = !!busy || !patchCurrent;
     apply.hidden = !patchCurrent;
-    exportAnswer.disabled = exportDiff.disabled = !ready || !!busy;
-    for (const button of files.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !ready || !!busy;
+    exportAnswer.disabled = exportDiff.disabled = !!busy;
+    for (const button of files.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !!busy;
     form.setAttribute("aria-busy", String(busy === "running"));
     send.textContent = busy === "running" ? "Working…" : "Send selected files";
     const off = localCommands === "off" || localCommands === "managed";
@@ -160,10 +162,10 @@ export function mountProject() {
     }
   });
   async function removeFile(name: string): Promise<void> {
-    if (!ready || busy) return;
+    if (busy) return;
     const at = revision;
     busy = "picking";
-    let focusAfter: HTMLButtonElement | null = null;
+    let focusAfter: (() => HTMLElement) | null = null;
     draw();
     try {
       const result = await window.ember.projectRemove(name);
@@ -175,11 +177,13 @@ export function mountProject() {
         includePrevious.checked = false;
       }
       status.textContent = result.error ?? `Removed ${name}. Your request is kept.`;
-      if (result.changed) focusAfter = files.querySelector<HTMLButtonElement>("button") ?? pick;
+      // Chosen once drawn: Choose files… waits for a connection, so with the last file gone while not connected the
+      // request takes the focus, as after Apply patch (integrations-v4-4, WCAG 2.4.3).
+      if (result.changed) focusAfter = () => files.querySelector<HTMLButtonElement>("button") ?? (pick.disabled ? question : pick);
     } catch {
       if (at === revision) status.textContent = "Couldn't remove the file. Your selection is kept.";
     } finally {
-      if (at === revision) { busy = null; draw(); focusAfter?.focus(); }
+      if (at === revision) { busy = null; draw(); focusAfter?.().focus(); }
     }
   }
   async function copyText(text: string, message: string): Promise<void> {
@@ -192,7 +196,7 @@ export function mountProject() {
     }
   }
   const exportOutput = async (kind: "answer" | "diff") => {
-    if (!ready || busy) return;
+    if (busy) return;
     const at = revision;
     busy = "export";
     draw();

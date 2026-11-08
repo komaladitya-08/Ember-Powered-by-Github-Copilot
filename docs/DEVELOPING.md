@@ -131,7 +131,7 @@ runtime. It does not change the app's consent or speaking settings.
   lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
   provider while it is in force, or the organisation's model service) and **Agree and continue**, or **Not now**, which keeps Ember off
   and offers **Quit Ember** (a press on either within half a second of its appearing is dropped, so a double click
-  agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Your Ember** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on, only **Use GitHub Copilot instead** switches it off, and an edit is checked as typed before it replaces the details in use, so one that fails, or that you leave or change while it is checked, changes nothing and the step says Ember is still using the old host; or **Skip for now**); the setup check shows only
+  agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Your Ember** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on, only **Use GitHub Copilot instead** switches it off (pressed while Ember is still answering or at a task, the step says Ember will switch once it has finished, and lets you go on), and an edit is checked as typed before it replaces the details in use, so one that fails, or that you leave or change while it is checked, changes nothing and the step says Ember is still using the old host, with **Keep using** it to go on; once switched off, the step opens again as one to set up, and a check there that fails leaves it off; or **Skip for now**); the setup check shows only
   the rows that need you (and, once **Turn on** has switched screen reading on, that apps already open need a restart), in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission), and
   **Check again**, which reads the rows anew once you have run the command or changed the setting yourself (Home's
   setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s, in the background, so Ember
@@ -1028,6 +1028,20 @@ details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, t
 card's yes for exactly its host given by the same press, with a key just typed (refused, unsent, where it couldn't be
 kept) or, without one, the saved key only when it was entered for that very host. Nothing is saved or recorded until it
 answers; then the details, the key and the card's yes are saved as usual.
+Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
+held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
+answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
+up for the new host, the status line says "Read the note above: Ember still uses <host in force>, and sends nothing to
+<new host> until you agree.", the hint "Ember still uses <host in force>. Agree to use <new host> to switch.", the card's
+quiet button reads "Keep using <host in force>" (it puts the details in force back, saving nothing), and a key typed for
+the new host waits in its field. "I agree" checks the held details with the same GET ("Checking <new host>…"); one that
+fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
+names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
+main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
+An edit back to the host in force, or of the same host, is saved at once as before. The held card's text has no
+sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
+provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so
+the address in force and its saved key are kept and come back with the switch (integrations-v4-1).
 
 - **Is it there?** Nothing else contacts the endpoint before the first request, so the same GET (`probeProvider`,
   main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn or a
@@ -1056,6 +1070,14 @@ answers; then the details, the key and the card's yes are saved as usual.
   to nothing (`AgreeGuard`). While the card waits with no GitHub sign-in, nothing is connected, and Models &
   connections says "Not connected: Ember is waiting for you to agree to use <host>." and points to the card or the
   switch, with no "Sign in with GitHub" or "Use my own provider" (`homeConnectionView`'s `own`: integrations-c2-3).
+  Nothing else points to Copilot then (integrations-r3-1): a request from the Ask box, by voice or from Home is
+  answered "Your provider needs your OK: Agree to use <host> in settings, or turn off “Use my own model provider”,
+  then ask me again." (main's `providerWaiting`, `providerWaitingHost`), Home's tagline says "Agree to use <host> in
+  Models & connections to start asking.", the status panel's button is "Check my provider…", and the hint under the
+  group "Ember can't answer until you agree to use <host>." (with a GitHub sign-in it says Ember uses GitHub Copilot
+  until then, as it does). Ember's hello at start and at login says "I need your OK for <host> first. Open settings
+  (<settings key>) and agree to use it in Models & connections, or turn off “Use my own model provider”." with Open
+  settings (hello.ts `providerWaiting`, integrations-v4-3).
 - **The key** is sealed with the OS keyring (`safeStorage`) in `provider-key.bin` in Ember's data folder (0600), apart
   from `settings.json`, together with the host it was entered for (also in `provider-key.host`, which isn't secret, so
   no keyring is asked to know it). It goes only to that host: moving the endpoint to another host deletes it, and the
@@ -1082,7 +1104,10 @@ answers; then the details, the key and the card's yes are saved as usual.
   again: Ember still can't connect to <host>."; reached but still unusable (no model named, a refused key), "Checked
   again: Ember still can't use <host>. The line above says why."; either goes once the provider connects.
 - **Switching** applies from the next message, without a restart; tasks already running finish on the service they
-  started with. A request asked while a turn or a task is still under way on the service before is held, with a bubble
+  started with. While a turn or a task is under way, Ember's status says the switch waits (`switchPending`; first
+  run's sign-in step: "I'll switch to Copilot once I've finished what I'm doing.", with Continue open), and Ember
+  reconnects to the new service as soon as they are done (the turn's end, a Stop, the last task's end), not at the
+  next request. A request asked while a turn or a task is still under way on the service before is held, with a bubble
   saying so ("Switching model service", up for as long as anything is held), and sent to the new one once they are
   done, in the order asked (one asked during the switch goes behind them); it never goes to the one before, and no new
   task starts on it (a queued one ends saying the service changed). "Done" is the runtime's own word for the turn, not
@@ -1239,7 +1264,8 @@ Ember that **Ask Ember** started doesn't open the ask box again when it restarts
 session, **Transparent windows** (the compositor), **Screen reading**, **Mouse and keyboard** (XTest), Copilot sign-in
 or the organisation's endpoint, the admin policy, the microphone, speech models, **Speaking** (Ember's own Kitten
 voice where it runs natively, with speech-dispatcher as its fallback; it warns only when neither can speak), Ember's
-desk, **Window sandbox** and **Copilot's file watchers** (inotify), and says what to do about each problem. On a
+desk, **Window sandbox** and **Copilot's file watchers** (inotify; **Ember's file watchers** while another model
+service is in use: integrations-r3-3), and says what to do about each problem. On a
 Linux other than the RHEL 8 family, the operating system row says Ember is tested on RHEL 8 and may work but isn't
 supported. It exits 1 if Ember can't work. A warning that keeps Ember from reading or using apps (Screen reading
 missing, say) is counted as one to fix and named in its last line ("1 thing to fix so Ember can read and use your apps
@@ -2177,11 +2203,15 @@ page crashing still end it, and closing the window clears the answer and an unap
 them).
 
 While Ember reconnects or can't connect for now (the runtime restarted, a model or the provider changed, the model
-service out of reach, or, with no GitHub sign-in, your own provider turned off or waiting for its card for a new
-address), Projects keeps the chosen files, the request being typed, the answer and its unapplied diff,
-says "Ember isn't connected right now. Your work here stays, and you can send once it connects.", and only sending,
-applying and the command wait (`projectAfterStatus`, app/main/agent/project.ts). A request under way then stops and
-says the connection dropped. Sign out, another account and the organisation's lockdown clear it all. Once another
+service out of reach, or, with no GitHub sign-in, your own provider turned off or waiting for its card),
+Projects keeps the chosen files, the request being typed, the answer and its unapplied diff,
+says "Ember isn't connected right now. Your work here stays, and you can send once it connects.", and only what
+reaches the model service waits: choosing files, sending, saved workspaces and the command (`projectAfterStatus`,
+app/main/agent/project.ts). **Export answer…**, **Export diff…**, **Apply patch…** and a file's **Remove** work on
+what is kept here and send nothing, so they go on working (`projectMay`'s `local`, integrations-r3-2); consent, the
+screen lock, the organisation's actions switch and the settings window in view still hold. A request under way then stops and
+says the connection dropped; Apply patch…'s confirmation stays up through Copilot's reconnect tries while offline, and
+only Stop everything, the screen lock, Sign out and the lockdown close it (`projectJobStops`, integrations-v4-2). Sign out, another account and the organisation's lockdown clear it all. Once another
 model service, address, key or GitHub account is in force, the previous request and answer stay in view but are no
 longer offered as context, so an answer from one service is never sent to another.
 

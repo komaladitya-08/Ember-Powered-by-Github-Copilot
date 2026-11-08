@@ -169,6 +169,21 @@ describe("AgentHost with the user's own model provider", () => {
     expect(host.getStatus().phase).toBe("ready");
   });
 
+  it("asked with no GitHub sign-in while my own provider's note waits, points to agreeing to it, never to Copilot (integrations-r3-1)", async () => {
+    sim.clients = []; sim.sessions = [];
+    let waiting: string | null = "127.0.0.1:18308";
+    const states: EmberState[] = [];
+    const { host } = makeHost(() => null, undefined, { providerWaiting: () => waiting, setState: (s: EmberState) => states.push(structuredClone(s)) });
+    expect(await host.start(null)).toBe("signed-out");
+    await host.ask("What time is it?");
+    expect(states.at(-1)?.bubble).toMatchObject({ visible: true, title: "Your provider needs your OK", thought: "Agree to use 127.0.0.1:18308 in settings, or turn off “Use my own model provider”, then ask me again.", mood: "attention", actions: [{ id: "ui:settings", label: "Open settings" }] });
+    expect(host.getTranscript().at(-1)).toMatchObject({ who: "problem", text: "Your provider needs your OK: Agree to use 127.0.0.1:18308 in settings, or turn off “Use my own model provider”, then ask me again." });
+    // With no note waiting, signing in is the way on, as before.
+    waiting = null;
+    await host.ask("What time is it?");
+    expect(states.at(-1)?.bubble).toMatchObject({ title: NOTICE_TITLE["signed-out"], thought: "Connect your GitHub account in settings, then ask me again." });
+  });
+
   it("says the model server on this computer isn't running instead of Connected, and connects once it answers (integrations-1)", async () => {
     sim.clients = []; sim.sessions = [];
     let answer: TestResult = REFUSED;

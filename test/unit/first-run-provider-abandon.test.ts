@@ -73,7 +73,7 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   const ctx: Record<string, unknown> = {
     active: true, step: "provider", checkEpoch: 0, checkRun: 0, providerCheck: { phase: "checking", line: "Checking" }, navigation: 0, heardBefore: -1,
     // The visit set the provider up (it wasn't in use as the step opened): Back to Copilot puts it away (first-run-c1-2).
-    visitInUse: false, edited: false, ownInForce: () => false, inUseHost: () => null,
+    visitInUse: false, checkSaves: true, edited: false, ownInForce: () => false, inUseHost: () => null, offPending: 0, see() {},
     get settings() { return settings.get(); },
     latestOnly, endpointHost, providerChoice, showOffFailureText: "", providerCheckLine, providerFailField, providerKeptLine, PROVIDER_STEP, gated, stepPosition,
     root: { dataset: {} }, consented: () => true, render() {}, $: (id: string) => (nodes[id] ??= { hidden: true, textContent: "", focus() {} }), provField: () => ({ focus() {} }), next: { focus() {} },
@@ -223,7 +223,7 @@ describe("first run's check of an edit to the provider in use (first-run-r2-1)",
     expect(h.service.api.agree("a.example")).toEqual({ ok: true });
     expect(await h.service.api.saveKey(OLD)).toEqual({ ok: true });
     await vi.waitFor(() => expect(h.host.getStatus().service?.host).toBe("a.example"));
-    Object.assign(h.ctx, { visitInUse: true, ownInForce: () => true, inUseHost: () => "a.example", providerCheck: { phase: "checking", line: "Checking" } });
+    Object.assign(h.ctx, { visitInUse: true, checkSaves: false, ownInForce: () => true, inUseHost: () => "a.example", providerCheck: { phase: "checking", line: "Checking" } });
     Object.assign(h.fields, { baseUrl: "https://b.example/v1", key: NEW });
     return h;
   }
@@ -245,8 +245,22 @@ describe("first run's check of an edit to the provider in use (first-run-r2-1)",
     expect(h.requests).toEqual([{ url: "https://b.example/v1/models", headers: { authorization: `Bearer ${NEW}` } }]);
     h.http.resolve(FAIL);
     await done;
-    expect((h.ctx.providerCheck as { phase: string; line: string })).toEqual({ phase: "failed", line: "b.example didn't accept the API key. Check it, or replace it. Nothing has changed: I'm still using a.example." });
+    expect((h.ctx.providerCheck as { phase: string; line: string })).toEqual({ phase: "failed", line: "b.example didn't accept the API key. Check it, or replace it. Nothing has changed: I'm still using a.example.", kept: "a.example" });
     await unchanged(h);
+  });
+
+  it("a check that had to save first (the provider was switched off since the step opened) puts it away again when it fails (first-run-r3-1)", async () => {
+    const h = await inUse();
+    h.settings.update(withOwnProvider({ provider: { on: false } } as never, h.settings.own().provider));
+    const done = h.f.checkProvider();
+    await vi.waitFor(() => expect(h.tested()).toBe(true));
+    // Saved, agreed and switched on before it asked: nothing was checked as typed.
+    expect(h.agrees()).toBe(1);
+    expect(h.settings.get().provider.on).toBe(true);
+    h.http.resolve(FAIL);
+    await done;
+    expect((h.ctx.providerCheck as { phase: string; line: string })).toEqual({ phase: "failed", line: "b.example didn't accept the API key. Check it, or replace it." });
+    await settle(h);
   });
 
   it("Back while the edit is checked leaves the details in use, even when the check then answers", async () => {
