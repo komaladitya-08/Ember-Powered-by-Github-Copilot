@@ -1157,7 +1157,7 @@ describe("VoiceService", () => {
     electron.net.fetch.mockRejectedValue(new Error("net::ERR_PROXY_CONNECTION_FAILED"));
     await expect(v.downloadModels(() => undefined)).rejects.toThrow(/ERR_PROXY/);
     expect(states.map(s => s.s)).toContain("downloading");
-    expect(states.at(-1)).toEqual({ s: "needs-models", detail: "Couldn't download the speech models. Ember can't reach the download site (github.com) right now. Check the network or proxy, then try again." });
+    expect(states.at(-1)).toEqual({ s: "needs-models", detail: "Couldn't download the speech models. This computer can't reach the download site (github.com) right now. Check the network or proxy, then try again." });
     expect(v.micState).toBe("needs-models");
     expect(fs.readdirSync(root)).toEqual([]);
   });

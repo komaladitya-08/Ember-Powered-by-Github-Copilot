@@ -1801,18 +1801,23 @@ export function cutByQuestion(source: "ask" | "home" | undefined, status: Listen
   return source && !questionHoldsListen(true, status) ? source : null;
 }
 
-/** What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…). */
+/**
+ * What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…).
+ * Never with Ember's name: Hear me more clearly's line says it under its switch while the wake word's microphone may be
+ * open, and a screen reader saying "Ember can't reach the download site…" into it woke Ember and sent the rest as a
+ * request in 37 of 40 real-model placements (voice-listening-v5-1).
+ */
 export function downloadHelp(message: string, bytes = VOICE_MODELS_BYTES): string {
   if (/ERR_CERT_|certificate|self.signed|issuer|SSL|TLS/i.test(message)) {
-    return "Ember can't verify the download site's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate, or to allow github.com.";
+    return "This computer can't verify the download site's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate, or to allow github.com.";
   }
-  if (/ERR_PROXY_AUTH|HTTP 407/i.test(message)) return "The network proxy asked for a sign-in Ember can't give. Ask IT to allow github.com for Ember.";
+  if (/ERR_PROXY_AUTH|HTTP 407/i.test(message)) return "The network proxy asked for a sign-in the download can't give. Ask IT to allow downloads from github.com.";
   if (/nothing arrived for|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|fetch failed|socket hang up|net::ERR_|HTTP 5\d\d/i.test(message)) {
-    return "Ember can't reach the download site (github.com) right now. Check the network or proxy, then try again.";
+    return "This computer can't reach the download site (github.com) right now. Check the network or proxy, then try again.";
   }
   if (/HTTP 4\d\d/i.test(message)) return "The download site refused the request. Try again later; if it keeps happening, ask IT whether github.com downloads are blocked.";
   if (/ENOSPC|no space left/i.test(message)) return `There isn't enough free disk space for the speech models (about ${Math.round(bytes / 1e6)} MB).`;
-  if (/EACCES|EPERM|EROFS|permission denied|read-only/i.test(message)) return "Ember can't write the speech models to its data folder (permission denied).";
+  if (/EACCES|EPERM|EROFS|permission denied|read-only/i.test(message)) return "The speech models can't be written to the data folder (permission denied).";
   if (/checksum mismatch/i.test(message)) return "The download arrived damaged or changed, so it wasn't used. Try again; if it keeps happening, something on the network may be altering downloads.";
   if (/\btar\b/i.test(message)) return "The download couldn't be unpacked. Try again.";
   return message;
