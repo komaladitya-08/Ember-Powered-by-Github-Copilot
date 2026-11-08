@@ -115,8 +115,9 @@ installer is working on, stays until the next start. `ember doctor` and `--npm-i
 they don't start Ember. If an older Ember is still running, the new one hands what you asked over to it instead of
 starting: the launcher says which version is running ("Ember 0.1.1 is already running, so it took this instead of
 starting 0.1.2") and removes nothing, so quit Ember and run `ember` again. On Windows, where the launcher can't see
-which one is running, it says only that Ember was already running and took it, adding the advice to quit when the cache
-also holds another version.
+which one is running, it says that Ember was already running and took it, and what to do if that is an older Ember you
+installed from the zip (every Ember on a PC hands over to the one running, wherever it was installed from), or, when
+the cache also holds another version, if it is older.
 
 ## Uninstall
 

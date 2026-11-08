@@ -937,9 +937,12 @@ export function afterHandover(o) {
   if (older !== null) return handedOver(o.version, older, o.name);
   // A Mac's open(1) tells nothing, and a new Ember.app may still be starting (Gatekeeper's first check).
   if (o.platform === "darwin") return `started Ember ${o.version}`;
-  // Where what runs can't be read (Windows), only another version in the cache could be an older Ember running: with
-  // none, running `ember` again for its settings, as the help says, isn't told it may be out of date (install-docs-r3-3).
-  if (running === null && !o.others.length) return "Ember was already running, so it took this.";
+  // Where what runs isn't read (Windows) and the cache holds only this version, the Ember running is this one, or one
+  // unzipped from the Releases page, which shares its single-instance lock: running `ember` again for its settings, as
+  // the help says, isn't told its own may be out of date, and the zip's older one is still named (install-docs-r3-3).
+  if (running === null && !o.others.length && o.platform === "win32") {
+    return `Ember was already running, so it took this. If that is an older Ember you installed from the zip, quit it, then run '${o.name}' again to start ${o.version}.`;
+  }
   return handedOver(o.version, null, o.name);
 }
 

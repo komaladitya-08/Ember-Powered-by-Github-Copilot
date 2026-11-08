@@ -2402,6 +2402,7 @@ keeps it), never one whose installer holds its lock or whose folder a running pr
 (`ps -axo command=`) names; the setup check and `--npm-install-only` remove nothing, because only a running Ember points
 **Start Ember when I log in** at itself. A start that ended at once with 0 and isn't what runs has handed over to an
 Ember already running (`startWatched()`): it removes nothing and says so (`afterHandover()`: `handedOver()`, naming
-the cache's version that runs when `ps` shows it; where `ps` isn't read, on Windows, the advice to quit only when the
-cache holds another version). Tests in
+the cache's version that runs when `ps` shows it; where `ps` isn't read, on Windows, the advice to quit an older Ember
+installed from the zip, which shares the single-instance lock, or any older one when the cache holds another version).
+Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.

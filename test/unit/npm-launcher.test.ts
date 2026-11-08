@@ -880,18 +880,28 @@ describe("updating through npm", () => {
   it("says plainly on Windows that the Ember running took the request, and hedges only when another version in the cache could be it (install-docs-r3-3)", () => {
     const cache = "C:\\Users\\k\\AppData\\Local\\ember-npm";
     // Windows' process list isn't read, so with only this version cached the one running is this one, or one from
-    // outside the cache: running `ember` again for its settings, as the help says, isn't told to quit and update.
-    expect(afterHandover({ version: "0.1.1", platform: "win32", name: "ember", running: null, others: [] })).toBe("Ember was already running, so it took this.");
+    // outside the cache: running `ember` again for its settings, as the help says, isn't told its own may be old.
+    expect(afterHandover({ version: "0.1.1", platform: "win32", name: "ember", running: null, others: [] })).not.toMatch(/If it is older/);
     expect(afterHandover({ version: "0.1.1", platform: "win32", name: "ember", running: null, others: [{ version: "0.1.0", dir: `${cache}\\0.1.0` }] })).toBe(handedOver("0.1.1", null, "ember"));
     // Where ps names the running folder, the version is said; one running from outside the cache may be older.
     const linux = "/home/k/.cache/ember-npm";
     const older = [{ version: "0.1.1", dir: `${linux}/0.1.1` }];
     expect(afterHandover({ version: "0.1.2", platform: "linux", name: "ember", running: `${linux}/0.1.1/Ember-0.1.1-x86_64.AppImage\n`, others: older })).toBe(handedOver("0.1.2", "0.1.1", "ember"));
     expect(afterHandover({ version: "0.1.2", platform: "linux", name: "ember", running: "/opt/ember/ember\n", others: [] })).toBe(handedOver("0.1.2", null, "ember"));
-    expect(afterHandover({ version: "0.1.2", platform: "linux", name: "ember", running: null, others: [] })).toBe("Ember was already running, so it took this.");
+    // ps couldn't run: the RPM's or an AppImage's Ember, outside the cache, may be what runs.
+    expect(afterHandover({ version: "0.1.2", platform: "linux", name: "ember", running: null, others: [] })).toBe(handedOver("0.1.2", null, "ember"));
     // A Mac's open(1) ends at once whatever happens: only a cached older version in ps tells a handover there.
     expect(afterHandover({ version: "0.1.2", platform: "darwin", name: "ember", running: "", others: [] })).toBe("started Ember 0.1.2");
     expect(afterHandover({ version: "0.1.2", platform: "darwin", name: "ember", running: `/Users/k/Library/Caches/ember-npm/0.1.1/Ember.app/Contents/MacOS/Ember\n`, others: [{ version: "0.1.1", dir: "/Users/k/Library/Caches/ember-npm/0.1.1" }] })).toBe(handedOver("0.1.2", "0.1.1", "ember"));
+  });
+
+  it("still says on Windows what to do when the Ember that took the request may be an older one from the zip, which shares its single-instance lock (install-docs-r3-3)", () => {
+    // Every Ember on a PC shares one data folder, and with it one single-instance lock: the npm copy hands over to an
+    // Ember unzipped from the Releases page as well, which the cache knows nothing of.
+    expect(afterHandover({ version: "0.1.1", platform: "win32", name: "npx ember-copilot", running: null, others: [] }))
+      .toBe("Ember was already running, so it took this. If that is an older Ember you installed from the zip, quit it, then run 'npx ember-copilot' again to start 0.1.1.");
+    const own = read("packages/npm/README.md").replace(/\s+/g, " ");
+    expect(own).toContain("an older Ember you installed from the zip");
   });
 
   it("gives update steps, and uninstall steps in an order that works (install-docs-10)", () => {
