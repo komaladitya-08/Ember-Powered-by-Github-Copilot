@@ -662,6 +662,8 @@ export class VoiceEngine {
   private manualOnset = false;
   /** The speech under way at the deadline began in the window's first second, and may be the room's talk (MANUAL_DOUBT_MS). */
   private manualDoubt = false;
+  /** What Ember's windows announce as Listen once opens, while a screen reader runs (withoutAnnounced). */
+  private manualAnnounced: readonly string[] = [];
   /** What was heard for the request just emitted ("utterance"), for Voice Match; it never goes to main. */
   requestAudio: Float32Array | null = null;
   /** That audio starts with the wake phrase (heard with it in one breath): Voice Match vouches only for what follows it. */
@@ -961,9 +963,13 @@ export class VoiceEngine {
     this.emit({ type: "listening", on: true, reason: "follow-up", window: "follow-up" });
   }
 
-  /** A fresh request after an explicit keyboard or mouse action. No pre-roll or inherited loudness. */
-  listenOnce(from: number, ms: number): void {
+  /**
+   * A fresh request after an explicit keyboard or mouse action. No pre-roll or inherited loudness. `announced`: what
+   * Ember's windows say as it opens, while a screen reader runs (it says them through the speakers: withoutAnnounced).
+   */
+  listenOnce(from: number, ms: number, announced: readonly string[] = []): void {
     this.manualFrom = from;
+    this.manualAnnounced = announced;
     this.manualReady = false;
     this.manualLevels = [];
     this.manualTalk = [];
@@ -1819,6 +1825,15 @@ export class VoiceEngine {
       return;
     }
     let text = this.mode.reason === "manual" ? heard.trim() : stripWake(heard, this.mode.first || conversation);
+    if (this.mode.reason === "manual" && this.manualAnnounced.length) {
+      const own = withoutAnnounced(text, this.manualAnnounced);
+      if (own !== text && !saysSomething(own)) {
+        // Only a screen reader saying the window had opened: the request is still to come, the window's time after it.
+        this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
+        return;
+      }
+      text = own;
+    }
     // The clip holds the wake phrase before the request ("Hey Ember, allow" in one breath): Voice Match then vouches only
     // for what follows it (match.ts afterWakePhrase).
     let withWake = this.mode.reason !== "manual" && holdsWake(heard, text, this.mode.first || conversation);
@@ -2030,6 +2045,53 @@ export function spokenByEmber(heard: string, said: readonly string[]): boolean {
   const words = wordsOf(heard);
   if (!words.length || !said.length) return false;
   return words.filter(w => said.some(s => sameWord(w, s))).length / words.length >= OWN_WORDS_SHARE;
+}
+
+/** The role a screen reader says after a button's name ("Cancel listening, push button"). */
+const ROLE_WORDS = [["push", "button"], ["button"]];
+
+/** `sameWord`, or, in words of six letters or more, two letters apart ("Listing" for "Listening"). */
+function nearWord(a: string, b: string): boolean {
+  if (sameWord(a, b)) return true;
+  if (Math.min(a.length, b.length) < 6 || Math.abs(a.length - b.length) > 2) return false;
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length] <= 2;
+}
+
+/**
+ * A Listen once request without what a screen reader said at its start: Ember's own status lines and button name as the
+ * window opens (`announced`, sent only while one runs), which it says through the speakers, outside the echo canceller.
+ * On the real models the announcement was in what was sent 36 of 36 times, and heard alone, with the user waiting for it
+ * to finish, it went as the whole request (4 of 4: voice-listening-c2-1). Whole phrases from the start, in any order:
+ * each word as the recognizer may slip on it, one word of a phrase of four or more another ("Listen for one request"),
+ * a phrase of one word only as said alone ("Listening." or in the announcement, never "Starting tomorrow…"), and the role
+ * a screen reader says after a button's name.
+ */
+export function withoutAnnounced(heard: string, announced: readonly string[]): string {
+  if (!announced.length) return heard;
+  const words = [...heard.matchAll(/[\p{L}\p{N}']+/gu)];
+  const said = words.map(w => w[0].toLowerCase());
+  const phrases = [...announced.map(wordsOf), ...ROLE_WORDS].filter(p => p.length);
+  let at = 0;
+  for (;;) {
+    let took = 0;
+    for (const p of phrases) {
+      if (p.length <= took || at + p.length > said.length) continue;
+      if (p.filter((w, i) => !nearWord(said[at + i], w)).length > (p.length >= 4 ? 1 : 0)) continue;
+      const end = words[at].index! + words[at][0].length;
+      if (p.length === 1 && at === 0 && at + 1 < said.length && !/^[^\p{L}\p{N}']*[.,;:!?…]/u.test(heard.slice(end))) continue;
+      took = p.length;
+    }
+    if (!took) break;
+    at += took;
+  }
+  if (!at) return heard;
+  return at >= words.length ? "" : heard.slice(words[at].index!).replace(/^\p{Ll}/u, c => c.toUpperCase());
 }
 
 /** The wake said alone as the recognizer may write it: "Hey Amber.", "Member.". */

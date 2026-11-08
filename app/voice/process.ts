@@ -48,7 +48,8 @@ type FromMain =
   | { type: "question"; up: boolean }
   /** `afterQuestion`: Ember's answer asked something ("Okay." is then a reply, not a closer). */
   | { type: "follow-up"; ms: number; afterQuestion?: boolean }
-  | { type: "listen-once"; generation: number; from: number; ms: number }
+  /** `announced`: what Ember's windows say as it opens, while a screen reader runs (engine.ts withoutAnnounced). */
+  | { type: "listen-once"; generation: number; from: number; ms: number; announced?: string[] }
   | { type: "cancel"; generation: number };
 
 /**
@@ -298,7 +299,7 @@ parent.on("message", e => {
     engine.cancel();
     generation = m.generation;
     manualWindow = { frames: 0, zeros: true };
-    engine.listenOnce(m.from, m.ms);
+    engine.listenOnce(m.from, m.ms, Array.isArray(m.announced) ? m.announced.filter(a => typeof a === "string").slice(0, 16) : []);
   } else if (m.type === "cancel") {
     generation = m.generation;
     gate.cancel();

@@ -3544,6 +3544,8 @@ function start(): void {
       // Speaker rejection needs PulseAudio's monitor sources (Linux only); elsewhere the setting says so.
       monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
       conversation: () => settings.get().voice.conversation,
+      // A screen reader says Listen once's status lines through the speakers: the voice process leaves them out.
+      screenReaderOn: () => sys.a11y.screenReaderOn(),
       // (EMBER_NO_OUTPUT_WATCH: a test that speaks through the speakers as the user would count as other sound. A fake
       // microphone's WAV is Chromium's fake loopback too, so it would.)
       outputLevel: sys.voice.outputLevel && !testMicWav && !devEnv("EMBER_NO_OUTPUT_WATCH"),

@@ -517,6 +517,23 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(once(inRoom(silence(10))).ended).toMatchObject({ reason: "timeout", at: 8000 });
   });
 
+  it("hears a Listen once request said after a screen reader's announcement of the window, never the announcement (voice-listening-c2-1)", () => {
+    // A screen reader saying a status line through the speakers as the window opens, 14–20 dB under the user (the "chat"
+    // clip stands in for it: its words are what main tells the voice process the windows say), then the user's request
+    // 0.3 or 0.8 s after it. Without them the announcement was sent before the request, or alone as the request, the
+    // user's words then lost (with a synthesized "Listening for one request": 36 of 36 and 4 of 4).
+    const reader = trimmed("chat"), user = trimmed("followup");
+    for (const g of [0.1, 0.2]) for (const after of [0.3, 0.8]) {
+      const events: VoiceEvent[] = [];
+      let t = 0;
+      const engine = new VoiceEngine(backend, e => events.push(e), { now: () => t });
+      engine.listenOnce(0, 8000, ["Let's meet at the station after lunch."]);
+      const mic = inRoom(cat(silence(0.25), reader.map(x => x * g), silence(after), user, silence(4)));
+      try { for (let i = 0; i + 512 <= mic.length; i += 512) { engine.feed(mic.subarray(i, i + 512), t + 1); t += 32; } } finally { backend.resetVad(); }
+      expect(sent(events).map(u => u.text), `at ${g}, ${after} s after it`).toEqual([expect.stringMatching(/^and turn on\.? do not disturb,? (too|to|2)\.?$/i)]);
+    }
+  });
+
   it("hears a one-word reply in a follow-up (the VAD hears speech only 0.2 s into it)", () => {
     // "Bigger." alone, and "Stop!" 3 dB softer than the request: both were dropped before the recognizer.
     for (const [word, then] of [[trimmed("bigger").subarray(at(1.45)), "utterance"], [trimmed("stop").subarray(at(0.45)).map(x => x * 0.7), "stop"]] as const) {

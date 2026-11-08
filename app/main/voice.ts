@@ -75,6 +75,14 @@ const LISTEN_ONCE_CHECK_MS = 3000;
  * reader announcing a change then would say it over their words (voice-listening-c2-1).
  */
 const LISTEN_ONCE_LISTENING = "Listening…";
+/**
+ * What Ember's windows announce as Listen once opens, which a screen reader says through the speakers, outside the echo
+ * canceller, as the microphone opens: its status line in Home and Ask (listenOnceStatus, and the button's own
+ * "Checking the microphone…" as it is pressed), the button's new name (renderer/shared/listen-once.ts) and Settings'
+ * voice line. The voice process takes them off the start of what it
+ * hears (engine.ts withoutAnnounced): they were sent as the request, or before it (voice-listening-c2-1).
+ */
+export const LISTEN_ONCE_ANNOUNCED = ["Checking the microphone…", "Starting to listen…", "Listening for one request…", "Cancel listening", "Starting…", LISTEN_ONCE_LISTENING];
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /**
@@ -143,6 +151,8 @@ export interface VoiceOptions {
   playback?: "context" | "element";
   /** A wake's request opens a conversation (settings' voice.conversation; engine.ts CONVERSATION_IDLE_MS). */
   conversation?: () => boolean;
+  /** A screen reader runs (Platform a11y.screenReaderOn): it says Listen once's status lines through the speakers. */
+  screenReaderOn?: () => boolean;
   /** The mic page can read how loud the computer's output is (PlatformVoice.outputLevel). */
   outputLevel?: boolean;
   /** Synthetic WAV input has no acoustic echo. Chromium's processing can distort it (development builds only). */
@@ -476,7 +486,7 @@ export class VoiceService {
     // The voice process ends the window itself, by MANUAL_MAX_MS at the latest: this catches one that never says so.
     manual.timer = setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), MANUAL_MAX_MS + LISTEN_ONCE_CHECK_MS);
     manual.timer.unref();
-    this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS });
+    this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS, ...(this.o.screenReaderOn?.() ? { announced: LISTEN_ONCE_ANNOUNCED } : {}) });
   }
 
   cancelListenOnce(detail = "Listening cancelled."): void {

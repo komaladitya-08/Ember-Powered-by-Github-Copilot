@@ -265,6 +265,23 @@ describe("the voice process", () => {
     }
   });
 
+  it("leaves out what a screen reader said as Listen once opened, with the phrases main sends, and hears the request after it (voice-listening-c2-1)", async () => {
+    for (const announced of [["Listening for one request…"], undefined]) {
+      const texts = ["Listening for one request.", "Turn on do not disturb."];
+      let n = 0;
+      const p = await voiceProcess(() => quiet({ vad: () => (++n === 20 || n === 60 ? [new Float32Array(8192).fill(0.05)] : []), transcribe: () => texts.shift() ?? "" }));
+      let now = Date.now();
+      const spy = vi.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        p.init();
+        p.message({ type: "listen-once", generation: 1, from: now, ms: 8000, ...(announced ? { announced } : {}) });
+        for (let i = 0; i < 80; i++) { now += 32; port(p).emit("message", { data: { samples: new Float32Array(512).fill(0.05), capturedAt: now } }); }
+        // (Without a screen reader nothing is left out: main sends no phrases then.)
+        expect(p.sent().filter(m => m.type === "utterance").map(m => (m as { type: string; text?: string }).text)).toEqual([announced ? "Turn on do not disturb." : "Listening for one request."]);
+      } finally { spy.mockRestore(); }
+    }
+  });
+
   it("passes on other errors at start as they are", async () => {
     const p = await voiceProcess(() => { throw new Error("Cannot find module 'sherpa-onnx'"); });
     p.init();

@@ -43,7 +43,7 @@ const electron = vi.hoisted(() => {
 vi.mock("electron", () => electron);
 
 import { VoiceGate } from "../../app/voice/match";
-import { VoiceService, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
+import { LISTEN_ONCE_ANNOUNCED, VoiceService, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import { micBadge } from "../../app/shared/mic";
 import crypto from "node:crypto";
@@ -66,7 +66,7 @@ const LISTENING: ModelId[] = ["kws", "vad", "asr"];
 const markers = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".ok")).sort();
 const markerOf = (id: ModelId) => `.${VOICE_MODELS.find(m => m.id === id)!.target}.ok`;
 
-function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "naturalModel" | "naturalSupported" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav" | "onEvent">> & { onEnrol?: (e: unknown) => void } = {}) {
+function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "naturalModel" | "naturalSupported" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav" | "onEvent" | "screenReaderOn">> & { onEnrol?: (e: unknown) => void } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
@@ -431,6 +431,33 @@ describe("VoiceService", () => {
     expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
     // The handle's badge says so too, in every window: it listens, and hears the user only once they speak.
     expect(micBadge("active")!.label).toBe("Listening");
+  });
+
+  it("tells the voice process what a screen reader will say as Listen once opens, only while one runs (voice-listening-c2-1)", async () => {
+    for (const reader of [true, false]) {
+      const { v } = service(true, { screenReaderOn: () => reader });
+      await v.setWanted(true);
+      const [proc] = electron.procs.slice(-1);
+      proc.emit("message", { type: "ready", loadMs: 20 });
+      captured();
+      const starting = v.listenOnceStatus.detail;
+      v.listenOnce();
+      const posted0 = posted(proc, "listen-once")[0] as { announced?: string[]; generation?: number };
+      proc.emit("message", { generation: posted0.generation, type: "listening", on: true, reason: "manual", window: "manual" });
+      if (!reader) { expect(posted0.announced).toBeUndefined(); continue; }
+      expect(posted0.announced).toEqual(LISTEN_ONCE_ANNOUNCED);
+      // Each is what a window says then: the status line, the voice line, and the button's new name.
+      expect(starting).not.toBe("Listening for one request…");
+      expect(LISTEN_ONCE_ANNOUNCED).toContain(v.listenOnceStatus.detail);
+      expect(LISTEN_ONCE_ANNOUNCED).toContain("Listening…");
+      expect(LISTEN_ONCE_ANNOUNCED).toContain("Starting to listen…");
+      const button = readFileSync(path.resolve("app/renderer/shared/listen-once.ts"), "utf8");
+      expect(button).toContain('const label = listening(status) ? "Cancel listening" : "Listen once";');
+      expect(button).toContain('pending.on ? "Checking the microphone…" : "Cancelling…"');
+      expect(LISTEN_ONCE_ANNOUNCED).toContain("Checking the microphone…");
+      expect(readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8")).toContain('starting: "Starting…"');
+      v.stop();
+    }
   });
 
   it("says the microphone sends only silence, not “No request heard”, when Listen once heard only zeros (voice-listening-4)", async () => {

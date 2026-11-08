@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MANUAL_MAX_MS, Ring, TRAIL_HOLD_MS, VoiceEngine, heardOtherStop, trailsOff, heardStopWord, holdsWake, isCloser, isFiller, isStop, saidWakeStop, stopSaidAlone, stripWake, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
+import { MANUAL_MAX_MS, Ring, TRAIL_HOLD_MS, VoiceEngine, heardOtherStop, trailsOff, heardStopWord, holdsWake, isCloser, isFiller, isStop, saidWakeStop, stopSaidAlone, stripWake, withoutAnnounced, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
 import { withoutRepeats } from "../../app/voice/sherpa";
 
 /** A scripted backend: frames are tagged by their first sample. */
@@ -111,6 +111,29 @@ describe("stripWake", () => {
     expect(stripWake("Hey, ever, turn on Nightlight")).toBe("Hey, ever, turn on Nightlight");
     expect(stripWake("Okay, great.")).toBe("Okay, great.");
     expect(stripWake("8 a.m. Remind me to call.", true)).toBe("8 a.m. Remind me to call.");
+  });
+});
+
+describe("withoutAnnounced (what a screen reader said as Listen once opened; voice-listening-c2-1)", () => {
+  // What Ember's windows announce then (main sends them only while a screen reader runs).
+  const said = ["Checking the microphone…", "Starting to listen…", "Listening for one request…", "Cancel listening", "Starting…", "Listening…"];
+
+  it("takes the announcement off the start of a request, as the recognizer wrote it on the real models", () => {
+    expect(withoutAnnounced("Listening for one request and turn on do not disturb to.", said)).toBe("And turn on do not disturb to.");
+    expect(withoutAnnounced("Listening for one request. And make the text a bit bigger, and turn on Do Not Disturb 2.", said)).toBe("And make the text a bit bigger, and turn on Do Not Disturb 2.");
+    expect(withoutAnnounced("Listen for one request and make the text a bit bigger", said)).toBe("And make the text a bit bigger");
+    expect(withoutAnnounced("Cancel listening, push button. Starting to listen. Listening for one request. Open the calendar.", said)).toBe("Open the calendar.");
+    expect(withoutAnnounced("Starting. Listening. Turn on night light.", said)).toBe("Turn on night light.");
+    expect(withoutAnnounced("Checking the microphone. Listening for one request. What's on my calendar today?", said)).toBe("What's on my calendar today?");
+  });
+
+  it("leaves nothing of an announcement heard alone", () => {
+    for (const t of ["Listening for one request.", "Listing for one request.", "Cancel listening button.", "Listening.", "Starting to listen. Listening for one request…"]) expect(withoutAnnounced(t, said), t).toBe("");
+  });
+
+  it("never takes the user's own words, and nothing at all with no screen reader running", () => {
+    for (const t of ["Starting tomorrow, remind me to call Sam.", "Listen to my voicemail.", "Listening to music is fine, turn it down a bit.", "Cancel my three o'clock.", "Open the calendar and listen for one request."]) expect(withoutAnnounced(t, said), t).toBe(t);
+    expect(withoutAnnounced("Listening for one request and turn on do not disturb to.", [])).toBe("Listening for one request and turn on do not disturb to.");
   });
 });
 
@@ -429,6 +452,23 @@ describe("VoiceEngine", () => {
           for (let i = 0; i < 40 && e.listening; i++, c.t += 32) e.feed(hush(), c.t);
         });
         expect(sent(events).map(u => (u as { text: string }).text)).toEqual(["Turn on do not disturb, and make the text a bit bigger."]);
+      });
+
+      it("hears the request after a screen reader's announcement of the window, never the announcement, and waits for it after one heard alone (voice-listening-c2-1)", () => {
+        let endedAt = 0;
+        const events = run(silero(["Listening for one request.", "Turn on do not disturb."]), (e, c) => {
+          c.t = 1000; e.listenOnce(c.t, 8000, ["Listening for one request…", "Cancel listening"]);
+          for (c.t = 1032; c.t < 1250; c.t += 32) e.feed(hush(), c.t);
+          // The announcement through the speakers, softer than the user, from 0.25 s to 1.5 s; then the user, at 8.6 s.
+          for (let i = 0; c.t < 2500; i++, c.t += 32) e.feed(i % 6 === 5 ? talk(0.0005) : talk(0.005), c.t);
+          for (; c.t < 9600; c.t += 32) e.feed(hush(), c.t);
+          for (let i = 0; c.t < 11_000; i++, c.t += 32) e.feed(say(i), c.t);
+          for (let i = 0; i < 40 && e.listening; i++, c.t += 32) e.feed(hush(), c.t);
+          endedAt = c.t;
+        });
+        // The announcement went as the request, and the window closed on it: what the user said was never heard.
+        expect(sent(events).map(u => (u as { text: string }).text)).toEqual(["Turn on do not disturb."]);
+        expect(endedAt).toBeGreaterThan(11_000);
       });
 
       it("sends a request that trailed off as it was, not nothing, when only talk that was going on as it opened follows it past the deadline (voice-listening-3)", () => {
