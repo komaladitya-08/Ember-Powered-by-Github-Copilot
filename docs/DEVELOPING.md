@@ -368,7 +368,8 @@ at work) stops every task, question, borrowed mouse,
 desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for
 are listed in **Apps & privacy** in the settings window (with **Remove**), next to the never-look list, which you can
 edit there too; each Remove says what it changed. **Send screenshots for tasks** there (on by default) turns tasks'
-screenshots off from the next task: Ember then works only from what apps tell it through accessibility. **What Ember
+screenshots off at once, for a task already at work too (from its next look): Ember then works only from what apps
+tell it through accessibility. **What Ember
 reads, sends and keeps**, at the top of that pane, is
 first run's "Before Ember starts" again, word for word as it reads now (Search finds it by "data", "screenshot",
 "audit" and the like). **What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80

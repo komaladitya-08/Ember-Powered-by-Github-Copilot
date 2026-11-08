@@ -78,6 +78,8 @@ function makeWorker(o: {
   promptOpen?: () => boolean | "unchecked";
   /** Is a system dialog open, as the borrow asks before it takes the keyboard (default: none). */
   systemDialogOpen?: () => boolean;
+  /** Home's "Send screenshots for tasks" as settings say it now (default: on). */
+  screenImages?: () => boolean;
 } = {}) {
   let closed = false;
   const asWin = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) =>
@@ -176,7 +178,7 @@ function makeWorker(o: {
     policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" }, ...(o.rateLimit ? { rateLimit: o.rateLimit } : {}) }),
     confirmer: { ask: async (q: { prompt: string; risky?: boolean }) => { asked.push(q.prompt); questions.push(q); o.onAsk?.(); return o.answer ?? "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
-    settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
+    settings: { get: () => ({ grants: {}, ...(o.screenImages ? { screenImages: o.screenImages() } : {}) }), update: () => undefined } as never,
     presenter,
     lease: o.lease ?? (async () => { o.onLease?.(); return () => undefined; }), flyTo: (b: unknown) => { flown.push(b); }, onProgress: () => undefined,
     onActivity: (e: Record<string, unknown>) => { activity.push(e); },
@@ -212,6 +214,21 @@ describe("a screenshot a task sends (safety-privacy-6)", () => {
     // A read of the text alone sends no picture, and records none.
     await h.call("perceive_window", {});
     expect(h.audit.filter(e => e.event === "read")).toHaveLength(1);
+  });
+
+  it("sends no more pictures once Send screenshots for tasks is turned off, though the task began with it on (safety-privacy-c1-1)", async () => {
+    let on = true;
+    const h = makeWorker({ capture: jpeg, screenImages: () => on });
+    expect(((await h.call("perceive_window", { image: true })) as { binaryResultsForLlm?: unknown[] }).binaryResultsForLlm).toHaveLength(1);
+    on = false;
+    const r = await h.call("perceive_window", { image: true }) as { binaryResultsForLlm?: unknown[]; textResultForLlm: string; resultType: string };
+    expect(r.resultType).toBe("success");
+    expect(r.binaryResultsForLlm).toBeUndefined();
+    expect(r.textResultForLlm).toContain("(No screenshot: the user turned off sending screenshots for tasks; work from the elements.)");
+    expect(h.audit.filter(e => e.event === "read")).toHaveLength(1);
+    // Turned back on, the next look may have one again.
+    on = true;
+    expect(((await h.call("perceive_window", { image: true })) as { binaryResultsForLlm?: unknown[] }).binaryResultsForLlm).toHaveLength(1);
   });
 
   it("sends no picture it couldn't record", async () => {

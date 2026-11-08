@@ -273,6 +273,8 @@ const AUTH_PROMPT_OPEN = "An authentication prompt is open on the user's screen.
  * never said to be one, so nobody goes looking for a prompt that isn't there (safety-privacy-c1-2).
  */
 const PROMPT_UNCHECKED = "Ember can't tell right now whether a password prompt is open on the user's screen (the desktop didn't answer in time), so nothing was read or done. Wait a moment and look again, or finish the task saying what's left.";
+/** What a look that asked for a picture says when the user turned Send screenshots for tasks off during the task. */
+const NO_PICTURES = "(No screenshot: the user turned off sending screenshots for tasks; work from the elements.)";
 /** The audit's reason for each (What Ember did shows it). */
 const PROMPT_REASON = { open: "an authentication prompt is open", unchecked: "Ember couldn't tell whether a password prompt was open" } as const;
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
@@ -1498,7 +1500,14 @@ export class Worker {
         : this.tool("perceive_window",
           "Read the window you are working in: its elements with ids, roles, names, states and positions." + (this.d.vision ? " Pass image=true to also get a screenshot with numbered marks." : ""),
           z.object({ image: z.boolean().optional().describe("Also return a marked screenshot") }),
-          async ({ image }) => this.perceive(image === true && this.d.vision)),
+          async ({ image }) => {
+            // Home's "Send screenshots for tasks" is asked at every look, not only as the task began: turned off while
+            // it works, the task's next look sends no picture (safety-privacy-c1-1).
+            const wanted = image === true && this.d.vision;
+            const may = wanted && this.picturesAllowed();
+            const r = await this.perceive(may);
+            return wanted && !may && r.resultType === "success" ? { ...r, textResultForLlm: `${r.textResultForLlm}\n${NO_PICTURES}` } : r;
+          }),
       this.tool("list_windows", "List the open windows (app and title).", z.object({}), async () => {
         // No window's title goes anywhere while the shell's own password prompt is open (safety-privacy-3).
         const prompt = await this.promptRefusal("read");
@@ -4434,6 +4443,19 @@ export class Worker {
     const unchecked = open === "unchecked";
     this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: unchecked ? PROMPT_REASON.unchecked : PROMPT_REASON.open });
     return denied(unchecked ? PROMPT_UNCHECKED : AUTH_PROMPT_OPEN);
+  }
+
+  /**
+   * May a look send a picture now? Settings as they are now (the admin's policy applied): Home's "Send screenshots for
+   * tasks" may have been turned off since the task began. Settings that can't be read send none (fail closed).
+   */
+  private picturesAllowed(): boolean {
+    try {
+      return this.d.settings.get().screenImages !== false;
+    } catch (err) {
+      this.d.log.warn("worker.settings_read_failed", { err });
+      return false;
+    }
   }
 
   /** Is the system dialog the borrow saw only a shell Ember couldn't ask (promptOpen "unchecked")? Words only: it refuses either way. */
