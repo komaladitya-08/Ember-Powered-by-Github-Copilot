@@ -288,9 +288,10 @@ the automated tests don't stand in for them.
 - **Projects says why a request failed** (a refused API key, a usage limit, files too long for the model) instead of
   always “Try again”. Minimising or hiding settings no longer cancels a project request or a project command: the
   answer is there when you come back. While Ember reconnects, Projects keeps your files, the request you're typing,
-  the answer and its unapplied changes, and only sending waits; signing out, another account or your organisation's
-  lockdown clear them, and an answer from one model service never goes to another. **Run a project command** says
-  commands are off before you type one, with **Open Commands**, or that your organisation turned them off.
+  the answer and its unapplied changes, and nothing in it runs until Ember is connected again; signing out, another
+  account or your organisation's lockdown clear them, and an answer from one model service never goes to another.
+  **Run a project command** says commands are off before you type one, with **Open Commands**, or that your
+  organisation turned them off.
 - **Projects and reminders look like the rest of Home:** one prominent button per group, Home's chevrons on their
   disclosures, buttons that keep their size and no blank bands. The question before deleting all routines and
   reminders reads properly (“Delete your routine?”, never “1 routines and 0 waiting reminders”).
@@ -535,7 +536,7 @@ the automated tests don't stand in for them.
 - **Ember uses less of the processor while it rests beside your cursor.** Its face is drawn about 6 times a second at
   rest, not 18 to 24, and it moves 10 times a second instead of 60 once it and the pointer are still. On a computer
   without a GPU, idle use went from about 11–15 % of a core to 9–10 %. Home doesn't draw its resting characters while
-  it sits behind the window you're working in, which saves about 3 % of a core more while it is open.
+  you're working in another window, which saves about 3 % of a core more while it is open.
 - **Opening Home or the stop shortcut no longer waits 5 seconds each time** when Linux's accessibility bindings hang:
   after its first look, Ember looks for them in the background, and so does **Check again** in the setup check, so
   Ember and its stop shortcut keep working meanwhile.
