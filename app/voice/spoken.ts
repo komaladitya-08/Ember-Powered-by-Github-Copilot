@@ -266,16 +266,18 @@ export function labelLine(line: string): boolean {
  * their list. `afterLed`: the line before the first, said already, is one a colon line led into; `afterBlank`: it is a
  * blank line (`ledIn` then says the one before it ends with a colon). `leads` is told what the last whole line leaves
  * for the line after it, as those three (the same as given when there is none). `goesOn`: the last line goes on past
- * `text`, so how long it is isn't known yet.
+ * `text`, so how long it is isn't known yet. `lineEnd`: the rest of the last line, after `text` (Markdown).
  */
-function endLines(text: string, ledIn = false, lineStart = "", afterLabel = false, afterLed = false, afterBlank = false, leads?: (lead: Lead) => void, goesOn = false): string {
+function endLines(text: string, ledIn = false, lineStart = "", afterLabel = false, afterLed = false, afterBlank = false, leads?: (lead: Lead) => void, goesOn = false, lineEnd = ""): string {
   const lines = text.split("\n");
   // The first line whole, its start said already (without Markdown's bold, as labelLine reads it).
   const whole = (i: number) => (i === 0 && lineStart ? lineStart.replace(/\*\*|__/g, "") + lines[0] : lines[i]);
   const item = lines.map((l, i) => ITEM.test(l) && !(i === 0 && lineStart && ARROW_BULLET.test(l)));
   // How many bare items run together through each line (voice-speaking-3: "Your windows\nFirefox\nFiles").
-  // (Each line whole: the rest of one cut inside it, or the start of one said already, may make it longer than a list's.)
-  const bare = lines.map((_l, i) => { const l = whole(i); return l.trim() && !item[i] && !HEADING.test(l) && !(goesOn && i === lines.length - 1) && BARE_ITEM(l.trimEnd()) ? 1 : 0; });
+  // (Each line whole: the rest of one cut inside it, or the start of one said already, may make it longer than a list's;
+  // as short, it may end a list: "Downloads\nDocuments\nPictures. Done." was "Downloads Documents Pictures.":
+  // voice-speaking-w5-2.)
+  const bare = lines.map((_l, i) => { const l = i === lines.length - 1 ? whole(i) + lineEnd.replace(/\*\*|__/g, "") : whole(i); return l.trim() && !item[i] && !HEADING.test(l) && !(goesOn && i === lines.length - 1) && BARE_ITEM(l.trimEnd()) ? 1 : 0; });
   const run: number[] = [...bare];
   for (let i = 1; i < run.length; i++) if (bare[i] && bare[i - 1]) run[i] = run[i - 1] + 1;
   for (let i = run.length - 2; i >= 0; i--) if (bare[i] && bare[i + 1]) run[i] = run[i + 1];
@@ -315,10 +317,11 @@ function endLines(text: string, ledIn = false, lineStart = "", afterLabel = fals
  * voice-speaking-v4-4). `o.afterLabel`: the line before its first, said already, starts with a label ("Step 1: …"
  * said, then "Step 2: Turn off Location" ends as the step it is: voice-speaking-c4-1). `o.afterLed`: that line is one a
  * colon line led into (`o.afterBlank`: it is blank); `o.leads` is told what its own last whole line leaves for the next
- * piece (Lead); `o.goesOn`: its last line goes on after it. So a run of such lines cut apart ends each of them as the
- * whole answer does (voice-speaking-v5-1, voice-speaking-v5-2).
+ * piece (Lead); `o.goesOn`: its last line goes on after it, by more than has come; `o.lineEnd`: what has come of the
+ * rest of that line. So a run of such lines cut apart ends each of them as the whole answer does (voice-speaking-v5-1,
+ * voice-speaking-v5-2, voice-speaking-w5-2).
  */
-export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: string; afterLabel?: boolean; afterLed?: boolean; afterBlank?: boolean; leads?: (lead: Lead) => void; goesOn?: boolean } = {}): string {
+export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: string; afterLabel?: boolean; afterLed?: boolean; afterBlank?: boolean; leads?: (lead: Lead) => void; goesOn?: boolean; lineEnd?: string } = {}): string {
   const prose = markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
     .replace(FENCED_CODE, `$1${CODE}`)
@@ -350,7 +353,7 @@ export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: s
     // "2**8", "_config.yml" or "__init__.py".
     .replace(/(^|[\s(])(?:\*\*?|_(?=\p{L}+(?:[\s,;:!?)]|$)))(?=\p{L})/gu, "$1")
     .replace(/(?<=[\p{L}\p{N}.,!?;:])(?:\*\*?|_)(?=[\s.,!?;:)]|$)/gu, "");
-  const said = endLines(plain, o.ledIn, o.lineStart, o.afterLabel, o.afterLed, o.afterBlank, o.leads, o.goesOn)
+  const said = endLines(plain, o.ledIn, o.lineStart, o.afterLabel, o.afterLed, o.afterBlank, o.leads, o.goesOn, o.lineEnd)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")
     .replace(/^[ \t]*[-*+→][ \t]+/gm, (m: string, at: number) => (at === 0 && o.lineStart && ARROW_BULLET.test(m) ? m : ""))

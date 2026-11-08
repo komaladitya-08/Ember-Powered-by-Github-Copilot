@@ -827,7 +827,9 @@ or underscore to be said. No piece of speech is longer than 120
 characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of speech ahead of what has played
 (`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
 it. A Markdown list is said item by item: each item, a heading (a line that is all bold too), the line that leads into
-a list, three or more short lines in a row that each start with a capital (a list without its markers), two or more
+a list, three or more short lines in a row that each start with a capital (a list without its markers; streamed, a
+last one cut after a full stop is judged whole, so a piece waits for the rest of that line while it is still short:
+"Downloads\nDocuments\nPictures. Done."), two or more
 such lines of any length after a line ending with a colon ("Here is the plan:\nStep one is…\nStep two is…", also
 after a blank line, and when that line was said on its own as the answer streamed), two or more lines in a row that
 each start with a short label and its colon or a spaced dash ("Step 1: Open Settings", "**Option A:** Keep it",

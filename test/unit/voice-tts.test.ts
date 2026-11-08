@@ -496,6 +496,25 @@ describe("SpeechStream", () => {
     }
   });
 
+  it.each([
+    "Downloads\nDocuments\nPictures. Done.",
+    "Firefox\nFiles\nTerminal. That's all.",
+    "Firefox\nFiles\nTerminal. **That's all.**",
+    "Firefox\nFiles\nTerminal. That's all.\nAnything else?",
+    // A longer last line is no list's line: the lines before it go on in one breath, whole or streamed.
+    "Firefox\nFiles\nTerminal. That is all of them for now, more later.",
+  ])("ends each short line before a last one that goes on after its full stop when %j streams, as the whole answer does (voice-speaking-w5-2)", answer => {
+    const whole = speechChunks(spokenText(answer)).join(" ");
+    for (const delta of [1, 4, 16, 1000]) expect(streamed(answer, delta).flatMap(speechChunks).join(" "), `${delta}`).toBe(whole);
+  });
+
+  it("waits for such a last line only while it could still be a list's short line (voice-speaking-w5-2)", () => {
+    const long = "Firefox\nFiles\nTerminal. That is all of them for now, more later.";
+    // Its fifth word starts it is no list's line.
+    expect(firstPiece(long, 1)).toEqual({ at: long.indexOf(" of ") + 2, piece: "Firefox\nFiles\nTerminal." });
+    expect(firstPiece("Firefox\nFiles\nTerminal. That's all.\nAnything else?", 1).at).toBe("Firefox\nFiles\nTerminal. That's all.\n".length);
+  });
+
   const FOUND = "I looked through your Downloads folder, and I found three spreadsheets that you changed this week, all of them from the sales team.";
 
   it.each([

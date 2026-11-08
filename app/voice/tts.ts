@@ -242,9 +242,18 @@ export class SpeechStream {
     this.raw += delta;
     const cut = this.safeCut();
     if (cut <= this.said) return [];
-    // (Cut inside a line, it goes on after the piece: a sentence's end has a space after it, a clause's no line break.)
-    const goesOn = this.raw[cut - 1] !== "\n" && this.raw[cut] !== "\n";
-    const spoken = this.withLabel(spokenText(this.raw.slice(this.said, cut), { ...this.lead, lineStart: this.lineStart(), afterLabel: this.afterLabel(), leads: lead => { this.lead = lead; }, goesOn }));
+    // (Cut inside a line, it goes on after the piece: a sentence's end has a space after it, a clause's no line break.
+    // What has come of the rest of that line is judged with it, all of it once its line break has.)
+    const inLine = this.raw[cut - 1] !== "\n" && this.raw[cut] !== "\n";
+    const nl = inLine ? this.raw.indexOf("\n", cut) : -1;
+    const piece = this.raw.slice(this.said, cut);
+    const o = { ...this.lead, lineStart: this.lineStart(), afterLabel: this.afterLabel(), lineEnd: inLine ? this.raw.slice(cut, nl < 0 ? undefined : nl) : "" };
+    // Till that line has come, a piece said otherwise were the line longer waits: as short as a list's line, it ends a
+    // run of such lines before it, and longer it doesn't. Judged as long, "Downloads\nDocuments\nPictures. Done." was
+    // said "Downloads Documents Pictures." (voice-speaking-w5-2); the wait is the rest of a short line at most. (Such a
+    // run is three lines: with fewer in the piece, the line's length changes nothing.)
+    if (inLine && nl < 0 && piece.indexOf("\n") < piece.lastIndexOf("\n") && spokenText(piece, { ...o, goesOn: true }) !== spokenText(piece, o)) return [];
+    const spoken = this.withLabel(spokenText(piece, { ...o, leads: lead => { this.lead = lead; } }));
     this.said = cut;
     return spoken.trim() ? this.budget(spoken) : [];
   }

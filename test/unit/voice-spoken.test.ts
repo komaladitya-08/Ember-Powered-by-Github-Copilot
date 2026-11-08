@@ -275,6 +275,14 @@ describe("spokenText", () => {
     ]);
   });
 
+  it("judges a last line cut after its full stop by all of it that has come, as a short list's line or not (voice-speaking-w5-2)", () => {
+    expect(spokenText("Downloads\nDocuments\nPictures.", { lineEnd: " Done." })).toBe("Downloads.\nDocuments.\nPictures.");
+    expect(spokenText("Downloads\nDocuments\nPictures.", { lineEnd: " **Done.**" })).toBe("Downloads.\nDocuments.\nPictures.");
+    expect(spokenText("Downloads\nDocuments\nPictures.", { lineEnd: " That is all of them for now" })).toBe("Downloads\nDocuments\nPictures.");
+    // Still coming, it is judged as long.
+    expect(spokenText("Downloads\nDocuments\nPictures.", { lineEnd: " Done.", goesOn: true })).toBe("Downloads\nDocuments\nPictures.");
+  });
+
   it("ends the lines a colon line leads into when that line was said already, as a stream cuts after it (voice-speaking-3)", () => {
     const steps = "Open the spreadsheet you sent me this morning\nAdd up the totals for each month\nSave it as a new file in Documents";
     expect(spokenText(steps, { ledIn: true })).toBe("Open the spreadsheet you sent me this morning.\nAdd up the totals for each month.\nSave it as a new file in Documents.");
