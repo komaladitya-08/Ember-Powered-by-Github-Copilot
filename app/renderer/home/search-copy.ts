@@ -31,7 +31,7 @@ export const SEARCH_ALIASES: Readonly<Record<string, string>> = {
   "computers-h": "ssh wsl remote server linux windows",
   "commands-h": "terminal shell command line run",
   "extensions-h": "plugins marketplace connectors tools",
-  "checks-h": "doctor setup check diagnostics troubleshoot version shortcuts keys hotkeys keyboard shortcuts",
+  "checks-h": "doctor setup check diagnostics troubleshoot version shortcuts keys hotkeys keyboard shortcuts log logs log file",
 };
 
 /** A node as the DOM gives it, as far as shownText reads it (text nodes are 3, elements 1). */

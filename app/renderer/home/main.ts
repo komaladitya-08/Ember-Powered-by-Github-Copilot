@@ -1952,7 +1952,9 @@ function renderSearchResults(): void {
   results.hidden = !found.length;
   results.replaceChildren(...found.slice(0, searchShown).map(result => {
     const li = document.createElement("li");
-    const section = jumpLinks.find(link => paneOf(document.getElementById(`${sectionOf(link)}-h`) ?? link) === result.pane)?.textContent ?? result.pane;
+    // The pane's name as its link shows it: never the setup badge's number or its words for screen readers (home-r2).
+    const link = jumpLinks.find(l => paneOf(document.getElementById(`${sectionOf(l)}-h`) ?? l) === result.pane);
+    const section = link ? shownText(link).replace(/\s+/g, " ").trim() : result.pane;
     const button = Object.assign(document.createElement("button"), { type: "button", className: "search-result", textContent: settingsResultText(section, result.text, search.value) });
     button.addEventListener("click", () => openSearchResult(result));
     li.append(button);

@@ -25,7 +25,7 @@ declare global {
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
-interface Seed { settings?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number } }
+interface Seed { settings?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[] }
 
 let browser: Browser;
 let server: http.Server;
@@ -56,7 +56,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
   const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
-  await page.addInitScript(({ settings, admin, activity }) => {
+  await page.addInitScript(({ settings, admin, activity, checks }) => {
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     // Main's list as last pushed: what a read after a task control gets.
     let tasks: unknown = [];
@@ -66,7 +66,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       activity: activity as ActivityEntry[] | "fail",
       reads: 0,
     };
-    const status = () => ({ appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin });
+    const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return async () => status();
@@ -78,7 +78,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "activity") return async (limit?: number) => { h.reads++; if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
-  }, { settings, admin, activity: seed.activity ?? [] });
+  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [] });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   await page.waitForSelector(`a[href='#${pane}-h']`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
@@ -192,6 +192,19 @@ describe.skipIf(gate)("Home's Search settings, as the person reads the results (
     for (const q of ["shortcut", "keyboard shortcut", "hotkeys"]) expect((await results(page, q)).length, q).toBeGreaterThan(0);
     expect((await results(page, "delete")).some(r => r.startsWith("Memory: "))).toBe(true);
     expect(await page.locator("#search-none").isHidden()).toBe(true);
+    await page.close();
+  });
+
+  it("names Setup & about plainly in its results while the sidebar's badge shows, and finds the log file (home-r2)", async () => {
+    const page = await open("home", { checks: [{ id: "atspi", status: "fail", label: "Accessibility", detail: "Ember can't read apps.", fix: "Turn on assistive technologies." }] });
+    // The badge is on the sidebar's link: its number for the eye, its words for a screen reader.
+    await expect.poll(() => page.locator("#jump a[href='#checks-h'] .jump-badge").count()).toBe(1);
+    const about = (await results(page, "version")).filter(r => r.startsWith("Setup & about"));
+    expect(about.length).toBeGreaterThan(0);
+    for (const r of about) expect(r, r).toMatch(/^Setup & about: [^\d]/);
+    for (const r of await results(page, "shortcut")) expect(r, r).not.toMatch(/about\d|thing to fix/);
+    for (const q of ["log", "log file", "logs"]) expect((await results(page, q)).some(r => r.startsWith("Setup & about: ")), q).toBe(true);
+    expect(page.errors).toEqual([]);
     await page.close();
   });
 });

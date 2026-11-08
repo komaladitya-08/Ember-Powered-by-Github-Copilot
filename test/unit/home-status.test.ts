@@ -206,6 +206,12 @@ describe("Search settings", () => {
     for (const q of ["erase", "delete"]) expect(searchMatches(q, panes).map(p => p.pane), q).toEqual(expect.arrayContaining(["conversation-h", "memory-h"]));
   });
 
+  it("finds the log file in Setup & about by the words people use for it, and still log-in in Your Ember (home-r2)", () => {
+    const panes = ["pick-h", "checks-h"].map(id => ({ pane: id, text: id, alias: SEARCH_ALIASES[id] }));
+    for (const q of ["log", "logs", "log file"]) expect(searchMatches(q, panes).map(p => p.pane), q).toContain("checks-h");
+    for (const q of ["log in", "login"]) expect(searchMatches(q, panes).map(p => p.pane), q).toEqual(["pick-h"]);
+  });
+
   it("finds what Ember reads, sends and keeps by the words people look for it with (safety-privacy-9)", () => {
     const panes = ["conversation-h", "privacy-h", "privacy-terms-h", "activity-h"].map(id => ({ pane: id, text: id, alias: SEARCH_ALIASES[id] }));
     for (const q of ["screenshot", "data", "usage statistics", "privacy policy", "kept", "audit"]) expect(searchMatches(q, panes)[0]?.pane, q).toBe("privacy-terms-h");
