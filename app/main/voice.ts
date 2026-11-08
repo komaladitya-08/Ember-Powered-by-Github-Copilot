@@ -90,6 +90,12 @@ const WAITING_TEXT = "Listening for “Ember”";
  * hears (engine.ts withoutAnnounced): they were sent as the request, or before it (voice-listening-c2-1, voice-listening-r3-1).
  */
 export const LISTEN_ONCE_ANNOUNCED = ["Checking the microphone…", "Starting to listen…", "Listening for one request…", "Cancel listening", "Starting…", LISTEN_ONCE_LISTENING, WAITING_TEXT];
+/**
+ * Listen once ended on talk it couldn't tell from the room's: begun as it opened and still going 12 s after the press
+ * (engine.ts MANUAL_DOUBT_MS). It may have been the user's long request, so "No request heard." was untrue; begun a
+ * moment after the window opens, a request is heard to its end (voice-listening-r2-1).
+ */
+const LISTEN_ONCE_DOUBT = "I heard talking but couldn't tell it was a request. Try again, waiting a moment before you speak.";
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /**
@@ -1547,7 +1553,7 @@ export class VoiceService {
         // (Checked by Voice Match after it is done, a temporary one's window stays as it was until its end says "off".)
         if (m.on || !temporary) this.setState(m.on ? "active" : "waiting", m.on ? LISTEN_ONCE_LISTENING : undefined);
         this.o.onEvent(event);
-        if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? (this.manualSilent ? SILENT_TEXT : "No request heard. Try again.") : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
+        if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? (this.manualSilent ? SILENT_TEXT : m.doubt ? LISTEN_ONCE_DOUBT : "No request heard. Try again.") : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
         else this.o.onListenOnce?.();
         return;
       }

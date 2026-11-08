@@ -437,8 +437,21 @@ describe("VoiceEngine", () => {
           endedAt = c.t;
         });
         expect(sent(events)).toEqual([]);
-        expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual" });
+        // (Said so: someone spoke, so main doesn't say that no request was heard: voice-listening-r2-1.)
+        expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual", doubt: true });
         expect(endedAt).toBeLessThanOrEqual(1000 + 12_000 + 100);
+      });
+
+      it("says a request begun at once and still being said 12 s after the press was talk it couldn't tell from the room's, not that nothing was heard (voice-listening-r2-1, voice-listening-1)", () => {
+        // The documented trade-off (MANUAL_DOUBT_MS): such a request isn't sent, and "No request heard. Try again." was untrue.
+        const events = run(silero(["Open the calendar, find a free hour on Thursday afternoon, invite Sam and Priya, and tell them it's about the budget."]), (e, c) => {
+          c.t = 1000; e.listenOnce(c.t, 8000);
+          for (c.t = 1032; c.t < 1300; c.t += 32) e.feed(hush(), c.t);
+          for (let i = 0; c.t < 13_400 && e.listening; i++, c.t += 32) e.feed(say(i), c.t);
+          for (let i = 0; i < 30 && e.listening; i++, c.t += 32) e.feed(hush(), c.t);
+        });
+        expect(sent(events)).toEqual([]);
+        expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual", doubt: true });
       });
 
       it("hears a request begun at once that pauses after a trailing word near the deadline as one request, its rest joined (voice-listening-3)", () => {

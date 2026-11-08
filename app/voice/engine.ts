@@ -84,9 +84,11 @@ export type VoiceEvent =
   | { type: "stop" }
   /**
    * `window`: which listening window this is (a follow-up's timeout shouldn't clear the answer it follows); `next`: a
-   * conversation opens as this window ends, at once (main goes straight on into it: voice-listening-c3-1).
+   * conversation opens as this window ends, at once (main goes straight on into it: voice-listening-c3-1); `doubt`:
+   * Listen once ended on talk it couldn't tell from the room's (MANUAL_DOUBT_MS), so someone did speak, and main
+   * doesn't say that no request was heard (voice-listening-r2-1).
    */
-  | { type: "listening"; on: boolean; reason: ListeningWindow | "timeout" | "done" | "stop" | "rejected"; window: ListeningWindow; next?: "conversation" }
+  | { type: "listening"; on: boolean; reason: ListeningWindow | "timeout" | "done" | "stop" | "rejected"; window: ListeningWindow; next?: "conversation"; doubt?: true }
   | { type: "speech"; on: boolean }
   /** The user started talking over Ember, in a conversation (see checkCutIn): main hushes Ember at once, and what they say follows as an utterance. */
   | { type: "cut-in" }
@@ -1021,10 +1023,13 @@ export class VoiceEngine {
     return loudest(room.length >= MANUAL_OPEN_FRAMES ? room : this.manualLevels.slice(0, MANUAL_ROOM_FRAMES));
   }
 
-  /** Listen once heard no request of the user's: nothing more is sent, but a request held for the rest of it goes as it was. */
-  private endManual(): void {
+  /**
+   * Listen once heard no request of the user's: nothing more is sent, but a request held for the rest of it goes as it
+   * was. `doubt`: it ends on talk that may have been the user's (MANUAL_DOUBT_MS), and says so.
+   */
+  private endManual(doubt = false): void {
     if (this.held) this.sendHeld();
-    else this.endListening("timeout");
+    else this.endListening("timeout", doubt ? { doubt: true } : {});
   }
 
   /** Stop listening for a command, and drop a wake or stop still being checked (the kill switch, Esc). */
@@ -1064,7 +1069,7 @@ export class VoiceEngine {
       // feed()). A request that trailed off and is held for the rest (TRAIL_HOLD_MS) goes as it was: what is said now isn't
       // the user's (it was thrown away with the window: voice-listening-3).
       if (now >= this.mode.until && !this.manualGoesOn(now)) { this.endManual(); return; }
-      else if (this.manualDoubt && now >= this.manualFrom + MANUAL_DOUBT_MS) { this.endManual(); return; }
+      else if (this.manualDoubt && now >= this.manualFrom + MANUAL_DOUBT_MS) { this.endManual(true); return; }
       else if (capturedAt === undefined || capturedAt <= Math.max(this.manualFrom, this.selfSpeakingUntil)) return;
       else if (!this.manualReady) {
         this.manualReady = true;
@@ -1620,7 +1625,7 @@ export class VoiceEngine {
     const over = this.quietFor >= QUIET_END_FRAMES && !this.hushRun && n - this.pauseAt > RETURN_FRAMES;
     if (over || capped) {
       // (Listen once's talk that may be the room's isn't sent at a cap: MANUAL_DOUBT_MS.)
-      if (!over && this.mode.reason === "manual" && this.manualDoubt) { this.endManual(); return; }
+      if (!over && this.mode.reason === "manual" && this.manualDoubt) { this.endManual(true); return; }
       const cut = !over && this.voiceIn(n - STILL_TALKING_FRAMES);
       for (const seg of this.backend.flushVad()) this.handleSegment(this.trim(seg), cut);
       this.endSegment();
@@ -1954,7 +1959,7 @@ export class VoiceEngine {
       return;
     }
     const opens = this.conversing && window !== "manual";
-    this.endListening("done", opens);
+    this.endListening("done", opens ? { next: "conversation" } : {});
     if (opens) this.openConversation();
   }
 
@@ -1991,8 +1996,8 @@ export class VoiceEngine {
     return parts.map(p => p.trim()).filter(Boolean).join(" ");
   }
 
-  /** `opens`: a conversation opens next, at once (the event says so). */
-  private endListening(reason: "timeout" | "done" | "stop" | "rejected", opens = false): void {
+  /** `also`: what the event says besides (a conversation opening next, at once; Listen once's doubt). */
+  private endListening(reason: "timeout" | "done" | "stop" | "rejected", also: { next?: "conversation"; doubt?: true } = {}): void {
     const window = this.mode.kind === "listening" ? this.mode.reason : "wake";
     const shown = this.mode.kind !== "listening" || this.mode.announced !== false;
     // (A request held for the rest of it goes with the window: never sent after a stop or a cancel.)
@@ -2003,7 +2008,7 @@ export class VoiceEngine {
     this.tail = [];
     this.tailFrom = 0;
     this.resetListening();
-    if (shown) this.emit({ type: "listening", on: false, reason, window, ...(opens ? { next: "conversation" as const } : {}) });
+    if (shown) this.emit({ type: "listening", on: false, reason, window, ...also });
   }
 }
 

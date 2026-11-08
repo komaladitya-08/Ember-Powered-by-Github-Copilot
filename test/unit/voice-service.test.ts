@@ -585,6 +585,23 @@ describe("VoiceService", () => {
     }
   });
 
+  it("says it heard talking it couldn't tell was a request, not that it heard none, when Listen once ends on such talk (voice-listening-r2-1, voice-listening-1)", async () => {
+    // A request begun at once and still being said 12 s after the press was thrown away with "No request heard. Try
+    // again.", though the user had been speaking the whole time.
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    for (const doubt of [true, false]) {
+      v.listenOnce();
+      const generation = (posted(proc, "listen-once").at(-1) as { generation?: number }).generation;
+      proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
+      proc.emit("message", { generation, type: "listening", on: false, reason: "timeout", window: "manual", ...(doubt ? { doubt: true } : {}) });
+      expect(v.listenOnceStatus.detail).toBe(doubt ? "I heard talking but couldn't tell it was a request. Try again, waiting a moment before you speak." : "No request heard. Try again.");
+    }
+  });
+
   it.each(["cancel", "stop", "mute", "lock", "device", "expiry"])("revokes manual verification on %s", async why => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     const { v, events } = service();
