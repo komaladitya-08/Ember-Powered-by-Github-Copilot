@@ -616,7 +616,7 @@ describe("“forget that”, the instruction check and the conversation's line",
       "Remove my address from memory", "Delete my address from your memory", "Forget everything about Priya", "Forget everything you know about Priya",
       "Forget Priya's birthday", "Clear memory", "Reset memory", "Reset your memory", "Forget what you know about my wife", "Delete your memory of me",
       "Forget the fact that I'm vegetarian", "Forget my data", "Forget all about me", "Forget my email address", "Forget my last name",
-      "Forget my home address", "Forget who I am", "Forget what I like",
+      "Forget my home address", "Forget who I am", "Forget what I like", "Forget my email",
     ]) {
       expect(memoryAsk(text), text).toBe("forget");
       expect(off.l.intent(text, { own: true }), text).toBe(FORGET_OFF);

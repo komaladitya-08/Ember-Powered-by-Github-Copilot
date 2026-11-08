@@ -210,7 +210,8 @@ function statesSomething(rest: string): boolean {
  */
 const ABOUT_ME = String.raw`(?:(?:full|first|last|middle|maiden|old|new|current|previous|real|legal|home|work|personal|private|mobile|postal|email|e-mail)\s+)?`
   + String.raw`(?:names?|nickname|surname|initials|age|birthdays?|birth\s*date|date\s+of\s+birth|pronouns|gender|nationality|religion|address(?:es)?|`
-  + String.raw`(?:phone|mobile|cell)\s+numbers?|number|email\s+address(?:es)?|e-mail\s+address(?:es)?|home\s*town|location|post\s*code|zip\s*code|time\s*zone|`
+  // "My email" alone is the address ("forget my email"); with more after it, a message ("forget my email to Bob").
+  + String.raw`(?:phone|mobile|cell)\s+numbers?|number|email\s+address(?:es)?|e-mail\s+address(?:es)?|e-?mail(?=\s*$)|home\s*town|location|post\s*code|zip\s*code|time\s*zone|`
   + String.raw`job(?:\s+title)?|title|role|employer|company|workplace|boss|manager|salary|profession|occupation|wife|husband|partner|spouse|girlfriend|boyfriend|`
   + String.raw`fianc[eé]e?|kids?|children|child|sons?|daughters?|baby|family|mum|mom|mother|dad|father|parents?|sisters?|brothers?|siblings?|`
   + String.raw`grand(?:ma|pa|mother|father|parents?)|friends?|pets?|dog|cat|preferences?|favou?rites?|favou?rite\s+\S+|likes|dislikes|allerg(?:y|ies)|diet|`
