@@ -27,3 +27,12 @@ export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waiti
     default: return `Ember can't connect to ${it} yet: Models & connections says why. Your message is still here.`;
   }
 }
+
+/**
+ * Why Home's composer can't send now, or null when the message goes. `stops`: it is a typed "stop" that stops everything
+ * at once (AgentHost.stopsWith), which goes whatever the connection is doing, as the Ask box's and voice's do (home-c2-1:
+ * waiting for the running tasks before it reconnects, Home refused the very stop that would end them).
+ */
+export function composerSendRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }, stops: boolean): string | null {
+  return stops || s.phase === "ready" ? null : composerRefusal(s);
+}

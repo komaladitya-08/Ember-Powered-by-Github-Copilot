@@ -24,7 +24,7 @@ import type { TargetSummary } from "../../app/shared/targets";
 import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
-import { composerRefusal } from "../../app/main/agent/composer-refusal";
+import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
 import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerCardShown, providerConsentText, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
@@ -1098,6 +1098,27 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(composerRefusal({ phase: "starting", service: { kind: "user", host: "llm.local" } })).toBe("Ember is still connecting to your model provider. Your message is still here: send it again in a moment.");
     expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "llm.example.com" } })).toBe("Ember can't reach the model service right now. Your message is still here: send it again once you're online.");
     expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true, service: { kind: "user", host: "llm.local" } })).toBe("Your model provider isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.");
+  });
+
+  it("lets a typed \"stop\" that stops everything through while Ember isn't connected, as the Ask box does (home-c2-1)", () => {
+    const waiting = { phase: "error" as const, reason: "not-answering" as const, waitingForTasks: true };
+    // Waiting for the running task before it reconnects: that task is what "stop" stops.
+    expect(composerSendRefusal(waiting, true)).toBeNull();
+    expect(composerSendRefusal({ phase: "starting" }, true)).toBeNull();
+    // Anything else is refused as before, and so is a ready Ember's nothing.
+    expect(composerSendRefusal(waiting, false)).toBe("Copilot isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.");
+    expect(composerSendRefusal({ phase: "ready" }, false)).toBeNull();
+    // main.ts decides the stop before the refusal, after consent and the locked screen.
+    const main = readFileSync("app/main/main.ts", "utf8").replace(/\s+/g, " ");
+    const at = (s: string) => { const i = main.indexOf(s); expect(i, s).toBeGreaterThan(-1); return i; };
+    const consent = at('if (!consented()) throw new Error("Finish setup before sending a request.");');
+    const locked = at('if (screenLock?.locked) throw new Error("Unlock your screen before sending a request.");');
+    const stops = at("const stops = agent?.stopsWith(text) === true;");
+    const refused = at('const refusal = composerSendRefusal(agent?.getStatus() ?? { phase: "signed-out" }, stops);');
+    expect(consent).toBeLessThan(locked);
+    expect(locked).toBeLessThan(stops);
+    expect(stops).toBeLessThan(refused);
+    expect(main).not.toContain("if (status?.phase !== \"ready\") throw new Error(composerRefusal(");
   });
 
   it("asks before New conversation clears the messages, and names the saved copy when there is one (home-9)", () => {
