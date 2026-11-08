@@ -35,7 +35,7 @@ import {
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
-import { modelDestination, privacyFoldWords, recipientWords } from "./copy";
+import { modelDestination, privacyFoldWords, recipientWords, type ModelDestination } from "./copy";
 import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
@@ -207,7 +207,7 @@ function applySettings(s: Settings): void {
   renderStatus();
 }
 // First run, one step at a time: it borrows the character and the cards until Start, and its fixes reach the setup check.
-const welcome = startWelcome({ save, buddy: heroCanvas, cards: $("cards"), checksChanged: env => renderChecks(env), arrived: () => { if (!calm) { heroRig.setEmotion("happy"); drawSoon(); } } });
+const welcome = startWelcome({ save, buddy: heroCanvas, cards: $("cards"), checksChanged: env => renderChecks(env), arrived: () => { if (!calm) { heroRig.setEmotion("happy"); drawSoon(); } }, destination: () => destinationNow() });
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
 $("login").addEventListener("change", e => { void save({ startAtLogin: (e.target as HTMLInputElement).checked }); });
@@ -552,7 +552,7 @@ let lastAdmin: Status["admin"] | null = null;
 function renderRecipient(): void {
   const a = lastAdmin;
   if (!a) return;
-  const d = modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() });
+  const d = destinationNow();
   const service = document.querySelector<HTMLElement>("#w-full #model-service");
   // The locked-down line replaces the sentence (and this span) altogether.
   if (service && d.kind !== "none") service.textContent = recipientWords(d, true);
@@ -563,6 +563,14 @@ function renderRecipient(): void {
   // Agreeing to "sent to …" needs the recipient named: unknown, "I agree" waits (aria-disabled keeps it focusable).
   const yes = $("consent-yes");
   if (d.kind === "unknown") yes.setAttribute("aria-disabled", "true"); else yes.removeAttribute("aria-disabled");
+  // First run's consent says it in short, from the same answer (first-run-r2-2).
+  welcome.recipient();
+}
+/** Where requests go now (copy.ts modelDestination); not known before the first policy, so never worded as Copilot. */
+function destinationNow(): ModelDestination {
+  const a = lastAdmin;
+  if (!a) return { kind: "unknown" };
+  return modelDestination({ locked: !!lockdownSendLine(a), adminProvider: a.provider ?? null, own: ownProvider() });
 }
 onProviderDestination(renderRecipient);
 function renderAdmin(a: Status["admin"]): void {

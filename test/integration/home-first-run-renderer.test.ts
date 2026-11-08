@@ -800,6 +800,31 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(q3) with my own provider in force, the consent's short form says my requests go to it, as the full text does, never to Copilot (first-run-r2-2)", async () => {
+    const own = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const inForce = { inForce: true, host: "api.example.com", agreed: true, keySaved: true };
+    const send = (q: Page) => q.locator("#w-points li[data-icon='send']").innerText();
+    const full = (q: Page) => q.locator("#w-full #model-service").evaluate(e => e.textContent ?? "");
+    // A returning user after a consent bump: Ember isn't connected yet (nothing is, before the consent).
+    const p = await open({ consent: 6, provider: own, providerState: inForce });
+    expect(await p.locator("#w-title").innerText()).toBe("What's changed since you last agreed");
+    await expect.poll(() => send(p)).toBe("When you ask something, your request and what I read go to your own model provider (api.example.com). Nothing is sent before you ask.");
+    expect(await full(p)).toBe("your own model provider (api.example.com)");
+    expect(await send(p)).not.toContain("Copilot");
+    // Agreed, and Back to the consent from the sign-in step: the same recipient.
+    const q = await open({ provider: own, providerState: inForce, agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service: { kind: "user", host: "api.example.com" } }) });
+    await expect.poll(() => q.locator("#w-title").innerText()).toBe("Your own model provider");
+    await q.locator("#w-back").click();
+    expect(await q.locator("#w-title").innerText()).toBe("What I do, and what I don't");
+    await expect.poll(() => send(q)).toContain("go to your own model provider (api.example.com).");
+    // The organisation's own service, and GitHub Copilot when nothing else is in force, are named as before.
+    const org = await open({ consent: 6, admin: { provider: "https://llm.example.org/v1" } });
+    await expect.poll(() => send(org)).toContain("go to your organisation's model service (llm.example.org).");
+    const copilot = await open({ consent: 6 });
+    await expect.poll(() => send(copilot)).toContain("go to GitHub Copilot.");
+    for (const page of [p, q, org, copilot]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(r) a model server on this computer is checked without an API key, also on a computer with no keyring (first-run-v2)", async () => {
     const p = await open();
     await p.getByRole("button", { name: "Use my own provider" }).click();

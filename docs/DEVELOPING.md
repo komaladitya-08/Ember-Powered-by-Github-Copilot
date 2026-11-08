@@ -128,7 +128,8 @@ runtime. It does not change the app's consent or speaking settings.
 
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
-  lines, the full text under **Read the full text**) and **Agree and continue**, or **Not now**, which keeps Ember off
+  lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
+  provider while it is in force, or the organisation's model service) and **Agree and continue**, or **Not now**, which keeps Ember off
   and offers **Quit Ember** (a press on either within half a second of its appearing is dropped, so a double click
   agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Your Ember** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on and only **Use GitHub Copilot instead** switches it off; or **Skip for now**); the setup check shows only
   the rows that need you (and, once **Turn on** has switched screen reading on, that apps already open need a restart), in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission), and

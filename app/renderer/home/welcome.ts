@@ -16,7 +16,7 @@ import { AGREE_ARM_MS, endpointHost, endpointProblem, keyNeeded, latestOnly, MOD
 import { LEVEL_STEPS } from "../../shared/level";
 import { holdsBack, needsUser } from "../../shared/setup-attention";
 import { keptWords } from "./admin-copy";
-import { fixButtonName, fixFailedText, ipcErrorText, retryMessage, signInLabel } from "./copy";
+import { fixButtonName, fixFailedText, ipcErrorText, recipientWords, retryMessage, signInLabel, type ModelDestination } from "./copy";
 import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
 import { onProviderChoice, providerChoice } from "./provider-choice";
@@ -40,6 +40,11 @@ export interface WelcomeDeps {
   arrived(): void;
   /** A fix from the checks step changed the setup rows: the settings window's own setup check follows. */
   checksChanged(env: Status["environment"]): void;
+  /**
+   * Where a request would go now, the one answer the full text's own line follows (main.ts renderRecipient,
+   * copy.ts modelDestination): the consent's short form names the same recipient (first-run-r2-2).
+   */
+  destination(): ModelDestination;
 }
 
 export interface Welcome {
@@ -50,6 +55,8 @@ export interface Welcome {
   toConsent(): void;
   /** Why saved memory is paused, in Memory's own words, or null: the optional "about you" step says it (memory-c1-2). */
   memoryOwner(why: string | null): void;
+  /** Where requests go changed (the policy, or the user's own provider): the consent's short form follows. */
+  recipient(): void;
 }
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -226,7 +233,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
 
   function renderConsent(): { label: string; why: string; alt: string } {
     const a = status?.admin;
-    const service = a?.provider ? `your organisation's model service (${hostOf(a.provider)})` : "GitHub Copilot";
+    // Named as the full text under it names it: the organisation's service, the user's own provider while it is in
+    // force, otherwise GitHub Copilot; never Copilot while another service would answer (first-run-r2-2).
+    const service = recipientWords(deps.destination(), true);
     const points = consentPoints({ service, kept: a ? keptWords(a) : "kept 30 days", locked: !!a && a.error !== null });
     $("w-points").replaceChildren(...points.map(p => { const li = el("li", { textContent: p.text }); li.dataset.icon = p.icon; return li; }));
     // Agreed to an earlier version: what changed since, above the usual points (first-run-4).
@@ -931,6 +940,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     },
     toConsent(): void { if (active) go("consent"); },
     memoryOwner(why: string | null): void { about.owner(why); },
+    recipient(): void { if (active && step === "consent") render(); },
   };
 }
 
@@ -942,8 +952,4 @@ function copyButton(text: string, label: string): HTMLButtonElement {
     window.ember.copyText(text).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; });
   });
   return copy;
-}
-
-function hostOf(url: string): string {
-  try { return new URL(url).host; } catch { return url; }
 }
