@@ -50,7 +50,7 @@ import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
 import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
-import { conversationAdded, conversationChange, conversationShown, earlierLabel, editGivenBack, stillUnsent } from "./conversation-view";
+import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { problemInHome, PROBLEM_SETTINGS, composerCount, composerGivenBack, composerLineYields, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { composerEditCancelled, composerLineFits } from "./copy";
@@ -1135,22 +1135,21 @@ function stoppedLine(stopped: string): string {
   const sending = conversationSending?.text === conversationMessage.value ? conversationSending : null;
   if (sending) sending.displaced = true;
   const draft = !sending && conversationMessage.value.trim() ? conversationMessage.value : "";
-  // The request being edited as the field holds it under the words given back: Cancel edit keeps what is above it as
-  // the person leaves it (home-v5-1).
-  if (conversationDraftBeforeEdit !== null) conversationEditTail = conversationEditGivenBack.length ? editGivenBack(conversationMessage.value, conversationEditGivenBack.join("\n\n"), conversationEditTail).edited : conversationMessage.value;
+  // Words given back earlier in this edit, as the person left them, go under the new ones (home-w5-1).
+  const earlier = conversationDraftBeforeEdit !== null && draft ? followGivenBack() : null;
   if (draft) {
     const { selectionStart, selectionEnd, selectionDirection } = conversationMessage;
     const by = words.length + 2;
     conversationMessage.value = `${words}\n\n${draft}`;
     conversationMessage.setSelectionRange(selectionStart + by, selectionEnd + by, selectionDirection);
   } else conversationMessage.value = words;
-  // Cancel edit keeps them, above the draft from before Edit (home-r4-1).
-  if (conversationDraftBeforeEdit !== null) conversationEditGivenBack = [...unsent, ...conversationEditGivenBack];
+  // Cancel edit keeps them, above the draft from before Edit (home-r4-1), as the person leaves them (home-w5-1).
+  if (conversationDraftBeforeEdit !== null) conversationEditGivenBack = givenBackAbove(earlier, unsent, conversationMessage.value);
   // (The line says whether they are over the limit: not the over-limit note first, then this: home-c4-2.)
   syncComposerCount(true);
   const over = conversationMessage.value.length > CONVERSATION_REQUEST_LIMIT;
   // One at a time only where what is under them fits by itself: each of theirs did, as Send took it (home-v5-3).
-  const under = conversationDraftBeforeEdit !== null ? conversationEditTail ?? draft : draft;
+  const under = earlier ? earlier.field.slice(earlier.ends.at(-1)).trim() : draft;
   conversationGivenBack = composerGivenBack(stopped, unsent.length, !!draft, { editing: !!draft && conversationDraftBeforeEdit !== null, over, draftOver: under.length > CONVERSATION_REQUEST_LIMIT });
   return conversationGivenBack;
 }
@@ -1210,13 +1209,18 @@ let conversationGivenBack: string | null = null;
  */
 let conversationStopTold: string | null = null;
 let conversationDraftBeforeEdit: string | null = null;
-/** Words a Stop gave back while Edit was open, in the order the field has them: Cancel edit keeps them (home-r4-1). */
-let conversationEditGivenBack: string[] = [];
 /**
- * The request being edited as the field holds it under those words, so Cancel edit keeps them as the person left them,
- * never as they first came (home-v5-1); null once both were changed, when what is which can't be told.
+ * Words a Stop gave back while Edit was open, followed through each change the person makes to the field: Cancel edit
+ * keeps them as the person left them (home-r4-1, home-v5-1), and never what they typed into the request (home-w5-1).
  */
-let conversationEditTail: string | null = null;
+let conversationEditGivenBack: GivenBack | null = null;
+/** Those words brought up to the field as it is now (`typed`: from its input, the caret ending the change), or null. */
+function followGivenBack(typed = false): GivenBack | null {
+  const g = conversationEditGivenBack;
+  if (!g || g.field === conversationMessage.value) return g;
+  const { selectionStart, selectionEnd } = conversationMessage;
+  return conversationEditGivenBack = givenBackFollow(g, conversationMessage.value, typed && selectionStart === selectionEnd ? selectionEnd : undefined);
+}
 let conversationGeneration = 0;
 $("conversation-scope").textContent = CONVERSATION_SCOPE;
 $("conversation-retention").textContent = conversationRetention(false);
@@ -1281,13 +1285,12 @@ function conversationRow(e: Entry): HTMLLIElement {
     edit.addEventListener("click", () => {
       // Editing has no IPC side effect: Send is a new, deliberate typed request, never a tool/voice/suggestion replay.
       if (conversationDraftBeforeEdit === null) conversationDraftBeforeEdit = conversationMessage.value;
-      else if (conversationEditGivenBack.length) {
+      else if (conversationEditGivenBack) {
         // Words a Stop gave back above the earlier edit stay, as the person left them, with the draft from before it (home-v5-1).
-        const kept = editGivenBack(conversationMessage.value, conversationEditGivenBack.join("\n\n"), conversationEditTail).text;
+        const kept = givenBackKept(followGivenBack() ?? conversationEditGivenBack).text;
         if (kept) conversationDraftBeforeEdit = conversationDraftBeforeEdit.trim() ? `${kept}\n\n${conversationDraftBeforeEdit}` : kept;
       }
-      conversationEditGivenBack = [];
-      conversationEditTail = null;
+      conversationEditGivenBack = null;
       $("conversation-cancel-edit").hidden = false;
       conversationMessage.value = e.text;
       syncComposerCount(true);
@@ -1478,8 +1481,7 @@ const resetConversationView = () => {
   conversationGivenBack = null;
   conversationStopTold = null;
   conversationDraftBeforeEdit = null;
-  conversationEditGivenBack = [];
-  conversationEditTail = null;
+  conversationEditGivenBack = null;
   conversationGeneration++;
   $("conversation-cancel-edit").hidden = true;
   newConfirm.hidden = true;
@@ -1566,8 +1568,7 @@ $("conversation-compose").addEventListener("submit", event => {
     if (conversationMessage.value === text && !unsent.displaced) conversationMessage.value = "";
     syncComposerCount();
     conversationDraftBeforeEdit = null;
-    conversationEditGivenBack = [];
-    conversationEditTail = null;
+    conversationEditGivenBack = null;
     $("conversation-cancel-edit").hidden = true;
     // A typed "stop" stopped everything at once: no turn comes, so nothing is awaited (home-c1-1). Its stop was told
     // already (onStopped), words given back with it: said once, and kept (home-r4-2, home-r4-3).
@@ -1594,7 +1595,10 @@ $("conversation-compose").addEventListener("submit", event => {
     conversationUnsent = conversationUnsent.filter(u => u !== unsent);
     // Refused after a Stop gave words back in its place: it goes back under them, unsent (home-r4-2).
     if (unsent.displaced) {
-      conversationMessage.value = conversationMessage.value.trim() ? `${conversationMessage.value}\n\n${text}` : text;
+      const blank = !conversationMessage.value.trim();
+      conversationMessage.value = blank ? text : `${conversationMessage.value}\n\n${text}`;
+      // It is the request, under any words given back above an edit; in a field left blank, none of those is left.
+      if (conversationEditGivenBack) conversationEditGivenBack = blank ? null : followGivenBack();
       syncComposerCount(true);
     }
     awaitingReply(false);
@@ -1604,17 +1608,16 @@ $("conversation-compose").addEventListener("submit", event => {
 $("conversation-cancel-edit").addEventListener("click", () => {
   const before = conversationDraftBeforeEdit ?? "";
   // Words a Stop gave back while the edit was open stay, above that draft (home-r4-1), as the person left them: their
-  // corrections kept, none once they deleted them (home-v5-1).
-  const given = conversationEditGivenBack.join("\n\n");
-  const kept = given ? editGivenBack(conversationMessage.value, given, conversationEditTail) : { text: "", whole: false };
+  // corrections kept, none once deleted (home-v5-1, home-w5-2), never a word typed into the request (home-w5-1).
+  const given = followGivenBack();
+  const kept = given ? givenBackKept(given) : { text: "", messages: 0, changed: false };
   const back = kept.text;
   conversationMessage.value = back && before.trim() ? `${back}\n\n${before}` : back || before;
   syncComposerCount(true);
   conversationDraftBeforeEdit = null;
   $("conversation-cancel-edit").hidden = true;
-  conversationComposeStatus.textContent = composerEditCancelled(back ? conversationEditGivenBack.length : 0, !!before.trim(), conversationMessage.value.length > CONVERSATION_REQUEST_LIMIT, { changed: back !== given, whole: kept.whole, draftOver: before.length > CONVERSATION_REQUEST_LIMIT });
-  conversationEditGivenBack = [];
-  conversationEditTail = null;
+  conversationComposeStatus.textContent = composerEditCancelled(kept.messages, !!before.trim(), conversationMessage.value.length > CONVERSATION_REQUEST_LIMIT, { changed: kept.changed, draftOver: before.length > CONVERSATION_REQUEST_LIMIT });
+  conversationEditGivenBack = null;
   conversationMessage.focus();
 });
 /**
@@ -1642,7 +1645,7 @@ function syncComposerCount(lineSays = false): void {
   }
   conversationOver = over;
 }
-conversationMessage.addEventListener("input", () => syncComposerCount());
+conversationMessage.addEventListener("input", () => { followGivenBack(true); syncComposerCount(); });
 conversationMessage.addEventListener("keydown", event => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.isComposing) {
     event.preventDefault();

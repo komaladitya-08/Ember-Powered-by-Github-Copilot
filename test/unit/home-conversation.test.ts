@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CONVERSATION_SHOWN, conversationAdded, conversationChange, conversationShown, earlierLabel, editGivenBack, stillUnsent } from "../../app/renderer/home/conversation-view";
+import { CONVERSATION_SHOWN, conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, stillUnsent, type GivenBack } from "../../app/renderer/home/conversation-view";
 import { pushLater } from "../../app/main/push-later";
 import { askedWhere } from "../../app/renderer/home/tasks-copy";
 import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT, conversationRequest, retainedConversationText } from "../../app/shared/conversation";
@@ -110,27 +110,87 @@ describe("Home's conversation", () => {
     expect(stillUnsent([a, b], [{ t: "x", who: "ember", text: "status?" }, you("And tell Sam")])).toEqual([a, b]);
   });
 
-  it("tells the words a Stop gave back from the request being edited as the person left them, for Cancel edit (home-v5-1)", () => {
-    const given = "Book the meeting room for Friday", edited = "Empty the trash";
-    // As they came, and corrected: everything above the request, their correction kept.
-    expect(editGivenBack(`${given}\n\n${edited}`, given, edited)).toEqual({ text: given, edited, whole: false });
-    expect(editGivenBack(`Book the meeting room for Saturday\n\n${edited}`, given, edited)).toEqual({ text: "Book the meeting room for Saturday", edited, whole: false });
-    expect(editGivenBack(`Book the meeting room for Saturday\n${edited}  \n`, given, edited).text).toBe("Book the meeting room for Saturday");
-    // Deleted, as they changed their mind: nothing (with or without the line break left behind).
-    expect(editGivenBack(edited, given, edited)).toEqual({ text: "", edited, whole: false });
-    expect(editGivenBack(`\n\n${edited}`, given, edited).text).toBe("");
-    // The request changed and the words as they came: those alone (the request's changes go, as Cancel edit's do).
-    expect(editGivenBack(`${given}\n\nEmpty the trash and the bin`, given, edited)).toEqual({ text: given, edited: "Empty the trash and the bin", whole: false });
-    expect(editGivenBack(given, given, edited)).toEqual({ text: given, edited: "", whole: false });
-    // Words that end as the request does are never cut short: of the two readings, the one that keeps more.
-    expect(editGivenBack("Say Yes", "Say Yes", "Yes").text).toBe("Say Yes");
-    expect(editGivenBack(`${given}\n\nAnd Sam\n\n${edited}`, given, edited).text).toBe(`${given}\n\nAnd Sam`);
-    // Both changed, or the request merged into them: the whole field, nothing of theirs lost.
-    expect(editGivenBack(`Book it for Saturday\n\nEmpty the bin`, given, edited)).toEqual({ text: "Book it for Saturday\n\nEmpty the bin", edited: null, whole: true });
-    expect(editGivenBack(`Book it${edited}`, given, edited).whole).toBe(true);
-    expect(editGivenBack("Book it for Saturday", given, null)).toEqual({ text: "Book it for Saturday", edited: null, whole: true });
-    // A request emptied before the Stop: everything there is theirs.
-    expect(editGivenBack("Book it for Saturday", given, "")).toEqual({ text: "Book it for Saturday", edited: "", whole: false });
+  /** The words a Stop gave back above `request` being edited, as the field first holds them. */
+  const givenAbove = (words: string[], request: string) => givenBackAbove(null, words, request ? `${words.join("\n\n")}\n\n${request}` : words.join("\n\n"));
+  /** The field filled with `now` at once (selected and replaced, the caret after it). */
+  const fill = (g: GivenBack, now: string) => givenBackFollow(g, now, now.length);
+  /** `text` typed a key at a time over `from`–`to` (pressed Delete or Backspace for ""), the caret after each. */
+  const type = (g: GivenBack, from: number, text: string, to = from) => {
+    let x = givenBackFollow(g, g.field.slice(0, from) + g.field.slice(to), from);
+    for (const [i, c] of [...text].entries()) x = givenBackFollow(x, x.field.slice(0, from + i) + c + x.field.slice(from + i), from + i + 1);
+    return x;
+  };
+  const given = "Book the meeting room for Friday", edited = "Empty the trash";
+
+  it("keeps the words a Stop gave back above my edit as I left them for Cancel edit, corrected or deleted (home-v5-1)", () => {
+    const g = givenAbove([given], edited);
+    expect(g).toEqual({ given: [given], ends: [given.length], field: `${given}\n\n${edited}` });
+    expect(givenBackKept(g)).toEqual({ text: given, messages: 1, changed: false });
+    // Corrected, Friday to Saturday, at once or a key at a time: Saturday is kept.
+    expect(givenBackKept(fill(g, `Book the meeting room for Saturday\n\n${edited}`))).toEqual({ text: "Book the meeting room for Saturday", messages: 1, changed: true });
+    expect(givenBackKept(type(g, 26, "Saturday", 32)).text).toBe("Book the meeting room for Saturday");
+    expect(givenBackKept(type(g, 32, " at 10am")).text).toBe(`${given} at 10am`);
+    expect(givenBackKept(type(g, 32, "\nand Sam")).text).toBe(`${given}\nand Sam`);
+    // Deleted, as they changed their mind: nothing, with or without the blank line left behind.
+    expect(givenBackKept(fill(g, edited))).toEqual({ text: "", messages: 0, changed: false });
+    expect(givenBackKept(fill(g, `\n\n${edited}`)).text).toBe("");
+    expect(givenBackKept(type(g, 0, "", given.length + 2)).text).toBe("");
+    // Only the request changed: the words as they came, the request's changes cancelled.
+    expect(givenBackKept(fill(g, `${given}\n\nEmpty the trash and the bin`))).toEqual({ text: given, messages: 1, changed: false });
+    expect(givenBackKept(fill(g, given)).text).toBe(given);
+    // Words that end as the request does are never cut short.
+    expect(givenBackKept(givenAbove(["Say Yes"], "Yes")).text).toBe("Say Yes");
+  });
+
+  it("never keeps for Cancel edit words I typed into the request I was editing, in front of it or under an emptied one (home-w5-1)", () => {
+    const g = givenAbove([given], "open Firefox");
+    // In front of the request, on its own line: the request's, filled at once or typed.
+    expect(givenBackKept(fill(g, `${given}\n\nPlease open Firefox`))).toEqual({ text: given, messages: 1, changed: false });
+    expect(givenBackKept(type(g, given.length + 2, "Please ")).text).toBe(given);
+    expect(givenBackKept(fill(givenAbove([given], edited), `${given}\n\nAlso ${edited}`)).text).toBe(given);
+    // A paragraph above the request, under the blank line: the request's too.
+    const lunch = givenAbove(["Order lunch"], edited);
+    expect(givenBackKept(fill(lunch, `Order lunch\n\nActually, ignore that.\n\n${edited}`)).text).toBe("Order lunch");
+    expect(givenBackKept(type(lunch, 11, "\n\nActually, ignore that.")).text).toBe("Order lunch");
+    expect(givenBackKept(type(lunch, 13, "Actually, ignore that.\n\n")).text).toBe("Order lunch");
+    // An edit emptied before the Stop, and a fresh request typed under the words: the request's.
+    const emptied = givenAbove([given], "");
+    expect(emptied.field).toBe(given);
+    expect(givenBackKept(fill(emptied, `${given}\n\nDelete my downloads`))).toEqual({ text: given, messages: 1, changed: false });
+    expect(givenBackKept(type(emptied, given.length, "\n\nDelete my downloads")).text).toBe(given);
+    expect(givenBackKept(type(emptied, given.length, "\nDelete my downloads")).text).toBe(`${given}\nDelete my downloads`);
+    // The words corrected as well: the correction kept, the request still not.
+    expect(givenBackKept(fill(emptied, "Book the meeting room for Saturday\n\nDelete my downloads")).text).toBe("Book the meeting room for Saturday");
+    expect(givenBackKept(type(emptied, given.length, " at 10am")).text).toBe(`${given} at 10am`);
+  });
+
+  it("keeps nothing of a message I deleted, however I went on editing the request, and counts only those left (home-w5-2)", () => {
+    const g = givenAbove([given], "open Firefox");
+    expect(givenBackKept(fill(g, "open Firefox and Files"))).toEqual({ text: "", messages: 0, changed: false });
+    // A key at a time: the message and its blank line deleted, then the request changed, or a new one typed over all.
+    expect(givenBackKept(type(type(g, 0, "", given.length + 2), "open Firefox".length, " and Files")).text).toBe("");
+    expect(givenBackKept(type(g, 0, "Open Files", g.field.length)).text).toBe("");
+    expect(givenBackKept(type(type(g, 0, "", given.length + 2), 0, "Please ")).text).toBe("");
+    // Its words deleted but its line left: typed there, it is the message again.
+    expect(givenBackKept(type(type(g, 0, "", given.length), 0, "Order lunch"))).toEqual({ text: "Order lunch", messages: 1, changed: true });
+    // Two given back, one deleted: one is left, as it came or corrected.
+    const two = givenAbove(["Order lunch", "Tell Sam I'm late"], edited);
+    expect(givenBackKept(two)).toEqual({ text: "Order lunch\n\nTell Sam I'm late", messages: 2, changed: false });
+    expect(givenBackKept(fill(two, `Order lunch\n\n${edited}`))).toEqual({ text: "Order lunch", messages: 1, changed: false });
+    expect(givenBackKept(fill(two, `Tell Sam I'm late\n\n${edited}`))).toEqual({ text: "Tell Sam I'm late", messages: 1, changed: false });
+    expect(givenBackKept(fill(two, `Order pizza\n\n${edited}`))).toEqual({ text: "Order pizza", messages: 1, changed: true });
+    expect(givenBackKept(type(two, 11, "", 30))).toEqual({ text: "Order lunch", messages: 1, changed: false });
+    // Given back by a second Stop, above those still there: all of them, in the field's order.
+    const later = givenBackAbove(fill(two, `Order lunch\n\n${edited}`), ["Open Files"], `Open Files\n\nOrder lunch\n\n${edited}`);
+    expect(givenBackKept(later)).toEqual({ text: "Open Files\n\nOrder lunch", messages: 2, changed: false });
+  });
+
+  it("never keeps the request I edited for Cancel edit where I changed both it and the words above it (home-w5-4)", () => {
+    expect(givenBackKept(fill(givenAbove(["Order lunch"], edited), "Order lunch for two\n\nEmpty the bin"))).toEqual({ text: "Order lunch for two", messages: 1, changed: true });
+    expect(givenBackKept(fill(givenAbove([given], edited), "Book it for Saturday\n\nEmpty the bin")).text).toBe("Book it for Saturday");
+    const long = givenAbove(["b".repeat(1990)], edited);
+    expect(givenBackKept(fill(long, `${"b".repeat(1989)}c\n\nEmpty the trash now`)).text).toBe(`${"b".repeat(1989)}c`);
+    expect(givenBackKept(type(type(long, 1989, "c", 1990), long.field.length, " now")).text).toBe(`${"b".repeat(1989)}c`);
   });
 });
 

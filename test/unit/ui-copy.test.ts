@@ -1227,18 +1227,24 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     }
   });
 
-  it("says Cancel edit kept the messages a Stop gave back as I left them, and the request I edited where it can't be told apart (home-v5-1)", () => {
+  it("says Cancel edit kept the messages a Stop gave back as I left them (home-v5-1)", () => {
     expect(conv.composerEditCancelled(1, true, false, { changed: true })).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, and your previous draft is restored below it.");
     expect(conv.composerEditCancelled(2, true, false, { changed: true })).toBe("Edit cancelled. The 2 messages that weren't sent stay here with your changes, and your previous draft is restored below them.");
     expect(conv.composerEditCancelled(1, false, false, { changed: true })).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, to edit or send again.");
     expect(conv.composerEditCancelled(2, false, true, { changed: true })).toBe("Edit cancelled. The 2 messages that weren't sent stay here with your changes. Together they're over 2,000 characters: send them one at a time.");
-    expect(conv.composerEditCancelled(1, true, false, { whole: true })).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, the request you edited included, above your previous draft. Sending that request again may repeat actions.");
-    expect(conv.composerEditCancelled(1, false, false, { changed: true, whole: true })).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, the request you edited included. Sending that request again may repeat actions.");
-    // None kept (the person deleted them): only the draft from before Edit.
+    // None kept (the person deleted them): only the draft from before Edit (home-w5-2).
     expect(conv.composerEditCancelled(0, true, false, { changed: true })).toBe("Edit cancelled. Your previous draft is restored.");
-    for (const line of [conv.composerEditCancelled(1, true, false, { changed: true }), conv.composerEditCancelled(1, true, false, { whole: true })]) {
+    for (const line of [conv.composerEditCancelled(1, true, false, { changed: true }), conv.composerEditCancelled(2, false, true, { changed: true })]) {
       expect(conv.composerLineYields(line), line).toBe(false);
-      expect(conv.composerSaysOver(line), line).toBe(false);
+    }
+  });
+
+  it("never says the request I edited stayed after Cancel edit, since it never does (home-w5-4)", () => {
+    for (const messages of [0, 1, 2]) for (const draft of [false, true]) for (const over of [false, true]) for (const changed of [false, true]) {
+      const line = conv.composerEditCancelled(messages, draft, over, { changed });
+      expect(line, line).not.toMatch(/request you edited|repeat actions/);
+      // Said over the limit, it goes once what is there fits, as no edit is open: nothing it said is left unsaid.
+      expect(conv.composerLineFits(line, false), line).toBe(over && messages ? "" : null);
     }
   });
 

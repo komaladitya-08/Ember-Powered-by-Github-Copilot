@@ -127,20 +127,16 @@ export function composerGivenBack(stopped: string, messages = 1, draft = false, 
 /**
  * Cancel edit, where a Stop gave back `messages` while the edit was open (home-r4-1): they stay, above the draft from
  * before Edit where there was one (`draft`), and together over the limit (`over`) they go one at a time (home-c4-2), but
- * for a draft over by itself (`draftOver`: home-v5-3). They stay as the person left them (home-v5-1): with their
- * changes (`changed`), and, where those can't be told from the request they edited, with that request too (`whole`),
- * whose caution is said again. `messages` 0: none stays (none came, or the person deleted them).
+ * for a draft over by itself (`draftOver`: home-v5-3). They stay as the person left them (home-v5-1), with their
+ * changes (`changed`), and only they: never the request they edited, whose changes are cancelled (home-w5-1, home-w5-4).
+ * `messages`: how many of them are still there; 0, none stays (none came, or the person deleted them: home-w5-2).
  */
-export function composerEditCancelled(messages: number, draft: boolean, over = false, o: { changed?: boolean; whole?: boolean; draftOver?: boolean } = {}): string {
+export function composerEditCancelled(messages: number, draft: boolean, over = false, o: { changed?: boolean; draftOver?: boolean } = {}): string {
   if (!messages) return COMPOSER_SAYS.editCancelled;
   const many = messages > 1;
   const what = many ? `${messages} messages that weren't sent` : "message that wasn't sent";
   const tooLong = !over ? "" : o.draftOver && draft ? ` That draft is ${GIVEN_BACK_SHORTEN}` : ` ${GIVEN_BACK_OVER}`;
-  if (o.changed || o.whole) {
-    const stay = `The ${what} ${many ? "stay" : "stays"} here with your changes`;
-    if (o.whole) return `Edit cancelled. ${stay}, the request you edited included${draft ? ", above your previous draft" : ""}.${tooLong} Sending that request again may repeat actions.`;
-    return `Edit cancelled. ${stay}${draft ? `, and your previous draft is restored below ${many ? "them" : "it"}.` : over ? "." : ", to edit or send again."}${tooLong}`;
-  }
+  if (o.changed) return `Edit cancelled. The ${what} ${many ? "stay" : "stays"} here with your changes${draft ? `, and your previous draft is restored below ${many ? "them" : "it"}.` : over ? "." : ", to edit or send again."}${tooLong}`;
   const said = draft ? `Your previous draft is restored, below the ${what}.` : `The ${what} ${many ? "are" : "is"} back here${over ? "." : " to edit or send again."}`;
   return `Edit cancelled. ${said}${tooLong}`;
 }
