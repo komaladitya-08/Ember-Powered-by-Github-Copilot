@@ -800,7 +800,8 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
         for (let k = 0; k < 512; k++) frame[k] += ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 0.001 / 0.2887;
         for (const seg of backend.vad(frame)) { await enrol.heard(seg, from ?? t); from = null; }
         if (!backend.speaking()) from = null;
-        else from ??= t;
+        // (As the voice process does: speech beginning means a phrase said as its prompt showed is followed by more.)
+        else if (from === null) { from = t; enrol.speechBegan(); }
         t += 32;
         const w = owed.phrase;
         if (w && t > w.at + 6000 && told < w.at) owed.phrase = { i: w.i, at: playAt(owner[w.i], t) };

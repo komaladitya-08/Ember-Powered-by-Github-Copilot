@@ -296,6 +296,55 @@ describe("Enrolment", () => {
     e.cancel();
   });
 
+  it("asks again, never silently, for a phrase said as soon as its prompt showed with a screen reader on headphones, and waits for the owner after a reading (voice-listening-r5-2)", async () => {
+    // A phrase begun under 1.5 s after its prompt was dropped without a word: the prompt stayed as it was, Home said
+    // nothing, and the owner was left waiting or said it again with no idea why.
+    vi.useFakeTimers();
+    try {
+      let now = 0;
+      const words = new Map<Float32Array, string>();
+      const said = (text: string, a = 1, b = 0) => { const s = phrase(a, b); words.set(s, text); return s; };
+      const states: EnrolState[] = [];
+      const e = new Enrolment(fakePrinter(), s => states.push(s), 4, ENROL_LIMITS, { said: s => words.get(s) ?? "", now: () => now });
+      const shown = () => states.map(s => s.state + ("why" in s ? `:${s.why}` : ""));
+      // On headphones nothing is read into the microphone: the owner says the phrase 1 s after it showed, then waits.
+      now = 3000;
+      await e.heard(said("Ember, what's the weather like today?"), 1000);
+      expect(shown()).toEqual(["listening"]);
+      vi.advanceTimersByTime(4999);
+      expect(shown()).toEqual(["listening"]);
+      vi.advanceTimersByTime(1);
+      expect(states.at(-1)).toEqual({ state: "again", got: 0, of: 4, why: "over" });
+      // Said again once the prompt has been read, it is kept.
+      now = 12_000;
+      await e.heard(said("Ember, what's the weather like today?"), 9000);
+      expect(shown()).toEqual(["listening", "again:over", "heard"]);
+      // Over speakers, a reading whose first word the recognizer missed sounds like the phrase: the owner's own phrase,
+      // begun before the wait is up, is what is heard next, and nothing is asked meanwhile.
+      now = 13_400;
+      await e.heard(said("Hey Ember, open my calendar.", 0.5, 0.5), 12_300);
+      vi.advanceTimersByTime(2000);
+      e.speechBegan();
+      vi.advanceTimersByTime(10_000);
+      expect(shown()).toEqual(["listening", "again:over", "heard"]);
+      now = 18_000;
+      await e.heard(said("Hey Ember, open my calendar.", 1, 0.05), 15_500);
+      expect(shown()).toEqual(["listening", "again:over", "heard", "heard"]);
+      // A reading in a prompt's own words, or one that says nothing of the phrase, still asks nothing.
+      now = 19_000;
+      await e.heard(said("Heard 2 of 4. Say, Ember, turn on Do Not Disturb.", 0, 1), 18_200);
+      await e.heard(said("Mm.", 0, 1), 18_600);
+      vi.advanceTimersByTime(10_000);
+      expect(shown()).toEqual(["listening", "again:over", "heard", "heard"]);
+      // Nor does a wait outlast the teaching.
+      now = 21_000;
+      await e.heard(said("Ember, turn on Do Not Disturb."), 19_200);
+      e.cancel();
+      vi.advanceTimersByTime(10_000);
+      expect(states.at(-1)).toEqual({ state: "cancelled", got: 2, of: 4 });
+    } finally { vi.useRealTimers(); }
+  });
+
   it("gives up after three phrases' worth of tries each, and says it gave up rather than that it was cancelled (voice-listening-5)", async () => {
     const states: EnrolState[] = [];
     const e = new Enrolment(fakePrinter(true), s => states.push(s), 2);
