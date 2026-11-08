@@ -11,7 +11,7 @@ import type { TaskControlAction, TaskEntry } from "../../shared/activity";
 import { PLAN_WORD, type PlanStep } from "../../shared/view";
 import { rowWord } from "../../shared/activity";
 import { renderView } from "../shared/view-dom";
-import { askedWhere, FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offsetText, offsetWords, stateWord, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
+import { askedWhere, FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offersRetry, offsetText, offsetWords, stateWord, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
 
 const $ = (id: string) => document.getElementById(id)!;
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
@@ -145,8 +145,9 @@ function taskControls(t: TaskEntry, result: HTMLElement | null): HTMLElement {
   };
   if (!ended(t)) action("Stop task", "stop", t.controls?.stop === true);
   // A failure, or a task whose question went unanswered while the user was away (tasks-approvals-c1-2): the card's
-  // Try again, here for the keyboard and screen readers, since the overlay and the handle take no focus.
-  if (t.status === "failed" || (t.status === "stopped" && t.controls?.retry === true)) action("Try again", "retry", t.controls?.retry === true);
+  // Try again, here for the keyboard and screen readers, since the overlay and the handle take no focus. Only while it
+  // can be pressed (tasks-approvals-r3-5).
+  if (offersRetry(t)) action("Try again", "retry", true);
   if (t.controls?.window) action("Show app", "window", true);
   if (result) {
     const show = el("button", "btn quiet small", "View result");
