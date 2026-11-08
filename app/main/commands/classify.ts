@@ -65,6 +65,11 @@ type Part = NonNullable<Arg["parts"]>[number];
  */
 const VAR_SHOWN_ONLY: ReadonlySet<string> = new Set(["echo", "printf", "test", "[", "[[", ":", "true", "false", "basename", "dirname", "export", "declare", "typeset", "local", "readonly", "unset", "set", "shift", "return", "exit", "read"]);
 /**
+ * Of those, the ones that print it: what they print only shows it on the terminal; into a file, a substitution or a
+ * later command it reaches whatever reads it (commands-remote-c5-1).
+ */
+const VAR_PRINTERS: ReadonlySet<string> = new Set(["echo", "printf", "basename", "dirname", "export", "declare", "typeset", "local", "readonly", "set"]);
+/**
  * Programs that only read their input as text (`grep -q x <<< "$d"`, `wc -c <<< "$d"`): a variable in it is no use of
  * its value as a path while nothing takes what they print (commands-remote-w5-4). An allow-list, so any other program
  * counts; sed and awk only without a program file or arguments Ember can't see, which may run what they read.
@@ -239,12 +244,57 @@ interface Simple {
   pipedFrom?: number;
   /** What it prints goes on to a later command of its pipeline or into a substitution (commands-remote-w5-4). */
   pipedOn?: boolean;
+  /** What it prints is the next simple command's input, which judges what echo or printf printed (printedBy). */
+  carriedOn?: boolean;
   /** PowerShell: the parsed command (for cmdlet parameters). */
   ps?: PsCommand;
 }
 
 /** The variables a here-string or here-document's text uses, and a here-string's word (null for a here-document). */
 interface HereVars { names: string[]; word: Arg | null }
+
+/**
+ * What echo or printf prints into the next command of its pipeline, as that command's input (commands-remote-c5-1):
+ * the text when Ember sees all of it, else null with the variables its words use (and the word, when it prints one).
+ */
+interface Printed { text: string | null; vars?: HereVars }
+
+/** The variables a word uses (Arg.parts), by name. */
+const varNames = (a: Arg): string[] => (a.parts ?? []).flatMap(p => (typeof p !== "string" && p.name !== null ? [p.name] : []));
+
+/**
+ * What a POSIX echo or printf prints (Printed), or null for any other program. echo prints its words with spaces;
+ * printf each argument through a format of one %s and separators, or a plain format with no arguments (`printf
+ * 'FLUSHALL\n'`). Anything else, a pattern or a backslash in a word (echo's escapes differ between shells) is text
+ * Ember doesn't see.
+ */
+function printedBy(words: readonly Arg[]): Printed | null {
+  let k = 0;
+  while (k < words.length - 1 && words[k].v !== null && ASSIGNS_AFTER.has(words[k].v ?? "")) k++;
+  const prog = (words[k]?.v ?? "").split("/").pop();
+  if (prog !== "echo" && prog !== "printf") return null;
+  let rest = words.slice(k + 1);
+  let shown: Arg[];
+  let render: ((values: string[]) => string) | null;
+  if (prog === "echo") {
+    while (rest.length && rest[0].v !== null && /^-[neE]+$/.test(rest[0].v)) rest = rest.slice(1);
+    shown = rest;
+    render = vs => `${vs.join(" ")}\n`;
+  } else {
+    if (rest[0]?.v === "--") rest = rest.slice(1);
+    // `printf -v d …` prints nothing: it sets d (setVar).
+    if (rest.length === 0 || rest[0].v === "-v") return null;
+    const format = rest[0].v;
+    const unescape = (s: string): string => s.replace(/\\([nt0])/g, (_m, c: string) => (c === "n" ? "\n" : c === "t" ? "\t" : "\0"));
+    if (format !== null && /^([^%\\]|\\[nt0])*$/.test(format) && rest.length === 1) return { text: unescape(format) };
+    const each = format !== null && /^(%s|\\[nt0]|[ \t])+$/.test(format) && (format.match(/%s/g) ?? []).length === 1 && rest.length > 1;
+    shown = each ? rest.slice(1) : rest;
+    render = each && format !== null ? vs => vs.map(v => unescape(format).replace("%s", () => v)).join("") : null;
+  }
+  const names = [...new Set(shown.flatMap(varNames))];
+  if (render && shown.every(a => a.v !== null && !a.glob && !a.v.includes("\\"))) return { text: render(shown.map(a => a.v ?? "")) };
+  return names.length ? { text: null, vars: { names, word: render && shown.length === 1 ? shown[0] : null } } : { text: null };
+}
 
 /** An object as the classifier tracks it. */
 interface Obj extends CommandObject {
@@ -327,6 +377,13 @@ class Classifier {
   private usedUnjudged = new Set<string>();
   /** Those handed to a program that may change what they name: on its input or in its environment (commands-remote-w5-5). */
   private changedUnjudged = new Set<string>();
+  /**
+   * Variables a command printed to where its own output goes, and whether a loop, `if`, group or subshell sends what is
+   * printed inside it on to a file or a later command (`for …; do echo "$f"; done | xargs rm -rf`): then those count
+   * as uses too (commands-remote-c5-1).
+   */
+  private printedVars = new Set<string>();
+  compoundOnward = false;
   /** Words a wrapper hands to the command it runs (payload, unwrap): the rest of its words are its own. */
   protected payloadWords = new WeakSet<Arg>();
   /** A loop's or `if`'s closer given text that uses variables (`done <<< "$d"`), for the reads in it (feedReads). */
@@ -600,12 +657,21 @@ class Classifier {
    * A command's words that use a variable and that its row didn't judge as paths (commands-remote-r4-5): the variable's
    * values are judged at the end (judgePendingSets), unless the command only tests or prints it.
    */
-  noteVarUses(key: string, args: readonly Arg[]): void {
+  noteVarUses(key: string, args: readonly Arg[], out: "shown" | "carried" | "onward" = "shown"): void {
     // A flow word's command is the one after it (`do echo "$f"`, `then time printf …`).
     let k = key;
     let rest = args;
     while (ASSIGNS_AFTER.has(k) && rest.length > 0 && rest[0].v !== null) { k = rest[0].v.split("/").pop() ?? ""; rest = rest.slice(1); }
-    if (VAR_SHOWN_ONLY.has(k)) return;
+    if (VAR_SHOWN_ONLY.has(k)) {
+      // Printed to the terminal it is only shown, and printed by echo or printf into the next command that command
+      // judges it as its input (printedBy); printed anywhere else, whatever reads it may change what it names
+      // (`echo "$d" > list.txt; xargs rm -rf < list.txt`: commands-remote-c5-1).
+      if (!VAR_PRINTERS.has(k) || (out === "carried" && (k === "echo" || k === "printf"))) return;
+      const names = [...new Set(rest.flatMap(varNames))];
+      if (out === "shown") for (const n of names) this.printedVars.add(n);
+      else this.useUnjudged(names, true);
+      return;
+    }
     for (const a of rest) {
       if (a.v !== null || !a.parts || this.judgedWords.has(a)) continue;
       for (const p of a.parts) if (typeof p !== "string" && p.name !== null) this.usedUnjudged.add(p.name);
@@ -626,6 +692,7 @@ class Classifier {
 
   /** The values of variables used in a word Ember didn't judge (noteVarUses), judged as round four judged every value. */
   protected judgePendingSets(): void {
+    if (this.compoundOnward) this.useUnjudged([...this.printedVars], true);
     for (const p of this.pendingSets) if (this.usedUnjudged.has(p.name)) for (const f of p.forms) this.judgeForm(f, null, p.sc, this.changedUnjudged.has(p.name));
   }
 
@@ -1633,20 +1700,27 @@ class Engine extends Classifier {
     this.pipe = { fetch: more(sc).pipedIn?.fetch ?? false, program: "" };
     let cd: string | null | undefined;
     let prev: number | undefined;
+    // What an echo or printf before it prints: the next command's input (commands-remote-c5-1).
+    let carry: Printed | null = null;
     pipe.cmds.forEach((c, k) => {
       const first = k === 0;
       const stdinPipe = !first || (first && more(sc).pipedIn !== null);
+      const given = carry;
+      carry = null;
       if (c.kind === "simple") {
         this.cdTarget = undefined;
-        this.posixSimple(c, sc, { stdinPipe, background, pipedFrom: first ? undefined : prev, pipedOn: k < pipe.cmds.length - 1 });
+        carry = this.posixSimple(c, sc, { stdinPipe, background, pipedFrom: first ? undefined : prev, pipedOn: k < pipe.cmds.length - 1, carriedOn: pipe.cmds[k + 1]?.kind === "simple", given });
         if (pipe.cmds.length === 1 && !background && this.cdTarget !== undefined) cd = this.cdTarget;
         prev = this.at;
         return;
       }
+      // A group or subshell given what echo or printf printed with a variable in it: a use Ember doesn't follow.
+      if (given?.vars) this.useUnjudged(given.vars.names, true);
       // A subshell or group: a subshell's (or a backgrounded or piped group's) cd doesn't leak.
       const isolated = c.kind === "subshell" || pipe.cmds.length > 1 || background;
       const inner = isolated ? child(sc, { depth: sc.depth + 1 }, { pipedIn: stdinPipe ? { fetch: this.pipe.fetch } : null, ...(k < pipe.cmds.length - 1 ? { captured: true as const } : {}) }) : sc;
       const redirs = c.redirs.map(r => this.posixRedir(r, sc));
+      if (redirs.some(r => (r.kind === "write" || r.kind === "append") && !r.op.startsWith("2"))) this.compoundOnward = true;
       if (redirs.some(r => r.kind !== "none") || background) {
         this.newCommand(c.kind === "subshell" ? "( … )" : "{ … }", [], sc, redirs, background, first ? undefined : prev);
         this.redirects(redirs, sc);
@@ -1676,7 +1750,8 @@ class Engine extends Classifier {
     return fetch;
   }
 
-  private posixSimple(c: PSimple, sc: Scope, o: { stdinPipe: boolean; background: boolean; pipedFrom?: number; pipedOn?: boolean }): void {
+  /** Classifies a simple command; returns what it prints into the next command of its pipeline when Ember sees that. */
+  private posixSimple(c: PSimple, sc: Scope, o: { stdinPipe: boolean; background: boolean; pipedFrom?: number; pipedOn?: boolean; carriedOn?: boolean; given?: Printed | null }): Printed | null {
     // Substitutions run first; their commands are classified as commands of their own.
     const fetchOf = new Map<PWord, boolean>();
     const allWords: PWord[] = [...c.words, ...c.assigns.map(a => a.value), ...c.redirs.flatMap(r => (r.target ? [r.target] : []))];
@@ -1686,17 +1761,22 @@ class Engine extends Classifier {
     const redirs = c.redirs.map(r => this.posixRedir(r, sc));
     const stdin: Simple["stdin"] = c.redirs.some(r => r.op === "<<" || r.op === "<<-" || r.op === "<<<") ? "heredoc"
       : c.redirs.some(r => r.op === "<") ? "file" : o.stdinPipe ? "pipe" : null;
-    const stdinText = stdin === "heredoc" ? this.hereText(c.redirs, sc) : undefined;
-    const stdinVars = stdinText === null ? this.hereVars(c.redirs, sc) : undefined;
+    // Text echo or printf pipes in is its input as a here-string's would be (commands-remote-c5-1).
+    const piped = stdin === "pipe" ? o.given ?? undefined : undefined;
+    const stdinText = stdin === "heredoc" ? this.hereText(c.redirs, sc) : piped?.text;
+    const stdinVars = stdin === "heredoc" ? (stdinText === null ? this.hereVars(c.redirs, sc) : undefined) : piped?.vars;
     if (c.words.length === 0) {
       this.newCommand("", [], sc, redirs, o.background, o.pipedFrom);
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc);
       this.redirects(redirs, sc);
-      return;
+      return null;
     }
-    this.simple({ words, redirs, stdin, stdinText, stdinVars, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true }, sc, () => {
+    // What it prints reaches the next command only without a redirection of its output.
+    const carried = o.pipedOn === true && o.carriedOn === true && !redirs.some(r => r.kind !== "none" && r.kind !== "read" && !r.op.startsWith("2"));
+    this.simple({ words, redirs, stdin, stdinText, stdinVars, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried }, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
+    return carried ? printedBy(words) : null;
   }
 
   /**
@@ -1855,6 +1935,9 @@ class Engine extends Classifier {
           for (const sub of el.subs) if (this.psSub(sub, sc)) fetch = true;
           const redirs = this.psRedirs(el.redirs, sc);
           this.newCommand("", [], sc, redirs, false, k === 0 ? undefined : prev);
+          // A lone value handed down the pipeline (`$d | Remove-Item -Recurse`, `'x.exe' | Copy-Item …`): the item it
+          // names, as a listing's (commands-remote-c5-1).
+          if (el.subs.length === 0 && /^(\$[\w:]+|'[^']*'|"[^"`]*")$/.test(el.raw.trim())) this.listed.set(this.at, [this.psValue(el.segs, el.raw, sc, true)]);
           if (fetch) this.pipe.fetch = true;
           this.redirects(redirs, sc);
           // A token typed into an assignment (`$env:GITHUB_TOKEN = 'ghp_…'`) is on the command line (§3.5.4).
@@ -2142,7 +2225,12 @@ class Engine extends Classifier {
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
     // A wrapper's own words (`sudo -D "$d" ls`, `xargs -a "$d/x" echo`; commands-remote-v5-2): the command it runs
     // (`do echo "$f"`, `sudo rm "$d"`) noted its words itself.
-    this.noteVarUses(key, this.commands.length === inner ? args : args.filter(a => !this.payloadWords.has(a)));
+    // Where what it prints goes: the terminal, the next command as its input, or on to a file, a substitution or a
+    // command that isn't handed it (commands-remote-c5-1).
+    const toFile = s.redirs.some(r => (r.kind === "write" || r.kind === "append") && !r.op.startsWith("2") && !(r.target?.v != null && NULL_SINKS.has(r.target.v.toLowerCase())));
+    const out = toFile || (s.pipedOn === true && s.carriedOn !== true) ? "onward" : s.carriedOn === true ? "carried" : "shown";
+    this.noteVarUses(key, this.commands.length === inner ? args : args.filter(a => !this.payloadWords.has(a)), out);
+    if ((key === "done" || key === "fi" || key === "esac") && out !== "shown") this.compoundOnward = true;
     this.unnamedWrites(key, args, sc);
     this.afterArgs(args);
     this.afterRun(key, args, s, sc);
@@ -7417,6 +7505,8 @@ reg(CMDLETS, ["start-bitstransfer"], h => {
   for (const d of b.named.get("Destination") ?? []) { h.e.usePath(d, "write", h.sc); h.e.download(d.v, h.sc); }
 });
 reg(CMDLETS, ["write-output", "write-host", "write-information", "write-verbose", "write-warning", "write-error", "write-debug"], h => {
+  // What Write-Output hands down the pipeline names items, as a listing's (`Write-Output $d | Remove-Item`).
+  if (h.key === "write-output") h.e.listed.set(h.e.at, h.args.filter(a => a.param === undefined));
   for (const a of h.args) {
     if (a.v === null && /\$\{?env:[A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|CREDENTIAL|AUTH|SESSION|COOKIE|PRIVATE)/i.test(a.raw)) h.e.add("secret", "secret.env", SAYS.env);
   }

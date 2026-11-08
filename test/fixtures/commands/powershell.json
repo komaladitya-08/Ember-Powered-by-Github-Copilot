@@ -5798,6 +5798,20 @@
    "classes": [
     "destroy"
    ]
+  },
+  {
+   "cmd": "$d = \"$env:LOCALAPPDATA\\ember\"; $d | Remove-Item -Recurse -Force",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "$d = \"$env:LOCALAPPDATA\\ember\"; Write-Output $d | Remove-Item -Recurse -Force",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }

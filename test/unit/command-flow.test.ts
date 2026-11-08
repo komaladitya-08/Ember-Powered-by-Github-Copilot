@@ -2014,7 +2014,8 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     for (const [then, run, says] of [
       ["cp --update x.sh y.sh", "bash y.sh", "Runs a file downloaded in this task."], ["cp --reflink x.sh y.sh", "bash y.sh", "Runs a file downloaded in this task."],
       ["install -b x.sh y.sh", "bash y.sh", "Runs a file downloaded in this task."], ["mv --backup x.sh y.sh", "bash y.sh", "Runs a file downloaded in this task."],
-      ["rsync -a --mkpath x.sh tools/y.sh", "bash tools/y.sh", "Runs a file downloaded in this task."], ["true", "echo x.sh | xargs -l bash", "It runs a script Ember can't name."],
+      ["rsync -a --mkpath x.sh tools/y.sh", "bash tools/y.sh", "Runs a file downloaded in this task."], ["true", "echo x.sh | xargs -l bash", "Runs a file downloaded in this task."],
+      ["true", "cat list.txt | xargs -l bash", "It runs a script Ember can't name."],
     ] as const) {
       // Nothing is there yet; a step that asks is allowed, and running the copy is not.
       const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["once", "once"] });
