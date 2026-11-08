@@ -341,7 +341,7 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
     await page.waitForTimeout(1300);
     expect(await said()).toEqual([]);
     expect(await voiceLine.innerText()).toBe("Listening for “Ember” through Built-in Microphone");
-    expect(await detail.innerText()).toBe("Press Listen once, then say one request without saying “Hey Ember”.");
+    expect(await detail.innerText()).toBe("Press Listen once, then just say your request.");
     // Pressed as a window opened: its answer isn't said into the window, nor is "Checking the microphone…" kept to be
     // read beside it, and as the window closes the line from before the press isn't said again (voice-listening-v4-2).
     await page.locator("#voice-listen-once").click();
