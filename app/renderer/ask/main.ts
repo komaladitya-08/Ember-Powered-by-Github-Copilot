@@ -7,7 +7,7 @@ import type { TargetSummary } from "../../shared/targets";
 import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
 import { ASK_OVER, WAIT_TIP, askCount, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, overLimit, sendKey, textScaleOf } from "./field";
-import { liveWords, seesView, unavailableLine, type SeesView } from "./chips";
+import { ANSWERS_AGAIN, liveWords, seesView, unavailableLine, type SeesView } from "./chips";
 import { watchPixels } from "../shared/pixels";
 import { mountListenOnce } from "../shared/listen-once";
 
@@ -281,11 +281,14 @@ function showUnavailable(word: string | undefined, live: boolean): void {
   const unavailable = document.getElementById("unavailable")!;
   const cant = unavailableLine(word);
   const news = live && !!cant && cant !== cantSay.full;
+  // Back while the box is open: said too, so the live region doesn't keep the old "Offline" (companion-6).
+  const back = live && !cant && !!cantSay.full;
   cantSay = { full: cant ?? "", word: cant ? word!.replace(/…$/, "") : "" };
   unavailable.hidden = !cant;
   unavailable.textContent = cant ?? "";
   unavailable.title = cant ?? "";
   if (news) seesLive.textContent = cant;
+  if (back) seesLive.textContent = ANSWERS_AGAIN;
   if (!live) return;
   document.querySelector(".meta")!.classList.toggle("bare", quiet && !cant);
   fitMeta();

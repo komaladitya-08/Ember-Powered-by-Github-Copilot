@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { notificationBody } from "../../app/main/notification";
 import { ASK_OVER, askCount, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, overLimit, sendKey, textScaleOf } from "../../app/renderer/ask/field";
 import { composerCount } from "../../app/renderer/home/copy";
-import { liveWords, seesView, unavailableLine } from "../../app/renderer/ask/chips";
+import { ANSWERS_AGAIN, liveWords, seesView, unavailableLine } from "../../app/renderer/ask/chips";
 import { targetChip, targetChipParts } from "../../app/renderer/handle/badge";
 import { askSees } from "../../app/main/ask-sees";
 import { Perception, openWindowLines, quickContextText, type Seen } from "../../app/main/perception";
@@ -31,6 +31,8 @@ describe("the ask box when Ember can't answer a request now (companion-6)", () =
   it("says why in the handle's word, and that a request would get no answer yet, in the first person", () => {
     expect(unavailableLine(undefined)).toBeNull();
     expect(unavailableLine("Not connected")).toBe("Not connected: I can't answer yet");
+    // Back while the box is open, its live region says so (companion-6).
+    expect(ANSWERS_AGAIN).toBe("I can answer again.");
     expect(unavailableLine("Offline")).toBe("Offline: I can't answer yet");
     // An ellipsis says something is under way; before the colon it reads as cut off.
     expect(unavailableLine("Reconnecting…")).toBe("Reconnecting: I can't answer yet");

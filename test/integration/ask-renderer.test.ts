@@ -202,10 +202,12 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       expect(await page.locator("#q").inputValue()).toBe("draft");
       expect(await page.locator("#sees").isVisible()).toBe(true);
       expect(await page.locator(".meta").evaluate(e => e.scrollWidth - e.clientWidth)).toBe(0);
-      // Back: the line goes, and the window's name stays.
+      // Back: the line goes, and the window's name stays; a screen reader hears that Ember can answer again, not the
+      // stale "Offline" its live region still held (companion-6).
       await page.evaluate(() => (window as unknown as TestWindow).askHarness.unavailable(null));
       expect(await line.isVisible()).toBe(false);
       expect(await page.locator("#sees").isVisible()).toBe(true);
+      expect(await page.locator("#sees-live").textContent()).toBe("I can answer again.");
       // A crowded line (another computer that is lost, a long window name, what else goes): the line says just why, in
       // the handle's word, before the window's name is cut short; its whole sentence stays for screen readers and the
       // tooltip (the live X11 suite found the name cut to 5 px; a request wouldn't be answered now, so why comes first).

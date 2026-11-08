@@ -51,6 +51,9 @@ export function unavailableLine(word: string | undefined): string | null {
   return word ? `${word.replace(/…$/, "")}: I can't answer yet` : null;
 }
 
+/** Said in the live region when Ember can answer again while the box is open (companion-6: it still said "Offline"). */
+export const ANSWERS_AGAIN = "I can answer again.";
+
 /**
  * What the box's live region says when a context arrives, given what it last said in this opening (`said`): "" when
  * the box opens (cleared, so the late words are news again), the whole sentence once the late update brings it (the
