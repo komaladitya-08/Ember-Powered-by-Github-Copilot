@@ -77,6 +77,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let reported: AgentStatus | null = null;
   /** Switch-offs of the user's own provider being saved (turnOwnOff). */
   let offPending = 0;
+  /** Main moves from the user's own provider to Copilot once what it is doing is done (see(), first-run-v4-1). */
+  let toCopilotLater = false;
   let voice: VoiceStatus | null = null;
   let signingIn = false;
   let signInMessage: { text: string; tone: string } | null = null;
@@ -287,6 +289,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const v = signInView({
       phase: agent?.phase ?? null, reason: agent?.reason, login: agent?.login, signingIn,
       managedProvider: !!status?.admin.provider, locked: !!status && status.admin.error !== null, service: agent?.service,
+      switching: toCopilotLater,
     });
     const line = $("w-signin-line");
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
@@ -769,7 +772,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     $("w-voice-later").textContent = TRY_TEXT.voiceLater;
     mark("w-try-voice", tried.voice, tried.voice ? TRY_TEXT.voice.done : vs === "listening" ? TRY_TEXT.voice.ask : TRY_TEXT.voiceWaiting);
     $("w-meter").classList.toggle("off", vs !== "listening");
-    mark("w-try-ask", tried.ask, tried.ask ? TRY_TEXT.ask.done : signedIn() ? TRY_TEXT.ask.ask : askWhy({ locked: locked(), noSignIn: !!status?.admin.provider || ownInUse() }));
+    // (While Ember finishes before it moves to Copilot, there is no sign-in to do yet: first-run-v4-1.)
+    mark("w-try-ask", tried.ask, tried.ask ? TRY_TEXT.ask.done : signedIn() ? TRY_TEXT.ask.ask : askWhy({ locked: locked(), noSignIn: !!status?.admin.provider || ownInUse() || toCopilotLater }));
     const ask = $("w-ask");
     ask.textContent = TRY_TEXT.ask.open;
     if (signedIn()) ask.removeAttribute("aria-disabled"); else ask.setAttribute("aria-disabled", "true");
@@ -982,10 +986,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
    * The user's own provider is switched off ("Use GitHub Copilot instead", or a check that put it away) but main's status
    * still names it until it reconnects: the steps draw Copilot's connection as starting from the moment of the press, so
    * the title the focus lands on is Copilot's sign-in, never "Your own model provider" (first-run-c3-2). A switch-off
-   * that couldn't be saved leaves it named, as it is still in use.
+   * that couldn't be saved leaves it named, as it is still in use. It lasts until main's status follows: main reconnects
+   * at once, or says the switch waits for what it is doing (`switchPending`, which the steps say) and reconnects as
+   * soon as that is done, never only at the next request (first-run-v4-1).
    */
   function see(): void {
     const leaving = reported?.service?.kind === "user" && (offPending > 0 || settings?.provider.on === false);
+    toCopilotLater = leaving && reported?.switchPending === true;
     agent = leaving && reported ? { ...reported, phase: "starting", detail: "", reason: undefined, login: undefined, service: undefined, models: [], conductorModel: null, workerModel: null } : reported;
   }
   const onAgent = (a: AgentStatus) => { reported = a; see(); if (active && (step === "sign-in" || step === "provider" || step === "try" || step === "done")) render(); };

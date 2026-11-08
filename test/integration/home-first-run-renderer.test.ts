@@ -859,6 +859,42 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     for (const page of [p, q]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
+  it("(ai) “Use GitHub Copilot instead” while I'm busy says I'll switch once I've finished, keeps Continue, and offers Copilot's sign-in once the switch is made (first-run-v4-1)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const own = readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service });
+    const p = await open({ provider, providerState: { inForce: true, host: "api.example.com", agreed: true, keySaved: true }, agent: own });
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    await p.locator("#w-alt").click();
+    await expect.poll(() => calls(p)).toContain(`save:${JSON.stringify({ provider: { on: false } })}`);
+    // A turn or a task is under way: main puts the switch off and says so, and no other status comes until it's done.
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...own, switchPending: true });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe("I'll switch to Copilot once I've finished what I'm doing.");
+    expect(await p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    expect(await next(p).innerText()).toBe("Continue");
+    expect(await next(p).getAttribute("aria-disabled")).toBeNull();
+    expect(await p.locator("#w-why").innerText()).not.toContain("connecting");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
+    // Ask waits for the switch, never behind a sign-in nothing offers yet.
+    expect(await p.locator("#w-try-ask p").innerText()).toBe("Once I'm connected, you can ask me something.");
+    expect(await p.locator("#w-ask").getAttribute("aria-disabled")).toBe("true");
+    // The switch is made once main is done: Copilot, not signed in yet, and the sign-in step offers it.
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, SIGNED_OUT);
+    await expect.poll(() => p.locator("#w-try-ask p").innerText()).toBe("Sign in first, then you can ask me something.");
+    await p.locator("#w-back").click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    expect(await next(p).innerText()).toBe("Sign in with GitHub");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
   it("(z) resumed while the user's own provider connects or fails, the sign-in step names it, with no Copilot or sign-in words (first-run-1, first-run-c1-3)", async () => {
     const service = { kind: "user", host: "localhost:11434" };
     const own = { on: true, baseUrl: "http://localhost:11434/v1", conductor: "llama3.2:3b", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "localhost:11434" } };

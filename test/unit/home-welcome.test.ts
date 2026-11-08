@@ -162,6 +162,18 @@ describe("the sign-in step", () => {
     expect(signInView({ phase: "starting", signingIn: false, managedProvider: false })).toMatchObject({ primary: "continue", why: "Still connecting to Copilot.", skip: true });
   });
 
+  it("says I'll switch to Copilot once I've finished, with Continue open, while a switch waits for what I'm doing (first-run-v4-1)", () => {
+    expect(signInView({ phase: "starting", signingIn: false, managedProvider: false, switching: true }))
+      .toEqual({ line: "I'll switch to Copilot once I've finished what I'm doing.", tone: "", primary: "continue", why: "", cancel: false, skip: false, retry: false });
+    // Main's own status wins once it is ready again or the organisation locks Ember down.
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, switching: true }).line).toBe("Connected to Copilot.");
+    expect(signInView({ phase: "starting", signingIn: false, managedProvider: false, locked: true, switching: true }).line).toBe("Your organisation's policy locks me down, so I can't connect for now.");
+    // The try step's Ask waits for the switch, never for a sign-in the step doesn't offer yet.
+    expect(SCRIPT).toContain("noSignIn: !!status?.admin.provider || ownInUse() || toCopilotLater");
+    // Only while main leaves my own provider for Copilot: never for a switch the other way.
+    expect(SCRIPT).toContain("toCopilotLater = leaving && reported?.switchPending === true;");
+  });
+
   it("offers Check again while signed out, and shows the page main offers for a GitHub CLI sign-in (review of #124)", () => {
     expect(signInView({ phase: "signed-out", signingIn: false, managedProvider: false }).retry).toBe(true);
     expect(signInView({ phase: "ready", signingIn: false, managedProvider: false }).retry).toBe(false);

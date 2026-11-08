@@ -2660,7 +2660,7 @@ function start(): void {
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
   }, providers.api, { log: log.child("provider") });
   // Any settings change may move the endpoint in force (the switch, its address, its models, its card): the host
-  // reconnects when nothing would be cut off, else before the next request between turns.
+  // reconnects when nothing would be cut off, else as soon as the turn and the tasks under way are done.
   settings.onChange(() => { providers.settingsChanged(); void agent?.providerChanged(); });
   registerExtensionsIpc(ipcMain, event => {
     const url = event.senderFrame?.url ?? "";

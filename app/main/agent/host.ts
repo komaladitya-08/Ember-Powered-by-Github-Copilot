@@ -144,6 +144,11 @@ export interface AgentStatus {
   /** Copilot stopped answering, and Ember reconnects once the tasks that are running finish (reconnecting now would stop them). */
   waitingForTasks?: boolean;
   /**
+   * The model service in force changed while a turn or a task was under way: this connection still serves them, and Ember
+   * switches to the new service as soon as they are done (switchWhenQuiet). Absent otherwise (first-run-v4-1).
+   */
+  switchPending?: boolean;
+  /**
    * The model service this connection uses when it isn't GitHub Copilot: the organisation's ("admin"), the user's own
    * ("user") or a development test server ("test"), by its host only (never the key).
    */
@@ -975,6 +980,8 @@ export class AgentHost {
    * (this) once they're done, not before (a reconnect would cut them off).
    */
   private reconnectAfterTasks: (() => void) | null = null;
+  /** A switch of model service waits for the turn or the tasks under way (AgentStatus.switchPending). */
+  private switchWaits = false;
   /** Ember is quitting: finished tasks are neither shown nor announced. */
   private quitting = false;
   /** How the tasks of a connection that went away ended, for the next conductor (it resumes the conversation). */
@@ -1684,7 +1691,9 @@ export class AgentHost {
     // A reason holds for its error, the default model for its connection.
     const cleared = patch.phase && patch.phase !== this.status.phase
       ? { ...(patch.phase !== "error" ? { reason: undefined } : {}), ...(patch.phase !== "ready" ? { defaultModel: undefined, conversationContext: undefined } : {}) } : {};
-    this.status = { ...this.status, ...cleared, ...patch, waitingForTasks: this.reconnectAfterTasks !== null };
+    // (A switch waits only while this connection is ready to serve what is under way: first-run-v4-1.)
+    const switchPending = this.switchWaits && (patch.phase ?? this.status.phase) === "ready" ? true : undefined;
+    this.status = { ...this.status, ...cleared, ...patch, waitingForTasks: this.reconnectAfterTasks !== null, switchPending };
     // Connected again: a notice saying why Ember couldn't answer no longer holds (one still up goes).
     if (this.status.phase === "ready" && this.unreachable !== null) { this.presenter.withdraw(this.unreachable); this.unreachable = null; }
     // Connected again after the runtime stopped: a bubble still saying it is reconnecting says it is back (rp-6).
@@ -1740,6 +1749,8 @@ export class AgentHost {
 
   private launch(token: string | null, source?: string): Promise<AgentPhase> {
     const gen = ++this.gen;
+    // (This connect is the switch: the next status says nothing waits.)
+    this.switchWaits = false;
     this.token = token;
     this.source = source;
     if (this.retry) { clearTimeout(this.retry); this.retry = null; }
@@ -1949,8 +1960,10 @@ export class AgentHost {
           this.finishedLately = [...this.finishedLately.filter(t => t !== task && Date.now() - (t.finished ?? 0) <= CATCH_UP_MS), task].slice(-FINISHED_KEPT);
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
-          // Requests held for a model service the user switched to go there once nothing else is under way.
+          // Requests held for a model service the user switched to go there once nothing else is under way, and with
+          // none held, the switch itself is made then.
           this.releaseHeldSoon();
+          this.switchWhenQuiet();
           // Stopped because its computer went (or someone there pressed Stop): it says why, not just "Stopped.".
           const why = task.status === "cancelled" ? this.stoppedWhy.get(task.id) : undefined;
           this.stoppedWhy.delete(task.id);
@@ -2087,6 +2100,7 @@ export class AgentHost {
           if (note && this.turn) { delete this.turn.memoryNote; if (!aborted) this.noteMemory(note); }
           this.o.onTurnEnd?.(aborted);
           this.releaseHeldSoon();
+          this.switchWhenQuiet();
           this.turnChanged();
         },
         onTurnOpen: () => this.turnChanged(),
@@ -2690,16 +2704,44 @@ export class AgentHost {
   /**
    * The model service in force may have changed (main calls this when the user's own provider is turned on or off,
    * edited, or its key saved or removed): Copilot is reconnected now when nothing would be cut off (not connected, or
-   * ready and idle), so the next request goes to the service in force. Otherwise the next request reconnects once the
-   * turn and the tasks under way are done (ask), and they finish where they started. Resolves to the phase once the
-   * reconnect is done, or null when nothing reconnects now.
+   * ready and idle), so the next request goes to the service in force. Otherwise the status says the switch waits, and
+   * Ember reconnects as soon as the turn and the tasks under way are done (switchWhenQuiet; a request asked meanwhile is
+   * held for it), and they finish where they started. Resolves to the phase once the reconnect is done, or null when
+   * nothing reconnects now.
    */
   providerChanged(): Promise<AgentPhase> | null {
     this.checkHistoryService();
-    if (this.quitting || !this.providerMoved()) return null;
-    if (this.status.phase === "ready" && (!this.quietForSwitch() || this.held.length > 0)) return null;
+    if (this.quitting) return null;
+    // Put back as it was before the switch could happen: nothing waits any more.
+    if (!this.providerMoved()) { this.waitForSwitch(false); return null; }
+    if (this.status.phase === "ready" && (!this.quietForSwitch() || this.held.length > 0)) {
+      // (A connect already under way reads the service in force as it starts: nothing waits for it.)
+      if (this.starting === 0) this.waitForSwitch(true);
+      return null;
+    }
     this.o.log.info("agent.provider_changed", { kind: this.providerNow()?.kind ?? "copilot" });
     return this.launch(this.token, this.source);
+  }
+
+  /** Says in the status whether a switch of model service waits for what is under way (AgentStatus.switchPending). */
+  private waitForSwitch(on: boolean): void {
+    if (this.switchWaits === on) return;
+    this.switchWaits = on;
+    this.setStatus({});
+  }
+
+  /**
+   * The model service in force moved while a turn or a task was under way (providerChanged put the reconnect off): once
+   * nothing is, Ember reconnects to it now, not at the next request, so its status (and first run's sign-in step, Home and
+   * Settings with it) names the service in force, never the one before for good (first-run-v4-1). Requests held for the
+   * new service go through releaseHeld instead, which reconnects first.
+   */
+  private switchWhenQuiet(): void {
+    void Promise.resolve().then(() => {
+      if (this.quitting || this.held.length || this.releasing || this.status.phase !== "ready" || !this.providerMoved() || !this.quietForSwitch()) return;
+      this.o.log.info("agent.provider_changed", { kind: this.providerNow()?.kind ?? "copilot", after: "quiet" });
+      void this.launch(this.token, this.source);
+    });
   }
 
   /**
@@ -3176,6 +3218,8 @@ export class AgentHost {
     const aborting = this.conductor?.abort();
     this.turnChanged();
     await aborting;
+    // (The turn is over from Ember's side, whether or not the runtime confirms it: a switch waiting for it is made.)
+    this.switchWhenQuiet();
     return underWay;
   }
 
