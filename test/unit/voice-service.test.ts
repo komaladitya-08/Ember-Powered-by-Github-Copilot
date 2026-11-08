@@ -43,7 +43,7 @@ const electron = vi.hoisted(() => {
 vi.mock("electron", () => electron);
 
 import { VoiceGate } from "../../app/voice/match";
-import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_ANNOUNCED, VoiceService, cutByQuestion, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
+import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_ANNOUNCED, VoiceService, cutByQuestion, heldByQuestion, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import { micBadge } from "../../app/shared/mic";
 import crypto from "node:crypto";
@@ -305,7 +305,16 @@ describe("VoiceService", () => {
     expect(main).not.toMatch(/Wait for Ember['’]s answer to finish\./);
     expect(main).toContain(`const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;`);
     expect(main).toMatch(/listenOnceStatus\(source\)\.phase === "ready"\) \{\s*\/\/[^\n]*\n\s*if \(agent\?\.answerOpen\) agent\.interruptAnswer\(\);/);
-    expect(main).toContain(`if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return blocked("Answer Ember's question first.");`);
+    expect(main).toContain(`if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return heldByQuestion(voice?.micState);`);
+  });
+
+  it("doesn't tell screen readers to answer the question first while a conversation waits for that answer (voice-listening-v4-1)", () => {
+    // A conversation stays open while a question waits, so it can be answered by voice: "Answer Ember's question
+    // first." said then went through the speakers into it, as a request or as another voice, after which Voice Match
+    // took no spoken answer to the question.
+    expect(heldByQuestion("active")).toEqual({ phase: "blocked", detail: "Answer Ember's question first.", reason: "listening" });
+    // Outside a window it is said as before: the microphone is listening for the name, or off.
+    for (const mic of ["waiting", "off", "muted", "starting", "error", undefined] as const) expect(heldByQuestion(mic), String(mic)).toEqual({ phase: "blocked", detail: "Answer Ember's question first." });
   });
 
   it("keeps Cancel listening for a Listen once under way when a task asks a question, and holds back a new one (companion-r1)", async () => {

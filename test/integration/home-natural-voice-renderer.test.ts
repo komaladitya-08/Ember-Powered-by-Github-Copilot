@@ -322,6 +322,13 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
     await send({ ...waiting, state: "active", detail: "Listening…", listenOnce: already });
     await page.waitForTimeout(1300);
     expect(await said()).toEqual([]);
+    // A task's question while the conversation waits for its answer (main's heldByQuestion): shown, never said into it,
+    // where it was heard as a request or as another voice (voice-listening-v4-1).
+    await send({ ...waiting, state: "active", detail: "Listening…", listenOnce: { phase: "blocked", detail: "Answer Ember's question first.", reason: "listening" } });
+    expect(await detail.innerText()).toBe("Answer Ember's question first.");
+    await send({ ...waiting, state: "active", detail: "Listening…", listenOnce: already });
+    await page.waitForTimeout(1300);
+    expect(await said()).toEqual([]);
     await send(waiting);
     // (A line that changes and changes back says nothing either: it is said once it has held for a second.)
     await send({ ...waiting, state: "error", detail: "The microphone stopped." });

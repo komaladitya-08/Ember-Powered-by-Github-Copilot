@@ -1766,6 +1766,17 @@ export function questionHoldsListen(question: boolean, own: ListenOnceStatus | u
   return question && !(own?.phase === "starting" || own?.phase === "listening" || own?.phase === "checking");
 }
 
+/**
+ * Listen once's line while a question holds it back (questionHoldsListen), given the microphone's state. While it is
+ * open for a request (`active`: a conversation stays open while a question waits, so it can be answered by voice), the
+ * line isn't said to screen readers (reason `listening`): said then, through the speakers, it was heard in the
+ * conversation as a request or, with Voice Match on, as another voice, after which no spoken answer to that question was
+ * taken (voice-listening-v4-1).
+ */
+export function heldByQuestion(mic: MicState | undefined): ListenOnceStatus {
+  return { phase: "blocked", detail: "Answer Ember's question first.", ...(mic === "active" ? { reason: "listening" as const } : {}) };
+}
+
 /** Listen once's line on the control whose request a question ended, while that question is up (companion-r2-2). */
 export const LISTEN_CUT_BY_QUESTION = "I stopped listening to ask you something. Answer it, then ask again.";
 

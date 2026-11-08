@@ -243,9 +243,10 @@ export interface ListenOnceStatus {
   /**
    * Why it is blocked, where the fix is elsewhere in Settings: `needs-models` (the speech models' download) or
    * `voice-error` (the voice line says what's wrong). Settings words those for itself (VoiceService listenOnceInSettings).
-   * `listening`: Ember is listening for a request already (a wake's, a conversation's, the other control's Listen once).
-   * Its line isn't said to screen readers (renderer/shared/listen-once.ts): it changes as the microphone opens for a
-   * request, and a screen reader said it into the request (voice-listening-c3-1).
+   * `listening`: Ember is listening for a request already (a wake's, a conversation's, the other control's Listen once),
+   * so the line (that it is, or that a question is to be answered first while a conversation waits for that answer)
+   * isn't said to screen readers (renderer/shared/listen-once.ts): it changes as the microphone opens for a request, or
+   * while it is open, and a screen reader said it into the request (voice-listening-c3-1, voice-listening-v4-1).
    */
   reason?: "needs-models" | "voice-error" | "listening";
 }
