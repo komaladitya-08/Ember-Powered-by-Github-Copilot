@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, LOST_RECONNECTING, NO_REPLY, Presenter, RECONNECTED, RECONNECTED_RETRY, STILL_WAITING, noAnswer, notAnswering, stillWaiting, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
+import { taskStoppedWords, BubbleOwner, LONG_ANSWER, LOST_RECONNECTING, NO_REPLY, Presenter, RECONNECTED, RECONNECTED_RETRY, STILL_WAITING, noAnswer, notAnswering, stillWaiting, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 
@@ -1276,6 +1276,14 @@ describe("a wait for Copilot says so and can be stopped (UI audit #4)", () => {
     expect(last().bubble).toMatchObject({ mood: "thinking", title: STILL_WAITING, streaming: true, actions: [STOP_ANSWER] });
     p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Checking" } });
     expect(last().bubble).toMatchObject({ mood: "thinking", title: "Thinking…", actions: [] });
+  });
+
+  it("names the model service that isn't answering as it stops a task, never Copilot when it isn't (integrations-v1)", () => {
+    expect(taskStoppedWords(false, "silent")).toBe("Copilot didn't answer, so I stopped this task. You can ask me again in a moment.");
+    expect(taskStoppedWords(false, "not-started")).toBe("Copilot isn't answering, so I stopped this task. You can ask me again in a moment.");
+    expect(taskStoppedWords("user", "silent")).toBe("Your model provider didn't answer, so I stopped this task. You can ask me again in a moment.");
+    expect(taskStoppedWords(true, "not-started")).toBe("The model service isn't answering, so I stopped this task. You can ask me again in a moment.");
+    expect(new Presenter(() => undefined, undefined, undefined, undefined, undefined, "user").taskStopped("silent")).toBe(taskStoppedWords("user", "silent"));
   });
 
   it("names the model service in use while it waits, never Copilot when it isn't (integrations-v1, reliability-performance-v3)", () => {

@@ -40,7 +40,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, NOTICE_TITLE, USER_PROVIDER_NO_MODEL, idleWord, noticeTitle, stillConnectingTitle } from "../../app/main/agent/host";
+import { AgentHost, NOTICE_TITLE, USER_PROVIDER_NO_MODEL, idleWord, noticeTitle, reconnectWords, stillConnectingTitle } from "../../app/main/agent/host";
 import type { BubbleState, EmberState } from "../../app/shared/overlay";
 import { SettingsStore } from "../../app/main/settings";
 import { providerDown, type ActiveProvider, type TestResult } from "../../app/main/provider";
@@ -212,6 +212,25 @@ describe("AgentHost with the user's own model provider", () => {
       expect(statuses.slice(after).map(s => JSON.parse(s).phase)).toContain("starting");
       await host.stop();
     } finally { vi.useRealTimers(); }
+  });
+
+  it("names the model service that isn't answering as it reconnects, never Copilot when it isn't (integrations-v1)", () => {
+    // Copilot's words are as they were.
+    expect(reconnectWords(false)).toEqual({
+      notAnswering: "Copilot isn't answering. I'm reconnecting; ask me again in a moment.",
+      notAnsweringAfterTasks: "Copilot isn't answering. I'll reconnect when the tasks that are running finish; ask me again then.",
+      notAnsweringDetail: "Copilot isn't answering. Reconnecting…",
+      noAnswerDetail: "Copilot didn't answer in time. Reconnecting…",
+      notAnsweringNow: "Copilot isn't answering.",
+    });
+    expect(reconnectWords("user")).toEqual({
+      notAnswering: "Your model provider isn't answering. I'm reconnecting; ask me again in a moment.",
+      notAnsweringAfterTasks: "Your model provider isn't answering. I'll reconnect when the tasks that are running finish; ask me again then.",
+      notAnsweringDetail: "Your model provider isn't answering. Reconnecting…",
+      noAnswerDetail: "Your model provider didn't answer in time. Reconnecting…",
+      notAnsweringNow: "Your model provider isn't answering.",
+    });
+    expect(reconnectWords(true).noAnswerDetail).toBe("The model service didn't answer in time. Reconnecting…");
   });
 
   it("tells memory it waits for the own provider, never for a GitHub account, when the provider can't connect (integrations-r5)", async () => {

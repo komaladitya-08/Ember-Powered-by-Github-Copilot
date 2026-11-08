@@ -1909,9 +1909,9 @@ export class Worker {
           d.log.warn(why === "silent" ? "worker.turn_silent" : "worker.turn_not_started");
           let full = false;
           try { full = why === "not-started" && d.inotifyUsedUp?.() === true; } catch { /* can't be counted */ }
-          this.stopNow(why === "silent" ? "Copilot didn't answer, so I stopped this task. You can ask me again in a moment."
-            : full ? "Copilot can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again."
-            : "Copilot isn't answering, so I stopped this task. You can ask me again in a moment.");
+          // Named for the model service in use, never Copilot when it isn't (integrations-v1).
+          this.stopNow(full ? "Copilot can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again."
+            : d.presenter.taskStopped(why === "silent" ? "silent" : "not-started"));
         }, {
           slowMs: d.limits?.turnSlowMs, silentMs: d.limits?.turnSilentMs,
           // The task's card and its bubble say so (without a compositor the card's task row is one short line).

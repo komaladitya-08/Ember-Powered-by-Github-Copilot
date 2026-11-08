@@ -13,9 +13,9 @@ import path from "node:path";
 import { CopilotClient, type ProviderConfig } from "@github/copilot-sdk";
 import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
-import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
+import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { BubbleOwner, LOST_RECONNECTING, Presenter, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
+import { BubbleOwner, LOST_RECONNECTING, Presenter, noAnswer, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
 import { providerDown, type ActiveProvider, type TestResult } from "../provider";
 import { keyNeeded } from "../../shared/provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
@@ -459,6 +459,22 @@ const NO_WATCHERS_DETAIL = `${NO_WATCHERS_WHY} Reconnecting…`;
 const NO_ANSWER_DETAIL = "Copilot didn't answer in time. Reconnecting…";
 /** A reconnect put off while tasks are at work (the runtime still works for them): what settings show meanwhile. */
 const AFTER_TASKS = "Reconnecting when the tasks that are running finish…";
+
+/**
+ * What a model service that isn't answering is called as Ember reconnects, for the service in use (integrations-v1):
+ * Copilot's words are NOT_ANSWERING and its kin above; the user's own provider and the organisation's are named as such.
+ */
+export function reconnectWords(service: ServiceKind) {
+  if (service === false) return { notAnswering: NOT_ANSWERING, notAnsweringAfterTasks: NOT_ANSWERING_AFTER_TASKS, notAnsweringDetail: "Copilot isn't answering. Reconnecting…", noAnswerDetail: NO_ANSWER_DETAIL, notAnsweringNow: "Copilot isn't answering." };
+  const who = service === "user" ? "Your model provider" : "The model service";
+  return {
+    notAnswering: `${who} isn't answering. I'm reconnecting; ask me again in a moment.`,
+    notAnsweringAfterTasks: `${who} isn't answering. I'll reconnect when the tasks that are running finish; ask me again then.`,
+    notAnsweringDetail: `${who} isn't answering. Reconnecting…`,
+    noAnswerDetail: `${who} didn't answer in time. Reconnecting…`,
+    notAnsweringNow: `${who} isn't answering.`,
+  };
+}
 
 /**
  * This user's inotify instances in use and the limit (fs.inotify.max_user_instances: 128 on RHEL 8, and every app
@@ -1943,17 +1959,19 @@ export class AgentHost {
           this.queued = [];
           const full = why === "not-started" && (this.o.inotifyUsedUp ?? inotifyUsedUp)();
           const reason = why === "silent" ? "turn went silent and didn't end" : full ? "turn didn't start: inotify instances used up" : "turn didn't start";
+          // Named for the service in use, never Copilot when it isn't (integrations-v1).
+          const words = reconnectWords(this.serviceKind());
           if (this.tasksAtWork()) {
             this.o.log.warn("agent.reconnect_after_tasks", { why: reason });
             // (A silent turn: the conductor said Copilot didn't answer.)
-            if (why === "not-started") this.presenter.fail(full ? NO_WATCHERS : NOT_ANSWERING_AFTER_TASKS);
+            if (why === "not-started") this.presenter.fail(full ? NO_WATCHERS : words.notAnsweringAfterTasks);
             // (Set first: the status says the reconnect waits for the tasks, so settings doesn't offer one that stops them.)
-            this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, reason, undefined, why === "silent" ? NO_ANSWER_DETAIL : full ? NO_WATCHERS_DETAIL : "Copilot isn't answering. Reconnecting…", asked, CUT_OFF_STALLED); };
-            this.setStatus({ phase: "error", reason: "not-answering", detail: full ? `${NO_WATCHERS_WHY} ${AFTER_TASKS}` : `Copilot isn't answering. ${AFTER_TASKS}` });
+            this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, reason, undefined, why === "silent" ? words.noAnswerDetail : full ? NO_WATCHERS_DETAIL : words.notAnsweringDetail, asked, CUT_OFF_STALLED); };
+            this.setStatus({ phase: "error", reason: "not-answering", detail: full ? `${NO_WATCHERS_WHY} ${AFTER_TASKS}` : `${words.notAnsweringNow} ${AFTER_TASKS}` });
             return;
           }
-          if (why === "silent") this.lost(gen, reason, NO_ANSWER, NO_ANSWER_DETAIL, asked, CUT_OFF_STALLED);
-          else this.lost(gen, reason, full ? NO_WATCHERS : NOT_ANSWERING, full ? NO_WATCHERS_DETAIL : undefined, asked, CUT_OFF_STALLED);
+          if (why === "silent") this.lost(gen, reason, noAnswer(this.serviceKind()), words.noAnswerDetail, asked, CUT_OFF_STALLED);
+          else this.lost(gen, reason, full ? NO_WATCHERS : words.notAnswering, full ? NO_WATCHERS_DETAIL : undefined, asked, CUT_OFF_STALLED);
         },
         startTask: tasks ? (goal, choice) => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
@@ -2254,7 +2272,7 @@ export class AgentHost {
     // An answer cut off half-way says so, instead of vanishing.
     if (says || this.presenter.busy || why === "send failed") { this.presenter.fail(says ?? LOST_RECONNECTING); this.reconnectingShown = !says; }
     else this.presenter.reset();
-    this.setStatus({ phase: "error", reason: says || stalled ? "not-answering" : "runtime", detail: detail ?? (says ? "Copilot isn't answering. Reconnecting…" : "Copilot stopped unexpectedly. Reconnecting…") });
+    this.setStatus({ phase: "error", reason: says || stalled ? "not-answering" : "runtime", detail: detail ?? (says ? reconnectWords(this.serviceKind()).notAnsweringDetail : "Copilot stopped unexpectedly. Reconnecting…") });
     if (!stalled) {
       const recent = this.crashes.filter(t => Date.now() - t < 10 * 60_000);
       if (recent.length >= 5) {

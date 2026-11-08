@@ -572,6 +572,11 @@ export function stalledStep(settingsKey: string | null, stopKey: string | null):
 /** The model service in use, as a sentence starts with it. */
 const serviceName = (provider: ServiceKind) => (provider === "user" ? "Your model provider" : provider ? "The model service" : "Copilot");
 
+/** What a task stopped for its model service's silence says (worker.ts TurnWatch), for the service in use (integrations-v1). */
+export function taskStoppedWords(provider: ServiceKind, why: "silent" | "not-started"): string {
+  return `${serviceName(provider)} ${why === "silent" ? "didn't answer" : "isn't answering"}, so I stopped this task. You can ask me again in a moment.`;
+}
+
 /** What a turn that is stuck says, for the model service in use (conductor.ts, when nothing else handles it). */
 export function notAnswering(provider: ServiceKind = false): string {
   return `${serviceName(provider)} isn't answering. Ask me again in a moment.`;
@@ -716,6 +721,11 @@ export class Presenter {
   /** What a turn that got nothing back says, for the service in use now. */
   notAnswering(): string {
     return notAnswering(this.provider);
+  }
+
+  /** What a task stopped for its model service's silence says, for the service in use now (integrations-v1). */
+  taskStopped(why: "silent" | "not-started"): string {
+    return taskStoppedWords(this.provider, why);
   }
 
   constructor(
