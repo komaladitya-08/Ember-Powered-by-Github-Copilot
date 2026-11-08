@@ -4420,6 +4420,14 @@ describe("“remember…” while memory is off (memory-c1-1, memory-i1)", () =>
       conductorSession().emit("assistant.message", { content: "Opening Firefox." });
       conductorSession().emit("session.idle", {});
       expect(host.getTranscript().slice(-2).map(e => [e.who, e.text])).toEqual([["ember", "Opening Firefox."], ["ember", "Memory is off, so I can't change what's saved."]]);
+      // A fact said with any verb, and one with a request after it: the answer, then the truth (memory-r3-2).
+      for (const [text, answer] of [["Remember my wife likes tulips", "Tulips it is."], ["Remember that I'm vegetarian and book a table", "Booking a table."]]) {
+        await host.ask(text);
+        expect(conductorSession().sent.at(-1), text).toContain(text);
+        conductorSession().emit("assistant.message", { content: answer });
+        conductorSession().emit("session.idle", {});
+        expect(host.getTranscript().slice(-2).map(e => [e.who, e.text]), text).toEqual([["ember", answer], ["ember", "Memory is off, so I won't keep this after Ember closes."]]);
+      }
       await host.stop();
     } finally {
       vi.useRealTimers();

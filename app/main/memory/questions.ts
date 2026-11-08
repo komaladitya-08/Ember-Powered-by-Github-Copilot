@@ -151,12 +151,57 @@ const SAID = String.raw`(?!\s+(?:even\s+|ever\s+|just\s+)?(?:said|say|told|asked
  * nor "make a note in…" (a note in an app).
  */
 const REMEMBER_ASK = new RegExp(String.raw`${LEAD}(?:remember|don'?t\s+forget|do\s+not\s+forget|keep\s+in\s+mind|make\s+a\s+(?:mental\s+)?note\s+(?:that|of)\b)\s*(?!to\b|when\b|what\b|how\b|who\b|where\b|which\b|whether\b|if\b|me\b)(\S.*)$`, "is");
+/** "Remember," or "keep in mind," with a pause after it. */
+const REMEMBER_PAUSE = new RegExp(String.raw`^(${LEAD.slice(1)}(?:remember|keep\s+in\s+mind|don'?t\s+forget|do\s+not\s+forget))\s*,\s*`, "i");
 /**
  * What follows "remember…" says something to keep: "that…", "I'm vegetarian", "my wife's birthday is 12 March", "the
  * deadline is Friday". "Remember the file I mentioned", "don't forget my umbrella" and "remember this" refer to
  * something, or ask for a reminder: Ember adds no "I won't keep this" after them (memory-r8).
  */
 const STATES = /^(?:that\b|i\b|i['’]|we\b|we['’])|\b(?:is|are|was|were|am|isn['’]t|aren['’]t|wasn['’]t|has|have)\b|\b(?:it|that|there|he|she|they|what|who|this|here)['’]s\b|['’](?:re|m|ve)\b/i;
+/** Words that open a noun phrase ("the file", "my umbrella"): the word straight after one names a thing. */
+const DETERMINER = /^(?:the|my|our|your|his|her|their|this|that|these|those|a|an|some|its)$/i;
+/** Who does something: after a thing named ("the file I mentioned", "the time we went") they describe that thing. */
+const PRONOUN = /^(?:i|you|we|he|she|they)$/i;
+/** What may stand before a number that only says when or where ("my meeting at 3"). */
+const PREPOSITION = /^(?:at|on|in|by|for|from|to|of|with|about|until|till|after|before|around|near|under|over)$/i;
+/** Past forms without "-ed" ("the standup got moved", "Priya left Globex"). */
+const PAST = new Set([
+  "went", "left", "came", "got", "had", "made", "said", "took", "gave", "began", "ran", "saw", "met", "found", "told", "thought", "brought",
+  "bought", "sent", "kept", "felt", "knew", "grew", "wrote", "won", "lost", "paid", "sold", "did", "fell", "drove", "flew", "broke", "chose",
+  "spent", "built", "taught", "caught", "became", "forgot", "led", "meant",
+]);
+/** What says something will, can or won't happen ("Priya will lead it", "Bob can't come"). */
+const MODAL = /^(?:will|would|can|could|should|must|might|shall|won['’]t|can['’]t|cannot|doesn['’]t|don['’]t|didn['’]t|wouldn['’]t)$/i;
+/**
+ * After a name's "'s", the words that make it "is" ("Priya's my manager", "Bob's off on Friday", "Priya's leaving"), not
+ * "Priya's birthday" or "Monday's meeting".
+ */
+const IS_AFTER = /^(?:my|our|the|a|an|his|her|their|your|not|off|on|in|at|out|away|back|from|over|here|there|always|never|still|now|leaving|going|coming|moving|starting|joining|working|staying|visiting|arriving|retiring|travelling|traveling|flying)$/i;
+
+/**
+ * Whether what follows "remember…" says something to keep (memory-r3-2): a statement with a verb after who or what it is
+ * about ("my wife likes tulips", "Priya leads the platform team", "the standup moved to 4 pm", "Priya's my manager"), a
+ * label and its value ("my birthday: 12 March", "my phone number 07700 900123"), or STATES's words. Never what only points
+ * at something: "the file I mentioned", "the documents Priya sent", "my keys", "my meeting at 3" (memory-r8).
+ */
+function statesSomething(rest: string): boolean {
+  if (STATES.test(rest) || /\p{L}\s*:\s*\S/u.test(rest)) return true;
+  const words = rest.split(/\s+/).map(w => w.replace(/^[^\p{L}\p{N}£$€]+|[^\p{L}\p{N}'’]+$/gu, "")).filter(Boolean);
+  if (words.some((w, i) => /^\p{Lu}.*['’]s$/u.test(w) && IS_AFTER.test(words[i + 1] ?? ""))) return true;
+  // A noun phrase's first word after its determiner is the thing itself ("my keys", "the steps"), never its verb.
+  const from = DETERMINER.test(words[0] ?? "") ? 2 : 1;
+  for (let v = from; v < words.length; v++) {
+    const w = words[v]!;
+    const verb = /^\p{Ll}/u.test(w) && (MODAL.test(w) || PAST.has(w) || /^\p{Ll}{2,}ed$/u.test(w) || (/^\p{Ll}+[^siu'’]s$/u.test(w) && v + 1 < words.length));
+    const value = /^[£$€]?\d/u.test(w) && !PREPOSITION.test(words[v - 1]!) && !DETERMINER.test(words[v - 1]!);
+    if (!verb && !value) continue;
+    const between = words.slice(from, v);
+    // "the file I mentioned", "the tab I had open", "the documents Priya sent": a thing described, not a fact.
+    return !between.some(x => PRONOUN.test(x)) && !(v === words.length - 1 && between.some(x => /^\p{Lu}/u.test(x)));
+  }
+  return false;
+}
 /**
  * What someone tells Ember about themselves after "my" or "our": "my address", "my wife's birthday", "my favourite
  * colour", "my old phone number". Only these, since "forget" is also the system's word for a device or a network ("my
@@ -242,14 +287,15 @@ const AND_MORE = /\s(?:and|then|&)\s+(?:(?:then|also|instead|just|please)\s+)*(?
  * keeps it until Ember closes, and Ember says after the answer that memory won't (`rememberNote`).
  */
 export function memoryAsk(text: string): "remember" | "forget" | null {
-  const t = text.trim();
+  // "Remember, I'm vegetarian": the comma a pause after the verb, not more after the request (memory-r3-2).
+  const t = text.trim().replace(REMEMBER_PAUSE, "$1 ");
   // (After "Ember," or "Hey Ember." the request starts: that comma is no more.)
   const body = t.replace(/^(?:hey\s+)?ember[,.!]?\s+/i, "").replace(/[.!?]+$/, "");
   if (MORE.test(body) || AND_MORE.test(body)) return null;
   // Asked as a question, unless it is a request put politely ("Can you remember that I'm vegetarian?").
   if (/\?$/.test(t) && !POLITE.test(t)) return null;
   const kept = REMEMBER_ASK.exec(t.replace(/[.!?]+$/, ""));
-  if (kept) return STATES.test(kept[1]!.trim()) ? "remember" : null;
+  if (kept) return statesSomething(kept[1]!.trim()) ? "remember" : null;
   return forgets(t.replace(/[.!]+$/, "")) ? "forget" : null;
 }
 
@@ -269,6 +315,25 @@ export function forgetsWithMore(text: string): boolean {
   const first = t.split(/[.!?]\s|[,;]|\s[-–—]+\s|\s(?:and|then|&)\s/i)[0]!.trim();
   // "Forget everything and start over" is as likely "never mind": no note after it.
   return !new RegExp(String.raw`${LEAD}forget\s+(?:everything|all)$`, "i").test(first) && forgets(first);
+}
+
+/** Filler after a comma, which says nothing to keep ("Remember the tab I had open, please"). */
+const FILLER = /^(?:please|thanks|thank\s+you|ok|okay|right|alright|yeah|yes|now|too|as\s+well|for\s+me|for\s+later)$/i;
+
+/**
+ * A remember request with more after it (memory-r3-2): "Remember that I'm vegetarian and book a table" (the first part
+ * says something to keep), or "Remember my wife's name, Sam" (a value after a comma or a dash). The conversation takes
+ * the whole of it, and Ember says after its answer that memory won't keep it (`rememberNote`).
+ */
+export function remembersWithMore(text: string): boolean {
+  const t = text.trim().replace(/[.!]+$/, "");
+  if (memoryAsk(t) !== null || (/\?$/.test(t) && !POLITE.test(t))) return false;
+  const first = t.split(/[.!?]\s|[,;]|\s[-–—]+\s|\s(?:and|then|&)\s/i)[0]!.trim();
+  if (memoryAsk(first) === "remember") return true;
+  const sep = /^\s*(?:,|\s[-–—]+\s)\s*(.+)$/.exec(t.slice(first.length));
+  const value = sep?.[1]!.trim() ?? "";
+  return !!sep && !!REMEMBER_ASK.exec(first) && value.split(/\s+/).length <= 4 && !FILLER.test(value) && !looksLikeRequest(value)
+    && !MORE.test(value) && !AND_MORE.test(` and ${value}`);
 }
 
 /**
