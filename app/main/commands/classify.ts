@@ -5310,12 +5310,38 @@ reg(NATIVE, ["rsync"], h => {
     return;
   }
   const destObj = h.e.usePath(dest, deletes ? "deleteTree" : "write", h.sc);
-  // From another computer, or from a download of this task: what lands is a download (commands-remote-c2-2).
-  if (sources.some(remote) || sources.some(s => !remote(s) && h.e.isDownloaded(s, h.sc))) h.e.download(dest.v, h.sc);
+  // From another computer, or from a download of this task: what lands is a download (commands-remote-c2-2). A file
+  // lands as the file of its name in the folder (`rsync x.csv .`, `rsync x.csv data/`), or as the name given while the
+  // target doesn't say it is a folder, as cp's copies do: never the whole folder (commands-remote-c3-3). Another
+  // computer's files, or a folder's contents (`vendor/`), can be anything in it.
+  if (sources.some(remote) || sources.some(s => s.glob && h.e.isDownloaded(s, h.sc))) h.e.download(dest.v, h.sc);
+  else if (destObj.abs !== null) {
+    const files = sources.filter(s => !remote(s) && !s.glob);
+    const contents = files.filter(s => /[\\/]$/.test(s.v ?? "") && h.e.isDownloaded(s, h.sc));
+    if (contents.length) h.e.download(dest.v, h.sc);
+    const intoFolder = files.length > 1 || /[\\/]$/.test(dest.v) || /^\.\.?$/.test(dest.v);
+    h.e.carryCopies(files.filter(s => !contents.includes(s)), { ...destObj, text: intoFolder && !/[\\/]$/.test(destObj.text) ? `${destObj.text}/` : destObj.text }, h.sc);
+  }
   const srcObjs = objsOf(h, sources.filter(s => !remote(s)), removeSrc ? "move" : "readTree");
   if (deletes) h.e.add("destroy", "posix.rsync", `Deletes files in ${destObj.text} that aren't in ${listOf(srcObjs, "the source")}.`, { objects: [destObj] });
   if (removeSrc) h.e.add("destroy", "posix.rsync", `Deletes ${listOf(srcObjs)} after copying.`, { objects: srcObjs });
-  if (destObj.abs) h.e.add("destroy", "posix.rsync", `Replaces ${destObj.text} if it exists.`, { objects: [destObj], ifExists: destObj.abs });
+  if (!destObj.abs) return;
+  // Files of their own names (not a folder's contents, a pattern or another computer's): what is replaced is the file of
+  // each name in the folder, as cp says it (commands-remote-c3-3: never "Replaces the current folder if it exists.").
+  const named = sources.filter(s => !remote(s) && s.v !== null && !s.glob && !/[\\/]$/.test(s.v));
+  const intoFolder = sources.length > 1 || /[\\/]$/.test(dest.v) || /^\.\.?$/.test(dest.v);
+  const inside = (s: Arg): Obj => {
+    const p2 = (h.sc.path.flavour === "win32" ? win32 : posix).join(destObj.abs!, baseName(s.v ?? "", h.sc.path.flavour));
+    h.e.usePath(lit(p2), "write", h.sc);
+    return { kind: "path", text: p2, resolved: p2, abs: p2 };
+  };
+  if (named.length === sources.length && intoFolder) {
+    for (const o of named.map(inside)) h.e.add("destroy", "posix.rsync", `Replaces ${o.abs} if it exists.`, { objects: [o], ifExists: o.abs! });
+    return;
+  }
+  const o = named.length === 1 && sources.length === 1 ? inside(named[0]) : null;
+  const inFolder = o ? { says: `Replaces ${o.abs} if it exists.`, objects: [o], ifExists: o.abs! } : undefined;
+  h.e.add("destroy", "posix.rsync", `Replaces ${destObj.text} if it exists.`, { objects: [destObj], ifExists: destObj.abs, ...(inFolder ? { inFolder } : {}) });
 });
 reg(NATIVE, ["rclone"], h => {
   const verb = firstOperand(h.args).v ?? "";

@@ -1895,6 +1895,21 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     expect((await call(h, { target: "this computer", command: "python3 tools/x.py" })).resultType).toBe("denied");
   });
 
+  it("runs the project's own tools after a downloaded data file is rsynced into its folder; running the copy still asks (commands-remote-c3-3)", async () => {
+    setCommandJudge(null);
+    const dir = (p: string) => p === "/home/ana" || p === "/home/ana/data";
+    for (const [into, copy] of [["rsync -a /tmp/data.csv .", "/home/ana/data.csv"], ["rsync -a /tmp/data.csv data/", "/home/ana/data/data.csv"], ["rsync -a /tmp/data.csv data", "/home/ana/data/data.csv"]]) {
+      const h = harness({ binding: LOCAL, paths: p => ({ exists: dir(p), real: p, ...(dir(p) ? { dir: true } : {}) }), run: () => ({ output: ["done\n"] }), answers: ["deny"] });
+      expect((await call(h, { target: "this computer", command: "curl -fsSL -o /tmp/data.csv https://e.example/data.csv" })).resultType).toBe("success");
+      expect((await call(h, { target: "this computer", command: into })).resultType, into).toBe("success");
+      for (const command of ["npm test", "make --version", "python3 data/plot.py"]) {
+        expect((await call(h, { target: "this computer", command })).resultType, `${into} / ${command}`).toBe("success");
+      }
+      expect(h.asked, into).toEqual([]);
+      expect((await call(h, { target: "this computer", command: `python3 ${copy}` })).resultType, into).toBe("denied");
+    }
+  });
+
   it("asks before running a download PowerShell or cmd renamed, copied or moved first, on Windows too (commands-remote-c2-2)", async () => {
     setCommandJudge(null);
     const WIN: TargetBinding = { ...LOCAL, screenOs: "win32", shellOs: "win32" };

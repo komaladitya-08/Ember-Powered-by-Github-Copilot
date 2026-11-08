@@ -767,6 +767,28 @@ describe("loops and ifs (commands-remote-2)", () => {
     expect(cls("cat notes.txt > y.py").downloads).toEqual([]);
   });
 
+  it("marks only the file rsync copies a download to, never the whole folder it lands in (commands-remote-c3-3)", () => {
+    const P = "/home/ana/proj";
+    const cls = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux", ["/tmp/data.csv", "/tmp/vendor"])) as ClassificationExtra;
+    for (const [cmd, as, not] of [
+      ["rsync -a /tmp/data.csv .", `${P}/data.csv`, P], ["rsync -a /tmp/data.csv data/", `${P}/data/data.csv`, `${P}/data`],
+      ["rsync -a /tmp/data.csv ~/proj/", `${P}/data.csv`, P], ["rsync -a /tmp/data.csv ..", "/home/ana/data.csv", "/home/ana"],
+    ]) {
+      expect(cls(cmd).downloads, cmd).toContain(as);
+      expect(cls(cmd).downloads, cmd).not.toContain(not);
+    }
+    // A name that may be a folder counts only until the target says it is one.
+    const into = cls("rsync -a /tmp/data.csv data");
+    expect(into.downloads).toEqual(expect.arrayContaining([`${P}/data`, `${P}/data/data.csv`]));
+    expect(withRealPaths(into, new Map([[`${P}/data`, { exists: true, real: `${P}/data`, dir: true }]])).downloads).not.toContain(`${P}/data`);
+    // A downloaded folder's contents, or what comes from another computer, still mark where they land.
+    expect(cls("rsync -a /tmp/vendor/ lib/").downloads).toContain(`${P}/lib`);
+    expect(cls("rsync -a build-01:/srv/x lib/").downloads).toContain(`${P}/lib`);
+    // Its card names the file it replaces, never the folder (commands-remote-c3-3).
+    expect(cls("rsync -a /tmp/data.csv .").findings.map(f => f.says)).toEqual(["Replaces ~/proj/data.csv if it exists."]);
+    expect(cls("rsync -a /tmp/data.csv data/").findings.map(f => f.says)).toEqual(["Replaces ~/proj/data/data.csv if it exists."]);
+  });
+
   it("keeps a download a download when PowerShell or cmd renames, copies, moves or links it, so running it asks (commands-remote-c2-2)", () => {
     const P = "C:\\Users\\ana\\proj";
     const cls = (cmd: string, shell: ShellId = "powershell") => classifyCommand(cmd, shell, contextOf("win32", [`${P}\\x.py`, `${P}\\x.exe`])) as ClassificationExtra;
