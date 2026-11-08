@@ -236,6 +236,10 @@ describe.skipIf(gate)("Home's Projects, as Ember's connection changes (2026-11-0
     await page.getByRole("button", { name: "Remove greeting.ts" }).click();
     await expect.poll(() => page.locator("#project-status").innerText()).toBe("Removed greeting.ts. Your request is kept.");
     expect(await calls(page)).toContain("remove:greeting.ts");
+    // The last file gone, the focus goes to the request, since Choose files… waits for a connection (integrations-v4-4,
+    // WCAG 2.4.3).
+    expect(await page.locator("#project-pick").isDisabled()).toBe(true);
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id ?? "")).toBe("project-question");
     await page.evaluate(st => window.__ixEmit("onAgentStatus", st), READY);
     // Sign-out or the organisation's lockdown: main forgot it all, and so does Home.
     await page.evaluate(() => window.__ixEmit("onProjectForgot", "all"));

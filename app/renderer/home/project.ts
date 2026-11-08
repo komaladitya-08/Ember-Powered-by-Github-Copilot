@@ -165,7 +165,7 @@ export function mountProject() {
     if (busy) return;
     const at = revision;
     busy = "picking";
-    let focusAfter: HTMLButtonElement | null = null;
+    let focusAfter: (() => HTMLElement) | null = null;
     draw();
     try {
       const result = await window.ember.projectRemove(name);
@@ -177,11 +177,13 @@ export function mountProject() {
         includePrevious.checked = false;
       }
       status.textContent = result.error ?? `Removed ${name}. Your request is kept.`;
-      if (result.changed) focusAfter = files.querySelector<HTMLButtonElement>("button") ?? pick;
+      // Chosen once drawn: Choose files… waits for a connection, so with the last file gone while not connected the
+      // request takes the focus, as after Apply patch (integrations-v4-4, WCAG 2.4.3).
+      if (result.changed) focusAfter = () => files.querySelector<HTMLButtonElement>("button") ?? (pick.disabled ? question : pick);
     } catch {
       if (at === revision) status.textContent = "Couldn't remove the file. Your selection is kept.";
     } finally {
-      if (at === revision) { busy = null; draw(); focusAfter?.focus(); }
+      if (at === revision) { busy = null; draw(); focusAfter?.().focus(); }
     }
   }
   async function copyText(text: string, message: string): Promise<void> {
