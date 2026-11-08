@@ -175,12 +175,15 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
       "read d <<< ~/.config/ember; rm -rf \"$d\"",
       // A pattern Ember sees only the start of, where it could match one of Ember's folders.
       "rm -rf ~/.c*/$x",
+      // xargs given a here-string or here-document whose words Ember sees whole (commands-remote-v4-4).
+      "xargs rm -rf <<< ~/.config/ember", "xargs -I{} rm -rf {} <<< ~/.config/ember", "xargs rm -rf <<EOF\n/home/ana/.config/ember\nEOF",
     ]) expect(refused(cmd), cmd).toBe(CHANGE);
     // Nothing of Ember's, or a pattern the quotes turn into a name: asked or run as before.
     for (const cmd of [
       "d=build; rm -rf \"$d\"/*.o", "d=~/.config; rm -rf \"$d\"/\"emb*\"", "set -- build dist; rm -rf \"$@\"", "set -e; rm -rf \"$1\"",
-      "while read f; do rm -rf \"$f\"; done <<< build", "printf -v d %s build; rm -rf \"$d\"", "cat ~/.cache/*$x",
+      "while read f; do rm -rf \"$f\"; done <<< build", "printf -v d %s build; rm -rf \"$d\"", "cat ~/.cache/*$x", "xargs rm -rf <<< build",
     ]) expect(refused(cmd), cmd).toBeUndefined();
+    expect(classifyCommand("xargs rm -rf <<< build", "bash", contextOf("linux")).findings.map(f => f.says)).toEqual(["Deletes build and everything in it."]);
   });
 
   it("judges a variable set to Ember's folder where a command uses it, so testing or printing it runs (commands-remote-r4-5)", () => {

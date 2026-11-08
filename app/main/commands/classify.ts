@@ -3132,8 +3132,18 @@ reg(NATIVE, ["xargs"], h => {
     return { v: null, raw: w.raw, glob: false };
   });
   if (intoCode) h.e.unclear("unclear.input-in-code", "It puts its input into shell text, where it can run as code.");
+  // Input Ember sees whole (a here-string or here-document) with no quotes or backslashes for xargs to read: its words,
+  // or with -I its lines, are what the command gets (commands-remote-v4-4).
+  const text = h.s.stdinText;
+  const seen = typeof text === "string" && !/['"\\]/.test(text) && !values(p, "a", "arg-file", "d", "delimiter").length && !has(p, "0", "null") ? text : null;
+  if (seen !== null && repl && !intoCode) {
+    const lines = seen.split("\n").map(l => l.trim()).filter(l => l !== "").slice(0, MAX_FORMS);
+    for (const l of lines) h.e.payload(ops.map(w => (w.v !== null && w.v.includes(repl) ? lit(w.v.split(repl).join(l)) : w)), h.sc, "xargs", { stdin: null });
+    if (lines.length) return;
+  }
+  const input = seen !== null && !repl ? seen.split(/\s+/).filter(w => w !== "").map(w => lit(w)) : [];
   // With -I the input replaces the placeholder; otherwise it is added after the words.
-  h.e.payload(repl ? words : [...words, { v: null, raw: "(input)", glob: false }], h.sc, "xargs", { stdin: null });
+  h.e.payload(repl ? words : [...words, ...(input.length ? input : [{ v: null, raw: "(input)", glob: false }])], h.sc, "xargs", { stdin: null });
 });
 reg(NATIVE, ["parallel"], h => {
   if (h.args.some(a => a.v !== null && /^:::+\+?$/.test(a.v))) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
