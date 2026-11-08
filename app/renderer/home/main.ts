@@ -1857,13 +1857,21 @@ $("updates-consent-text").textContent = UPDATES_CONSENT_TEXT;
 function applyUpdateSettings(s: Settings): void {
   ($("updates-on") as HTMLInputElement).checked = s.updates.on && s.updates.consent.version >= FEATURE_CONSENT_VERSION.updates;
 }
+/** The how-to's words as last written, to leave its live region alone when a push brings the same ones. */
+let shownHow = "";
 function renderUpdates(s: UpdateStatus): void {
   updatesNow = s;
-  $("updates-status").textContent = updateStatusText(s);
+  // Each line is written only when its words change: one Check now pushes the same status several times, and so does
+  // every settings change, and a live region rewritten with the same words is announced again (install-docs-c3-2).
+  const status = updateStatusText(s);
+  if ($("updates-status").textContent !== status) $("updates-status").textContent = status;
   // How to update this kind of install, while a newer version is out (install-docs-11), its commands as code. A polite
   // live region that stays on the page while empty, so it is announced as it fills (install-docs-r2-2).
   const how = updateOut(s) ? updateHowTo(platform?.install ?? null, s.latest) : [];
-  $("updates-how").replaceChildren(...how.map(segmentNode));
+  if (JSON.stringify(how) !== shownHow) {
+    shownHow = JSON.stringify(how);
+    $("updates-how").replaceChildren(...how.map(segmentNode));
+  }
   ($("updates-open") as HTMLButtonElement).hidden = !updateOut(s);
   const check = $("updates-check") as HTMLButtonElement;
   check.hidden = s.phase === "off";

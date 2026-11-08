@@ -214,7 +214,7 @@ Name these patterns when you design something new. Vague direction such as "make
 - **Screen readers.**
   - Put words for screen readers only in `.sr` (`.eb-live` in the bubble), and announce changes through `role="status"` or `aria-live="polite"`.
   - Give ambiguous buttons a contextual `aria-label` (`Stop: <task title>`), and mark decorative dots `aria-hidden="true"`.
-  - Throttle live regions: a download is announced every 25%, never on every chunk.
+  - Throttle live regions: a download is announced every 25%, never on every chunk, and a region is written only when its words change, since the same words written again are announced again (Home's Updates lines).
 - **Shortcut chords.** Show them as `<span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span>`: the page rewrites the keys for its OS from app/shared/shortcuts.ts, and `data-key-held`/`data-key-taken` alternatives cover another app holding the key. Never hard-code a chord.
 
 ## Symbols and state
