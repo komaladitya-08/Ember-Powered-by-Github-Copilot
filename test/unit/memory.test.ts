@@ -546,6 +546,34 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBeNull();
   });
 
+  // A secret said as changed, current or to be, the way people most often say one, and a service, a router's label or a
+  // capitals setting with its value (memory-r5-1, safety-privacy-1, safety-privacy-c4-2, memory-1).
+  it.each([
+    ["My Wi-Fi password is now BlueSky99"], ["My password is still hunter2"], ["The password is also hunter2"], ["My bank PIN is now 4821"],
+    ["The door code is now 4821"], ["The keypad code is now 4821"], ["The user's password is now Summer2024!"], ["I changed my password to Summer2024!"],
+    ["I changed my PIN to 4821"], ["I changed my Netflix password to hunter2"], ["The user's Netflix password changed to hunter2"],
+    ["The user's password was changed to Summer2024!"], ["The user's password has been reset to Summer2024!"], ["The user set their password to Summer2024!"],
+    ["The Wi-Fi password was updated to BlueSky99"], ["remember I set my PIN to 4821"], ["I updated the alarm code to 4821"],
+    ["my password: changed it to hunter22"], ["The password will be hunter2"], ["My password used to be hunter2"], ["I changed my password to fluffy."],
+    ['"pin": "4821"'], ["Netflix: hunter2"], ["The user's Gmail: Tr0ub4dor&3"], ["The user's Netflix account: hunter2"], ["Netflix login hunter2"],
+    ["The wireless key is BlueSky99"], ["WLAN key: BlueSky99"], ["WEP key: 1234567890"], ["Guest Wi-Fi: BlueSky / BlueSky99"],
+    ["Home network: BlueSky, key BlueSky99"], ["DB_PASS=Tr0ub4dor&3"],
+  ])("refuses %j and saves nothing, a secret said as changed, current or with its service (memory-r5-1, safety-privacy-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["The password is now required"], ["The password changed to the new policy last week"], ["The PIN is now 6 digits"], ["The door code changes on Monday"],
+    ["My password manager is now Bitwarden"], ["I changed my password manager to 1Password"], ["The password should be easy to remember"],
+    ["Set the password to expire every 90 days"], ["Change your password to something memorable"], ["The password will be reset in 30 days"],
+    ["The PIN changed to 6 digits"], ["Reset the password to the default"], ["The password is still required"], ["The password must be 12+ characters"],
+    ["I set my password manager to lock after 5 minutes"], ["Gmail: priya2@gmail.com"], ["Netflix: 4K plan"], ["Spotify: Premium family plan"],
+    ["The user's GitHub: octocat2"], ["Amazon: order 123-4567"], ["Steam: 250 games"], ["DB_PASS=$DB_PASSWORD"], ["Wi-Fi: BlueSky / 5GHz"],
+    ["The wireless keyboard is broken"], ["Netflix login is via Google"],
+  ])("keeps %j, which says no secret (memory-r5-1, safety-privacy-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
     [`Stripe key sk_live_${run(24)}`], [`Restricted key rk_test_${run(24)}`], [`Webhook signing secret whsec_${run(32)}`],

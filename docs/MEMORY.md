@@ -78,7 +78,12 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   "Netflix credentials: hunter2" (a login said with a digit or a symbol, even a user name such as "my login is
   jsmith42" or a user at a computer whose name has a digit and no port, such as "admin@nas1", since one said that way
   is as often its password, "P@ss-w0rd": safety-privacy-1; the model is told it may be the login's password, never
-  that it is one), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  that it is one), a secret said as changed, current or to be ("my Wi-Fi password is now BlueSky99", "I changed my
+  PIN to 4821", "the user's password was reset to Summer2024!", "the password will be hunter2"; never "the password is
+  now required", "the PIN changed to 6 digits" or "I changed my password manager to 1Password": memory-r5-1), a
+  service and a value shaped like a password ("Netflix: hunter2", "Netflix login hunter2", never "Gmail:
+  priya2@gmail.com": safety-privacy-1), a router's label names and a network with its key ("WLAN key: …", "Guest
+  Wi-Fi: BlueSky / BlueSky99": safety-privacy-c4-2), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
   "hashed" and "masked" only before more words with no digit or symbol: "password: never logged", but "Wi-Fi password

@@ -628,10 +628,37 @@ const SAYS_VALUE = String.raw`(?:${SAYS_IS}|${SAYS_IT}(?=\s*["'“]?[^\s"'”]{0
  * secret (perception/elements.ts), and a security question's answer however its owner is named ("the answer to the
  * user's security question is…"): safety-privacy-c4-2, memory-1.
  */
+const SECRET_NAMES = String.raw`(?:pass(?:word|phrase|code|wd)|pw|pin|passcode|otp|2fa code|verification code|recovery (?:code|key|phrase|words)|puk|seed (?:phrase|words)|mnemonic|(?:bitcoin|btc|crypto|wallet|ethereum|eth|ledger|metamask) seed|unlock phrase|security (?:question )?answer|answer to (?:(?:my|the|a|your|our|their|his|her)\s+)?(?:[a-z]+['’]s\s+)?security question|cvv|cvc|wi-?fi (?:key|password)|network (?:security )?key|wpa[23]? (?:key|passphrase)|pre-?shared key|psk|wireless (?:network )?(?:key|password)|wlan (?:key|password)|wep key|api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)`;
+/** Places that lock with a code ("door", "alarm", "garage", "safe"), for a code said as changed (CHANGED_MY). */
+const PLACE_NAMES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|bike lock|locker|keypad|key ?safe|key ?box|lockbox|padlock|vault|building|entry|access|airbnb|gym|cabin|shed|mailbox|lift|elevator|house|home|office`;
+/**
+ * An adverb after "is" that says when, never the value ("My Wi-Fi password is now BlueSky99", "My password is still
+ * hunter2", "The PIN is also 4821"), so "The password is now required" and "The PIN is now 6 digits" stay facts:
+ * memory-r5-1.
+ */
+const NOW = String.raw`(?:(?:now|still|also|currently|actually|really|then|just)\s+)?`;
 const TOLD_SECRET = new RegExp(
-  String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pin|passcode|otp|2fa code|verification code|recovery (?:code|key|phrase|words)|puk|seed (?:phrase|words)|mnemonic|(?:bitcoin|btc|crypto|wallet|ethereum|eth|ledger|metamask) seed|unlock phrase|security (?:question )?answer|answer to (?:(?:my|the|a|your|our|their|his|her)\s+)?(?:[a-z]+['’]s\s+)?security question|cvv|cvc|wi-?fi (?:key|password)|network (?:security )?key|wpa[23]? (?:key|passphrase)|pre-?shared key|psk|api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)s?\b${FOR_WHAT}(?:\s+(?:everywhere|anywhere|here|there|now|too|also|always|usually|still|today|currently))?${SAYS_VALUE}${VALUE}`,
+  String.raw`\b${SECRET_NAMES}s?\b(?:["'](?=\s*[:=]))?${FOR_WHAT}(?:\s+(?:everywhere|anywhere|here|there|now|too|also|always|usually|still|today|currently))?${SAYS_VALUE}${NOW}${VALUE}`,
   "i",
 );
+/**
+ * A secret said as changed or to be ("I changed my password to Summer2024!", "The user's password was changed to …",
+ * "The Netflix password changed to hunter2", "my password: changed it to hunter22", "remember I set my PIN to 4821",
+ * "I updated the alarm code to 4821", "The password will be hunter2", "My password used to be hunter2"): memory-r5-1,
+ * safety-privacy-1. After "changed to" a value with a digit or a symbol, or one word that ends the clause; after "will
+ * be" or "used to be" only one with a digit or a symbol, so "The password should be easy to remember", "The password
+ * changed to the new policy last week", "I changed my password manager to 1Password" and "Set the password to expire
+ * every 90 days" stay facts.
+ */
+const NOT_A_CHANGE = String.raw`(?:${NOT_A_VALUE}|something|anything|nothing|one|whatever|mine|yours|default|expire|a\s+new)`;
+const LENGTH = String.raw`(?!\d+\+?\s*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b)`;
+const CHANGE_VALUE = String.raw`["'“]?(?!${NOT_A_CHANGE}(?:[\s.,;!?"'”]|$))${LENGTH}(?:(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}|[^\s"'”.,;!?]{3,}(?=["'”]?\s*(?:$|[.,;!?])))`;
+const LATER_VALUE = String.raw`["'“]?(?!${NOT_A_VALUE}(?:[\s.,;!?"'”]|$))${LENGTH}(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}`;
+const CHANGE_TO = String.raw`\s*[:,–—-]?\s*(?:(?:has|have|had)\s+been\s+|(?:was|were|is|are|got|gets|been)\s+)?(?:just\s+|now\s+|recently\s+)?(?:changed|set|reset|updated|switched)(?:\s+(?:it|them))?\s+(?:back\s+)?to\s+`;
+const LATER_BE = String.raw`\s+(?:(?:will|would|should|shall|must|might|could)(?:\s+now)?\s+be|is\s+going\s+to\s+be|used\s+to\s+be|became|becomes)\s+`;
+const TOLD_CHANGE = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}(?:${CHANGE_TO}${CHANGE_VALUE}|${LATER_BE}${LATER_VALUE})`, "i");
+const CHANGED_MY = new RegExp(String.raw`\b(?:changed|change|set|reset|updated|update|switched|switch)\s+(?:(?:my|our|the|their|his|her|your|[a-z]+['’]s)\s+)?(?:[\w-]+\s+){0,3}?`
+  + String.raw`(?:\b${SECRET_NAMES}s?|(?:${PLACE_NAMES})\s+(?:code|combination|combo)s?)\s+(?:back\s+)?to\s+${CHANGE_VALUE}`, "i");
 
 /**
  * A password, passcode or passphrase with its value straight after ("VPN password hunter2", "the password 'Summer2024!'",
@@ -682,7 +709,7 @@ const BARE_PIN = /\bpin(?:\s+(?:code|number|no\.?))?,?\s+\d{4,12}\b/i;
  * "My PIN number is 1234", "PIN code: 1234", "the PIN number for my card is 1234", "my passcode number is 123456": the
  * commonest ways to say a PIN (memory-1), with four to twelve digits for its value, so "the LED pin number is 13" stays.
  */
-const PIN_NUMBER = new RegExp(String.raw`\b(?:pin|passcode)\s+(?:code|number|no\.?)(?=[\s:=])${FOR_WHAT}${SAYS}["'“]?\d(?:[-\s]?\d){3,11}\b`, "i");
+const PIN_NUMBER = new RegExp(String.raw`\b(?:pin|passcode)\s+(?:code|number|no\.?)(?=[\s:=])${FOR_WHAT}${SAYS}${NOW}["'“]?\d(?:[-\s]?\d){3,11}\b`, "i");
 /**
  * How long or how much a number is, after it ("12000 lines", "2024-ready", "32 characters"): never a code's digits.
  */
@@ -694,7 +721,7 @@ const NOT_DIGITS_OF_A_CODE = String.raw`(?![-–][A-Za-z]|\s+(?:lines?|loc|files
  * memory-c3-1).
  */
 const DEVICE_CODE = new RegExp(
-  String.raw`\b(?:(?:my|his|her|their)\s+(?:mobile|cell|cellphone|smartphone|phone|android)|android(?=\s+(?:unlock|lock|screen))|iphone|ipad|tablet|laptop|macbook|kindle)(?:['’]s)?\s+(?:(?:unlock|lock|screen|lock\s+screen|screen\s+lock)\s+)?(?:code|pin|passcode)s?\b${FOR_WHAT}${SAYS}["'“]?\d(?:[-\s]?\d){3,11}\b${NOT_DIGITS_OF_A_CODE}`,
+  String.raw`\b(?:(?:my|his|her|their)\s+(?:mobile|cell|cellphone|smartphone|phone|android)|android(?=\s+(?:unlock|lock|screen))|iphone|ipad|tablet|laptop|macbook|kindle)(?:['’]s)?\s+(?:(?:unlock|lock|screen|lock\s+screen|screen\s+lock)\s+)?(?:code|pin|passcode)s?\b${FOR_WHAT}${SAYS}${NOW}["'“]?\d(?:[-\s]?\d){3,11}\b${NOT_DIGITS_OF_A_CODE}`,
   "i",
 );
 /**
@@ -788,6 +815,25 @@ const ADMIN_SET = new RegExp(
 /** "Wifi: BlueSky99": the network's key, only with a digit or a symbol in it ("Wifi: slow" is a fact). */
 const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}/i;
 /**
+ * A network and its key said together ("Guest Wi-Fi: BlueSky / BlueSky99", "Home network: BlueSky, key BlueSky99"),
+ * the key with a digit or a symbol: safety-privacy-c4-2.
+ */
+const NETWORK_PAIR = /\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:(?:key|password|pass|pw|passphrase|psk)\s+)?["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}/i;
+/**
+ * A service a person signs in to and a value shaped like a password straight after its name ("Netflix: hunter2", "The
+ * user's Gmail: Tr0ub4dor&3", "The user's Netflix account: hunter2", "Netflix login hunter2"): safety-privacy-1. Never a
+ * site where an account is a public handle (GitHub, Instagram), nor an address, a plan or a size ("Gmail:
+ * priya2@gmail.com", "Netflix: 4K plan").
+ */
+const SERVICE_VALUE = new RegExp(String.raw`\b(?:netflix|spotify|hulu|disney\+?|amazon|prime\s+video|gmail|outlook|hotmail|yahoo|icloud|apple\s+id|paypal|venmo|ebay|steam|xbox|playstation|psn|nintendo|uber|airbnb|dropbox|facebook|online\s+banking|bank)`
+  + String.raw`(?:(?:\s+(?:account|login|sign-in))?\s*:\s*|\s+(?:login|sign-in)\s+)["'“]?([^\s"'”]{6,})`, "gi");
+function serviceValue(text: string): boolean {
+  for (const m of text.matchAll(SERVICE_VALUE)) if (secretShaped(m[1]!.replace(/[.,;!?)]+$/, ""))) return true;
+  return false;
+}
+/** A capitals setting for a password ("DB_PASS=Tr0ub4dor&3"), a value with a digit or a symbol, never a reference: memory-1. */
+const SHOUTED_PASS = /\b[A-Z][A-Z0-9]*_PASS\s*[:=]\s*["']?(?![$%{<])(?=[^\s"']{0,64}[0-9!@#$%^&*])[^\s"']{4,}/;
+/**
  * A secret's name, then another label and a value shaped like a password, as a mapping reads once its lines are run
  * together, the way memory keeps a fact ("credentials: admin: Wint3r!Sh0p", "Wi-Fi: home: BlueSky99"), never a
  * setting's label or a size ("Wi-Fi: SSID: Home5G", "Wi-Fi: speed: 300Mbps"): safety-privacy-r5-1.
@@ -878,7 +924,7 @@ const LOCK_WORDS = String.raw`door|front door|back door|side door|entry|entrance
 const PLACE_CODE = new RegExp(
   // "keycode" is one on its own.
   // "The access code 401 errors" and "the security code 403 error" name an HTTP status (memory-r6).
-  String.raw`\b(?:(?:${PLACES})(?:\s+(?:${LOCK_WORDS}))?\s+(?:code|combination|combo|pin)s?|key ?codes?|door ?codes?)\b${FOR_WHAT}(?:${SAYS}|\s+)["'“]?#?\d(?:[-\s]?\d){2,}(?![\d-]|\s*(?:errors?|status|responses?|forbidden|unauthori[sz]ed|http)\b)`,
+  String.raw`\b(?:(?:${PLACES})(?:\s+(?:${LOCK_WORDS}))?\s+(?:code|combination|combo|pin)s?|key ?codes?|door ?codes?)\b${FOR_WHAT}(?:${SAYS}${NOW}|${CHANGE_TO}|${LATER_BE}|\s+)["'“]?#?\d(?:[-\s]?\d){2,}(?![\d-]|\s*(?:errors?|status|responses?|forbidden|unauthori[sz]ed|http)\b)`,
   "i",
 );
 /** Codes that open nothing, whatever place they are for ("the area code for the building is 0113"): memory-r6. */
@@ -943,7 +989,8 @@ export function memoryRefusal(text: string): string | null {
   const pins = withoutPostcodes(said);
   if (TOLD_SECRET.test(said) || BARE_PASSWORD.test(said) || BARE_PIN.test(pins) || loginPass(said) || PLACE_CODE.test(said)
     || CODE_FOR_PLACE.test(said) || BARE_CVV.test(said) || USED_AS.test(said) || LOGIN_PAIR.test(said) || WIFI_KEY.test(said) || SEED_WORDS.test(said) || nestedSecret(said)
-    || PIN_NUMBER.test(pins) || DEVICE_CODE.test(said) || TOLD_TOKEN.test(said) || ADMIN_PAIR.test(said) || ADMIN_SET.test(said) || VALUE_FIRST.test(said)) {
+    || PIN_NUMBER.test(pins) || DEVICE_CODE.test(said) || TOLD_TOKEN.test(said) || ADMIN_PAIR.test(said) || ADMIN_SET.test(said) || VALUE_FIRST.test(said)
+    || TOLD_CHANGE.test(said) || CHANGED_MY.test(said) || NETWORK_PAIR.test(said) || serviceValue(said) || SHOUTED_PASS.test(said)) {
     return "it holds a password, PIN or code";
   }
   // Said as a login's one value, it may be the user name ("my login is jsmith42"): the model is told it may be the
