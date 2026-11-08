@@ -898,7 +898,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | What Ember made on its desk | `~/Ember/` |
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
-| When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts) | `settings.json` (`updates.checkedAt`) |
+| When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
 | Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`) |

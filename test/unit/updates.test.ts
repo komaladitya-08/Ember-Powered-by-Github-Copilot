@@ -124,6 +124,33 @@ describe("the update checker", () => {
     again[0].stop();
   });
 
+  it("still says a newer version it found is out after a restart within the day, with no request (integrations-r6)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-05T12:00:00Z"));
+    const fetch = vi.fn(async () => reply([release("v9.9.9")]));
+    const start = (current: string, told: string | null) => {
+      const c = new UpdateChecker({
+        fetch: fetch as never, current, allowed: () => true, told: () => told, announce: vi.fn(), changed: vi.fn(), log: { warn: vi.fn() },
+        lastChecked: () => "2026-11-05T10:00:00.000Z", checked: vi.fn(),
+      });
+      c.refresh();
+      return c;
+    };
+    const again = start("0.1.1", "9.9.9");
+    expect(again.status).toEqual({ phase: "available", latest: "9.9.9", checkedAt: "2026-11-05T10:00:00.000Z" });
+    expect(updateStatusText(again.status)).not.toBe(updateStatusText({ phase: "idle", latest: null, checkedAt: "2026-11-05T10:00:00.000Z" }));
+    expect(fetch).not.toHaveBeenCalled();
+    again.stop();
+    // Updated to it since: nothing newer is said until the next look.
+    const updated = start("9.9.9", "9.9.9");
+    expect(updated.status.phase).toBe("idle");
+    updated.stop();
+    // Never told of one: as before.
+    const none = start("0.1.1", null);
+    expect(none.status.phase).toBe("idle");
+    none.stop();
+  });
+
   it("counts a failed look, waits at most a day for a clock set back, and ignores a time it can't read (integrations-v3)", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-11-05T10:00:00Z"));

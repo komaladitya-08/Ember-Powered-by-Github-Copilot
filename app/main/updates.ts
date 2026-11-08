@@ -105,6 +105,10 @@ export class UpdateChecker {
     // Announcing changes the settings, which lands here mid-look: that look schedules the next one itself.
     else if (!this.timer && !this.looking) {
       this.checkedAt ??= this.lastLook();
+      // A newer version found before a restart (the one the user was told of) is still out: said again at once, with
+      // no request, until the next look or until Ember is that version (integrations-r6).
+      const told = this.o.told();
+      if (this.phase === "idle" && this.latest === null && told !== null && isNewer(told, this.o.current)) { this.latest = told; this.phase = "available"; }
       this.schedule(this.firstWait());
     }
     this.o.changed(this.status);
