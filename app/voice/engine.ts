@@ -82,8 +82,11 @@ type ListeningWindow = "wake" | "follow-up" | "manual" | "conversation";
 export type VoiceEvent =
   | { type: "wake"; keyword: string }
   | { type: "stop" }
-  /** `window`: which listening window this is (a follow-up's timeout shouldn't clear the answer it follows). */
-  | { type: "listening"; on: boolean; reason: ListeningWindow | "timeout" | "done" | "stop" | "rejected"; window: ListeningWindow }
+  /**
+   * `window`: which listening window this is (a follow-up's timeout shouldn't clear the answer it follows); `next`: a
+   * conversation opens as this window ends, at once (main goes straight on into it: voice-listening-c3-1).
+   */
+  | { type: "listening"; on: boolean; reason: ListeningWindow | "timeout" | "done" | "stop" | "rejected"; window: ListeningWindow; next?: "conversation" }
   | { type: "speech"; on: boolean }
   /** The user started talking over Ember, in a conversation (see checkCutIn): main hushes Ember at once, and what they say follows as an utterance. */
   | { type: "cut-in" }
@@ -1951,7 +1954,7 @@ export class VoiceEngine {
       return;
     }
     const opens = this.conversing && window !== "manual";
-    this.endListening("done");
+    this.endListening("done", opens);
     if (opens) this.openConversation();
   }
 
@@ -1988,7 +1991,8 @@ export class VoiceEngine {
     return parts.map(p => p.trim()).filter(Boolean).join(" ");
   }
 
-  private endListening(reason: "timeout" | "done" | "stop" | "rejected"): void {
+  /** `opens`: a conversation opens next, at once (the event says so). */
+  private endListening(reason: "timeout" | "done" | "stop" | "rejected", opens = false): void {
     const window = this.mode.kind === "listening" ? this.mode.reason : "wake";
     const shown = this.mode.kind !== "listening" || this.mode.announced !== false;
     // (A request held for the rest of it goes with the window: never sent after a stop or a cancel.)
@@ -1999,7 +2003,7 @@ export class VoiceEngine {
     this.tail = [];
     this.tailFrom = 0;
     this.resetListening();
-    if (shown) this.emit({ type: "listening", on: false, reason, window });
+    if (shown) this.emit({ type: "listening", on: false, reason, window, ...(opens ? { next: "conversation" as const } : {}) });
   }
 }
 

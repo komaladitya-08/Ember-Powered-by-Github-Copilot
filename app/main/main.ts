@@ -1498,7 +1498,7 @@ function start(): void {
     if (!consented()) return blocked("Finish Ember's setup first.");
     if (screenLock?.locked) return blocked("The screen is locked.");
     if (s.voice.muted) return blocked("Unmute the microphone first.");
-    if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
+    if (manualCall && source !== manualCall.source) return { ...blocked("Ember is already listening."), reason: "listening" };
     // A Listen once of this control's that the question ended says so while it is up (companion-r2-2).
     if (confirmer?.waiting && listenCutFor === source) return blocked(LISTEN_CUT_BY_QUESTION);
     // A question holds it back, but not this control's own Listen once under way: its Cancel listening stays (companion-r1).

@@ -320,8 +320,9 @@ describe("VoiceService", () => {
     // Main asks the voice only for the control whose listen it is, before the question holds it back.
     const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
     const at = (t: string) => main.indexOf(t);
-    expect(at(`if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");`)).toBeGreaterThan(0);
-    expect(at(`if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");`)).toBeLessThan(at("if (questionHoldsListen("));
+    const other = `if (manualCall && source !== manualCall.source) return { ...blocked("Ember is already listening."), reason: "listening" };`;
+    expect(at(other)).toBeGreaterThan(0);
+    expect(at(other)).toBeLessThan(at("if (questionHoldsListen("));
   });
 
   it("says a question ended the request it was hearing, on that control only, while the question is up (companion-r2-2)", () => {
@@ -474,6 +475,40 @@ describe("VoiceService", () => {
     if (end === "cancel") v.cancelListenOnce();
     expect(states.map(s => s.s)).toEqual(["starting", "active", "off"]);
     expect(v.listenOnceStatus.phase).toBe("ready");
+  });
+
+  it("goes straight from a wake's window into its conversation, and says Listen once is blocked by it as a line screen readers aren't told (voice-listening-c3-1)", async () => {
+    // Both lines went "Listening for “Ember”" (and "Stops Ember's answer…") and back in the same millisecond as the
+    // conversation opened, and a screen reader saying "Ember is already listening." was heard as the next request.
+    const lines: string[] = [];
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    const generation = (posted(proc, "init")[0] as { generation?: number }).generation;
+    const send = (e: VoiceEvent) => { proc.emit("message", { ...e, generation }); lines.push(v.listenOnceStatus.detail); };
+    states.length = 0;
+    send({ type: "wake", keyword: "hey_ember" });
+    send({ type: "listening", on: true, reason: "wake", window: "wake" });
+    expect(v.listenOnceStatus).toEqual({ phase: "blocked", detail: "Ember is already listening.", reason: "listening" });
+    send({ type: "utterance", text: "Turn on night light.", ms: 0, window: "wake" });
+    send({ type: "listening", on: false, reason: "done", window: "wake", next: "conversation" });
+    send({ type: "listening", on: true, reason: "conversation", window: "conversation" });
+    expect(states.map(s => s.s)).not.toContain("waiting");
+    expect(new Set(lines.slice(1))).toEqual(new Set(["Ember is already listening."]));
+    // The conversation over: listening for “Ember” again, and Listen once can be used.
+    send({ type: "listening", on: false, reason: "timeout", window: "conversation" });
+    expect(states.at(-1)!.s).toBe("waiting");
+    expect(v.listenOnceStatus.phase).toBe("ready");
+    // A window that opens no conversation (conversations off) ends as before.
+    send({ type: "wake", keyword: "hey_ember" });
+    send({ type: "listening", on: true, reason: "wake", window: "wake" });
+    send({ type: "listening", on: false, reason: "done", window: "wake" });
+    expect(states.at(-1)!.s).toBe("waiting");
+    // Main marks the other control's Listen once under way the same way.
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`if (manualCall && source !== manualCall.source) return { ...blocked("Ember is already listening."), reason: "listening" };`);
   });
 
   it("tells the voice process what a screen reader will say as Listen once opens, only while one runs (voice-listening-c2-1)", async () => {

@@ -450,7 +450,9 @@ export class VoiceService {
     if (!this.wanted) return { phase: "ready", detail: hushFirst || this.manualDetail || "Opens the microphone for one request." };
     if (this.state === "error") return { ...blocked("Check the microphone and voice status in Settings."), reason: "voice-error" };
     if (!this.capturing || !this.readyAt || !this.proc) return blocked("The microphone or speech recogniser is getting ready.");
-    if (this.state === "active") return blocked("Ember is already listening.");
+    // (Not a line screen readers are told: it changes as a wake's window opens, and a screen reader saying it then was
+    // heard in the request, or as one in the conversation: voice-listening-c3-1.)
+    if (this.state === "active") return { ...blocked("Ember is already listening."), reason: "listening" };
     return { phase: "ready", detail: hushFirst || this.manualDetail };
   }
 
@@ -1548,7 +1550,9 @@ export class VoiceService {
         else this.o.onListenOnce?.();
         return;
       }
-      if (m.type === "listening") this.setState(m.on ? "active" : "waiting");
+      // A window whose request opens a conversation goes straight on into it: "Listening for “Ember”" for a moment between
+      // them (Listen once's line with it) was said by a screen reader into the conversation, as a request (voice-listening-c3-1).
+      if (m.type === "listening" && (m.on || m.next !== "conversation")) this.setState(m.on ? "active" : "waiting");
       if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason, ...(m.score !== undefined ? { score: m.score } : {}) });
       this.o.log.debug("voice.event", { type: m.type });
       this.o.onEvent(event, m.type === "utterance" ? { utterance: this.utterances } : undefined);

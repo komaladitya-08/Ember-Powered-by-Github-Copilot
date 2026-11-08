@@ -5,13 +5,20 @@ const listening = (s: ListenOnceStatus | undefined): boolean =>
 /** Main says listening can't start now (its detail says why): the control is unavailable, never a press that does nothing. */
 const blocked = (s: ListenOnceStatus | undefined): boolean => s?.phase === "blocked";
 
-/** The same one-request control in Ask and Home. Main owns the session and every permission check. */
+/**
+ * The same one-request control in Ask and Home. Main owns the session and every permission check. `live`: the status
+ * line screen readers are told the detail's changes through, all but one: that Ember is already listening (a wake's or
+ * a conversation's window, or the other control's Listen once) changes as the microphone opens for a request, and a
+ * screen reader saying it then was heard in the request, or as one of its own in a conversation. Kept from before, the
+ * line isn't said again when it comes back as the window closes either (voice-listening-c3-1).
+ */
 export function mountListenOnce(
   button: HTMLButtonElement,
   detail: HTMLElement,
   request: (on: boolean) => Promise<ListenOnceStatus>,
   ready: string,
   fit?: () => void,
+  live?: HTMLElement,
 ): (s: ListenOnceStatus | undefined) => void {
   let status: ListenOnceStatus | undefined;
   let revision = 0;
@@ -28,6 +35,8 @@ export function mountListenOnce(
       ? pending.on ? "Checking the microphone…" : "Cancelling…"
       : error || (status ? status.detail || ready : "Checking the microphone…");
     if (detail.textContent !== text) detail.textContent = text;
+    const quiet = pending?.revision !== revision && !error && status?.phase === "blocked" && status.reason === "listening";
+    if (live && !quiet && live.textContent !== text) live.textContent = text;
     fit?.();
   };
   const update = (next: ListenOnceStatus | undefined) => {

@@ -68,6 +68,31 @@ describe("Listen once controls", () => {
     expect(ui.button.setAttribute).toHaveBeenLastCalledWith("aria-disabled", "false");
   });
 
+  it("tells screen readers each new line but never that Ember is already listening, nor the line it comes back to (voice-listening-c3-1)", async () => {
+    // The line changed as a wake's window opened ("Ember is already listening.") and back as it closed: a screen reader
+    // said it over the microphone, into the request, or into the conversation as a request of its own.
+    const said: string[] = [];
+    const live = { set textContent(t: string) { said.push(t); }, get textContent() { return said.at(-1) ?? ""; } };
+    const button = Object.assign(new EventTarget(), { textContent: "", setAttribute: vi.fn() });
+    const detail = { textContent: "" };
+    const update = mountListenOnce(button as unknown as HTMLButtonElement, detail as HTMLElement, async () => ({ phase: "listening", detail: "Listening for one request…" }), "Speak one request.", undefined, live as unknown as HTMLElement);
+    update({ phase: "ready", detail: "" });
+    expect(said.at(-1)).toBe("Speak one request.");
+    const before = said.length;
+    for (const s of [{ phase: "blocked", detail: "Ember is already listening.", reason: "listening" }, { phase: "ready", detail: "" }, { phase: "blocked", detail: "Ember is already listening.", reason: "listening" }, { phase: "ready", detail: "" }] as const) {
+      update(s);
+      // Shown all the same, and the control is unavailable while it says so.
+      expect(detail.textContent).toBe(s.detail || "Speak one request.");
+    }
+    expect(said.slice(before)).toEqual([]);
+    // Anything else is said as it comes, a press's own lines with it.
+    update({ phase: "blocked", detail: "The microphone is muted.", reason: undefined });
+    update({ phase: "ready", detail: "" });
+    button.dispatchEvent(new Event("click"));
+    await Promise.resolve(); await Promise.resolve();
+    expect(said.slice(before)).toEqual(["The microphone is muted.", "Speak one request.", "Checking the microphone…", "Listening for one request…"]);
+  });
+
   it("adds room for the control and a wrapped explanation alongside the existing rows", () => {
     expect(boxRows(1, false, false, 0, 1)).toBe(2);
     expect(boxRows(4, true, true, 1, 2)).toBe(9);

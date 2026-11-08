@@ -143,9 +143,11 @@ function reportShape(): void {
 }
 const listenButton = document.getElementById("listen-once") as HTMLButtonElement;
 const listenDetail = document.getElementById("listen-once-detail")!;
+/** What screen readers are told of it (never that Ember is already listening: mountListenOnce, voice-listening-c3-1). */
+const listenLive = document.getElementById("listen-once-live")!;
 const voiceSetup = document.getElementById("voice-setup") as HTMLButtonElement;
 voiceSetup.addEventListener("click", () => window.emberAsk.voiceSettings?.());
-const drawListenOnce = mountListenOnce(listenButton, listenDetail, on => window.emberAsk.listenOnce(on), "Say one request after you press Listen once.", fit);
+const drawListenOnce = mountListenOnce(listenButton, listenDetail, on => window.emberAsk.listenOnce(on), "Say one request after you press Listen once.", fit, listenLive);
 /**
  * Listen once as main says it stands. A block nothing here can lift isn't a control that can't work (companion-3):
  * speech models not downloaded, the way to Settings' Download instead; voice off by the organisation, no row at all.
@@ -155,7 +157,7 @@ function showListenOnce(s: ListenOnceStatus | undefined): void {
   listenRow.hidden = !listenOnceShown(s);
   // The one button's capsule is as wide as it (companion-r2: a full-width strip with nothing after it).
   listenRow.classList.toggle("setup", setup);
-  listenButton.hidden = listenDetail.hidden = setup;
+  listenButton.hidden = listenDetail.hidden = listenLive.hidden = setup;
   voiceSetup.hidden = !setup;
   drawListenOnce(s);
 }

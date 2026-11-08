@@ -296,6 +296,30 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("shows that Ember is already listening without telling screen readers, who still hear Listen once's other lines (voice-listening-c3-1)", async () => {
+    // Said as a wake's window opened, a screen reader's "Ember is already listening." was heard in the request, or as
+    // one of its own in the conversation after it.
+    const page = await pageAt();
+    try {
+      const listen = (s: ListenOnceStatus) => page.evaluate(l => (window as unknown as TestWindow).askHarness.listen(l), s);
+      const live = page.locator("#listen-once-live"), detail = page.locator("#listen-once-detail");
+      expect(await live.textContent()).toBe("Say one request after you press Listen once.");
+      // The line under the control is its description, and the one live region is apart from it.
+      expect(await page.locator("#listen-once").getAttribute("aria-describedby")).toBe("listen-once-detail");
+      expect(await detail.evaluate(e => [e.getAttribute("role"), e.getAttribute("aria-live")])).toEqual([null, null]);
+      expect(await live.evaluate(e => [e.getAttribute("role"), e.getAttribute("aria-atomic")])).toEqual(["status", "true"]);
+      for (let i = 0; i < 2; i++) {
+        await listen({ phase: "blocked", detail: "Ember is already listening.", reason: "listening" });
+        expect(await detail.textContent()).toBe("Ember is already listening.");
+        expect(await page.locator("#listen-once").getAttribute("aria-disabled")).toBe("true");
+        await listen({ phase: "ready", detail: "" });
+      }
+      expect(await live.textContent()).toBe("Say one request after you press Listen once.");
+      await listen({ phase: "blocked", detail: "The microphone is muted. Unmute it to speak one request." });
+      expect(await live.textContent()).toBe("The microphone is muted. Unmute it to speak one request.");
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("shows every suggestion and comfortable controls at narrow widths, every text size and forced colours", async () => {
     const page = await pageAt();
     try {
