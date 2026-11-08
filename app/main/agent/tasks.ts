@@ -153,6 +153,17 @@ export interface StartOptions {
   partWay?: boolean;
 }
 
+/** What a task that may be tried again was asked with (TaskManager.askedWith): the user's words, never its goal. */
+export interface RetriedWords {
+  userWords: string;
+  commandWords?: string;
+  typedOnly?: boolean;
+  /** What they agreed to for it (TaskOpts.agreed). */
+  agreed?: Agreement[];
+  /** It changed something before it ended, so a new try is told an earlier one stopped part-way (TaskSpec.partWay). */
+  partWay?: boolean;
+}
+
 /**
  * A task the user may try again from its card: one that did work (not a guide) and failed, or whose question went
  * unanswered while they were away (tasks-approvals-4: a timeout is no refusal, and Try again asks every question again).
@@ -361,10 +372,15 @@ export class TaskManager {
     // An earlier try that changed something (typed, clicked, ran a command) may have done part of it: the new worker is
     // told so (TaskSpec.partWay: its first prompt only), never in the user's words, so every question is still asked,
     // and its card's title stays the request's (tasks-approvals-3).
-    const did = this.logs.get(id)?.log.get();
-    const changed = !!did && Object.entries(did.counts).some(([g, n]) => !LOOKS_ONLY.has(g as StepGroup) && (n ?? 0) > 0);
+    const changed = this.changedSomething(id);
     this.dismiss(id);
     return this.start(spec.goal, { ...spec.opts, ...(changed ? { partWay: true } : {}) });
+  }
+
+  /** Whether task `id`'s steps changed anything (typed, clicked, ran a command…), not only looked: Ember's own counts. */
+  private changedSomething(id: string): boolean {
+    const did = this.logs.get(id)?.log.get();
+    return !!did && Object.entries(did.counts).some(([g, n]) => !LOOKS_ONLY.has(g as StepGroup) && (n ?? 0) > 0);
   }
 
   list(): Task[] {
@@ -380,16 +396,20 @@ export class TaskManager {
   }
 
   /**
-   * The user's own words a task that may be tried again was asked with (its userWords, and those its commands hear):
-   * what a spoken "try again" carries, as Try again on its card does (tasks-approvals-1). Never its goal, which the
-   * model wrote. Null for a task that can't be tried again.
+   * The user's own words a task that may be tried again was asked with (its userWords, and those its commands hear),
+   * what they agreed to for it, and whether it did part of the work (`partWay`, as retry() tells the new worker): what
+   * a spoken or typed "try again" carries, as Try again on its card does (tasks-approvals-1, -r2, -c1-3). Never its
+   * goal, which the model wrote. Null for a task that can't be tried again.
    */
-  askedWith(id: string): { userWords: string; commandWords?: string; typedOnly?: boolean } | null {
+  askedWith(id: string): RetriedWords | null {
     const t = this.tasks.get(id);
     const spec = this.specs.get(id);
     if (!t || !spec || !retryable(t) || spec.opts.userWords === undefined) return null;
     const o = spec.opts;
-    return { userWords: o.userWords!, ...(o.commandWords !== undefined ? { commandWords: o.commandWords } : {}), ...(o.typedOnly ? { typedOnly: true } : {}) };
+    return {
+      userWords: o.userWords!, ...(o.commandWords !== undefined ? { commandWords: o.commandWords } : {}), ...(o.typedOnly ? { typedOnly: true } : {}),
+      ...(o.agreed?.length ? { agreed: o.agreed.map(a => ({ ...a })) } : {}), ...(this.changedSomething(id) ? { partWay: true } : {}),
+    };
   }
 
   /**

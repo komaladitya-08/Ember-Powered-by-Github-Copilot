@@ -193,8 +193,11 @@ export function catchUpReply(tasks: readonly Task[], now: number): string {
   return `${head} ${lines.join(" ")}${more ? ` And ${more} more.` : ""}${still}`;
 }
 
-/** "Try again", "one more time", "have another go", with "please" or the name about them: nothing more. */
-const RETRY_RE = new RegExp(String.raw`^${LEAD}(?:please[,\s]+)?(?:(?:try|do) (?:it |that )?again|retry(?: it| that)?|again|one more time|(?:have|give it) another (?:go|try))(?:[,\s]+please)?${TAIL}$`, "i");
+/**
+ * "Try again", "one more time", "have another go", with "please" or the name about them, asked ("can you try again?")
+ * or agreed to ("yes, try again"; tasks-approvals-c1-3): nothing more.
+ */
+const RETRY_RE = new RegExp(String.raw`^${LEAD}(?:(?:yes|yeah|yep|sure|alright|all right)[,\s]+)?(?:please[,\s]+)?(?:(?:can|could|would|will) you[,\s]+(?:please[,\s]+)?)?(?:(?:try|do) (?:it |that )?(?:again|once more)|retry(?: it| that)?|again|once more|one more time|(?:have|give it) another (?:go|try))(?:[,\s]+please)?${TAIL}$`, "i");
 
 /**
  * Whether `text` only asks Ember to try again (tasks-approvals-1): after a task that didn't finish, the user means that
