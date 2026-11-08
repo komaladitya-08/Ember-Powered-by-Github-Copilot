@@ -53,7 +53,7 @@ export type ActivityEvent =
   /** Something went wrong, in Ember's words. */
   | { type: "problem"; words: string }
   /** The task ended. */
-  | { type: "end"; status: "done" | "failed" | "stopped" };
+  | { type: "end"; status: "done" | "failed" | "stopped"; unanswered?: boolean };
 
 /** Longest words kept from a note or a reason (the card shows a line of it). */
 const NOTE_MAX = 200;
@@ -240,7 +240,8 @@ export class ActivityLog {
         a.asking = false;
         a.retry = 0;
         a.slow = false;
-        const words = STATUS_WORDS[e.status];
+        // A question that went unanswered stopped it: the user stopped nothing (tasks-approvals-r1).
+        const words = e.status === "stopped" && e.unanswered ? STATUS_WORDS.unanswered : STATUS_WORDS[e.status];
         this.push({ id: this.id("end"), kind: "result", at, state: e.status === "done" ? "done" : e.status === "failed" ? "failed" : "stopped", words });
         a.live = words;
         a.endedAt = now;

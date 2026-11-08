@@ -111,6 +111,13 @@ export const EXPIRED_MS = 10_000;
 /** Under a timed-out question's thought: how to review it (the bubble has no button once the question has gone). */
 export const EXPIRED_STEP = "To review it, say or type the request again.";
 export const EXPIRED_THOUGHT = "Time ran out, so nothing was approved and I haven't done it. Ask me again if you'd like to review it.";
+/**
+ * The same for a task's question: the task ends with Try again on its card (and in Home), and a "try again" said or
+ * typed then asks for it again in the user's words, so the note points there rather than at the whole request
+ * (tasks-approvals-r1).
+ */
+export const EXPIRED_TASK_STEP = "To review it, choose Try again on its card, or say or type “try again”.";
+export const EXPIRED_TASK_THOUGHT = "Time ran out, so nothing was approved and I haven't done it.";
 
 /**
  * What main does once a question's answer has been up its moment (ConfirmerTiming.afterAnswer): nothing when something
@@ -570,7 +577,7 @@ export class Confirmer {
       this.current = null;
       // "Not now" (or no answer) leaves Ember idle, not still working.
       const yes = !!answer && answer !== "deny";
-      const shown: BubbleState = { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : expired ? EXPIRED_THOUGHT : "Okay, I won't.", step: expired && !yes ? EXPIRED_STEP : null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) };
+      const shown: BubbleState = { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : expired ? (p.q.task ? EXPIRED_TASK_THOUGHT : EXPIRED_THOUGHT) : "Okay, I won't.", step: expired && !yes ? (p.q.task ? EXPIRED_TASK_STEP : EXPIRED_STEP) : null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) };
       this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: shown });
       this.answerShown(shown, expired && !yes);
     }

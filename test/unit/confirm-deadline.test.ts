@@ -5,6 +5,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
+import type { EmberState } from "../../app/shared/overlay";
 
 const Q: Question = { title: "May I?", prompt: "Click “Send”?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: "t1", risky: true };
 
@@ -96,5 +97,21 @@ describe("a question that runs out of time (tasks-approvals-4)", () => {
       await vi.advanceTimersByTimeAsync(1_100);
       expect(settled).toHaveLength(2);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("what a timed-out question says to do next (tasks-approvals-r1)", () => {
+  it("points a task's question at Try again on its card, and keeps “say or type the request again” for one with no task", async () => {
+    const { EXPIRED_STEP, EXPIRED_TASK_STEP, EXPIRED_THOUGHT, EXPIRED_TASK_THOUGHT } = await import("../../app/main/agent/confirm");
+    const shown: Partial<EmberState>[] = [];
+    const c = new Confirmer(s => shown.push(s), { armMs: 0, gapMs: 0, timeoutMs: 20 });
+    await c.ask(Q);
+    expect(shown.at(-1)!.bubble).toMatchObject({ thought: EXPIRED_TASK_THOUGHT, step: EXPIRED_TASK_STEP });
+    expect(EXPIRED_TASK_STEP).toBe("To review it, choose Try again on its card, or say or type “try again”.");
+    expect(EXPIRED_TASK_THOUGHT).toBe("Time ran out, so nothing was approved and I haven't done it.");
+    const { task: _task, ...untasked } = Q;
+    await c.ask(untasked);
+    expect(shown.at(-1)!.bubble).toMatchObject({ thought: EXPIRED_THOUGHT, step: EXPIRED_STEP });
+    expect(EXPIRED_STEP).toBe("To review it, say or type the request again.");
   });
 });

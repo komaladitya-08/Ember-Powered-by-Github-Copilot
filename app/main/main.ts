@@ -1377,7 +1377,8 @@ function start(): void {
     // A failure card stays about a minute (longer than others, so it can be read; the settings window's Conversation
     // keeps the result) and its Close needs a click: Stop everything clears it at once too (the keyboard's way, and the
     // screen reader's).
-    for (const t of agent?.tasks?.list() ?? []) if (t.status === "failed") agent?.tasks?.dismiss(t.id);
+    // So does the card of a task whose question went unanswered, kept as long (tasks-approvals-r1).
+    agent?.tasks?.dismissFailures();
     const bubble = { visible: true, mood: "idle" as const, title: "Stopped", thought: "Okay, I've stopped everything.", step: null, streaming: false, actions: [] };
     statusBy.listen = statusBy.mic = null;
     setState({ emotion: "neutral", talking: false, status: statusBy.borrow, bubble, suggest: null });

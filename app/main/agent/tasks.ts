@@ -328,6 +328,7 @@ export class TaskManager {
         ...(ended && t.result?.summary ? { summary: t.result.summary } : {}),
         ...(t.view ? { view: t.view } : {}),
         controls: { stop: this.canStop(id), retry: this.canRetry(id), window: !this.closed && this.tasks.has(id) && (this.d.taskWindow?.(t, false) ?? false) },
+        ...(t.status === "cancelled" && t.endedBy === "expired" ? { unanswered: true as const } : {}),
         activity,
       };
     });
@@ -368,6 +369,14 @@ export class TaskManager {
 
   list(): Task[] {
     return [...this.tasks.values()];
+  }
+
+  /**
+   * Stop everything's sweep: the cards kept as long as a failure's (a task that didn't finish, or whose question went
+   * unanswered) go at once, the keyboard's and the screen reader's way to clear them (tasks-approvals-r1).
+   */
+  dismissFailures(): void {
+    for (const t of [...this.tasks.values()]) if (t.status === "failed" || (t.status === "cancelled" && t.endedBy === "expired")) this.dismiss(t.id);
   }
 
   /**
@@ -620,7 +629,8 @@ export class TaskManager {
     const did = result.limit ? this.logs.get(task.id)?.log.get() : undefined;
     const steps = did ? summarizeActivity(did.counts, did.failedSteps) : null;
     if (steps) result = { ...result, summary: `${result.summary} Before I stopped: ${steps.charAt(0).toLowerCase()}${steps.slice(1)}.` };
-    this.logs.get(task.id)?.log.add({ type: "end", status: status === "done" ? "done" : status === "failed" ? "failed" : "stopped" }, Date.now());
+    const unanswered = status === "cancelled" && endedBy === "expired";
+    this.logs.get(task.id)?.log.add({ type: "end", status: status === "done" ? "done" : status === "failed" ? "failed" : "stopped", ...(unanswered ? { unanswered } : {}) }, Date.now());
     task.status = status;
     if (status === "cancelled") task.endedBy = endedBy ?? "stop";
     // Only a failure (or a question that went unanswered) can be tried again: what it was asked with goes for the rest.
@@ -693,6 +703,7 @@ export class TaskManager {
         ...(t.plan?.length ? { plan: t.status === "done" ? t.plan.map(p => ({ ...p, state: "done" as const })) : t.plan } : {}),
         ...(t.view ? { viewRev: t.view.rev } : {}),
         ...(log ? { activity: log.card() } : {}),
+        ...(t.status === "cancelled" && t.endedBy === "expired" ? { unanswered: true as const } : {}),
       };
     });
     this.d.setCards(cards);

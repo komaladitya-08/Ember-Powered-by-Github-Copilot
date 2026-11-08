@@ -349,8 +349,10 @@ shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always 
 for them. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
 "Waiting for you" while it asks, "Starts when another task ends" while two others are at work), how long it has worked and which step of its plan it is on, and shows what it did
 under **Details**; a failed card goes on its own after about a minute when not being read (Home's Conversation keeps
-what went wrong). So does the card of a task whose question ran out of time while you were away: it says so, offers
-**Try again**, and a notification says Ember couldn't finish it; "What did I miss?" says the question wasn't answered
+what went wrong). So does the card of a task whose question ran out of time while you were away: it says so ("No
+answer in time", on the card and in Home's Task activity, where its **Try again** is too), offers **Try again**, the
+bubble's note points to it, and a notification says Ember couldn't finish it; **Stop everything** clears both kinds of
+card at once; "What did I miss?" says the question wasn't answered
 in time, never "you stopped it". More time multiplies the lifetime by ten; expanded Details, hover or keyboard focus pauses expiry,
 with at least five seconds to move on after the last reader leaves. Its **Try again** starts the latest accepted request again, retaining any changed instructions,
 restrictions and the original computer and window, and asking every question again. Saying or typing “try again” right

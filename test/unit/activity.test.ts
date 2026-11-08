@@ -105,7 +105,7 @@ describe("a task's live line", () => {
     l.add({ type: "end", status: "failed" }, T0 + 5000);
     expect(l.card()).toMatchObject({ live: "Didn't finish", endedAt: T0 + 5000 });
     expect(l.add({ type: "turn" }, T0 + 6000)).toBe(false);
-    expect(STATUS_WORDS).toEqual({ running: "Working", waiting: "Waiting for you", queued: "Waiting its turn", retrying: "Retrying", done: "Done", failed: "Didn't finish", stopped: "Stopped" });
+    expect(STATUS_WORDS).toEqual({ running: "Working", waiting: "Waiting for you", queued: "Waiting its turn", retrying: "Retrying", done: "Done", failed: "Didn't finish", stopped: "Stopped", unanswered: "No answer in time" });
   });
 });
 

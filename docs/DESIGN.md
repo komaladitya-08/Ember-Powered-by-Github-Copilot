@@ -217,7 +217,8 @@ Ember is two places at once, each for one kind of work.
     **Close**. Never after "Not now", a Stop or the mouse taken back: those were the user's own choice.
 
   The words come from `app/shared/activity.ts` (one table of state words: Working, Waiting for you, Waiting its turn,
-  Retrying, Done, Didn't finish, Stopped) and `app/main/agent/activity.ts`, which builds a task's activity from its
+  Retrying, Done, Didn't finish, Stopped, and No answer in time for a task whose question ran out of time, which the
+  user didn't stop) and `app/main/agent/activity.ts`, which builds a task's activity from its
   worker's tool calls and Ember's own signals: never the model's arguments, its reasoning or screen text. A running
   task's symbol is a ring round a lit dot, which never reads as a spinner. A card with a view or a failure stays a
   minute, and the stack widens from 270 to 320px to hold it; both widths grow with the text size. Without a
@@ -324,7 +325,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   44 px with the time after the task began in tabular figures, a state symbol and Ember's words, steps of one kind
   folded behind a chevron, a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged
   **Note** in the secondary label. Then how it ended: the worker's summary in the secondary label and its view, drawn
-  by the cards' catalog code. A finished task folds to its head. Home offers exact-task Stop, retained safe retry, verified Show app and
+  by the cards' catalog code. A finished task folds to its head. Home offers exact-task Stop, retained safe retry (Try again
+  wherever its card has it: a failure, and a task whose question went unanswered), verified Show app and
   focusable View result. Capability hints never authorise an action: main revalidates the exact task and native window
   identity, while stale/remote/desk/locked/borrowing cases cannot raise another window. While a task waits for an answer, a callout in its
   group says where it is asked (the bubble, with the keys that answer it; the command window; or a consent card's window); Open approval opens the exact live question in a focusable card or its existing panel; Home never answers from

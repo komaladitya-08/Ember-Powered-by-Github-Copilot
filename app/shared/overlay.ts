@@ -145,6 +145,8 @@ export interface TaskCard {
   viewRev?: number;
   /** What it is doing and has done, in Ember's words (app/shared/activity.ts), from the moment it starts to run. */
   activity?: CardActivity;
+  /** A stopped task whose question went unanswered: its state's word says so (TaskEntry.unanswered; tasks-approvals-r1). */
+  unanswered?: true;
 }
 
 /** A running task's card detail from the moment its Stop is pressed until it has wound down. */
