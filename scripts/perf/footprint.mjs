@@ -7,8 +7,9 @@
 // --sound feeds Chromium's fake microphone tone instead of silence (speech detection never rests). --max-cpu (% of one
 // core) and --max-pss (MB) are the budget: past either, it says so and exits 1 (docs/DEVELOPING.md records the figures).
 // Listening runs on WebAssembly in a development build; --native runs it on sherpa-onnx's C API, as the Linux packages
-// do (scripts/voice/fetch-capi.mjs checks it by SHA-256, fetching it first if it isn't there), and fails unless Ember
-// used it. Either way it says which listening backend Ember ran (main's voice.backend), so like is compared with like.
+// do (scripts/voice/fetch-capi.mjs checks it by SHA-256, fetching it first if it isn't there), and fails unless the
+// voice process ran on it, every model included. Either way it says which backend the voice process listened on
+// (voice.ready in Ember's log, not main's choice in voice.backend: listening-backend.mjs), so like is compared with like.
 // The sample is of Ember awake at rest (it dozes after 3 minutes with the pointer still). Needs `npm run build`
 // and the speech models from `node scripts/voice/prepare.mjs`. Not counted: the Copilot runtime (no sign-in) and the
 // speech process for Ember's voice (it starts with the first reply). On Xvfb there is no GPU, so the GPU process
@@ -20,6 +21,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { listeningSeen, listeningWords, notNative } from "./listening-backend.mjs";
 
 if (process.platform !== "linux") { console.error("footprint.mjs reads /proc: Linux only."); process.exit(2); }
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -88,18 +90,11 @@ delete env.EMBER_VOICE_BACKEND;
 if (capi) env.EMBER_SHERPA_CAPI = capi;
 const app = spawn(electron, flags, { env, stdio: "ignore" });
 
-/** The listening backend Ember ran, from its log: main's voice.backend ("native" or "wasm"), and "wasm" again after a native one failed. */
+/** What the voice process listened on, from Ember's log (listening-backend.mjs). */
 function backendSeen() {
-  let seen = null;
-  let text;
-  try { text = fs.readFileSync(path.join(userData, "logs", "ember.log"), "utf8"); } catch { return null; } // no log yet: not known
-  for (const line of text.split("\n")) {
-    let m;
-    try { m = JSON.parse(line); } catch { continue; }
-    if (m?.msg === "voice.backend" && typeof m.backend === "string") seen = m.backend;
-    else if (m?.msg === "voice.native_failed") seen = "wasm";
-  }
-  return seen;
+  let text = "";
+  try { text = fs.readFileSync(path.join(userData, "logs", "ember.log"), "utf8"); } catch { /* no log yet: not known */ }
+  return listeningSeen(text);
 }
 
 /** Every process in the app's tree. */
@@ -167,19 +162,21 @@ try {
     return { pid: p, kind: kind(p), pssMb: Math.round(pssKb(p) / 102.4) / 10, cpu: a === null || b === null ? 0 : Math.round((b - a) / hz / sample * 1000) / 10 };
   }).filter(r => r.pssMb > 0).sort((x, y) => y.pssMb - x.pssMb);
   const total = { pssMb: Math.round(rows.reduce((n, r) => n + r.pssMb, 0)), cpu: Math.round(rows.reduce((n, r) => n + r.cpu, 0) * 10) / 10 };
-  const backend = backendSeen();
-  const listening = backend === "native" ? "sherpa-onnx's C API" : backend === "wasm" ? "WebAssembly" : "an unknown backend";
+  const seen = backendSeen(), backend = seen.backend;
+  const listening = listeningWords(seen);
   console.log(`Ember at rest (${sound ? "a tone" : "silence"}, listening on ${listening}), over ${sample} s after ${settle} s; CPU in % of one core\n`);
   for (const r of rows) console.log(`${String(r.pssMb).padStart(7)} MB ${String(r.cpu).padStart(5)} %  ${r.kind}`);
   console.log(`${String(total.pssMb).padStart(7)} MB ${String(total.cpu).padStart(5)} %  total\n\nPages (main thread):`);
   for (const p of perPage) console.log(`${String(p.cpu).padStart(5)} %  ${p.page} (${p.title})`);
-  console.log("\n" + JSON.stringify({ os: `${os.type()} ${os.release()}`, cpus: os.cpus().length, cpu: os.cpus()[0]?.model, sound, backend, settle, sample, total, rows, pages: perPage }));
+  console.log("\n" + JSON.stringify({ os: `${os.type()} ${os.release()}`, cpus: os.cpus().length, cpu: os.cpus()[0]?.model, sound, backend, backendFrom: seen.from, ...(seen.onWasm.length ? { onWasm: seen.onWasm } : {}), settle, sample, total, rows, pages: perPage }));
   const over = [...(total.cpu > maxCpu ? [`${total.cpu} % of a core, over ${maxCpu} %`] : []), ...(total.pssMb > maxPss ? [`${total.pssMb} MB, over ${maxPss} MB`] : [])];
   if (over.length) { console.error(`\nOver budget: ${over.join("; ")}.`); process.exitCode = 1; }
   // A budget meant to count the overlay never passes without it (an overlay that fell back to the handle card).
   if (compositor && !perPage.some(p => p.page === "overlay")) { console.error("\nThe overlay didn't start, so it wasn't measured: is xcompmgr running on this display?"); process.exitCode = 1; }
-  // Nor one meant to measure what the packages run, on WebAssembly (a C API that didn't load, or a processor it can't use).
-  if (native && backend !== "native") { console.error(`\nListening ran on ${listening}, not sherpa-onnx's C API, so the native backend wasn't measured: see voice.backend in the log.`); process.exitCode = 1; }
+  // Nor one meant to measure what the packages run, on WebAssembly (a C API that didn't load, a processor it can't use,
+  // a model it couldn't make), or on main's choice alone (reliability-performance-v6-1).
+  const short = native ? notNative(seen) : null;
+  if (short) { console.error(`\nThe native backend wasn't measured: ${short}.`); process.exitCode = 1; }
 } finally {
   app.kill("SIGTERM");
   compositor?.kill("SIGTERM");

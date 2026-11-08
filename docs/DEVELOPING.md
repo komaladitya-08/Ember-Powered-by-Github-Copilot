@@ -917,8 +917,12 @@ regression alongside the Electron smoke.
   decisions (docs/ASSISTANT.md).
 - A development build listens on WebAssembly. `--native` listens on sherpa-onnx's C API, as the Linux packages do: it
   runs `scripts/voice/fetch-capi.mjs` (which checks the libraries by SHA-256, fetching them first when they aren't
-  there) and fails unless Ember used them. Either way the first line and the JSON (`backend`) say which backend Ember
-  ran, from `voice.backend` in its log; a caller's own `EMBER_SHERPA_CAPI` or `EMBER_VOICE_BACKEND` is never passed on.
+  there) and fails unless the voice process ran on them, every model included. Either way the first line and the JSON
+  (`backend`, and `backendFrom` for the line it came from) say which backend the voice process listened on, from
+  `voice.ready` in Ember's log: main's `voice.backend` is only its choice (the libraries are there), and a library that
+  doesn't load falls back to WebAssembly in the voice process without it stopping. A `voice.model_wasm_fallback` (a
+  model made on WebAssembly) fails `--native` too, and so does a run whose voice process never got ready. A caller's own
+  `EMBER_SHERPA_CAPI` or `EMBER_VOICE_BACKEND` is never passed on.
   With `--compositor --settle 70 --sample 30` on 4 shared vCPUs (2026-11-08), the listening process took 238–244 MB on
   the C API against 402–403 MB on WebAssembly: 695–785 MB and 14.2–15.4 % of a core in all, against 942–947 MB and
   14.3–15.5 % (Ember's other processes vary by about 90 MB from run to run).
