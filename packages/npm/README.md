@@ -106,7 +106,9 @@ Quit Ember, then run `npm i -g ember-copilot@latest` and start `ember` again (or
 first start downloads and checks the new version, and once the new version has started (it then points **Start Ember
 when I log in** at itself), removes the older versions from the cache; one that is still running, or that another
 installer is working on, stays until the next start. `ember doctor` and `--npm-install-only` remove nothing, since
-they don't start Ember.
+they don't start Ember. If an older Ember is still running, the new one hands what you asked over to it instead of
+starting: the launcher says which version is running ("Ember 0.1.1 is already running, so it took this instead of
+starting 0.1.2") and removes nothing, so quit Ember and run `ember` again.
 
 ## Uninstall
 

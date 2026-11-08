@@ -770,6 +770,18 @@ const EARLY_MS = 3000;
  * @returns {Promise<number>}
  */
 export async function start(cmd, o) {
+  return (await startWatched(cmd, o)).code;
+}
+
+/**
+ * As start(), and whether a detached start was still running when its watch ended (`stayed`): one that ended at once
+ * with 0 has handed its request to an Ember already running, as a second Ember does. (open(1) on a Mac always ends at
+ * once, so there only what runs can tell.)
+ * @param {{ file: string; args: string[] }} cmd
+ * @param {{ attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }} o
+ * @returns {Promise<{ code: number; stayed: boolean }>}
+ */
+export async function startWatched(cmd, o) {
   const stdout = o.stdout ?? process.stdout;
   const stderr = o.stderr ?? process.stderr;
   if (o.attached) {
@@ -778,7 +790,7 @@ export async function start(cmd, o) {
       child.stdout.pipe(stdout, { end: false });
       child.stderr.pipe(stderr, { end: false });
       child.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`)));
-      child.once("close", (code, signal) => resolve(code ?? (signal ? 128 + (os.constants.signals[signal] ?? 0) : 1)));
+      child.once("close", (code, signal) => resolve({ code: code ?? (signal ? 128 + (os.constants.signals[signal] ?? 0) : 1), stayed: false }));
     });
   }
   const fd = fs.openSync(o.log, "w", 0o600);
@@ -798,10 +810,23 @@ export async function start(cmd, o) {
     child.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
   });
   child.unref();
-  if (!ended || ended.code === 0) return 0;
+  if (!ended || ended.code === 0) return { code: 0, stayed: !ended };
   const said = fs.readFileSync(o.log, "utf8").replace(/^pid \d+\n/m, "").trim();
   stderr.write(`ember-copilot: Ember stopped as it started (${ended.code === null ? `signal ${ended.signal}` : `exit ${ended.code}`})${said ? `:\n${said.slice(-4000)}` : "."}\n`);
-  return ended.code ?? 1;
+  return { code: ended.code ?? 1, stayed: false };
+}
+
+/**
+ * What the launcher says when the Ember it started handed its request to one already running instead of starting:
+ * `older` is that one's version when the cache's folders tell it, else null.
+ * @param {string} version
+ * @param {string | null} older
+ * @param {string} name what the person runs it as (invokedAs)
+ */
+export function handedOver(version, older, name) {
+  return older
+    ? `Ember ${older} is already running, so it took this instead of starting ${version}. To start ${version}, quit Ember, then run '${name}' again.`
+    : `Ember was already running, so it took this. If it is older than ${version}, quit Ember, then run '${name}' again to start ${version}.`;
 }
 
 /**
@@ -887,13 +912,33 @@ export async function main(argv, o = {}) {
   const p = platform === "win32" ? pathWin32 : pathPosix;
   const log = p.join(p.dirname(installed.dir), `.${version}-start.log`);
   if (mode.attached && platform === "darwin") return await doctorMac(installed, mode.args, log);
-  const code = await start(launchCommand(platform, installed, mode.args), { attached: mode.attached, log, earlyMs: o.earlyMs });
+  const { code, stayed } = await startWatched(launchCommand(platform, installed, mode.args), { attached: mode.attached, log, earlyMs: o.earlyMs });
   if (!mode.attached && code === 0) {
-    // Only once this version has started: Ember then points Start Ember when I log in (and Windows' Start menu
-    // shortcut) at itself, which the setup check and an install-only run don't, so until then the older one stays.
-    const removed = pruneVersions({ parent: p.dirname(installed.dir), keep: version, platform });
-    if (removed.length) say(`removed the older ${removed.length === 1 ? "version" : "versions"} ${removed.join(", ")} from the cache`);
-    say(`started Ember ${version}`);
+    // Is this version what runs now? Still running after the watch, or its folder in a running command line (a Mac's
+    // open(1) ends at once). Otherwise it handed over to an Ember already running (install-docs-c2-3).
+    const parent = p.dirname(installed.dir);
+    let ps = null;
+    try {
+      if (platform !== "win32") ps = runningCommands();
+    } catch {
+      // ps couldn't run: judged by the watch alone.
+    }
+    const shows = (/** @type {string} */ dir) => ps !== null && ps.includes(`${dir}${p.sep}`);
+    if (stayed || shows(installed.dir)) {
+      // Only once this version has started: Ember then points Start Ember when I log in (and Windows' Start menu
+      // shortcut) at itself, which the setup check and an install-only run don't, so until then the older one stays.
+      const removed = pruneVersions({ parent, keep: version, platform });
+      if (removed.length) say(`removed the older ${removed.length === 1 ? "version" : "versions"} ${removed.join(", ")} from the cache`);
+      say(`started Ember ${version}`);
+    } else {
+      // Nothing is removed: Start at login still points at the one running.
+      let names = [];
+      try { names = fs.readdirSync(parent); } catch { /* No cache folder to read: the older one can't be named. */ }
+      const older = names.find(v => v !== version && /^\d+\.\d+\.\d+(?:-[\w.]+)?$/.test(v) && shows(p.join(parent, v))) ?? null;
+      // A Mac's open(1) tells nothing, and a new Ember.app may still be starting (Gatekeeper's first check).
+      if (older !== null || platform !== "darwin") say(handedOver(version, older, name));
+      else say(`started Ember ${version}`);
+    }
   }
   return code;
 }

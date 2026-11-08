@@ -2296,9 +2296,12 @@ run attached (`runMode()`, `start()`: the report and the exit code reach the ter
 Ember that stops at once is reported with what it said and its exit code. The AppImage's AppRun and the RPM's `ember`
 take `--doctor` as well as `doctor`, and `--help`/`-h` (the launcher answers those itself with `usage()`, since Ember.exe
 and Ember.app have none). On Linux without `DISPLAY`, a plain start says so in the launcher's own words (`noDisplay()`,
-naming the command as it was run) before downloading anything. Once a plain start has kept running past its 3 s watch,
-`pruneVersions()` removes the cache's other complete versions (renamed aside first, so a Windows Ember running from one
+naming the command as it was run) before downloading anything. Once a plain start has kept running past its 3 s watch
+(or, as on a Mac, where open(1) ends at once, its folder is in `ps -axo command=`), `pruneVersions()` removes the
+cache's other complete versions (renamed aside first, so a Windows Ember running from one
 keeps it), never one whose installer holds its lock or whose folder a running program's command line
 (`ps -axo command=`) names; the setup check and `--npm-install-only` remove nothing, because only a running Ember points
-**Start Ember when I log in** at itself. Tests in
+**Start Ember when I log in** at itself. A start that ended at once with 0 and isn't what runs has handed over to an
+Ember already running (`startWatched()`): it removes nothing and says so (`handedOver()`, naming the cache's version
+that runs when `ps` shows it). Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.

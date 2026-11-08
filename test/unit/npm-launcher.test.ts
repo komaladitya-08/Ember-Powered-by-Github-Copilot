@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Writable } from "node:stream";
-import { assetFor, cacheDir, downloadUrl, ensureInstalled, invokedAs, launchCommand, main, noDisplay, notReleased, npmrcProxy, packageVersion, parseSha256Sums, proxyFor, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
+import { assetFor, cacheDir, downloadUrl, ensureInstalled, handedOver, invokedAs, launchCommand, main, noDisplay, notReleased, npmrcProxy, packageVersion, parseSha256Sums, proxyFor, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
 import { releaseFiles } from "../../scripts/package/release.mjs";
 
 const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8");
@@ -586,6 +586,43 @@ describe("updating through npm", () => {
       if (pid > 0) try { process.kill(pid); } catch { /* already gone */ }
       await server.close();
     }
+  });
+
+  // The stand-in AppImages are shell scripts, which this needs to run as the launcher runs the real ones.
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64")("says an older Ember still running took the start, and removes nothing, instead of saying the new one started (install-docs-c2-3)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "");
+    const v = packageVersion(), old = "0.0.1", other = "0.0.2";
+    const files: Record<string, string> = {};
+    // The older one keeps running; the new one finds it running and hands over, exiting 0 at once, as Ember does.
+    const bodies: Record<string, string> = { [old]: "#!/bin/sh\nwhile :; do sleep 1; done\n", [other]: "#!/bin/sh\nexit 0\n", [v]: "#!/bin/sh\nexit 0\n" };
+    for (const [ver, body] of Object.entries(bodies)) {
+      const asset = `Ember-${ver}-x86_64.AppImage`;
+      files[`/v${ver}/${asset}`] = body;
+      files[`/v${ver}/SHA256SUMS`] = `${createHash("sha256").update(body).digest("hex")}  ${asset}\n`;
+    }
+    const server = await serve(files);
+    const cache = tempDir();
+    const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, DISPLAY: ":99", EMBER_NPM_QUIET: "1", ...noNpmrc };
+    let running: ReturnType<typeof spawn> | null = null;
+    try {
+      for (const ver of [old, other]) await ensureInstalled({ version: ver, platform: "linux", arch: "x64", env });
+      running = spawn(path.join(cache, old, `Ember-${old}-x86_64.AppImage`), [], { stdio: "ignore" });
+      await new Promise(resolve => setTimeout(resolve, 200));
+      const r = await captured(() => main([], { platform: "linux", env: { ...env, EMBER_NPM_QUIET: "" }, earlyMs: 1500 }));
+      expect(r.result).toBe(0);
+      expect(r.err).toContain(`ember-copilot: Ember ${old} is already running, so it took this instead of starting ${v}. To start ${v}, quit Ember, then run 'ember' again.\n`);
+      expect(r.err).not.toContain("started Ember");
+      // Start at login still points at the one running: nothing is removed until the new one has started.
+      expect(fs.existsSync(path.join(cache, other, ".ember-npm-complete"))).toBe(true);
+      expect(fs.existsSync(path.join(cache, old, ".ember-npm-complete"))).toBe(true);
+    } finally {
+      running?.kill();
+      await server.close();
+    }
+    // Where the running one can't be named (Windows has no ps here; an Ember from outside the cache), it says so too.
+    expect(handedOver("0.1.2", null, "npx ember-copilot")).toBe("Ember was already running, so it took this. If it is older than 0.1.2, quit Ember, then run 'npx ember-copilot' again to start 0.1.2.");
+    const own = read("packages/npm/README.md").replace(/\s+/g, " ");
+    expect(own).toContain("If an older Ember is still running, the new one hands what you asked over to it instead of starting");
   });
 
   it("gives update steps, and uninstall steps in an order that works (install-docs-10)", () => {

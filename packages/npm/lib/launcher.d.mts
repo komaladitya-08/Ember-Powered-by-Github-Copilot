@@ -14,6 +14,8 @@ export declare function launchCommand(platform: string, installed: { exe: string
 export declare function pruneVersions(o: { parent: string; keep: string; platform?: string; running?: () => string }): string[];
 export declare function runMode(args: string[]): { attached: boolean; args: string[] };
 export declare function start(cmd: { file: string; args: string[] }, o: { attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }): Promise<number>;
+export declare function startWatched(cmd: { file: string; args: string[] }, o: { attached: boolean; log: string; earlyMs?: number; stdout?: NodeJS.WritableStream; stderr?: NodeJS.WritableStream }): Promise<{ code: number; stayed: boolean }>;
+export declare function handedOver(version: string, older: string | null, name: string): string;
 export declare function invokedAs(script: string | undefined, env: Record<string, string | undefined>): string;
 export declare function usage(name: string): string;
 export declare function noDisplay(platform: string, env: Record<string, string | undefined>, name: string): string | null;
