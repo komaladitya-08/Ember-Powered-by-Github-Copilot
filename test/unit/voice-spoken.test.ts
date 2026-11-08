@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { AnswerLanguage, cancelWords, endsWithQuestion, speechLanguage, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
 import { heardCutInWake } from "../../app/voice/engine";
+import { SpeechStream } from "../../app/voice/tts";
 
 describe("spokenText says keys, menu paths and symbols as people say them", () => {
   it.each([
@@ -486,6 +487,26 @@ describe("AnswerLanguage: an answer is said in one language, decided once from e
     ["\"I don't know\", basically.", "que veut dire je ne sais pas ?"],
   ])("says the English reply %j, which quotes English and has no short word of the request's language, in Ember's voice (voice-speaking-v4-1)", (reply, request) => {
     expect(said([reply], { request }).map(x => x.lang)).toEqual([null]);
+  });
+
+  it.each([
+    ["Voilà « Ventes.xlsx ».", "ouvre le fichier des ventes s'il te plaît", "fr"],
+    ["Ouvert : « Ventes.xlsx ».", "ouvre le fichier des ventes s'il te plaît", "fr"],
+    ["Listo, abrí \"Ventas.xlsx\".", "abre el archivo de ventas por favor", "es"],
+    ["Abrí \"Ventas.xlsx\".", "abre el archivo de ventas por favor", "es"],
+    ["Hecho: abrí «Ventas.xlsx».", "abre el archivo de ventas por favor", "es"],
+  ])("says the short reply %j, which names a file and has a letter or mark of the request's language, in that language (voice-speaking-c4-2)", (reply, request, lang) => {
+    expect(said([reply], { request }).map(x => x.lang)).toEqual([lang]);
+    // Streamed, as main says it.
+    const a = new AnswerLanguage();
+    a.reset(request);
+    const s = new SpeechStream();
+    const out: { lang: string | null }[] = [];
+    for (let i = 0; i < reply.length; i += 4) out.push(...a.take(s.push(reply.slice(i, i + 4))));
+    out.push(...a.take(s.finish(reply), true));
+    expect(out.map(x => x.lang)).toEqual([lang]);
+    // The same reply in English is Ember's.
+    expect(said(["Done: \"Ventas.xlsx\" is open."], { request }).map(x => x.lang)).toEqual([null]);
   });
 
   it("still says a short reply that quotes English in the request's language where its own words are that language's (voice-speaking-v4-1)", () => {

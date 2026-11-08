@@ -537,7 +537,9 @@ export class AnswerLanguage {
     const own = outsideQuotes(this.text);
     const words = wordsBesidesNames(own);
     const english = stopwords(words, "en").length, asked = stopwords(words, this.asked).length;
-    if (own !== this.text) return asked > english ? this.asked : null;
+    // With as many of each (none, often: "Abrí "Ventas.xlsx"."), a letter or a mark of another language outside the
+    // quotes follows the request ("Voilà « Ventes.xlsx ».": voice-speaking-c4-2); English's own words stay Kitten's.
+    if (own !== this.text) return asked > english || (asked === english && mayBeAnother(own)) ? this.asked : null;
     return english && english >= asked ? null : this.asked;
   }
 }
