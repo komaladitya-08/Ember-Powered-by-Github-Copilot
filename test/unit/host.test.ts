@@ -1486,6 +1486,50 @@ describe("a runtime that dies or hangs", () => {
     await host.stop();
   });
 
+  it("says it is connected again, in the bubble and the conversation, once Check again brings Copilot back after Ember gave up (reliability-performance-r3-2)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const { host, screen } = makeHost({ healthMs: 1000 });
+    await host.start(TOKEN, "stored");
+    sim.ping = async () => { if (crashes < 5) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(10_000);
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(host.getTranscript().filter(e => e.who === "problem").at(-1)?.text).toBe(LOST_GAVE_UP);
+    // Check again, with a runtime that works now.
+    sim.onSend = () => undefined;
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    // The bubble no longer says Ember stopped reconnecting, nor offers settings that no longer help.
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "idle", title: "Connected again", thought: "I'm connected again. Ask me again.", actions: [] });
+    const problems = host.getTranscript().filter(e => e.who === "problem").map(e => e.text);
+    expect(problems.at(-1)).toBe(LOST_RECONNECTED);
+    expect(problems).not.toContain(LOST_GAVE_UP);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(host.getTranscript().filter(e => e.who === "problem").map(e => e.text)).not.toContain(LOST_GAVE_UP);
+    await host.stop();
+  });
+
+  it("says my model connection is back, never Copilot, once Check again reconnects after Ember gave up under my own provider (reliability-performance-r3-2, integrations-v1)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const own: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example.com/v1", apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } };
+    const { host, screen } = makeHost({ healthMs: 1000, provider: () => own });
+    await host.start(null);
+    sim.ping = async () => { if (crashes < 5) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(10_000);
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    await vi.advanceTimersByTimeAsync(1000);
+    sim.onSend = () => undefined;
+    expect(await host.start(null)).toBe("ready");
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "idle", title: "Connected again", thought: "I'm connected again. Ask me again.", actions: [] });
+    const problems = host.getTranscript().filter(e => e.who === "problem").map(e => e.text);
+    expect(problems.at(-1)).toBe("My model connection stopped unexpectedly. I'm connected again: send it again.");
+    expect(problems.join("\n")).not.toMatch(/stopped reconnecting|Copilot/);
+    await host.stop();
+  });
+
   it("five crashes in ten minutes: Ember stops trying", async () => {
     vi.useFakeTimers();
     sim.ping = async () => { throw new Error("Connection is disposed."); };

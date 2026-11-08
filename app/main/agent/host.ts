@@ -1034,6 +1034,8 @@ export class AgentHost {
   private unreachable: string | null = null;
   /** The bubble says the runtime stopped and Ember is reconnecting (lost): once ready, it says Copilot is back (rp-6). */
   private reconnectingShown: string | null = null;
+  /** The bubble says Ember stopped reconnecting (lost gave up): once Check again brings it back, it says so (reliability-performance-r3-2). */
+  private gaveUpShown: string | null = null;
   /** A finished task's line in the transcript: its result as it said it (without the title the conversation wrote). */
   private readonly results = new WeakMap<TranscriptEntry, string>();
   /**
@@ -1694,6 +1696,13 @@ export class AgentHost {
       this.presenter.reconnected(shown);
       this.problemReconnected();
     }
+    // Connected again after Ember gave up (Check again): what said it had stopped reconnecting says it is back.
+    if (this.status.phase === "ready" && this.gaveUpShown !== null) {
+      const shown = this.gaveUpShown;
+      this.gaveUpShown = null;
+      this.presenter.reconnected(shown);
+      this.problemNow(w => w.reconnected, w => w.gaveUp);
+    }
     this.o.onStatus(this.status);
   }
 
@@ -1706,11 +1715,12 @@ export class AgentHost {
   }
 
   /**
-   * The conversation's latest problem line that says Ember is reconnecting, in Copilot's words or "my model
-   * connection"'s as it was written (integrations-v1), says `next` of the same words instead, in Home and the saved copy.
+   * The conversation's latest problem line that says Ember is reconnecting (or `was` of the same words), in Copilot's
+   * words or "my model connection"'s as it was written (integrations-v1), says `next` of the same words instead, in Home
+   * and the saved copy.
    */
-  private problemNow(next: (w: LostWords) => string): void {
-    const pairs = [lostWords(false), lostWords("user")].map(w => ({ said: retainedConversationText(w.reconnecting).text, w }));
+  private problemNow(next: (w: LostWords) => string, was: (w: LostWords) => string = w => w.reconnecting): void {
+    const pairs = [lostWords(false), lostWords("user")].map(w => ({ said: retainedConversationText(was(w)).text, w }));
     const at = this.transcript.findLastIndex(e => e.who === "problem" && pairs.some(p => p.said === e.text));
     if (at < 0) return;
     const old = this.transcript[at];
@@ -2447,6 +2457,7 @@ export class AgentHost {
           this.reconnectingShown = null;
           const said = [lostWords(false), lostWords("user")].find(w => w.reconnecting === shown) ?? lostWords(this.serviceKind());
           this.presenter.gaveUp(shown, said.gaveUpBubble);
+          this.gaveUpShown = said.gaveUpBubble;
           this.problemNow(w => w.gaveUp);
         }
         void this.halt(false);
