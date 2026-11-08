@@ -73,6 +73,26 @@ export function stillUnsent<T extends { text: string }>(unsent: readonly T[], ad
   return left;
 }
 
+/**
+ * What of the composer's `field` is the words a Stop gave back (`given`, as it gave them) above the request being edited
+ * (`edited`: that request as the field had it under them), as the person left them (home-v5-1): Cancel edit keeps
+ * these, never the words as they first came. With that request as it was, everything above it, trimmed (nothing once
+ * they deleted it, their corrections kept); with the words as they came, those alone (the request's changes go, as
+ * Cancel edit's do; of the two, the longer, so no word of theirs goes); with both changed, the whole field (`whole`),
+ * since what is which can't be told. `edited` comes back as the request under them now (null with `whole`).
+ */
+export function editGivenBack(field: string, given: string, edited: string | null): { text: string; edited: string | null; whole: boolean } {
+  const f = field.trimEnd();
+  const e = edited?.trim();
+  // (An empty request, emptied before the Stop: everything there is above it.)
+  const above = e !== undefined && f.endsWith(e) && (!e || /(^|\s)$/.test(f.slice(0, f.length - e.length))) ? f.slice(0, f.length - e.length).trim() : null;
+  const rest = f.slice(given.length);
+  const same = given !== "" && f.startsWith(given) && (!rest.trim() || rest.startsWith("\n\n"));
+  if (above !== null && (!same || above.length >= given.length)) return { text: above, edited: e ?? "", whole: false };
+  if (same) return { text: given, edited: rest.trim(), whole: false };
+  return { text: f.trim(), edited: null, whole: true };
+}
+
 /** "Show 1 earlier message", "Show 12 earlier messages"; null when none is hidden. */
 export function earlierLabel(hidden: number): string | null {
   return hidden > 0 ? (hidden === 1 ? "Show 1 earlier message" : `Show ${hidden} earlier messages`) : null;

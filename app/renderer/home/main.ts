@@ -50,10 +50,10 @@ import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
 import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
-import { conversationAdded, conversationChange, conversationShown, earlierLabel, stillUnsent } from "./conversation-view";
+import { conversationAdded, conversationChange, conversationShown, earlierLabel, editGivenBack, stillUnsent } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { problemInHome, PROBLEM_SETTINGS, composerCount, composerGivenBack, composerLineYields, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
-import { composerEditCancelled, composerSaysOver } from "./copy";
+import { composerEditCancelled, composerLineFits } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -1135,6 +1135,9 @@ function stoppedLine(stopped: string): string {
   const sending = conversationSending?.text === conversationMessage.value ? conversationSending : null;
   if (sending) sending.displaced = true;
   const draft = !sending && conversationMessage.value.trim() ? conversationMessage.value : "";
+  // The request being edited as the field holds it under the words given back: Cancel edit keeps what is above it as
+  // the person leaves it (home-v5-1).
+  if (conversationDraftBeforeEdit !== null) conversationEditTail = conversationEditGivenBack.length ? editGivenBack(conversationMessage.value, conversationEditGivenBack.join("\n\n"), conversationEditTail).edited : conversationMessage.value;
   if (draft) {
     const { selectionStart, selectionEnd, selectionDirection } = conversationMessage;
     const by = words.length + 2;
@@ -1146,7 +1149,9 @@ function stoppedLine(stopped: string): string {
   // (The line says whether they are over the limit: not the over-limit note first, then this: home-c4-2.)
   syncComposerCount(true);
   const over = conversationMessage.value.length > CONVERSATION_REQUEST_LIMIT;
-  conversationGivenBack = composerGivenBack(stopped, unsent.length, !!draft, { editing: !!draft && conversationDraftBeforeEdit !== null, over });
+  // One at a time only where what is under them fits by itself: each of theirs did, as Send took it (home-v5-3).
+  const under = conversationDraftBeforeEdit !== null ? conversationEditTail ?? draft : draft;
+  conversationGivenBack = composerGivenBack(stopped, unsent.length, !!draft, { editing: !!draft && conversationDraftBeforeEdit !== null, over, draftOver: under.length > CONVERSATION_REQUEST_LIMIT });
   return conversationGivenBack;
 }
 /** Main's word of the conversation's turn: the status panel, and the composer's line while its request waits. */
@@ -1207,6 +1212,11 @@ let conversationStopTold: string | null = null;
 let conversationDraftBeforeEdit: string | null = null;
 /** Words a Stop gave back while Edit was open, in the order the field has them: Cancel edit keeps them (home-r4-1). */
 let conversationEditGivenBack: string[] = [];
+/**
+ * The request being edited as the field holds it under those words, so Cancel edit keeps them as the person left them,
+ * never as they first came (home-v5-1); null once both were changed, when what is which can't be told.
+ */
+let conversationEditTail: string | null = null;
 let conversationGeneration = 0;
 $("conversation-scope").textContent = CONVERSATION_SCOPE;
 $("conversation-retention").textContent = conversationRetention(false);
@@ -1270,10 +1280,17 @@ function conversationRow(e: Entry): HTMLLIElement {
     edit.setAttribute("aria-label", `Edit your message from ${when} as a new request`);
     edit.addEventListener("click", () => {
       // Editing has no IPC side effect: Send is a new, deliberate typed request, never a tool/voice/suggestion replay.
-      if (conversationDraftBeforeEdit === null) { conversationDraftBeforeEdit = conversationMessage.value; conversationEditGivenBack = []; }
+      if (conversationDraftBeforeEdit === null) conversationDraftBeforeEdit = conversationMessage.value;
+      else if (conversationEditGivenBack.length) {
+        // Words a Stop gave back above the earlier edit stay, as the person left them, with the draft from before it (home-v5-1).
+        const kept = editGivenBack(conversationMessage.value, conversationEditGivenBack.join("\n\n"), conversationEditTail).text;
+        if (kept) conversationDraftBeforeEdit = conversationDraftBeforeEdit.trim() ? `${kept}\n\n${conversationDraftBeforeEdit}` : kept;
+      }
+      conversationEditGivenBack = [];
+      conversationEditTail = null;
       $("conversation-cancel-edit").hidden = false;
       conversationMessage.value = e.text;
-      syncComposerCount();
+      syncComposerCount(true);
       conversationComposeStatus.textContent = CONVERSATION_EDIT;
       conversationMessage.focus();
     });
@@ -1462,6 +1479,7 @@ const resetConversationView = () => {
   conversationStopTold = null;
   conversationDraftBeforeEdit = null;
   conversationEditGivenBack = [];
+  conversationEditTail = null;
   conversationGeneration++;
   $("conversation-cancel-edit").hidden = true;
   newConfirm.hidden = true;
@@ -1549,6 +1567,7 @@ $("conversation-compose").addEventListener("submit", event => {
     syncComposerCount();
     conversationDraftBeforeEdit = null;
     conversationEditGivenBack = [];
+    conversationEditTail = null;
     $("conversation-cancel-edit").hidden = true;
     // A typed "stop" stopped everything at once: no turn comes, so nothing is awaited (home-c1-1). Its stop was told
     // already (onStopped), words given back with it: said once, and kept (home-r4-2, home-r4-3).
@@ -1584,14 +1603,18 @@ $("conversation-compose").addEventListener("submit", event => {
 });
 $("conversation-cancel-edit").addEventListener("click", () => {
   const before = conversationDraftBeforeEdit ?? "";
-  // Words a Stop gave back while the edit was open stay, above that draft (home-r4-1).
-  const back = conversationEditGivenBack.join("\n\n");
+  // Words a Stop gave back while the edit was open stay, above that draft (home-r4-1), as the person left them: their
+  // corrections kept, none once they deleted them (home-v5-1).
+  const given = conversationEditGivenBack.join("\n\n");
+  const kept = given ? editGivenBack(conversationMessage.value, given, conversationEditTail) : { text: "", whole: false };
+  const back = kept.text;
   conversationMessage.value = back && before.trim() ? `${back}\n\n${before}` : back || before;
-  syncComposerCount(!!back);
+  syncComposerCount(true);
   conversationDraftBeforeEdit = null;
   $("conversation-cancel-edit").hidden = true;
-  conversationComposeStatus.textContent = composerEditCancelled(conversationEditGivenBack.length, !!before.trim(), conversationMessage.value.length > CONVERSATION_REQUEST_LIMIT);
+  conversationComposeStatus.textContent = composerEditCancelled(back ? conversationEditGivenBack.length : 0, !!before.trim(), conversationMessage.value.length > CONVERSATION_REQUEST_LIMIT, { changed: back !== given, whole: kept.whole, draftOver: before.length > CONVERSATION_REQUEST_LIMIT });
   conversationEditGivenBack = [];
+  conversationEditTail = null;
   conversationMessage.focus();
 });
 /**
@@ -1612,7 +1635,11 @@ function syncComposerCount(lineSays = false): void {
   const over = n > CONVERSATION_REQUEST_LIMIT;
   if (over) conversationMessage.setAttribute("aria-invalid", "true"); else conversationMessage.removeAttribute("aria-invalid");
   if (over && !conversationOver && !lineSays) conversationComposeStatus.textContent = COMPOSER_OVER;
-  else if (!over && conversationOver && !lineSays && composerSaysOver(conversationComposeStatus.textContent ?? "")) conversationComposeStatus.textContent = "";
+  else if (!over && conversationOver && !lineSays) {
+    // Fits again: a line saying it's over goes, but while an edit is open Edit's caution takes its place (home-v5-2).
+    const next = composerLineFits(conversationComposeStatus.textContent ?? "", conversationDraftBeforeEdit !== null);
+    if (next !== null) conversationComposeStatus.textContent = next;
+  }
   conversationOver = over;
 }
 conversationMessage.addEventListener("input", () => syncComposerCount());

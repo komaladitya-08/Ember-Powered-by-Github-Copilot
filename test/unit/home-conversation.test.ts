@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CONVERSATION_SHOWN, conversationAdded, conversationChange, conversationShown, earlierLabel, stillUnsent } from "../../app/renderer/home/conversation-view";
+import { CONVERSATION_SHOWN, conversationAdded, conversationChange, conversationShown, earlierLabel, editGivenBack, stillUnsent } from "../../app/renderer/home/conversation-view";
 import { pushLater } from "../../app/main/push-later";
 import { askedWhere } from "../../app/renderer/home/tasks-copy";
 import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT, conversationRequest, retainedConversationText } from "../../app/shared/conversation";
@@ -108,6 +108,29 @@ describe("Home's conversation", () => {
     expect(stillUnsent([a, b, c], [you("Book the meeting room", 1), you("status?", 2)])).toEqual([c]);
     // Ember's lines, and lines of yours with other words, take nothing off.
     expect(stillUnsent([a, b], [{ t: "x", who: "ember", text: "status?" }, you("And tell Sam")])).toEqual([a, b]);
+  });
+
+  it("tells the words a Stop gave back from the request being edited as the person left them, for Cancel edit (home-v5-1)", () => {
+    const given = "Book the meeting room for Friday", edited = "Empty the trash";
+    // As they came, and corrected: everything above the request, their correction kept.
+    expect(editGivenBack(`${given}\n\n${edited}`, given, edited)).toEqual({ text: given, edited, whole: false });
+    expect(editGivenBack(`Book the meeting room for Saturday\n\n${edited}`, given, edited)).toEqual({ text: "Book the meeting room for Saturday", edited, whole: false });
+    expect(editGivenBack(`Book the meeting room for Saturday\n${edited}  \n`, given, edited).text).toBe("Book the meeting room for Saturday");
+    // Deleted, as they changed their mind: nothing (with or without the line break left behind).
+    expect(editGivenBack(edited, given, edited)).toEqual({ text: "", edited, whole: false });
+    expect(editGivenBack(`\n\n${edited}`, given, edited).text).toBe("");
+    // The request changed and the words as they came: those alone (the request's changes go, as Cancel edit's do).
+    expect(editGivenBack(`${given}\n\nEmpty the trash and the bin`, given, edited)).toEqual({ text: given, edited: "Empty the trash and the bin", whole: false });
+    expect(editGivenBack(given, given, edited)).toEqual({ text: given, edited: "", whole: false });
+    // Words that end as the request does are never cut short: of the two readings, the one that keeps more.
+    expect(editGivenBack("Say Yes", "Say Yes", "Yes").text).toBe("Say Yes");
+    expect(editGivenBack(`${given}\n\nAnd Sam\n\n${edited}`, given, edited).text).toBe(`${given}\n\nAnd Sam`);
+    // Both changed, or the request merged into them: the whole field, nothing of theirs lost.
+    expect(editGivenBack(`Book it for Saturday\n\nEmpty the bin`, given, edited)).toEqual({ text: "Book it for Saturday\n\nEmpty the bin", edited: null, whole: true });
+    expect(editGivenBack(`Book it${edited}`, given, edited).whole).toBe(true);
+    expect(editGivenBack("Book it for Saturday", given, null)).toEqual({ text: "Book it for Saturday", edited: null, whole: true });
+    // A request emptied before the Stop: everything there is theirs.
+    expect(editGivenBack("Book it for Saturday", given, "")).toEqual({ text: "Book it for Saturday", edited: "", whole: false });
   });
 });
 
