@@ -92,9 +92,12 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   pi@192.168.1.20", "the admin login is admin@localhost", "my GitHub login is @octocat", "login is localhost:8080",
   "credentials: process.env.AWS_CREDS_V2", safety-privacy-v4-1), a version, an issue, a setting or a user at a
   computer by a word or with its port said as a login ("the login is v2.0", "login was #142", "Credentials:
-  AWS_PROFILE=dev2", "my work login is jsmith@corp", "the login is user@host:2222": safety-privacy-c4-3), a disk's use
-  and a formula ("Root: 45G / 100G", "const root = -b / (2*a);": an admin's pair is never after "=", nor with a size
-  for the user name, memory-c4-2), a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
+  AWS_PROFILE=dev2", "my work login is jsmith@corp", "the login is user@host:2222": safety-privacy-c4-3; a setting only
+  when its name says no secret and its value isn't shaped like a password, and a user at a computer only when the
+  user's name has no digit, so "Credentials: MY_PASS=hunter2" and "the login is p4ss@word" are refused, memory-v5-4), a
+  disk's use and a formula ("Root: 45G / 100G", "const root = -b / (2*a);", "root = width / 2000": an admin's pair
+  after "=" only outside code, so "Admin = admin / hunter2!" is refused, and never with a size for the user name,
+  memory-c4-2, memory-v5-4), a board's wiring and advice about passwords ("GPIO4 is the data pin", "the ESP32 uses
   GPIO0 as the boot pin", "never share your password, it's personal": a value said before "the data pin" or "the
   boot pin" counts only as digits, and ", it's" only before a value with a digit or a symbol, memory-v4-6), how a
   token is made ("the access token is HS256-signed", "base64url-encoded"), how long a number is ("our Android code is 12000 lines long", "my phone PIN is 6 digits
@@ -112,8 +115,14 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   symbol, a PIN's number and a shell variable's unquoted word ("export DB_PASSWORD=changeme", "readonly
   ADMIN_PASSWORD=opensesame": "=" with nothing around it, first on its line or after export, readonly, declare,
   typeset, local or ENV, memory-v5-2) stay values, and so does code that gives a literal as a default or one shaped like a
-  password ("os.getenv('PW', 'changeme')", "pw || 'hunter2'", "f(user, 'S3cret!')"). Secrets are refused whole, never
-  stored redacted.
+  password ("os.getenv('PW', 'changeme')", "pw || 'hunter2'", "f(user, 'S3cret!')"). After a label's ":" in prose
+  (not a line of code, nor one that ends as code does) none of the bare shapes counts: the same name, three letters, a
+  name for a secret, an operator, a number of more than two digits, a word in brackets, "new" without a call, "self."
+  with a digit, a bare plural and a next line not indented under it or not written as code, so "The router's password:
+  password", "Netflix password: (fluffy)", "Gmail password: new Summer2024!", "pins: 4821" and "Admin
+  password:\ndefault is admin123" are refused (memory-v5-3); a letters-only "pass" straight after "user" and a name is a
+  password too ("username bob pass hunter", never "the user should pass validation": memory-v5-4). Secrets are refused
+  whole, never stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory

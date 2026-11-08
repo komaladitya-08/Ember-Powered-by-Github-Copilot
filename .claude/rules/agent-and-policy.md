@@ -115,7 +115,8 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
     line, a secret's name, perhaps with what it is for, with a value that isn't a word like "required", a bare
     password, PIN or door code with digits or symbols in its value, a login or credentials said as one such value;
     a secret-named key with code for its value is passed over by `withoutCodeKeys()`, never a quoted or bare value, a
-    PIN's number or code that gives a literal as a default, and its value is still read for tokens: add a code shape
+    PIN's number, a shell variable's word or code that gives a literal as a default, never by a bare shape after a
+    prose label's ":" (`codeish()`), and its value is still read for tokens: add a code shape
     there only with its look-alike secret pinned as refused in memory.test.ts), and a private path anywhere in any string, after NFKC and with
     look-alike slashes read as "/" (but not /private/tmp, a Keynote .key, .env.example or id_rsa.pub). A token split
     over up to five strings in reading order, or written with spaces, is caught run together (`tokenRefusal`, the

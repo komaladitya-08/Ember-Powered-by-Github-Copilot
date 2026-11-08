@@ -372,6 +372,43 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBeNull();
   });
 
+  // Prose after a secret's name, read as code by round five's code shapes (memory-v5-3): each look-alike secret is
+  // pinned here, beside the code it was made for.
+  it.each([
+    ["Gmail password: new Summer2024!"], ["VPN password: new Hunter2024 since March"], ["The router's password: password"], ["Login: admin, password: password"],
+    ["pins: 4821"], ["Passwords: 48213377"], ["Tokens: 12345678"], ["My Wi-Fi password: abc"], ["Netflix password: (fluffy)"], ["Password: self.made99"],
+    ["Wi-Fi password: [BlueSky]"], ["Admin password:\ndefault is admin123"], ["Wi-Fi password:\nif anyone asks, BlueSky99"], ["Wi-Fi password:\n* BlueSky99"],
+    ["Wi-Fi password:\nGuest: BlueSky99"], ["Password:\nreturn Summer2024!"], ["The guest password: guest_pass"], ["The password: rex + 1985"],
+    ["Password: 0xCAFE"], ["  password: BlueSky"],
+  ])("refuses %j and saves nothing, prose that only looks like code (memory-v5-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["password: z.string().min(8),"], ["const tokens = [];"], ["token = (await getToken())"], ["interface Session {\n  token: Token\n}"], ["    token: Token"],
+    ["prompt_tokens: 512"], ['"usage": {"prompt_tokens": 12, "completion_tokens": 30}'], ["if creds.refresh_token:\n    return creds"],
+    ["/**\n * The token:\n * what it is\n */"], ["credentials:\n  username: admin"], ["token: <your-token>"], ["password: [redacted]"], ["api_key: [YOUR_API_KEY]"],
+    ["const token = [0];"], ["isSecret: (i, role, name) => host.secrets.isSecret(i),"], ["currentToken = [controlChar, controlChar, pos]"],
+    ["case SyntaxKind.EqualsToken:\ncase SyntaxKind.MinusToken:"], ["foo({ token: token })"], ['if (tokenHost === "<loopback>") {'], ["const token = this.token;"],
+  ])("keeps %j, code with no secret where the value would be (memory-v5-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // A login's password written with "@", a setting that names a password, an admin's pair after "=" and a letters-only
+  // "pass" after a user name, which round five's login and admin rules kept (memory-v5-4).
+  it.each([
+    ["The login is p4ss@word"], ["My login is summer2024@home"], ["The NAS login is tr0ub4dor@nas"], ["Credentials: s3cret@box"], ["Credentials: MY_PASS=hunter2"],
+    ["Admin = admin / hunter2!"], ["username bob pass hunter"], ["user priya, pass hunter"],
+  ])("refuses %j as a login or an admin's password (memory-v5-4)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  it.each([
+    ["My work login is jsmith@corp"], ["Credentials: AWS_REGION=us-east-1"], ["root = width / 2000"], ["root = (a + b) / 2"], ["the user should pass validation"],
+    ["Make the login tests pass again."], ["The user can pass"],
+  ])("keeps %j, which names no password (memory-v5-4)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   // A Wi-Fi password under the names Windows and routers give it, which Ember's screen reading already treats as secret
   // (safety-privacy-c4-2), and a security question's answer in the model's own style (memory-1).
   it.each([
