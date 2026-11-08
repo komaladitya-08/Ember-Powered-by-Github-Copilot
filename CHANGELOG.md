@@ -243,7 +243,7 @@ the automated tests don't stand in for them.
   keyboard lands on its title, and if you then choose your own provider again, a check that fails switches it off
   instead of leaving it on at an address that didn't answer, and Back returns to Copilot's sign-in. Pressed while
   Ember is still answering or doing a task, the step says “I'll switch to Copilot once I've finished what I'm doing.”
-  and lets you go on, and Ember switches as soon as that is done.
+  and lets you go on.
 - **Ember's hello names the service it can't reach**, your own model provider or your organisation's, with “Start it,
   and I'll connect in a moment.” for a model server on this computer, and Home's button reads **Check my provider…**
   or **Models & connections…** instead of **Connect Copilot…**.
@@ -399,8 +399,8 @@ the automated tests don't stand in for them.
   request, and when that is heard, your 8 seconds start after it. On a muted microphone it says “The microphone is
   sending only silence…”, and pressed while Ember talks or answers, it stops that first and listens, as “Hey Ember”
   does.
-- **What a screen reader says of Ember's listening isn't heard as your request.** While Ember's microphone is open for
-  one (after “Hey Ember”, in a conversation or during Listen once), Settings' voice line and Listen once's line in
+- **A screen reader doesn't read Ember's listening lines over your request.** While Ember's microphone is open for a
+  request (after “Hey Ember”, in a conversation or during Listen once), Settings' voice line and Listen once's line in
   Settings and in Ask still show what changed but don't tell a screen reader, so “Hearing you…” and “Ember is already
   listening.” aren't read out over what you say, nor is “Answer Ember's question first.” while a conversation stays
   open for your spoken answer. “Ember is already listening.” stays under Listen once as its description, and browse
@@ -563,10 +563,10 @@ the automated tests don't stand in for them.
   keep, leave out, place or only describe asks with the command's card instead: “delete everything but build/”,
   “delete dist/ and keep build/”, “other than” and “instead of”, “kill 5678, 1234 is my editor” for `kill 1234`, “stop
   apache and check nginx” for `systemctl stop nginx`, “delete my old branches, main and develop stay” for `git branch
-  -D main`, and “delete the build folder in dist” for `rm -rf build`, since a folder named after “in” is where the
-  path must be. Saying the verb again or listing after a colon still counts (“delete build/ and delete dist/”, “kill
-  these processes: 1234 and 5678”), and a bare `gh pr merge`, which merges the current branch's pull request, asks
-  when your words number one.
+  -D main`, and “delete the build folder in dist” or “delete dist's build folder” for `rm -rf build`, since a folder
+  named after “in” or “from”, or before “'s”, is where the path must be. Saying the verb again or listing after a
+  colon still counts (“delete build/ and delete dist/”, “kill these processes: 1234 and 5678”), and a bare
+  `gh pr merge`, which merges the current branch's pull request, asks when your words number one.
 - **Ember refuses a command that reaches its own settings and records through a variable** (in bash and other POSIX
   shells), as it does when they are named: through a loop's list (`for f in ~/.config/ember/*; do rm -f "$f"; done`),
   an assignment (`d=~/.config/ember; rm -rf "$d"`), a pattern after a variable, `set --`, `printf -v` or a here-string
@@ -650,10 +650,11 @@ the automated tests don't stand in for them.
   phrase, a social security number or an IBAN. Codes that lock nothing are kept (“the access control code 401”,
   “backup exit code 255”, “our office ZIP code is 90210”, “Branch office code: 4410”), and so are an Indian address's
   PIN code (“Bengaluru, PIN code: 560001”), how a token is made (“The access token is HS256-signed”) and a login that
-  names a user at a computer, a handle or a host (“pi@192.168.1.20”, “@octocat”, “localhost:8080”), so Projects
-  requests and files and task views that mention them aren't refused. A user name with a digit said as a login (“my
-  login is jsmith42”) is refused, as it may be the password, and some shorthand still gets past it (“Netflix:
-  hunter2”), so keep passwords out of what you tell Ember.
+  names a user at an IP address or localhost, a handle or a host with its port (“pi@192.168.1.20”, “@octocat”,
+  “localhost:8080”), so Projects requests and files and task views that mention them aren't refused. A user name with
+  a digit said as a login (“my login is jsmith42”), or a user at a computer with a one-word name (“admin@nas1”), is
+  refused, as it may be the password, and some shorthand still gets past it (“Netflix: hunter2”), so keep passwords
+  out of what you tell Ember.
 - **Memory says why it is paused.** While Ember connects, uses your own model provider or can't reach GitHub,
   Settings › Memory says so instead of suggesting Forget everything, Home says “Memory paused”, and Tell Ember about
   you no longer fails with “Try again”. While your own provider can't connect, memory says it waits for that, not for
@@ -749,8 +750,8 @@ the automated tests don't stand in for them.
 - **The npm launcher says so when its version's release isn't out yet,** instead of an HTTP error. It downloads
   through the proxy npm uses (see For administrators), and when it can't reach the download it says why in one
   sentence and what to do (the proxy setting, the browser download or a mirror): an error answer names the host that
-  gave it and any proxy it came through, a server's own failure says to run `ember` again later, and a full disk or
-  quota says there isn't room in its cache folder, naming the folder, and to free some space or set `EMBER_NPM_CACHE`.
+  gave it, a server's own failure says to run `ember` again later, and a full disk or quota says there isn't room in
+  its cache folder, naming the folder, and to free some space or set `EMBER_NPM_CACHE`.
   Pressing Ctrl+C or closing the terminal during its first download, while it unpacks Ember or while it clears a Mac's
   quarantine flag removes what it had made and starts nothing (“Stopped before Ember 0.1.1 was installed, and nothing
   was kept.”), so the next `ember` downloads again; a stopped `ember --npm-reinstall` keeps the copy you had, and
