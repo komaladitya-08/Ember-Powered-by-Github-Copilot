@@ -906,6 +906,53 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  it("keeps Edit's caution and the words a Stop gave back while I edit, and Cancel edit keeps them (home-r4-1)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const waitThenEdit = async (text: string, draft: string) => {
+        await field.fill(text);
+        await page.locator("#conversation-send").click();
+        await turn(page, "thinking");
+        await expect.poll(() => field.inputValue()).toBe("");
+        await field.fill(draft);
+        await page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ }).click();
+        expect(await field.inputValue()).toBe("Empty the trash");
+      };
+      const stop = async () => {
+        await page.locator("#conversation-stop").click();
+        await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+        await expect.poll(() => page.evaluate(() => window.__home.stops)).toBeGreaterThan(0);
+        await expect.poll(() => page.locator("#conversation-stop").getAttribute("aria-disabled")).toBeNull();
+      };
+      // Sent while Ember reconnects, then Edit on an earlier request, then Stop response.
+      await waitThenEdit("Book the meeting room for Friday", "");
+      await stop();
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday\n\nEmpty the trash");
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above the request you're editing. Sending that request again may repeat actions.");
+      await page.getByRole("button", { name: "Cancel edit" }).click();
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday");
+      expect(await line.innerText()).toBe("Edit cancelled. The message that wasn't sent is back here to edit or send again.");
+      // With a draft before Edit: it comes back too, under the message.
+      await field.fill("");
+      await waitThenEdit("Order lunch", "Tell Sam");
+      await stop();
+      expect(await field.inputValue()).toBe("Order lunch\n\nEmpty the trash");
+      await page.getByRole("button", { name: "Cancel edit" }).click();
+      expect(await field.inputValue()).toBe("Order lunch\n\nTell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent.");
+      // The next edit starts afresh: Cancel edit gives back only its own draft.
+      await page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ }).click();
+      await page.getByRole("button", { name: "Cancel edit" }).click();
+      expect(await field.inputValue()).toBe("Order lunch\n\nTell Sam");
+      expect(await line.innerText()).toBe("Edit cancelled. Your previous draft is restored.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("says a Stop once under Send, however main tells it, and says a new Stop again (home-r4-3)", async () => {
     const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Q1" }, { t: at(1), who: "ember", text: "A1" }];
     const { page, errors } = await home(seed);
@@ -950,6 +997,37 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await stopEndFirst();
       expect(await line.innerText()).toBe("Response stopped. Running tasks continue.");
       expect(await lineWrites(page)).toBe(1);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("says when the messages a Stop gave back are together too long to send, and how to send them (home-c4-2)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Q1" }, { t: at(1), who: "ember", text: "A1" }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      for (const c of ["a", "b"]) {
+        await field.fill(c.repeat(1500));
+        await page.locator("#conversation-send").click();
+        await turn(page, "thinking");
+        await expect.poll(() => field.inputValue()).toBe("");
+      }
+      await lineWrites(page);
+      await page.locator("#conversation-stop").click();
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      await expect.poll(() => page.locator("#conversation-stop").getAttribute("aria-disabled")).toBeNull();
+      expect(await field.inputValue()).toBe(`${"a".repeat(1500)}\n\n${"b".repeat(1500)}`);
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue. Your 2 messages weren't sent, so they're back here. Together they're over 2,000 characters: send them one at a time.");
+      expect(await page.locator("#conversation-count").innerText()).toBe("3,002 of 2,000 characters, 1,002 too many.");
+      expect(await field.getAttribute("aria-invalid")).toBe("true");
+      // Said once: not the over-limit note first, then this.
+      expect(await lineWrites(page)).toBe(1);
+      // Cut to one that fits: the line no longer says they're over, as the over-limit note goes.
+      await field.fill("a".repeat(1500));
+      expect(await line.innerText()).toBe("");
+      expect(await field.getAttribute("aria-invalid")).toBeNull();
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);

@@ -364,7 +364,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   back in the composer, oldest first, never over anything typed since (above it, the caret kept where it was), with
   "Your message wasn't sent, so it's back here to edit or send again." ("Your 2 messages weren't sent…", "…back here,
   above what you were writing, …": home-r3-1, home-v4-2), said once however main tells the Stop (home-r4-3); a typed
-  "stop" still on its way to main is never taken for something being written (home-r4-2); one whose line came (Ember answered it itself, or it went to
+  "stop" still on its way to main is never taken for something being written (home-r4-2); above a request being
+  edited the line keeps Edit's caution, and Cancel edit keeps the words, above the draft from before Edit (home-r4-1);
+  together over 2,000 characters, the line says to send them one at a time, never to send again (home-c4-2); one whose line came (Ember answered it itself, or it went to
   the model) never does, however far the conversation has moved past it (home-v4-1); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's
   "Okay, I've stopped everything."; the status panel says "Thinking…" while Ember answers any request, from the Ask
   box and by voice too: main's `conversationTurn`, never a guess, home-c1-1), shows explicit per-answer truncation beyond

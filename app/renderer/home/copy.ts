@@ -105,14 +105,34 @@ export const PROBLEM_SETTINGS = "Models & connections…";
 /** Stop response, pressed: what it stopped, or that nothing was under way (home-3: never a stop that didn't happen). */
 export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";
 export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything right now, so there was nothing to stop.";
+/** Given-back words that, with what is in the composer, are over the limit (home-c4-2): Send refuses them as they are. */
+const GIVEN_BACK_OVER = `Together they're over ${CONVERSATION_REQUEST_LIMIT.toLocaleString("en-GB")} characters: send them one at a time.`;
 /**
  * How a Stop ended the composer's `messages` (`stopped`: CONVERSATION_STOPPED, COMPOSER_SAYS.stoppedAll) when they
  * hadn't gone yet (they waited for a reconnect), so their words are back in the composer (home-r3-1), above the `draft`
- * typed since where there is one (home-v4-2).
+ * typed since where there is one (home-v4-2). Above a request being edited (`editing`), Edit's caution is said again,
+ * since sending it may repeat actions (home-r4-1); together longer than Send takes (`over`), they're never said to be
+ * back to send again (home-c4-2).
  */
-export function composerGivenBack(stopped: string, messages = 1, draft = false): string {
+export function composerGivenBack(stopped: string, messages = 1, draft = false, o: { editing?: boolean; over?: boolean } = {}): string {
   const which = messages > 1 ? `Your ${messages} messages weren't sent, so they're` : "Your message wasn't sent, so it's";
-  return `${stopped} ${which} back here${draft ? ", above what you were writing," : ""} to edit or send again.`;
+  if (!o.editing && !o.over) return `${stopped} ${which} back here${draft ? ", above what you were writing," : ""} to edit or send again.`;
+  const where = o.editing ? ", above the request you're editing" : draft ? ", above what you were writing" : "";
+  return `${stopped} ${which} back here${where}.${o.over ? ` ${GIVEN_BACK_OVER}` : ""}${o.editing ? " Sending that request again may repeat actions." : ""}`;
+}
+/**
+ * Cancel edit, where a Stop gave back `messages` while the edit was open (home-r4-1): they stay, above the draft from
+ * before Edit where there was one (`draft`), and together over the limit (`over`) they go one at a time (home-c4-2).
+ */
+export function composerEditCancelled(messages: number, draft: boolean, over = false): string {
+  if (!messages) return COMPOSER_SAYS.editCancelled;
+  const what = messages > 1 ? `${messages} messages that weren't sent` : "message that wasn't sent";
+  const said = draft ? `Your previous draft is restored, below the ${what}.` : `The ${what} ${messages > 1 ? "are" : "is"} back here${over ? "." : " to edit or send again."}`;
+  return `Edit cancelled. ${said}${over ? ` ${GIVEN_BACK_OVER}` : ""}`;
+}
+/** Whether the composer's line says what is in it is over the limit: once it fits, the line goes (home-5, home-c4-2). */
+export function composerSaysOver(line: string): boolean {
+  return line === COMPOSER_OVER || line.includes(GIVEN_BACK_OVER);
 }
 /** The composer's lines that say how something earlier went: they give way to a wait of the Ask box's or voice's. */
 const COMPOSER_OUTCOMES: ReadonlySet<string> = new Set([

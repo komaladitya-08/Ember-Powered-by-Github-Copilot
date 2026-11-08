@@ -53,6 +53,7 @@ import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./searc
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, stillUnsent } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { problemInHome, PROBLEM_SETTINGS, composerCount, composerGivenBack, composerLineYields, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { composerEditCancelled, composerSaysOver } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -1140,8 +1141,12 @@ function stoppedLine(stopped: string): string {
     conversationMessage.value = `${words}\n\n${draft}`;
     conversationMessage.setSelectionRange(selectionStart + by, selectionEnd + by, selectionDirection);
   } else conversationMessage.value = words;
-  syncComposerCount();
-  conversationGivenBack = composerGivenBack(stopped, unsent.length, !!draft);
+  // Cancel edit keeps them, above the draft from before Edit (home-r4-1).
+  if (conversationDraftBeforeEdit !== null) conversationEditGivenBack = [...unsent, ...conversationEditGivenBack];
+  // (The line says whether they are over the limit: not the over-limit note first, then this: home-c4-2.)
+  syncComposerCount(true);
+  const over = conversationMessage.value.length > CONVERSATION_REQUEST_LIMIT;
+  conversationGivenBack = composerGivenBack(stopped, unsent.length, !!draft, { editing: !!draft && conversationDraftBeforeEdit !== null, over });
   return conversationGivenBack;
 }
 /** Main's word of the conversation's turn: the status panel, and the composer's line while its request waits. */
@@ -1200,6 +1205,8 @@ let conversationGivenBack: string | null = null;
  */
 let conversationStopTold: string | null = null;
 let conversationDraftBeforeEdit: string | null = null;
+/** Words a Stop gave back while Edit was open, in the order the field has them: Cancel edit keeps them (home-r4-1). */
+let conversationEditGivenBack: string[] = [];
 let conversationGeneration = 0;
 $("conversation-scope").textContent = CONVERSATION_SCOPE;
 $("conversation-retention").textContent = conversationRetention(false);
@@ -1263,7 +1270,7 @@ function conversationRow(e: Entry): HTMLLIElement {
     edit.setAttribute("aria-label", `Edit your message from ${when} as a new request`);
     edit.addEventListener("click", () => {
       // Editing has no IPC side effect: Send is a new, deliberate typed request, never a tool/voice/suggestion replay.
-      if (conversationDraftBeforeEdit === null) conversationDraftBeforeEdit = conversationMessage.value;
+      if (conversationDraftBeforeEdit === null) { conversationDraftBeforeEdit = conversationMessage.value; conversationEditGivenBack = []; }
       $("conversation-cancel-edit").hidden = false;
       conversationMessage.value = e.text;
       syncComposerCount();
@@ -1454,6 +1461,7 @@ const resetConversationView = () => {
   conversationGivenBack = null;
   conversationStopTold = null;
   conversationDraftBeforeEdit = null;
+  conversationEditGivenBack = [];
   conversationGeneration++;
   $("conversation-cancel-edit").hidden = true;
   newConfirm.hidden = true;
@@ -1540,6 +1548,7 @@ $("conversation-compose").addEventListener("submit", event => {
     if (conversationMessage.value === text && !unsent.displaced) conversationMessage.value = "";
     syncComposerCount();
     conversationDraftBeforeEdit = null;
+    conversationEditGivenBack = [];
     $("conversation-cancel-edit").hidden = true;
     // A typed "stop" stopped everything at once: no turn comes, so nothing is awaited (home-c1-1). Its stop was told
     // already (onStopped), words given back with it: said once, and kept (home-r4-2, home-r4-3).
@@ -1567,18 +1576,22 @@ $("conversation-compose").addEventListener("submit", event => {
     // Refused after a Stop gave words back in its place: it goes back under them, unsent (home-r4-2).
     if (unsent.displaced) {
       conversationMessage.value = conversationMessage.value.trim() ? `${conversationMessage.value}\n\n${text}` : text;
-      syncComposerCount();
+      syncComposerCount(true);
     }
     awaitingReply(false);
     keepingComposer(() => { conversationComposeStatus.textContent = ipcErrorText(error) || COMPOSER_SAYS.sendFailed; });
   }).finally(() => { if (generation === conversationGeneration) { send.removeAttribute("aria-disabled"); send.textContent = "Send"; } });
 });
 $("conversation-cancel-edit").addEventListener("click", () => {
-  conversationMessage.value = conversationDraftBeforeEdit ?? "";
-  syncComposerCount();
+  const before = conversationDraftBeforeEdit ?? "";
+  // Words a Stop gave back while the edit was open stay, above that draft (home-r4-1).
+  const back = conversationEditGivenBack.join("\n\n");
+  conversationMessage.value = back && before.trim() ? `${back}\n\n${before}` : back || before;
+  syncComposerCount(!!back);
   conversationDraftBeforeEdit = null;
   $("conversation-cancel-edit").hidden = true;
-  conversationComposeStatus.textContent = COMPOSER_SAYS.editCancelled;
+  conversationComposeStatus.textContent = composerEditCancelled(conversationEditGivenBack.length, !!before.trim(), conversationMessage.value.length > CONVERSATION_REQUEST_LIMIT);
+  conversationEditGivenBack = [];
   conversationMessage.focus();
 });
 /**
@@ -1586,7 +1599,11 @@ $("conversation-cancel-edit").addEventListener("click", () => {
  * (no maxlength cutting its end off unseen), and Send refuses it until it fits (home-5). Crossing the limit is said once.
  */
 let conversationOver = false;
-function syncComposerCount(): void {
+/**
+ * `lineSays`: the line written next says what matters more (given-back words, which say if they're over the limit; a
+ * refused send's reason), so the over-limit note isn't written first, only to be overwritten (home-c4-2).
+ */
+function syncComposerCount(lineSays = false): void {
   const n = conversationMessage.value.length;
   const words = composerCount(n);
   const count = $("conversation-count");
@@ -1594,11 +1611,11 @@ function syncComposerCount(): void {
   count.hidden = !words;
   const over = n > CONVERSATION_REQUEST_LIMIT;
   if (over) conversationMessage.setAttribute("aria-invalid", "true"); else conversationMessage.removeAttribute("aria-invalid");
-  if (over && !conversationOver) conversationComposeStatus.textContent = COMPOSER_OVER;
-  else if (!over && conversationOver && conversationComposeStatus.textContent === COMPOSER_OVER) conversationComposeStatus.textContent = "";
+  if (over && !conversationOver && !lineSays) conversationComposeStatus.textContent = COMPOSER_OVER;
+  else if (!over && conversationOver && !lineSays && composerSaysOver(conversationComposeStatus.textContent ?? "")) conversationComposeStatus.textContent = "";
   conversationOver = over;
 }
-conversationMessage.addEventListener("input", syncComposerCount);
+conversationMessage.addEventListener("input", () => syncComposerCount());
 conversationMessage.addEventListener("keydown", event => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.isComposing) {
     event.preventDefault();
