@@ -484,6 +484,9 @@ describe("the launcher's own answers", () => {
     expect(text).toMatch(/^ember-copilot starts Ember/);
     expect(text).toContain("usage: ember [doctor | --show-settings | --ask]");
     for (const w of ["  ember doctor", "  ember --show-settings", "  ember --ask", "--npm-install-only", "--npm-where", "EMBER_NPM_DOWNLOAD_BASE"]) expect(text, w).toContain(w);
+    // No shortcut: another app may hold Ctrl+Alt+E, and then Ember holds its fallback (install-docs-r2-3).
+    expect(text).toContain("start Ember (it stays beside your cursor; run it again for its settings)");
+    expect(text).not.toMatch(/Ctrl\+|Alt\+/);
     expect(invokedAs("/usr/local/bin/ember", {})).toBe("ember");
     expect(invokedAs("/usr/local/bin/ember-copilot", {})).toBe("ember-copilot");
     expect(invokedAs("C:\\Users\\k\\AppData\\Roaming\\npm\\node_modules\\ember-copilot\\bin\\ember.mjs", {})).toBe("ember");
