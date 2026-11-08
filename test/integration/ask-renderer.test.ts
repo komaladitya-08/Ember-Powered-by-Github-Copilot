@@ -312,9 +312,12 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
         await listen({ phase: "blocked", detail: "Ember is already listening.", reason: "listening" });
         expect(await detail.textContent()).toBe("Ember is already listening.");
         expect(await page.locator("#listen-once").getAttribute("aria-disabled")).toBe("true");
+        // (Its status line is emptied meanwhile, unsaid, rather than kept to be read beside it: voice-listening-v4-2.)
+        expect(await live.textContent()).toBe("");
         await listen({ phase: "ready", detail: "" });
       }
-      expect(await live.textContent()).toBe("Say one request after you press Listen once.");
+      // Back to the line it said before: not said again.
+      expect(await live.textContent()).toBe("");
       await listen({ phase: "blocked", detail: "The microphone is muted. Unmute it to speak one request." });
       expect(await live.textContent()).toBe("The microphone is muted. Unmute it to speak one request.");
     } finally { await page.close(); }

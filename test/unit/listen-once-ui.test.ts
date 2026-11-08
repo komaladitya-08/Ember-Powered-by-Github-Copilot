@@ -14,6 +14,14 @@ function control(request: (on: boolean) => Promise<ListenOnceStatus>) {
   return { button, detail, update, click };
 }
 
+/** A status line as a screen reader hears it: each line written to it is said, and an emptied one says nothing. */
+function statusLine() {
+  const said: string[] = [];
+  let now = "";
+  const live = { set textContent(t: string) { now = t; if (t) said.push(t); }, get textContent() { return now; } };
+  return { said, live };
+}
+
 describe("Listen once controls", () => {
   it("shows why listening is blocked as a control that can't be used now, takes no press, and switches to Cancel during capture (companion-3)", async () => {
     const request = vi.fn(async (on: boolean): Promise<ListenOnceStatus> => on
@@ -71,8 +79,7 @@ describe("Listen once controls", () => {
   it("tells screen readers each new line but never that Ember is already listening, nor the line it comes back to (voice-listening-c3-1)", async () => {
     // The line changed as a wake's window opened ("Ember is already listening.") and back as it closed: a screen reader
     // said it over the microphone, into the request, or into the conversation as a request of its own.
-    const said: string[] = [];
-    const live = { set textContent(t: string) { said.push(t); }, get textContent() { return said.at(-1) ?? ""; } };
+    const { said, live } = statusLine();
     const button = Object.assign(new EventTarget(), { textContent: "", setAttribute: vi.fn() });
     const detail = { textContent: "" };
     const update = mountListenOnce(button as unknown as HTMLButtonElement, detail as HTMLElement, async () => ({ phase: "listening", detail: "Listening for one request…" }), "Speak one request.", undefined, live as unknown as HTMLElement);
@@ -85,12 +92,36 @@ describe("Listen once controls", () => {
       expect(detail.textContent).toBe(s.detail || "Speak one request.");
     }
     expect(said.slice(before)).toEqual([]);
+    // (Nor does the status line keep a line that no longer holds beside the one shown: voice-listening-v4-2.)
+    expect(live.textContent).toBe("");
     // Anything else is said as it comes, a press's own lines with it.
     update({ phase: "blocked", detail: "The microphone is muted.", reason: undefined });
     update({ phase: "ready", detail: "" });
     button.dispatchEvent(new Event("click"));
     await Promise.resolve(); await Promise.resolve();
     expect(said.slice(before)).toEqual(["The microphone is muted.", "Speak one request.", "Checking the microphone…", "Listening for one request…"]);
+  });
+
+  it("says nothing more when a press finds Ember already listening, and never leaves “Checking the microphone…” to be read beside it (voice-listening-v4-2)", async () => {
+    // A window opened as Listen once was pressed: its answer, "Ember is already listening.", would be said into that
+    // window (voice-listening-c3-1), and the status line kept "Checking the microphone…", read in browse mode beside it.
+    const { said, live } = statusLine();
+    const button = Object.assign(new EventTarget(), { textContent: "", setAttribute: vi.fn() });
+    const detail = { textContent: "" };
+    const update = mountListenOnce(button as unknown as HTMLButtonElement, detail as HTMLElement, async () => ({ phase: "blocked", detail: "Ember is already listening.", reason: "listening" }), "Speak one request.", undefined, live as unknown as HTMLElement);
+    update({ phase: "ready", detail: "" });
+    button.dispatchEvent(new Event("click"));
+    await Promise.resolve(); await Promise.resolve();
+    expect(detail.textContent).toBe("Ember is already listening.");
+    expect(button.setAttribute).toHaveBeenLastCalledWith("aria-disabled", "true");
+    expect(live.textContent).toBe("");
+    // The window closes: the line before the press is back, and it was said then, so it isn't said again (Home's names
+    // “Hey Ember”, which would be said into the wake word's microphone).
+    update({ phase: "ready", detail: "" });
+    expect(said).toEqual(["Checking the microphone…", "Speak one request.", "Checking the microphone…"]);
+    // What comes next is said.
+    update({ phase: "blocked", detail: "The microphone is muted." });
+    expect(said.at(-1)).toBe("The microphone is muted.");
   });
 
   it("adds room for the control and a wrapped explanation alongside the existing rows", () => {

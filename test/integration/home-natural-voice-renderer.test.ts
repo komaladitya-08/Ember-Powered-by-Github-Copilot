@@ -297,6 +297,8 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
         if (name.startsWith("on")) return (fn: (value: unknown) => void) => { (listeners[name] ??= new Set()).add(fn); return () => { listeners[name]?.delete(fn); }; };
         if (name === "getStatus") return async () => seed.status;
         if (name === "voiceStatus") return async () => seed.voice;
+        // (Pressed as a window opens, Listen once finds Ember already listening: voice-listening-v4-2.)
+        if (name === "listenOnce") return async () => ({ phase: "blocked", detail: "Ember is already listening.", reason: "listening" });
         return () => new Promise(() => undefined);
       } }) as EmberHomeApi;
     }, { status, voice: waiting });
@@ -310,7 +312,8 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
     await page.evaluate(() => {
       const out: string[] = (window as unknown as { __said: string[] }).__said = [];
       const regions = [...document.querySelectorAll(".group.voice [role='status'], .group.voice [aria-live], .group.voice [role='alert']")];
-      for (const r of regions) new MutationObserver(() => out.push(`${r.id}: ${r.textContent}`)).observe(r, { subtree: true, childList: true, characterData: true });
+      // (An emptied line says nothing.)
+      for (const r of regions) new MutationObserver(() => { if (r.textContent) out.push(`${r.id}: ${r.textContent}`); }).observe(r, { subtree: true, childList: true, characterData: true });
     });
     const send = (v: VoiceStatus) => page.evaluate(s => window.__fullNaturalTest.status(s), v);
     const already = { phase: "blocked", detail: "Ember is already listening.", reason: "listening" } as const;
@@ -319,6 +322,8 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
     expect(await voiceLine.innerText()).toBe("Hearing you…");
     expect(await detail.innerText()).toBe("Ember is already listening.");
     expect(await page.locator("#voice-listen-once").getAttribute("aria-disabled")).toBe("true");
+    // Nor do their status lines keep the lines before it, to be read in browse mode beside these (voice-listening-v4-2).
+    expect([await page.locator("#voice-live").textContent(), await page.locator("#voice-listen-once-live").textContent()]).toEqual(["", ""]);
     await send({ ...waiting, state: "active", detail: "Listening…", listenOnce: already });
     await page.waitForTimeout(1300);
     expect(await said()).toEqual([]);
@@ -337,9 +342,18 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
     expect(await said()).toEqual([]);
     expect(await voiceLine.innerText()).toBe("Listening for “Ember” through Built-in Microphone");
     expect(await detail.innerText()).toBe("Press Listen once, then say one request without saying “Hey Ember”.");
+    // Pressed as a window opened: its answer isn't said into the window, nor is "Checking the microphone…" kept to be
+    // read beside it, and as the window closes the line from before the press isn't said again (voice-listening-v4-2).
+    await page.locator("#voice-listen-once").click();
+    await expect.poll(() => detail.innerText()).toBe("Ember is already listening.");
+    expect(await page.locator("#voice-listen-once-live").textContent()).toBe("");
+    await send({ ...waiting, state: "active", listenOnce: already });
+    await send(waiting);
+    await page.waitForTimeout(1300);
+    expect(await said()).toEqual(["voice-listen-once-live: Checking the microphone…"]);
     // What lasts is said, outside a window.
     await send({ ...waiting, state: "error", detail: "The microphone stopped.", listenOnce: { phase: "blocked", detail: "Check the microphone and the voice status above.", reason: "voice-error" } });
-    await expect.poll(said, { timeout: 3000 }).toEqual(["voice-listen-once-live: Check the microphone and the voice status above.", "voice-live: Not working: The microphone stopped."]);
+    await expect.poll(said, { timeout: 3000 }).toEqual(["voice-listen-once-live: Checking the microphone…", "voice-listen-once-live: Check the microphone and the voice status above.", "voice-live: Not working: The microphone stopped."]);
     expect(errors).toEqual([]);
   } finally { await browser.close(); await server.close(); }
 }, 60_000);
