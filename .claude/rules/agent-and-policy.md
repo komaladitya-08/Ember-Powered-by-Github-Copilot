@@ -116,7 +116,8 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
     password, PIN or door code with digits or symbols in its value, a login or credentials said as one such value;
     a secret-named key with code for its value is passed over by `withoutCodeKeys()`, never a literal under it, as a
     hash's entry, a property naming one of several, or in a mapping, list or "{"/"[" it opens (`holdsUnder()`,
-    safety-privacy-r5-1), never a quoted or bare value, a
+    safety-privacy-r5-1); a prompt's or a label's words with only code or markup after them are written out first
+    (`withoutLabels()`, memory-r4-2); never a quoted or bare value, a
     PIN's number, a shell variable's word or code that gives a literal as a default, never by a bare shape after a
     prose label's ":" (`codeish()`, or a bracket a line of code opened above it, `openedAbove()`), and its value is
     still read for tokens: add a code shape

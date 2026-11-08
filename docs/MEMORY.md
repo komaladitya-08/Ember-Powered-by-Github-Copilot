@@ -141,14 +141,24 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   before it (memory-w5-2); a letters-only "pass" straight after "user" and a name is a
   password too ("username bob pass hunter", never "the user should pass validation": memory-v5-4), but never a
   lowercase plural straight after "user" nor a word for a check after "pass" ("Why don't the user scripts pass
-  linting?", "Ensure user inputs pass sanitisation.": memory-w5-4). A literal under a key named for a secret is that
+  linting?", "Ensure user inputs pass sanitisation.": memory-w5-4). A prompt's or a label's words are no value
+  (memory-r4-2): a string that ends after "Password:" with code after it (`getpass.getpass("Password: ")`, `read -s
+  -p "Password: " PASS`), an element's text that ends there with only markup after it, on its line and the next
+  (`<label for="password">Password:</label>`; never `<td>Password:</td><td>hunter2</td>` or `print("Password:",
+  "hunter2")`), and `$PWD`. Nor is a quoted label ("Password:"), a sentence about a secret ("Forgot your
+  password?"), an address with no credentials and no part shaped like a token ('TOKEN_URL =
+  "https://oauth2.googleapis.com/token"'), what a key that names where a secret is holds ("PASSWORD_FIELD",
+  "API_KEY_HEADER", "secretName", "tokenType"; never one shaped like a password), a tokenizer's setting, or, in a
+  request, a type, null or an environment read with words after it and no digit or symbol in the sentence ("Add a
+  token: string field to the Session interface", "Make apiKey: process.env.KEY optional"; never "PIN: number 4821":
+  integrations-r4-1). "password": "Password" alone is still refused, since that may be the password. A literal under a key named for a secret is that
   secret wherever the key sits (safety-privacy-r5-1, safety-privacy-c5-1): a hash's entry ("'password' =>
   'Summer2024!'", ":password => '…'", Perl's "password => '…'"; an arrow's parameter with code after it, "token =>
   token.trim()", is code), a property that names one of several ("secrets.db: …", "password.old = …"; one about the
   secret, "token.type", "password.minLength", "token.start", holds a value only shaped like a password), and the
   mapping or list indented under a name that ends with a secret's word and the members of a "{" or "[" that ends its
   line ("passwords:\n  db: Summer2024!", '"Secrets": {\n  "Database": "…"\n}', "PASSWORDS = [\n  \"…\",\n]"), up to
-  60 lines and 4 KiB. A child named for a setting ("username", "type", "min_length", "ssid", "secure"), code (a call, a
+  40 lines and 2 KiB. A child named for a setting ("username", "type", "min_length", "ssid", "secure"), code (a call, a
   reference, a variable in code, a count, true or false, a YAML alias), a name for a secret ("key: password",
   "- db_password", "'projects.secrets'") and a sentence about one ("Forgot your password?") hold none; under a name for
   tokens (a lexer's or a design system's) only a literal shaped like a token does, and under a block's line ("if

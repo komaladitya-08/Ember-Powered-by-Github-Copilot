@@ -195,6 +195,16 @@ it("holds back a deploy script and a README that give a password to a program's 
   expect(await prompt([safe])).toContain("mysqldump -u root -p");
 });
 
+it("sends a login form, a getpass CLI and an OAuth client, and takes a request that names a type, which hold no password (memory-r4-2, integrations-r4-1)", async () => {
+  const form = await file("login.html", '<form method="post" action="/login">\n  <label for="username">Username:</label>\n  <input type="text" id="username" name="username">\n  <label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n</form>\n');
+  const cli = await file("cli.py", 'import getpass\n\ndef main():\n    user = input("Username: ")\n    password = getpass.getpass("Password: ")\n    return user, password\n');
+  const oauth = await file("oauth.py", 'TOKEN_URL = "https://oauth2.googleapis.com/token"\nAUTH_URL = "https://accounts.google.com/o/oauth2/auth"\n');
+  const result = await projectPrompt([form, cli, oauth], "review", "Add a token: string field to the Session interface", new AbortController().signal, privateDir);
+  for (const line of ["Password:", "getpass.getpass", "oauth2.googleapis.com/token", "Add a token: string field"]) expect(result).toContain(line);
+  const table = await file("users.html", "<table>\n  <tr><td>Password:</td><td>Summer2024!</td></tr>\n</table>\n");
+  await expect(prompt([table])).rejects.toThrow(new Error("users.html appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+});
+
 it("takes a request about user scripts passing a check and sends a path built into root, beside a user's name and password (memory-w5-4, memory-w5-5)", async () => {
   const app = await file("app.py", "print(1)\n");
   for (const q of ["Why don't the user scripts pass linting?", "How do I make user uploads pass scanning?", "Do the user queries pass sanitisation?"]) {

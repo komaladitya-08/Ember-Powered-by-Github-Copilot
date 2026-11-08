@@ -326,6 +326,30 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
 
+  // A prompt's or a label's words, a sentence, an address and what a key that names where a secret is holds, which
+  // still refused whole auth files, and a type named in a request (memory-r4-2, integrations-r4-1).
+  it.each([
+    ['pw = input("Password:")'], ['password = getpass.getpass("Password: ")'], ['<label for="password">Password:</label>'], ["<td>Password:</td>"],
+    ['<span>Password:</span> <input type="password">'], ['<label for="password">Password:</label>\n  <input type="password" id="password" name="password">'],
+    ['read -s -p "Password: " PASS'], ['echo "Password:"'], ['Console.Write("Password: ");'], ['"passwordLabel": "Password:",'],
+    ['Password: <input type="password" name="pw">'], ['"forgotPassword": "Forgot your password?"'], ['TOKEN_URL = "https://oauth2.googleapis.com/token"'],
+    ['TOKEN_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/token"'], ['const PASSWORD_FIELD = "password";'], ['const API_KEY_HEADER = "x-api-key";'],
+    ["secretName: db-credentials"], ['tokenType: "Bearer",'], ['  tokenizer: "cl100k_base",'], ['docker run -v "$PWD":/app node:22'],
+    ["Make apiKey: process.env.KEY optional"], ["Rename password: string to secret: string in types.ts"], ["Fix the bug where token: undefined is logged"],
+    ["Why does pin: string fail validation?"], ["Add a token: string field to the Session interface"], ["Make password: string optional in the LoginForm type"],
+    ["Why does token: null break the header?"], ["Replace apiKey: config.key with apiKey: process.env.KEY"], ["Where is the session token: string set?"],
+  ])("keeps %j, a prompt, a label, an address or a type where a secret's value would be (memory-r4-2, integrations-r4-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["<td>Password:</td><td>hunter2</td>"], ["<dt>Password:</dt>\n<dd>hunter2</dd>"], ['echo "Password:" hunter2'], ['print("Password:", "hunter2")'],
+    ['input("Password: hunter2")'], ['TOKEN_URL = "https://user:pass@host/token"'], ["password: <hunter>"], ["<b>Password:</b> hunter2"],
+    ['WEBHOOK_TOKEN_URL = "https://hooks.slack.com/services/T0000/B0000/x8KqR2mN7pL4tW9vZ3cY6b1D"'], ['PASSWORD_FIELD = "Summer2024!"'],
+    ["PIN: number 4821"], ["Password: string cheese"], ["My PIN: number is 4821"], ['"passwordLabel": "hunter2",'], ['"password": "Password"'],
+  ])("still refuses %j, a value after a prompt or a label, or in an address (memory-r4-2, integrations-r4-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+
   // A version, an issue, a setting or a user at a computer said as a login, a disk's size and a formula: round four's
   // login and admin rules refused them (safety-privacy-c4-3, memory-c4-2).
   it.each([

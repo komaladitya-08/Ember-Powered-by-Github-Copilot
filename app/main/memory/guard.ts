@@ -64,6 +64,11 @@ const NAMED_NO_VALUE = new RegExp(
 const KEY_BEFORE_SEP = /(?<![\w$-])(?<![\w$.-]\.)[A-Za-z_$][\w$.-]{0,127}(?=["']?\s{0,40}[:=])/g;
 /** The words in a key's name that say a secret, as the redactor's KEY_VALUE and this guard's own names read them. */
 const SECRET_IN_NAME = /pass(?:word|wd|phrase|code)?|pwd|pw|secret|token|key|credentials?|creds|login|pin|otp|cvv|cvc|puk|psk|wi-?fi/i;
+/**
+ * Words that hold a secret's name but never name one ("tokenizer", "keyboard", "passport", "bypass"), so
+ * `tokenizer: "cl100k_base"` is a setting (integrations-r4-1).
+ */
+const NOT_SECRET_WORD = /^(?:de)?tokeni[sz](?:er|ers|ed|es|e|ing|ation)$|^(?:keyboard|keyboards|keyframes?|keymaps?|keycodes?|keypress|keydown|keyup|keystrokes?|monkey|passport|compass|bypass|passenger|spinner|pinterest|pinyin|pinned|pinch)$/i;
 /** A variable's own words that name a secret, so "accessToken", "creds_v2" and "SECRET_KEY" are variables, not values. */
 const SECRET_PARTS = new Set(["password", "passwords", "passwd", "pwd", "pw", "pass", "passphrase", "passcode", "secret", "secrets", "token",
   "tokens", "key", "keys", "apikey", "cred", "creds", "credential", "credentials", "login", "auth", "pin"]);
@@ -215,7 +220,30 @@ const TYPE_ALIAS = /^\s*(?:export\s+)?(?:declare\s+)?type\s+[A-Za-z_$][\w$]*(?:<
  * that ends with ";", an indented one or one inside a bracket), whose bare name after it is a variable ("token.line =
  * line;"), never a config file's line ("passwords.home = hunter"): safety-privacy-r5-1.
  */
-interface CodeKey { name: string; count: boolean; pin: boolean; compared: boolean; typeOf: boolean; shell: boolean; inside: boolean; codeId?: boolean; about?: boolean }
+interface CodeKey { name: string; count: boolean; pin: boolean; compared: boolean; typeOf: boolean; shell: boolean; inside: boolean; codeId?: boolean; about?: boolean; nameOf?: boolean }
+
+/** The last word of a key that names where a secret is or what it is called, never the secret ("FIELD", "HEADER", "Name"). */
+const NAME_OF = /^(?:field|fields|header|headers|name|names|param|params|label|labels|id|ids|attr|attribute|env|var|variable|prop|property|column|cookie|slot|input|selector|path|url|uri|endpoint|file|type|kind|ref|prefix|placeholder|message|msg|error|hint)$/i;
+/** The end of a value in code: the line's end, a comma, a semicolon, a closing bracket or a comment. */
+const CODE_AFTER_END = /^\s*(?:$|[,;)\]}]|\/\/|#)/;
+/** A label's words, a colon at their end ("Password:", "PIN :"), letters only. */
+const label = (s: string) => /^[\p{L}_][\p{L}_ '’-]{0,40}:\s*$/u.test(s);
+/**
+ * An address with no credentials in it, and none of its parts shaped like a token ("https://oauth2.googleapis.com/token",
+ * never "https://user:pass@host" or a webhook's "https://hooks.slack.com/services/T0/B0/x8Kq…"): memory-r4-2.
+ */
+function plainUrl(s: string): boolean {
+  if (!/^[a-z][a-z0-9+.-]*:\/\/[^\s]+$/i.test(s) || /:\/\/[^/\s]*@/.test(s)) return false;
+  return s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[/?&=#;:.]/).every(p => !(p.length >= 16 && /\d/.test(p) && /[A-Za-z]/.test(p)) && !/[!@$%^*]/.test(p));
+}
+/**
+ * Words after a type or an environment read in a request, that say what is done with it, and no value in the rest of
+ * the sentence (no digit or symbol): "field to the Session interface", "fail validation?", "optional".
+ */
+const PROSE_WORD = String.raw`field|fields|option|options|prop|props|property|properties|param|params|parameter|parameters|arg|args|argument|arguments|attribute|attributes|member|members|column|columns|type|types|value|values|key|entry|setting|variable|to|in|into|as|from|for|on|optional|required|instead|with|and|or|but|is|are|was|were|be|fails?|failed|failing|breaks?|broke|gets?|got|causes?|throws?|works?|isn['’]t|doesn['’]t|does|do|should|would|could|can|will|must|may|might|here|there|now|correctly|properly|a|an|the|everywhere|anywhere|appears?|shows?|prints?|logs?|logged|leaks?|comes?|returns?|returned|becomes?|stays?|set|used|stored|defined|declared|read|written|passed|sent|kept|saved|with`;
+function proseAfter(rest: string): boolean {
+  return new RegExp(String.raw`^\s+(?:${PROSE_WORD})\b`, "i").test(rest) && !/[0-9!@#$%^&*]/.test(rest.split(/[.?!\n]/)[0]!.slice(0, 160));
+}
 
 /** Whether `v`, what follows a secret-named key's ":" or "=" on `line`, reads as code rather than a value. */
 function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
@@ -251,6 +279,10 @@ function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
   if (quoted) {
     const s = quoted[2]!;
     // A type's string values ('"password" | "text"'), what typeof gives in a comparison, and one or two characters.
+    // A label, a sentence about the secret, an address with no credentials in it, or what a key that names where the
+    // secret is holds ('"passwordLabel": "Password:"', '"forgotPassword": "Forgot your password?"', 'TOKEN_URL =
+    // "https://oauth2.googleapis.com/token"', 'PASSWORD_FIELD = "password"'): memory-r4-2, integrations-r4-1.
+    if (label(s) || sentence(s) || plainUrl(s) || (key.nameOf === true && !/:\/\//.test(s) && !secretShaped(s) && !tokenShaped(s))) return true;
     return s === "" || PLACEHOLDER.test(s) || REFERENCE.test(s) || VERSION.test(s) || /^(?:\.{1,2}|~)\//.test(s)
       || (!key.pin && (/^[^\w\s]{1,3}$/.test(s) || s.length <= 2)) || (quoted[1] === "`" && s.includes("${"))
       || (key.compared && !secretShaped(s)) || /^\s*\|\s*["'`]/.test(v.slice(quoted[0].length))
@@ -258,6 +290,13 @@ function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
   }
   if (/^["'`]/.test(v)) return false;
   const word = /^[^\s,;)\]}"'`]+/.exec(v)?.[0] ?? "";
+  // A bare name under a key that names where the secret is ("secretName: db-credentials"): integrations-r4-1.
+  if (key.nameOf === true && /^[A-Za-z][\w.-]*$/.test(word) && !secretShaped(word) && CODE_AFTER_END.test(v.slice(word.length))) return true;
+  // A type, an empty value or an environment read named in a request, with words after it and no value among them
+  // ("Add a token: string field", "Why does token: null break the header?", "Make apiKey: process.env.KEY optional"):
+  // integrations-r4-1. Never "PIN: number 4821" or "Password: string cheese".
+  const typed = /^(?:string|str|number|int|integer|float|boolean|bool|bigint|null|undefined|None|any|unknown|(?:process\.env|import\.meta\.env|os\.environ)\.[A-Z_][A-Z0-9_]*)(?=\s)/.exec(v)?.[0];
+  if (typed !== undefined && proseAfter(v.slice(typed.length))) return true;
   // A setting's own name and a value that isn't shaped like a password ("AWS_PROFILE=dev2").
   const setting = /^[A-Z][A-Z0-9]*_[A-Z0-9_]*=([^\s,;]*)/.exec(v);
   if (PLACEHOLDER.test(word) || (key.shell ? SHELL_CODE.test(v) : CODE_TYPE.test(v) || CODE_WORD.test(v)) || (setting && !secretShaped(setting[1]!))) return true;
@@ -278,6 +317,9 @@ function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
   const member = /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+(?![\w$@.!#%&*-])/.exec(v)?.[0];
   if (member) {
     const rest = v.slice(member.length);
+    // A member read in code, named in a request with words after it ("Replace apiKey: config.key with …"):
+    // integrations-r4-1.
+    if (!ends.test(rest) && CODE_OBJECTS.has(member.split(".")[0]!.toLowerCase()) && !/\d/.test(member) && proseAfter(rest)) return true;
     // "self.made99" outside code is a password written so (memory-v5-3).
     if (!ends.test(rest) || (/^(?:this|self|super|cls)\./.test(member) && /\d/.test(member) && !inCode)) return false;
     return codeMember(member) || CODE_LINE.test(line) || (/;\s*(?:\/\/.*)?$/.test(line) && /^[a-z.]+$/.test(member)) || op.startsWith("==") || operator.test(rest);
@@ -388,18 +430,18 @@ const tokenShaped = (s: string) => secretShaped(s) || (!/[\s\\/]|:\/\//.test(s) 
  * (a call, a reference, a variable in code, a count) holds none; a literal or a bare word in YAML does. Under a name
  * for tokens (a lexer's, a design system's), only a literal shaped like a token counts, and under a PIN's a short
  * number is a pin's (a board's "led: 13"). Under a key that doesn't start its line (a block's "if …:", "class
- * Password:"), only a literal shaped like a password counts. At most 60 lines and 4 KiB are read.
+ * Password:"), only a literal shaped like a password counts. At most 40 lines and 2 KiB are read.
  */
 function holdsUnder(text: string, from: number, keyIndent: number, key: CodeKey, bracket: boolean, opener: string, block: boolean): boolean {
   const ws = words(key.name).map(w => w.toLowerCase());
   const tokens = ws.some(w => /^tokens?$/.test(w)) && !ws.some(w => !/^tokens?$/.test(w) && (STRONG_SECRET.has(w) || /^(?:keys?|pins?)$/.test(w)));
-  const stop = Math.min(text.length, from + 4096);
+  const stop = Math.min(text.length, from + 2048);
   let depth = 1;
   let at = from;
   // A setting's own nested lines or bracket, passed over whole: the indent its lines stand under, or its depth.
   let skipIndent = -1;
   let skipDepth = 0;
-  for (let n = 0; n < 60 && at < stop; n++) {
+  for (let n = 0; n < 40 && at < stop; n++) {
     const nl = text.indexOf("\n", at);
     let raw = text.slice(at, nl < 0 ? stop : Math.min(nl, stop));
     at = nl < 0 ? stop : nl + 1;
@@ -509,8 +551,14 @@ function withoutCodeKeys(text: string, found?: { held: boolean }): string {
         && (SHELL_BEFORE.test(text.slice(lineStart, start))
           || (/^[A-Z_][A-Z0-9_]*$/.test(name) && SHELL_CAPS_BEFORE.test(text.slice(lineStart, start)) && !/[([]/.test(above(lineStart) ?? ""))),
       inside: false,
+      // A key that names where the secret is or what it is called ("PASSWORD_FIELD", "API_KEY_HEADER", "secretName",
+      // "TOKEN_URL"), whose value is never the secret (memory-r4-2, integrations-r4-1).
+      nameOf: words(name.split(".").at(-1)!).length > 1 && NAME_OF.test(words(name.split(".").at(-1)!).at(-1)!),
     };
     let code: boolean;
+    // A name whose only secret-looking words never name one ("tokenizer", "keyboardLayout").
+    const looks = words(segs[s]!).filter(w => SECRET_IN_NAME.test(w));
+    const notSecret = looks.length > 0 && looks.every(w => NOT_SECRET_WORD.test(w));
     // Each look is bounded (a value's first 400 characters, its line's first and last 200), so a long line of keys
     // stays linear.
     const lineEnd = text.indexOf("\n", i);
@@ -533,7 +581,7 @@ function withoutCodeKeys(text: string, found?: { held: boolean }): string {
     // A path ("Token::Kind"), an arrow's parameter with code after it ("token => token.trim()"), never a hash's entry
     // or a lone value after it: safety-privacy-r5-1. A name that ends a sentence ("…from a refresh_token.\n\n:param …")
     // and a property before a block's ":" ("if node.type == token.SEMI:").
-    if (op === "::" || (op === "=>" && !entry && !lone) || segs.at(-1) === "" || (property && op === ":" && !first)) code = true;
+    if (notSecret || op === "::" || (op === "=>" && !entry && !lone) || segs.at(-1) === "" || (property && op === ":" && !first)) code = true;
     // A property compared ("token.type === …", "tokenBefore.loc.end.line ===\n  …"), unless with a password.
     else if (property && op.startsWith("==") && !VALUE_PROPERTY.test(segs.at(-1)!)) code = !literalsIn(rest).some(l => secretShaped(l.s));
     else {
@@ -594,6 +642,47 @@ function withoutCodeKeys(text: string, found?: { held: boolean }): string {
   }
   return at === 0 ? text : out + text.slice(at);
 }
+
+/**
+ * A secret's name as a prompt's or a label's words, with nothing where its value would be (memory-r4-2): a string that
+ * ends after its ":" and code after the string (`input("Password: ")`, `getpass.getpass("Password: ")`,
+ * `Console.Write("Password: ");`, `read -s -p "Password: " PASS`), or an element's text that ends there with no text
+ * after it on its line, nor on the next when nothing follows (`<label for="password">Password:</label>`, `Password:
+ * <input type="password">`). Only the name is written out. `<td>Password:</td><td>hunter2</td>`, `echo "Password:"
+ * hunter2` and `print("Password:", "hunter2")` stay values.
+ */
+const LABEL = /\b(?:pass(?:word|phrase|code)?|passwd|pwd|pin|passcode|token|secret|api[ _-]?key)s?[ \t]*:[ \t]*(?=["'`<])/gi;
+/** An HTML element's tag where a label's text ends, never a word in angle brackets ("<hunter>", "<your password>"). */
+const HTML_TAG = /^<\/?(?:label|input|td|th|tr|span|div|p|b|strong|i|em|u|small|dt|dd|li|a|button|select|option|br|code|font|legend|fieldset|form|h[1-6])(?:\s[^<>]*)?\/?>/i;
+/** `text` with each prompt's or label's secret name (LABEL) written out as "_". */
+function withoutLabels(text: string): string {
+  return text.replace(LABEL, (m: string, at: number) => {
+    const lineStart = text.lastIndexOf("\n", at) + 1;
+    const nl = text.indexOf("\n", at);
+    const lineEnd = nl < 0 ? text.length : nl;
+    const line = text.slice(lineStart, lineEnd);
+    const rest = text.slice(at + m.length, lineEnd);
+    const q = rest[0]!;
+    // Inside a string that closes here, with only code after it, or a shell's read with its variable's name; or markup
+    // after it and no text, on its line and on the next.
+    const textOf = (t: string) => t.replace(/<[^<>]*>/g, " ").trim();
+    const next = nl < 0 ? "" : text.slice(nl + 1, text.indexOf("\n", nl + 1) < 0 ? text.length : text.indexOf("\n", nl + 1));
+    const after = rest.slice(1);
+    const prompt = q !== "<"
+      ? (text.slice(lineStart, at).split(q).length - 1) % 2 === 1 && !/["'`][^"'`\n]*\w[^"'`\n]*["'`]/.test(after)
+        && (/^\s*(?:$|[),;+\]}]|\.\w|\/\/|#)/.test(after) || (/^\s*read\b/.test(line) && /^\s+[A-Za-z_]\w*\s*(?:;|$)/.test(after)))
+      : HTML_TAG.test(rest) && !textOf(rest) && !textOf(next).replace(/^[\p{L} ]{1,40}:$/u, "");
+    return prompt ? m.replace(/^[^:\s]+/, w => "_".repeat(w.length)) : m;
+  });
+}
+/** A prompt's string, then a literal shaped like a password after it ('print("Password:", "hunter2")'): memory-r4-2. */
+const PROMPT_THEN = /\b(?:pass(?:word|phrase|code)?|passwd|pwd|pin|passcode|token|secret|api[ _-]?key)s?[ \t]*:[ \t]*(["'`])\s*[,+]\s*(["'`])([^"'`\n]{3,80})\2/gi;
+function promptThen(text: string): boolean {
+  for (const m of text.matchAll(PROMPT_THEN)) if (secretShaped(m[3]!)) return true;
+  return false;
+}
+/** The shell's working folder ("$PWD", "${PWD}", "$OLDPWD"), never a password. */
+const SHELL_PWD = /\$\{?(?:OLD)?PWD\}?(?![\w])/g;
 
 /**
  * An Authorization header that gives where its token comes from, not the token ("Authorization: Bearer $(gh auth
@@ -993,9 +1082,9 @@ function luhn(digits: string): boolean {
 export function memoryRefusal(text: string): string | null {
   // Code where a value would be names no secret (memory-r4-1, memory-r4-2): its names are written out first, its values kept.
   const found = { held: false };
-  const said = withoutCodeKeys(text.replace(AUTH_REFERENCE, "_"), found);
+  const said = withoutCodeKeys(withoutLabels(text.replace(AUTH_REFERENCE, "_").replace(SHELL_PWD, "_")), found);
   const probe = said.replace(NAMED_NO_VALUE, " ");
-  if (found.held || redactSecrets(probe) !== probe || secretPair(text)) return "it holds a password, token or key";
+  if (found.held || redactSecrets(probe) !== probe || secretPair(text) || promptThen(text)) return "it holds a password, token or key";
   // The redactor hides a key only with its END line too: a key's first line alone is still a key's start (audit).
   if (PRIVATE_KEY_START.test(text)) return "it holds a private key";
   const pins = withoutPostcodes(said);
