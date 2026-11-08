@@ -403,6 +403,9 @@ progress[hidden] { display: none; }
 .memory-forgotten { align-items: center; flex-wrap: wrap; }
 .memory-forgotten > .hint { margin: 0; border-radius: var(--r-xs); }
 .memory-forgotten > .hint:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Memory's note, opened by a request: focus waits on its words, never its "I agree, remember" (memory-r7). */
+#memory-consent-text { border-radius: var(--r-xs); }
+#memory-consent-text:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 /* Memory on but paused: its line stands alone in the group, so no rule above it. */
 .group > .about-paused { border-top: 0; }
 /* Its group and the hints under it are spaced as a section's own children are. */

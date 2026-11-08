@@ -34,6 +34,27 @@ export function conversationTurnOf(value: unknown): ConversationTurn | null {
 }
 
 /**
+ * How the turn Home was told of ended, when a Stop ended it (home-c2-2): "stopped" by the conversation's Stop (Home's
+ * Stop response, the bubble's Stop, New conversation), "stopped-everything" by the kill switch. Any other end has none:
+ * Home says what the lines that came since its request show, which main sends before the turn's end (home-r2-1).
+ */
+export type ConversationTurnEnd = "stopped" | "stopped-everything";
+
+/** The conversation's turn as main pushes it to Home: its state, and with "idle" how a Stop ended it. */
+export interface ConversationTurnChange { turn: ConversationTurn; ended?: ConversationTurnEnd }
+
+/** A turn change as main pushes it (or a bare state, as Home's conversationTurn() answers), or null for anything else. */
+export function conversationTurnChangeOf(value: unknown): ConversationTurnChange | null {
+  const bare = conversationTurnOf(value);
+  if (bare) return { turn: bare };
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as { turn?: unknown; ended?: unknown };
+  const turn = conversationTurnOf(v.turn);
+  if (!turn) return null;
+  return turn === "idle" && (v.ended === "stopped" || v.ended === "stopped-everything") ? { turn, ended: v.ended } : { turn };
+}
+
+/**
  * What became of a request Home's composer sent: "stopped" for a typed "stop" that stopped everything at once (a task
  * was at work: no turn comes for it), else "sent".
  */

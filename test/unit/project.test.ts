@@ -55,7 +55,15 @@ it("rejects unsafe files, ambiguous names, excess data and invalid request modes
   await expect(prompt([bad], AbortSignal.abort())).rejects.toThrow();
 });
 
-const diffAnswer = (diff: string) => "A change to review.\n\n" + ["```diff", diff, "```"].join("\n");
+it("sends a request and a file that name an HTTP status or exit code, which hold no secret (memory-r6)", async () => {
+  const source = await file("auth.ts", "export const handler = () => 401;\n// Returns the access control code 401 when the token is missing.\n// The backup exit code 255 means the disk is full.\n");
+  const result = await projectPrompt([source], "review", "Explain why the access control code 401 is returned", new AbortController().signal, privateDir);
+  expect(result).toContain("access control code 401");
+  const door = await file("notes.txt", "The office door code is 4821.");
+  await expect(prompt([door])).rejects.toThrow("contain a password");
+});
+
+const diffAnswer = (diff: string) =>"A change to review.\n\n" + ["```diff", diff, "```"].join("\n");
 const diff = (name: string, hunks: string) => `--- a/${name}\n+++ b/${name}\n${hunks}`;
 
 it("applies exactly the reviewed hunks and preserves CRLF and the UTF-8 BOM", async () => {

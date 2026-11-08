@@ -229,7 +229,9 @@ runtime. It does not change the app's consent or speaking settings.
     only.
   - It never keeps passwords, codes, keys or card numbers.
   - If `memory.json` can't be read (it is left as it was), isn't memory (it is set aside as `memory.json.broken`) or
-    can't be saved (a full or read-only disk), Settings › Memory says so under the list.
+    can't be saved (a full or read-only disk), Settings › Memory says so under the list. While it can't be read,
+    Home's status line says "Memory paused" and the line says to check that your account can open `memory.json` in
+    Ember's data folder (a file left by running Ember as root is the usual cause), then restart Ember.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
     signing out forgets it all. The list says where each fact came from (you, our conversation, a task, Ember's
     summary or guess). After Forget, focus goes to a line saying what went, with **Undo** for a minute, never to the

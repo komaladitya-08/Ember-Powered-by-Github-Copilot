@@ -415,6 +415,8 @@ describe("getting to know you", () => {
     const { l, opened } = learning({ inForce: () => false });
     expect(l.intent("get to know me", { own: true })).toBe(INTRO_OFF);
     expect(opened).toHaveBeenCalledOnce();
+    // At the note's words, never its "I agree, remember" (memory-r7).
+    expect(opened).toHaveBeenCalledWith("note");
   });
 
   it("says why when memory is on but paused, instead of asking to turn it on (memory-2)", () => {
@@ -515,6 +517,8 @@ describe("“forget that”, the instruction check and the conversation's line",
     expect(off.l.intent("Ember, please forget that I work at Globex", { own: true })).toBe(FORGET_OFF);
     expect(FORGET_OFF).toBe("Memory is off, so I can't change what's saved. I've opened Memory in Settings.");
     expect(off.opened).toHaveBeenCalledOnce();
+    // At the list, where Forget is, never at the note and its "I agree, remember" (memory-r7).
+    expect(off.opened).toHaveBeenCalledWith("list");
     // A bare "forget that" is as likely "never mind" while memory is off: the conversation's.
     expect(off.l.intent("forget that", { own: true })).toBeNull();
     const paused = learning({ inForce: () => false, paused: () => "own-provider" });
@@ -553,10 +557,70 @@ describe("“forget that”, the instruction check and the conversation's line",
       expect(off.l.rememberNote(text)?.text, text).toBe("Memory is off, so I won't keep this after Ember closes.");
     }
     // What the user asks Ember to stop knowing about them is still answered in code.
-    for (const text of ["Forget that I work at Globex", "Forget my address", "forget where I live", "Forget everything about me", "Could you forget my wife's birthday?", "Don't remember that Priya is my manager", "Forget that I'm vegetarian"]) {
+    for (const text of ["Forget that I work at Globex", "Forget my address", "forget where I live", "Forget everything about me", "Could you forget my wife's birthday?", "Don't remember that Priya is my manager", "Forget that I'm vegetarian", "Forget my old address", "Forget my first name", "Forget my phone number and my address"]) {
       expect(memoryAsk(text), text).toBe("forget");
     }
     expect(off.opened).not.toHaveBeenCalled();
+  });
+
+  it("lets a request about the conversation, or one with another request after “and” or “then”, reach the conversation while memory is off (memory-c1-1)", () => {
+    const off = learning({ inForce: () => false });
+    for (const text of [
+      "Forget my last message", "Forget my previous request", "Forget my previous instructions", "Forget I mentioned it", "Forget I even brought it up",
+      "Forget our last conversation", "Forget my last request and open Firefox instead", "Forget my question", "Forget my typo", "Forget we talked about Atlas",
+      "Forget my draft and write a new one", "Forget my changes and reopen the file", "Forget my earlier answer", "Forget we ever had this chat",
+      "Forget my last request then open Firefox", "Forget my last request - open Firefox instead", "Forget our plan and open the calendar",
+      "Forget my old instructions", "Forget my first message",
+    ]) {
+      expect(off.l.intent(text, { own: true }), text).toBeNull();
+      expect(memoryAsk(text), text).toBeNull();
+      // Nothing about memory was asked: no note after the answer either.
+      expect(off.l.rememberNote(text), text).toBeNull();
+    }
+    expect(off.opened).not.toHaveBeenCalled();
+    // A forget request with another request after it: the conversation does the rest, and Ember says after its answer
+    // that memory can't change what's saved, so neither half is lost and nothing claims it was forgotten.
+    for (const text of ["Forget my address and open Firefox", "Forget that I work at Globex, then open Thunderbird"]) {
+      expect(off.l.intent(text, { own: true }), text).toBeNull();
+      expect(off.l.rememberNote(text), text).toEqual({ title: "Memory is off", text: "Memory is off, so I can't change what's saved.", open: true });
+    }
+    const paused = learning({ inForce: () => false, paused: () => "own-provider" });
+    expect(paused.l.rememberNote("Forget my address and open Firefox")).toEqual({ title: "Memory paused", text: "Memory is paused while I use your own model provider, so I can't change what's saved.", open: false });
+    expect(off.opened).not.toHaveBeenCalled();
+  });
+
+  it("answers the commonest ways to ask Ember to forget everything, or a name, truthfully in code while memory is off or paused (memory-v1)", () => {
+    const off = learning({ inForce: () => false });
+    const paused = learning({ inForce: () => false, paused: () => "org-provider" });
+    for (const text of [
+      "Forget everything", "Forget everything you know", "Erase your memory", "Clear your memory", "Wipe your memory", "Delete everything you remember",
+      "Forget Priya", "Forget Priya Shah", "Remove Priya from your memory", "Stop remembering things about me", "Ember, clear your memory.",
+    ]) {
+      expect(memoryAsk(text), text).toBe("forget");
+      expect(off.l.intent(text, { own: true }), text).toBe(FORGET_OFF);
+      expect(paused.l.intent(text, { own: true }), text).toBe("Memory is paused while I use your organisation's model service, so I can't change what's saved.");
+    }
+    // What was said just now, a word of the conversation and a name followed by more are the conversation's.
+    for (const text of ["Forget everything I said", "Forget It", "Forget The last part", "Forget Priya and email Bob", "forget about Priya"]) {
+      expect(memoryAsk(text), text).toBeNull();
+    }
+  });
+
+  it("adds “I won't keep this” only after a request that says something to keep, never after “remember the file I mentioned” (memory-r8)", () => {
+    const off = learning({ inForce: () => false });
+    for (const text of [
+      "Remember the file I mentioned", "Remember this", "Don't forget the attachment", "Remember the steps you just did and do them again",
+      "Remember the tab I had open", "Don't forget my umbrella", "Don't forget my meeting at 3", "Remember my meeting at 3", "Make a note of the time",
+    ]) {
+      expect(off.l.intent(text, { own: true }), text).toBeNull();
+      expect(off.l.rememberNote(text), text).toBeNull();
+    }
+    for (const text of [
+      "Remember my wife's birthday is 12 March", "Please remember I'm vegetarian", "Keep in mind I'm on mobile", "Remember: the build is at 5",
+      "Keep in mind the deadline is Friday", "Remember that my manager is Priya", "Don't forget that it's Priya's birthday",
+    ]) {
+      expect(off.l.rememberNote(text)?.text, text).toBe("Memory is off, so I won't keep this after Ember closes.");
+    }
   });
 
   it("says memory waits for its updated note, as Home does, rather than that it is off (memory-r4)", () => {
@@ -567,6 +631,7 @@ describe("“forget that”, the instruction check and the conversation's line",
     expect(l.intent("get to know me", { own: true })).toBe(INTRO_NOTE);
     expect(INTRO_NOTE).toBe("Memory is paused until you review its updated note. I've opened Memory in Settings.");
     expect(opened).toHaveBeenCalledTimes(2);
+    expect(opened.mock.calls).toEqual([["list"], ["note"]]);
     expect(rememberNote("checking").text).toBe("I'm still checking your GitHub account, so I won't keep this after Ember closes.");
   });
 

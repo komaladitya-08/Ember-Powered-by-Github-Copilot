@@ -418,8 +418,26 @@ function preferenceChanged(before: string, after: string): boolean {
   // changed ("dark" → "light"). "Dark mode" and "dark chocolate", or dark mode in Slack and in Outlook, both hold
   // (memory-r1).
   if (a.what.length < 2 || a.what.length !== b.what.length || a.what.at(-1) !== b.what.at(-1) || a.where !== b.where) return false;
-  return a.what.filter((w, i) => w !== b.what[i]).length === 1;
+  const changed = a.what.flatMap((w, i) => (w !== b.what[i] ? [[w, b.what[i]!] as const] : []));
+  // And the word that changed says the same kind of thing: "short" → "long" answers is a change, "short" → "bulleted"
+  // answers is another preference beside it, so About you's answer length stays in the profile (memory-r1).
+  return changed.length === 1 && kindOf(changed[0]![0]) === kindOf(changed[0]![1]);
 }
+/**
+ * Kinds of preference, by the word that says it (as `terms` gives it: folded, singular): how long, how set out, in what
+ * tone, light or dark, when, how often, by what. Two words of one kind, or two of none ("green" → "black" tea), are one
+ * preference that changed; two of different kinds are two preferences (memory-r1).
+ */
+const PREFERENCE_KINDS: readonly (readonly string[])[] = [
+  ["short", "shorter", "brief", "concise", "terse", "succinct", "long", "longer", "lengthy", "detailed", "thorough", "full", "verbose", "quick", "small", "large", "big"],
+  ["bulleted", "bullet", "numbered", "written", "spoken", "plain", "formatted", "prose", "markdown", "tabular", "table", "list", "paragraph"],
+  ["casual", "formal", "informal", "direct", "friendly", "polite", "blunt", "gentle", "warm", "professional", "playful", "serious"],
+  ["dark", "light"],
+  ["morning", "afternoon", "evening", "night", "early", "late", "midday", "lunchtime", "weekday", "weekend"],
+  ["daily", "weekly", "monthly", "hourly", "yearly", "quarterly", "fortnightly"],
+  ["email", "slack", "team", "phone", "text", "sms", "chat", "zoom", "video", "voice", "call", "whatsapp", "signal", "letter"],
+];
+const kindOf = (w: string) => PREFERENCE_KINDS.findIndex(k => k.includes(w));
 /** Where a preference's place or occasion begins: "…in Slack", "…for calls", "…at work", "…over tabs". */
 const PREFERENCE_PLACE = /\s(?:in|on|at|for|with|during|when|while|over|to|from|by|before|after|instead)\s/i;
 /** "Prefers dark mode in Slack": what is preferred (["dark", "mode"]) and where (its terms), or null for no preference. */

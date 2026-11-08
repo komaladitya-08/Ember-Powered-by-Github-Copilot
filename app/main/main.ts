@@ -65,7 +65,7 @@ import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
-import { composerRefusal } from "./agent/composer-refusal";
+import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
 import { projectAfterStatus, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
 import { exportProjectText } from "./agent/project-export";
@@ -985,8 +985,11 @@ function start(): void {
     if (where) sendToHome(IPC.focusSection, where);
   };
 
-  /** Settings › Memory, at its switch. */
-  const openMemory = () => { showHome(); sendToHome(IPC.focusSection, "memory:memory-yes"); };
+  /**
+   * Settings › Memory: at its list for a forget request, else at its note's words (shown while memory is off or waits
+   * for it). Never at the note's "I agree, remember", where an Enter or a space typed on would agree (memory-r7).
+   */
+  const openMemory = (at: "list" | "note" = "note") => { showHome(); sendToHome(IPC.focusSection, at === "list" ? "memory:memory-query" : "memory:memory-consent-text"); };
 
   const sendToHome = (channel: string, value: unknown) => {
     const send = () => { if (home && !home.isDestroyed()) home.webContents.send(channel, value); };
@@ -2060,12 +2063,12 @@ function start(): void {
     if (!text) throw new Error("Enter a request of up to 2,000 characters.");
     if (!consented()) throw new Error("Finish setup before sending a request.");
     if (screenLock?.locked) throw new Error("Unlock your screen before sending a request.");
-    // Still starting, offline or reconnecting is said as such: Models & connections can't help with those.
-    const status = agent?.getStatus();
-    if (status?.phase !== "ready") throw new Error(composerRefusal(status ?? { phase: "signed-out" }));
     // A typed "stop" while a task is at work stops everything at once (askEmber): no turn comes for it, and Home's
-    // composer says so instead of waiting for a reply (home-c1-1).
+    // composer says so instead of waiting for a reply (home-c1-1). Also while Ember isn't connected (home-c2-1).
     const stops = agent?.stopsWith(text) === true;
+    // Still starting, offline or reconnecting is said as such: Models & connections can't help with those.
+    const refusal = composerSendRefusal(agent?.getStatus() ?? { phase: "signed-out" }, stops);
+    if (refusal) throw new Error(refusal);
     // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
     void askEmber(text, {}, Promise.resolve(null));
     return stops ? "stopped" : "sent";
@@ -3409,8 +3412,9 @@ function start(): void {
       },
       // Home's conversation shows the answer as it develops (the same words as the bubble's).
       onAnswerStream: e => broadcast(IPC.conversationStream, e),
-      // And whether the conversation is answering (home-c1-1): its composer's wait ends when the turn does.
-      onConversationTurn: turn => sendToHome(IPC.conversationTurnChanged, turn),
+      // And whether the conversation is answering (home-c1-1): its composer's wait ends when the turn does, and says so
+      // when a Stop ended it (home-c2-2).
+      onConversationTurn: (turn, ended) => sendToHome(IPC.conversationTurnChanged, ended ? { turn, ended } : { turn }),
       onTranscript: (entries, why) => {
         // Forgotten (sign-out, another account): the "Ember learned" lines go with it. A New conversation clears them
         // too, but isn't announced as a forgetting: Home that asked for it resets itself when the request is answered.

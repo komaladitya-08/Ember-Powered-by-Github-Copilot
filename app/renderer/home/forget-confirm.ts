@@ -121,7 +121,7 @@ export function mountForgetConfirms(api: EmberHomeApi, hooks: { signOutFailed(er
       made = [];
       counts.stop();
     };
-    // An enabled, visible control first (memory-on is disabled while an organisation manages memory), else the section heading.
+    // An enabled, visible control in `after` first, else the section heading.
     const visibleAfter = () => after.map(id => document.getElementById(id)).find(usable);
     const fallback = () => visibleAfter() ?? document.getElementById(heading) ?? undefined;
     const close = (refocus: boolean) => {
@@ -177,5 +177,6 @@ export function mountForgetConfirms(api: EmberHomeApi, hooks: { signOutFailed(er
   ask("sign-out", "sign-out-confirm", "sign-out-scope", "sign-out-yes", "sign-out-no", signOutScope,
     () => api.signOut().catch(hooks.signOutFailed), ["sign-in", "retry"], "copilot-h");
   ask("memory-forget-all", "forget-all-confirm", "forget-all-scope", "forget-all-yes", "forget-all-no", forgetEverythingScope,
-    () => hooks.deleteMemory(() => api.forgetAllMemory()), ["memory-on"], "memory-h");
+    // Then Memory's heading, never its switch, where a stray space would turn memory off (memory-c2-1).
+    () => hooks.deleteMemory(() => api.forgetAllMemory()), [], "memory-h");
 }

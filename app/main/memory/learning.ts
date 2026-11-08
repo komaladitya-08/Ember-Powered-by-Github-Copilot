@@ -20,7 +20,8 @@ import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneS
 import type { MemoryOwnerReason } from "./owner";
 import {
   ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, INTRO_NOTE, NOTHING_TO_FORGET, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes,
-  forgetReply, forgotReply, gapFact, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk, rememberNote, type MemoryNote, type MemoryNotNow,
+  forgetNote, forgetReply, forgetsWithMore, forgotReply, gapFact, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk, rememberNote, type MemoryNote,
+  type MemoryNotNow,
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
 import { ownFact, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
@@ -55,8 +56,11 @@ export interface LearningDeps {
   locked: () => boolean;
   /** Says Ember's question in the conversation (and aloud when replies are spoken). False when it couldn't now. */
   say: (text: string) => boolean;
-  /** Opens Settings › Memory (the interview asked for while memory is off). */
-  openMemory?: () => void;
+  /**
+   * Opens Settings › Memory: at its list for a forget request (`list`), at its note's words for the interview asked for
+   * while memory is off (`note`). Never at the note's agree button (memory-r7).
+   */
+  openMemory?: (at: "list" | "note") => void;
   /**
    * Memory is on and agreed to, but its saved memory can't be opened now: why (memory-2); or memory is on under an
    * earlier note the user hasn't reviewed (`note`, memory-r4). Ember says so rather than asking for memory to be turned
@@ -358,11 +362,14 @@ export class MemoryLearning {
 
   /**
    * What Ember adds after the conversation's answer to "remember…" while memory isn't in force (memory-c1-1): the
-   * conversation keeps it until Ember closes, memory doesn't. Null for anything else, or while memory is in force.
+   * conversation keeps it until Ember closes, memory doesn't. After a forget request with more in it ("Forget my
+   * address and open Firefox"), that memory can't change what's saved. Null for anything else, or while memory is in
+   * force.
    */
   rememberNote(text: string): MemoryNote | null {
-    if (this.d.inForce() || memoryAsk(text) !== "remember") return null;
-    return rememberNote(this.notNow());
+    if (this.d.inForce()) return null;
+    if (memoryAsk(text) === "remember") return rememberNote(this.notNow());
+    return forgetsWithMore(text) ? forgetNote(this.notNow()) : null;
   }
 
   /** Why memory isn't in force now: managed by the organisation, on but paused (and why), or off. */
@@ -373,22 +380,23 @@ export class MemoryLearning {
 
   /**
    * What Ember says when asked for something only memory can do (get to know the user, forget) while it isn't in force:
-   * managed by the organisation, on but paused (and why), or off (Settings › Memory opens at its switch).
+   * managed by the organisation, on but paused (and why), or off (Settings › Memory opens: at its list to forget, else
+   * at its note).
    */
   private notInForce(asked: "introduce" | "forget" = "introduce"): string {
     const why = this.notNow();
     if (asked === "forget") {
       const reply = forgetReply(why);
-      if (reply.open) this.d.openMemory?.();
+      if (reply.open) this.d.openMemory?.("list");
       return reply.text;
     }
     if (why === "managed") return INTRO_MANAGED;
     if (why === "off" || why === "note") {
-      this.d.openMemory?.();
+      this.d.openMemory?.("note");
       return why === "off" ? INTRO_OFF : INTRO_NOTE;
     }
     const reply = memoryPausedReply(why);
-    if (reply.open) this.d.openMemory?.();
+    if (reply.open) this.d.openMemory?.("note");
     return reply.text;
   }
 

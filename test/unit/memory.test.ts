@@ -15,6 +15,7 @@ import { factLine, memoryBlock } from "../../app/main/memory/format";
 import { SEMANTIC_K } from "../../app/main/memory/embed";
 import { MemoryGraph, type EntityKind, type GraphClock } from "../../app/main/memory/graph";
 import { memoryRefusal } from "../../app/main/memory/guard";
+import { introFacts } from "../../app/main/memory/intro";
 import { SEMANTIC_FLOOR, bm25, personalizedPageRank, recall } from "../../app/main/memory/recall";
 import { memoryFile } from "../../app/main/memory/store";
 import { MemoryService } from "../../app/main/memory/service";
@@ -120,6 +121,40 @@ describe("what memory never keeps", () => {
     ["Use Firefox as the default browser"], ["Use Edge as the PIN pad app"], ["Credentials for staging are in 1Password"], ["The CVV is on the back of the card"],
   ])("keeps the look-alike %j too (memory-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // The commonest ways to say a PIN or a device's code, which round two's guard still kept (memory-1, round three).
+  it.each([
+    ["My PIN number is 1234"], ["PIN code is 1234"], ["My PIN code: 1234"], ["The PIN number for my card is 1234"],
+    ["My SIM PIN number is 0000"], ["My passcode number is 123456"], ["My PIN no. is 4821"], ["pin no. 1234"], ["My phone code is 4821"],
+    ["My iPhone code is 4821"], ["The iPad code is 482193"], ["My laptop code is 4821"], ["The token for the API is abc123def456ghi789"],
+  ])("refuses %j, the way a PIN or a device's code is mostly said (memory-1)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
+  });
+
+  // Ordinary words that round two's wider place codes refused (memory-r6): Projects' requests and files and task views
+  // share this guard, so each of these was refused there as if it held a password.
+  it.each([
+    ["Why does the backup exit code 255 happen?"], ["The server returns a security error code 403"], ["Access denied code 403 when I log in"],
+    ["Explain why the access control code 401 is returned"], ["The access log code 404 lines"], ["Our office zip code is 90210"],
+    ["Head office ZIP code 90210"], ["recovery mode code 123"], ["the building permit code 2021"], ["The alarm status code 200 means OK"],
+    ["Fix the gate timeout code 504 handling"], ["The cost code for the office is 4821"], ["The area code for the office is 0113"],
+    ["The project code for the London office is 12345"], ["Our office phone code is 0113"], ["The office extension code is 4821"],
+    ["Security update code 2024"], ["HTTP security error code 403"], ["The office cost code is 4821"], ["The office Teams code is 482193"],
+    ["The house style code 123"], ["The entry point code 0x400 loads"], ["The safe mode exit code 139 means a segfault"],
+    ["The area code for the building is 0113"], ["The phone code for Leeds is 0113"], ["The token count is 4096"],
+    ["The access token is short-lived"], ["My phone code is in the drawer"],
+  ])("keeps %j, which names a status, area or cost code and no lock (memory-r6)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // The codes that open something still go, said every way round two's fix was for (memory-1, memory-r6).
+  it.each([
+    ["The office door code is 4821"], ["Garage opener code 7734"], ["The garage remote code is 5512"], ["The house alarm code is 1234"],
+    ["The building entry code is 4821"], ["The code for the office door is 4821"], ["The office keycode is 4821"], ["The access code is 482193"],
+    ["My security code is 123"], ["Backup codes 1234-5678"], ["The recovery code is 482913"], ["The building code is 4821"],
+  ])("still refuses %j, a code that opens something (memory-r6)", text => {
+    expect(memoryRefusal(text)).toBe("it holds a password, PIN or code");
   });
 
   it.each([
@@ -228,6 +263,42 @@ describe("the memory graph", () => {
     for (const [before, now] of [["Prefers dark mode", "Prefers light mode"], ["Prefers short answers", "Prefers long answers"], ["Prefers dark mode in Slack", "Prefers light mode in Slack"]]) {
       expect(after({ text: before }, now), `${before} → ${now}`).toEqual({ closed: [before], open: [now] });
     }
+  });
+
+  it("closes a preference only for another value of the same kind: how long, how set out, what tone, when, how often (memory-r1)", () => {
+    const U = [{ name: "User", kind: "person" as const }];
+    const after = (before: { text: string; predicate?: string }, text: string) => {
+      const c = clock();
+      const g = new MemoryGraph(undefined, c);
+      g.add({ ...before, about: U, source: "user" });
+      c.advance(1);
+      const r = g.add({ text, about: U, source: "user" });
+      return { closed: r.kind === "added" ? r.closed.map(f => f.text) : [], open: g.allFacts(true).map(f => f.text).sort() };
+    };
+    // How long, set out how, in what tone, when, how often and by what: each holds beside the others.
+    for (const [before, now] of [
+      ["Prefers short answers", "Prefers bulleted answers"], ["Prefers short answers", "Prefers spoken answers"], ["Prefers short answers", "Prefers written answers"],
+      ["Prefers short answers", "Prefers numbered answers"], ["Prefers short answers", "Prefers casual answers"], ["Prefers short answers", "Prefers direct answers"],
+      ["Prefers detailed answers", "Prefers friendly answers"], ["Prefers email updates", "Prefers weekly updates"], ["Prefers morning meetings", "Prefers short meetings"],
+      ["Prefers short meetings", "Prefers remote meetings"], ["Prefers video calls", "Prefers short calls"], ["Prefers dark mode", "Prefers focus mode"],
+    ]) expect(after({ text: before }, now), `${before} → ${now}`).toEqual({ closed: [], open: [before, now].sort() });
+    // About you's answer length stays in the profile however answers are to be set out.
+    expect(after({ text: "Prefers short answers", predicate: "answer_length" }, "Prefers bulleted answers").closed).toEqual([]);
+    // Another value of the same kind is a change: the older is closed.
+    for (const [before, now] of [
+      ["Prefers short answers", "Prefers detailed answers"], ["Prefers casual answers", "Prefers formal answers"], ["Prefers written answers", "Prefers spoken answers"],
+      ["Prefers morning meetings", "Prefers afternoon meetings"], ["Prefers daily updates", "Prefers weekly updates"], ["Prefers email updates", "Prefers Slack updates"],
+      ["Prefers green tea", "Prefers black tea"],
+    ]) expect(after({ text: before }, now), `${before} → ${now}`).toEqual({ closed: [before], open: [now] });
+  });
+
+  it("keeps About you's answer length in the profile sent with every request after “remember that I prefer bulleted answers” (memory-r1)", async () => {
+    const s = new MemoryService({ dir: fs.mkdtempSync(path.join(os.tmpdir(), "ember-memory-r1-")), log: { info: () => undefined, warn: () => undefined }, inForce: () => true });
+    for (const f of introFacts({ name: "Ram", length: "short" })) s.learn(f);
+    expect(s.remember("Prefers bulleted answers", [{ name: "User", kind: "person" }], "Remember that I prefer bulleted answers")).not.toMatch(/replacing/);
+    const profile = (await s.requestContext("open Firefox")).text;
+    expect(profile).toContain("Prefers short answers");
+    expect(profile).toContain("Likes to be called Ram");
   });
 
   it("lets nothing it saw overrule what the user said", () => {
@@ -556,7 +627,8 @@ describe("the memory file", () => {
       const unreadable = new MemoryService({ dir: locked, log: quietLog });
       expect(unreadable.list()).toEqual([]);
       expect(unreadable.trouble).toBe("unreadable");
-      expect(memoryTroubleText("unreadable")).toBe("Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again.");
+      // With what to do about it: a file left by running Ember as another user is the usual cause (memory-r2).
+      expect(memoryTroubleText("unreadable")).toBe("Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again. Check that your account can open memory.json in Ember's data folder, then restart Ember.");
       expect(memoryTroubleText(null)).toBe("");
     } finally { vi.useRealTimers(); }
   });

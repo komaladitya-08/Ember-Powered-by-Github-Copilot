@@ -247,13 +247,13 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps Undo truthful, preserves
     await page.locator('a[href="#memory-h"]').click();
     await page.locator("#memory-more").focus();
     await page.evaluate(() => window.__memoryTest.memory({ ownership: "locked", rows: [] }));
-    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-on");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-h");
     await page.evaluate(rows => window.__memoryTest.memory({ ownership: "ready", rows }), facts);
     await page.locator("#memory-query").focus();
     await page.evaluate(() => window.__memoryTest.memory({ ownership: "locked", rows: [] }));
     expect(await page.locator("#memory-count").isHidden()).toBe(true);
     expect(await page.locator("#memory-list").isHidden()).toBe(true);
-    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-on");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-h");
     expect(errors).toEqual([]);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);
@@ -562,7 +562,7 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("paints only Forget red, keeps 
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);
 
-it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the search and focus while Ember checks the same account again on a reconnect (memory-8)", async () => {
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the search and focus while Ember checks the same account again on a reconnect, and never parks focus on the memory switch (memory-8, memory-c2-1)", async () => {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
   settings.memory = { ...settings.memory, on: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
@@ -595,6 +595,8 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the 
         if (name === "memory") return async () => ({ rows: seed.rows, ownership: "ready", reason: null, epoch: 1 });
         if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
         if (name === "forgetMemory") return async (id: string) => ({ text: seed.rows.find(r => r.id === id)!.text, derived: 0, undo: `token-${id}-0001` });
+        // Every settings save is recorded: a key typed while the list is out of sight must change nothing (memory-c2-1).
+        if (name === "updateSettings") return async (patch: unknown) => { ((window as unknown as { __saves: unknown[] }).__saves ??= []).push(patch); };
         return () => new Promise(() => undefined);
       } }) as EmberHomeApi;
     }, { status, rows });
@@ -616,7 +618,11 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the 
     // Out of sight with the list while it checks, never closed.
     expect(await page.locator("#memory-correction").isHidden()).toBe(true);
     expect(await page.locator("#memory-list").isHidden()).toBe(true);
-    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-on");
+    // Focus waits on Memory's heading, never the switch, so the words typed on change no setting (memory-c2-1).
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-h");
+    await page.keyboard.type(" billing team");
+    expect(await page.evaluate(() => (window as unknown as { __saves?: unknown[] }).__saves ?? [])).toEqual([]);
+    expect(await page.locator("#memory-on").isChecked()).toBe(true);
     await push(back);
     expect(await page.locator("#memory-correction").isVisible()).toBe(true);
     expect(await correction.inputValue()).toBe("Priya leads the platform and billing teams");
@@ -626,7 +632,8 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the 
     await page.locator("#memory-query").fill("Priya");
     expect(await page.locator("#memory-list [data-memory-forget]").count()).toBe(1);
     await push(checking);
-    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-on");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-h");
+    await page.keyboard.press("Space");
     await push(back);
     expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-query");
     expect(await page.locator("#memory-query").inputValue()).toBe("Priya");
@@ -645,7 +652,9 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the 
     expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-forgotten-text");
     await push(checking);
     expect(await forgotten.isHidden()).toBe(true);
-    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-on");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-h");
+    await page.keyboard.press("Space");
+    expect(await page.evaluate(() => (window as unknown as { __saves?: unknown[] }).__saves ?? [])).toEqual([]);
     await push({ ...back, rows: rows.filter(r => r.id !== "b") });
     expect(await forgotten.isVisible()).toBe(true);
     expect(await page.locator("#memory-forgotten-text").innerText()).toBe("Forgotten: “Priya leads the platform team”.");
@@ -668,6 +677,100 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the 
     expect(await page.locator("#memory-trouble").innerText()).toBe("Ember couldn't save memory on this computer, so what it keeps now may be gone when Ember closes.");
     await push({ rows, ownership: "ready", reason: null, epoch: 3, trouble: null });
     expect(await page.locator("#memory-trouble").isHidden()).toBe(true);
+    expect(errors).toEqual([]);
+  } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+}, 60_000);
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("never lands a forget or remember request on “I agree, remember”, and takes no agreement in the first moment a note is up (memory-r7)", async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
+  // Memory off, as it is until the person turns it on.
+  settings.memory = { ...settings.memory, on: false, consent: { version: 0, at: null } };
+  const status = { appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null,
+    admin: { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] } };
+  const browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
+  const dist = path.resolve("dist");
+  const server = http.createServer((req, res) => {
+    const file = path.resolve(dist, `.${decodeURIComponent((req.url ?? "/").split("?")[0])}`);
+    if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
+    const mime: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
+    res.setHeader("content-type", mime[path.extname(file)] ?? "application/octet-stream");
+    res.end(fs.readFileSync(file));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.addInitScript(seed => {
+      // Every listener, since Home listens for settings in more than one place.
+      const listeners: Record<string, ((value: unknown) => void)[]> = {};
+      const w = window as unknown as { __emit: (name: string, value: unknown) => void; __saves: unknown[] };
+      w.__saves = [];
+      w.__emit = (name, value) => { for (const fn of listeners[name] ?? []) fn(value); };
+      window.ember = new Proxy({}, { get: (_target, name: string) => {
+        if (name.startsWith("on")) return (fn: (value: unknown) => void) => { (listeners[name] ??= []).push(fn); return () => { listeners[name] = listeners[name]!.filter(f => f !== fn); }; };
+        if (name === "getStatus") return async () => seed.status;
+        if (name === "memory") return async () => ({ rows: [], ownership: "ready", reason: null, epoch: 1 });
+        if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
+        if (name === "updateSettings") return async (patch: unknown) => { w.__saves.push(patch); };
+        return () => new Promise(() => undefined);
+      } }) as EmberHomeApi;
+    }, { status });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Renderer fixture didn't start.");
+    await page.goto(`http://127.0.0.1:${address.port}/app/renderer/home/index.html`);
+    await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
+    const emit = (name: string, value: unknown) => page.evaluate(([n, v]) => (window as unknown as { __emit: (name: string, value: unknown) => void }).__emit(n as string, v), [name, value]);
+    const saves = () => page.evaluate(() => (window as unknown as { __saves: unknown[] }).__saves);
+    const focused = () => page.evaluate(() => document.activeElement?.id);
+    const consent = page.locator("#memory-consent");
+    // "Forget my address" while memory is off: Memory opens at its list, never at the note or its agree button.
+    await emit("onFocusSection", "memory:memory-query");
+    await expect.poll(focused).toBe("memory-query");
+    expect(await consent.isHidden()).toBe(true);
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Space");
+    expect(await saves()).toEqual([]);
+    // "Get to know me" or Open Memory: the note shows, focused on its words; a key there agrees to nothing.
+    await emit("onFocusSection", "memory:memory-consent-text");
+    await expect.poll(focused).toBe("memory-consent-text");
+    expect(await consent.isVisible()).toBe(true);
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Space");
+    // Tab reaches “I agree, remember”, but a press in the first half second after the note came up is dropped.
+    await page.keyboard.press("Tab");
+    expect(await focused()).toBe("memory-yes");
+    await page.keyboard.press("Space");
+    expect(await saves()).toEqual([]);
+    expect(await consent.isVisible()).toBe(true);
+    await page.waitForTimeout(600);
+    await page.keyboard.press("Space");
+    await expect.poll(saves).toHaveLength(1);
+    expect((await saves())[0]).toMatchObject({ memory: { on: true, consent: { version: expect.any(Number) } } });
+    // The switch's own note (memory off again, its consent withdrawn): a repeating Space can't agree for them either.
+    await emit("onSettingsChanged", { ...settings, memory: { ...settings.memory, on: false, consent: { version: 0, at: null } } });
+    await page.locator("#memory-on").focus();
+    await page.keyboard.press("Space");
+    expect(await focused()).toBe("memory-yes");
+    await page.keyboard.press("Space");
+    expect(await saves()).toHaveLength(1);
+    // A request that asks for the agree button by its old name lands on the note's words too.
+    await page.locator("#memory-no").click();
+    await emit("onFocusSection", "memory:memory-yes");
+    await expect.poll(focused).toBe("memory-consent-text");
+    // Memory already agreed to but saved under another account: no note for consent already given, only the section.
+    await emit("onSettingsChanged", { ...settings, memory: { ...settings.memory, on: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } } });
+    await page.locator("#memory-no").click();
+    await emit("onMemory", { rows: [], ownership: "locked", reason: "other-account", epoch: 2 });
+    await emit("onFocusSection", "memory:memory-consent-text");
+    await expect.poll(focused).toBe("memory-h");
+    expect(await consent.isHidden()).toBe(true);
+    // Work without asking's card, asked for by voice, is armed the same way.
+    await emit("onFocusSection", "privacy:autonomy-yes");
+    await expect.poll(focused).toBe("autonomy-yes");
+    await page.keyboard.press("Enter");
+    expect(await saves()).toHaveLength(1);
     expect(errors).toEqual([]);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);

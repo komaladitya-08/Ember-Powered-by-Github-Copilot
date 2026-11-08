@@ -316,12 +316,18 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **The conversation** is part of the page, not a box that scrolls inside it: its latest 6 messages (so the composer
   and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries (a search left typed in is cleared when you send, so your message and
   its reply show; the composer's line, right under its buttons, says "Thinking…" until the reply, "Still waiting for
-  Copilot… Stop response ends this reply." while the bubble says so, and, when main says the turn ended with nothing
-  written (it only started a task, ran a step, or was stopped), "Ember didn't write a reply. Task activity shows any
-  task it started."; a typed "stop" that stopped everything says so, and is kept in the conversation with Ember's
+  Copilot… Stop response ends this reply." while the bubble says so (for a request from the Ask box or by voice too,
+  where the settings key lands on Stop response, until the wait ends: home-r2-3), and, when main says the turn ended with nothing
+  written (it only started a task or ran a step), "Ember didn't write a reply. Task activity shows any task it
+  started."; main sends a turn's lines (its reply, its Problem line) before its end, so a model error says "Ember
+  couldn't finish this reply…" (home-r2-1), never counts a request waiting for a reconnect as over (home-r2-2), and says
+  with the end when a Stop ended it: "Response stopped. Running tasks continue." for the bubble's Stop too, "Stopped
+  everything, running tasks included." for Stop everything (home-c2-2); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's
   "Okay, I've stopped everything."; the status panel says "Thinking…" while Ember answers any request, from the Ask
   box and by voice too: main's `conversationTurn`, never a guess, home-c1-1), shows explicit per-answer truncation beyond
-  131,072 characters, and offers Copy and Edit. A long paste is kept whole: from 1,800 characters the composer counts
+  131,072 characters, and offers Copy and Edit. A Problem line that settings can help with names Models & connections
+  where the bubble says "Ember's settings (Ctrl+Alt+E)" (Home is them), and offers **Models & connections…**, which
+  goes there (home-7; Try again stays the bubble's). A long paste is kept whole: from 1,800 characters the composer counts
   them, and over 2,000 it says how many too many and Send refuses until it fits. Its hint names the send key as the OS
   does (Ctrl+Enter; Command+Enter on a Mac), and a message's Copy says Copied on itself for 2 s. Messages kept from before a restart
   (**Keep my recent conversation**) show their day beside their time, and a quiet line under the last of them says
@@ -522,7 +528,11 @@ Memory has query/source filters, counts and pages of 50 (no count over an empty 
 a `--red-text` text button, and Correct… in the words' colour, side by side on one line however long the fact,
 and apart, inside the group, when forced colours give them an edge. Surviving memory and learned-word controls
 keep their DOM identity and keyboard focus through background updates. Undo acknowledges only successful deletion and stays
-retryable on failure. An unavailable account hides facts and returns focus to the memory switch. Correct… opens
+retryable on failure. An unavailable account hides facts and parks focus on Memory's heading, never the memory
+switch, where a typed space would turn memory off; it goes back to the search, the draft or the Forgotten line when
+the same account's list returns (memory-c2-1). A request opens Memory at its search ("forget…") or at its note's
+words ("get to know me", Open Memory), never at "I agree, remember", and the note's agree button, like Work without
+asking's, takes no press for `AGREE_ARM_MS` after the card comes up (memory-r7). Correct… opens
 one local draft (up to 400 characters); Save correction is explicit, checks the exact account/revision and saves
 durably before publication. Correction preserves original source/authority and adds Corrected by you. It invalidates
 stale recall/learning/vector work; failures keep the draft and account reset clears it.

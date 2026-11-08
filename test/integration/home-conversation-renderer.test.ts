@@ -656,6 +656,98 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  it("says the reply failed when its Problem line came before its end, and that Stop ended it when the bubble's Stop or Stop everything did (home-r2-1, home-c2-2)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      // A model error: main sends the Problem line, then the turn's end (home-r2-1).
+      await page.locator("#conversation-message").fill("What's the weather?");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      const failed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "What's the weather?" }, { t: at(1), who: "problem", text: "The model service reported a problem. Try again." }];
+      await page.evaluate(e => window.__home.emit("onConversation", e), failed);
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember couldn't finish this reply. Review the message above; you can edit your request and send again.");
+      // The bubble's own Stop on a stalled reply: no line comes, main says Stop ended it.
+      await page.locator("#conversation-message").fill("And tomorrow?");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      const asked = [...failed, { t: at(2), who: "you" as const, text: "And tomorrow?" }];
+      await page.evaluate(e => window.__home.emit("onConversation", e), asked);
+      await turn(page, "slow");
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Response stopped. Running tasks continue.");
+      expect(await page.locator("#state-word").innerText()).toBe("Ready");
+      // Stop everything ends it with everything else.
+      await page.locator("#conversation-message").fill("And the weekend?");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...asked, { t: at(3), who: "you" as const, text: "And the weekend?" }]);
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped-everything" }));
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Stopped everything, running tasks included.");
+      // The next turn's own end says what its lines show, not the Stop before it.
+      await page.locator("#conversation-message").fill("Thanks");
+      await page.locator("#conversation-send").click();
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "thinking" }));
+      await reply(page, [...asked, { t: at(3), who: "you" as const, text: "And the weekend?" }], "Thanks", 9);
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle" }));
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("says where to look on a Problem line that settings can help with, and goes there (home-7)", async () => {
+    const seed: TranscriptEntry[] = [
+      { t: at(0), who: "you", text: "What's the weather?" },
+      { t: at(1), who: "problem", text: "The model service reported a problem. Try again; if it keeps happening, check the model service in Ember's settings (Ctrl+Alt+E)." },
+      { t: at(2), who: "you", text: "And now?" },
+      { t: at(3), who: "problem", text: "Copilot had a problem on its side. Try again in a moment." },
+    ];
+    const { page, errors } = await home(seed);
+    try {
+      const rows = page.locator("#conversation > li.problem");
+      await expect.poll(() => rows.count()).toBe(2);
+      expect(await rows.nth(0).locator("p").innerText()).toBe("The model service reported a problem. Try again; if it keeps happening, check the model service in Models & connections.");
+      // Only where settings can help.
+      expect(await rows.nth(1).locator("button").count()).toBe(0);
+      // Found by the words it shows.
+      await page.locator("#conversation-search").fill("Models & connections");
+      expect(await page.locator("#conversation-search-status").innerText()).toBe("1 matching message in this conversation.");
+      await page.locator("#conversation-search").fill("");
+      const go = rows.nth(0).getByRole("button", { name: /^Models & connections…/ });
+      expect(await go.innerText()).toBe("Models & connections…");
+      await go.click();
+      await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("copilot-h");
+      expect(await page.locator("#copilot-h").isVisible()).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("says under Stop response that Ember is still waiting for a request from the Ask box or by voice, not an older message's outcome (home-r2-3)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await page.locator("#conversation-message").fill("What's the weather?");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await reply(page, [], "What's the weather?", 2);
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      // Asked in the Ask box, and the bubble says Ember is still waiting: so does the line under Stop response.
+      await turn(page, "thinking");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      await turn(page, "slow");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Still waiting for Copilot… Stop response ends this reply.");
+      // Heard from again, or over: the line goes, rather than say a wait that has ended.
+      await turn(page, "thinking");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("");
+      await turn(page, "slow");
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("keeps the line saying how the request is going in view under the buttons after a reply, at 760×640 (home-7)", async () => {
     const seed = exchange(12);
     const { page, errors } = await home(seed);

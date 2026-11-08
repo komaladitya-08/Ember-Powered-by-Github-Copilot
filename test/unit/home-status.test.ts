@@ -99,6 +99,14 @@ describe("Home's status panel", () => {
     expect(memoryWhatsOn(false, false, "locked")).toBe(false);
     expect(memoryWhatsOn(false, true, "ready")).toBe("paused");
   });
+
+  it("says memory is paused while its saved memory can't be read, as Settings › Memory does (memory-r2)", () => {
+    expect(memoryWhatsOn(true, false, "ready", "unreadable")).toBe("paused");
+    // Saving that failed this run, or a broken file set aside: memory still works now, and Settings says the rest.
+    expect(memoryWhatsOn(true, false, "ready", "unsaved")).toBe(true);
+    expect(memoryWhatsOn(true, false, "ready", "reset")).toBe(true);
+    expect(memoryWhatsOn(false, false, "ready", "unreadable")).toBe(false);
+  });
 });
 
 describe("the setup counts (UI audit #6)", () => {

@@ -9,7 +9,7 @@
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RetryResult, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
-import { CONVERSATION_REQUEST_LIMIT, conversationTurnOf, type ConversationTurn, type HistoryProblemKind } from "../../shared/conversation";
+import { CONVERSATION_REQUEST_LIMIT, conversationTurnChangeOf, type ConversationTurn, type ConversationTurnEnd, type HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
@@ -24,6 +24,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
+import { AGREE_ARM_MS } from "../../shared/provider";
 import { useAppNames } from "../../shared/apps";
 import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
 import type { Settings, SettingsPatch } from "../../main/settings";
@@ -51,7 +52,7 @@ import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, tod
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { problemInHome, PROBLEM_SETTINGS, composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -276,7 +277,7 @@ function renderStatus(): void {
   const listening = !!settings?.wakeWord && !!settings?.voice.consent;
   setText("whats-on", whatsOnText({
     voice: !listening ? "off" : v === "muted" ? "muted" : "listening",
-    memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner),
+    memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner, memoryTrouble),
     commands: Object.values(settings?.commands ?? {}).filter(c => c?.on).length,
     computers: settings?.targets.hosts.length ?? 0,
     wsl: !!settings?.targets.wsl.on,
@@ -1058,6 +1059,8 @@ let conversationAwaitingReply = false;
  * The status panel says "Thinking…" while it does, and the composer's wait ends when it stops.
  */
 let conversationTurnNow: ConversationTurn = "idle";
+/** How main says the last turn ended, when a Stop ended it (home-c2-2): its words, not a guess from the lines. */
+let conversationTurnEnded: ConversationTurnEnd | undefined;
 /** The composer's request was taken by main (its send resolved), and main has said it is answering since it was sent. */
 let conversationSendTaken = false;
 let conversationTurnSeen = false;
@@ -1081,20 +1084,29 @@ function endComposerWait(): void {
   let at = -1;
   if (was) for (let i = conversationAll.length - 1; i >= 0 && at < 0; i--) if (conversationAll[i].t === was.t && conversationAll[i].who === was.who && conversationAll[i].text === was.text) at = i;
   const said = conversationAll.slice(at + 1).filter(e => e.who === "ember" || e.who === "problem").at(-1);
-  const words = said?.who === "problem" ? COMPOSER_SAYS.replyFailed : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
+  // A Stop that ended it left no line to read it from (the bubble's own Stop: home-c2-2).
+  const words = conversationTurnEnded === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : conversationTurnEnded === "stopped" ? CONVERSATION_STOPPED
+    : said?.who === "problem" ? COMPOSER_SAYS.replyFailed : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
   keepingComposer(() => { conversationComposeStatus.textContent = words; });
 }
 /** Main's word of the conversation's turn: the status panel, and the composer's line while its request waits. */
 function conversationTurn(value: unknown): void {
-  const turn = conversationTurnOf(value);
-  if (!turn) return;
+  const change = conversationTurnChangeOf(value);
+  if (!change) return;
+  const turn = change.turn;
   conversationTurnNow = turn;
+  conversationTurnEnded = change.ended;
   if (conversationAwaitingReply && turn !== "idle") conversationTurnSeen = true;
+  const waiting = composerStillWaiting(agent?.service?.kind);
   if (conversationAwaitingReply && conversationSendTaken) {
     // Still waiting as the bubble says it (nothing written yet), and back to thinking once it is heard from.
-    const waiting = composerStillWaiting(agent?.service?.kind);
     if (turn === "slow" && !answerStream.row) keepingComposer(() => { conversationComposeStatus.textContent = waiting; });
     else if (turn === "thinking" && conversationComposeStatus.textContent === waiting) conversationComposeStatus.textContent = COMPOSER_THINKING;
+  } else if (!conversationAwaitingReply) {
+    // A request from the Ask box or by voice that the bubble says is still waiting: the line under Stop response (where
+    // the settings key lands then) says so, not an older message's outcome, and goes once the wait does (home-r2-3).
+    if (turn === "slow" && !answerStream.row) conversationComposeStatus.textContent = waiting;
+    else if (conversationComposeStatus.textContent === waiting) conversationComposeStatus.textContent = "";
   }
   endComposerWait();
   renderStatus();
@@ -1144,7 +1156,9 @@ function conversationRow(e: Entry): HTMLLIElement {
   // A line kept from before a restart may be days old: its day is said too (home-8).
   const when = e.restored ? conversationWhen(e.t, time(e.t)) : time(e.t);
   const t = Object.assign(document.createElement("time"), { textContent: when, dateTime: e.t });
-  const text = Object.assign(document.createElement("p"), { textContent: e.text });
+  // A Problem line names the section that helps, here in Ember's settings (home-7).
+  const problem = e.who === "problem" ? problemInHome(e.text) : null;
+  const text = Object.assign(document.createElement("p"), { textContent: problem?.text ?? e.text });
   // A request Ember heard: "That's not what I said" finds its row by this (personal.ts markHeard).
   if (e.heardId) li.dataset.heardId = String(e.heardId);
   li.append(who, t, text);
@@ -1178,6 +1192,13 @@ function conversationRow(e: Entry): HTMLLIElement {
       conversationMessage.focus();
     });
     actions.append(edit);
+  }
+  // A live problem that settings can help with: the way there (not a line kept from before a restart, now long past).
+  if (problem?.settings && !e.restored) {
+    const go = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: PROBLEM_SETTINGS });
+    go.setAttribute("aria-label", `${PROBLEM_SETTINGS} for the problem from ${when}`);
+    go.addEventListener("click", () => showSection("copilot"));
+    actions.append(go);
   }
   if (actions.childElementCount) li.append(actions);
   if (e.stopped) li.append(Object.assign(document.createElement("small"), { className: "conversation-limit", textContent: STOPPED_NOTE }));
@@ -1265,7 +1286,8 @@ function renderConversation(raw: Entry[]): void {
   shownConversation = shown;
   let matches = 0;
   for (let i = 0; i < shown.length; i++) {
-    const match = !searching || conversationMatchesText(shown[i].text, conversationSearch.value);
+    // (A Problem line is found by the words it shows: home-7.)
+    const match = !searching || conversationMatchesText(shown[i].who === "problem" ? problemInHome(shown[i].text).text : shown[i].text, conversationSearch.value);
     redrawLearned(list.children[i] as HTMLElement, shown[i]).hidden = !match;
     if (match) matches++;
   }
@@ -1485,12 +1507,28 @@ $("conversation-stop").addEventListener("click", () => {
 // ───── Memory (docs/MEMORY.md): kept between runs, only once the user turns it on and agrees to its note ─────
 $("memory-consent-text").textContent = MEMORY_CONSENT_TEXT;
 const memoryOn = () => !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION;
+/**
+ * When a consent card came up (performance.now(), by its agree button): a press on that button sooner than
+ * AGREE_ARM_MS is dropped, as first run's is (first-run-c1-1), so a repeating Space from the switch, or an Enter typed
+ * for another app as the card opens, agrees to nothing (memory-r7).
+ */
+const agreeShownAt = new Map<string, number>();
+const showConsentCard = (card: string, agree: string) => { $(card).hidden = false; agreeShownAt.set(agree, performance.now()); };
+const agreeArmed = (agree: string) => performance.now() - (agreeShownAt.get(agree) ?? -Infinity) >= AGREE_ARM_MS;
+/**
+ * Where focus waits while Memory's list is out of sight (a reconnect's account check) or a control in it goes: the
+ * section's heading, which does nothing on a key. Never the switch, where a typed space turns memory off, or on again
+ * under a note already agreed to (memory-c2-1).
+ */
+const memoryRest = () => $("memory-h");
 let memoryOwner: MemoryView["ownership"] = "waiting";
 let memoryReason: MemoryView["reason"];
+/** What is wrong with memory.json this run (memory-r2): Home's status line says "Memory paused" while it can't be read. */
+let memoryTrouble: MemoryView["trouble"] = null;
 let memoryEpoch = 0;
 /** Where focus was in the search when memory went to be checked again, and under which epoch (memory-8). */
 let memoryFocusBack: { el: HTMLElement; epoch: number } | null = null;
-const memoryCorrection = mountMemoryCorrection(window.ember, () => $("memory-on"), (expected, corrected) => {
+const memoryCorrection = mountMemoryCorrection(window.ember, memoryRest, (expected, corrected) => {
   const current = memoryRows.find(row => row.id === expected.id);
   // A newer push wins; a successful IPC reply can fill in a missed view notification without resurrecting a deletion.
   if (!current || current.text !== expected.text || current.source !== expected.source || current.at !== expected.at || (current.revision ?? 0) !== (expected.revision ?? 0)) return;
@@ -1506,7 +1544,7 @@ $("memory-more").textContent = MEMORY_SHOW_MORE;
 const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
   key: row => row.id,
   empty: () => memoryQuery.value.trim() || memorySource.value ? MEMORY_NO_MATCHES : memoryEmptyText(memoryOn()),
-  fallback: () => $("memory-on"),
+  fallback: memoryRest,
   create: read => {
     const row = read();
     const li = document.createElement("li");
@@ -1545,14 +1583,14 @@ function renderMemory(rows: MemoryRow[]): void {
   memoryList.render(page.rows);
   const filters = $("memory-filters");
   const unavailable = memoryOwner !== "ready";
-  // Focus in the search while the same account is checked again (a reconnect) waits on the switch, and goes back if it
+  // Focus in the search while the same account is checked again (a reconnect) waits on the heading, and goes back if it
   // is still there when the list returns (memory-8); another account's list (a new epoch) never gets it back.
   if (memoryFocusBack && memoryFocusBack.epoch !== memoryEpoch) memoryFocusBack = null;
-  if (unavailable && filters.contains(document.activeElement)) { memoryFocusBack = { el: document.activeElement as HTMLElement, epoch: memoryEpoch }; $("memory-on").focus(); }
+  if (unavailable && filters.contains(document.activeElement)) { memoryFocusBack = { el: document.activeElement as HTMLElement, epoch: memoryEpoch }; memoryRest().focus(); }
   filters.hidden = unavailable;
   $("memory-list").hidden = unavailable;
   if (!unavailable && memoryFocusBack) {
-    if (document.activeElement === $("memory-on")) memoryFocusBack.el.focus();
+    if (document.activeElement === memoryRest()) memoryFocusBack.el.focus();
     memoryFocusBack = null;
   }
   // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause), and
@@ -1563,21 +1601,21 @@ function renderMemory(rows: MemoryRow[]): void {
     if (memoryUndo && forgottenEpoch === memoryEpoch) {
       forgottenHeld = { epoch: memoryEpoch, focused: box.contains(document.activeElement) };
       box.hidden = true;
-      if (forgottenHeld.focused) $("memory-on").focus();
+      if (forgottenHeld.focused) memoryRest().focus();
     } else hideForgotten();
   }
   if (!unavailable && forgottenHeld) {
     const held = forgottenHeld;
     forgottenHeld = null;
     $("memory-forgotten").hidden = false;
-    if (held.focused && document.activeElement === $("memory-on")) $("memory-forgotten-text").focus();
+    if (held.focused && document.activeElement === memoryRest()) $("memory-forgotten-text").focus();
   }
   // An empty list says so in its own row, never "0 of 0 memories" above it (memory-13).
   $("memory-count").textContent = unavailable || !rows.length ? "" : memoryCountText(page.rows.length, page.total, rows.length);
   const more = $("memory-more");
   const moreWasFocused = document.activeElement === more;
   more.hidden = page.rows.length >= page.total;
-  if (moreWasFocused && more.hidden) ($("memory-list").querySelector<HTMLElement>("li:last-child button") ?? (unavailable ? $("memory-on") : memoryQuery)).focus();
+  if (moreWasFocused && more.hidden) ($("memory-list").querySelector<HTMLElement>("li:last-child button") ?? (unavailable ? memoryRest() : memoryQuery)).focus();
   // Why memory isn't open, never advice to erase memory that only waits (a model provider, a reconnect: memory-2).
   const ownerText = memoryOwnerText(memoryReason, memoryOwner === "locked");
   $("memory-owner").textContent = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn()) ? "" : ownerText;
@@ -1589,7 +1627,7 @@ function renderMemory(rows: MemoryRow[]): void {
   const all = $("memory-forget-all");
   const wasFocused = document.activeElement === all;
   all.hidden = !rows.length && !memoryOwnerOffersErase(memoryReason, memoryOwner === "locked");
-  if (wasFocused && all.hidden) $("memory-on").focus();
+  if (wasFocused && all.hidden) memoryRest().focus();
 }
 for (const control of [memoryQuery, memorySource]) control.addEventListener("input", () => {
   memoryShown = MEMORY_PAGE_SIZE;
@@ -1626,7 +1664,7 @@ function showForgotten(text: string, gone: MemoryForgotten | null): void {
   forgottenEpoch = memoryEpoch;
   forgottenHeld = null;
   said.focus();
-  // Main lets go of what Undo needs after MEMORY_UNDO_MS: the line goes a little before, and focus with it to the switch.
+  // Main lets go of what Undo needs after MEMORY_UNDO_MS: the line goes a little before, and focus with it to the heading.
   memoryUndoTimer = setTimeout(() => hideForgotten(), MEMORY_UNDO_MS - 2000);
 }
 function hideForgotten(): void {
@@ -1636,7 +1674,7 @@ function hideForgotten(): void {
   const box = $("memory-forgotten");
   const had = box.contains(document.activeElement);
   box.hidden = true;
-  if (had) $("memory-on").focus();
+  if (had) memoryRest().focus();
 }
 $("memory-undo").addEventListener("click", () => {
   const undo = $("memory-undo") as HTMLButtonElement, said = $("memory-forgotten-text");
@@ -1657,7 +1695,7 @@ $("memory-undo").addEventListener("click", () => {
   });
 });
 const showMemory = (view: MemoryView) => {
-  memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0;
+  memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0; memoryTrouble = view.trouble ?? null;
   // memory.json couldn't be read, was set aside or couldn't be saved: said, never an empty list alone (memory-r2).
   const trouble = memoryTroubleText(view.trouble);
   setText("memory-trouble", trouble);
@@ -1668,7 +1706,7 @@ const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, 
 /** "Tell Ember about you" (about-you.ts): its Turn on memory… opens the switch's own note. */
 const aboutYou = mountAboutYou($("about-you"), {
   id: "ay", save, ownSave: true,
-  askConsent: () => { $("memory-consent").hidden = false; $("memory-yes").focus(); },
+  askConsent: () => { showConsentCard("memory-consent", "memory-yes"); $("memory-yes").focus(); },
 });
 $("memory-questions-hint").textContent = MEMORY_QUESTIONS_HINT;
 /** The paused note was shown (once a session: Not now hides it). */
@@ -1686,18 +1724,19 @@ function applyMemorySettings(s: Settings): void {
   const paused = memoryPaused(s.memory) && !managed.has("memory");
   $("memory-paused").textContent = MEMORY_PAUSED_TEXT;
   $("memory-paused").hidden = !paused;
-  if (paused && !pausedSeen) { pausedSeen = true; $("memory-consent").hidden = false; }
+  if (paused && !pausedSeen) { pausedSeen = true; showConsentCard("memory-consent", "memory-yes"); }
   renderMemory(memoryRows);
 }
 $("memory-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   const consent = settings?.memory.consent ?? { version: 0, at: null };
   // First time (or the note changed since it was agreed to): the note comes first, and focus moves to it so it is read and answered.
-  if (on && consent.version < MEMORY_VERSION) { $("memory-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("memory-yes").focus(); return; }
+  if (on && consent.version < MEMORY_VERSION) { showConsentCard("memory-consent", "memory-yes"); (e.target as HTMLInputElement).checked = false; $("memory-yes").focus(); return; }
   void save({ memory: { ...memoryNow(), consent, on } });
 });
 $("memory-questions").addEventListener("change", e => { void save({ memory: { ...memoryNow(), questions: (e.target as HTMLInputElement).checked } }); });
 $("memory-yes").addEventListener("click", () => {
+  if (!agreeArmed("memory-yes")) return;
   $("memory-consent").hidden = true;
   void save({ memory: { ...memoryNow(), on: true, consent: { version: MEMORY_VERSION, at: new Date().toISOString() } } });
   $("memory-on").focus();
@@ -1832,11 +1871,12 @@ function applyAutonomySettings(s: Settings): void {
 $("autonomy-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   const a = settings?.autonomy ?? { on: false, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 0, at: null } };
-  if (on && a.consent.version < AUTONOMY_VERSION) { $("autonomy-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("autonomy-yes").focus(); return; }
+  if (on && a.consent.version < AUTONOMY_VERSION) { showConsentCard("autonomy-consent", "autonomy-yes"); (e.target as HTMLInputElement).checked = false; $("autonomy-yes").focus(); return; }
   // Turned on: all four of what it covers (using apps, commands, the mouse and keyboard, moving text between apps).
   void save({ autonomy: { ...a, on, ...(on ? { scopes: { apps: true, commands: true, cursor: true, crossWindow: true } } : {}) } });
 });
 $("autonomy-yes").addEventListener("click", () => {
+  if (!agreeArmed("autonomy-yes")) return;
   $("autonomy-consent").hidden = true;
   void save({ autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: AUTONOMY_VERSION, at: new Date().toISOString() } } });
   $("autonomy-on").focus();
@@ -1865,10 +1905,12 @@ function showSection(value: string, asked = false): void {
   const inPane = paneOf(h);
   const opened = !document.body.classList.contains("first-run") && !!inPane && inPane !== pane;
   if (opened && inPane) { restoring = null; showPane(inPane, true); }
-  // Asked for by voice ("work without asking" before its card was agreed to): the card shows, focused on its agree button.
-  if (control === "autonomy-yes" && !managed.has("autonomy")) $("autonomy-consent").hidden = false;
-  // Asked for by voice ("get to know me" while memory is off): its note shows, focused on its agree button.
-  if (control === "memory-yes" && !managed.has("memory")) $("memory-consent").hidden = false;
+  // Asked for by voice ("work without asking" before its card was agreed to): the card shows, focused on its agree
+  // button, which takes no press for AGREE_ARM_MS.
+  if (control === "autonomy-yes" && !managed.has("autonomy")) showConsentCard("autonomy-consent", "autonomy-yes");
+  // "Get to know me" or Open Memory while memory is off or waits for its note: the note shows, focused on its words,
+  // never its agree button (memory-r7). Memory already agreed to (saved under another account) gets the section alone.
+  if (control === "memory-consent-text" && !managed.has("memory") && !memoryOn()) showConsentCard("memory-consent", "memory-yes");
   const fold = h.closest("details");
   if (fold) fold.open = true;
   const target = (fold?.querySelector("summary") ?? h) as HTMLElement;

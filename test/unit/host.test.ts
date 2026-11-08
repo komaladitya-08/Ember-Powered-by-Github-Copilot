@@ -197,7 +197,85 @@ describe("connecting and signing in", () => {
     expect(host.conversationTurn).toBe("thinking");
     conductorSession().emit("assistant.message", { content: "Rain later." });
     conductorSession().emit("session.idle");
-    expect(turns).toEqual(["thinking", "slow", "thinking", "idle"]);
+    await vi.waitFor(() => expect(turns).toEqual(["thinking", "slow", "thinking", "idle"]));
+    await host.stop();
+  });
+  it("tells Home a turn ended only after the Problem line that says how, for a model error and for no answer at all (home-r2-1)", async () => {
+    const told: string[] = [];
+    const { host } = makeHost({ onConversationTurn: t => { told.push(`turn ${t}`); }, onTranscript: e => { told.push(`line ${e.at(-1)?.who ?? "none"}`); } });
+    await host.start(TOKEN, "stored");
+    told.length = 0;
+    await host.ask("What's the weather?");
+    conductorSession().emit("session.error", { errorType: "query", statusCode: 400, message: "Bad request" });
+    await vi.waitFor(() => expect(told).toContain("turn idle"));
+    expect(told).toEqual(["line you", "turn thinking", "line problem", "turn idle"]);
+    // A turn that ends with neither words nor a step: its "No answer" line comes before its end too.
+    told.length = 0;
+    await host.ask("And tomorrow?");
+    conductorSession().emit("session.idle");
+    await vi.waitFor(() => expect(told).toContain("turn idle"));
+    expect(told).toEqual(["line you", "turn thinking", "line problem", "turn idle"]);
+    await host.stop();
+  });
+  it("never tells Home a request waiting for a reconnect is over before its turn has run, as after Stop everything (home-r2-2)", async () => {
+    let generation = 1;
+    const told: string[] = [];
+    const { host } = makeHost({ extensions: { forSession: () => undefined, get generation() { return generation; } }, onConversationTurn: t => { told.push(t); } });
+    await host.start(TOKEN, "stored");
+    // The kill switch's extensions part stopped the extension servers: the next request reconnects first.
+    generation = 2;
+    const first = conductorSession();
+    expect(await host.ask("Q9 after")).toBe(true);
+    expect(conductorSession()).not.toBe(first);
+    expect(conductorSession().sent.at(-1)).toMatch(/Q9 after$/);
+    expect(told).toEqual(["thinking"]);
+    conductorSession().emit("assistant.message", { content: "Here is my answer." });
+    conductorSession().emit("session.idle");
+    await vi.waitFor(() => expect(told).toEqual(["thinking", "idle"]));
+    await host.stop();
+  });
+  it("never tells Home the conversation stopped answering while a spoken request cuts in on a reply (home-r2-2)", async () => {
+    const told: string[] = [];
+    const { host } = makeHost({ onConversationTurn: t => { told.push(t); } });
+    await host.start(TOKEN, "stored");
+    await host.ask("What's the weather?");
+    expect(await host.ask("Actually, tomorrow's", null, undefined, { spoken: true, replaces: true })).toBe(true);
+    expect(conductorSession().sent.at(-1)).toMatch(/Actually, tomorrow's/);
+    await Promise.resolve();
+    expect(told).toEqual(["thinking"]);
+    await host.stop();
+  });
+  it("tells Home a request that waited for a reconnect in vain ended only after its Problem line (home-r2-2)", async () => {
+    let generation = 1;
+    const told: string[] = [];
+    const { host } = makeHost({ connectWaitMs: 50, extensions: { forSession: () => undefined, get generation() { return generation; } },
+      onConversationTurn: t => { told.push(`turn ${t}`); }, onTranscript: e => { told.push(`line ${e.at(-1)?.who ?? "none"}`); } });
+    await host.start(TOKEN, "stored");
+    generation = 2;
+    // The reconnect hangs: the request waits a moment, then says Ember is still connecting.
+    sim.startHangs = true;
+    told.length = 0;
+    expect(await host.ask("Q9 after")).toBe(false);
+    await vi.waitFor(() => expect(told).toContain("turn idle"));
+    expect(told).toEqual(["turn thinking", "line you", "line problem", "turn idle"]);
+    // (The hung start never lets the runtime go: the stop isn't waited for.)
+    void host.stop();
+  });
+  it("tells Home its turn ended because Stop ended it, from the bubble's Stop as from Home's (home-c2-2)", async () => {
+    const told: string[] = [];
+    const { host } = makeHost({ onConversationTurn: (t, ended) => { told.push(ended ? `${t} ${ended}` : t); }, turnSlowMs: 30 });
+    await host.start(TOKEN, "stored");
+    await host.ask("What's the weather?");
+    // Stopped while the bubble says Ember is still waiting: never "thinking" again on the way.
+    await vi.waitFor(() => expect(told).toEqual(["thinking", "slow"]));
+    expect(await host.stopAnswer()).toBe(true);
+    expect(told).toEqual(["thinking", "slow", "idle stopped"]);
+    // Nothing under way: nothing is told, and a later turn's own end says nothing of a stop.
+    expect(await host.stopAnswer()).toBe(false);
+    await host.ask("And tomorrow?");
+    conductorSession().emit("assistant.message", { content: "Sunny." });
+    conductorSession().emit("session.idle");
+    await vi.waitFor(() => expect(told).toEqual(["thinking", "slow", "idle stopped", "thinking", "idle"]));
     await host.stop();
   });
   it("keeps a manually opened spoken request with its own queued turn", async () => {
@@ -2644,7 +2722,8 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     // The turn said nothing (start_task alone): its end is the end of the wait all the same.
     session.emit("session.idle");
     expect(host.conversationTurn).toBe("idle");
-    expect(turns).toEqual(["thinking", "idle"]);
+    // (Told once what came with its end has been: home-r2-1.)
+    await vi.waitFor(() => expect(turns).toEqual(["thinking", "idle"]));
     // A spoken request is answering too (Home's status panel says so for the Ask box and voice), and Stop ends it at once.
     await host.ask("what's on my calendar?", null, undefined, { spoken: true });
     expect(host.conversationTurn).toBe("thinking");
@@ -2664,6 +2743,7 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     session.emit("session.idle");
     expect(host.stopsWith("stop")).toBe(true);
     expect(host.stopsWith("stop the music")).toBe(false);
+    await vi.waitFor(() => expect(turns.at(-1)).toBe("idle"));
     turns.length = 0;
     expect(await host.ask("stop", mail, undefined, { heardId: 7, voiceUnchecked: true })).toBe(true);
     expect(stops).toBe(1);
@@ -4212,6 +4292,20 @@ describe("“remember…” while memory is off (memory-c1-1, memory-i1)", () =>
       conductorSession().emit("assistant.message", { content: "Opening Firefox." });
       conductorSession().emit("session.idle", {});
       expect(host.getTranscript().at(-1)).toMatchObject({ who: "ember", text: "Opening Firefox." });
+      // "Forget my last request and open Firefox instead" is about the conversation: it reaches it whole, with no note
+      // (memory-c1-1).
+      await host.ask("Forget my last request and open Firefox instead");
+      expect(conductorSession().sent.at(-1)).toContain("Forget my last request and open Firefox instead");
+      conductorSession().emit("assistant.message", { content: "Opening Firefox instead." });
+      conductorSession().emit("session.idle", {});
+      expect(host.getTranscript().at(-1)).toMatchObject({ who: "ember", text: "Opening Firefox instead." });
+      // A forget request with another after it: the conversation does the other, and Ember says memory can't change
+      // what's saved, never leaving the model's answer to stand for the forget.
+      await host.ask("Forget my address and open Firefox");
+      expect(conductorSession().sent.at(-1)).toContain("Forget my address and open Firefox");
+      conductorSession().emit("assistant.message", { content: "Opening Firefox." });
+      conductorSession().emit("session.idle", {});
+      expect(host.getTranscript().slice(-2).map(e => [e.who, e.text])).toEqual([["ember", "Opening Firefox."], ["ember", "Memory is off, so I can't change what's saved."]]);
       await host.stop();
     } finally {
       vi.useRealTimers();
