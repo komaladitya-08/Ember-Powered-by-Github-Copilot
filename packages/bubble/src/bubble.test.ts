@@ -451,7 +451,10 @@ describe("the bubble's hierarchy (UI audit #9)", () => {
   it("draws the \" · \" between two chords only where they share a line, never ending or starting one (accessibility-visual-r3-2)", () => {
     // Each chord's own, in the room before it; the list starts that room left of the row, where it is clipped.
     expect(BUBBLE_CSS).toContain(".eb-step .eb-keys { display: flex; flex-wrap: wrap; margin-left: -1em; clip-path: inset(-4px -4px -4px 1em); }");
-    expect(BUBBLE_CSS).toContain(".eb-step .eb-key::before { content: \"·\"; position: absolute; left: 0; top: 0; width: 1em; text-align: center; }");
+    // Before a chord that follows another only: the first one's, clipped from sight, was still read ("· Ctrl Alt Y
+    // allow": companion-v4-3; bubble-motion-live.test.ts reads the accessibility tree).
+    expect(BUBBLE_CSS).toContain(".eb-step .eb-key + .eb-key::before { content: \"·\"; position: absolute; left: 0; top: 0; width: 1em; text-align: center; }");
+    expect(BUBBLE_CSS).not.toMatch(/\.eb-step \.eb-key::before/);
     // No " · " text between the chords any more (it was left at the first line's end).
     const src = fs.readFileSync(path.join(__dirname, "bubble.ts"), "utf8");
     const step = src.slice(src.indexOf("  setStep(text: string | null): void {"), src.indexOf("  setWhole("));

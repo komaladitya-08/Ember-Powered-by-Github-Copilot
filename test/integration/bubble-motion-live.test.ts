@@ -149,6 +149,27 @@ function keyHints(): { name: string; over: number; textOver: number; seps: { sho
   html.style.removeProperty("--text-scale");
   return out;
 }
+/**
+ * Question hints left in the page for main to read from its accessibility tree: Linux's at the bubble's own width (the
+ * two chords on one line) and a Mac's narrowed to 220 px (each chord on a line of its own). Their hosts' ids.
+ */
+function axHints(): string[] {
+  const hints: [string, string, number][] = [["ax-linux", "Ctrl+Alt+Y allow · Ctrl+Alt+N not now", 0],
+    ["ax-mac", "Control+Shift+Command+Y allow · Control+Shift+Command+N not now", 220]];
+  for (const [id, step, width] of hints) {
+    const host = document.createElement("div");
+    host.id = id;
+    host.style.cssText = "position:absolute;inset:0";
+    document.body.append(host);
+    const b = new ReasoningBubble(host);
+    b.setMood("attention");
+    b.setThought("May I click Apply in Settings?");
+    b.setStep(step);
+    b.setVisible(true);
+    if (width) { b.root.style.width = width + "px"; b.root.style.boxSizing = "border-box"; }
+  }
+  return hints.map(h => h[0]);
+}
 (window as unknown as { start: () => Promise<void> }).start = async () => {
   // A first run, thrown away: the page's fonts, layout and the bubble's style sheet in place before anything counts.
   await question("thinking", true);
@@ -160,6 +181,7 @@ function keyHints(): { name: string; over: number; textOver: number; seps: { sho
     answer: await answer(),
     chips: chips(),
     keyHints: keyHints(),
+    axHints: axHints(),
   };
   (window as unknown as { done: unknown }).done = result;
 };
@@ -168,6 +190,35 @@ function keyHints(): { name: string; over: number; textOver: number; seps: { sho
 const MAIN = `
 const { app, BrowserWindow } = require("electron");
 const path = require("node:path");
+/**
+ * The words a screen reader is given for each hint left in the page (ids): the text of the accessibility tree under its
+ * step, in order, as Orca's flat review reads it. Generated content is in that tree whatever clips it from sight.
+ */
+async function axTexts(win, ids) {
+  const out = {};
+  const dbg = win.webContents.debugger;
+  try {
+    dbg.attach("1.3");
+    await dbg.sendCommand("Accessibility.enable");
+    const { root } = await dbg.sendCommand("DOM.getDocument", { depth: -1 });
+    const { nodes } = await dbg.sendCommand("Accessibility.getFullAXTree");
+    const byId = new Map(nodes.map(n => [n.nodeId, n]));
+    for (const id of ids) {
+      const { nodeId } = await dbg.sendCommand("DOM.querySelector", { nodeId: root.nodeId, selector: "#" + id + " .eb-step-text" });
+      const { node } = await dbg.sendCommand("DOM.describeNode", { nodeId });
+      const words = [];
+      const walk = n => {
+        if (!n) return;
+        if (!n.ignored && n.role && n.role.value === "StaticText") { words.push(n.name ? n.name.value : ""); return; }
+        for (const c of n.childIds || []) walk(byId.get(c));
+      };
+      const start = nodes.find(n => n.backendDOMNodeId === node.backendNodeId);
+      walk(start);
+      out[id] = start ? words.join(" ").split(" ").filter(Boolean).join(" ") : null;
+    }
+  } catch (e) { out.error = String(e); }
+  return out;
+}
 app.whenReady().then(async () => {
   setTimeout(() => app.exit(3), 30_000);
   const win = new BrowserWindow({ width: 1000, height: 700, show: true, webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
@@ -175,7 +226,7 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript("document.fonts.ready.then(() => { window.start(); return true; })");
   for (let i = 0; i < 200; i++) {
     const r = await win.webContents.executeJavaScript("window.done ?? null");
-    if (r) { process.stdout.write("RESULT " + JSON.stringify(r) + "\\n"); app.exit(0); return; }
+    if (r) { r.axHints = await axTexts(win, r.axHints); process.stdout.write("RESULT " + JSON.stringify(r) + "\\n"); app.exit(0); return; }
     await new Promise(r => setTimeout(r, 100));
   }
   app.exit(4);
@@ -186,6 +237,8 @@ type Sample = { scale: string; translate: string; opacity: number };
 type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext" | "answer", Sample[]> & {
   chips: { row: { x: number; y: number; w: number; h: number } | null; covered: boolean; buttons: number; labelledBy: string };
   keyHints: { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[];
+  /** What a screen reader reads of each hint left in the page (by its host's id). */
+  axHints: Record<string, string | null>;
 };
 
 /** How far a sample is from at rest: its scale's distance from 1, its translate in px. */
@@ -276,5 +329,13 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
     for (const name of ["linux at its own width at default text", "windows at its own width at larger text"]) {
       expect(all.find(k => k.name === name)!.seps, name).toEqual([{ shown: true, sameLine: true }]);
     }
+  });
+
+  it("reads a question's key hint to a screen reader with the \" · \" only between its chords, never before the first (companion-v4-3)", () => {
+    // The first chord's own dot, clipped from sight, was read all the same: "· Ctrl Alt Y allow · Ctrl Alt N not now".
+    expect(result.axHints).toEqual({
+      "ax-linux": "Ctrl Alt Y allow · Ctrl Alt N not now",
+      "ax-mac": "Control Shift Command Y allow · Control Shift Command N not now",
+    });
   });
 });
