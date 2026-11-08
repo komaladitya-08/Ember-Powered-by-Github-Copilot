@@ -323,7 +323,7 @@ describe("matchIntent: only a request counts (review #28)", () => {
     ["rm -r build", "go ahead and delete build/", "Deleting build, as you asked."],
     ["rm -r build", "fix line 12 in main.ts and delete build/", "Deleting build, as you asked."],
     ["rm -r build", "list the files, then delete build/", "Deleting build, as you asked."],
-    ["rm -r build", "how big is build/? delete build/ if it is over 1 GB", "Deleting build, as you asked."],
+    ["rm -r build", "how big is build/? delete build/", "Deleting build, as you asked."],
     ["rm -r build", "on the desktop delete build/", "Deleting build, as you asked."],
     [PUSH, "push my branch to GitHub", "Pushing feature-x to origin, as you asked."],
     [PUSH, "commit and push my branch to GitHub", "Pushing feature-x to origin, as you asked."],
@@ -342,8 +342,10 @@ describe("matchIntent: the folder the words put a path in (review #31)", () => {
     ["rm -rf packages/app/build", "delete the build folder in packages/app", "Deleting packages/app/build, as you asked."],
     ["rm -r step2/cache", "clean up the cache folder in step2", "Deleting step2/cache, as you asked."],
     ["rm -r cache", "clean up the cache folder in step2", null],
-    ["rm -r build", "delete build/ in 5 minutes", "Deleting build, as you asked."],
-    ["rm -r build", "delete build/ in a moment", "Deleting build, as you asked."],
+    // A time ("in 5 minutes", "in a moment") names no folder, and holds the step back (commands-remote-c4-4).
+    ["rm -r build", "delete build/ in 5 minutes", null],
+    ["rm -r build", "delete build/ in one go", "Deleting build, as you asked."],
+    ["rm -r build", "delete build/ in bulk", "Deleting build, as you asked."],
     ["echo x > notes.txt", "overwrite notes.txt in place", "Overwriting notes.txt, as you asked."],
     ["rm -r build", "delete the build folder in this repo", "Deleting build, as you asked."],
     // The home folder is a folder too: build/ there is not the task's build/ (commands-remote-c3-1).
@@ -436,6 +438,128 @@ describe("matchIntent: only what the asked-for verb acts on (commands-remote-c3-
   });
 });
 
+describe("matchIntent: a name that only places, describes or does something else (commands-remote-c3-1, r3-x1)", () => {
+  it.each([
+    // [command, words]: the name follows in, of, for, into or by, is the subject of another verb, or isn't the head.
+    ["rm -rf frontend", "delete node_modules in the frontend folder"],
+    ["rm -rf frontend", "delete the node_modules folder inside frontend"],
+    ["rm -rf build", "delete the logs in the build folder"],
+    ["rm -rf build", "delete the old logs inside the build folder"],
+    ["rm -rf build", "delete the backup of the build folder"],
+    ["rm -rf src", "delete the test files for the src folder"],
+    ["rm -rf dist", "delete the build folder in dist"],
+    ["rm -rf dist", "remove the build folder from dist"],
+    ["rm -rf build", "in dist delete the build folder"],
+    ["rm -rf build", "in dist, delete the build folder"],
+    ["rm -rf build", "delete the build logs"],
+    ["rm build", "delete the build logs"],
+    ["rm -r build", "delete the folders that build creates"],
+    ["git branch -D main", "delete the branches merged into main"],
+    ["git branch -D main", "delete every branch that main already has"],
+    ["kill 1234", "kill the children of 1234"],
+    ["kill 1234", "kill the process that 1234 started"],
+    ["kill 1234", "kill the processes started by 1234"],
+    ["kill 1234", "kill 5678, the child of 1234"],
+    ["kill 1234", "kill 5678, 1234 = my editor"],
+    ["kill 1234", "kill 5678, 1234 my editor"],
+    ["kill 1234", "kill 5678, 1234 started it"],
+    ["kill 1234", "kill 5678 since 1234 depends on it"],
+    ["systemctl restart nginx", "restart php-fpm, nginx depends on it"],
+    ["systemctl stop nginx", "stop apache, nginx serves the site"],
+    ["systemctl stop nginx", "stop apache since nginx serves the site"],
+    ["systemctl stop nginx", "stop apache, nginx handles the traffic now"],
+    ["systemctl stop nginx", "stop apache because nginx wants port 80"],
+    ["systemctl stop nginx", "stop the service nginx forwards to"],
+    ["kill 1234", "kill 1234's parent"],
+    ["rm -rf build", "delete what's inside build/"],
+    ["rm -rf build", "delete everything in build/"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBeNull();
+  });
+
+  it.each([
+    // [command, words]: the name is in a participle's phrase, a free relative or a relative clause after any word, or
+    // the folder is placed with of, for or at.
+    ["kill 1234", "kill the process blocking 1234"],
+    ["kill 1234", "kill whatever is blocking 1234"],
+    ["kill 1234", "kill whoever spawned 1234"],
+    ["kill 1234", "kill the process next to 1234"],
+    ["systemctl stop nginx", "stop the services that depend on nginx"],
+    ["systemctl stop nginx", "stop what's using nginx"],
+    ["systemctl stop nginx", "stop everything using nginx"],
+    ["rm -rf build", "delete the script that made build/"],
+    ["rm -rf build", "delete the folder next to build/"],
+    ["git branch -D main", "delete the branches based on main"],
+    ["git branch -D main", "delete the branches off main"],
+    ["git branch -D main", "delete the old-ui branch based on main"],
+    ["rm -rf build", "delete the build folder of the frontend app"],
+    ["rm -rf build", "delete the build folder for the docs"],
+    ["rm -rf build", "delete the build folder at docs/"],
+    ["rm -rf build", "delete build/ at docs/"],
+  ])("asks for `%s` after %j (commands-remote-v5-2)", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBeNull();
+  });
+
+  it.each([
+    // The thing itself, with a participle or a place that describes it, or a word that only looks like one.
+    ["rm -rf frontend/build", "delete the build folder of the frontend app", "Deleting frontend/build, as you asked."],
+    ["rm -rf docs/build", "delete the build folder for the docs", "Deleting docs/build, as you asked."],
+    ["rm -rf docs/build", "delete the build folder at docs/", "Deleting docs/build, as you asked."],
+    ["rm -rf build", "delete the build folder for me", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder at once", "Deleting build, as you asked."],
+    ["rm -rf build", "delete that build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the folder named build", "Deleting build, as you asked."],
+    ["git branch -D staging", "delete branch staging", "Deleting the branch staging, as you asked."],
+    ["git branch -D feature-x", "delete the merged branch feature-x", "Deleting the branch feature-x, as you asked."],
+    ["pkill node", "kill all running node processes", "Stopping node, as you asked."],
+    ["kill 1234", "kill that process 1234", "Stopping 1234, as you asked."],
+  ])("announces `%s` after %j (commands-remote-v5-2)", (cmd, words, said) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe(said);
+  });
+
+  it.each([
+    // "at", "of" with words that say where in the project, when or whose, never which folder.
+    ["rm -rf build", "delete the build folder at the root"],
+    ["rm -rf build", "delete the build folder at the top level"],
+    ["rm -rf build", "delete build/ at this point"],
+    ["rm -rf build", "delete build/ at your convenience"],
+    ["rm -rf build", "delete the build folder of mine"],
+    ["rm -rf build", "delete the build folder at my request"],
+  ])("announces `%s` after %j, which names no folder (commands-remote-w5-6)", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe("Deleting build, as you asked.");
+  });
+
+  it.each([
+    // What the verb itself acts on, with words that place it, say how or name where it goes.
+    ["rm -rf dist/build", "delete the build folder in dist", "Deleting dist/build, as you asked."],
+    ["rm -rf dist/build", "in dist delete the build folder", "Deleting dist/build, as you asked."],
+    ["rm -rf dist/build", "in dist, delete the build folder", "Deleting dist/build, as you asked."],
+    ["rm -rf build", "delete build/ in the repo", "Deleting build, as you asked."],
+    ["rm -rf build", "get rid of build/", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ completely, for me", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the old build folder that nobody uses", "Deleting build, as you asked."],
+    ["kill 1234", "kill the process with pid 1234", "Stopping 1234, as you asked."],
+    ["kill 1234", "kill 1234 now please", "Stopping 1234, as you asked."],
+    ["systemctl stop nginx", "stop the nginx service", "Stopping nginx, as you asked."],
+    ["npm uninstall lodash", "remove lodash from the frontend", "Removing lodash, as you asked."],
+    ["npm install lodash", "install lodash for the frontend", "Installing lodash, as you asked."],
+    ["git push origin feature-x", "push feature-x for review to origin", "Pushing feature-x to origin, as you asked."],
+    ["git push origin feature-x", "push my feature-x changes to origin", "Pushing feature-x to origin, as you asked."],
+    ["git checkout -- src/a.ts", "discard the changes in src/a.ts", "Discarding changes to src/a.ts, as you asked."],
+    ["git clean -fd build", "clean the untracked files in build/", "Deleting untracked files, as you asked."],
+    ["echo x > out.txt", "save the list in out.txt", "Overwriting out.txt, as you asked."],
+    ["echo x > out.txt", "write the list into out.txt", "Overwriting out.txt, as you asked."],
+    ["scp report.pdf build-01:/tmp", "copy report.pdf onto the build-01 server", "Copying report.pdf to build-01, as you asked."],
+    ["git branch -D feature old", "delete the feature and old branches", "Deleting the branch feature and old, as you asked."],
+    ["pkill node", "kill the node process that's hogging the CPU", "Stopping node, as you asked."],
+    ["rm -rf build dist", "delete build/ and dist/ both", "Deleting build and dist, as you asked."],
+    ["rm -rf dist src", "delete the dist folder and all of src/", "Deleting dist and src, as you asked."],
+    ["git push origin feature-x", "push feature-x up to origin", "Pushing feature-x to origin, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe(said);
+  });
+});
+
 describe("matchIntent: a pull request numbered anywhere in the words (commands-remote-v4-2)", () => {
   it.each([
     "look at pull request 45. merge the pr",
@@ -476,8 +600,321 @@ describe("matchIntent: the verb said again, or a list after a colon (commands-re
     ["gh pr merge 45", "check pr 45 and pr 46, then merge the pr"],
     ["gh pr merge 45", "pr 45 is broken. merge pr 46"],
     ["gh pr merge 45", "check pr 45, then merge the other pr"],
+    // A phrase the matcher leaves out still says which pull request (found fixing commands-remote-c3-1).
+    ["gh pr merge 45", "check pr 45, then merge the pr for the other branch"],
+    ["gh pr merge 45", "check pr 45, then merge the pr with the other fixes"],
   ])("asks for `%s` after %j", (cmd, words) => {
     expect(announce(cmd, words)).toBeNull();
+  });
+});
+
+describe("matchIntent: words that hold the step back (commands-remote-c4-4)", () => {
+  it.each([
+    // [command, words]: a condition, a later time, asking to be asked, or a how-to the verb said again escapes.
+    ["rm -rf src", "delete src/ only after I confirm"],
+    ["rm -rf src", "delete src/ only if I say so"],
+    ["rm -rf src", "delete src/ when I tell you"],
+    ["rm -rf src", "delete src/ once the tests pass"],
+    ["rm -rf src", "if the build fails, delete src/"],
+    ["rm -rf src", "delete src/. Only if the tests pass, though."],
+    ["rm -rf src", "delete src/ as soon as the build is done"],
+    ["rm -rf src", "wait until the build finishes, then delete src/"],
+    ["kill 1234", "kill 1234 if it hangs again"],
+    ["kill 1234", "kill 5678; whatever you do, kill 1234 only if I say so"],
+    ["rm -rf build", "delete build/ if it is over 1 GB"],
+    ["rm -rf src", "delete src/ tomorrow"],
+    ["rm -rf src", "next week, delete src/"],
+    ["rm -rf src", "delete build/; delete src/ tomorrow"],
+    ["rm -rf src", "delete src/ tonight"],
+    ["rm -rf src", "delete src/ in 5 minutes"],
+    ["rm -rf src", "delete src/ in a moment"],
+    ["rm -rf src", "delete src/ at 5pm"],
+    ["rm -rf src", "delete src/ on Friday"],
+    ["rm -rf src", "delete src/ but ask me first"],
+    ["rm -rf src", "delete src/, check with me before you do"],
+    ["rm -rf src", "delete src/ when you have my go-ahead"],
+    ["rm -rf src", "delete src/ after I've had a look"],
+    ["rm -rf src", "delete src/ and let me check first"],
+    ["rm -rf src", "delete src/, wait for my ok"],
+    ["rm -rf src", "explain how to delete build/ and delete src/"],
+    ["rm -rf src", "tell me how to delete build/, then delete src/"],
+    ["git push origin feature-x", "explain how to push, and push feature-x to origin"],
+    ["rm -rf dist", "delete build/ after dist/ finishes"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBeNull();
+  });
+
+  it.each([
+    // Showing first, a go-ahead, holding off, the user's own signal, a later time in figures or words, a condition.
+    "delete src/ but first show me what's in it",
+    "delete src/ but show me the command first",
+    "delete src/ but run it by me",
+    "delete src/ but get the ok from me",
+    "delete src/ but prompt me",
+    "delete src/ on my go",
+    "delete src/ upon confirmation",
+    "delete src/ pending review",
+    "delete src/, I'll say when",
+    "delete src/ and I'll confirm",
+    "delete src/ but hold off for now",
+    "delete src/ but hang on",
+    "delete src/ at the end of the task",
+    "delete src/ in 1h",
+    "delete src/ in 5m",
+    "delete src/ at 5.30pm",
+    "delete src/ at five",
+    "delete src/ at 5",
+    "delete src/ at some point",
+    "delete src/ in a little while",
+    "delete src/ on the 15th",
+    "delete src/ in December",
+    "delete src/ in case the tests fail",
+    "delete src/ supposing the build fails",
+  ])("asks for `rm -rf src` after %j (commands-remote-v5-3)", words => {
+    expect(announce("rm -rf src", words)).toBeNull();
+  });
+
+  it.each([
+    // Now, a thing that may not be there, an interjection, another step's own time or condition, the folder with what
+    // is in it, the contents of a file and a process by its pid.
+    ["rm -rf build", "delete build/ as soon as possible", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ as soon as you can", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ if it exists", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ if it's there", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ if there is one", "Deleting build, as you asked."],
+    ["rm -rf build", "wait, delete build/ instead", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ now, I'll rebuild later", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ and rebuild it after", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/, then run the tests once it's gone", "Deleting build, as you asked."],
+    ["kill 1234", "kill 1234 and restart it later", "Stopping 1234, as you asked."],
+    ["rm -rf build", "delete the build folder with everything in it", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder along with its contents", "Deleting build, as you asked."],
+    ["echo hi > out.txt", "replace the contents of out.txt with hi", "Overwriting out.txt, as you asked."],
+    ["kill 1234", "kill the process for pid 1234", "Stopping 1234, as you asked."],
+  ])("announces `%s` after %j (commands-remote-v5-5)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // The same words with the step itself held back, or a condition that goes on.
+    ["rm -rf build", "delete build/, but do it later"],
+    ["rm -rf build", "delete build/, but run it tomorrow"],
+    ["rm -rf build", "delete build/, but start tomorrow"],
+    ["rm -rf build", "delete build/ and rebuild it, but only after lunch"],
+    ["rm -rf build", "delete build/ and check with the team tomorrow"],
+    ["rm -rf build", "delete build/ if it exists and the tests pass"],
+    ["rm -rf build", "delete build/ as soon as the tests pass"],
+    ["rm -rf build", "wait until it's done, delete build/"],
+    ["rm -rf build", "rebuild the app later and delete build/ now"],
+    ["kill 1234", "kill the parent of pid 1234"],
+    ["rm -rf build", "delete the build folder with everything in dist"],
+  ])("still asks for `%s` after %j (commands-remote-v5-5)", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
+    // A later clause whose object is the step itself keeps its time or condition, and a wait a sequence follows waits.
+    ["rm -rf build", "delete build/, but run the command tomorrow"],
+    ["rm -rf build", "delete build/, but run the command only if the tests pass"],
+    ["rm -rf build", "delete build/, but I'll run the command myself tomorrow"],
+    ["rm -rf build", "delete build/ and start the cleanup tomorrow"],
+    ["git branch -D main", "delete the main branch, but run the command next week"],
+    ["kill 1234", "kill 1234 and run the command if it hangs again"],
+    ["rm -rf build", "wait, then delete build/"],
+    ["rm -rf build", "Wait. Then delete build/."],
+  ])("asks for `%s` after %j, which holds the step itself back (commands-remote-w5-2)", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
+    // Another thing to run, named after the verb, keeps its own time.
+    ["rm -rf build", "delete build/ and start the dev server tomorrow", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/, then run the build later", "Deleting build, as you asked."],
+    ["rm -rf build", "Wait! Delete build/ instead.", "Deleting build, as you asked."],
+  ])("still announces `%s` after %j (commands-remote-w5-2)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // The contents of the file a copy reads from: after "with", or as what "save" writes somewhere else.
+    ["cp config.yml config.yml.bak", "overwrite config.yml with the contents of config.yml.bak"],
+    ["mv config.yml config.yml.bak", "overwrite config.yml with the contents of config.yml.bak"],
+    ["cat config.yml > config.yml.bak", "overwrite config.yml with the contents of config.yml.bak"],
+    ["cp report.md README.md", "replace report.md with the contents of README.md"],
+    ["cp out.txt notes.txt", "save the contents of notes.txt to out.txt"],
+    ["Copy-Item config.yml config.yml.bak", "overwrite config.yml with the contents of config.yml.bak", "win32"],
+  ] as [string, string, ContextName?][])("asks for `%s` after %j, which overwrites the file the words read from (commands-remote-w5-1)", (cmd, words, where) => {
+    expect(announce(cmd, words, { where })).toBeNull();
+  });
+
+  it.each([
+    // A word between the verb and the process word says the process is another one.
+    ["kill 1234", "kill the parent process for pid 1234"],
+    ["kill 1234", "kill the child process for pid 1234"],
+    ["kill 1234", "kill the other process for pid 1234"],
+    ["kill 1234", "kill the watchdog process for pid 1234"],
+    ["Stop-Process -Id 1234", "kill the parent process for pid 1234", "win32"],
+    ["taskkill /PID 1234", "kill the parent process for pid 1234", "win32", "cmd"],
+  ] as [string, string, ContextName?, ShellId?][])("asks for `%s` after %j, which names another process (commands-remote-w5-3)", (cmd, words, where, shell) => {
+    expect(announce(cmd, words, { where, shell })).toBeNull();
+  });
+
+  it.each([
+    // The same words with the copy the right way round, and the process the verb itself acts on.
+    ["cp config.yml.bak config.yml", "overwrite config.yml with the contents of config.yml.bak", "Overwriting config.yml, as you asked."],
+    ["cp README.md report.md", "replace report.md with the contents of README.md", "Overwriting report.md, as you asked."],
+    ["cp notes.txt out.txt", "save the contents of notes.txt to out.txt", "Overwriting out.txt, as you asked."],
+    ["echo hi > out.txt", "update the text of out.txt to hi", "Overwriting out.txt, as you asked."],
+    ["kill 1234", "stop that job for pid 1234", "Stopping 1234, as you asked."],
+    ["kill 1234", "please kill the process for pid 1234", "Stopping 1234, as you asked."],
+  ])("still announces `%s` after %j (commands-remote-w5-1, w5-3)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // Asking for the step now, with words that only ask for something else or say why, still announces.
+    ["rm -rf src", "delete src/", "Deleting src, as you asked."],
+    ["rm -rf src", "can you delete src/?", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ and tell me if anything goes wrong", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ and let me know when it's done", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ if you can", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ at once", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ now", "Deleting src, as you asked."],
+    ["rm -rf src", "list the files; after that, delete src/", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ and explain why it was so big", "Deleting src, as you asked."],
+    ["rm -rf src", "Explain how rm works. Then delete src/.", "Deleting src, as you asked."],
+    ["rm -r build", "how big is build/? delete build/", "Deleting build, as you asked."],
+    ["rm -r build dist", "delete build/ and dist/ in one go", "Deleting build and dist, as you asked."],
+    ["rm -rf src", "delete src/ first, then run the tests", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ before you run the tests", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ at once", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ and tell me what you deleted", "Deleting src, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe(said);
+  });
+
+  it.each([
+    // What to report once it is done.
+    ["rm -rf build", "delete build/ and let me see the output", "Deleting build, as you asked."],
+    ["kill 1234", "kill 1234 and let me see the result", "Stopping 1234, as you asked."],
+    ["rm -rf build", "delete build/ and say if it worked", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ and say when it's done", "Deleting build, as you asked."],
+  ])("announces `%s` after %j, which only asks to hear how it went (commands-remote-w5-5)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // Seeing the step before it runs, and the user's own word to go.
+    "delete src/, I'll say when",
+    "delete src/ and we will say when",
+    "delete src/ but let me see the command first",
+    "delete src/ but let me see the command",
+    "delete src/ but let me see what you'll run",
+    "delete src/ and let me see it",
+    "let me see the command, then delete src/",
+  ])("still asks for `rm -rf src` after %j (commands-remote-w5-5)", words => {
+    expect(announce("rm -rf src", words)).toBeNull();
+  });
+});
+
+describe("matchIntent: plain chains and a hung thing referred back to (commands-remote-r4-4)", () => {
+  it.each([
+    ["systemctl stop nginx", "stop apache, then nginx", "Stopping nginx, as you asked."],
+    ["systemctl stop nginx", "stop apache and then nginx", "Stopping nginx, as you asked."],
+    ["systemctl stop nginx", "stop apache. nginx too.", "Stopping nginx, as you asked."],
+    ["rm -rf build dist", "delete build/, then dist/", "Deleting build and dist, as you asked."],
+    ["rm -rf dist", "delete build/. dist/ as well.", "Deleting dist, as you asked."],
+    ["kill 1234", "1234 is hung, kill it", "Stopping 1234, as you asked."],
+    ["kill 1234", "1234 is frozen. kill it", "Stopping 1234, as you asked."],
+    ["systemctl restart nginx", "nginx is stuck, restart it", "Restarting nginx, as you asked."],
+    ["systemctl restart nginx", "the nginx service seems hung, please restart it", "Restarting nginx, as you asked."],
+    ["systemctl stop nginx", "stop apache, then nginx please", "Stopping nginx, as you asked."],
+    ["rm -rf build dist", "delete build/, then the dist folder", "Deleting build and dist, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // Another verb, something said of the thing, a question, or "it" for something that isn't hung.
+    ["systemctl stop nginx", "stop apache, then look at nginx"],
+    ["systemctl stop nginx", "stop apache, then nginx is fine"],
+    ["systemctl stop nginx", "stop apache, then nginx restarts itself"],
+    ["systemctl stop nginx", "stop apache. nginx too?"],
+    ["kill 1234", "1234 is my editor, kill it"],
+    ["kill 1234", "1234 is hung and 5678 is my editor, kill it"],
+    ["kill 1234", "1234 is hung. 5678 is fine. kill it"],
+    ["systemctl restart nginx", "nginx is fine, restart it"],
+    ["kill 1234", "1234 is hung, kill 5678 and leave it"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
+    // A thing after "then" with more than fillers after it, or a particle after any listed thing, is another verb's.
+    ["systemctl stop nginx", "stop apache, then nginx back up"],
+    ["systemctl stop nginx", "stop apache, then nginx up"],
+    ["systemctl stop nginx", "stop apache, then nginx on 80"],
+    ["systemctl stop nginx", "stop apache and nginx back up"],
+    ["kill 1234", "kill apache, then 1234 back up"],
+    ["rm -rf build", "delete dist/, then build/ back up"],
+  ])("asks for `%s` after %j, which brings it back (commands-remote-v5-6)", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
+    // "right away" after "then", and "on" before where it runs, bring nothing back.
+    ["systemctl stop nginx", "stop apache, then nginx right away", "Stopping nginx, as you asked."],
+    ["rm -rf build dist", "delete build/ and dist/ on my machine", "Deleting build and dist, as you asked."],
+  ])("announces `%s` after %j (commands-remote-w5-6)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // "it" inside a description of something else is never the hung thing itself (commands-remote-v5-1).
+    ["kill 1234", "1234 is stuck, kill whatever is blocking it"],
+    ["kill 1234", "1234 is stuck, kill the parent that owns it"],
+    ["systemctl stop nginx", "nginx is broken, stop what's using it"],
+    ["git branch -D main", "main is broken, delete the branches off it"],
+    ["rm -rf build", "build/ is broken, delete what's using it"],
+    ["Stop-Process -Id 1234", "1234 is stuck, kill whatever is blocking it", "win32"],
+    ["taskkill /PID 1234", "1234 is stuck, kill whatever is blocking it", "win32", "cmd"],
+  ] as [string, string, ContextName?, ShellId?][])("asks for `%s` after %j, where \"it\" isn't what the verb acts on (commands-remote-v5-1)", (cmd, words, where, shell) => {
+    expect(announce(cmd, words, { where, shell })).toBeNull();
+  });
+
+  it.each([
+    ["kill 1234", "1234 is hung, kill it now please", "Stopping 1234, as you asked."],
+    ["kill 1234", "1234's stuck, just kill it", "Stopping 1234, as you asked."],
+    ["systemctl restart nginx", "nginx is stuck, restart it again", "Restarting nginx, as you asked."],
+  ])("still announces `%s` after %j, where \"it\" is all the verb acts on (commands-remote-v5-1)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // "already", "off" and "for good" after "it", and what it is for.
+    ["kill 1234", "1234 is hung, kill it already", "Stopping 1234, as you asked."],
+    ["kill 1234", "1234 is hung, kill it off", "Stopping 1234, as you asked."],
+    ["kill 1234", "1234 is frozen, kill it for good", "Stopping 1234, as you asked."],
+    ["systemctl restart nginx", "nginx is broken, restart it to fix it", "Restarting nginx, as you asked."],
+  ])("announces `%s` after %j, where \"it\" is still all the verb acts on (commands-remote-w5-6)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+});
+
+describe("matchIntent: a path in the home folder, said as the card says it (commands-remote-r4-7)", () => {
+  it.each([
+    ["rm -rf ~/proj/build", "delete the build folder in this repo", "Deleting ~/proj/build, as you asked."],
+    ["rm -rf /home/ana/proj/build", "delete the build folder", "Deleting ~/proj/build, as you asked."],
+    ["echo x > ~/proj/notes.txt", "overwrite notes.txt", "Overwriting ~/proj/notes.txt, as you asked."],
+    ["git checkout -- ~/proj/src/a.ts", "discard the changes to src/a.ts", "Discarding changes to ~/proj/src/a.ts, as you asked."],
+    // A folder that only starts like the home folder's name is said as written.
+    ["rm /home/ananas/x.txt", "delete /home/ananas/x.txt", "Deleting /home/ananas/x.txt, as you asked."],
+  ])("announces `%s` after %j as %j", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it("keeps a Windows path as PowerShell's card shows it", () => {
+    expect(announce("Remove-Item -Recurse C:\\Users\\ana\\proj\\build", "delete the build folder", { where: "win32" })).toBe("Deleting C:\\Users\\ana\\proj\\build, as you asked.");
   });
 });
 

@@ -14,7 +14,7 @@ import { lexPowerShell } from "../../app/main/commands/lex-powershell";
 import { lexCmd } from "../../app/main/commands/lex-cmd";
 import { lit, type Arg } from "../../app/main/commands/words";
 import { withoutReadFlow, withRealPaths } from "../../app/main/commands/scripts";
-import { contextOf, loadCorpus, problemsOf, runCase, type Family } from "../fixtures/commands/corpus";
+import { contextOf, loadCorpus, problemsOf, runCase, type ContextName, type Family } from "../fixtures/commands/corpus";
 
 const FAMILIES: Family[] = ["posix", "powershell", "cmd", "wsl"];
 
@@ -175,12 +175,168 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
       "read d <<< ~/.config/ember; rm -rf \"$d\"",
       // A pattern Ember sees only the start of, where it could match one of Ember's folders.
       "rm -rf ~/.c*/$x",
+      // xargs given a here-string or here-document whose words Ember sees whole (commands-remote-v4-4).
+      "xargs rm -rf <<< ~/.config/ember", "xargs -I{} rm -rf {} <<< ~/.config/ember", "xargs rm -rf <<EOF\n/home/ana/.config/ember\nEOF",
     ]) expect(refused(cmd), cmd).toBe(CHANGE);
     // Nothing of Ember's, or a pattern the quotes turn into a name: asked or run as before.
     for (const cmd of [
       "d=build; rm -rf \"$d\"/*.o", "d=~/.config; rm -rf \"$d\"/\"emb*\"", "set -- build dist; rm -rf \"$@\"", "set -e; rm -rf \"$1\"",
-      "while read f; do rm -rf \"$f\"; done <<< build", "printf -v d %s build; rm -rf \"$d\"", "cat ~/.cache/*$x",
+      "while read f; do rm -rf \"$f\"; done <<< build", "printf -v d %s build; rm -rf \"$d\"", "cat ~/.cache/*$x", "xargs rm -rf <<< build",
     ]) expect(refused(cmd), cmd).toBeUndefined();
+    expect(classifyCommand("xargs rm -rf <<< build", "bash", contextOf("linux")).findings.map(f => f.says)).toEqual(["Deletes build and everything in it."]);
+  });
+
+  it("judges a variable set to Ember's folder where a command uses it, so testing or printing it runs (commands-remote-r4-5)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "p=~/.config/ember; [ -d \"$p\" ] && echo yes", "p=~/.config/ember; test -d \"$p\" && echo yes", "p=~/.config/ember; echo \"Ember keeps data in $p\"",
+      "x=~/.config/ember; echo hi", "for f in ~/.config/*; do echo \"$f\"; done", "for f in ~/.local/share/*; do echo \"$f\"; done",
+      "while read -r l; do echo \"$l\"; done <<EOF\n/home/ana/.config/ember\nEOF", "printf -v d %s ~/.config/ember; echo \"$d\"", "set -- ~/.config/ember; echo \"$1\"",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+    // Where it is used it is judged as the path: read, changed, or listed as `ls` of the pattern itself is.
+    expect(refused("p=~/.config/ember; cat \"$p/settings.json\"")).toBe(READ);
+    expect(refused("p=~/.config/ember; rm -rf \"$p\"")).toBe(CHANGE);
+    expect(refused("for app in ~/.config/*; do ls \"$app\" | head -1; done")).toBe(refused("ls ~/.config/*"));
+    // Used in a word Ember doesn't judge as a path (inline code, a program's own option), its value is judged as before.
+    for (const cmd of ["d=~/.config/ember; python3 -c \"import shutil; shutil.rmtree('$d')\"", "d=~/.config/ember; some-tool --dir=\"$d\""]) expect(refused(cmd), cmd).toBe(READ);
+    // A value that may reach a program's environment (exported, before a command, or an environment variable's name)
+    // is still judged when it is set; one handed to a program's environment may be changed there (commands-remote-w5-5).
+    for (const cmd of ["export d=~/.config/ember; make", "D=~/.config/ember make", "declare -x d=~/.config/ember; make"]) expect(refused(cmd), cmd).toBe(CHANGE);
+    expect(refused("XDG_CONFIG_HOME=~/.config/ember; gedit-like-tool")).toBe(READ);
+  });
+
+  it("refuses a variable set to Ember's folder that reaches a program through a wrapper's option, its input, an expansion, its name or a later export (commands-remote-v5-2)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "d=~/.config/ember; xargs -a \"$d/settings.json\" echo", "d=~/.config/ember; xargs -a \"$d/audit.jsonl\" printf '%s\\n'", "d=~/.config/ember; xargs rm -rf <<< \"$d\"",
+      "d=~/.config/ember; read -r f <<< \"$d\"; rm -rf \"$f\"", "d=~/.config/ember; while read -r f; do rm -rf \"$f\"; done <<< \"$d\"",
+      "d=~/.config/ember; rm -rf \"${d:?}\"", "d=~/.config/ember/; rm -rf \"${d%/}\"", "d=~/.config/ember; rm -rf \"${d:-build}\"", "d=~/.config/ember; \"$d/bin/ember\" --reset",
+      "d=~/.config/ember; export d; python3 -c \"import os,shutil; shutil.rmtree(os.environ['d'])\"", "d=~/.config/ember; declare -x d; make", "set -a; d=~/.config/ember; make",
+      "d=~/.config/ember; sudo -D \"$d\" ls", "d=~/.config/ember; python3 <<EOF\nimport shutil; shutil.rmtree(\"$d\")\nEOF", "d=~/.config/ember; env X=\"$d\" make",
+    ]) expect(refused(cmd), cmd).toBeDefined();
+    // Testing, printing or reading it into a variable that is then printed still runs, and so does a variable that names
+    // anything else.
+    for (const cmd of [
+      "d=~/.config/ember; read -r f <<< \"$d\"; echo \"$f\"", "d=~/.config/ember; while read -r f; do echo \"$f\"; done <<< \"$d\"", "d=~/.config/ember; echo \"${d:?}\"",
+      "set -e; d=~/.config/ember; echo \"$d\"", "set -euo pipefail; d=~/.config/ember; [ -d \"$d\" ]", "d=~/.config/ember; xargs echo <<< hello", "d=build; rm -rf \"${d:?}\"",
+      "d=build; xargs rm -rf <<< \"$d\"", "d=./bin; \"$d/tool\" --x", "f=notes.txt; xargs -a \"$f\" echo", "d=x; rm -rf \"${d:+y}\"",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+    expect(classifyCommand("f=notes.txt; xargs -a \"$f\" echo", "bash", contextOf("linux")).findings).toEqual([]);
+  });
+
+  it("refuses Ember's folder through a variable in a wrapper's option written with its value attached, as when it is apart (commands-remote-w5-6)", () => {
+    const decided = (cmd: string) => classifyCommand(`d=~/.config/ember; ${cmd}`, "bash", contextOf("linux"));
+    for (const [cmd, apart] of [
+      ["xargs --arg-file=\"$d/settings.json\" echo", "xargs --arg-file \"$d/settings.json\" echo"], ["xargs -a\"$d/settings.json\" echo", "xargs -a \"$d/settings.json\" echo"],
+      ["xargs -0a\"$d/settings.json\" echo", "xargs -0 -a \"$d/settings.json\" echo"], ["uv run --cache-dir=\"$d\" x", "uv run --cache-dir \"$d\" x"],
+      ["uv run --directory=\"$d\" x", "uv run --directory \"$d\" x"], ["parallel --wd=\"$d\" echo ::: a", "parallel --wd \"$d\" echo ::: a"],
+    ] as const) {
+      const cls = decided(cmd);
+      expect(cls.refuse?.rule, cmd).toBe("ember.path");
+      expect(cls.refuse?.says, cmd).toBe(decided(apart).refuse?.says);
+      expect(cls.findings.map(f => f.rule), cmd).not.toContain("unclear.program");
+    }
+    // Another value is the file it reads, and the command after it is still the one named.
+    const other = classifyCommand("f=notes.txt; xargs --arg-file=\"$f\" echo", "bash", contextOf("linux"));
+    expect(other.refuse?.rule).toBeUndefined();
+    expect(other.findings.map(f => f.rule)).not.toContain("unclear.program");
+    expect(classifyCommand("f=list.txt; xargs -a\"$f\" rm -rf", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("posix.rm");
+    // A word whose option Ember can't tell is still the command it may be.
+    expect(classifyCommand("xargs -$X echo", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("unclear.program");
+  });
+
+  it("runs a text filter that only reads a variable set to Ember's folder on its input, and refuses a program that acts on it (commands-remote-w5-4)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(`d=~/.config/ember; ${cmd}`, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "grep -q ember <<< \"$d\" && echo yes", "wc -c <<< \"$d\"", "tr / _ <<< \"$d\"", "sed s/a/b/ <<< \"$d\"", "cat <<< \"$d\"", "cat <<EOF\n$d\nEOF",
+      "awk '{print $1}' <<< \"$d\"", "sort <<< \"$d\"", "head -n 1 <<< \"$d\"", "cut -d / -f 2 <<< \"$d\"", "mapfile -t a <<< \"$d\"; echo \"${a[@]}\"",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+    // What it prints going on to another program, a program file of its own, or a program that acts on its input.
+    for (const cmd of [
+      "xargs rm -rf <<< \"$d\"", "cat <<< \"$d\" | xargs rm -rf", "tr -d x <<< \"$d\" | sh", "rm -rf \"$(cat <<< \"$d\")\"", "sed -f s.sed <<< \"$d\"",
+      "awk -f p.awk <<< \"$d\"", "python3 <<< \"$d\"", "bash <<< \"$d\"", "sudo xargs rm -rf <<< \"$d\"", "parallel rm -rf <<< \"$d\"", "mapfile -t a <<< \"$d\"; rm -rf \"${a[@]}\"",
+      "./tool <<< \"$d\"",
+    ]) expect(refused(cmd), cmd).toBeDefined();
+  });
+
+  it("says a command that hands Ember's folder to a program that deletes it would change Ember's files, not read them (commands-remote-w5-5)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(`d=~/.config/ember; ${cmd}`, "bash", contextOf("linux")), "bash").refuse?.says;
+    const change = "Ember won't run this: it would change Ember's own safety settings, records or programs.";
+    const read = "Ember won't run this: it would read Ember's own safety settings, records or programs.";
+    for (const cmd of [
+      "xargs rm -rf <<< \"$d\"", "xargs -I{} rm -rf {}/x <<< \"$d\"", "parallel rm -rf <<< \"$d\"", "mapfile -t a <<< \"$d\"; rm -rf \"${a[@]}\"",
+      "export d; python3 -c 'import os,shutil; shutil.rmtree(os.environ[\"d\"])'", "python3 <<EOF\nimport shutil; shutil.rmtree(\"$d\")\nEOF", "./tool <<< \"$d\"",
+    ]) expect(refused(cmd), cmd).toBe(change);
+    expect(classifyCommand("xargs rm -rf <<< ~/.config/ember", "bash", contextOf("linux")).refuse?.says).toBe(change);
+    // A program that reads what it is given still says it would read.
+    for (const cmd of ["xargs cat <<< \"$d\"", "xargs -a \"$d/settings.json\" echo", "mapfile -t a <<< \"$d\"; cat \"${a[0]}/settings.json\""]) expect(refused(cmd), cmd).toBe(read);
+  });
+
+  it("keeps a download a download through a cut or a default, and refuses Ember's folder that one could name (commands-remote-w5-1)", () => {
+    // Each step of a task in turn, the downloads carried from one to the next as the flow carries them.
+    const steps = (ctx: ContextName, ...cmds: string[]): string[] => {
+      const dl: string[] = [];
+      let rules: string[] = [];
+      for (const cmd of cmds) {
+        const cls = classifyCommand(cmd, "bash", contextOf(ctx, dl)) as ClassificationExtra;
+        dl.push(...cls.downloads);
+        rules = cls.findings.map(f => f.rule);
+      }
+      return rules;
+    };
+    for (const ctx of ["linux", "darwin", "wsl"] as const) {
+      for (const [get, copy, run] of [
+        ["curl -fsSLo tool.py https://example.com/tool.py", "url=https://example.com/tool.py; cp \"${url##*/}\" run.py", "python3 run.py"],
+        ["curl -fsSLo tool.py https://example.com/tool.py", "url=https://example.com/tool.py; mv \"${url##*/}\" app.py", "python3 app.py"],
+        ["curl -fsSLo run.sh.bak https://example.com/run.sh", "d=run.sh.bak; cp \"${d%.bak}.bak\" run.sh", "bash run.sh"],
+        ["curl -fsSLo tool https://example.com/tool", "u=https://example.com/tool; mkdir -p bin; cp \"${u##*/}\" bin/tool; chmod +x bin/tool", "./bin/tool"],
+        ["curl -fsSLo tool.py https://example.com/tool.py", "f=; cp \"${f:-tool.py}\" run.py", "python3 run.py"],
+      ]) expect(steps(ctx, get, copy, run), `${ctx}: ${copy}`).toContain("escape.run-downloaded");
+    }
+    // A cut or a default that may name Ember's folder beside the part Ember sees is refused, as a part it can't see is.
+    const refused = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux")).refuse?.rule;
+    for (const cmd of [
+      "d=emberx; rm -rf ~/.config/\"${d%x}\"", "d=; cat ~/.config/\"${d:-ember}/settings.json\"", "b=~/.config; d=emberx; rm -rf \"$b/${d%x}\"",
+      "d=xember; rm -rf ~/.config/\"${d#x}\"", "d=emberx; rm -rf ~/.config/\"${d%%x}\"",
+    ]) expect(refused(cmd), cmd).toBe("ember.path");
+    // A check is the value itself: only that value is judged.
+    for (const cmd of ["d=build; rm -rf ~/.config/\"${d:?}\"", "d=build; rm -rf \"${d%/}\"", "d=/tmp/x/; rm -rf \"${d%/}\""]) expect(refused(cmd), cmd).toBeUndefined();
+  });
+
+  it("refuses Ember's folder through ${HOME:?} and ${HOME:-…}, as through $HOME (commands-remote-w5-3)", () => {
+    const refused = (cmd: string, ctx: ContextName = "linux") => classifyCommand(cmd, "bash", contextOf(ctx)).refuse?.rule;
+    for (const cmd of [
+      "rm -rf \"${HOME:?}/.config/ember\"", "rm -rf \"${HOME?}/.config/ember\"", "cat \"${HOME:?}/.config/ember/settings.json\"",
+      "rm -rf \"${HOME:-/home/ana}/.config/ember\"", "rm -rf \"${HOME%/}/.config/ember\"", "cd ~/.config && rm -rf \"${PWD:?}/ember\"",
+    ]) expect(refused(cmd), cmd).toBe("ember.path");
+    expect(refused("rm -rf \"${HOME:?}/Library/Application Support/ember\"", "darwin")).toBe("ember.path");
+    // ${HOME:?} is the home folder: the rest of it is judged as the plain path is.
+    expect(classifyCommand("rm -rf \"${HOME:?}/proj/build\"", "bash", contextOf("linux")).findings.map(f => f.says)).toContain("Deletes ~/proj/build and everything in it.");
+  });
+
+  it("refuses Ember's own folder reached through a PowerShell variable the command sets, as when it is named (commands-remote-c3-2)", () => {
+    const ps = (cmd: string) => says(cmd, "powershell", "win32");
+    for (const cmd of [
+      "$d = \"$env:LOCALAPPDATA\\ember\"; Remove-Item -Recurse -Force $d",
+      "$d = 'C:\\Users\\ana\\AppData\\Local\\ember'; Remove-Item -Recurse -Force $d",
+      "$d = Join-Path $env:LOCALAPPDATA 'ember'; Remove-Item -Recurse -Force $d",
+      "$d = Join-Path -Path $env:LOCALAPPDATA -ChildPath ember; Remove-Item -Recurse $d",
+      "$f = \"$env:LOCALAPPDATA\\ember\\settings.json\"; Set-Content $f '{}'",
+      "$f = \"$env:LOCALAPPDATA\\ember\\audit.jsonl\"; Clear-Content $f",
+      "$d = $env:LOCALAPPDATA; Remove-Item -Recurse -Force \"$d\\emb*\"",
+      "$d = $env:LOCALAPPDATA; Remove-Item -Recurse -Force \"$d\\ember\"",
+      "$env:D = \"$env:LOCALAPPDATA\\ember\"; Remove-Item -Recurse $env:D",
+      "$d = $env:LOCALAPPDATA; Remove-Item -Recurse \"$d\\$x\"",
+    ]) expect(ps(cmd), cmd).toBe(CHANGE);
+    expect(ps("$f = \"$env:LOCALAPPDATA\\ember\\settings.json\"; Get-Content $f")).toBe(READ);
+    // As the named path is: Test-Path reads it, Write-Output only prints the name.
+    expect(ps("$d = \"$env:LOCALAPPDATA\\ember\"; Test-Path $d")).toBe(ps("Test-Path $env:LOCALAPPDATA\\ember"));
+    // Nothing of Ember's, or a variable only printed: asked or run as before.
+    for (const cmd of [
+      "$d = \"$env:LOCALAPPDATA\\proj\"; Remove-Item -Recurse -Force $d", "$d = 'build'; Remove-Item -Recurse $d",
+      "$d = \"$env:LOCALAPPDATA\\ember\"; Write-Output $d",
+      "$d = $env:LOCALAPPDATA; Get-ChildItem \"$d\\$x\"",
+    ]) expect(ps(cmd), cmd).toBeUndefined();
   });
 
   it("keeps the input refusal's words, and lets a read refusal give way to it", () => {
@@ -855,6 +1011,37 @@ describe("loops and ifs (commands-remote-2)", () => {
     expect(cls("ren notes.txt y.py", "cmd").downloads).toEqual([]);
   });
 
+  it("keeps a download a download when robocopy copies or moves it, so running the copy asks (commands-remote-c2-2)", () => {
+    const P = "C:\\Users\\ana\\proj";
+    const cls = (cmd: string, shell: ShellId = "powershell", downloaded = [`${P}\\x.exe`]) => classifyCommand(cmd, shell, contextOf("win32", downloaded)) as ClassificationExtra;
+    for (const shell of ["powershell", "cmd"] as const) {
+      expect(cls("robocopy . tools x.exe", shell).downloads, shell).toContain(`${P}\\tools\\x.exe`);
+      expect(cls("robocopy . tools x.exe /MOV", shell).downloads, shell).toContain(`${P}\\tools\\x.exe`);
+      expect(cls(`robocopy ${P} ${P}\\tools x.exe /NJH`, shell).downloads, shell).toContain(`${P}\\tools\\x.exe`);
+      // A whole folder that holds a download puts it under the same name where it goes, and a downloaded folder leaves
+      // files Ember can't name there: never the destination folder itself (commands-remote-v5-6). One that holds none,
+      // nothing.
+      expect(cls("robocopy dl tools /E", shell, [`${P}\\dl\\sub\\x.exe`]).downloads, shell).toEqual([`${P}\\tools\\sub\\x.exe`]);
+      expect(cls("robocopy dl tools *.exe /S", shell, [`${P}\\dl\\x.exe`]).downloads, shell).toEqual([`${P}\\tools\\x.exe`]);
+      expect(cls("robocopy dl tools /E", shell, [`${P}\\dl`]).downloads, shell).toEqual([`${P}\\tools\\\u0000`]);
+      expect(cls("robocopy . tools notes.txt", shell).downloads, shell).toEqual([]);
+      expect(cls("robocopy src tools /E", shell).downloads, shell).toEqual([]);
+      // Names after an option are what it leaves out, not what it copies.
+      expect(cls("robocopy . tools notes.txt /XF x.exe", shell).downloads, shell).toEqual([]);
+    }
+    // After a folder copy into the project, the project's own tools run, and a file run from the copy asks
+    // (commands-remote-v5-6).
+    const dl = [`${P}\\dl\\data.csv`];
+    const after = [...dl, ...(cls("robocopy dl . /E", "powershell", dl).downloads ?? [])];
+    expect(after).not.toContain(`${P}\\`);
+    expect(after).not.toContain(P);
+    for (const cmd of ["npm test", "dotnet test", "python -m pytest"]) expect(cls(cmd, "powershell", after).findings.map(f => f.rule), cmd).not.toContain("escape.run-downloaded");
+    const exe = [`${P}\\dl\\x.exe`];
+    const tools = [...exe, ...(cls("robocopy dl tools /E", "powershell", exe).downloads ?? [])];
+    expect(cls(".\\tools\\x.exe", "powershell", tools).findings.map(f => f.rule)).toContain("escape.run-downloaded");
+    expect(cls(".\\tools\\build.exe", "powershell", tools).findings.map(f => f.rule)).not.toContain("escape.run-downloaded");
+  });
+
   it("keeps a download a download when a pipeline or xargs copies, moves or renames it (commands-remote-v4-5)", () => {
     const P = "C:\\Users\\ana\\proj";
     const cls = (cmd: string, downloaded = [`${P}\\x.exe`, `${P}\\tools\\x.exe`]) => classifyCommand(cmd, "powershell", contextOf("win32", downloaded)) as ClassificationExtra;
@@ -872,6 +1059,29 @@ describe("loops and ifs (commands-remote-2)", () => {
       expect(posix(cmd, ["/home/ana/proj/x.sh"]).downloads, cmd).toContain("/home/ana/proj/y.sh");
       expect(posix(cmd, []).downloads, cmd).toEqual([]);
     }
+    // dd's copy of a download is the download too (commands-remote-c2-2).
+    expect(posix("dd if=x.sh of=y.sh", ["/home/ana/proj/x.sh"]).downloads).toContain("/home/ana/proj/y.sh");
+    expect(posix("dd if=notes.txt of=y.sh", ["/home/ana/proj/x.sh"]).downloads).toEqual([]);
+  });
+
+  it("marks a file of unknown name in the folder, never the folder, when a copy Ember can't name lands there (commands-remote-r4-3)", () => {
+    const P = "/home/ana/proj";
+    const posix = (cmd: string, downloaded: string[]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)) as ClassificationExtra;
+    for (const cmd of ["cp \"$SRC\" .", "ls *.txt | xargs -I{} cp {} .", "cp \"$SRC\" ./"]) {
+      const d = posix(cmd, [`${P}/data.csv`]).downloads;
+      expect(d, cmd).toContain(`${P}/\u0000`);
+      expect(d, cmd).not.toContain(P);
+    }
+    // A loop's list Ember sees: only a value that can be a download counts.
+    expect(posix("for f in *.txt; do cp \"$f\" backup/; done", [`${P}/data.csv`]).downloads).toEqual([]);
+    expect(posix("for f in *.txt; do cp \"$f\" backup/; done", [`${P}/notes.txt`]).downloads).toContain(`${P}/backup/\u0000`);
+    expect(posix("for f in ~/Downloads/*; do cp \"$f\" tools/; done", ["/home/ana/Downloads/x.sh"]).downloads).toContain(`${P}/tools/\u0000`);
+    // Running a file from there asks; the folder's own tools don't, unless a download may be one of their files.
+    const ran = (cmd: string, downloaded: string[]) => classifyCommand(cmd, "bash", contextOf("linux", downloaded)).findings.map(f => f.rule);
+    expect(ran("bash tools/x.sh", [`${P}/tools/\u0000`])).toContain("escape.run-downloaded");
+    expect(ran("npm test", [`${P}/data.csv`, `${P}/\u0000`])).not.toContain("escape.run-downloaded");
+    expect(ran("make", [`${P}/data.csv`, `${P}/\u0000`])).not.toContain("escape.run-downloaded");
+    expect(ran("make", [`${P}/Makefile.in`, "/tmp/Makefile", `${P}/\u0000`])).toContain("escape.run-downloaded");
   });
 
   it("asks before a tool runs a download it picks up by name: a Makefile, tests, package.json, a module, a preload (commands-remote-c2-2)", () => {
@@ -898,5 +1108,222 @@ describe("loops and ifs (commands-remote-2)", () => {
     for (const risky of ["IFS=/ ls", "IFS=/; ls", "if true; then IFS=/; fi; ls", "IFS= ./read -r l < list.txt", "PATH=/tmp/x read -r l < list.txt"]) {
       expect(rules(risky), risky).toContain("unclear.assignment");
     }
+  });
+});
+
+describe("the option tables: a flag that takes no value never takes the word after it (commands-remote-i5a)", () => {
+  const decided = (cmd: string, context: ContextName = "linux", downloaded: string[] = []) =>
+    runCase({ cmd, verdict: "run", context, downloaded }, { shell: context === "win32" ? "powershell" : "bash", context });
+  /** The flagged command asks or refuses as the plain one does: never runs where it asks, the same refusal, its rules and lines. */
+  const asPlain = (cmd: string, plain: string, context: ContextName = "linux"): string[] => {
+    const a = decided(cmd, context);
+    const b = decided(plain, context);
+    const out: string[] = [];
+    if (b.decision.verdict !== "run" && a.decision.verdict === "run") out.push("runs");
+    if ((a.cls.refuse?.says ?? null) !== (b.cls.refuse?.says ?? null)) out.push(`refusal ${a.cls.refuse?.says ?? "none"}`);
+    for (const r of b.decision.rules) if (!a.decision.rules.includes(r)) out.push(`no ${r}`);
+    for (const s of b.cls.findings.map(f => f.says)) if (!a.cls.findings.some(f => f.says === s)) out.push(`no line "${s}"`);
+    return out;
+  };
+  const each = (cases: readonly (readonly [string, string, ContextName?])[]): void => {
+    for (const [cmd, plain, context] of cases) expect(asPlain(cmd, plain, context), `${cmd} (as ${plain})`).toEqual([]);
+  };
+
+  it("asks before rsync --mkpath replaces a file, and refuses it on Ember's own, here and in WSL (commands-remote-r4-1)", () => {
+    each([
+      ["rsync -a --mkpath notes.txt backup/", "rsync -a notes.txt backup/"],
+      ["rsync -a --mkpath x ~/.config/ember/settings.json", "rsync -a x ~/.config/ember/settings.json"],
+      ["rsync -a --mkpath settings.json /mnt/c/Users/ana/AppData/Local/ember/settings.json", "rsync -a settings.json /mnt/c/Users/ana/AppData/Local/ember/settings.json", "wsl"],
+      ...["--update", "--checksum", "--inplace", "--append", "--partial", "--progress", "--backup", "--sparse", "--fsync", "--compress", "--itemize-changes", "--no-motd", "--prune-empty-dirs", "--delay-updates", "-u", "-c", "-z", "-P", "-h", "-W", "-F"]
+        .map(f => [`rsync -a ${f} notes.txt backup/`, "rsync -a notes.txt backup/"] as const),
+    ]);
+    expect(decided("rsync -a --mkpath notes.txt backup/").decision.says).toContain("Replaces ~/proj/backup/notes.txt if it exists.");
+    expect(decided("rsync -a --mkpath x ~/.config/ember/settings.json").cls.refuse?.rule).toBe("ember.path");
+    expect(decided("rsync -a --mkpath settings.json /mnt/c/Users/ana/AppData/Local/ember/settings.json", "wsl").cls.refuse?.rule).toBe("ember.path");
+  });
+
+  it("names the file shred -u deletes, and refuses it on Ember's own (commands-remote-r4-2)", () => {
+    each([
+      ["shred -u ~/.config/ember/settings.json", "shred ~/.config/ember/settings.json"], ["shred -zu ~/.config/ember/audit.jsonl", "shred ~/.config/ember/audit.jsonl"],
+      ["shred -n 3 -u ~/.config/ember/settings.json", "shred ~/.config/ember/settings.json"], ["shred -u notes.txt", "shred notes.txt"], ["shred -uvz notes.txt", "shred notes.txt"],
+      ["shred -x -f -u notes.txt", "shred notes.txt"], ["shred --remove notes.txt", "shred notes.txt"],
+    ]);
+    expect(decided("shred -u notes.txt").decision.says).toContain("Deletes notes.txt.");
+    expect(decided("shred -u ~/.config/ember/settings.json").cls.refuse?.rule).toBe("ember.path");
+  });
+
+  it("judges the command xargs and parallel run after a bare -l, -i or -e and the flags around it (commands-remote-c4-1)", () => {
+    each([
+      ...["-l", "-0", "-r", "-t", "-p", "-x", "-o", "-e", "--null", "--no-run-if-empty", "--verbose", "--interactive", "--exit", "--open-tty", "--eof", "--max-lines", "-l1", "-n 1", "-L 1", "-P 4", "-s 1000", "-d ,", "--max-args 1"]
+        .map(f => [`cat l | xargs ${f} rm -rf`, "cat l | xargs rm -rf"] as const),
+      ["cat l | xargs -i rm -rf {}", "cat l | xargs -I {} rm -rf {}"], ["cat l | xargs --replace rm -rf {}", "cat l | xargs -I {} rm -rf {}"],
+      ["echo ~/.config/ember | xargs -l rm -rf", "echo ~/.config/ember | xargs rm -rf"], ["seq 3 | xargs -l kill", "seq 3 | xargs kill"],
+      ["find . -name '*.log' | xargs -l rm", "find . -name '*.log' | xargs rm"], ["find . | xargs -l shred -u", "find . | xargs shred -u"],
+      ...["-X", "-k", "-u", "--keep-order", "--wd .", "--timeout 10", "-N 1", "-n 1", "--colsep ,", "--halt now,fail=1", "--retries 2"]
+        .map(f => [`ls | parallel ${f} rm -rf`, "ls | parallel rm -rf"] as const),
+    ]);
+    expect(decided("cat l | xargs -l rm -rf").decision.says).toContain("Deletes (input) and everything in it.");
+  });
+
+  it("judges what a container is given after -P and the run options around it, in docker and podman (commands-remote-c4-2)", () => {
+    const options = [
+      "-P", "--publish-all", "-d", "-i", "-t", "-it", "-q", "--init", "--read-only", "--rm", "--interactive", "--tty", "--no-healthcheck", "--oom-kill-disable",
+      "--cpus 2", "--memory-reservation 1g", "--pids-limit 10", "--stop-timeout 5", "--expose 80", "--ip 10.0.0.2", "--tz UTC", "--umask 022",
+      "--domainname x", "--label-file f", "--oom-score-adj 1", "--cpuset-cpus 0", "--health-interval 1s", "--mac-address x", "--network-alias x",
+      "--dns-search x", "--memory-swap 1g", "--annotation a=b", "--link x", "-e A=1", "--name web", "--network bridge", "-w /x", "-u 1000",
+    ];
+    const podman = ["--pod p", "--secret s", "--arch amd64", "--os linux", "--systemd always", "--timeout 5", "--uidmap 0:1:1", "--requires x", "--rmi", "--replace", "--env-host", "--no-hosts", "--http-proxy=false"];
+    for (const prog of ["docker", "podman"]) {
+      for (const o of [...options, ...(prog === "podman" ? podman : [])]) {
+        each([
+          [`${prog} run ${o} -v /:/host alpine sh`, `${prog} run -v /:/host alpine sh`],
+          [`${prog} run ${o} --privileged nginx`, `${prog} run --privileged nginx`],
+          [`${prog} run ${o} -v ~/.config/ember:/x alpine true`, `${prog} run -v ~/.config/ember:/x alpine true`],
+          [`${prog} create ${o} -v /var/run/docker.sock:/var/run/docker.sock docker:cli`, `${prog} create -v /var/run/docker.sock:/var/run/docker.sock docker:cli`],
+        ]);
+      }
+    }
+    each([["docker exec -d web rm -rf /data", "docker exec web rm -rf /data"], ["docker exec --detach web rm -rf /data", "docker exec web rm -rf /data"], ["docker exec -it web rm -rf /data", "docker exec web rm -rf /data"]]);
+  });
+
+  it("asks before cp, mv, install and ln replace a file after an option whose value only follows =, and for redis-cli -c (commands-remote-c4-3)", () => {
+    each([
+      ...["--update", "--reflink", "--preserve", "--backup", "--context", "-Z", "-b", "-v", "-p", "--debug", "--sparse always", "-S .bak", "--suffix .bak", "--remove-destination", "--attributes-only"]
+        .map(f => [`cp ${f} notes.txt backup/notes.txt`, "cp notes.txt backup/notes.txt"] as const),
+      ...["--update", "--backup", "--context", "-Z", "-b", "-u", "-v", "-S .bak"].map(f => [`mv ${f} notes.txt backup/notes.txt`, "mv notes.txt backup/notes.txt"] as const),
+      ...["-b", "--backup", "--context", "-C", "-D", "-p", "-s", "-v", "-Z", "--compare", "-m 755", "-o root", "-g wheel"].map(f => [`install ${f} x.sh notes.txt`, "install x.sh notes.txt"] as const),
+      ["cp --update x ~/.config/ember/settings.json", "cp x ~/.config/ember/settings.json"], ["mv --backup x ~/.config/ember/settings.json", "mv x ~/.config/ember/settings.json"],
+      ["ln -sf --backup x ~/.config/ember/settings.json", "ln -sf x ~/.config/ember/settings.json"], ["install -b x.sh ~/.config/ember/settings.json", "install x.sh ~/.config/ember/settings.json"],
+      ...["-c", "-e", "-x", "-2", "-3", "--tls", "--raw", "--no-raw", "--csv", "--json", "--quoted-input", "--insecure", "--verbose", "--no-auth-warning", "--askpass", "-h db -p 6380 -n 2", "-D ,"]
+        .map(f => [`redis-cli ${f} FLUSHALL`, "redis-cli FLUSHALL"] as const),
+      ["redis-cli -c FLUSHDB", "redis-cli FLUSHDB"],
+    ]);
+    expect(decided("cp --update notes.txt backup/notes.txt").decision.says).toContain("Replaces backup/notes.txt if it exists.");
+    // An = value is the option's own (`--update=none` never replaces).
+    expect(decided("cp --update=none notes.txt backup/notes.txt").decision.verdict).toBe("run");
+  });
+
+  it("judges the command wrappers, compressors, uniq, patch, tar, git, maven, make, grep, awk, watch and ssh run after a flag (commands-remote-i5a)", () => {
+    each([
+      ...["numactl -H", "numactl -l", "faketime -m '2020-01-01'", "faketime -f '2020-01-01'", "ltrace -L", "ltrace -f", "nsenter -t 1 -m", "nsenter -t 1 -n -u", "nsenter -a -t 1",
+        "env --default-signal", "env --ignore-signal", "env --block-signal", "env -u HOME", "sudo -E", "sudo --preserve-env", "sudo -H", "sudo -n", "sudo -u root", "perf record -a", "perf stat -a",
+        "timeout --preserve-status 5", "nice -n 5", "ionice -c 3", "time -p", "xvfb-run -a", "strace -f"].map(w => [`${w} rm -rf build`, "rm -rf build"] as const),
+      ["gzip --rsyncable notes.txt", "gzip notes.txt"], ["uniq --group in.txt out.txt", "uniq in.txt out.txt"], ["uniq --all-repeated in.txt out.txt", "uniq in.txt out.txt"],
+      ["patch --merge ~/.config/ember/settings.json fix.patch", "patch ~/.config/ember/settings.json fix.patch"],
+      ["tar cjf notes.tar.bz2 src", "tar cf notes.tar.bz2 src"], ["tar -cjf notes.tar.bz2 src", "tar -cf notes.tar.bz2 src"], ["tar -cHf out.tar src", "tar -cf out.tar src", "darwin"],
+      ["git config --fixed-value core.hooksPath ./x", "git config core.hooksPath ./x"], ["git tag --create-reflog -d v1", "git tag -d v1"], ["git tag --color -d v1", "git tag -d v1"],
+      ["git branch -t -D main", "git branch -D main"], ["git branch --color -D main", "git branch -D main"], ["git branch --column -D main", "git branch -D main"],
+      ["git rebase --gpg-sign -x 'rm -rf build' main", "git rebase -x 'rm -rf build' main"], ["git checkout --track -f main", "git checkout -f main"],
+      ["git switch --track --discard-changes main", "git switch --discard-changes main"],
+      ["mvn -X deploy", "mvn deploy"], ["mvn -up deploy", "mvn deploy"], ["mvn -e -X -pl core -am deploy", "mvn deploy"], ["mvn -rf core -gs s.xml deploy", "mvn deploy"],
+      ["make -j install", "make install"], ["make -l install", "make install"], ["make --jobs install", "make install"], ["make --load-average install", "make install"],
+      ["make -j 4 install", "make install"], ["make -j4 install", "make install"], ["make --jobs 4 install", "make install"],
+      ["grep --color secret ~/.ssh/id_rsa", "grep secret ~/.ssh/id_rsa"], ["grep --colour secret ~/.ssh/id_rsa", "grep secret ~/.ssh/id_rsa"],
+      ["ag -D secret ~/.ssh/id_rsa", "ag secret ~/.ssh/id_rsa"], ["ag --color secret ~/.ssh/id_rsa", "ag secret ~/.ssh/id_rsa"], ["ack --color secret ~/.ssh/id_rsa", "ack secret ~/.ssh/id_rsa"],
+      ["watch -d rm -rf build", "watch rm -rf build"], ["watch --differences rm -rf build", "watch rm -rf build"],
+      ["ssh -M host rm -rf ~/", "ssh host rm -rf ~/"], ["stat -f ~/.config/ember/settings.json", "stat ~/.config/ember/settings.json"],
+      ["mkdir --context ~/.config/ember/x", "mkdir ~/.config/ember/x"], ["zip -T out.zip ~/.config/ember/settings.json", "zip out.zip ~/.config/ember/settings.json"],
+    ]);
+    // A commit signed with -S or listing -u's untracked files still has its message.
+    for (const cmd of ["git commit -S -m wip", "git commit -u -m wip", "git commit --gpg-sign -m wip"]) expect(decided(cmd).decision.rules, cmd).not.toContain("unclear.interactive");
+    // gawk -i inplace edits the files it reads.
+    expect(decided("gawk -i inplace '{}' ~/.config/ember/settings.json").cls.refuse?.says).toBe("Ember won't run this: it would change Ember's own safety settings, records or programs.");
+    // node -C's condition isn't the script: the download after it is.
+    expect(decided("node -C dev x.js", "linux", ["/home/ana/proj/x.js"]).decision.rules).toContain("escape.run-downloaded");
+  });
+
+  it("runs make with a job count from a substitution or a variable, while -j install still builds install (commands-remote-v5-4)", () => {
+    for (const cmd of ["make -j $(nproc)", "make -j \"$(nproc)\"", "make -j `nproc`", "make -j \"$JOBS\"", "make -j ${JOBS}", "make --jobs $(nproc)", "make -C build -j $(nproc)", "make -j $(nproc) all", "make -l $(nproc)", "make -j $((2 * 4))"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+    expect(decided("make -j $(sysctl -n hw.ncpu)", "darwin").decision.verdict).toBe("run");
+    each([["make -j install", "make install"], ["make -j $(nproc) install", "make install"], ["make --jobs \"$JOBS\" install", "make install"]]);
+    // A word that is more than a substitution or a variable may be a target.
+    expect(decided("make -j \"$X/install\"").decision.rules).toContain("unclear.target");
+  });
+
+  it("builds the target a job count's variable or substitution holds, as make does, so a deploy there asks (commands-remote-w5-2)", () => {
+    for (const [cmd, plain] of [
+      ["T=deploy; make -j \"$T\"", "make deploy"], ["T=release; gmake -j $T", "gmake release"], ["T=publish; make -j \"$T\"", "make publish"],
+      ["T=deploy; make --jobs \"$T\"", "make deploy"], ["T=deploy; make -l \"${T}\"", "make deploy"], ["T=4; T=deploy; make -j \"$T\"", "make deploy"],
+    ] as const) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+      expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
+    }
+    expect(decided("T=deploy; make -j \"$T\"").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    // Any other substitution may print a target, and a value like an option or a make variable asks.
+    for (const cmd of ["make -j \"$(printf deploy)\"", "make -j `echo deploy`", "T=-f/tmp/x.mk; make -j \"$T\"", "T='SHELL=/tmp/x'; make -j \"$T\""]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    // A number, a value Ember can't see and the processor counts are the job count, as before.
+    for (const cmd of ["make -j $(nproc)", "make -j \"$JOBS\"", "T=4; make -j \"$T\"", "T=$(nproc); make -j \"$T\"", "make -j $(nproc --all)", "make -j $(getconf _NPROCESSORS_ONLN)", "T=build; make -j \"$T\""]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+    expect(decided("make -j $(sysctl -n hw.logicalcpu)", "darwin").decision.verdict).toBe("run");
+  });
+
+  it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {
+    for (const cmd of ["cp notes.txt", "mv notes.txt", "install x.sh", "docker run --rm", "podman run -P"]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    for (const cmd of ["cp --help", "mv --version", "rsync -a src", "rsync src/"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+  });
+
+  it("judges the file zstd's and brotli's -o write: Ember's own refused, a startup, key or system file asked about (commands-remote-v5-1)", () => {
+    for (const f of ["~/.config/ember/settings.json", "~/.bashrc", "~/.ssh/authorized_keys", "/etc/passwd"]) {
+      each([
+        [`zstd -d -f -o ${f} x.zst`, `touch ${f}`], [`zstd -d -o ${f} x.zst`, `touch ${f}`], [`zstd -f -o ${f} notes.txt`, `touch ${f}`],
+        [`unzstd -o ${f} x.zst`, `touch ${f}`], [`brotli -f -o ${f} notes.txt`, `touch ${f}`], [`brotli -d -o ${f} x.br`, `touch ${f}`],
+      ]);
+    }
+    each([["zstd -D ~/.config/ember/settings.json notes.txt", "cat ~/.config/ember/settings.json"], ["zstd -D ~/.ssh/id_rsa notes.txt", "cat ~/.ssh/id_rsa"]]);
+    // With -f it replaces a file that is there; without, zstd won't, and a new file is as before.
+    expect(decided("zstd -d -f -o out.txt x.zst").decision.says).toContain("Overwrites out.txt if it exists.");
+    for (const cmd of ["zstd -d -o out.txt x.zst", "zstd -o out.zst notes.txt", "brotli -o out.br notes.txt"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    // Unpacked from a download, the file it writes is a download too.
+    expect(decided("zstd -d -o run.sh x.zst", "linux", ["/home/ana/proj/x.zst"]).cls.downloads).toContain("/home/ana/proj/run.sh");
+  });
+
+  it("judges the files and folders value options name as the bare path is: node, uv, poetry, conda, pip, file, ltrace, tar, parallel and sudo (commands-remote-v5-3)", () => {
+    for (const f of ["~/.config/ember/settings.json", "~/.bashrc", "~/.ssh/authorized_keys", "/etc/passwd"]) {
+      each([
+        [`node --redirect-warnings ${f} app.js`, `touch ${f}`], [`node --test-reporter-destination ${f} --test`, `touch ${f}`], [`node --localstorage-file ${f} app.js`, `touch ${f}`],
+        [`tar --listed-incremental ${f} -cf x.tar src`, `touch ${f}`], [`tar -g ${f} -cf x.tar src`, `touch ${f}`], [`pip install --log ${f} requests`, `touch ${f}`],
+      ]);
+    }
+    for (const f of ["~/.config/ember/audit.jsonl", "~/.ssh/id_rsa", "~/.netrc"]) {
+      each([
+        [`file -f ${f}`, `cat ${f}`], [`file -m ${f} x`, `cat ${f}`], [`ltrace -F ${f} ls`, `cat ${f}`], [`tar --owner-map ${f} -cf x.tar src`, `cat ${f}`],
+        [`tar --group-map ${f} -cf x.tar src`, `cat ${f}`], [`node --openssl-config ${f} app.js`, `cat ${f}`], [`node --experimental-sea-config ${f}`, `cat ${f}`],
+        [`uv run --with-requirements ${f} pytest`, `cat ${f}`], [`pip install --cert ${f} requests`, `cat ${f}`], [`pip install --client-cert ${f} requests`, `cat ${f}`],
+      ]);
+    }
+    for (const d of ["~/.config/ember", "~/.ssh"]) {
+      each([
+        [`node --report-dir ${d} app.js`, `mkdir -p ${d}`], [`node --diagnostic-dir ${d} app.js`, `mkdir -p ${d}`], [`uv run --cache-dir ${d} pytest`, `mkdir -p ${d}`],
+        [`poetry run --cache-dir ${d} pytest`, `mkdir -p ${d}`], [`pip install --cache-dir ${d} requests`, `mkdir -p ${d}`],
+        [`ls | parallel --wd ${d} rm -rf`, `cd ${d}`], [`ls | parallel --workdir ${d} rm -rf`, `cd ${d}`], [`sudo -R ${d} ls`, `cd ${d}`], [`sudo --chroot ${d} ls`, `cd ${d}`],
+        [`sudo -D ${d} ls`, `cd ${d}`], [`uv run --directory ${d} pytest`, `cd ${d}`], [`poetry run -C ${d} pytest`, `cd ${d}`], [`conda run --cwd ${d} pytest`, `cd ${d}`],
+      ]);
+    }
+    // A Mac's env -P finds the program in another folder, as a PATH assignment does.
+    each([["env -P ~/.config/ember ls", "~/.config/ember/ls"], ["env -P /tmp/x ls", "PATH=/tmp/x ls"]]);
+    // The terminal, the project's own files and folders, and a new working folder are as before.
+    for (const cmd of ["node --test-reporter-destination stdout --test", "node --redirect-warnings warn.log app.js", "node --report-dir reports app.js", "uv run --cache-dir .cache pytest", "file -f list.txt", "file -f -", "ls | parallel --wd ... echo", "tar -g snap.file -czf x.tgz src"]) {
+      expect(decided(cmd).decision.rules, cmd).not.toContain("ember.path");
+      expect(decided(cmd).cls.refuse, cmd).toBeFalsy();
+    }
+    for (const cmd of ["node --test-reporter-destination stdout --test", "node --redirect-warnings warn.log app.js", "uv run --cache-dir .cache pytest", "file -f list.txt"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+  });
+
+  it("keeps GNU grep's --ignore (its --ignore-case), rg's --ignore and lsd's -L and -t switches, so the file after them is judged (commands-remote-v5-5)", () => {
+    each([
+      ["grep -i --ignore pass ~/.netrc", "grep pass ~/.netrc"], ["grep -r --ignore pass ~/.config/ember", "grep -r pass ~/.config/ember"], ["egrep --ignore pass ~/.netrc", "egrep pass ~/.netrc"],
+      ["rg --ignore pass ~/.config/ember", "rg pass ~/.config/ember"], ["rg --ignore pass ~/.netrc", "rg pass ~/.netrc"], ["grep --match pass ~/.netrc", "grep pass ~/.netrc"],
+      ["grep --output pass ~/.netrc", "grep pass ~/.netrc"], ["rg --depth pass ~/.netrc", "rg pass ~/.netrc"], ["rg --files-from pass ~/.netrc", "rg pass ~/.netrc"],
+      ["lsd -t ~/.config/ember", "lsd ~/.config/ember"], ["lsd -L ~/.config/ember", "lsd ~/.config/ember"], ["lsd -tL ~/.netrc", "lsd ~/.netrc"],
+      // ack's --match gives the pattern, so the word after it is a file.
+      ["ack --match pass ~/.netrc", "ack pass ~/.netrc"],
+      // ag's --ignore and ack's --ignore-dir still take their pattern or name.
+      ["ag --ignore '*.log' pass ~/.netrc", "ag pass ~/.netrc"], ["ack --ignore-dir node_modules pass ~/.netrc", "ack pass ~/.netrc"],
+    ]);
   });
 });

@@ -113,7 +113,7 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
 - **Never.**
   - Ember never types into, selects in or sends keys to password, secret or payment fields.
   - It never acts in authentication windows (polkit, keyring, pinentry, sudo). While one is open, it reads, captures and sends nothing.
-  - It never opens, types into or acts in the user's terminals, makes files executable, or presses desktop-level keys or its own shortcuts. Commands run only through `run_command`, in Ember's own command window, after its classifier: dangerous ones (deleting, publishing, secrets, system changes, download-and-run) ask, except that one the user's own words asked for exactly (never secrets, download-and-run or anything unclear) is announced with a 4 s Stop; tampering with Ember's safety is refused (PLAN.md §2 "Commands").
+  - It never opens, types into or acts in the user's terminals, makes files executable, or presses desktop-level keys or its own shortcuts. Commands run only through `run_command`, in Ember's own command window, after its classifier: dangerous ones (deleting, publishing, secrets, system changes, download-and-run) ask, except that one the user's own words asked for exactly, for now (never held back by a condition or a later time, never secrets, download-and-run or anything unclear), is announced with a 4 s Stop; tampering with Ember's safety is refused (PLAN.md §2 "Commands").
   - It never reads or acts in its own windows or in never-look windows.
   - Password text never reaches the model.
 - **Screenshots** go only to workers. They are JPEGs at most 1280 px, with Ember hidden and never-look windows and secret fields blacked out. If masking fails, no image is sent. Prefer AT-SPI text to pixels.

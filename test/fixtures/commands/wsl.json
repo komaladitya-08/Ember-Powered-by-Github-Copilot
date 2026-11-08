@@ -2334,6 +2334,13 @@
   {
    "cmd": "powershell.exe -File x.ps1",
    "verdict": "run"
+  },
+  {
+   "cmd": "rsync -a --mkpath settings.json /mnt/c/Users/ana/AppData/Local/ember/settings.json",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }

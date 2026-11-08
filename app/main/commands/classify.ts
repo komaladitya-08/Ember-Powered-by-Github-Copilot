@@ -20,8 +20,8 @@ import {
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
-  holdsSecret, inWorkTree, isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, physicalForm,
-  resolveTargetPath, secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, windowsContextOf, writeKind, wslUncPath,
+  holdsSecret, inDownload, inWorkTree, isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, physicalForm,
+  resolveTargetPath, secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, UNNAMED_COPY, windowsContextOf, writeKind, wslUncPath,
 } from "./paths";
 import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, CLOUD_READ_PHRASES, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
@@ -57,6 +57,25 @@ export const MAX_SCRIPTS = 16;
 const UNSEEN = "\u0000";
 const PATTERN = "\u0001";
 const MAX_FORMS = 32;
+/** One piece of a POSIX word Ember couldn't resolve (Arg.parts). */
+type Part = NonNullable<Arg["parts"]>[number];
+/**
+ * Programs that only test, print or name a variable's value, reading no file it names (commands-remote-r4-5): a word
+ * that uses a variable there leaves the variable's value unjudged.
+ */
+const VAR_SHOWN_ONLY: ReadonlySet<string> = new Set(["echo", "printf", "test", "[", "[[", ":", "true", "false", "basename", "dirname", "export", "declare", "typeset", "local", "readonly", "unset", "set", "shift", "return", "exit", "read"]);
+/**
+ * Programs that only read their input as text (`grep -q x <<< "$d"`, `wc -c <<< "$d"`): a variable in it is no use of
+ * its value as a path while nothing takes what they print (commands-remote-w5-4). An allow-list, so any other program
+ * counts; sed and awk only without a program file or arguments Ember can't see, which may run what they read.
+ */
+const TEXT_READERS: ReadonlySet<string> = new Set([
+  "grep", "egrep", "fgrep", "wc", "tr", "sed", "awk", "gawk", "mawk", "nawk", "cat", "tac", "sort", "uniq", "head", "tail", "cut", "nl", "rev", "fold",
+  "paste", "column", "od", "xxd", "hexdump", "base64", "md5sum", "sha1sum", "sha256sum", "sha512sum", "cksum", "jq",
+]);
+const readsText = (key: string, args: readonly Arg[]): boolean => TEXT_READERS.has(key)
+  && !(key === "sed" && args.some(a => a.v === null || /^(-[A-Za-z]*f|--file)/.test(a.v)))
+  && !(/awk$/.test(key) && args.some(a => a.v === null || /^(-[A-Za-z]*[fEil]|--(file|exec|include|load))/.test(a.v)));
 /** The shell's positional parameters (`$1`…`$9`, `$@`, `$*`), as `set --` gives them values. */
 const POSITIONAL: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "@", "*"];
 /** What `read` may set from a text: each of its lines, and each word of each line. */
@@ -209,13 +228,23 @@ interface Simple {
    * expansions); null when it can't. A program that reads its own program text from stdin is judged by it (review #166).
    */
   stdinText?: string | null;
+  /**
+   * A here-string or unquoted here-document on stdin whose text uses variables (`<<< "$d"`): their names, and a
+   * here-string's word, so Ember's own refusal follows a variable into the program's input (commands-remote-v5-2).
+   */
+  stdinVars?: HereVars;
   /** An earlier command in its pipeline fetches from the network or decodes hidden text. */
   fetchBefore: boolean;
   background: boolean;
   pipedFrom?: number;
+  /** What it prints goes on to a later command of its pipeline or into a substitution (commands-remote-w5-4). */
+  pipedOn?: boolean;
   /** PowerShell: the parsed command (for cmdlet parameters). */
   ps?: PsCommand;
 }
+
+/** The variables a here-string or here-document's text uses, and a here-string's word (null for a here-document). */
+interface HereVars { names: string[]; word: Arg | null }
 
 /** An object as the classifier tracks it. */
 interface Obj extends CommandObject {
@@ -287,8 +316,27 @@ class Classifier {
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
    */
   private varValues = new Map<string, string[]>();
+  /**
+   * A plain variable's values, judged at the end only if a command used the variable in a word Ember didn't judge as a
+   * path (`python3 -c "…$d…"`): testing or printing it isn't such a use (commands-remote-r4-5).
+   */
+  private pendingSets: { name: string; forms: string[]; sc: Scope }[] = [];
+  /** Words of a variable judged as a path where they were used (judgeUnseen). */
+  private judgedWords = new WeakSet<Arg>();
+  /** Variables a command used in a word Ember didn't judge as a path, apart from testing or printing it. */
+  private usedUnjudged = new Set<string>();
+  /** Those handed to a program that may change what they name: on its input or in its environment (commands-remote-w5-5). */
+  private changedUnjudged = new Set<string>();
+  /** Words a wrapper hands to the command it runs (payload, unwrap): the rest of its words are its own. */
+  protected payloadWords = new WeakSet<Arg>();
+  /** A loop's or `if`'s closer given text that uses variables (`done <<< "$d"`), for the reads in it (feedReads). */
+  protected hereVarsAt = new Map<number, HereVars>();
+  /** `set -a`: every variable set after it is exported to the programs that run (commands-remote-v5-2). */
+  allExport = false;
+  /** The same for a PowerShell variable (lower case, `env:` kept): only for Ember's own refusal (commands-remote-c3-2). */
+  private psVarValues = new Map<string, string[]>();
   /** Words of a variable Ember couldn't resolve, with how they were used: judged again once a loop's input gives it a value. */
-  private unseenUses: { parts: readonly (string | { name: string | null })[]; use: PathUse; sc: Scope }[] = [];
+  private unseenUses: { parts: readonly Part[]; use: PathUse; sc: Scope }[] = [];
   /** The text a command was given on stdin by a here-document or here-string (null: Ember can't see all of it), by index. */
   protected hereAt = new Map<number, string | null>();
   /** The names each `read` sets, by command index, with its scope: a loop's here-string gives them values (result). */
@@ -473,17 +521,20 @@ class Classifier {
 
   /**
    * A POSIX variable's value the text sets (`d=…`, `export d=…`, a loop's list, `set --`'s `$1`…, `printf -v d`, `read
-   * d` from a here-string: its lines and words, else unseen), judged at once for
-   * any use (one of Ember's paths, or a pattern that can match one, is refused as fallbackScan refuses it) and kept for
-   * the words that use the variable later (commands-remote-c3-2). Every value is kept, earlier ones too, so a value
-   * set again inside a loop still counts. A name set again no longer says the loop's files on the card.
+   * d` from a here-string: its lines and words, else unseen), kept for the words that use the variable later, where it
+   * is judged as the path it names (commands-remote-c3-2). Only a value that may reach a program's environment (`export`,
+   * `declare -x`, an assignment before a command, or an environment variable's name such as XDG_CONFIG_HOME) is judged
+   * when it is set, for any use: testing or printing a plain variable reads nothing (commands-remote-r4-5). Every value
+   * is kept, earlier ones too, so a value set again inside a loop still counts. A name set again no longer says the
+   * loop's files on the card.
    */
-  setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false): void {
+  setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false, exported = false): void {
     if (!/^([A-Za-z_]\w*|[1-9@*])$/.test(name)) return;
     if (!loop) this.loopVars.delete(name);
     if (sc.family !== "posix") return;
     const forms = values === null ? [UNSEEN] : values.flatMap(a => (a.v !== null ? [a.glob ? PATTERN + (a.pattern ?? a.v) : a.v] : a.parts ? this.formsOf(a.parts) : [UNSEEN]));
-    for (const f of forms) this.judgeForm(f, null, sc);
+    if (exported || this.allExport || /^[A-Z][A-Z0-9_]*$/.test(name)) for (const f of forms) this.judgeForm(f, null, sc, exported || this.allExport);
+    else this.pendingSets.push({ name, forms, sc });
     const all = [...new Set([...(this.varValues.get(name) ?? []), ...forms])];
     this.varValues.set(name, all.length > MAX_FORMS ? [UNSEEN] : all);
   }
@@ -492,11 +543,90 @@ class Classifier {
    * Ember's own refusal for a word Ember couldn't resolve, by the values the text gave the variables in it (`rm -rf
    * "$d"` after `d=~/.config/ember`, `for f in ~; do rm -rf "$f"; done`): refused as the path itself would be.
    */
-  judgeUnseen(a: Arg, use: PathUse, sc: Scope): void {
+  judgeUnseen(a: Arg, use: PathUse, sc: Scope, asPath = true): void {
+    // An option with its value attached (`--dir="$d"`) isn't a path, whatever was asked of it; nor is a program word
+    // (`env X="$d" make`'s first word may be an assignment), which stays a use Ember didn't judge (noteVarUses).
+    if (asPath && (typeof a.parts?.[0] !== "string" || !a.parts[0].startsWith("-"))) this.judgedWords.add(a);
     if (a.v === null && a.parts && sc.path.flavour === "posix") {
       for (const form of this.formsOf(a.parts)) this.judgeForm(form, use, sc);
       this.unseenUses.push({ parts: a.parts, use, sc });
+    } else if (a.v === null && a.parts && sc.path.flavour === "win32") {
+      for (const form of this.formsOf(a.parts, this.psVarValues)) this.judgeWinForm(form, use, sc);
     }
+  }
+
+  /**
+   * A PowerShell variable's value the text sets (`$d = "$env:LOCALAPPDATA\ember"`, `$d = Join-Path …`; null: one Ember
+   * can't see), kept for the words that use it later, for Ember's own refusal only (commands-remote-c3-2).
+   */
+  setPsVar(name: string, value: Arg | null): void {
+    const key = name.toLowerCase().replace(/^(script|global|local|private|using):/, "");
+    const forms = value === null ? [UNSEEN] : value.v !== null ? [value.v] : value.parts ? this.formsOf(value.parts, this.psVarValues) : [UNSEEN];
+    const all = [...new Set([...(this.psVarValues.get(key) ?? []), ...forms])];
+    this.psVarValues.set(key, all.length > MAX_FORMS ? [UNSEEN] : all);
+  }
+
+  /**
+   * Ember's own refusal for one form of a Windows word (judgeForm's rules in Windows paths): the path it names, a
+   * pattern (PowerShell's -Path takes wildcards even when quoted), or, with a part Ember can't see, anything in one of
+   * Ember's folders or (to change or read) a name that could be one in the folder that holds it.
+   */
+  private judgeWinForm(value: string, use: PathUse, sc: Scope): void {
+    const form = value.startsWith(PATTERN) ? value.slice(1) : value;
+    const cut = form.indexOf(UNSEEN);
+    const known = cut < 0 ? form : form.slice(0, cut);
+    if (known === "" || (!/^[A-Za-z]:[\\/]|^[\\/]{2}/.test(known) && !sc.cwd)) return;
+    const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" };
+    const kind = accessOf(use);
+    if (cut < 0) {
+      const abs = resolveTargetPath(form, at);
+      if (/[*?[]/.test(form)) {
+        let reaches: boolean;
+        try { reaches = globReaches(abs, use, sc.path, false).ember || isEmberPath(globPrefix(abs, sc.path), sc.path); } catch { reaches = isEmberPath(abs.replace(/[*?[].*$/, ""), sc.path); /* a pattern the matcher can't read: its fixed part decides */ }
+        if (reaches) this.refuseWith("ember.path", kind);
+      } else if (isEmberPath(abs, sc.path)) this.refuseWith("ember.path", kind);
+      else if ((use === "deleteTree" || use === "move" || use === "permTree") && holdsEmberPath(abs, sc.path)) this.refuseWith("ember.path", "safety");
+      return;
+    }
+    const slash = Math.max(known.lastIndexOf("\\"), known.lastIndexOf("/"));
+    const dir = resolveTargetPath(slash < 0 ? "." : known.slice(0, slash) || "\\", at);
+    const stem = known.slice(slash + 1).toLowerCase();
+    if (isEmberPath(dir, sc.path) || isEmberPath(resolveTargetPath(known, at), sc.path)) { this.refuseWith("ember.path", kind); return; }
+    if (use === "list" || use === "cd") return;
+    if (sc.path.ember.some(e => win32.dirname(e).toLowerCase() === dir.toLowerCase() && win32.basename(e).toLowerCase().startsWith(stem))) this.refuseWith("ember.path", kind);
+  }
+
+  /**
+   * A command's words that use a variable and that its row didn't judge as paths (commands-remote-r4-5): the variable's
+   * values are judged at the end (judgePendingSets), unless the command only tests or prints it.
+   */
+  noteVarUses(key: string, args: readonly Arg[]): void {
+    // A flow word's command is the one after it (`do echo "$f"`, `then time printf …`).
+    let k = key;
+    let rest = args;
+    while (ASSIGNS_AFTER.has(k) && rest.length > 0 && rest[0].v !== null) { k = rest[0].v.split("/").pop() ?? ""; rest = rest.slice(1); }
+    if (VAR_SHOWN_ONLY.has(k)) return;
+    for (const a of rest) {
+      if (a.v !== null || !a.parts || this.judgedWords.has(a)) continue;
+      for (const p of a.parts) if (typeof p !== "string" && p.name !== null) this.usedUnjudged.add(p.name);
+    }
+  }
+
+  /**
+   * Variables a command uses where Ember judges no path: its stdin's text (`xargs rm -rf <<< "$d"`) or an export to
+   * the programs it runs (`export d`): their values are judged at the end (commands-remote-v5-2), as changed when the
+   * program may change what they name (`change`: commands-remote-w5-5).
+   */
+  useUnjudged(names: readonly string[], change = false): void {
+    for (const n of names) {
+      this.usedUnjudged.add(n);
+      if (change) this.changedUnjudged.add(n);
+    }
+  }
+
+  /** The values of variables used in a word Ember didn't judge (noteVarUses), judged as round four judged every value. */
+  protected judgePendingSets(): void {
+    for (const p of this.pendingSets) if (this.usedUnjudged.has(p.name)) for (const f of p.forms) this.judgeForm(f, null, p.sc, this.changedUnjudged.has(p.name));
   }
 
   /** The names a `read` sets, for a loop's here-string to give them values (result). */
@@ -510,25 +640,44 @@ class Classifier {
    * again with them, for Ember's own refusal (commands-remote-v4-4).
    */
   protected feedReads(): void {
+    const fedClosers = new Set<number>();
     for (const [r, closer] of fedReadsByCloser(this.commands, i => this.stdinGiven.has(i))) {
       const text = this.hereAt.get(closer);
       const set = this.readSets.get(r);
-      if (typeof text !== "string" || !set) continue;
+      // Text Ember can't see that uses a variable (`done <<< "$d"`): the here-string's word is what the read gets.
+      const word = this.hereVarsAt.get(closer)?.word;
+      if ((typeof text !== "string" && !word) || !set) continue;
+      fedClosers.add(closer);
       for (const name of set.names) {
-        this.setVar(name, textValues(text), set.sc, true);
+        this.setVar(name, typeof text === "string" ? textValues(text) : [word as Arg], set.sc, true);
         for (const u of this.unseenUses) {
           if (!u.parts.some(p => typeof p !== "string" && p.name === name)) continue;
           for (const form of this.formsOf(u.parts)) this.judgeForm(form, u.use, u.sc);
         }
       }
     }
+    // A closer's text that no read takes, or a here-document's: a use Ember didn't judge (commands-remote-v5-2), by
+    // commands it can't follow (commands-remote-w5-5).
+    for (const [closer, hv] of this.hereVarsAt) if (!fedClosers.has(closer)) this.useUnjudged(hv.names, true);
+  }
+
+  /**
+   * The values the text gives a word (formsOf): null for one with a part Ember can't see, a resolved word its own value
+   * (`T=deploy; make -j "$T"`: commands-remote-w5-2).
+   */
+  knownForms(a: Arg): (string | null)[] {
+    if (a.v !== null) return [a.v];
+    if (!a.parts) return [null];
+    return this.formsOf(a.parts).map(f => (f.includes(UNSEEN) ? null : f.replace(PATTERN, "")));
   }
 
   /** The forms a word may take with the values the text gave its variables (UNSEEN for any other part). */
-  private formsOf(parts: readonly (string | { name: string | null })[]): string[] {
+  private formsOf(parts: readonly Part[], vars: ReadonlyMap<string, string[]> = this.varValues): string[] {
     let out = [""];
     for (const p of parts) {
-      const vals = typeof p === "string" ? [p] : (p.name !== null && this.varValues.get(p.name)) || [UNSEEN];
+      const known = typeof p === "string" ? [p] : p.value !== undefined ? [p.value] : (p.name !== null && vars.get(p.name)) || [UNSEEN];
+      // A cut or a default: its values, and text Ember can't see (commands-remote-w5-1).
+      const vals = typeof p !== "string" && p.cut && !known.includes(UNSEEN) ? [...known, UNSEEN] : known;
       const next = out.flatMap(a => vals.map(b => a + b));
       // Too many to judge one by one: what stands there is unseen (judgeForm's rule for an unseen part).
       out = next.length > MAX_FORMS ? out.map(a => a + UNSEEN) : next;
@@ -543,7 +692,7 @@ class Classifier {
    * one of Ember's folders, or (to change or read, not to list or enter) a name that could be one of them in the folder
    * that holds it (`rm -rf ~/.config/$x`).
    */
-  private judgeForm(value: string, use: PathUse | null, sc: Scope): void {
+  private judgeForm(value: string, use: PathUse | null, sc: Scope, change = false): void {
     if (sc.path.flavour !== "posix") return;
     const pattern = value.startsWith(PATTERN);
     const form = pattern ? value.slice(1) : value;
@@ -551,8 +700,9 @@ class Classifier {
     const known = cut < 0 ? form : form.slice(0, cut);
     if (known === "" || (known.startsWith("~") && !sc.home) || (!known.startsWith("/") && !known.startsWith("~") && !sc.cwd)) return;
     const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" };
-    // Set, not yet used: "would read", which gives way to "would change" when a later command writes with it.
-    const kind = use === null ? "read" : accessOf(use);
+    // Set, not yet used: "would read", which gives way to "would change" when a later command writes with it; handed to
+    // a program that may change it (`change`, an export): "would change" (commands-remote-w5-5).
+    const kind = use === null ? (change ? "safety" : "read") : accessOf(use);
     const tree = use === "deleteTree" || use === "move" || use === "permTree";
     if (cut < 0) {
       const abs = resolveTargetPath(form, at);
@@ -808,12 +958,23 @@ class Classifier {
     const mod = sc.path.flavour === "win32" ? win32 : posix;
     const intoFolder = /[\\/]$/.test(dest.text) || /^\.\.?$/.test(dest.text);
     for (const s of sources) {
-      if (!this.isDownloaded(s, sc) && !this.mayBeDownload(s)) continue;
+      if (!this.isDownloaded(s, sc) && !this.mayBeDownload(s, sc)) continue;
       const name = asIs || s.v === null || s.glob ? null : baseName(s.v.replace(/[\\/]+$/, ""), sc.path.flavour);
       const named = name !== null && name !== "." && name !== "..";
       if (named) this.carryDownload(mod.join(dest.abs, name), sc);
-      if (!named || !intoFolder) this.carryDownload(dest.abs, sc, named);
+      if (asIs) this.carryDownload(dest.abs, sc);
+      else if (!named) this.carryUnnamed(dest.abs, intoFolder, sc);
+      else if (!intoFolder) this.carryDownload(dest.abs, sc, true);
     }
+  }
+
+  /**
+   * A copy of a download whose name Ember can't tell, into `dest`: a file of unknown name in that folder, never the
+   * folder itself (commands-remote-r4-3); `dest` itself too while the target doesn't say it is a folder.
+   */
+  carryUnnamed(dest: string, intoFolder: boolean, sc: Scope): void {
+    if (!intoFolder) this.carryDownload(dest, sc, true);
+    this.carryDownload((sc.path.flavour === "win32" ? win32 : posix).join(dest, UNNAMED_COPY), sc);
   }
 
   /**
@@ -823,15 +984,32 @@ class Classifier {
    */
   downloadedProjectFile(folder: string, sc: Scope): boolean {
     const all = [...this.ctx.downloaded, ...this.downloads];
-    return all.some(d => d !== folder && isUnder(d, folder, sc.path) && PROJECT_FILE.test(baseName(d, sc.path.flavour)));
+    const unnamed = (d: string): boolean => baseName(d, sc.path.flavour) === UNNAMED_COPY;
+    // A copy Ember can't name may be one, when a download of this task is one or may be a folder (no extension).
+    const mayBe = all.some(d => !unnamed(d) && (PROJECT_FILE.test(baseName(d, sc.path.flavour)) || !/\.[^.\\/]+$/.test(baseName(d, sc.path.flavour))));
+    return all.some(d => d !== folder && isUnder(d, folder, sc.path) && (unnamed(d) ? mayBe : PROJECT_FILE.test(baseName(d, sc.path.flavour))));
   }
 
   /**
    * Whether a word Ember can't name (`xargs cp {} y.sh`'s input, `cp "$f" y.sh`) may be a download: when this task
    * downloaded anything, it may be (commands-remote-v4-5).
    */
-  mayBeDownload(a: Arg): boolean {
-    return a.v === null && (this.ctx.downloaded.size > 0 || this.downloads.length > 0);
+  mayBeDownload(a: Arg, sc?: Scope): boolean {
+    if (a.v !== null || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
+    // The values the text gives it, when Ember sees them all (`for f in *.txt`): only one that can be a download, or
+    // a folder that holds one, counts (commands-remote-r4-3).
+    if (!sc || !a.parts || sc.path.flavour !== "posix" || !sc.cwd) return true;
+    const forms = this.formsOf(a.parts);
+    if (forms.some(f => f.includes(UNSEEN))) return true;
+    const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd };
+    const all = [...this.ctx.downloaded, ...this.downloads].filter(d => baseName(d, sc.path.flavour) !== UNNAMED_COPY);
+    return forms.some(f => {
+      if (!f.startsWith(PATTERN)) return this.isDownloaded(lit(f), sc) || this.holdsDownload(lit(f), sc);
+      let re: RegExp;
+      try { re = globRegExp(resolveTargetPath(f.slice(1), at), sc.path, true); } catch { return true; /* a pattern the matcher can't read may match anything */ }
+      // The download, or a folder above it that the pattern names (its copy holds the download).
+      return all.some(d => { for (let p = d; p !== posix.dirname(p); p = posix.dirname(p)) if (re.test(p)) return true; return false; });
+    });
   }
 
   /** Whether a folder holds a file this task downloaded (by the name written: what `rsync -R` or --files-from copies). */
@@ -841,22 +1019,25 @@ class Classifier {
     return [...this.ctx.downloaded, ...this.downloads].some(d => d !== abs && isUnder(d, abs, sc.path));
   }
 
-  /** Whether a path is a file this task downloaded, or inside a downloaded folder. */
-  isDownloaded(a: Arg, sc: Scope): boolean {
+  /**
+   * Whether a path is a file this task downloaded, or inside a downloaded folder. `unnamed`: a copy Ember couldn't name
+   * counts for every file in its folder (a project tool's words aren't files it runs: commands-remote-r4-3).
+   */
+  isDownloaded(a: Arg, sc: Scope, unnamed = true): boolean {
     if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
-    const all = [...this.ctx.downloaded, ...this.downloads];
+    const all = [...this.ctx.downloaded, ...this.downloads].filter(d => unnamed || baseName(d, sc.path.flavour) !== UNNAMED_COPY);
     // Its real path too (§3.6): a link to a download, or `..` walked through a link (`sh sub/../x`), is the download.
     const phys = this.physical(a.v, "exec", sc);
     const names = [abs, this.ctx.real?.get(abs), phys === null ? undefined : this.ctx.real?.get(phys)].filter((n): n is string => typeof n === "string");
     // Downloaded by an earlier command of this task, or earlier in this same command (`curl -o x … && sh x`).
-    if (all.some(d => names.some(n => isUnder(n, d, sc.path)))) return true;
+    if (all.some(d => names.some(n => inDownload(n, d, sc.path)))) return true;
     // A Windows path in cmd or PowerShell reached from a distro: the distro recorded it under the drive mount.
     if (sc.fromWsl && /^[A-Za-z]:[\\/]/.test(abs) && this.ctx.wsl) {
       const mount = this.ctx.wsl.mountRoot;
       const env = pathEnv({ flavour: "posix", os: "linux", home: null, cwd: null, mountRoot: mount });
       const m = toMount(abs, mount);
-      return all.some(d => isUnder(m, d, env));
+      return all.some(d => inDownload(m, d, env));
     }
     return false;
   }
@@ -1273,8 +1454,11 @@ export function unseenName(key: string, args: readonly Arg[]): boolean {
 /** Words that name the null device or the terminal (redirecting to them writes no file). */
 const NULL_SINKS = new Set(["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "nul", "$null", "con", "nul:"]);
 
-/** Extra scope fields (kept off Scope so copies stay cheap). */
-interface ScopeMore { pipedIn: { fetch: boolean } | null }
+/**
+ * Extra scope fields (kept off Scope so copies stay cheap). `captured`: what the scope's last command prints is taken by
+ * a substitution or a later command of a pipeline (commands-remote-w5-4).
+ */
+interface ScopeMore { pipedIn: { fetch: boolean } | null; captured?: true }
 const MORE = new WeakMap<Scope, ScopeMore>();
 const more = (sc: Scope): ScopeMore => MORE.get(sc) ?? { pipedIn: null };
 
@@ -1310,6 +1494,7 @@ class Engine extends Classifier {
       this.unclear("unclear.script-written", "It runs a script that this command writes first, so Ember can't read it beforehand.");
     }
     this.feedReads();
+    this.judgePendingSets();
     // A `read` that its loop or `if` gives a file or text to (`while read -r l; …; done < list.txt`) waits for no typing.
     const fed = readsFedByCompound(this.commands, i => this.stdinGiven.has(i));
     if (fed.size) this.findings = this.findings.filter(f => !(f.rule === "unclear.interactive" && f.program === "read" && fed.has(f.at)));
@@ -1453,14 +1638,14 @@ class Engine extends Classifier {
       const stdinPipe = !first || (first && more(sc).pipedIn !== null);
       if (c.kind === "simple") {
         this.cdTarget = undefined;
-        this.posixSimple(c, sc, { stdinPipe, background, pipedFrom: first ? undefined : prev });
+        this.posixSimple(c, sc, { stdinPipe, background, pipedFrom: first ? undefined : prev, pipedOn: k < pipe.cmds.length - 1 });
         if (pipe.cmds.length === 1 && !background && this.cdTarget !== undefined) cd = this.cdTarget;
         prev = this.at;
         return;
       }
       // A subshell or group: a subshell's (or a backgrounded or piped group's) cd doesn't leak.
       const isolated = c.kind === "subshell" || pipe.cmds.length > 1 || background;
-      const inner = isolated ? child(sc, { depth: sc.depth + 1 }, { pipedIn: stdinPipe ? { fetch: this.pipe.fetch } : null }) : sc;
+      const inner = isolated ? child(sc, { depth: sc.depth + 1 }, { pipedIn: stdinPipe ? { fetch: this.pipe.fetch } : null, ...(k < pipe.cmds.length - 1 ? { captured: true as const } : {}) }) : sc;
       const redirs = c.redirs.map(r => this.posixRedir(r, sc));
       if (redirs.some(r => r.kind !== "none") || background) {
         this.newCommand(c.kind === "subshell" ? "( … )" : "{ … }", [], sc, redirs, background, first ? undefined : prev);
@@ -1482,7 +1667,7 @@ class Engine extends Classifier {
     const savedProg = this.program;
     const savedCd = this.cdTarget;
     const before = this.commands.length;
-    this.posixList(list, child(sc, { depth: sc.depth + 1 }));
+    this.posixList(list, child(sc, { depth: sc.depth + 1 }, { pipedIn: null, captured: true }));
     const fetch = this.commands.slice(before).some(c => FETCHERS.has(c.program.toLowerCase()));
     this.pipe = savedPipe;
     this.at = savedAt;
@@ -1491,7 +1676,7 @@ class Engine extends Classifier {
     return fetch;
   }
 
-  private posixSimple(c: PSimple, sc: Scope, o: { stdinPipe: boolean; background: boolean; pipedFrom?: number }): void {
+  private posixSimple(c: PSimple, sc: Scope, o: { stdinPipe: boolean; background: boolean; pipedFrom?: number; pipedOn?: boolean }): void {
     // Substitutions run first; their commands are classified as commands of their own.
     const fetchOf = new Map<PWord, boolean>();
     const allWords: PWord[] = [...c.words, ...c.assigns.map(a => a.value), ...c.redirs.flatMap(r => (r.target ? [r.target] : []))];
@@ -1502,14 +1687,15 @@ class Engine extends Classifier {
     const stdin: Simple["stdin"] = c.redirs.some(r => r.op === "<<" || r.op === "<<-" || r.op === "<<<") ? "heredoc"
       : c.redirs.some(r => r.op === "<") ? "file" : o.stdinPipe ? "pipe" : null;
     const stdinText = stdin === "heredoc" ? this.hereText(c.redirs, sc) : undefined;
+    const stdinVars = stdinText === null ? this.hereVars(c.redirs, sc) : undefined;
     if (c.words.length === 0) {
       this.newCommand("", [], sc, redirs, o.background, o.pipedFrom);
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc);
       this.redirects(redirs, sc);
       return;
     }
-    this.simple({ words, redirs, stdin, stdinText, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom }, sc, () => {
-      this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v);
+    this.simple({ words, redirs, stdin, stdinText, stdinVars, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true }, sc, () => {
+      this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
   }
 
@@ -1528,6 +1714,23 @@ class Engine extends Classifier {
     return last.heredoc.quoted || !/[$`\\]/.test(last.heredoc.body) ? last.heredoc.body : null;
   }
 
+  /**
+   * The variables the last here-string or unquoted here-document on stdin uses, when Ember can't see its text
+   * (hereText null), with a here-string's word (commands-remote-v5-2).
+   */
+  private hereVars(redirs: PRedir[], sc: Scope): HereVars | undefined {
+    const last = redirs.filter(r => (r.fd === null || r.fd === 0) && r.dup === undefined && ["<", "<<", "<<-", "<<<"].includes(r.op)).pop();
+    if (!last) return undefined;
+    if (last.op === "<<<" && last.target) {
+      const word = this.posixWord(last.target, sc, false);
+      const names = (word.parts ?? []).flatMap(p => (typeof p !== "string" && p.name !== null ? [p.name] : []));
+      return names.length ? { names, word } : undefined;
+    }
+    if (!last.heredoc || last.heredoc.quoted) return undefined;
+    const names = [...last.heredoc.body.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map(m => m[1]);
+    return names.length ? { names, word: null } : undefined;
+  }
+
   /** A POSIX word's value with the scope's home and folder (`~`, `$HOME`, `$PWD`, `$(pwd)`); anything else unresolved. */
   posixWord(w: PWord, sc: Scope, fetch: boolean): Arg {
     let v = "";
@@ -1537,7 +1740,7 @@ class Engine extends Classifier {
     // A word whose only substitution is a plain `$(pwd)` or `` `pwd` `` gives the folder, as `$PWD` does (review #170).
     const cwdSub = w.subs.length === 1 && w.segs.filter(seg => seg.t === "unres" && seg.why === "command substitution").length === 1 && lonePwd(w.subs[0]);
     // The word as pieces, for Ember's own refusal through variables the text sets (commands-remote-c3-2).
-    const parts: (string | { name: string | null })[] = [];
+    const parts: Part[] = [];
     // Which parts are unquoted text, where `*`, `?` and `[` match names (commands-remote-v4-4).
     const open: boolean[] = [];
     for (const seg of w.segs) {
@@ -1564,6 +1767,16 @@ class Engine extends Classifier {
         // `$1`, `"$@"`: the values `set --` gives them (commands-remote-v4-4).
         unresolved = true;
         parts.push({ name: seg.why.slice(1) });
+      } else if (seg.t === "unres" && seg.of !== undefined) {
+        // `${d:?}`: the variable's values, for Ember's own refusal (commands-remote-v5-2). A cut or a default (`${d%x}`,
+        // `${url##*/}`, `${d:-x}`) may be other text too, so a part Ember can't see stays as well: the near rule and a
+        // copied download still see it (commands-remote-w5-1). HOME and PWD are the scope's, as `$HOME` is (w5-3).
+        const val = seg.of === "HOME" ? sc.home : seg.of === "PWD" ? sc.cwd : null;
+        if (val !== null && seg.exact) { v += val; parts.push(val); pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
+        else {
+          unresolved = true;
+          parts.push({ name: seg.of, ...(seg.exact ? {} : { cut: true as const }), ...(val !== null ? { value: val } : {}) });
+        }
       } else { unresolved = true; parts.push({ name: null }); }
     }
     const globs = /[*?]/.test(unquoted) || /\[[^\]]*\]/.test(unquoted);
@@ -1606,7 +1819,7 @@ class Engine extends Classifier {
    * before `read`, `mapfile` or `readarray` (`IFS= read -r l`) lasts only while that built-in splits what it reads, in
    * bash, zsh and sh alike, so it changes how nothing else runs (commands-remote-2).
    */
-  private assignments(list: { name: string; value: Arg }[], sc: Scope, program: string | null = null): void {
+  private assignments(list: { name: string; value: Arg }[], sc: Scope, program: string | null = null, beforeCommand = program !== null): void {
     if (list.length) this.envChanged = true;
     const splitOnly = sc.family === "posix" && program !== null && READS_LINES.has(program);
     for (const a of list) {
@@ -1615,7 +1828,7 @@ class Engine extends Classifier {
         this.unclear("unclear.assignment", "It changes how commands are found or run.");
       }
       if (a.value.v !== null && commandLineSecret(`${a.name}=${a.value.v}`)) this.add("secret", "secret.token-arg", SAYS.tokenArg);
-      this.setVar(a.name, [a.value], sc);
+      this.setVar(a.name, [a.value], sc, false, beforeCommand);
     }
   }
 
@@ -1626,6 +1839,7 @@ class Engine extends Classifier {
     sts.forEach((st, si) => {
       if (st.assign) {
         this.envChanged = true;
+        this.setPsVar(st.assign, this.psAssigned(st, sc));
         const env = /^env:(.+)$/i.exec(st.assign);
         if (env && (RISKY_ASSIGNMENTS.has(env[1].toUpperCase()) || RISKY_ASSIGNMENTS.has(env[1]) || RISKY_ASSIGNMENT_PREFIX.test(env[1].toUpperCase()))) {
           this.newCommand("", [], sc, [], false);
@@ -1681,14 +1895,41 @@ class Engine extends Classifier {
     return fetch;
   }
 
+  /**
+   * The value a PowerShell assignment gives its variable, for Ember's own refusal (commands-remote-c3-2): a plain value
+   * (`"$env:LOCALAPPDATA\ember"`) or `Join-Path` of plain values; null for anything else (a command's output).
+   */
+  private psAssigned(st: PsStatement, sc: Scope): Arg | null {
+    if (st.elements.length !== 1) return null;
+    const el = st.elements[0];
+    if (el.kind === "expr") return el.subs.length ? null : this.psValue(el.segs, el.raw, sc, true);
+    if (el.name.segs.length !== 1 || el.name.segs[0].t !== "lit" || el.name.segs[0].s.toLowerCase() !== "join-path") return null;
+    const parts: Arg[] = [];
+    let named: string | null = null;
+    for (const a of el.args) {
+      if (a.kind === "param") { named = a.param?.toLowerCase() ?? null; if (a.attached) { parts.push(this.psValue(a.segs, a.raw, sc, a.quoted)); named = null; } continue; }
+      if (a.kind !== "word" || (named !== null && !/^(path|childpath|additionalchildpath)$/.test(named))) return null;
+      parts.push(this.psValue(a.segs, a.raw, sc, a.quoted));
+      named = null;
+    }
+    if (parts.length < 2) return null;
+    if (parts.every(x => x.v !== null)) return lit(win32.join(...parts.map(x => x.v!)));
+    // A part Ember can't see: what is joined so far, then that part, for the refusal.
+    const pieces: (string | { name: string | null })[] = [];
+    parts.forEach((x, k) => { if (k > 0) pieces.push("\\"); if (x.v !== null) pieces.push(x.v); else pieces.push(...(x.parts ?? [{ name: null }])); });
+    return { v: null, raw: el.name.raw, glob: false, parts: pieces };
+  }
+
   /** A PowerShell value's parts resolved: $HOME, $PWD, $env:USERPROFILE and the profile folders, $PROFILE, $null. */
   psValue(segs: PsSeg[], raw: string, sc: Scope, quoted: boolean): Arg {
     let v = "";
     let unresolved = false;
     const w = sc.windows;
+    // What stands in it, a variable's name for a part Ember can't resolve: for Ember's own refusal (commands-remote-c3-2).
+    const parts: (string | { name: string | null })[] = [];
     for (const seg of segs) {
-      if (seg.t === "lit") { v += seg.s; continue; }
-      if (seg.t === "unres") { unresolved = true; continue; }
+      if (seg.t === "lit") { v += seg.s; parts.push(seg.s); continue; }
+      if (seg.t === "unres") { unresolved = true; parts.push({ name: null }); continue; }
       const n = seg.name.toLowerCase();
       const known: Record<string, string | null | undefined> = {
         home: sc.home, pwd: sc.cwd, "env:userprofile": w?.home ?? sc.home, "env:temp": w?.temp, "env:tmp": w?.temp,
@@ -1697,14 +1938,14 @@ class Engine extends Classifier {
       };
       if (n === "profile" || n.startsWith("profile.")) {
         const home = w?.home ?? sc.home;
-        if (home) { v += `${home}\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1`; continue; }
+        if (home) { const pf = `${home}\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1`; v += pf; parts.push(pf); continue; }
       }
       const val = known[n];
-      if (val === undefined || val === null) unresolved = true;
-      else v += val;
+      if (val === undefined || val === null) { unresolved = true; parts.push({ name: n.replace(/^(script|global|local|private|using):/, "") }); }
+      else { v += val; parts.push(val); }
     }
     void quoted;
-    return { v: unresolved ? null : v, raw, glob: !unresolved && /[*?[]/.test(v) };
+    return { v: unresolved ? null : v, raw, glob: !unresolved && /[*?[]/.test(v), ...(unresolved ? { parts } : {}) };
   }
 
   /** A PowerShell argument as one or more values (an array gives one per element). */
@@ -1862,6 +2103,8 @@ class Engine extends Classifier {
       this.newCommand(nameArg.raw, args, sc, s.redirs, s.background, s.pipedFrom);
       before?.();
       this.unclear("unclear.program", "It runs a program Ember can't name.");
+      // `"$d/bin/ember"`: run from Ember's own folder through a variable, refused as by its name (commands-remote-v5-2).
+      this.judgeUnseen(nameArg, "exec", sc, false);
       if (nameArg.fetch) this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
       this.redirects(s.redirs, sc);
       this.readArgs(args, sc);
@@ -1879,6 +2122,14 @@ class Engine extends Classifier {
     this.newCommand(prog, args, sc, s.redirs, s.background, s.pipedFrom);
     if (s.stdin === "file" || s.stdin === "heredoc") this.stdinGiven.add(this.at);
     if (s.stdin === "heredoc") this.hereAt.set(this.at, s.stdinText ?? null);
+    // Text on stdin that uses a variable (`xargs rm -rf <<< "$d"`) is a use Ember doesn't judge as a path, unless a read
+    // or mapfile takes a here-string's word as its value, a loop's closer hands it to the reads in the loop (feedReads),
+    // the program reads no stdin (commands-remote-v5-2), or it only reads text and nothing takes what it prints
+    // (`grep -q x <<< "$d"`: commands-remote-w5-4). A program Ember can't follow may change what the value names; xargs
+    // and parallel hand it to the command they run, which judges it as it uses it (commands-remote-w5-5).
+    const takes = key === "read" || key === "mapfile" || key === "readarray";
+    if (s.stdinVars && (key === "done" || key === "fi")) this.hereVarsAt.set(this.at, s.stdinVars);
+    else if (s.stdinVars && !(takes ? s.stdinVars.word !== null : VAR_SHOWN_ONLY.has(key) || (readsText(key, args) && !s.pipedOn))) this.useUnjudged(s.stdinVars.names, key !== "xargs" && key !== "parallel");
     this.noteProgram(prog);
     before?.();
     if (nonAsciiLetters(nameArg.v)) this.unclear("unclear.program-letters", "Its program name has letters from another alphabet.");
@@ -1887,7 +2138,11 @@ class Engine extends Classifier {
     if (/[\x00-\x1f\x7f]/.test(nameArg.v)) this.unclear("unclear.program", "It runs a program Ember can't name.");
     this.redirects(s.redirs, sc);
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
+    const inner = this.commands.length;
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
+    // A wrapper's own words (`sudo -D "$d" ls`, `xargs -a "$d/x" echo`; commands-remote-v5-2): the command it runs
+    // (`do echo "$f"`, `sudo rm "$d"`) noted its words itself.
+    this.noteVarUses(key, this.commands.length === inner ? args : args.filter(a => !this.payloadWords.has(a)));
     this.unnamedWrites(key, args, sc);
     this.afterArgs(args);
     this.afterRun(key, args, s, sc);
@@ -1996,6 +2251,7 @@ class Engine extends Classifier {
   /** Classifies an argument vector as a command of its own (a payload: find -exec, xargs, timeout…). */
   payload(words: Arg[], sc: Scope, wrapper: string, o: Partial<Simple> = {}): void {
     if (words.length === 0) return;
+    for (const w of words) this.payloadWords.add(w);
     const savedAt = this.at;
     const savedProg = this.program;
     const savedPipe = this.pipe;
@@ -2009,6 +2265,7 @@ class Engine extends Classifier {
   /** Unwraps a wrapper: the same command now runs `words`, with the wrapper recorded (sudo rm → program rm, wrappers sudo). */
   unwrap(h: H, all: Arg[], wrapper: string, o: Partial<Scope> = {}): void {
     if (all.length === 0) return;
+    for (const w of all) this.payloadWords.add(w);
     const pc = this.commands[this.at];
     // After a reserved word the shell still takes `NAME=value` words as assignments: `then LD_PRELOAD=./x.so ls` runs ls
     // with the library loaded, and `do PATH=/tmp/x:/usr/bin` changes where later commands are found. They are judged as
@@ -2035,8 +2292,9 @@ class Engine extends Classifier {
       pc.program = nameArg.raw;
       pc.args = words.slice(1).map(a => a.v);
       this.program = nameArg.raw;
-      this.assignments(assigns, sc, null);
+      this.assignments(assigns, sc, null, true);
       this.unclear("unclear.program", "It runs a program Ember can't name.");
+      this.judgeUnseen(nameArg, "exec", sc, false);
       if (nameArg.fetch) this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
       this.readArgs(words.slice(1), sc);
       return;
@@ -2157,7 +2415,7 @@ class Engine extends Classifier {
       if (v === "" || v.startsWith("-")) return false;
       // A file it is given, or a folder it works in (`make -C sub`) holding a project file this task downloaded.
       const f = folderOf(v);
-      return this.isDownloaded({ ...a, v }, sc) || (f !== null && this.downloadedProjectFile(f, sc));
+      return this.isDownloaded({ ...a, v }, sc, false) || (f !== null && this.downloadedProjectFile(f, sc));
     }) || (sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc));
     if (inDownloaded) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   }
@@ -2402,7 +2660,8 @@ function interactive(h: H): void {
     case "watch": {
       add();
       // watch hands its words, joined, to sh -c.
-      const w = parseOpts(a, { shortValue: "nqd", longValue: ["interval", "differences"], stopAtOperand: true });
+      // -d (--differences) takes a value only attached or after = (commands-remote-i5a).
+      const w = parseOpts(a, { shortValue: "nq", shortOptional: "d", longValue: ["interval", "equexit"], longOptional: ["differences"], stopAtOperand: true });
       if (w.operands.some(x => x.v === null)) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
       else if (w.operands.length) h.e.nested(w.operands.map(x => x.v).join(" "), "sh", h.sc, "watch");
       return;
@@ -2581,6 +2840,37 @@ function optionPaths(h: H, unknown: boolean): void {
   }
 }
 
+/** What a row's value option names: a file it reads or writes, a folder it writes into, or the folder its command runs in. */
+type OptionFileUse = "read" | "write" | "into" | "cd";
+
+/**
+ * The files and folders a row's value options name (`--redirect-warnings f`, `-F f`, `--wd d`), judged as the bare path
+ * is: an option an option table lists as taking a value takes the word after it, so that word is judged only where the
+ * row reads it (commands-remote-v5-3). A value Ember can't see is judged by its parts, and asks unless `askUnseen` is
+ * false.
+ */
+function optionFiles(h: H, args: readonly Arg[], p: Parsed, files: Partial<Record<OptionFileUse, readonly string[]>>, askUnseen = true): void {
+  const mark = h.e.written.length;
+  for (const use of ["read", "write", "into", "cd"] as const) {
+    const names = files[use] ?? [];
+    for (const o of p.opts) {
+      if (o.value === undefined || !names.some(n => optIs(o.name, n))) continue;
+      const v = o.value;
+      if (v !== null && (v === "" || STDIN_NAME.test(v) || NULL_SINKS.has(v.toLowerCase()) || /^std(out|err)$/.test(v))) continue;
+      // The word itself when the value came apart from the option, so a variable in it keeps its parts.
+      const w = args[o.at]?.v ?? "";
+      const next = args[o.at + 1];
+      const apart = next !== undefined && next.v === v && (w === o.name || (!w.startsWith("--") && w.endsWith(o.name.slice(1))));
+      // A value attached to it that Ember can't see all of (`--arg-file="$d/x"`) keeps its pieces (commands-remote-w5-6).
+      const a: Arg = apart ? next : v === null ? { v: null, raw: "?", glob: false, ...(o.parts ? { parts: o.parts } : {}) } : lit(v);
+      if (a.v === null && askUnseen) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog || "the program"} gets.`);
+      const obj = h.e.usePath(a, use === "into" ? "write" : use, h.sc);
+      if (use === "into" && obj.abs !== null) h.e.judgeInside(obj.abs, "write", h.sc, obj.text);
+    }
+  }
+  h.e.written.length = mark;
+}
+
 /** PowerShell's approved verbs that change things: an unknown cmdlet with one is unclear (§3.4.2's conservative rule). */
 const PS_READ_VERBS = new Set(["get", "find", "search", "select", "measure", "test", "compare", "convertto", "convertfrom", "format", "resolve", "trace", "join", "split", "group", "sort", "where", "foreach", "show", "read", "out", "write", "debug", "wait", "use", "watch", "confirm", "assert", "ping", "receive", "convert", "expand", "limit"]);
 function unknownCmdlet(h: H): void {
@@ -2700,8 +2990,13 @@ function finishCd(h: H, abs: string | null): void {
 
 // Listing names and sizes reads no file's contents.
 reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "exa", "eza"], h => {
-  const p = opts(h, { shortValue: h.key === "tree" ? "LPIoH" : h.key === "du" ? "BdXt" : h.key === "stat" ? "cf" : "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "time", "printf", "output", "sort", "color", "indicator-style", "quoting-style", "files0-from", "exclude-from"] });
+  // stat's -f (file system), file's -w and exa's -T (tree) take no value, and --color (and du's --time) one only after =
+  // (commands-remote-i5a); lsd's -L (follow links) and -t (sort by time) are switches (commands-remote-v5-5).
+  const short: Readonly<Record<string, string>> = { tree: "LPIoHT", du: "BdXt", stat: "c", file: "eFfmP", lsd: "I", exa: "LIstw", eza: "LIstw" };
+  const p = opts(h, { shortValue: short[h.key] ?? "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "printf", "output", "sort", "indicator-style", "quoting-style", "files0-from", "exclude-from", "cached", "filelimit", "timefmt", "charset"], longOptional: ["color", "time"] });
   if (h.key === "tree") for (const o of values(p, "o", "output")) if (o) h.e.usePath(lit(o), "write", h.sc);
+  // file's -f reads the names to look at from a file and prints each, and -m loads magic files (commands-remote-v5-3).
+  if (h.key === "file") optionFiles(h, h.args, p, { read: ["f", "m"] });
   // du reads names from --files0-from and patterns from -X/--exclude-from, and shows the lines in its errors (review
   // #174): those files are read. `--exclude` is a pattern, not an abbreviation of --exclude-from.
   if (h.key === "du") {
@@ -2723,7 +3018,13 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
   // git grep's and ugrep's pager value is optional and only follows `=`: written alone, the option takes the default
   // pager and the next word is the pattern or a file (review #165). ag's and ack's take the next word.
   const pagerApart = h.key === "git-grep" || h.key === "ugrep" ? [] : ["pager", "open-files-in-pager"];
-  const p = opts(h, { shortValue: h.key === "rg" ? "eftgjmABCEMT" : "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", "color", "colour", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin"] });
+  // GNU grep's, ugrep's and git grep's --color take a value only after =, and ag's and ack's none: only rg's takes the next
+  // word, as rg's -d and -r do. ag's -f and -D and ack's -f are switches (commands-remote-i5a).
+  const short: Readonly<Record<string, string>> = { rg: "eftgjmABCEMTdr", ag: "ABCGgmp", ack: "ABCmg" };
+  // ag's and ack's own long options that take a value: to GNU grep `--ignore` is --ignore-case, and to rg a switch
+  // (commands-remote-v5-5).
+  const long: Readonly<Record<string, readonly string[]>> = { ag: ["file-search-regex", "depth", "path-to-ignore", "ignore", "ignore-dir"], ack: ["ignore-dir", "match", "output", "files-from"] };
+  const p = opts(h, { shortValue: short[h.key] ?? "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", ...(h.key === "rg" ? ["color", "colors"] : []), "group-separator", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin", ...(long[h.key] ?? []), "context-separator", "field-context-separator", "field-match-separator", "max-columns", "dfa-size-limit", "regex-size-limit"], longOptional: ["color", "colour"] });
   // Options whose value is a program run on the matches or the matched files (review #165): git grep's pager,
   // ag/ack/ugrep's pager, ugrep's per-file filter, rg's --pre and --hostname-bin. Seen text is the command it runs.
   if (values(p, "pre", "hostname-bin").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
@@ -2738,7 +3039,8 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
     const text = h.key === "ugrep" && /^[^:,]*:/.test(cmd) ? cmd.split(",").map(part => part.replace(/^[^:]*:/, "")).join("; ") : cmd;
     h.e.nested(text, "sh", h.sc, `${h.prog} pager`);
   }
-  const patternGiven = values(p, "e", "regexp", "f", "file").length > 0;
+  // ack's --match gives the pattern as -e does: every operand is then a file.
+  const patternGiven = values(p, "e", "regexp", "f", "file", ...(h.key === "ack" ? ["match"] : [])).length > 0;
   for (const f of values(p, "f", "file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   const files = patternGiven ? p.operands : p.operands.slice(1);
   const hiddenToo = h.key === "grep" || h.key === "egrep" || h.key === "fgrep" || h.key === "ack" || h.key === "ugrep" || has(p, "hidden", "u", "uu", "uuu", "unrestricted", "a", "all-types", "no-ignore");
@@ -2839,7 +3141,8 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   } else if (k === "mongo" || k === "mongosh") {
     if (inlineSql(h, [], ["eval"]).length) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
   } else if (k === "redis-cli") {
-    const p = opts(h, { shortValue: "hpsanuirdc", longValue: ["user", "pass", "tls", "cacert", "cert", "key", "rdb", "functions-rdb", "eval"] });
+    // -c (cluster mode), -x, -e and --tls take no value (commands-remote-c4-3).
+    const p = opts(h, { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] });
     if (values(p, "eval").length || has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
     if (has(p, "a", "pass") || values(p, "a").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
     const cmd = (p.operands[0]?.v ?? "").toLowerCase();
@@ -2854,7 +3157,8 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
 // a: rm and friends (§3.5.1).
 reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir"], h => {
   const shred = h.key === "shred";
-  const p = opts(h, { shortValue: shred ? "nsu" : "", longValue: shred ? ["iterations", "size", "random-source"] : [] });
+  // shred's -u (remove) takes no value, and --remove only one after = (commands-remote-r4-2).
+  const p = opts(h, { shortValue: shred ? "ns" : "", longValue: shred ? ["iterations", "size", "random-source"] : [], longOptional: ["remove"] });
   const rec = (h.key === "rm" || h.key === "srm" || h.key === "wipe") && has(p, "r", "R", "recursive");
   const objs = objsOf(h, p.operands, rec ? "deleteTree" : "delete");
   const widening: string[] = [];
@@ -2976,7 +3280,7 @@ reg(NATIVE, ["find"], h => {
     if (/^-(i?name|i?path|i?wholename|i?regex|i?lname)$/.test(v)) { const pv = expr[j + 1]?.v; if (pv) patterns.push(pv); j++; continue; }
     // The starting points read from a file, whose names find shows in its errors (review #174).
     if (v === "-files0-from") { const f = expr[j + 1]; if (f && f.v !== null && !STDIN_NAME.test(f.v)) h.e.usePath(f, "read", h.sc); j++; continue; }
-    if (FIND_VALUE.has(v)) j++;
+    if (FIND_VALUE.has(v) || /^-newer[aBcm][aBcmt]$/.test(v)) j++;
   }
   if (hasDelete) h.e.add("destroy", "posix.find.delete", `Deletes what it finds under ${where}.`, { objects: startObjs });
   // A find for secrets with an action that reads or lists them (the default action prints).
@@ -2997,32 +3301,65 @@ function secretPattern(pt: string, sc: Scope): boolean {
 
 // xargs and parallel: their payload is a command too (§3.4.5).
 reg(NATIVE, ["xargs"], h => {
+  // GNU's -l, -i and -e (and --max-lines, --replace, --eof) take a value only attached or after =: written alone, the
+  // next word is the command (commands-remote-c4-1). BSD's -J, -R and -S take one.
   const p = parseOpts(h.args, {
-    shortValue: "adEILlnPs", longValue: ["arg-file", "delimiter", "eof", "replace", "max-lines", "max-args", "max-procs", "max-chars", "process-slot-var"],
-    stopAtOperand: true,
+    shortValue: "adEILnPsJRS", shortOptional: "lie", longValue: ["arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"],
+    longOptional: ["eof", "replace", "max-lines"], stopAtOperand: true,
   });
-  for (const f of values(p, "a", "arg-file")) if (f) h.e.usePath(lit(f), "read", h.sc);
-  const repl = values(p, "I", "replace", "i")[0];
+  // The file it reads its input from, a variable in it judged for Ember's own refusal (commands-remote-v5-2).
+  optionFiles(h, h.args, p, { read: ["a", "arg-file"] }, false);
+  // A bare -i or --replace replaces {}.
+  const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
   const shell = POSIX_SHELLS[(ops[0].v ?? "").split("/").pop() ?? ""];
+  // A here-string whose variables Ember follows (`xargs rm -rf <<< "$d"`): its pieces stand where the input goes, so the
+  // command judges the variable's values as it uses them (commands-remote-w5-5).
+  const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
   let intoCode = false;
   const words = ops.map((w, k) => {
     if (!repl || w.v === null || !w.v.includes(repl)) return w;
     // The input put into shell text (`sh -c 'rm {}'`): the text is still read, the input standing as an unknown
     // word, and it is unclear (a name holding `;` or `$(…)` runs as code).
     if (shell && k > 0 && /^-[a-zA-Z]*c$/.test(ops[k - 1].v ?? "")) { intoCode = true; return { ...w, v: w.v.split(repl).join("\"$XARGS_INPUT\"") }; }
-    return { v: null, raw: w.raw, glob: false };
+    const a: Arg = { v: null, raw: w.raw, glob: false };
+    if (fed) a.parts = w.v.split(repl).flatMap((piece, j) => (j === 0 ? [piece] : [...fed, piece]));
+    return a;
   });
   if (intoCode) h.e.unclear("unclear.input-in-code", "It puts its input into shell text, where it can run as code.");
+  // Input Ember sees whole (a here-string or here-document) with no quotes or backslashes for xargs to read: its words,
+  // or with -I its lines, are what the command gets (commands-remote-v4-4).
+  const text = h.s.stdinText;
+  const seen = typeof text === "string" && !/['"\\]/.test(text) && !values(p, "a", "arg-file", "d", "delimiter").length && !has(p, "0", "null") ? text : null;
+  if (seen !== null && repl && !intoCode) {
+    const lines = seen.split("\n").map(l => l.trim()).filter(l => l !== "").slice(0, MAX_FORMS);
+    for (const l of lines) h.e.payload(ops.map(w => (w.v !== null && w.v.includes(repl) ? lit(w.v.split(repl).join(l)) : w)), h.sc, "xargs", { stdin: null });
+    if (lines.length) return;
+  }
+  const input = seen !== null && !repl ? seen.split(/\s+/).filter(w => w !== "").map(w => lit(w)) : [];
   // With -I the input replaces the placeholder; otherwise it is added after the words.
-  h.e.payload(repl ? words : [...words, { v: null, raw: "(input)", glob: false }], h.sc, "xargs", { stdin: null });
+  h.e.payload(repl ? words : [...words, ...(input.length ? input : [{ v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }])], h.sc, "xargs", { stdin: null });
 });
 reg(NATIVE, ["parallel"], h => {
   if (h.args.some(a => a.v !== null && /^:::+\+?$/.test(a.v))) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
-  const p = parseOpts(h.args, { shortValue: "jSaEdIX", longValue: ["jobs", "sshlogin", "arg-file", "eof", "delimiter", "joblog", "results", "tmpdir"], stopAtOperand: true });
+  // -X (context replace) is a switch, and -l, -i and -e take a value only attached (commands-remote-c4-1).
+  const p = parseOpts(h.args, {
+    shortValue: "jSaEdINnLCs", shortOptional: "lie", stopAtOperand: true,
+    longValue: [
+      "jobs", "sshlogin", "sshloginfile", "slf", "arg-file", "delimiter", "joblog", "results", "tmpdir", "max-args", "colsep", "timeout", "delay", "workdir", "wd",
+      "basefile", "bf", "return", "transferfile", "tf", "tagstring", "tag-string", "header", "halt", "nice", "retries", "memfree", "load", "env", "termseq",
+      "limit", "arg-sep", "arg-file-sep", "block", "blocksize", "recstart", "recend", "semaphorename", "id", "ssh", "sshdelay", "rpl", "process-slot-var", "max-chars",
+    ],
+  });
   if (p.operands.length === 1 && (p.operands[0].v ?? " ").includes(" ")) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
   if (has(p, "S", "sshlogin")) h.e.add("publish", "send.ssh", "Sends data to another computer.");
-  h.e.payload([...p.operands, { v: null, raw: "(input)", glob: false }], h.sc, "parallel");
+  // --wd: the folder each command runs in, judged as a cd to it is (commands-remote-v5-3); `...` is a new one.
+  const wd = values(p, "wd", "workdir").filter(d => d !== "...").pop();
+  optionFiles(h, h.args, p, { cd: ["wd", "workdir"] });
+  const sc = wd === undefined ? h.sc : child(h.sc, { cwd: wd === null || !h.sc.cwd ? null : resolveTargetPath(wd, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd }) }, more(h.sc));
+  // A here-string's variables stand for the input, as with xargs (commands-remote-w5-5).
+  const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
+  h.e.payload([...p.operands, { v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }], sc, "parallel");
 });
 
 reg(NATIVE, ["truncate"], h => {
@@ -3033,6 +3370,9 @@ reg(NATIVE, ["truncate"], h => {
 });
 
 reg(NATIVE, ["dd"], h => {
+  // A copy of a download is the download under its new name (commands-remote-c2-2).
+  const from = h.args.map(a => /^if=(.*)$/.exec(a.v ?? "")?.[1]).find(v => v !== undefined);
+  const copiesDownload = from !== undefined && h.e.isDownloaded(lit(from), h.sc);
   for (const a of h.args) {
     const v = a.v;
     if (v === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell which arguments dd gets."); continue; }
@@ -3041,6 +3381,7 @@ reg(NATIVE, ["dd"], h => {
     if (m[1] === "if") { h.e.usePath({ ...a, v: m[2] }, "read", h.sc); continue; }
     if (NULL_SINKS.has(m[2].toLowerCase())) continue;
     const obj = h.e.usePath({ ...a, v: m[2] }, "write", h.sc);
+    if (copiesDownload && obj.abs) h.e.carryDownload(obj.abs, h.sc);
     const disk = obj.abs !== null && writeKind(obj.abs, h.sc.path) === "disk";
     h.e.add("destroy", "posix.dd", disk ? `Overwrites the disk ${obj.text}.` : `Overwrites ${obj.text}.`, { objects: [obj] });
   }
@@ -3055,8 +3396,11 @@ reg(NATIVE, ["diskutil"], h => {
 // cp, mv, install, ln, rsync (local): the destination may exist (§3.5.1).
 function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   const p = opts(h, {
-    shortValue: kind === "install" ? "mgotSb" : kind === "ln" ? "tS" : "tS",
-    longValue: ["target-directory", "suffix", "mode", "group", "owner", "strip-program", "context", "backup", "reflink", "sparse", "preserve", "no-preserve", "update"],
+    // install's -b (backup) takes no value; --backup, --context, --reflink, --preserve and --update take one only after =
+    // (commands-remote-c4-3).
+    shortValue: kind === "install" ? "mgotS" : "tS",
+    longValue: ["target-directory", "suffix", "mode", "group", "owner", "strip-program", "sparse", "no-preserve"],
+    longOptional: ["backup", "context", "reflink", "preserve", "update"],
   });
   if (kind === "install" && has(p, "d", "directory")) { objsOf(h, p.operands, "write"); return; }
   const noClobber = has(p, "n", "no-clobber") || values(p, "update").includes("none");
@@ -3069,7 +3413,11 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   else if (sources.length >= 2) { dest = sources[sources.length - 1]; sources = sources.slice(0, -1); }
   else if (kind === "ln" && sources.length === 1) { dest = lit("."); }
   objsOf(h, sources, srcUse);
-  if (!dest) return;
+  if (!dest) {
+    // With no destination it can't run as it is; it is asked about rather than judged as nothing (commands-remote-i5a).
+    if (!has(p, "help", "version")) h.e.add("destroy", `posix.${kind}`, "Writes to a file Ember can't name.");
+    return;
+  }
   const destObj = h.e.usePath(dest, "write", h.sc);
   // `.` and `..` are always folders: `cp x .` puts x in the current folder (commands-remote-v1).
   const intoFolder = target !== undefined || sources.length > 1 || /[\\/]$/.test(dest.v ?? "") || /^\.\.?$/.test(dest.v ?? "");
@@ -3101,10 +3449,13 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   // folder counts too until the target says it is one.
   if (destObj.abs !== null) {
     for (const s of sources) {
-      if (!h.e.isDownloaded(s, h.sc) && !h.e.mayBeDownload(s)) continue;
+      if (!h.e.isDownloaded(s, h.sc) && !h.e.mayBeDownload(s, h.sc)) continue;
       const obj = asIs ? null : inside(s);
       if (obj?.abs) h.e.carryDownload(obj.abs, h.sc);
-      if (!obj || !intoFolder) h.e.carryDownload(destObj.abs, h.sc, obj !== null);
+      // A source Ember can't name lands as a file of unknown name there, never the whole folder (commands-remote-r4-3).
+      if (asIs) h.e.carryDownload(destObj.abs, h.sc);
+      else if (!obj) h.e.carryUnnamed(destObj.abs, intoFolder, h.sc);
+      else if (!intoFolder) h.e.carryDownload(destObj.abs, h.sc, true);
     }
   }
   if (kind === "ln" && !has(p, "f", "force")) return;
@@ -3147,7 +3498,8 @@ reg(NATIVE, ["tee"], h => {
 });
 
 reg(NATIVE, ["touch", "mkdir", "mkfifo", "mknod", "mktemp"], h => {
-  const p = opts(h, { shortValue: h.key === "touch" ? "dtr" : h.key === "mkdir" ? "m" : "pt", longValue: ["date", "reference", "mode", "tmpdir", "suffix", "context"] });
+  // --context (and mktemp's --tmpdir) take a value only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: h.key === "touch" ? "dtr" : h.key === "mktemp" ? "pt" : "m", longValue: ["date", "reference", "time", "mode", "suffix"], longOptional: ["context", "tmpdir"] });
   if (h.key === "mktemp") return;
   const mark = h.e.written.length;
   objsOf(h, h.key === "mknod" ? p.operands.slice(0, 1) : p.operands, "write");
@@ -3173,22 +3525,29 @@ reg(NATIVE, ["chmod", "chown", "chgrp", "setfacl", "chattr", "chflags"], h => {
 });
 
 // Archivers (§3.5.1, critique security-6).
-const TAR_VALUE = "fCbKNTXgLVFHIj";
+/** GNU tar's short options that take a value (-j, -J and -z are switches: commands-remote-i5a). */
+const TAR_VALUE = "fCbKNTXgLVFHI";
+/** A Mac's own tar (bsdtar): -H and -L follow links, -I names a file list as -T does, and -s takes a pattern. */
+const BSDTAR_VALUE = "fCbTXIs";
 reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const a = [...h.args];
   // Old-style bundled first argument (`tar xzf x.tgz`).
   if (a[0]?.v && !a[0].v.startsWith("-")) a[0] = { ...a[0], v: `-${a[0].v}` };
+  const bsd = h.key === "bsdtar" || (h.key === "tar" && h.sc.os === "darwin");
   const p = parseOpts(a, {
-    shortValue: TAR_VALUE,
-    longValue: ["file", "directory", "files-from", "exclude-from", "exclude", "use-compress-program", "transform", "xform", "to-command", "info-script", "new-volume-script", "newer", "after-date", "owner", "group", "mode", "mtime", "format", "label", "volno-file", "checkpoint-action", "index-file", "warning", "record-size", "blocking-factor", "tape-length", "sort"],
+    shortValue: bsd ? BSDTAR_VALUE : TAR_VALUE,
+    longValue: ["file", "directory", "files-from", "exclude-from", "exclude", "use-compress-program", "transform", "xform", "to-command", "info-script", "new-volume-script", "newer", "after-date", "owner", "group", "mode", "mtime", "format", "label", "volno-file", "checkpoint-action", "index-file", "warning", "record-size", "blocking-factor", "tape-length", "sort", "strip-components", "exclude-tag", "exclude-tag-all", "exclude-tag-under", "suffix", "owner-map", "group-map", "level", "hole-detection", "pax-option", "quoting-style", "quote-chars", "no-quote-chars", "rmt-command", "rsh-command", "listed-incremental", "starting-file", "options"],
+    longOptional: ["backup", "checkpoint", "occurrence", "one-top-level", "totals", "atime-preserve"],
   });
   const extract = has(p, "x", "extract", "get");
   const create = has(p, "c", "create", "r", "append", "u", "update", "A", "catenate", "concatenate");
   const archive = values(p, "f", "file")[0];
   const dir = values(p, "C", "directory")[0];
-  if (has(p, "to-command", "use-compress-program", "I", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || values(p, "checkpoint-action").length) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
+  if (has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I")) || values(p, "checkpoint-action").length) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
   // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
-  for (const f of values(p, "T", "files-from", "X", "exclude-from")) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  for (const f of values(p, "T", "files-from", "X", "exclude-from", ...(bsd ? ["I"] : []))) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // An incremental backup's snapshot file, which tar rewrites, and the owner and group maps it reads (commands-remote-v5-3).
+  optionFiles(h, a, p, { write: ["g", "listed-incremental"], read: ["owner-map", "group-map"] });
   if (archive) {
     const arc = lit(archive);
     if (URL_LIKE.test(archive) || SCP_LIKE.test(archive)) h.e.add("publish", "send.tar", "Sends data to another computer.");
@@ -3215,7 +3574,9 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
 });
 
 reg(NATIVE, ["zip"], h => {
-  const p = opts(h, { shortValue: "bnPtTZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] });
+  // -T tests the archive and takes no value; -TT and -tt are one option each, written with one dash (commands-remote-i5a).
+  const two: Readonly<Record<string, string>> = { "-TT": "--unzip-command", "-tt": "--tt" };
+  const p = parseOpts(h.args.map(a => (a.v !== null && two[a.v] ? { ...a, v: two[a.v] } : a)), { shortValue: "bnPtZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] });
   if (has(p, "unzip-command") || h.args.some(a => /^(-TT|--unzip-command|--tt)/.test(a.v ?? ""))) h.e.unclear("unclear.zip-command", "It runs a command Ember can't see.");
   const [arc, ...inputs] = p.operands;
   if (arc) {
@@ -3285,7 +3646,8 @@ reg(NATIVE, ["unzip"], h => {
 });
 
 reg(NATIVE, ["cpio"], h => {
-  const p = opts(h, { shortValue: "EFHIMORsD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory"] });
+  // -s swaps bytes and takes no value; -C is the block size (commands-remote-i5a).
+  const p = opts(h, { shortValue: "EFHIMORCD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory", "io-size", "message", "block-size"] });
   if (has(p, "rsh-command")) h.e.unclear("unclear.cpio-command", "It runs a command Ember can't see.");
   if (has(p, "i", "extract")) {
     // -D/--directory: the folder it unpacks into (review #169).
@@ -3301,11 +3663,24 @@ reg(NATIVE, ["cpio"], h => {
 
 // Compressors replace their input with the packed (or unpacked) file unless told to keep it.
 reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma", "lzip", "compress", "uncompress", "zstd", "unzstd", "lz4", "pigz", "unpigz", "brotli"], h => {
-  const p = opts(h, { shortValue: "S", longValue: ["suffix", "rsyncable", "format", "threads", "memlimit"] });
+  // --rsyncable takes no value (commands-remote-i5a); xz's -T, -M, -F and -C, pigz's -p and -b, zstd's and brotli's -o do.
+  const valueShort: Readonly<Record<string, string>> = { xz: "STMFC", unxz: "STMFC", lzma: "STMFC", unlzma: "STMFC", pigz: "Spb", unpigz: "Spb", zstd: "oD", unzstd: "oD", brotli: "oqwS" };
+  const p = opts(h, { shortValue: valueShort[h.key] ?? "S", longValue: ["suffix", "format", "threads", "memlimit", "output", "quality", "window", "processes", "blocksize", "patch-from"] });
   const keeps = has(p, "k", "keep", "c", "stdout", "to-stdout", "t", "test", "l", "list", "h", "help", "V", "version");
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
   const ins = objsOf(h, p.operands, "write");
   if (removes && p.operands.length && !keeps) h.e.add("destroy", "archive.in-place", `Replaces ${listOf(ins)} with a packed or unpacked copy.`, { objects: ins });
+  // zstd's and brotli's -o names the file they write (with -f, over one that is there), and zstd's -D a dictionary it
+  // reads: judged as that file is (commands-remote-v5-1). Unpacked from a download, it is one too.
+  if (!["zstd", "unzstd", "brotli"].includes(h.key)) return;
+  const fromDownload = p.operands.some(o => h.e.isDownloaded(o, h.sc));
+  for (const o of values(p, "o", "output")) {
+    const f = o === null ? { v: null, raw: "?", glob: false } : lit(o);
+    if (has(p, "f", "force")) overwrites(h, f);
+    else h.e.usePath(f, "write", h.sc);
+    if (fromDownload && o) h.e.carryDownload(o, h.sc);
+  }
+  for (const d of values(p, "D")) h.e.usePath(d === null ? { v: null, raw: "?", glob: false } : lit(d), "read", h.sc);
 });
 
 // Programs that write the files their operands or options name (review #169); otherwise they are unknown programs.
@@ -3407,8 +3782,11 @@ export function awkProgramOk(prog: string): boolean {
   return !/[|>]/.test(bare.replace(/>=|\|\|/g, ""));
 }
 reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
-  const p = opts(h, { shortValue: "fFvWe", longValue: ["file", "field-separator", "assign", "source", "include", "load"] });
-  const progFiles = values(p, "f", "file", "include", "load");
+  // gawk's -i (include), -l (load) and -E (exec) take a value; -d, -D, -o, -p and -L only attached (commands-remote-i5a).
+  const p = opts(h, { shortValue: "fFvWeilE", longValue: ["file", "field-separator", "assign", "source", "include", "load", "exec"], longOptional: ["dump-variables", "debug", "pretty-print", "profile", "lint"] });
+  const progFiles = values(p, "f", "file", "include", "load", "i", "l", "E", "exec");
+  // `-i inplace` writes what it prints back into each file it reads, as sed -i.
+  const inPlace = values(p, "i", "include").some(v => v !== null && /^inplace(\.awk)?$/.test(v));
   for (const f of progFiles) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // `awk -f -` / `-f /dev/stdin` reads its program from stdin: judge the seen text, else ask (review #166).
   if (progFiles.some(f => f === null || STDIN_NAME.test(f))) fromStdin(h, t => { if (!awkProgramOk(t)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files."); });
@@ -3417,7 +3795,9 @@ reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   const inline = values(p, "e", "source");
   if (progFiles.length === 0 && inline.length === 0) { inline.push(files[0]?.v ?? null); files = files.slice(1); }
   for (const prog of inline) if (prog === null || !awkProgramOk(prog)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files.");
-  h.e.readArgs(files.filter(f => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(f.v ?? "")), h.sc, { unresolvedUnclear: true });
+  const read = files.filter(f => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(f.v ?? ""));
+  if (inPlace) objsOf(h, read, "write");
+  h.e.readArgs(read, h.sc, { unresolvedUnclear: true });
 });
 
 // Shells: -c text classified as POSIX (§3.4.5); scripts by name; stdin after a fetch is download-and-run (§3.4.7).
@@ -3512,8 +3892,14 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   const isNode = h.key === "node" || h.key === "nodejs";
   const p = parseOpts(h.args, {
     shortValue: spec.valueOpts ?? "", stopAtOperand: true,
-    longValue: ["eval", "print", "require", "import", "loader", "input-type", "experimental-loader", ...(isNode ? ["run"] : [])],
+    longValue: [
+      "eval", "print", "require", "import", "loader", "input-type", "experimental-loader",
+      ...(isNode ? ["run", "conditions", "env-file", "env-file-if-exists", "title", "watch-path", "test-reporter", "test-reporter-destination", "redirect-warnings", "openssl-config", "icu-data-dir", "disable-warning", "test-name-pattern", "test-skip-pattern", "diagnostic-dir", "report-dir", "unhandled-rejections", "dns-result-order", "localstorage-file", "experimental-sea-config"] : []),
+    ],
   });
+  // node's own files: where it writes warnings, test reports, local storage and diagnostic reports, and the settings it
+  // reads (commands-remote-v5-3).
+  if (isNode) optionFiles(h, h.args, p, { write: ["redirect-warnings", "test-reporter-destination", "localstorage-file"], into: ["report-dir", "diagnostic-dir"], read: ["openssl-config", "experimental-sea-config", "icu-data-dir", "watch-path"] });
   for (let k = 0; k < h.args.length; k++) {
     const v = h.args[k].v;
     if (v === null) continue;
@@ -3533,6 +3919,8 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     }
   }
   if (h.key === "osascript" && p.operands[0]) { h.e.unclear("unclear.script", "It runs a script Ember can't see."); return; }
+  // node's --env-file loads that file's settings, secrets included, into the program's environment.
+  for (const f of values(p, "env-file", "env-file-if-exists")) if (f) h.e.usePath(lit(f), "read", h.sc);
   if (h.key === "php" && h.args.some(a => a.v !== null && a.v.startsWith("-S"))) {
     // PHP's own web server: -S address:port, -t the folder it serves (this one by default), and a router script it
     // runs for every request (review #178).
@@ -3655,7 +4043,7 @@ reg(NATIVE, ["read", "mapfile", "readarray"], h => {
   // The names it sets from each line it reads (`read -r l`; -a, -d, -n, -N, -p, -t, -u, -i take a value).
   if (h.key === "read") {
     // Text it is given itself (`read d <<< ~/.config/ember`): its lines and words (commands-remote-v4-4).
-    const given = typeof h.s.stdinText === "string" ? textValues(h.s.stdinText) : null;
+    const given = typeof h.s.stdinText === "string" ? textValues(h.s.stdinText) : h.s.stdinVars?.word ? [h.s.stdinVars.word] : null;
     const names: string[] = [];
     for (let k = 0; k < h.args.length; k++) {
       const v = h.args[k].v;
@@ -3664,6 +4052,19 @@ reg(NATIVE, ["read", "mapfile", "readarray"], h => {
       if (/^[A-Za-z_]\w*$/.test(v)) { h.e.setVar(v, given, h.sc, true); h.e.loopVars.set(v, "read"); names.push(v); }
     }
     h.e.noteRead(names, h.sc);
+  } else {
+    // mapfile's array (MAPFILE unless named) gets the text it is given, so `"${a[@]}"` is judged where it is used
+    // (commands-remote-w5-5); -d, -n, -O, -s, -u, -C and -c take a value.
+    const given = typeof h.s.stdinText === "string" ? textValues(h.s.stdinText) : h.s.stdinVars?.word ? [h.s.stdinVars.word] : null;
+    let name = "MAPFILE";
+    for (let k = 0; k < h.args.length; k++) {
+      const v = h.args[k].v;
+      if (v === null) break;
+      if (/^-[a-zA-Z]+$/.test(v)) { if (/[dnOsuCc]$/.test(v)) k++; continue; }
+      if (/^[A-Za-z_]\w*$/.test(v)) name = v;
+      break;
+    }
+    h.e.setVar(name, given, h.sc, true);
   }
   // mapfile's callback (-C) is shell text it runs for every line.
   if (h.key !== "read" && h.args.some(a => a.v !== null && /^-[A-Za-z]*C/.test(a.v))) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
@@ -3694,7 +4095,9 @@ reg(NATIVE, ["exec"], h => {
 
 // The environment: printing it is class d (§3.5.4); env runs a command with assignments.
 reg(NATIVE, ["env"], h => {
-  const p = parseOpts(h.args, { shortValue: "uCS", longValue: ["unset", "chdir", "split-string", "default-signal", "ignore-signal", "block-signal"], stopAtOperand: true });
+  // --default-signal, --ignore-signal and --block-signal take a value only after = (commands-remote-i5a); -a (argv0) and
+  // a Mac's -P (a search path) take one.
+  const p = parseOpts(h.args, { shortValue: "uCSaP", longValue: ["unset", "chdir", "split-string", "argv0"], longOptional: ["default-signal", "ignore-signal", "block-signal"], stopAtOperand: true });
   if (has(p, "S", "split-string")) { h.e.unclear("unclear.env-split", "Ember can't tell what env -S runs."); return; }
   let k = 0;
   const assigns: { name: string; value: Arg }[] = [];
@@ -3706,6 +4109,12 @@ reg(NATIVE, ["env"], h => {
   if (assigns.length || has(p, "u", "unset", "i") || h.args.some(a => a.v === "-")) h.e.envChanged = true;
   for (const a of assigns) {
     if (RISKY_ASSIGNMENTS.has(a.name) || RISKY_ASSIGNMENT_PREFIX.test(a.name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+  }
+  // A Mac's -P looks for the program in those folders, as a PATH assignment does; each is judged as the folder it runs a
+  // program from (commands-remote-v5-3).
+  for (const dirs of values(p, "P")) {
+    h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+    for (const d of dirs === null ? [] : dirs.split(":")) if (d) h.e.usePath(lit(d), "exec", h.sc);
   }
   const rest = p.operands.slice(k);
   if (rest.length === 0) { h.e.add("secret", "secret.env", SAYS.env); return; }
@@ -3737,6 +4146,14 @@ reg(NATIVE, ["set"], h => {
     if (from >= 0) for (const n of POSITIONAL) h.e.setVar(n, h.args.slice(from), h.sc);
   }
   if (h.sc.family === "posix" && h.args.some(a => a.v === "-o" || a.v === "+o") && h.args.length === 1) h.e.add("secret", "secret.env", SAYS.env);
+  // `set -a` (allexport) exports every variable set after it (commands-remote-v5-2); `set +a` stops.
+  if (h.sc.family === "posix") {
+    for (const [k, a] of h.args.entries()) {
+      const v = a.v ?? "";
+      if (v === "--") break;
+      if ((/^[-+][A-Za-z]*a/.test(v) && !v.startsWith("--")) || ((v === "-o" || v === "+o") && h.args[k + 1]?.v === "allexport")) h.e.allExport = v.startsWith("-");
+    }
+  }
   // `set -P` / `set -o physical`: every later `cd` follows links, and `cd link; cd ..` lands beside link's target, not
   // where Ember's lexical folder says.
   if (h.sc.family === "posix" && setChases(h.args)) h.e.unclear("unclear.chase-links", CHASE_SAYS);
@@ -3764,8 +4181,10 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
     const name = (n.v ?? n.raw).split("=")[0].replace(/\[.*$/, "").replace(/\+$/, "");
     if (RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
     if (n.v !== null && n.v.includes("=") && commandLineSecret(n.v)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-    // `export d=~/.config/ember` gives d a value as an assignment does (commands-remote-c3-2).
-    if ((n.v ?? n.raw).includes("=")) h.e.setVar(name, n.v !== null ? [lit(n.v.slice(n.v.indexOf("=") + 1))] : null, h.sc);
+    // `export d=~/.config/ember` gives d a value as an assignment does (commands-remote-c3-2); `export d` hands the value
+    // it has to the programs that run, so it is judged as when it is exported as it is set (commands-remote-v5-2).
+    if ((n.v ?? n.raw).includes("=")) h.e.setVar(name, n.v !== null ? [lit(n.v.slice(n.v.indexOf("=") + 1))] : null, h.sc, false, h.key === "export" || has(p, "x"));
+    else if (h.key === "export" || has(p, "x")) h.e.useUnjudged([name], true);
   }
 });
 reg(NATIVE, ["compgen"], h => { if (h.args.some(a => /^-[a-zA-Z]*[ev]/.test(a.v ?? ""))) h.e.add("secret", "secret.env", SAYS.env); });
@@ -3808,8 +4227,11 @@ reg(NATIVE, [...SUDO_LIKE], h => {
     return;
   }
   const p = parseOpts(h.args, {
-    shortValue: k === "sudo" || k === "sudoedit" ? "ugpCUTrthD" : k === "doas" ? "uC" : k === "pkexec" ? "u" : "u",
-    longValue: ["user", "group", "host", "prompt", "close-from", "other-user", "command-timeout", "role", "type", "chdir", "preserve-env"],
+    // sudo's -h takes a host only attached (alone it is help), and --preserve-env a list only after = (commands-remote-i5a).
+    shortValue: k === "sudo" || k === "sudoedit" ? "ugpCUTrtDRca" : k === "doas" ? "uC" : k === "pkexec" ? "u" : "u",
+    shortOptional: k === "sudo" || k === "sudoedit" ? "h" : "",
+    longValue: ["user", "group", "host", "prompt", "close-from", "other-user", "command-timeout", "role", "type", "chdir", "chroot", "login-class", "auth-type"],
+    longOptional: ["preserve-env"],
     stopAtOperand: true,
   });
   const other = values(p, "u", "user")[0];
@@ -3818,6 +4240,9 @@ reg(NATIVE, [...SUDO_LIKE], h => {
   if (has(p, "b", "background")) h.e.add("escape", "escape.background", SAYS.keepsRunning);
   if (has(p, "l", "list", "v", "validate", "k", "reset-timestamp", "K", "remove-timestamp", "V", "version") && p.operands.length === 0) return;
   if (p.operands.length === 0) { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
+  // The folder the command runs in, and the one it runs in as its whole disk (-R), judged as a cd to it is
+  // (commands-remote-v5-3).
+  if (k === "sudo") optionFiles(h, h.args, p, { cd: ["D", "chdir", "R", "chroot"] });
   const dir = values(p, "D", "chdir")[0];
   h.e.unwrap(h, p.operands, k, dir === undefined ? {} : { cwd: dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) });
 });
@@ -3829,10 +4254,12 @@ reg(NATIVE, Object.keys(WRAPPERS), h => {
   if (rule.finding) h.e.add(rule.finding.cls, rule.finding.rule, rule.finding.says);
   if (h.key === "disown") return;
   if (rule.noCommand && h.args.some(a => a.v !== null && rule.noCommand!.test(a.v))) { h.e.readArgs([], h.sc); return; }
-  const p = parseOpts(h.args, { shortValue: rule.shortValue ?? "", longValue: rule.longValue ?? [], stopAtOperand: true });
+  const p = parseOpts(h.args, { shortValue: rule.shortValue ?? "", shortOptional: rule.shortOptional ?? "", longValue: rule.longValue ?? [], stopAtOperand: true });
   let rest = p.operands;
   if (h.key === "nice" && h.args[0]?.v && /^-\d+$/.test(h.args[0].v)) rest = parseOpts(h.args.slice(1), { stopAtOperand: true }).operands;
   if (h.key === "time" || h.key === "strace" || h.key === "ltrace") for (const o of values(p, "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
+  // ltrace -F loads another settings file (commands-remote-v5-3).
+  if (h.key === "ltrace") optionFiles(h, h.args, p, { read: ["F"] });
   if ((h.key === "strace" || h.key === "ltrace") && values(p, "p").length) {
     const pids = values(p, "p").flatMap(v => (v ?? "").split(/[ ,]/)).map(Number);
     if (pids.some(n => h.e.ctx.ember.pids.includes(n))) h.e.refuseWith("ember.process", "safety");
@@ -3860,7 +4287,7 @@ reg(NATIVE, ["firejail", "bwrap", "run-parts", "envdir", "expect"], h => {
   h.e.readArgs(h.args, h.sc);
 });
 reg(NATIVE, ["script"], h => {
-  const p = parseOpts(h.args, { shortValue: "cEIOBT", longValue: ["command", "echo", "log-in", "log-out", "log-io", "log-timing", "logging-format", "output-limit"] });
+  const p = parseOpts(h.args, { shortValue: "cEIOBTmo", longValue: ["command", "echo", "log-in", "log-out", "log-io", "log-timing", "logging-format", "output-limit"] });
   const c = values(p, "c", "command")[0];
   for (const f of p.operands) { const obj = h.e.usePath(f, "write", h.sc); if (obj.abs && f.v !== "/dev/null") h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
   if (c === undefined) { if (h.sc.os === "darwin" && p.operands.length > 1) { h.e.unwrap(h, p.operands.slice(1), "script"); return; } h.e.unclear("unclear.interactive", SAYS.interactive); return; }
@@ -4062,7 +4489,8 @@ git(["reset"], h => {
 });
 
 git(["checkout"], h => {
-  const p = opts(h, { shortValue: "bB", longValue: ["orphan", "conflict", "pathspec-from-file", "track"] });
+  // --track takes a mode only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "bB", longValue: ["orphan", "conflict", "pathspec-from-file"], longOptional: ["track"] });
   if (has(p, "p", "patch")) h.e.unclear("unclear.interactive", SAYS.interactive);
   if (has(p, "pathspec-from-file")) h.e.unclear("unclear.pathspec-file", "Ember can't see which files it names.");
   if (has(p, "f", "force")) h.e.add("destroy", "git.checkout.force", "Throws away uncommitted changes.", { program: "git checkout" });
@@ -4101,12 +4529,13 @@ git(["restore"], h => {
 });
 
 git(["switch"], h => {
-  const p = opts(h, { shortValue: "cC", longValue: ["create", "force-create", "orphan", "conflict", "track"] });
+  const p = opts(h, { shortValue: "cC", longValue: ["create", "force-create", "orphan", "conflict"], longOptional: ["track"] });
   if (has(p, "discard-changes", "f", "force") || values(p, "C", "force-create").length) h.e.add("destroy", "git.switch", "Throws away uncommitted changes.", { program: "git switch" });
 });
 
 git(["branch"], h => {
-  const p = opts(h, { shortValue: "tu", longValue: ["set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format", "color", "column", "track"] });
+  // -t (--track) takes no value, and --track, --color and --column one only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "u", longValue: ["set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format"], longOptional: ["track", "color", "column"] });
   const names = p.operands;
   if (has(p, "D") || (has(p, "d", "delete") && has(p, "f", "force"))) {
     h.e.add("destroy", "git.branch.D", `Deletes the branch ${joinList(names.map(n => n.v ?? n.raw)) || "?"} even if it isn't merged.`, { objects: names.map(GIT_BRANCH_OBJ), program: "git branch" });
@@ -4126,7 +4555,8 @@ git(["stash"], h => {
 });
 
 git(["tag"], h => {
-  const p = opts(h, { shortValue: "umF", longValue: ["local-user", "message", "file", "sort", "format", "contains", "no-contains", "points-at", "merged", "no-merged", "color", "column", "cleanup", "create-reflog"] });
+  // --create-reflog takes no value, and --color and --column one only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "umF", longValue: ["local-user", "message", "file", "sort", "format", "contains", "no-contains", "points-at", "merged", "no-merged", "cleanup"], longOptional: ["color", "column"] });
   if (has(p, "d", "delete")) h.e.add("destroy", "git.tag.delete", `Deletes the tag ${joinList(p.operands.map(a => a.v ?? a.raw)) || "?"}.`, { objects: p.operands.map(a => ({ kind: "tag", text: a.v ?? a.raw, abs: null })), program: "git tag" });
   if (has(p, "f", "force")) h.e.add("destroy", "git.tag.force", `Replaces the tag ${p.operands[0]?.v ?? "?"} if it exists.`, { program: "git tag" });
   if ((has(p, "a", "annotate", "s", "sign") || values(p, "u", "local-user").length) && !values(p, "m", "message", "F", "file").length) h.e.unclear("unclear.interactive", SAYS.interactive);
@@ -4192,7 +4622,8 @@ git(["credential", "credential-store", "credential-cache", "credential-manager",
   h.e.add("secret", "secret.git-credential", SAYS.secrets, { program: "git credential" });
 });
 git(["config"], h => {
-  const p = opts(h, { shortValue: "f", longValue: ["file", "blob", "type", "default", "comment", "value", "fixed-value"] });
+  // --fixed-value takes no value (commands-remote-i5a).
+  const p = opts(h, { shortValue: "f", longValue: ["file", "blob", "type", "default", "comment", "value"] });
   const ops = p.operands;
   let sub = ops[0]?.v ?? null;
   const subs = ["get", "set", "unset", "list", "rename-section", "remove-section", "edit", "get-color", "get-colorbool"];
@@ -4224,7 +4655,8 @@ git(["submodule"], h => {
 git(["grep"], h => { NATIVE["git-grep"]({ ...h, key: "git-grep", prog: "git grep" }); });
 git(["bisect"], h => { if (h.args[0]?.v === "run") h.e.payload(h.args.slice(1), h.sc, "git bisect run"); });
 git(["rebase"], h => {
-  const p = opts(h, { shortValue: "xsX", longValue: ["exec", "onto", "strategy", "strategy-option", "gpg-sign", "whitespace", "empty"] });
+  // -S and --gpg-sign take a key only attached or after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "xsX", shortOptional: "S", longValue: ["exec", "onto", "strategy", "strategy-option", "whitespace", "empty"], longOptional: ["gpg-sign"] });
   if (has(p, "i", "interactive", "edit-todo")) h.e.unclear("unclear.interactive", SAYS.interactive);
   for (const x of values(p, "x", "exec")) {
     if (x === null) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
@@ -4232,7 +4664,8 @@ git(["rebase"], h => {
   }
 });
 git(["commit"], h => {
-  const p = opts(h, { shortValue: "mFCcutS", longValue: ["message", "file", "reuse-message", "reedit-message", "fixup", "squash", "author", "date", "template", "cleanup", "trailer", "untracked-files", "pathspec-from-file", "gpg-sign"] });
+  // -u and -S take a value only attached, --untracked-files and --gpg-sign only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "mFCct", shortOptional: "uS", longValue: ["message", "file", "reuse-message", "reedit-message", "fixup", "squash", "author", "date", "template", "cleanup", "trailer", "pathspec-from-file"], longOptional: ["untracked-files", "gpg-sign"] });
   if (has(p, "p", "patch", "interactive", "e", "edit") || values(p, "c", "reedit-message").length) h.e.unclear("unclear.interactive", SAYS.interactive);
   else if (!values(p, "m", "message", "F", "file", "C", "reuse-message", "fixup").length && !has(p, "no-edit")) h.e.unclear("unclear.interactive", SAYS.interactive);
   for (const f of values(p, "F", "file", "t", "template")) if (f && f !== "-") h.e.usePath(lit(f), "read", h.sc);
@@ -4341,7 +4774,9 @@ reg(NATIVE, ["gh"], h => {
     return;
   }
   if ((GH_WRITE[group] ?? []).includes(sub)) {
-    const p = parseOpts(rest, { shortValue: "BHRtbFTlamr", longValue: ["base", "head", "repo", "title", "body", "body-file", "label", "assignee", "milestone", "reviewer", "project", "template", "match-head-commit", "subject", "author-email"] });
+    // A merge's -m, -r and -s and a review's -a, -c and -r are switches; a release's -n is its notes (commands-remote-i5a).
+    const short = sub === "merge" ? "RtbFA" : sub === "review" ? "RbF" : group === "release" ? "RtnF" : group === "gist" ? "Rdf" : "BHRtbFTlamrp";
+    const p = parseOpts(rest, { shortValue: short, longValue: ["base", "head", "repo", "title", "body", "body-file", "label", "assignee", "milestone", "reviewer", "project", "template", "match-head-commit", "subject", "author-email", "add-label", "remove-label", "add-assignee", "remove-assignee", "add-reviewer", "remove-reviewer", "add-project", "remove-project", "notes", "notes-file", "target", "discussion-category", "notes-start-tag", "desc", "filename"] });
     const w = [...widening];
     for (const o of p.opts) if (/^(-B|--base|-H|--head|-R|--repo|--admin|--web|-w|-d|--delete-branch)$/.test(o.name)) w.push(o.name);
     const n = p.operands.slice(1).map(a => ({ kind: "other" as const, text: a.v ?? a.raw, abs: null }));
@@ -4464,7 +4899,8 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
   if (v === "kill" || v === "stop" || v === "restart" || v === "pause") { h.e.add("system", "kill.process", `Stops programs that are running (${joinList(objsText) || "containers"}).`, { objects: objsText.map(t => ({ kind: "process" as const, text: t, abs: null })) }); return; }
   if (v === "run" || v === "create") { containerRun(h, prog, rest); return; }
   if (v === "exec") {
-    const p = parseOpts(rest, { shortValue: "euwd", longValue: ["env", "user", "workdir", "detach-keys", "env-file"], stopAtOperand: true });
+    // -d (detach) takes no value (commands-remote-c4-2).
+    const p = parseOpts(rest, { shortValue: "euw", longValue: ["env", "user", "workdir", "detach-keys", "env-file"], stopAtOperand: true });
     if (has(p, "i") && has(p, "t")) h.e.unclear("unclear.interactive", SAYS.interactive);
     if (has(p, "d", "detach")) h.e.add("escape", "escape.background", SAYS.keepsRunning);
     h.e.payload(p.operands.slice(1), h.sc, `${prog} exec`);
@@ -4495,11 +4931,32 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
   }
   h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
 });
+/**
+ * docker's and podman's run and create options that take a value (`docker run --help`, podman-run(1)): one missing here
+ * would make its value the image, and the options after it (a mount, --privileged) would go unseen (commands-remote-c4-2).
+ */
+const CONTAINER_RUN_VALUE: readonly string[] = [
+  "env", "user", "publish", "volume", "workdir", "label", "cpu-shares", "hostname", "memory", "attach", "name", "network", "net", "mount", "entrypoint",
+  "env-file", "device", "cap-add", "cap-drop", "pid", "ipc", "userns", "security-opt", "platform", "restart", "runtime", "add-host", "dns", "log-driver",
+  "log-opt", "ulimit", "tmpfs", "gpus", "pull", "cidfile", "cgroupns", "uts", "volumes-from", "group-add", "health-cmd", "stop-signal", "storage-opt",
+  "sysctl", "isolation", "init-path", "shm-size", "annotation", "blkio-weight", "blkio-weight-device", "cgroup-parent", "cpu-count", "cpu-percent",
+  "cpu-period", "cpu-quota", "cpu-rt-period", "cpu-rt-runtime", "cpus", "cpuset-cpus", "cpuset-mems", "detach-keys", "device-cgroup-rule",
+  "device-read-bps", "device-read-iops", "device-write-bps", "device-write-iops", "dns-option", "dns-opt", "dns-search", "domainname", "expose",
+  "health-interval", "health-retries", "health-start-interval", "health-start-period", "health-timeout", "io-maxbandwidth", "io-maxiops", "ip", "ip6",
+  "kernel-memory", "label-file", "link", "link-local-ip", "mac-address", "memory-reservation", "memory-swap", "memory-swappiness", "network-alias",
+  "net-alias", "oom-score-adj", "pids-limit", "stop-timeout", "umask", "volume-driver",
+  // podman's own.
+  "arch", "authfile", "cgroup-conf", "cgroups", "chrootdirs", "conmon-pidfile", "decryption-key", "env-merge", "gidmap", "group-entry",
+  "health-log-destination", "health-max-log-count", "health-max-log-size", "health-on-failure", "health-startup-cmd", "health-startup-interval",
+  "health-startup-retries", "health-startup-success", "health-startup-timeout", "hostuser", "image-volume", "os", "passwd-entry", "personality",
+  "pidfile", "pod", "pod-id-file", "preserve-fd", "preserve-fds", "rdt-class", "requires", "retry", "retry-delay", "sdnotify", "seccomp-policy", "secret",
+  "shm-size-systemd", "subgidname", "subuidname", "systemd", "timeout", "tz", "uidmap", "unsetenv", "variant",
+];
 function containerRun(h: H, prog: string, rest: Arg[]): void {
-  const p = parseOpts(rest, {
-    shortValue: "eupvwlchmaP", stopAtOperand: true,
-    longValue: ["env", "user", "publish", "volume", "workdir", "label", "cpu-shares", "hostname", "memory", "attach", "name", "network", "net", "mount", "entrypoint", "env-file", "device", "cap-add", "cap-drop", "pid", "ipc", "userns", "security-opt", "platform", "restart", "runtime", "add-host", "dns", "log-driver", "log-opt", "ulimit", "tmpfs", "gpus", "pull", "cidfile", "cgroupns", "uts", "volumes-from", "group-add", "health-cmd", "stop-signal", "storage-opt", "sysctl", "isolation", "init-path", "shm-size"],
-  });
+  // -P (--publish-all), -d, -i, -t and -q take no value (commands-remote-c4-2).
+  const p = parseOpts(rest, { shortValue: "eupvwlchma", stopAtOperand: true, longValue: CONTAINER_RUN_VALUE });
+  // Without an image it can't run as it is: asked about rather than judged as nothing (commands-remote-i5a).
+  if (p.operands.length === 0 && !has(p, "help")) h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
   if (has(p, "d", "detach")) h.e.add("escape", "escape.background", SAYS.keepsRunning);
   if (has(p, "i", "interactive") && has(p, "t", "tty")) h.e.unclear("unclear.interactive", SAYS.interactive);
   const priv = has(p, "privileged")
@@ -4573,7 +5030,7 @@ function compose(h: H, prog: string, rest: Arg[]): void {
     if (sub === "run" && !flags.includes("-T") && !flags.some(f => f === "-d" || f === "--detach")) h.e.unclear("unclear.interactive", SAYS.interactive);
     // `compose run -v host:container` mounts as `docker run -v` does.
     const at = rest.indexOf(p.operands[0]);
-    if (sub === "run") containerMounts(h, parseOpts(rest.slice(at + 1), { shortValue: "eluvwp", longValue: ["env", "env-from-file", "label", "user", "volume", "workdir", "publish", "name", "entrypoint", "cap-add", "cap-drop"], stopAtOperand: true }));
+    if (sub === "run") containerMounts(h, parseOpts(rest.slice(at + 1), { shortValue: "eluvwp", longValue: ["env", "env-from-file", "label", "user", "volume", "workdir", "publish", "name", "entrypoint", "cap-add", "cap-drop", "pull"], stopAtOperand: true }));
     return;
   }
   if (sub === "down" || sub === "rm" || sub === "kill") { h.e.add("destroy", `${prog}.rm`, "Deletes containers, images or volumes."); return; }
@@ -4881,8 +5338,10 @@ function pip(h: H): void {
   const verb = h.args[g.verbAt]?.v ?? null;
   const rest = h.args.slice(g.verbAt + 1);
   if (verb === "install" || verb === "uninstall") {
-    const p = parseOpts(rest, { shortValue: "rcetbi", longValue: ["requirement", "constraint", "editable", "target", "build", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "root", "prefix", "src", "upgrade-strategy", "config-settings", "global-option", "install-option", "progress-bar", "report", "only-binary", "no-binary"] });
+    const p = parseOpts(rest, { shortValue: "rcetbifC", longValue: ["requirement", "constraint", "editable", "target", "build", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "root", "prefix", "src", "upgrade-strategy", "config-settings", "global-option", "install-option", "progress-bar", "report", "only-binary", "no-binary", "trusted-host", "proxy", "retries", "timeout", "exists-action", "cert", "client-cert", "cache-dir", "log", "python", "keyring-provider", "use-feature", "use-deprecated", "group"] });
     for (const r of values(p, "r", "requirement", "c", "constraint")) if (r) h.e.usePath(lit(r), "read", h.sc);
+    // Its log, its cache and the certificates it reads (commands-remote-v5-3).
+    optionFiles(h, rest, p, { write: ["log"], into: ["cache-dir"], read: ["cert", "client-cert"] });
     // The folders it installs into (review #169).
     for (const d of values(p, "t", "target", "root", "prefix", "src")) if (d) writeInto(h, d);
     const editable = values(p, "e", "editable").map(v => (v === null ? { v: null, raw: "?", glob: false } : lit(v)));
@@ -4915,8 +5374,13 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
   }
   // Running something in the project's environment: the command after it is classified.
   if ((verb === "run" && /^(poetry|pipenv|uv|rye|pdm|hatch|conda|mamba|micromamba)$/.test(h.key)) || (verb === "exec" && /^(bundle|bundler|composer|pdm)$/.test(h.key))) {
-    const p = parseOpts(rest, { shortValue: "np", longValue: ["name", "prefix", "with", "python", "directory", "project", "env", "group", "extra", "package"], stopAtOperand: true });
+    const p = parseOpts(rest, {
+      shortValue: "npfC", stopAtOperand: true,
+      longValue: ["name", "prefix", "with", "python", "directory", "project", "env", "group", "extra", "package", "with-editable", "with-requirements", "env-file", "index", "default-index", "index-url", "extra-index-url", "find-links", "config-setting", "cwd", "python-preference", "exclude-newer", "resolution", "prerelease", "link-mode", "refresh-package", "upgrade-package", "reinstall-package", "no-group", "only-group", "cache-dir", "config-file", "color"],
+    });
     if (h.key === "uv" && values(p, "with").length) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+    // The folder it runs the command in, its cache and the files it reads (commands-remote-v5-3).
+    optionFiles(h, rest, p, { cd: ["directory", "cwd", "C"], into: ["cache-dir"], read: ["with-requirements", "config-file", "env-file"] });
     h.e.payload(p.operands, h.sc, `${h.key} ${verb}`);
     return;
   }
@@ -5026,10 +5490,24 @@ reg(NATIVE, ["msbuild"], h => {
     if (/^[-/]p(roperty)?:(PublishProfile|DeployOnBuild|WebPublishMethod|PublishUrl)=/i.test(v)) h.e.add("publish", "script.publish", "Builds and deploys with a publish profile.", { program: "msbuild" });
   }
 });
+/** Maven's options of two or more letters, as the long options they stand for (`-pl core` is one option, not -p -l). */
+const MVN_WORDS: Readonly<Record<string, string>> = {
+  "-pl": "--projects", "-rf": "--resume-from", "-gs": "--global-settings", "-gt": "--global-toolchains", "-emp": "--encrypt-master-password",
+  "-ep": "--encrypt-password", "-am": "--also-make", "-amd": "--also-make-dependents", "-cpu": "--check-plugin-updates", "-fae": "--fail-at-end",
+  "-ff": "--fail-fast", "-fn": "--fail-never", "-npr": "--no-plugin-registry", "-npu": "--no-plugin-updates", "-nsu": "--no-snapshot-updates",
+  "-ntp": "--no-transfer-progress", "-up": "--update-plugins", "-llr": "--legacy-local-repository", "-itr": "--ignore-transitive-repositories",
+};
 /** Task runners and package scripts (§3.5.9): their targets' names say what they do. */
 reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke", "inv", "ant", "sbt", "lein", "gradle", "gradlew", "mvn", "mvnw", "nox", "tox", "task", "mage", "ninja"], h => {
-  const valueShort: Record<string, string> = { make: "CfIjloWE", gmake: "CfIjloWE", "mingw32-make": "CfIjloWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "fsplDPTtbgrX", mvnw: "fsplDPTtbgrX", nox: "sfeptkr", tox: "ecvrnx", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
-  const p = parseOpts(h.args, { shortValue: valueShort[h.key] ?? "", longValue: ["file", "makefile", "directory", "include-dir", "jobs", "load-average", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir"] });
+  // make's -j and -l take the next word only when it is a number (`make -j install` builds install); Maven's -X, nox's -r and
+  // tox's -v, -r and -n take no value, and Maven's options of two or more letters are whole words (commands-remote-i5a).
+  const valueShort: Record<string, string> = { make: "CfIoWE", gmake: "CfIoWE", "mingw32-make": "CfIoWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "bDflPsTt", mvnw: "bDflPsTt", nox: "sfeptk", tox: "ecxfm", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
+  const mvn = h.key === "mvn" || h.key === "mvnw";
+  const args = mvn ? h.args.map(a => (a.v !== null && MVN_WORDS[a.v] ? { ...a, v: MVN_WORDS[a.v] } : a)) : h.args;
+  const p = parseOpts(args, {
+    shortValue: valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average"],
+    longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "global-toolchains", "toolchains", "encrypt-master-password", "encrypt-password", "builder", "log-file", "activate-profiles", "threads", "define"],
+  });
   // A makefile read from stdin, /dev/stdin or a process substitution is a build program Ember can't vouch for: its
   // recipes run shell (review #166). Ember asks unless it can see the whole text and it is plainly ordinary.
   if ((/make$/.test(h.key) || h.key === "ninja") && values(p, "f", "file", "makefile").some(f => f === null || STDIN_NAME.test(f))) {
@@ -5044,11 +5522,25 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // `ninja -t <tool>` runs one of ninja's own tools, not a target (review #167).
   if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
+  // make takes the word after -j or -l only when it is all digits, so a value the text gives a variable there that isn't
+  // one is a target or a variable, as written there (`T=deploy; make -j "$T"`), and an option-like one asks
+  // (commands-remote-w5-2).
+  const counts: Arg[] = [];
+  if (/make$/.test(h.key)) {
+    for (const o of p.opts) {
+      if (o.value !== null || !/^(-[jl]|--(jobs|load-average))$/.test(o.name)) continue;
+      for (const f of h.e.knownForms(args[o.at + 1])) {
+        if (f === null || /^\d+(\.\d+)?$/.test(f)) continue;
+        if (f.startsWith("-")) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
+        else counts.push(lit(f));
+      }
+    }
+  }
   // make: `--eval` and variable overrides that name a shell or hold command text run code Ember can't see in the
   // makefile's recipes (`make SHELL='rm -rf ~' build`, `make CC='sh -c …'`).
   if (/make$/.test(h.key)) {
     if (has(p, "eval") || values(p, "E").length || h.args.some(a => /^--eval/.test(a.v ?? ""))) h.e.unclear("unclear.make-eval", "It adds make rules Ember can't see.");
-    for (const a of p.operands) {
+    for (const a of [...p.operands, ...counts]) {
       const m = a.v === null ? null : /^([A-Za-z_.][A-Za-z0-9_.]*)\s*[:+?!]?=(.*)$/s.exec(a.v);
       if (a.v !== null && !m) continue;
       if (a.v === null || /^(\.?SHELL|\.SHELLFLAGS|MAKESHELL|MAKEFLAGS|MFLAGS|GNUMAKEFLAGS|MAKEFILES|\.RECIPEPREFIX)$/.test(m![1]) || /[$`;|&<>()\n"']/.test(m![2]) || /^\s*(sh|bash|zsh|dash|ksh|fish|python\d*(\.\d+)?|perl|ruby|node|env|eval|exec|busybox|xargs)(\s|$)/.test(m![2])) {
@@ -5057,7 +5549,7 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
     }
   }
   if (h.key === "rake" && (values(p, "e", "p", "E").length || has(p, "execute", "execute-print", "execute-continue"))) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
-  let targets = p.operands.filter(a => a.v === null || !/^[A-Za-z_][A-Za-z0-9_.]*=/.test(a.v));
+  let targets = [...p.operands, ...counts].filter(a => a.v === null || !/^[A-Za-z_][A-Za-z0-9_.]*=/.test(a.v));
   if (h.key === "nox") targets = values(p, "s", "session", "sessions").map(v => lit(v ?? "?"));
   if (h.key === "tox") targets = values(p, "e", "environment", "envlist").map(v => lit(v ?? "?"));
   if (h.key === "mvn" || h.key === "mvnw") targets = targets.filter(t => !(t.v ?? "").startsWith("-"));
@@ -5238,8 +5730,17 @@ function hostOf(s: string): string {
 
 reg(NATIVE, ["curl", "curl.exe"], h => {
   const p = opts(h, {
-    shortValue: "AbcCdeEFHKmoPrtTuUwXxyYzD",
-    longValue: ["data", "data-raw", "data-binary", "data-urlencode", "data-ascii", "json", "form", "form-string", "upload-file", "request", "header", "user", "output", "cookie", "cookie-jar", "config", "url", "proxy", "user-agent", "referer", "max-time", "connect-timeout", "retry", "cacert", "cert", "key", "pass", "oauth2-bearer", "aws-sigv4", "output-dir", "write-out", "dump-header", "trace", "trace-ascii", "stderr", "resolve", "interface", "limit-rate", "range", "max-filesize", "proto", "proxy-user", "netrc-file", "unix-socket", "abstract-unix-socket", "ciphers", "variable", "expand-data", "time-cond", "continue-at", "retry-delay", "retry-max-time", "speed-limit", "speed-time", "local-port", "dns-servers", "doh-url", "preproxy", "hsts", "alt-svc", "etag-save", "etag-compare", "krb", "login-options", "sasl-authzid", "service-name", "mail-from", "mail-rcpt", "mail-auth"],
+    shortValue: "AbcCdeEFHKmoPrtTuUwXxyYzDQ",
+    longValue: ["data", "data-raw", "data-binary", "data-urlencode", "data-ascii", "json", "form", "form-string", "upload-file", "request", "header", "user", "output", "cookie", "cookie-jar", "config", "url", "proxy", "user-agent", "referer", "max-time", "connect-timeout", "retry", "cacert", "cert", "key", "pass", "oauth2-bearer", "aws-sigv4", "output-dir", "write-out", "dump-header", "trace", "trace-ascii", "stderr", "resolve", "interface", "limit-rate", "range", "max-filesize", "proto", "proxy-user", "netrc-file", "unix-socket", "abstract-unix-socket", "ciphers", "variable", "expand-data", "time-cond", "continue-at", "retry-delay", "retry-max-time", "speed-limit", "speed-time", "local-port", "dns-servers", "doh-url", "preproxy", "hsts", "alt-svc", "etag-save", "etag-compare", "krb", "login-options", "sasl-authzid", "service-name", "mail-from", "mail-rcpt", "mail-auth",
+      // The rest of curl 8's options that take a value (`curl --help all`), so none of their values reads as an address.
+      "capath", "cert-type", "connect-to", "create-file-mode", "crlfile", "curves", "delegation", "dns-interface", "dns-ipv4-addr", "dns-ipv6-addr",
+      "egd-file", "engine", "expect100-timeout", "ftp-account", "ftp-alternative-to-user", "ftp-method", "ftp-port", "ftp-ssl-ccc-mode",
+      "happy-eyeballs-timeout-ms", "hostpubmd5", "hostpubsha256", "ipfs-gateway", "keepalive-time", "key-type", "libcurl", "max-redirs", "noproxy",
+      "parallel-max", "pinnedpubkey", "proto-default", "proto-redir", "proxy-cacert", "proxy-capath", "proxy-cert", "proxy-cert-type", "proxy-ciphers",
+      "proxy-crlfile", "proxy-header", "proxy-key", "proxy-key-type", "proxy-pass", "proxy-pinnedpubkey", "proxy-service-name", "proxy-tls13-ciphers",
+      "proxy-tlsauthtype", "proxy-tlspassword", "proxy-tlsuser", "pubkey", "quote", "random-file", "rate", "request-target", "socks4", "socks4a", "socks5",
+      "socks5-gssapi-service", "socks5-hostname", "telnet-option", "tftp-blksize", "tls-max", "tls13-ciphers", "tlsauthtype", "tlspassword", "tlsuser",
+      "trace-config", "url-query"],
   });
   const urls = [...p.operands.map(a => a.v ?? ""), ...values(p, "url").map(v => v ?? "")].filter(u => u !== "");
   const host = hostOf(urls[0] ?? "") || "another computer";
@@ -5284,7 +5785,11 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
 reg(NATIVE, ["wget", "wget2"], h => {
   const p = opts(h, {
     shortValue: "OoaPiBtTwQeUlAIRDXlY",
-    longValue: ["output-document", "output-file", "append-output", "directory-prefix", "input-file", "base", "tries", "timeout", "wait", "quota", "execute", "user-agent", "level", "accept", "reject", "include-directories", "exclude-directories", "domains", "exclude-domains", "post-data", "post-file", "method", "body-data", "body-file", "header", "user", "password", "http-user", "http-password", "ftp-user", "ftp-password", "load-cookies", "save-cookies", "certificate", "private-key", "ca-certificate", "config", "referer", "limit-rate", "restrict-file-names", "default-page", "bind-address", "proxy-user", "proxy-password"],
+    longValue: ["output-document", "output-file", "append-output", "directory-prefix", "input-file", "base", "tries", "timeout", "wait", "quota", "execute", "user-agent", "level", "accept", "reject", "include-directories", "exclude-directories", "domains", "exclude-domains", "post-data", "post-file", "method", "body-data", "body-file", "header", "user", "password", "http-user", "http-password", "ftp-user", "ftp-password", "load-cookies", "save-cookies", "certificate", "private-key", "ca-certificate", "config", "referer", "limit-rate", "restrict-file-names", "default-page", "bind-address", "proxy-user", "proxy-password",
+      "accept-regex", "backups", "ca-directory", "certificate-type", "ciphers", "compression", "connect-timeout", "crl-file", "cut-dirs", "dns-timeout",
+      "follow-tags", "ignore-tags", "local-encoding", "pinnedpubkey", "prefer-family", "private-key-type", "progress", "random-file", "read-timeout",
+      "regex-type", "reject-regex", "rejected-log", "remote-encoding", "report-speed", "retry-on-http-error", "secure-protocol", "start-pos", "use-askpass",
+      "waitretry", "warc-dedup", "warc-file", "warc-header", "warc-max-size", "warc-tempdir"],
   });
   const urls = p.operands.map(a => a.v ?? "").filter(u => u);
   const host = hostOf(urls[0] ?? "") || "another computer";
@@ -5403,7 +5908,8 @@ function sshOptions(h: H, p: Parsed): void {
   for (const f of values(p, "F")) if (f) h.e.usePath(lit(f), "read", h.sc);
 }
 reg(NATIVE, ["ssh", "slogin", "autossh", "mosh"], h => {
-  const p = parseOpts(h.args, { shortValue: "BbcDEeFIiJLlmOoPpQRSWwM", stopAtOperand: true });
+  // -M (master mode) takes no value (commands-remote-i5a).
+  const p = parseOpts(h.args, { shortValue: "BbcDEeFIiJLlmOoPpQRSWw", stopAtOperand: true });
   sshOptions(h, p);
   const host = p.operands[0]?.v ?? null;
   const cmd = p.operands.slice(1);
@@ -5424,18 +5930,21 @@ reg(NATIVE, ["sftp", "ftp", "lftp", "tftp", "ncftp", "ncftpput", "smbclient", "t
 });
 reg(NATIVE, ["rsync"], h => {
   const p = opts(h, {
-    shortValue: "eBfTM",
-    longValue: ["rsh", "rsync-path", "exclude", "include", "filter", "files-from", "exclude-from", "include-from", "password-file", "log-file", "log-file-format", "backup-dir", "compare-dest", "copy-dest", "link-dest", "temp-dir", "partial-dir", "chmod", "chown", "usermap", "groupmap", "timeout", "contimeout", "port", "address", "sockopts", "bwlimit", "max-size", "min-size", "max-delete", "modify-window", "suffix", "out-format", "info", "debug", "checksum-choice", "compress-choice", "skip-compress", "outbuf", "stop-after", "stop-at", "write-batch", "read-batch", "only-write-batch", "iconv", "remote-option", "block-size", "protocol", "early-input", "mkpath"],
+    // --mkpath and every other switch take no value (commands-remote-r4-1).
+    shortValue: "eBfTM@",
+    longValue: ["rsh", "rsync-path", "exclude", "include", "filter", "files-from", "exclude-from", "include-from", "password-file", "log-file", "log-file-format", "backup-dir", "compare-dest", "copy-dest", "link-dest", "temp-dir", "partial-dir", "chmod", "chown", "usermap", "groupmap", "timeout", "contimeout", "port", "address", "sockopts", "bwlimit", "max-size", "min-size", "max-delete", "modify-window", "suffix", "out-format", "info", "debug", "checksum-choice", "compress-choice", "skip-compress", "outbuf", "stop-after", "stop-at", "write-batch", "read-batch", "only-write-batch", "iconv", "remote-option", "block-size", "protocol", "early-input", "max-alloc", "compress-level", "zl", "copy-as", "checksum-seed", "cc", "zc", "log-format", "config", "dparam"],
   });
   for (const e of values(p, "e", "rsh")) if (e === null || !/^ssh(\s+-[A-Za-z]+(\s+[A-Za-z0-9._/~-]+)?)*$/.test(e)) h.e.unclear("unclear.rsync-rsh", "It runs a remote shell command Ember can't see.");
   if (values(p, "rsync-path", "remote-option", "M").length) h.e.unclear("unclear.rsync-rsh", "It runs a command on the other computer Ember can't see.");
   for (const f of values(p, "password-file", "files-from", "exclude-from", "include-from", "read-batch")) if (f) h.e.usePath(lit(f), "read", h.sc);
   for (const f of values(p, "log-file", "write-batch", "only-write-batch")) if (f) h.e.usePath(lit(f), "write", h.sc);
   const ops = p.operands;
+  const remote = (a: Arg): boolean => a.v !== null && (/^rsync:\/\//i.test(a.v) || (SCP_LIKE.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v)) || /::/.test(a.v));
+  // One operand lists what is there, as ls does (commands-remote-i5a).
+  if (ops.length === 1 && !remote(ops[0])) h.e.usePath(ops[0], "list", h.sc);
   if (ops.length < 2) return;
   const dest = ops[ops.length - 1];
   const sources = ops.slice(0, -1);
-  const remote = (a: Arg): boolean => a.v !== null && (/^rsync:\/\//i.test(a.v) || (SCP_LIKE.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v)) || /::/.test(a.v));
   const deletes = has(p, "delete", "delete-before", "delete-during", "delete-delay", "delete-after", "delete-excluded", "del");
   const removeSrc = has(p, "remove-source-files");
   if (dest.v === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell where rsync copies to."); return; }
@@ -5584,8 +6093,9 @@ reg(NATIVE, ["caddy"], h => {
 reg(NATIVE, ["miniserve"], h => {
   // miniserve [PATH]: every address unless -i/--interfaces says otherwise; -u lets whoever connects add files.
   const q = parseOpts(h.args, {
-    shortValue: "ipacdtq",
-    longValue: ["interfaces", "port", "auth", "auth-file", "color-scheme", "color-scheme-dark", "title", "header", "index", "route-prefix", "tls-cert", "tls-key", "qrcode"],
+    // -q (--qrcode) takes no value (commands-remote-i5a).
+    shortValue: "ipacdt",
+    longValue: ["interfaces", "port", "auth", "auth-file", "color-scheme", "color-scheme-dark", "title", "header", "index", "route-prefix", "tls-cert", "tls-key"],
   });
   const ifs = values(q, "i", "interfaces");
   const root = q.operands[0] ?? lit(".");
@@ -5669,7 +6179,7 @@ reg(NATIVE, ["security"], h => {
 });
 reg(NATIVE, ["keyctl"], h => { if (/^(print|read|pipe|show|add|padd|request|update|newring|unlink|clear|purge|invalidate)$/.test(h.args[0]?.v ?? "")) h.e.add("secret", "secret.program", SAYS.secrets); });
 reg(NATIVE, ["ssh-keygen"], h => {
-  const p = opts(h, { shortValue: "aCEfFIJjKmMnNOrstVwYzZbD", longValue: [] });
+  const p = opts(h, { shortValue: "aCEfFIJjKmMnNOPrstVwYzZbD", longValue: [] });
   for (const f of values(p, "f")) if (f) h.e.usePath(lit(f), has(p, "l", "F", "B") ? "read" : "write", h.sc);
   if (has(p, "l", "F", "B", "H") || (has(p, "R") && false)) return;
   h.e.add("secret", "secret.program", SAYS.secrets);
@@ -5723,7 +6233,8 @@ reg(NATIVE, ["sort", "gsort"], h => {
   h.e.readArgs(p.operands, h.sc, { unresolvedUnclear: true });
 });
 reg(NATIVE, ["uniq", "guniq"], h => {
-  const p = opts(h, { shortValue: "fsw", longValue: ["skip-fields", "skip-chars", "check-chars", "group", "all-repeated"] });
+  // --group and --all-repeated take a method only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "fsw", longValue: ["skip-fields", "skip-chars", "check-chars"], longOptional: ["group", "all-repeated"] });
   const [input, output] = p.operands;
   if (input) h.e.readArgs([input], h.sc, { unresolvedUnclear: true });
   if (output) overwrites(h, output);
@@ -5740,7 +6251,8 @@ reg(NATIVE, ["iconv"], h => {
   h.e.readArgs(p.operands, h.sc, { unresolvedUnclear: true });
 });
 reg(NATIVE, ["patch", "gpatch"], h => {
-  const p = opts(h, { shortValue: "pioDdBFrVYzg", longValue: ["strip", "input", "output", "directory", "ifdef", "prefix", "fuzz", "reject-file", "version-control", "basename-prefix", "suffix", "get", "quoting-style", "merge"] });
+  // --merge takes a style only after = (commands-remote-i5a).
+  const p = opts(h, { shortValue: "pioDdBFrVYzg", longValue: ["strip", "input", "output", "directory", "ifdef", "prefix", "fuzz", "reject-file", "version-control", "basename-prefix", "suffix", "get", "quoting-style", "reject-format"], longOptional: ["merge"] });
   let sc = h.sc;
   const dir = values(p, "d", "directory")[0];
   if (dir !== undefined) sc = child(h.sc, { cwd: dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) });
@@ -5953,7 +6465,9 @@ reg(NATIVE, ["kill"], h => {
 reg(NATIVE, ["pkill", "killall", "pgrep-kill", "xkill", "fuser", "tskill", "skill", "snice", "killall5", "slay"], h => {
   if (h.key === "fuser" && !h.args.some(a => /^-[a-zA-Z]*k/.test(a.v ?? ""))) { h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc); return; }
   if (h.key === "killall5") { h.e.refuseWith("ember.process", "safety"); return; }
-  const p = opts(h, { shortValue: "sgGPtuUnoFeOy", longValue: ["signal", "pgroup", "group", "parent", "terminal", "euid", "uid", "session", "ns", "nslist", "pidfile", "older-than", "younger-than", "context"] });
+  // -e takes no value; pkill's -n and -o are switches where killall's are values, and killall's -g a switch (commands-remote-i5a).
+  const short = h.key === "killall" ? "suoynZ" : h.key === "skill" || h.key === "snice" ? "tupc" : "sgGPtuUFO";
+  const p = opts(h, { shortValue: short, longValue: ["signal", "pgroup", "group", "parent", "terminal", "euid", "uid", "session", "ns", "nslist", "pidfile", "older-than", "younger-than", "context", "older", "runstates"] });
   const names = p.operands.map(a => a.v);
   const full = has(p, "f", "full");
   const regex = h.key === "pkill" || has(p, "r", "regexp");
@@ -6005,7 +6519,8 @@ reg(NATIVE, ["gdb", "lldb", "renice", "gcore", "dtrace", "dtruss", "perf"], h =>
   if (pids.some(p => h.e.ctx.ember.pids.includes(Number(p)))) { h.e.refuseWith("ember.process", "safety"); return; }
   if (pids.length) h.e.add("system", "system.debug", "Watches or changes another program that is running.");
   if (h.key === "perf" && /^(record|stat|trace|top)$/.test(h.args[0]?.v ?? "") && !pids.length) {
-    const p = parseOpts(h.args.slice(1), { shortValue: "eopFcCtGa", stopAtOperand: true });
+    // -a (every CPU) takes no value (commands-remote-i5a).
+    const p = parseOpts(h.args.slice(1), { shortValue: "eopFcCtGmu", stopAtOperand: true });
     h.e.payload(p.operands, h.sc, `perf ${h.args[0].v}`);
     return;
   }
@@ -6353,8 +6868,28 @@ reg(NATIVE, ["format"], h => {
 reg(NATIVE, ["robocopy"], h => {
   const flags = h.args.map(a => (a.v ?? "").toLowerCase());
   const [src, dst] = h.args.filter(a => !(a.v ?? "").startsWith("/"));
-  if (src) h.e.usePath(src, flags.some(f => /^\/(move|mov)$/.test(f)) ? "move" : "readTree", h.sc);
+  // `robocopy SOURCE DEST [FILE…] [/OPTION…]`: the names before the first option are the files it copies from the
+  // source folder (all of them by default); names after one belong to it (/XF's, /XD's).
+  const first = h.args.findIndex(a => (a.v ?? "").startsWith("/"));
+  const files = (first < 0 ? h.args : h.args.slice(0, first)).filter(a => !(a.v ?? "").startsWith("/")).slice(2);
+  const move = flags.some(f => /^\/(move|mov)$/.test(f));
+  const inSrc = (f: Arg): Arg => (src?.v != null && f.v !== null ? { ...f, v: win32.join(src.v, f.v), glob: f.glob || /[*?]/.test(f.v) } : { v: null, raw: f.raw, glob: false });
+  const named = files.length > 0 && !flags.some(f => /^\/(s|e|mir)$/.test(f));
+  if (src && named) { h.e.usePath(src, "list", h.sc); for (const f of files) h.e.usePath(inSrc(f), move ? "move" : "read", h.sc); }
+  else if (src) h.e.usePath(src, move ? "move" : "readTree", h.sc);
   const destObj = dst ? h.e.usePath(dst, flags.some(f => /^\/(mir|purge)$/.test(f)) ? "deleteTree" : "write", h.sc) : null;
+  // A download it copies or moves is the download in the destination folder, as with copy and Copy-Item
+  // (commands-remote-c2-2): the file of its name there. A folder or pattern copy puts each download the folder holds
+  // under the same name there, and a source folder that is (or may be) a download itself leaves files Ember can't
+  // name; never the destination folder itself, whose own tools would all ask (commands-remote-v5-6).
+  if (src && destObj?.abs) {
+    if (files.length) h.e.carryCopies(files.map(inSrc).filter(f => !f.glob), { ...destObj, text: `${destObj.text.replace(/[\\/]+$/, "")}\\` }, h.sc);
+    if ((!named || files.some(f => f.glob || f.v === null)) && src.v !== null && h.sc.cwd) {
+      const from = resolveTargetPath(src.v, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd });
+      if (h.e.isDownloaded(src, h.sc)) h.e.carryUnnamed(destObj.abs, true, h.sc);
+      else for (const d of [...h.e.ctx.downloaded, ...h.e.downloads]) if (d !== from && isUnder(d, from, h.sc.path)) h.e.carryDownload(win32.join(destObj.abs, win32.relative(from, d)), h.sc);
+    }
+  }
   if (flags.some(f => /^\/(mir|purge|move|mov)$/.test(f))) h.e.add("destroy", "cmd.robocopy", `Deletes files in ${destObj?.text ?? "the destination"} that aren't in ${src?.v ?? "the source"}.`, { objects: destObj ? [destObj] : [] });
   else if (destObj?.abs) h.e.add("destroy", "cmd.robocopy", `Replaces files in ${destObj.text} if they exist.`, { objects: [destObj], ifExists: destObj.abs });
 });

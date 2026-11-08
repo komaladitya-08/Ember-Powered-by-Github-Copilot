@@ -265,6 +265,90 @@ describe("decideCommand: the rules in order", () => {
     expect(decide("git push origin main", { words: "push main (it's ready)" }).says).not.toContain(LINES.unasked);
   });
 
+  it("says \"You didn't ask for this.\" on the step the words rule out by saying its verb again, and only on it (commands-remote-c1-2)", () => {
+    for (const [cmd, words] of [
+      ["rm -r src", "delete build/ but don't delete src/"],
+      ["rm -r src", "delete build/ and don't delete the src folder"],
+      ["kill 1234", "kill 5678 but don't kill 1234"],
+      ["git branch -D main", "delete old branches, don't delete main"],
+      ["rm -r build && rm -r src", "delete build/ but don't delete src/"],
+      ["rm -r src", "delete build/ and not src/"],
+      ["rm -r src", "delete build/ and don't touch src/"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+    }
+    // The step the words asked for keeps no line about the words.
+    for (const [cmd, words] of [
+      ["rm -r build", "delete build/ but don't delete src/"],
+      ["kill 5678", "kill 5678 but don't kill 1234"],
+      ["rm -r build", "delete build/ and not src/"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+    }
+  });
+
+  it("keeps the asked-for step's card free of \"You didn't ask for this.\" when the words add \"and don't delete anything else\" (commands-remote-r4-6)", () => {
+    expect(decide("rm -rf build", { words: "delete build/ and don't delete anything else" }).says).toEqual(["Deletes build and everything in it."]);
+    expect(decide("rm -rf build", { words: "delete build/ and nothing else" }).says).toEqual(["Deletes build and everything in it."]);
+    expect(decide("kill 5678", { words: "kill 5678 and don't kill anything more" }).says).toEqual(["Stops programs that are running (5678)."]);
+    // Anything else is what those words rule out.
+    for (const [cmd, words] of [
+      ["rm -rf src", "delete build/ and don't delete anything else"],
+      ["rm -rf src", "delete build/ and nothing else"],
+      ["kill 1234", "kill 5678 and don't kill anything more"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+    }
+  });
+
+  it("says \"You didn't ask for this.\" after \"and nothing else\" on a step that does the named thing and more (commands-remote-v5-4)", () => {
+    for (const [cmd, words] of [
+      ["kill 1234 5678", "kill 5678 and nothing else"],
+      ["rm -rf build dist", "delete build/ and don't delete anything else"],
+      ["git branch -D feature-x main", "delete the feature-x branch and don't delete any other branch"],
+      ["systemctl stop apache nginx", "stop apache and nothing else"],
+      ["git push --force origin main", "push main and nothing else"],
+      ["git clean -fdx", "clean untracked files and nothing else"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.unasked, `${cmd} / ${words}`).toBe(true);
+    }
+    // All of it named, the force and the remote it goes to included: no line about the words.
+    expect(decide("git push origin main", { words: "push main and nothing else" }).says).not.toContain(LINES.unasked);
+    expect(decide("git push --force origin main", { words: "force push main and nothing else" }).says).not.toContain(LINES.unasked);
+    expect(decide("kill 1234 5678", { words: "kill 1234 and 5678 and nothing else" }).says).not.toContain(LINES.unasked);
+  });
+
+  it("says \"You didn't ask for this.\" after \"and nothing else\" on a step that names nothing of its own when the words ask only to look (commands-remote-w5-4)", () => {
+    for (const [cmd, words] of [
+      ["crontab -r", "show my crontab and nothing else"],
+      ["git stash drop", "run git stash list and nothing else"],
+      ["docker system prune -f", "list docker images and nothing else"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.unasked, `${cmd} / ${words}`).toBe(true);
+    }
+    // Words that ask for that kind of step, or name its program and subcommand whole, keep the line off.
+    for (const [cmd, words] of [
+      ["crontab -r", "remove my crontab and nothing else"],
+      ["git stash drop", "drop the stash and nothing else"],
+      ["npm ci", "run npm ci and nothing else"],
+      ["npm publish", "publish it and nothing else"],
+    ]) expect(decide(cmd, { words }).says, `${cmd} / ${words}`).not.toContain(LINES.unasked);
+    expect(decide("npm publish", { words: "publish it and nothing else" }).says).toContain(LINES.inexact);
+  });
+
   it("says the words ask for that kind of step when they schedule jobs or prune packages in plain words; it still asks (commands-remote-r3-2)", () => {
     for (const [cmd, words] of [
       ["crontab jobs.txt", "schedule the jobs in jobs.txt"],

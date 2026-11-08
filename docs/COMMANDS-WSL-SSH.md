@@ -166,10 +166,11 @@ Ember stops and asks before a command that:
   launchers and desktop extensions (`~/.local/share/applications`, GNOME Shell extensions), even when the file is new;
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
   downloaded in this task (also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
-  `rsync`, `cat x.py > y.py` or `tee`, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
+  `rsync`, `dd`, `cat x.py > y.py` or `tee`, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
   or a `New-Item` link, also from a pipeline (`Get-Item x.exe | Copy-Item -Destination y.exe`; when Ember can't tell
   which files a pipeline or a variable hands over, the copy counts as a download whenever the task downloaded
-  something), or with cmd's `ren`, `move`, `copy` or `mklink`, run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
+  something it could be: running a file from where it went asks, but that folder's own tools, such as `npm test` or
+  `make`, ask only when the download could be one of their files), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy` (a folder's copy keeps each download under its own name, so the folder's other files and tools are as before), run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
   by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
@@ -233,8 +234,12 @@ jobs.txt`) the card says "Your words don't name exactly this,
 so Ember checks first." instead, and a command whose program you named in full ("run npm ci") says neither. Words
 that say not to ("don't git push yet", "never force push") ask for nothing, so the card still says "You didn't ask for
 this.", typed or spoken, and so does a step on what your words leave out ("delete everything except build/" for
-`rm -r build`) or a step of the kind they rule out ("push without force" for a force push, "prepare the release
-(don't publish)" for `npm publish`, "don't (ever) delete build"). A "not" in a condition, an exception or a reminder leaves the rest as you asked it ("push my changes if
+`rm -r build`), a step of the kind they rule out ("push without force" for a force push, "prepare the release
+(don't publish)" for `npm publish`, "don't (ever) delete build") or one they say not to do by name ("delete build/
+but don't delete src/" for `rm -r src`, "kill 5678 but don't kill 1234"); "delete build/ and don't delete anything
+else" says it of every step but the one you named, and of one that does that and more (`rm -rf build dist`, or a
+force you didn't ask for), and "show my crontab and nothing else" says it of `crontab -r`, since a step that names
+nothing of its own counts as named only by its kind ("remove my crontab") or its command in full. A "not" in a condition, an exception or a reminder leaves the rest as you asked it ("push my changes if
 the tests don't fail", "delete everything in build except .gitkeep", "don't forget to push"); any "not" in your words
 still keeps Ember from announcing a step instead of asking. A
 command that asks for what it does (deleting, publishing, secrets, system changes, downloading and running code, or
@@ -262,7 +267,8 @@ that folder, for that task: any change asks again. After a "no", Ember doesn't t
 If your own words for this task asked for that kind of operation on that computer and that object, a dangerous command
 runs without a question, after an announcement: "delete build/" covers `rm -r build`, "push my branch to GitHub" covers
 `git push origin <that branch>`, "submit my changelist" covers `p4 submit -c <n>`. The bubble shows the announcement
-("Pushing feature-x to origin, as you asked.", with "It starts in 4 seconds. Ctrl+Alt+X stops everything at once." and
+("Pushing feature-x to origin, as you asked.", naming a path in the home folder from ~ as the card does: "Deleting
+~/proj/build, as you asked.", with "It starts in 4 seconds. Ctrl+Alt+X stops everything at once." and
 **Stop**), the command window shows "About to run this, as you asked" with the command, what it does and the model's
 reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop**. While another app holds the stop
 chord, both name its fallback (Ctrl+Alt+Shift+X); while another app holds that too,
@@ -288,20 +294,41 @@ voice asks ("You asked by voice. Ember can't tell your voice from what your spea
 typed words still count. Your words have to ask for it: "delete build/", "please delete
 build/", "Ember, delete build/", "can you delete build/?" and "I want to delete build/" do; a question ("should I delete build/?", "how do I push
 my branch?"), something already done ("I pushed my branch"), a maybe ("I might delete build/ later") and words about
-something else ("fix the script that deletes build/") don't, so the command asks. So do words that say not to, or
+something else ("fix the script that deletes build/") don't, so the command asks. Nor do words that hold the step
+back, since the announcement runs it now: a condition ("delete src/ only if I say so", "if the build fails, delete
+src/", "once the tests pass", "when I tell you", "in case the tests fail"), a later time ("tomorrow", "next week", "in 5
+minutes", "in 1h", "at 5pm", "at 5.30pm", "at the end of the task"), asking to be asked first ("ask me first", "check
+with me", "wait for my ok", "show me the command first", "let me see the command", "run it by me", "on my go", "hold
+off", "I'll say when") or asking how ("explain how to delete build/ and delete src/"); "tell me if it worked", "say if it
+worked", "let me know when it's done", "let me see the output", "if you can", "as soon as possible", "if it exists" and a time or
+a condition of another step of yours said after it ("delete build/ now, I'll rebuild later", "then run the tests once
+it's gone") hold nothing back, but the step itself said again with a time does ("delete build/, but run the command
+tomorrow", "… start the cleanup tomorrow"), and so does "wait, then delete build/". So do words that say not to, or
 that keep or leave something out ("don't delete build/", "delete everything but build/", "delete dist/ and keep
 build/", "instead of", "other than"), since the step may be on what you meant to keep. Only what the verb you
 asked with acts on counts, in its own part of the sentence: "kill 5678, 1234 is my editor" doesn't cover `kill 1234`,
 "stop apache and check nginx" doesn't cover stopping nginx, and "delete my old branches, main stays" (or "main and
-develop stay") doesn't cover deleting main, so those ask; "delete build/, dist/ and the cache folder" covers all three, and so do the same verb
+develop stay") doesn't cover deleting main, so those ask. Nor does a name you use only to place, describe or say
+something else of: "delete node_modules in the frontend folder" doesn't cover `rm -r frontend`, and neither do "the
+backup of the build folder", "the branches merged into main", "the children of 1234", "the process that 1234 started",
+"stop apache because nginx wants port 80", "stop apache, nginx serves the site", "kill 5678, 1234 my editor", "the
+build logs", "the process blocking 1234", "whatever is blocking 1234", "the services that depend on nginx", "the
+parent process for pid 1234" or "the branches based on main". Nor is a file whose contents you name to copy from the one
+to overwrite: "overwrite config.yml with the contents of config.yml.bak" and "save the contents of notes.txt to out.txt"
+never cover writing over config.yml.bak or notes.txt. "delete build/, dist/ and the cache folder" covers all three, and so do the same verb
 said again ("delete build/ and delete dist/", "delete build/. Delete dist/ too.") and a list after a colon ("delete
-these folders: build/ and dist/"), but never another verb ("stop apache and restart nginx" doesn't cover restarting
+these folders: build/ and dist/"), a thing after "then" or a sentence that only adds one ("stop apache, then nginx",
+"stop apache. nginx too.", "then nginx right away", "and dist/ on my machine"; "then nginx back up" or "and nginx on 80"
+asks, since that is another verb's), and "it" for the one thing you just said is hung ("1234 is hung, kill it", "nginx is
+stuck, restart it"), when "it" is all the verb acts on ("kill it already", "kill it for good", "restart it to fix it";
+"kill whatever is blocking it" asks), but never another verb ("stop apache and restart nginx" doesn't cover restarting
 apache). A pull request you numbered anywhere in your words keeps `gh pr merge` without a number asking ("look at pull
 request 45. merge the pr"), since that merges the current branch's; "check pr 45, then merge the pr" covers
 `gh pr merge 45`. A folder you place a name
 in is where it must be: "delete the build folder in dist" covers `rm -r dist/build`, never `rm -r build`, and so do
-"the build folder, which is in dist", "(the one in dist)", "from dist" and "dist's build folder"; "in my home folder"
-means the home folder. Anything broader than what you named asks: a force flag, a
+"the build folder, which is in dist", "(the one in dist)", "from dist", "the build folder of dist", "… for dist", "… at
+dist/", "in dist, delete the build folder" and "dist's build folder"; "in my home folder" means the home folder, and "at the
+root", "at this point", "at your convenience" and "of mine" name no folder. Anything broader than what you named asks: a force flag, a
 wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
 as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
 build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).
@@ -358,12 +385,20 @@ keys and click in Ember's windows (`xdotool`, `SendKeys`, `osascript` keystrokes
 it would change Ember's own safety settings, records or programs." ("it would read …" for a command that only reads
 them, such as `cat` or `Get-Content`) or "Ember won't run this: it could press keys or click in Ember's own windows."
 The same goes when a shell loop's list or a variable the command sets names them (`for f in ~/.config/ember/*; do …`,
-`d=~/.config/ember; rm -rf "$d"`, `d=~/.config; rm -rf "$d"/emb*`), and so do `set --` (`"$1"`, `"$@"`),
-`printf -v` and the text a here-string or here-document gives `read` (`while read f; do rm -rf "$f"; done <<<
+`d=~/.config/ember; rm -rf "$d"`, `d=~/.config; rm -rf "$d"/emb*`), in PowerShell too (`$d = "$env:LOCALAPPDATA\ember";
+Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do `set --` (`"$1"`, `"$@"`),
+`printf -v` and the text a here-string or here-document gives `read` or `xargs` (`while read f; do rm -rf "$f"; done <<<
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
-and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`) or a pattern before it
-could match one (`rm -rf ~/.c*/$x`). A value Ember can't see at all (a file `read` reads, a command's output) isn't
-followed: such a command asks, as any delete does.
+and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`, or a cut or a default
+of a variable, `~/.config/"${x%y}"`, which may be other text than its value) or a pattern before it could match one
+(`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is. A variable is judged where a command uses it, so one that only names Ember's
+folder to test or print it (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
+input while nothing takes what it prints (`grep -q ember <<< "$p"`, `wc -c <<< "$p"`), runs, unless it is exported to a
+program (`export p`, `set -a`) or a program gets it some other way: as its own name (`"$p/bin/ember"`), through a
+wrapper's option (`xargs -a "$p/settings.json"`, `xargs --arg-file="$p/settings.json"`), on its input (`xargs rm -rf <<< "$p"`, `read -r f <<< "$p"; rm -rf
+"$f"`, `mapfile -t a <<< "$p"; rm -rf "${a[@]}"`) or through `${p:?}`, `${p:-…}` or `${p%/}`. Handed to a program that
+may change what it names (an export, the input of a program Ember can't follow), Ember says it would change its files. A value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
+does.
 
 ### 2.7 What Copilot gets back
 
