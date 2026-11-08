@@ -15,7 +15,7 @@ import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { BubbleOwner, LOST_RECONNECTING, Presenter, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
+import { BubbleOwner, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
 import { providerDown, type ActiveProvider, type TestResult } from "../provider";
 import { keyNeeded } from "../../shared/provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
@@ -1544,8 +1544,28 @@ export class AgentHost {
     // Connected again: a notice saying why Ember couldn't answer no longer holds (one still up goes).
     if (this.status.phase === "ready" && this.unreachable !== null) { this.presenter.withdraw(this.unreachable); this.unreachable = null; }
     // Connected again after the runtime stopped: a bubble still saying it is reconnecting says it is back (rp-6).
-    if (this.status.phase === "ready" && this.reconnectingShown) { this.reconnectingShown = false; this.presenter.reconnected(LOST_RECONNECTING); }
+    if (this.status.phase === "ready" && this.reconnectingShown) {
+      this.reconnectingShown = false;
+      this.presenter.reconnected(LOST_RECONNECTING);
+      this.problemReconnected();
+    }
     this.o.onStatus(this.status);
+  }
+
+  /**
+   * Connected again after the runtime stopped: the conversation's line that said Ember was reconnecting says it is back
+   * (reliability-performance-c1-1: Home kept "ask me again in a moment" for good, under its own "Connected.").
+   */
+  private problemReconnected(): void {
+    const said = retainedConversationText(LOST_RECONNECTING).text;
+    const at = this.transcript.findLastIndex(e => e.who === "problem" && e.text === said);
+    if (at < 0) return;
+    const was = this.transcript[at];
+    const now = { ...was, ...retainedConversationText(LOST_RECONNECTED) };
+    this.transcript[at] = now;
+    if (this.unsaved.has(was)) this.unsaved.add(now);
+    this.o.onTranscript?.(this.getTranscript());
+    this.saveHistory();
   }
 
   /**

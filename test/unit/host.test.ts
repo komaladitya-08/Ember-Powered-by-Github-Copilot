@@ -107,7 +107,7 @@ import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, START_TIMEOUT_DETAIL, PROVI
 import type { ActiveProvider } from "../../app/main/provider";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
-import { Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
+import { LOST_RECONNECTED, Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
@@ -1152,6 +1152,23 @@ describe("a runtime that dies under a request (rp-6)", () => {
     expect(screen().bubble).toMatchObject({ visible: true, thought: RECONNECTED_RETRY, actions: [TRY_AGAIN] });
     expect(screen().bubble?.thought).not.toMatch(/reconnecting/i);
     expect(host.takeRetry()).toBe("Hello after the kill");
+    const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
+  });
+
+  it("says in the conversation that Ember is connected again, not that it is still reconnecting (reliability-performance-c1-1)", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    sim.onSend = () => undefined;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(host.getStatus().phase).toBe("ready");
+    // Home's conversation showed "I'm reconnecting; ask me again in a moment." for good, under its own "Connected."
+    const problems = host.getTranscript().filter(e => e.who === "problem");
+    expect(problems).toHaveLength(1);
+    expect(problems[0].text).toBe(LOST_RECONNECTED);
+    expect(LOST_RECONNECTED).toBe("Copilot stopped unexpectedly. I'm connected again: send it again.");
     const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
   });
 });

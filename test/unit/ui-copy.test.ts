@@ -1080,6 +1080,9 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     for (const reason of ["sign-in", "no-access", "models", "runtime", "other"] as const) {
       expect(composerRefusal({ phase: "error", reason })).toBe("Ember can't connect to Copilot yet: Models & connections says why. Your message is still here.");
     }
+    // Copilot stopped and Ember is reconnecting by itself: nothing in Models & connections helps (reliability-performance-v2).
+    expect(composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot stopped unexpectedly. Reconnecting…" })).toBe("Ember is reconnecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." })).toBe("Ember can't connect to Copilot yet: Models & connections says why. Your message is still here.");
     // The service in use is named, never Copilot when it isn't the one.
     expect(composerRefusal({ phase: "starting", service: { kind: "user", host: "llm.local" } })).toBe("Ember is still connecting to your model provider. Your message is still here: send it again in a moment.");
     expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "llm.example.com" } })).toBe("Ember can't reach the model service right now. Your message is still here: send it again once you're online.");

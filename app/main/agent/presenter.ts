@@ -592,6 +592,8 @@ export const TASK_IN_CORNER = "Its card in the corner shows how it's going.";
 export const STOPPED_ANSWER = "Okay, I've stopped.";
 /** What the bubble says when the runtime stopped under Ember and it reconnects by itself (host.ts lost). */
 export const LOST_RECONNECTING = "Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.";
+/** The conversation's line for that problem once Copilot is connected again (host.ts: reliability-performance-c1-1). */
+export const LOST_RECONNECTED = "Copilot stopped unexpectedly. I'm connected again: send it again.";
 /** The same bubble once Copilot is connected again (reconnected), with Try again (rp-6), or without a request to offer. */
 export const RECONNECTED_RETRY = "I'm connected again. Try again?";
 export const RECONNECTED = "I'm connected again. Ask me again.";

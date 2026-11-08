@@ -94,7 +94,8 @@ They share one emotion rig, so switching never changes behaviour.
   offers **Open settings** where settings can fix it, otherwise **Try again** where asking again is
   safe (the conversation's own request, whose turn ran no tool). A request the runtime stopped under
   before it reached the model keeps its Try again while Ember reconnects, and once Copilot is back
-  the bubble says "I'm connected again. Try again?". An answer whose turn started a task
+  the bubble says "I'm connected again. Try again?" (and Home's conversation line for it, "I'm connected again: send
+  it again."). An answer whose turn started a task
   says "Its card in the corner shows how it's going.", so the bubble and the card tell one story. Under a finished
   answer (and only that answer) the bubble may show what you might say next: a caption, "Ember suggests", then up to
   three quiet 24 px capsules (never the accent, never under a question), in its clickable area; the Ask box shows the

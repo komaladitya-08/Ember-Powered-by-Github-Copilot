@@ -7,14 +7,19 @@
  */
 import type { AgentStatus } from "./host";
 
-/** The refusal for a status whose phase isn't "ready". */
-export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service">): string {
+/**
+ * The refusal for a status whose phase isn't "ready". `detail`: the status' own words; one that ends "Reconnecting…"
+ * (host.ts lost, after the runtime stopped) means Ember is reconnecting by itself, whatever the reason.
+ */
+export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }): string {
   const it = s.service?.kind === "user" ? "your model provider" : s.service ? "the model service" : "Copilot";
   const It = it[0].toUpperCase() + it.slice(1);
   if (s.phase === "starting") return `Ember is still connecting to ${it}. Your message is still here: send it again in a moment.`;
   if (s.phase !== "error") return "Connect Ember in Models & connections, then send again.";
   // (Reconnecting now would stop the tasks at work: it waits for them, as Home's tagline says.)
   if (s.waitingForTasks) return `${It} isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.`;
+  // Copilot stopped and Ember starts it again by itself (reliability-performance-v2); "keeps stopping" waits for Check again.
+  if (s.reason === "runtime" && s.detail?.endsWith("Reconnecting…")) return `Ember is reconnecting to ${it}. Your message is still here: send it again in a moment.`;
   switch (s.reason) {
     case "network": return `Ember can't reach ${it} right now. Your message is still here: send it again once you're online.`;
     case "not-answering": return `Ember is reconnecting to ${it}. Your message is still here: send it again in a moment.`;
