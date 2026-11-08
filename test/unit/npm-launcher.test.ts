@@ -737,6 +737,79 @@ describe("starting Ember from the launcher", () => {
     process.kill(pid);
     expect(fs.readFileSync(log, "utf8")).toContain("still starting");
   });
+
+  it("leaves Ember running and returns 0 when a full disk takes its start log's pid line, instead of Node's \"ENOSPC\" (install-docs-r4-2)", async () => {
+    const out = sink(), err = sink();
+    const d = tempDir(), log = path.join(d, "start.log"), pidFile = path.join(d, "pid");
+    const cmd = fakeEmber(`require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 30_000);`);
+    const real = fs.writeSync;
+    // As a disk with no room left answers the first write into the new log.
+    const write = vi.spyOn(fs, "writeSync").mockImplementation(((fd: number, data: unknown, ...rest: unknown[]) => {
+      if (typeof data === "string" && data.startsWith("pid ")) throw Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC", syscall: "write" });
+      return (real as (...a: unknown[]) => number)(fd, data, ...rest);
+    }) as never);
+    let pid = 0;
+    try {
+      const code = await start(cmd, { attached: false, stdout: out.stream, stderr: err.stream, log, earlyMs: 1000 });
+      expect(code).toBe(0);
+      expect(err.text()).toBe("");
+      pid = Number(fs.readFileSync(pidFile, "utf8"));
+      expect(() => process.kill(pid, 0)).not.toThrow();
+    } finally {
+      write.mockRestore();
+      if (pid > 0) try { process.kill(pid); } catch { /* already gone */ }
+    }
+  });
+
+  // /dev/full fails every write with ENOSPC, as a full disk does: the start log made a link to it.
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64" || !fs.existsSync("/dev/full"))("says it started Ember and gives the terminal back when the disk is too full for the start log, as Ember keeps running (install-docs-r4-2)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const v = packageVersion(), asset = `Ember-${v}-x86_64.AppImage`;
+    // A stand-in AppImage that runs for 12 s and says where it is.
+    const body = "#!/bin/sh\necho $$ > \"$EMBER_TEST_PID\"\nexec sleep 12\n";
+    const server = await serve({ [`/v${v}/${asset}`]: body, [`/v${v}/SHA256SUMS`]: `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` });
+    const cache = tempDir(), pidFile = path.join(tempDir(), "pid");
+    let pid = 0;
+    try {
+      await ensureInstalled({ version: v, platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, ...noNpmrc } });
+      fs.symlinkSync("/dev/full", path.join(cache, `.${v}-start.log`));
+      const at = Date.now();
+      const run = runLauncher([], { EMBER_NPM_CACHE: cache, DISPLAY: ":99", EMBER_TEST_PID: pidFile, ...noNpmrc });
+      const ended = await run.ended;
+      const took = Date.now() - at;
+      pid = Number(fs.readFileSync(pidFile, "utf8"));
+      expect(run.err()).not.toContain("ENOSPC");
+      expect(run.err()).toContain(`ember-copilot: started Ember ${v}\n`);
+      expect(ended.code).toBe(0);
+      // The 3 s watch, not the stand-in's 12 s: the terminal is given back while Ember runs.
+      expect(took).toBeLessThan(10_000);
+      expect(() => process.kill(pid, 0)).not.toThrow();
+    } finally {
+      if (pid > 0) try { process.kill(pid); } catch { /* already gone */ }
+      await server.close();
+    }
+  }, 30_000);
+
+  it("says there isn't room, and where, when the disk is too full to make the start log, instead of Node's \"ENOSPC\" (install-docs-r4-2)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const v = packageVersion(), asset = `Ember-${v}-x86_64.AppImage`, body = "#!/bin/sh\nexit 0\n";
+    const server = await serve({ [`/v${v}/${asset}`]: body, [`/v${v}/SHA256SUMS`]: `${createHash("sha256").update(body).digest("hex")}  ${asset}\n` });
+    const cache = tempDir();
+    const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, DISPLAY: ":99", ...noNpmrc };
+    const real = fs.openSync;
+    const open = vi.spyOn(fs, "openSync").mockImplementation(((file: fs.PathLike, ...rest: unknown[]) => {
+      if (String(file).endsWith("-start.log")) throw Object.assign(new Error(`ENOSPC: no space left on device, open '${String(file)}'`), { code: "ENOSPC", syscall: "open", path: String(file) });
+      return (real as (...a: unknown[]) => number)(file, ...rest);
+    }) as never);
+    try {
+      await ensureInstalled({ version: v, platform: "linux", arch: "x64", env });
+      const r = await captured(() => main([], { platform: "linux", env }).then(c => c, (e: Error) => e));
+      expect((r.result as Error).message).toBe(`There isn't room in ${cache} for Ember ${v}: the disk is full (ENOSPC). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run 'ember' again.`);
+    } finally {
+      open.mockRestore();
+      await server.close();
+    }
+  });
 });
 
 describe("the launcher's own answers", () => {

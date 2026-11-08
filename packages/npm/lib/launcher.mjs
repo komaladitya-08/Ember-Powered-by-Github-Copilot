@@ -904,7 +904,12 @@ export async function startWatched(cmd, o) {
       c.once("error", err => reject(new Error(`starting ${cmd.file} failed: ${err.message}`)));
       c.once("spawn", () => resolve(c));
     });
-    fs.writeSync(fd, `pid ${child.pid}\n`);
+    try {
+      fs.writeSync(fd, `pid ${child.pid}\n`);
+    } catch {
+      // No room for it (a disk that filled since Ember was installed): Ember has started all the same, and is watched
+      // and let go as ever, so the start isn't said as a failure, nor the terminal held until Ember quits (install-docs-r4-2).
+    }
   } finally {
     fs.closeSync(fd);
   }
@@ -1038,7 +1043,10 @@ export async function main(argv, o = {}) {
   const p = platform === "win32" ? pathWin32 : pathPosix;
   const log = p.join(p.dirname(installed.dir), `.${version}-start.log`);
   if (mode.attached && platform === "darwin") return await doctorMac(installed, mode.args, log);
-  const { code, stayed } = await startWatched(launchCommand(platform, installed, mode.args), { attached: mode.attached, log, earlyMs: o.earlyMs });
+  const { code, stayed } = await startWatched(launchCommand(platform, installed, mode.args), { attached: mode.attached, log, earlyMs: o.earlyMs }).catch(err => {
+    // A disk too full to make the start log in the cache folder, said as this computer's (install-docs-r4-2).
+    throw ROOM.has(err?.code) ? new Error(noRoom(err, { folder: p.dirname(installed.dir), version, name }), { cause: err }) : err;
+  });
   if (!mode.attached && code === 0) {
     // Is this version what runs now? Still running after the watch, or its folder in a running command line (a Mac's
     // open(1) ends at once). Otherwise it handed over to an Ember already running (install-docs-c2-3).

@@ -2393,7 +2393,9 @@ cache folder and the lock to writing the marker, names the cache folder and, onc
 `ember doctor` and `ember --doctor`
 run attached (`runMode()`, `start()`: the report and the exit code reach the terminal; on a Mac through `open -W
 --stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an
-Ember that stops at once is reported with what it said and its exit code. The AppImage's AppRun and the RPM's `ember`
+Ember that stops at once is reported with what it said and its exit code. The log's `pid` line is written best-effort,
+so a disk that filled since the install neither fails a start that worked nor holds the terminal until Ember quits; a
+disk too full to make the log is `noRoom()`'s sentence. The AppImage's AppRun and the RPM's `ember`
 take `--doctor` as well as `doctor`, and `--help`/`-h` (the launcher answers those itself with `usage()`, since Ember.exe
 and Ember.app have none). On Linux without `DISPLAY`, a plain start says so in the launcher's own words (`noDisplay()`,
 naming the command as it was run) before downloading anything. Once a plain start has kept running past its 3 s watch
