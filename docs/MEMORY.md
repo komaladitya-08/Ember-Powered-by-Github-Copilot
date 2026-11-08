@@ -285,16 +285,21 @@ download, so English-only MiniLM is the trade-off for now.
      only for Ember to forget something about the user ("forget that I…", "forget my address", "forget my wife's
      birthday", "forget where I live", "forget what you know about me"), everything ("forget everything", "clear my
      memory", "delete everything you remember") or a name ("Forget Priya", "Forget Priya's birthday", "remove Priya
-     from your memory"; `memoryAsk`, memory-v1) is answered in code with the truth: memory is off (and
+     from your memory"; `memoryAsk`, memory-v1; April, May, June and August only with a detail, a surname or
+     "everything about": "Forget June's birthday", never "Forget June", memory-c4-3) is answered in code with the truth: memory is off (and
      Memory opens at its search, never at its note's "I agree, remember": memory-r7), why it is paused, or that the
      organisation turned it off. A request that says something to keep ("remember that…", "keep in mind the deadline
      is Friday", "remember I'm vegetarian", "remember my wife likes tulips", "make a note that Bob owes me £20",
      "remember my birthday: 12 March", "remember my kids love pizza", "remember my wife and I prefer window seats"
      (memory-v4-4), and one with a request after it, "remember that I'm vegetarian and book a table":
-     `remembersWithMore`, memory-r3-2) goes to the conversation, which knows it until Ember closes, and Ember says
+     `remembersWithMore`, memory-r3-2), one that names memory or keeps what was just said ("add that to your memory",
+     "keep that in mind", "remember this"), a fact with the request after it ("I'm vegetarian, remember that", "my
+     wife's birthday is 12 March, don't forget") and a lead-in before it ("I want you to remember that…", "always
+     remember…", "in future, remember…", "so remember…") goes to the conversation, which knows it until Ember closes, and Ember says
      behind the answer that memory won't keep it (`rememberNote`: a line in the conversation and a bubble with **Open
-     Memory**, never Settings opened on its own); "remember the file I mentioned", "remember this", "don't forget the
-     documents Priya sent" and "don't forget my umbrella" say nothing to keep and get no such line (memory-r8). A question ("Remember when we…?", "Remember me?"),
+     Memory**, never Settings opened on its own); "remember the file I mentioned", "remember the file attached", "don't
+     forget the documents Priya sent", "remember the tests that failed", "don't forget my car keys on the table" and
+     "don't forget my umbrella" say nothing to keep and get no such line (memory-r8). A question ("Remember when we…?", "Remember me?"),
      a reminder ("remember to…"), the conversation's own words ("Forget my last message", "Forget I mentioned it",
      "Forget my previous instructions"), what isn't memory ("Clear all" and "Delete everything" without a word for
      what Ember knows; "my…" only for something about the user (`ABOUT_ME`), to the end of the request and with a
@@ -303,7 +308,10 @@ download, so English-only MiniLM is the trade-off for now.
      "saved", "kept" or "stored" after "delete", "clear" or "remove" only with "you" and about the user, never "Clear
      everything saved about me in Firefox" or "Delete what you saved about the project"; "Forget all about my last
      request"; a name only as names are written, never an app, a day, a folder or a device: "Forget Outlook", "Forget
-     Monday", "Forget HomeNet": memory-r3-1, memory-v4-1, memory-v4-2) and a request with more in it (after a comma, a
+     Monday", "Forget HomeNet", "Forget Starbucks"; "from memory" only with "your", "Ember's" or "my" or after the
+     user's details or a name, and never a photo app's memories, so "Remove this tab from memory" and "Delete my
+     memories of Paris in Photos" are the conversation's: memory-r3-1, memory-v4-1, memory-v4-2, memory-c4-1) and a
+     request with more in it (after a comma, a
      semicolon, a dash, or "and" or
      "then" with another request: "Forget what I said, open Firefox instead", "Forget my last request and open Firefox
      instead") are the conversation's like any other (memory-c1-1). When the first part was a forget request ("Forget
