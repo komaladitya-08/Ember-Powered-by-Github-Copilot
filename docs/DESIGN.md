@@ -237,7 +237,7 @@ Ember is two places at once, each for one kind of work.
   - its plan, a dot per step (`report_progress`'s `plan` and `now`): done, under way (the accent, weight 600), to come
     (the step a failed or stopped task was on keeps its weight in red or grey, not the accent);
   - **Details**: up to six rows of what it did (steps of one kind in a row folded together, "Read the window 3 times in
-    Settings", and a read that sent a picture of it apart, "Sent the model a picture of the window in Firefox"; a refusal with policy's reason; a question and how it was answered; the worker's notes, marked as
+    Settings", and a read that sent a picture of it apart, "Sent the model a picture of the window in Firefox"; a refusal with policy's reason, or Ember's own (a password prompt open, the accessibility helper not working); a question and how it was answered; the worker's notes, marked as
     its words), each with a static state symbol and when it happened. Closed until the user opens it, kept open by
     task id across updates;
   - when it ends, what it found or made, as a **view**, and on a failure, or a question that ran out of time while the

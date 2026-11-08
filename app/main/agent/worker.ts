@@ -1404,6 +1404,8 @@ export class Worker {
     const w = this.place ? null : this.d.cursor?.activeWindow?.();
     if (!w || !this.sys.privacy.isSecurityWindow(w)) return null;
     this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
+    // Its card's row says why, in Ember's words (tasks-approvals-r3-4).
+    this.activity({ type: "refused", reason: "an authentication prompt has the keyboard" });
     return denied(AUTH_PROMPT_OPEN);
   }
 
@@ -2350,6 +2352,7 @@ export class Worker {
     if (p.authPrompt) {
       const key = promptKey(p.authPrompt);
       this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: PROMPT_REASON[key] });
+      this.activity({ type: "refused", reason: PROMPT_REASON[key] });
       return denied(PROMPT_REFUSAL[key]);
     }
     if (p.blocked) {
@@ -4160,7 +4163,9 @@ export class Worker {
       // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2), and a helper that
       // can't work here as the helper (reliability-performance-r2-1).
       const unchecked = dialog === "unchecked" ? "unchecked" : !why && await this.promptUnchecked();
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open") });
+      const reason = why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open");
+      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason });
+      this.activity({ type: "refused", reason });
       return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
         : unchecked ? PROMPT_REFUSAL[unchecked]
           : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
@@ -4527,6 +4532,9 @@ export class Worker {
     if (!open) return null;
     const key = promptKey(open);
     this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: PROMPT_REASON[key] });
+    // Its card's row and Home's say why (Ember's words, never screen text), not only that the step was tried
+    // (tasks-approvals-r3-4).
+    this.activity({ type: "refused", reason: PROMPT_REASON[key] });
     return denied(PROMPT_REFUSAL[key]);
   }
 

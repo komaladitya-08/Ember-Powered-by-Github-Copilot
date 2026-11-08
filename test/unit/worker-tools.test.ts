@@ -1937,6 +1937,44 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     expect(asked).toEqual(["Borrow your keyboard to fill 1 cell in gedit: B5 “42”?"]);
   });
 
+  it("tells the task's card why each step it refused for this was refused, in Ember's own words, so its row reads “Not allowed: …”, never only “Tried to …” (tasks-approvals-r3-4)", async () => {
+    let prompt: false | true | "unchecked" | "helper" = false;
+    const made = makeWorker({ promptOpen: () => prompt, launches: { name: "Untitled Document 1", app: "gedit" }, onAction: () => ({ ok: true, after: null }) });
+    await made.call("perceive_window", {});
+    const refusals = () => made.activity.filter(e => e.type === "refused").map(e => e.reason);
+    // By accessibility, opening an app and listing the windows, for each of promptOpen's answers.
+    for (const now of [true, "unchecked", "helper"] as const) {
+      prompt = now;
+      expect((await made.call("click", { id: 1 })).resultType).toBe("denied");
+    }
+    prompt = true;
+    expect((await made.call("open_app", { name: "gedit" })).resultType).toBe("denied");
+    expect((await made.call("list_windows", {})).resultType).toBe("denied");
+    expect(refusals()).toEqual(["an authentication prompt is open", "Ember couldn't tell whether a password prompt was open", "Ember's accessibility helper isn't working",
+      "an authentication prompt is open", "an authentication prompt is open"]);
+    // A look the shell's prompt stopped (perceive reads nothing).
+    const d = (made.w as unknown as { d: { perception: { perceive: () => Promise<unknown> } } }).d;
+    d.perception.perceive = async () => ({ authPrompt: "helper" });
+    expect((await made.call("perceive_window", {})).resultType).toBe("denied");
+    expect(refusals().at(-1)).toBe("Ember's accessibility helper isn't working");
+    // The borrow: an authentication window with the keyboard, and a system dialog on the screen.
+    let pinentry = true;
+    const borrow = makeWorker({ activeWindow: () => pinentry ? { app: "pinentry", title: "Passphrase" } : { app: "gedit", title: "notes.txt" }, systemDialogOpen: () => !pinentry, states: () => ["enabled", "focused"] });
+    await borrow.call("perceive_window", {});
+    expect((await borrow.call("press_keys", { keys: "ctrl+b" })).resultType).toBe("denied");
+    pinentry = false;
+    expect((await borrow.call("press_keys", { keys: "ctrl+b" })).resultType).toBe("denied");
+    expect(borrow.activity.filter(e => e.type === "refused").map(e => e.reason)).toEqual(["an authentication prompt has the keyboard", "a system dialog is open"]);
+    // So the card's row says why: Ember's words, never a step that only "tried".
+    const { ActivityLog } = await import("../../app/main/agent/activity");
+    const log = new ActivityLog(0);
+    log.add({ type: "tool-start", id: "c1", tool: "open_app" }, 10);
+    for (const e of made.activity.filter(e => e.type === "refused").slice(2, 3)) log.add(e as never, 20);
+    log.add({ type: "denied" }, 20);
+    log.add({ type: "tool-end", id: "c1", ok: false }, 30);
+    expect(log.card().rows.map(r => [r.state, r.words])).toEqual([["stopped", "Not allowed: Ember's accessibility helper isn't working"]]);
+  });
+
   it("lists no window's title, and reads none, until it's done", async () => {
     const { call } = makeWorker({ promptOpen: () => true });
     expect(await call("list_windows", {})).toMatchObject({ resultType: "denied", textResultForLlm: expect.not.stringMatching(/notes\.txt|gedit/) });
