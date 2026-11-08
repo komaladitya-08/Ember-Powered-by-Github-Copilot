@@ -80,6 +80,11 @@ const field = input.parentElement!;
 const listenRow = document.getElementById("listen-once-row")!;
 let suggested: string[] = [];
 /**
+ * What main offers now, while the field holds a draft (companion-r2-1, companion-c2-2): the chips are put away then
+ * (keeping their room), so the change waits until the field is cleared, and the field never jumps while it is typed in.
+ */
+let offered: string[] | null = null;
+/**
  * The window opens with one field row and two rows for the comfortable Listen once control, plus any wait tip.
  */
 let shownRows = 3;
@@ -161,6 +166,7 @@ window.emberAsk.onListenOnce(showListenOnce);
  * the first letter moved the field 48 px down).
  */
 function showSuggestions(list: string[]): void {
+  offered = null;
   suggested = list.slice(0, 3);
   for (const b of [...suggest.querySelectorAll("button")]) b.remove();
   for (const text of suggested) {
@@ -173,6 +179,7 @@ function showSuggestions(list: string[]): void {
   syncSuggestions();
 }
 function syncSuggestions(): void {
+  if (offered && input.value.trim() === "") { showSuggestions(offered); return; }
   suggest.hidden = !suggested.length;
   suggest.classList.toggle("away", input.value.trim() !== "");
 }
@@ -286,6 +293,16 @@ function showUnavailable(word: string | undefined, live: boolean): void {
 /** The quick look found nothing to show and no computer is named: the line is just its keys (and any line above). */
 let quiet = false;
 window.emberAsk.onUnavailable?.(w => showUnavailable(w ?? undefined, true));
+// What the open box suggests changed (a question came or went, or the answer they follow went): the chips follow, at
+// once while the field is empty, else once it is cleared (they are put away meanwhile and take no click).
+window.emberAsk.onSuggestions?.(list => {
+  if (input.value.trim() !== "") { offered = list; return; }
+  // A chip that had the keyboard goes: the field has it, not the page.
+  const had = suggest.contains(document.activeElement);
+  showSuggestions(list);
+  if (had) input.focus();
+  fit();
+});
 // Typed while the box was opening: it goes where the caret is, as if typed here.
 window.emberAsk.onTyped(t => {
   if (t.cancel) { window.emberAsk.close(); return; }

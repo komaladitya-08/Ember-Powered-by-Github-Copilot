@@ -27,7 +27,7 @@ import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } fr
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult, type RetryResult } from "../shared/ipc";
-import { OVERLAY, IDLE_BUBBLE, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
+import { OVERLAY, IDLE_BUBBLE, askSuggestions, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
@@ -676,9 +676,13 @@ function start(): void {
   let deskInControl = false;
   /** The task cards changed: Home's Task activity hears of it (set once the agent's handlers are, below). */
   let tasksShown = () => { /* nothing to tell until then */ };
+  /** What the Ask box offers may have changed: an open box hears of it (set once the box is made, below). */
+  let askOffersChanged = () => { /* no box yet */ };
   const showState = (next: Partial<EmberState>) => {
     lastState = { ...lastState, ...next };
     if (next.tasks) tasksShown();
+    // The answer its chips follow went, or a new one came (companion-c2-2).
+    if (next.bubble || "suggest" in next) askOffersChanged();
     // Shown just for an answer the user asked for while Ember was hidden: hidden again once it's read.
     if (hidesAgainAfter(shownForAnswer, next)) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
     overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
@@ -1030,6 +1034,8 @@ function start(): void {
     voice?.questionUp(q !== null);
     // "Answer Ember's question first." comes and goes with it (Listen once takes no press while it holds: companion-3).
     syncListenOnce();
+    // So do the Ask box's suggestions: "Yes, please" there would only seem to answer it (companion-r2-1).
+    askOffersChanged();
     targets?.questionChanged(q);
     presenceChanged();
     stepAside();
@@ -1281,6 +1287,12 @@ function start(): void {
    * user's own words, and what they might say next. Made once the stores it reads are (below).
    */
   let personalRef: PersonalVoice | null = null;
+  /**
+   * What the Ask box suggests now (askSuggestions): none while a question is up, and those that follow the answer only
+   * while it shows (companion-r2-1, companion-c2-2).
+   */
+  const askOffers = () => askSuggestions(lastState, personalRef?.current() ?? [], !!confirmer?.waiting);
+  askOffersChanged = () => askWindow.setSuggestions(askOffers());
   /** When the latest request went (for the task it may have started), and the latest reply's words. */
   let askedAt = 0;
   let lastReply = "";
@@ -1357,7 +1369,7 @@ function start(): void {
         sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened), listenOnce: listenOnceStatus("ask"),
         // Why a request would go unanswered now (not connected, offline): said before it is typed (companion-6).
         unavailable: unansweredWord(agent?.getStatus()) ?? undefined,
-        ...(personalRef?.current().length ? { suggestions: personalRef.current().map(s => s.text) } : {}),
+        ...(askOffers().length ? { suggestions: askOffers() } : {}),
       }, source),
     });
     const read = askContextRead = callContext;
@@ -2664,8 +2676,9 @@ function start(): void {
     sendToHome(IPC.focusSection, "voice:voice-download");
   });
   // One of Ember's suggestions chosen in the Ask box: only one it offers now, sent as Ember's words the user chose.
+  // Never while a question is up, nor one that followed an answer no longer shown (companion-r2-1, companion-c2-2).
   ipcMain.on(IPC.askSuggestion, (event, text: unknown) => {
-    if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;
+    if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text) || !askOffers().includes(text)) return;
     askWindow.hide();
     log.info("ask.suggestion");
     void askEmber(text, { suggested: true });
@@ -2901,7 +2914,7 @@ function start(): void {
     // Made now (hidden), so the ask shortcut opens it at once: a box still loading took the first letters typed. Agreed
     // to later (the first run), it is made then (review #78).
     if (consented()) askWindow.prepare();
-    settings.onChange(() => { if (consented()) askWindow.prepare(); });
+    settings.onChange(() => { if (consented()) askWindow.prepare(); askOffersChanged(); });
     // Where the pointer is, in global DIP, and the buttons held: from the window system (X11's XQueryPointer reports
     // physical pixels; Electron's position can be stale there), else Electron's.
     const cursor = () => {

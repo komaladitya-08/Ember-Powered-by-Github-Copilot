@@ -374,6 +374,17 @@ describe("what the user might say next (predict.ts)", () => {
     expect(predictNext({ ...base, lastRequest: "Archive the first email", task: { status: "done" } }, risky).map(s => s.text)).toContain("Do the same for the next one");
   });
 
+  it("marks the ones that answer or follow the reply, which mean something only while it shows (companion-c2-2)", () => {
+    const follows = (p: Partial<PredictInput>) => Object.fromEntries(predictNext({ ...base, ...p }, risky).map(s => [s.text, s.follows === true]));
+    expect(follows({ lastRequest: "Shall I?", lastReply: "Want me to add a world clock?" })).toMatchObject({ "Yes, please": true, "No, thanks": true });
+    expect(follows({ lastRequest: "Open my notes", lastReply: "Opened Notes." })).toMatchObject({ "Close it": true });
+    expect(follows({ lastRequest: "Summarise this email", lastReply: "x".repeat(80), spoken: false })).toMatchObject({ "Read it out": true });
+    expect(follows({ lastRequest: "Tidy up", task: { status: "failed" } })).toMatchObject({ "What went wrong?": true });
+    // A request said twice and the time of day's stand on their own; so does turning off what was turned on, by name.
+    expect(follows({ lastRequest: "Check the weather", lastReply: "Sunny.", history: ["Open the report", "Open the report"], hour: 18 })).toEqual({ "Open the report": false, "Turn on night light": false, "Remind me in an hour": false });
+    expect(follows({ lastRequest: "Turn on night light", lastReply: "Night light is on." })).toMatchObject({ "Turn night light off": false });
+  });
+
   it("never suggests a risky step unless the user's own last words were about it", () => {
     const people = ["Priya"];
     expect(predictNext({ ...base, lastRequest: "Draft a reply to Sam", people }, risky).some(s => risky(s.text))).toBe(false);
@@ -695,7 +706,8 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
     expect(start).toContain("lastAskByVoice = turn.spoken && !turn.manual;");
   });
   it("takes an Ask box suggestion only if it offers it now, and sends it as Ember's words the user chose (review of #145)", () => {
-    expect(MAIN).toContain('if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;\n    askWindow.hide();\n    log.info("ask.suggestion");\n    void askEmber(text, { suggested: true });');
+    // (And never while a question is up, nor one that followed an answer no longer shown: companion-r2-1, companion-c2-2.)
+    expect(MAIN).toContain('if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text) || !askOffers().includes(text)) return;\n    askWindow.hide();\n    log.info("ask.suggestion");\n    void askEmber(text, { suggested: true });');
   });
   it("keeps a retried suggestion (or one heard unchecked) what it was: Try again resubmits it with its provenance (review of #145)", () => {
     expect(MAIN).toContain("let recentAsks: { text: string; voiceUnchecked?: boolean; suggested?: boolean }[] = [];");

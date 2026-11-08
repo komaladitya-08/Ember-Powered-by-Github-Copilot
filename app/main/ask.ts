@@ -554,7 +554,8 @@ export class AskWindow {
 
   /** What Ember will read, once the quick look at the screen is done. */
   setContext(context: AskContext): void {
-    this.context = { ...context, listenOnce: this.context.listenOnce };
+    // (What it suggests stays as the opening or setSuggestions left it: only those change the chips.)
+    this.context = { ...context, listenOnce: this.context.listenOnce, ...(this.context.suggestions ? { suggestions: this.context.suggestions } : {}) };
     this.sendContext();
   }
 
@@ -568,6 +569,19 @@ export class AskWindow {
     this.context = { ...this.context, unavailable: word };
     if (this.win && !this.win.isDestroyed() && this.win.isVisible() && !this.win.webContents.isLoading()) {
       this.win.webContents.send(IPC.askUnavailable, word ?? null);
+    }
+  }
+
+  /**
+   * What the open box suggests now (main's askSuggestions) changed: a question came or went, or the answer they follow
+   * went (companion-r2-1, companion-c2-2). Only the chips change, and only in an open box: each opening brings its own.
+   */
+  setSuggestions(list: string[]): void {
+    const now = list.slice(0, 3);
+    if (JSON.stringify(now) === JSON.stringify(this.context.suggestions ?? [])) return;
+    this.context = { ...this.context, suggestions: now };
+    if (this.win && !this.win.isDestroyed() && this.win.isVisible() && !this.win.webContents.isLoading()) {
+      this.win.webContents.send(IPC.askSuggestions, now);
     }
   }
 

@@ -28,6 +28,8 @@ interface Harness {
   shape: { x: number; y: number; width: number; height: number }[] | null;
   context(c: AskContext): void;
   unavailable(word: string | null): void;
+  /** What the open box suggests now (main's askSuggestions, as it changes). */
+  suggestions(list: string[]): void;
   typed(t: Typed): void;
   hidden(): void;
   listen(s: ListenOnceStatus): void;
@@ -57,7 +59,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       await route.fulfill({ body: fs.readFileSync(file), contentType });
     });
     await page.addInitScript(() => {
-      const state: Harness = { rows: 3, calls: [], closes: 0, listens: 0, voiceSettings: 0, shape: null, context() {}, unavailable() {}, typed() {}, hidden() {}, listen() {} };
+      const state: Harness = { rows: 3, calls: [], closes: 0, listens: 0, voiceSettings: 0, shape: null, context() {}, unavailable() {}, suggestions() {}, typed() {}, hidden() {}, listen() {} };
       (window as unknown as TestWindow).askHarness = state;
       window.emberAsk = {
         ask: text => { state.calls.push({ kind: "ask", text }); },
@@ -66,6 +68,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
         fit: rows => { state.rows = rows; },
         onContext: fn => { state.context = fn; },
         onUnavailable: fn => { state.unavailable = fn; },
+        onSuggestions: fn => { state.suggestions = fn; },
         onTyped: fn => { state.typed = fn; },
         onHidden: fn => { state.hidden = fn; },
         onListenOnce: fn => { state.listen = fn; },
@@ -390,6 +393,45 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       await page.locator("#q").press("Backspace");
       expect(await chips.first().isVisible()).toBe(true);
       expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.rows)).toBe(rows);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("puts its suggestions away while a question is up, and back once it is answered, never moving a draft being typed (companion-r2-1)", async () => {
+    const page = await pageAt();
+    try {
+      const harness = () => page.evaluate(() => (window as unknown as TestWindow).askHarness);
+      const offer = (list: string[]) => page.evaluate(list => (window as unknown as TestWindow).askHarness.suggestions(list), list);
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions: ["Yes, please", "No, thanks"], listenOnce: { phase: "ready", detail: "" } }));
+      await fit(page);
+      const chips = page.locator("#suggest button");
+      const rows = (await harness()).rows;
+      expect(await chips.count()).toBe(2);
+      // A keyboard user is on "Yes, please" when a task asks: the chips go, the field has the keyboard, the box a row less.
+      await chips.first().focus();
+      await offer([]);
+      await fit(page);
+      expect(await chips.count()).toBe(0);
+      expect(await page.locator("#suggest").isVisible()).toBe(false);
+      expect(await page.locator("#q").evaluate(e => e === document.activeElement)).toBe(true);
+      const without = (await harness()).rows;
+      expect(without).toBeLessThan(rows);
+      // Answered: what stands on its own comes back.
+      await offer(["Remind me in an hour"]);
+      await fit(page);
+      expect(await chips.allTextContents()).toEqual(["Remind me in an hour"]);
+      expect((await harness()).rows).toBe(rows);
+      // A question comes while a reply is typed: the chips are already put away and keep their room, so nothing moves;
+      // they go once the field is cleared, and none of them can be clicked or reached meanwhile.
+      await page.locator("#q").fill("add one for Sydney too");
+      await offer([]);
+      await fit(page);
+      expect((await harness()).rows).toBe(rows);
+      expect(await page.getByRole("button", { name: "Remind me in an hour", exact: true }).count()).toBe(0);
+      await page.locator("#q").fill("");
+      await fit(page);
+      expect(await chips.count()).toBe(0);
+      expect((await harness()).rows).toBe(without);
+      expect((await harness()).calls).toEqual([]);
     } finally { await page.close(); }
   }, 30_000);
 
