@@ -202,6 +202,16 @@ describe("the sign-in step", () => {
     expect(SKIP_OWN).toBe("You can go on for now and check it later in Settings › Models & connections. Until I'm connected, I can't answer or act.");
   });
 
+  it("says it is using a provider elsewhere, as the line under it does, and connected only to one on this computer (first-run-r3-2)", () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const away = signInText({ managed: false, own: "api.example.com", ownPhase: "ready" });
+    expect(away.lead).toBe("I'm using the model provider you set up (api.example.com), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.");
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service }).line).toBe("Using your own provider (api.example.com).");
+    const near = signInText({ managed: false, own: "localhost:11434", ownPhase: "ready" });
+    expect(near.lead).toBe("I'm connected to the model provider you set up (localhost:11434), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.");
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host: "localhost:11434" } }).line).toBe("Connected to your own provider (localhost:11434).");
+  });
+
   it("never offers sign-in with the organisation's own service, under lockdown, or when the policy refused (review of #124)", () => {
     expect(signInText({ managed: true }).title).toBe("Connecting to your organisation's service");
     expect(signInText({ managed: false })).toBe(STEP_TEXT["sign-in"]);

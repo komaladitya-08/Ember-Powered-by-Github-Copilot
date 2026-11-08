@@ -178,7 +178,8 @@ export function signInText(o: { managed: boolean; locked?: boolean; held?: boole
   if (o.own) {
     const lead = o.ownPhase === "starting" ? `I'm connecting to the model provider you set up (${o.own}). You can change it later in Settings › Models & connections.`
       : o.ownPhase === "error" ? `I can't connect to the model provider you set up (${o.own}) yet: the line below says why. You can check its details here, or later in Settings › Models & connections.`
-        : `I'm connected to the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.`;
+        // A host elsewhere wasn't contacted at the start: "using", as the line under it says (first-run-r3-2).
+        : `I'm ${onThisComputer(o.own) ? "connected to" : "using"} the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.`;
     return { title: "Your own model provider", lead };
   }
   if (o.ownOffered === false) return { ...STEP_TEXT["sign-in"], lead: STEP_TEXT["sign-in"].lead.replace(OWN_OFFER, "") };
