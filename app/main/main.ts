@@ -60,6 +60,7 @@ import { taskNotice } from "./agent/tasks";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
+import { HelperWatch } from "./helper-watch";
 import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type ShortcutDef, type ShortcutId } from "../shared/shortcuts";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
@@ -264,6 +265,8 @@ let shortcutsTaken: string[] | undefined;
 let questionTaken: string[] = [];
 /** The shared accessibility host's status (Windows, macOS): undefined until asked, null when it didn't answer. */
 let helper: HelperStatus | null | undefined;
+/** Asks the shared host for it again (Windows, macOS) once the host is made; null on Linux (reliability-performance-c4-1). */
+let helperWatch: HelperWatch | null = null;
 
 /** The setup-check fixes the user applied while Ember runs (some rows then say what comes next, review #98). */
 let fixesApplied: readonly FixId[] = [];
@@ -310,6 +313,11 @@ const signInWith = (): SignInWith => githubClientId() ? "github" : "github-cli";
 
 /** How long Ember's windows get to come up before a saved sign-in is read on macOS (the keychain may ask; ms). */
 const KEYCHAIN_PAUSE_MS = 800;
+/**
+ * How long Check again waits for the shared host's status (Windows, macOS), as long as Linux's look: a bridge starting
+ * again can take 20 s, and its answer then lands for the next read of the rows (reliability-performance-c4-1).
+ */
+const HELPER_RECHECK_MS = 6000;
 
 // Packaged builds ship the sidecar under resources/; development runs it from the repo.
 const sidecarScript = () => app.isPackaged
@@ -601,6 +609,8 @@ function start(): void {
     // (reliability-performance-r2: a hung pyatspi import froze Ember for 5 s). Its look gives up after 5 s.
     const targetRows = targetChecks(fresh);
     if (fresh && sys.lookAgain) await Promise.race([sys.lookAgain().catch(() => undefined), new Promise(r => setTimeout(r, 6000))]);
+    // Windows and macOS: the shared host's status, which was asked once after start, is asked now (reliability-performance-c4-1).
+    if (fresh && helperWatch) await helperWatch.again();
     return withTargetChecks(readEnvironment(fresh), await targetRows);
   };
   ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => ({
@@ -3096,10 +3106,19 @@ function start(): void {
     const seenBy = wrapForWsl(sidecar, wslOptions);
     const wsSeen = ws && wrapWindowsForWsl(ws, wslOptions);
     wsSeenRef = wsSeen;
-    // The host's status for the setup checks (why it couldn't start, PowerShell's language mode), asked once, after
-    // the cold start (and later still at login, so the probe stays out of the way of everything else starting).
+    // The host's status for the setup checks (why it couldn't start, PowerShell's language mode), asked after the cold
+    // start (and later still at login, so the probe stays out of the way of everything else starting), then again on
+    // Check again and when reads find the helper can't work while the row says it does, or the reverse
+    // (reliability-performance-c4-1). Every request's outcome is told to the watch.
     if (launch) {
-      setTimeout(() => sidecar.status().then(st => { helper = toHelperStatus(st); }, err => { helper = helperStatusOfError(err); }), atLogin ? 60_000 : 10_000).unref();
+      const watch = helperWatch = new HelperWatch({
+        ask: () => sidecar.status().then(st => { helper = toHelperStatus(st); }, err => { helper = helperStatusOfError(err); }),
+        row: () => helper, waitMs: HELPER_RECHECK_MS,
+      });
+      const request = sidecar.request.bind(sidecar);
+      sidecar.request = <T>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<T> =>
+        request<T>(method, params, timeoutMs).then(v => { watch.saw(method, null); return v; }, (err: unknown) => { watch.saw(method, err); throw err; });
+      setTimeout(() => void watch.again(), atLogin ? 60_000 : 10_000).unref();
     }
     // The first screenshot with Ember's marks on a fresh Windows or macOS machine doesn't pay fontconfig's cache build:
     // sharp's text is drawn once in the background, later at login (text-warm.ts).

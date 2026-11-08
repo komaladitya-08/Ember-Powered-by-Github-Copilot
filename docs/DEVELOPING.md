@@ -1707,7 +1707,9 @@ Ember can't work.
 | Organisation policy | The registry policy can't be trusted, so Ember is locked down | Fix `PolicyJson` (§10.7) |
 | Speech models, Speaking | As on Linux; speech runs on sherpa-onnx's native addon (§5, How speech runs) | — |
 
-The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**), **Display
+The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**; asked about 10 s
+after start, 60 s at login, again on **Check again**, which waits up to 6 s for it, and in the background when a read
+finds the helper can't work while the row says it does, or works while the row says it doesn't), **Display
 scaling** (the helper and Ember disagree on scaling, so a click may land in the wrong place on some monitors: set every
 monitor to the same scale in **Settings › System › Display**, then restart Ember; if it still clicks in the wrong
 place, report it at https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues) and **Keyboard
