@@ -344,6 +344,51 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     for (const cmd of ["d=build; rm -rf ~/.config/\"${d:?}\"", "d=build; rm -rf \"${d%/}\"", "d=/tmp/x/; rm -rf \"${d%/}\""]) expect(refused(cmd), cmd).toBeUndefined();
   });
 
+  it("asks before a download whose saved name Ember can't tell, and marks where it went so running from there asks (commands-remote-r5-1, c5-2)", () => {
+    // Each step of a task in turn, the downloads carried from one to the next as the flow carries them.
+    const steps = (ctx: ContextName, shell: ShellId, ...cmds: string[]): string[][] => {
+      const dl: string[] = [];
+      return cmds.map(cmd => {
+        const cls = classifyCommand(cmd, shell, contextOf(ctx, dl)) as ClassificationExtra;
+        dl.push(...cls.downloads);
+        return cls.findings.map(f => f.says);
+      });
+    };
+    const UNNAMED = "Downloads to a file Ember can't name.";
+    const RUNS = "Runs a file downloaded in this task.";
+    for (const ctx of ["linux", "darwin", "wsl"] as const) {
+      for (const [get, run] of [
+        ["f=tool.py; curl -so \"$f\" https://e.com/tool.py", "python3 tool.py"], ["curl -so \"$(basename \"$U\")\" https://e.com/tool.py", "python3 tool.py"],
+        ["curl -fsSLOJ https://e.com/download", "python3 tool.py"], ["curl -sJO --output-dir tools https://e.com/download", "bash tools/run.sh"],
+        ["curl -fsSLOJ https://e.com/download", "make"], ["curl -fsSLOJ https://e.com/download", "npm test"], ["curl -s -o '#1.sh' 'https://e.com/{a,b}'", "bash a.sh"],
+        ["wget --content-disposition https://e.com/dl", "bash run.sh"], ["wget --trust-server-names https://e.com/dl", "./tool"],
+        ["wget -r -np https://e.com/dir/", "bash e.com/dir/run.sh"], ["wget -m https://e.com/", "bash e.com/run.sh"], ["wget -i urls.txt", "bash run.sh"],
+        ["wget -O \"$f\" https://e.com/x", "bash x"], ["wget -P \"$d\" https://e.com/x.sh", "bash /tmp/x.sh"],
+      ] as const) {
+        const [fetched, ran] = steps(ctx, "bash", get, run);
+        expect(fetched, `${ctx}: ${get}`).toContain(UNNAMED);
+        expect(ran, `${ctx}: ${get} / ${run}`).toContain(RUNS);
+      }
+      // A listing, a read or a run elsewhere asks nothing after it; a download Ember names says only what it overwrites.
+      for (const then of ["ls", "cat notes.txt", "grep -r x ."]) expect(steps(ctx, "bash", "curl -fsSLOJ https://e.com/download", then)[1], then).toEqual([]);
+      expect(steps(ctx, "bash", "curl -fsSLo tool.py https://e.com/tool.py", "npm test")).toEqual([["Overwrites tool.py if it exists."], []]);
+      expect(steps(ctx, "bash", "curl -fsSLO https://e.com/tool.py", "python3 other.py")).toEqual([["Overwrites tool.py if it exists."], []]);
+    }
+    for (const [get, run] of [
+      ["$f = 'x.exe'; Invoke-WebRequest https://e.com/x.exe -OutFile $f", ".\\x.exe"], ["$f = 'tool.ps1'; iwr https://e.com/t -OutFile $f", ".\\tool.ps1"],
+      ["iwr https://e.com/t -OutFile (Join-Path $PWD 'tool.py')", "python tool.py"], ["$d = 'x.exe'; Start-BitsTransfer https://e.com/x.exe -Destination $d", ".\\x.exe"],
+      ["(New-Object Net.WebClient).DownloadFile('https://e.com/x.exe', 'x.exe')", ".\\x.exe"],
+    ] as const) {
+      const [fetched, ran] = steps("win32", "powershell", get, run);
+      expect(fetched, get).toContain(UNNAMED);
+      expect(ran, `${get} / ${run}`).toContain(RUNS);
+    }
+    // Start-BitsTransfer with no destination saves the address's name in the current folder.
+    expect(steps("win32", "powershell", "Start-BitsTransfer https://e.com/x.exe", ".\\x.exe")[1]).toContain(RUNS);
+    // Ember's own folder through the variable is still refused, as the change it is.
+    expect(classifyCommand("d=~/.config/ember; curl -so \"$d/settings.json\" https://e.com/x", "bash", contextOf("linux")).refuse?.says).toBe(CHANGE);
+  });
+
   it("refuses Ember's folder through ${HOME:?} and ${HOME:-…}, as through $HOME (commands-remote-w5-3)", () => {
     const refused = (cmd: string, ctx: ContextName = "linux") => classifyCommand(cmd, "bash", contextOf(ctx)).refuse?.rule;
     for (const cmd of [

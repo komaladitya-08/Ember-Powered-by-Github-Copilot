@@ -1957,6 +1957,44 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     }
   });
 
+  it("asks before a download Ember can't name the file of, and before running what it may have saved, on every shell (commands-remote-r5-1, c5-2)", async () => {
+    setCommandJudge(null);
+    const WIN: TargetBinding = { ...LOCAL, screenOs: "win32", shellOs: "win32" };
+    const facts: Partial<RunnerFacts> = {
+      os: "win32", shells: ["powershell", "cmd"], shellPaths: { powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", cmd: "C:\\Windows\\System32\\cmd.exe" },
+      script: null, home: "C:\\Users\\ana", user: "ana", ember: { paths: ["C:\\Users\\ana\\AppData\\Local\\ember"], pids: [10], names: /^ember$/ },
+    };
+    for (const [win, fetch, run] of [
+      [true, "$f = 'x.exe'; Invoke-WebRequest https://e.example/x.exe -OutFile $f", ".\\x.exe"],
+      [true, "$f = 'tool.py'; iwr https://e.example/t -OutFile $f", "python tool.py"],
+      [true, "iwr https://e.example/t -OutFile (Join-Path $PWD 'tool.py')", "python tool.py"],
+      [true, "(New-Object Net.WebClient).DownloadFile('https://e.example/x.exe', 'x.exe')", ".\\x.exe"],
+      [false, "f=tool.py; curl -so \"$f\" https://e.example/tool.py", "python3 tool.py"],
+      [false, "curl -fsSLOJ https://e.example/download", "python3 tool.py"],
+      [false, "wget -q -r -np https://e.example/dir/", "bash e.example/dir/run.sh"],
+      [false, "wget --content-disposition https://e.example/dl", "bash run.sh"],
+      [false, "wget -i urls.txt", "make"],
+    ] as const) {
+      // The download asks (and is allowed); running what it may have saved asks again.
+      const h = win
+        ? harness({ binding: WIN, facts, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["once", "deny"] })
+        : harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["once", "deny"] });
+      const shell = win ? "powershell" : undefined;
+      expect((await call(h, { target: "this computer", ...(shell ? { shell } : {}), command: fetch })).resultType, fetch).toBe("success");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, fetch).toContain("Downloads to a file Ember can't name.");
+      expect((await call(h, { target: "this computer", ...(shell ? { shell } : {}), command: run })).resultType, `${fetch} / ${run}`).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+    }
+    // A download Ember names runs as before, and a listing or a read after one it can't name asks nothing.
+    const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["once"] });
+    expect((await call(h, { target: "this computer", command: "curl -fsSLo tool.py https://e.example/tool.py" })).resultType).toBe("success");
+    expect(h.asked.length).toBe(0);
+    expect((await call(h, { target: "this computer", command: "curl -fsSLOJ https://e.example/download" })).resultType).toBe("success");
+    const asked = h.asked.length;
+    for (const cmd of ["ls", "cat notes.txt", "git status"]) expect((await call(h, { target: "this computer", command: cmd })).resultType, cmd).toBe("success");
+    expect(h.asked.length).toBe(asked);
+  });
+
   it("asks before running a download a pipeline copied, moved or renamed first, in PowerShell and through xargs (commands-remote-v4-5)", async () => {
     setCommandJudge(null);
     const WIN: TargetBinding = { ...LOCAL, screenOs: "win32", shellOs: "win32" };

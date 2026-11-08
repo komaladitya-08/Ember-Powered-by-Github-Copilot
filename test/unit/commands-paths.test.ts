@@ -268,3 +268,22 @@ describe("Windows path forms", () => {
     expect(P.SHORT_NAME.test("C:\\Users\\ana\\x~y")).toBe(false);
   });
 });
+
+describe("downloads of a name Ember can't tell (inDownload)", () => {
+  it("counts every file in or below an unnamed download's folder, never the folder itself, the root's too (commands-remote-r5-1, c5-2)", () => {
+    const here = `/home/ana/proj/${P.UNNAMED_DOWNLOAD}`;
+    expect(P.unnamedFolder(here, envL)).toBe("/home/ana/proj");
+    expect(P.inDownload("/home/ana/proj/tool.py", here, envL)).toBe(true);
+    expect(P.inDownload("/home/ana/proj/e.com/dir/run.sh", here, envL)).toBe(true);
+    expect(P.inDownload("/home/ana/proj", here, envL)).toBe(false);
+    expect(P.inDownload("/home/ana/other.py", here, envL)).toBe(false);
+    // Anywhere: the root's marker.
+    expect(P.unnamedFolder(`/${P.UNNAMED_DOWNLOAD}`, envL)).toBe("/");
+    expect(P.inDownload("/tmp/x.sh", `/${P.UNNAMED_DOWNLOAD}`, envL)).toBe(true);
+    expect(P.inDownload("C:\\Users\\ana\\x.exe", `C:\\${P.UNNAMED_DOWNLOAD}`, envW)).toBe(true);
+    expect(P.inDownload("D:\\x.exe", `C:\\${P.UNNAMED_DOWNLOAD}`, envW)).toBe(false);
+    // A copy of unknown name stands for its folder's files as before; a named download only for itself.
+    expect(P.inDownload("/home/ana/proj/x", `/home/ana/proj/${P.UNNAMED_COPY}`, envL)).toBe(true);
+    expect(P.unnamedFolder("/home/ana/proj/tool.py", envL)).toBeNull();
+  });
+});

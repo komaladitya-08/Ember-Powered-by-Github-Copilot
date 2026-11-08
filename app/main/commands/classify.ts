@@ -21,7 +21,8 @@ import {
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
   holdsSecret, inDownload, inWorkTree, isAbsolute, isEmberPath, isUnder, homeDotFile, opaqueWindowsPath, pathEnv, physicalForm,
-  resolveTargetPath, secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, UNNAMED_COPY, windowsContextOf, writeKind, wslUncPath,
+  resolveTargetPath, secretCandidates, secretKind, SECRET_SAMPLE_NAMES, SHORT_NAME, toMount, UNNAMED_COPY, UNNAMED_DOWNLOAD, unnamedFolder,
+  windowsContextOf, writeKind, wslUncPath,
 } from "./paths";
 import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, CLOUD_READ_PHRASES, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
@@ -176,6 +177,7 @@ export const SAYS = {
   downloadsAndRuns: "Downloads code and runs it.",
   opensProgram: "Opens a program that keeps running after Ember stops.",
   runsDownloaded: "Runs a file downloaded in this task.",
+  downloadsUnnamed: "Downloads to a file Ember can't name.",
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
   unclear: "Ember can't tell exactly what this does.",
@@ -1001,6 +1003,47 @@ class Classifier {
   }
 
   /**
+   * A download whose saved name Ember can't tell (curl -J, wget -r or -i, an output word it can't see all of): it asks,
+   * and a file of unknown name in `folder` (resolved in the scope's folder; null or an unknown folder: anywhere) counts
+   * as downloaded, so running anything from there or below later in the task asks, the folder's own build and test
+   * tools too (UNNAMED_DOWNLOAD: commands-remote-r5-1, c5-2).
+   */
+  downloadUnnamed(folder: string | null, sc: Scope): void {
+    this.add("destroy", "download.unnamed", SAYS.downloadsUnnamed);
+    const mod = sc.path.flavour === "win32" ? win32 : posix;
+    const at = folder === null ? null
+      : isAbsolute(folder, sc.path.flavour) || (folder.startsWith("~") && sc.home) || sc.cwd ? resolveTargetPath(folder, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" })
+      : null;
+    const root = sc.path.flavour === "win32" ? (sc.cwd ? win32.parse(sc.cwd).root : "C:\\") : "/";
+    const mark = mod.join(at ?? root, UNNAMED_DOWNLOAD);
+    if (!this.downloads.includes(mark)) this.downloads.push(mark);
+  }
+
+  /**
+   * A download saved as a word Ember can't see all of (`-o "$f"`, `-OutFile $f`, `-OutFile (Join-Path …)`): judged as
+   * the file it writes (Ember's own refusal), each name the text gives the word recorded as the download, and a name
+   * with a part Ember can't see recorded as unnamed in the folder its seen start names (downloadUnnamed). It asks
+   * either way: those names are only what the text says, not what the shell is sure to use (commands-remote-r5-1).
+   */
+  downloadTo(a: Arg, sc: Scope): void {
+    this.usePath(a, "write", sc);
+    const win = sc.path.flavour === "win32";
+    const forms = this.formsOf(a.parts ?? [{ name: null }], win ? this.psVarValues : this.varValues);
+    const folders = new Set<string | null>();
+    for (const f of forms) {
+      const form = f.startsWith(PATTERN) ? f.slice(1) : f;
+      const cut = form.indexOf(UNSEEN);
+      if (cut < 0) { this.download(form, sc); continue; }
+      const known = form.slice(0, cut);
+      const slash = win ? Math.max(known.lastIndexOf("\\"), known.lastIndexOf("/")) : known.lastIndexOf("/");
+      // Its seen folder, the scope's folder for a name with no folder in its seen start, or anywhere.
+      folders.add(slash >= 0 ? known.slice(0, slash + 1) : known === "" ? null : ".");
+    }
+    if (folders.size === 0) this.add("destroy", "download.unnamed", SAYS.downloadsUnnamed);
+    for (const f of folders) this.downloadUnnamed(f, sc);
+  }
+
+  /**
    * A copy of a download under another name (`mv x.py y.py`, `cat x.py > y.py`): a download too (commands-remote-c2-2).
    * `ifFile`: the name may be a folder the copy goes into (its file is recorded on its own), so it stops counting
    * once the target says it is one.
@@ -1051,6 +1094,11 @@ class Classifier {
    */
   downloadedProjectFile(folder: string, sc: Scope): boolean {
     const all = [...this.ctx.downloaded, ...this.downloads];
+    // A download of a name Ember can't tell may be any of the tool's files, in its folder or one it works in.
+    if (all.some(d => {
+      const f = baseName(d, sc.path.flavour) === UNNAMED_DOWNLOAD ? unnamedFolder(d, sc.path) : null;
+      return f !== null && (isUnder(f, folder, sc.path) || isUnder(folder, f, sc.path));
+    })) return true;
     const unnamed = (d: string): boolean => baseName(d, sc.path.flavour) === UNNAMED_COPY;
     // A copy Ember can't name may be one, when a download of this task is one or may be a folder (no extension).
     const mayBe = all.some(d => !unnamed(d) && (PROJECT_FILE.test(baseName(d, sc.path.flavour)) || !/\.[^.\\/]+$/.test(baseName(d, sc.path.flavour))));
@@ -1626,8 +1674,11 @@ class Engine extends Classifier {
    * WScript.Shell object) is refused (D4.5), and Invoke-Expression in a text that downloads (a WebClient's
    * DownloadString, Invoke-WebRequest, curl) is download-and-run (§3.4.7).
    */
-  private psTextScan(text: string): void {
+  private psTextScan(text: string, sc: Scope): void {
     if (SENDKEYS.test(text)) this.refuseWith("ember.input", "input");
+    // A WebClient's DownloadFile saves relative to .NET's current folder, which need not be PowerShell's: a download
+    // Ember can't place (commands-remote-c5-2).
+    if (/\.DownloadFile(Async|TaskAsync)?\s*\(/i.test(text)) this.downloadUnnamed(null, sc);
     if (/(^|[^\w-])(iex|invoke-expression)([^\w-]|$)/i.test(text)
       && /download(string|data|file)|net\.webclient|invoke-webrequest|invoke-restmethod|(^|[^\w-])(iwr|irm|curl|wget|start-bitstransfer)([^\w-]|$)/i.test(text)) {
       this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
@@ -1650,7 +1701,7 @@ class Engine extends Classifier {
       this.noteUnclear(p.unclear);
       if (p.fatal) this.fallbackScan(text, sc);
       else this.psStatements(p.statements, child(sc, { family: "powershell", shell: "powershell" }));
-      this.psTextScan(text);
+      this.psTextScan(text, sc);
       return;
     }
     const p = lexCmd(text);
@@ -5808,6 +5859,19 @@ reg(NATIVE, ["softwareupdate", "installer", "msiexec", "pkgutil", "dism", "add-a
 // ------------------------------------------------------------------------------------------------------------------
 // The network (§3.5.2): sending data anywhere is class b.
 
+/**
+ * The words an option's values were given as: a value Ember sees as a literal, one it can't see all of as written
+ * (its next word, or the pieces of one attached before a command: Opt.parts), so the values a variable is given count.
+ */
+function optionWords(args: readonly Arg[], p: Parsed, ...names: string[]): Arg[] {
+  return p.opts.filter(o => o.value !== undefined && names.some(n => optIs(o.name, n))).map(o => {
+    if (typeof o.value === "string") return lit(o.value);
+    if (o.parts) return { v: null, raw: args[o.at]?.raw ?? "", glob: false, parts: o.parts };
+    const next = args[o.at + 1];
+    return args[o.at]?.v !== null && next !== undefined && next.v === null ? next : { v: null, raw: args[o.at]?.raw ?? "", glob: false };
+  });
+}
+
 /** The host of a URL or `user@host:path`. */
 function hostOf(s: string): string {
   const u = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]+\]|[^/:?#]+)/i.exec(s);
@@ -5849,15 +5913,22 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
     h.e.add("publish", "send.http", `Sends data to ${host}.`, { objects, program: "curl" });
   }
   const outDir = values(p, "output-dir")[0] ?? null;
-  const outputs = values(p, "o", "output");
-  for (const o of outputs) {
-    if (o === null) { h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name."); continue; }
+  // A folder Ember can't see (`--output-dir "$d"`): whatever it saves there is a download of no name Ember knows.
+  if (values(p, "output-dir").some(d => d === null)) h.e.downloadUnnamed(null, h.sc);
+  for (const w of optionWords(h.args, p, "o", "output")) {
+    const o = w.v;
+    // A name Ember can't see all of (`-o "$f"`): the names the text gives it, else unnamed (commands-remote-r5-1).
+    if (o === null) { h.e.downloadTo(outDir ? { ...w, parts: [`${outDir}/`, ...(w.parts ?? [{ name: null }])] } : w, h.sc); continue; }
     if (o === "-") continue;
     const path = outDir ? `${outDir}/${o}` : o;
     const obj = h.e.usePath(lit(path), "write", h.sc);
     if (obj.abs) h.e.add("destroy", "download.output", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
     h.e.download(path, h.sc);
+    // `-o '#1.sh'` with an address's {a,b} or [1-3]: a name from each address, none of which Ember names.
+    if (/#\d/.test(o)) h.e.downloadUnnamed(path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : ".", h.sc);
   }
+  // -J saves under the name the server sends, when it sends one (commands-remote-c5-2).
+  if (has(p, "O", "remote-name", "remote-name-all") && has(p, "J", "remote-header-name")) h.e.downloadUnnamed(outDir ?? ".", h.sc);
   if (has(p, "O", "remote-name", "remote-name-all")) {
     for (const u of urls) {
       const name = u.replace(/[?#].*$/, "").split("/").pop();
@@ -5890,7 +5961,7 @@ reg(NATIVE, ["wget", "wget2"], h => {
   const dir = values(p, "P", "directory-prefix")[0];
   const out = values(p, "O", "output-document")[0];
   if (out !== undefined) {
-    if (out === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+    if (out === null) h.e.downloadTo(optionWords(h.args, p, "O", "output-document")[0] ?? { v: null, raw: "", glob: false }, h.sc);
     else if (out !== "-") {
       const obj = h.e.usePath(lit(out), "write", h.sc);
       if (obj.abs) h.e.add("destroy", "download.output", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
@@ -5899,12 +5970,15 @@ reg(NATIVE, ["wget", "wget2"], h => {
   } else {
     // The folder it saves into (-P) and each file by the name its address ends in meet §3.6's rules, Ember's own files
     // included (review #169); wget may pick another name (a redirect, -r's folders), so the folder is judged too.
-    if (dir === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+    if (dir === null) h.e.downloadUnnamed(null, h.sc);
     else if (dir !== undefined) writeInto(h, dir);
     for (const u of urls) {
       const name = u.replace(/[?#].*$/, "").split("/").pop() || "index.html";
       saveAs(h, dir ? `${dir}/${name}` : name);
     }
+    // Names the server or a list picks, and a recursion's or a page's files (commands-remote-c5-2).
+    const picked = has(p, "r", "recursive", "m", "mirror", "p", "page-requisites", "content-disposition", "trust-server-names") || values(p, "i", "input-file").length > 0;
+    if (picked && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
   }
   for (const f of values(p, "a", "append-output")) if (f) h.e.append(lit(f), h.sc, "redirect.append");
   for (const f of values(p, "o", "output-file", "save-cookies")) if (f) overwrites(h, lit(f));
@@ -7381,6 +7455,9 @@ reg(CMDLETS, ["invoke-webrequest", "invoke-restmethod"], h => {
   for (const f of b.named.get("InFile") ?? []) h.e.usePath(f, "read", h.sc);
   if (/^(POST|PUT|PATCH|DELETE|MERGE)$/.test(method) || b.named.has("Body") || b.named.has("InFile")) h.e.add("publish", "send.http", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }] });
   for (const o of b.named.get("OutFile") ?? []) {
+    // A name Ember can't see all of (`-OutFile $f`, `-OutFile (Join-Path …)`): the names the text gives it, else
+    // unnamed (commands-remote-r5-1).
+    if (o.v === null) { h.e.downloadTo(o, h.sc); continue; }
     const obj = h.e.usePath(o, "write", h.sc);
     if (obj.abs) h.e.add("destroy", "download.output", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
     h.e.download(o.v, h.sc);
@@ -7502,7 +7579,21 @@ reg(CMDLETS, ["start-bitstransfer"], h => {
   const type = ((b.named.get("TransferType") ?? [])[0]?.v ?? "download").toLowerCase();
   if (b.switches.has("Asynchronous")) h.e.add("escape", "escape.background", SAYS.keepsRunning);
   if (type === "upload" || type === "uploadreply") { objsOf(h, b.named.get("Source") ?? [], "read"); h.e.add("publish", "send.http", "Sends data to another computer."); return; }
-  for (const d of b.named.get("Destination") ?? []) { h.e.usePath(d, "write", h.sc); h.e.download(d.v, h.sc); }
+  const dests = b.named.get("Destination") ?? [];
+  for (const d of dests) {
+    if (d.v === null) { h.e.downloadTo(d, h.sc); continue; }
+    h.e.usePath(d, "write", h.sc);
+    h.e.download(d.v, h.sc);
+  }
+  // With no destination it saves into the current folder under the address's name (commands-remote-c5-2).
+  if (dests.length === 0) {
+    for (const src of b.named.get("Source") ?? []) {
+      const name = src.v?.replace(/[?#].*$/, "").split("/").pop();
+      if (!name) { h.e.downloadUnnamed(".", h.sc); continue; }
+      h.e.usePath(lit(name), "write", h.sc);
+      h.e.download(name, h.sc);
+    }
+  }
 });
 reg(CMDLETS, ["write-output", "write-host", "write-information", "write-verbose", "write-warning", "write-error", "write-debug"], h => {
   // What Write-Output hands down the pipeline names items, as a listing's (`Write-Output $d | Remove-Item`).

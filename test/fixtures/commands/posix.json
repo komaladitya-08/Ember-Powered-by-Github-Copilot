@@ -12415,7 +12415,7 @@
     "destroy"
    ],
    "rules": [
-    "redirect.overwrite"
+    "download.unnamed"
    ]
   },
   {
@@ -12425,7 +12425,7 @@
     "destroy"
    ],
    "rules": [
-    "redirect.overwrite"
+    "download.unnamed"
    ]
   },
   {
@@ -12444,7 +12444,13 @@
   },
   {
    "cmd": "wget -P build -r https://example.com/",
-   "verdict": "run"
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "download.unnamed"
+   ]
   },
   {
    "cmd": "wget https://example.com/x.tar.gz",

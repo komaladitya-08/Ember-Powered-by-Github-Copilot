@@ -171,7 +171,13 @@ Ember stops and asks before a command that:
   which files a pipeline or a variable hands over, the copy counts as a download whenever the task downloaded
   something it could be: running a file from where it went asks, but that folder's own tools, such as `npm test` or
   `make`, ask only when the download could be one of their files), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy` (a folder's copy keeps each download under its own name, so the folder's other files and tools are as before), run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
-  by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder),
+  by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder;
+  a download whose saved name Ember can't tell (one the server or a list picks: `curl -OJ`, `wget
+  --content-disposition`, `wget -r`, `wget -i`; one in a variable or an expression: `curl -o "$f"`,
+  `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
+  `DownloadFile`) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
+  saved into or below, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the
+  folder either); a listing or a read never does),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
