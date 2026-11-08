@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { taskStoppedWords, BubbleOwner, LONG_ANSWER, LOST_RECONNECTING, NO_REPLY, Presenter, RECONNECTED, RECONNECTED_RETRY, STILL_WAITING, noAnswer, notAnswering, stillWaiting, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
+import { keysLanding, taskStoppedWords, BubbleOwner, LONG_ANSWER, LOST_RECONNECTING, NO_REPLY, Presenter, RECONNECTED, RECONNECTED_RETRY, STILL_WAITING, noAnswer, notAnswering, stillWaiting, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 
@@ -545,6 +545,21 @@ describe("Presenter: a wait that hears nothing from Copilot (accessibility-visua
     expect(last().bubble?.stalled).toBeUndefined();
     expect(last().bubble).toMatchObject({ title: before?.title, step: before?.step ?? null });
     vi.useRealTimers();
+  });
+});
+
+describe("Settings opened from the keyboard while the conversation's turn is stalled (accessibility-visual-2)", () => {
+  it("lands on Stop response, as the bubble's step says, whatever pane Home was left on", () => {
+    expect(keysLanding("slow", null)).toBe("conversation:stop");
+    // Ahead of the way to a shortcut another app holds: the step named this key for Stop response.
+    expect(keysLanding("slow", "access:stop")).toBe("conversation:stop");
+  });
+
+  it("opens settings as before while Ember only thinks, or is idle", () => {
+    expect(keysLanding("thinking", null)).toBeNull();
+    expect(keysLanding("idle", null)).toBeNull();
+    expect(keysLanding("thinking", "access:ask")).toBe("access:ask");
+    expect(keysLanding("idle", "access:stop")).toBe("access:stop");
   });
 });
 

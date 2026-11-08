@@ -388,6 +388,23 @@ describe.skipIf(gate)("Home's status lines, to a screen reader (2026-11-07 produ
     expect(await axNode(page, "#never-look-msg")).toEqual({ ignored: false, role: "status" });
     await page.close();
   });
+
+  it("lands on Stop response when the settings key opens Home on another pane while Ember still waits, so Enter stops the reply (accessibility-visual-2)", async () => {
+    const page = await open("voice");
+    expect(await page.locator("#conversation-stop").isVisible()).toBe(false);
+    await page.evaluate(() => window.__pane.emit("onAgentStatus", { phase: "ready", detail: "", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 } }));
+    // Main: the bubble says Ember is still waiting (its step names the settings key), and the key lands here.
+    await page.evaluate(() => window.__pane.emit("onConversationTurn", "slow"));
+    await page.evaluate(() => window.__pane.emit("onFocusSection", "conversation:stop"));
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("conversation-stop");
+    expect(await page.locator("#conversation-stop").isVisible()).toBe(true);
+    expect(await page.locator("a[href='#home-h']").first().getAttribute("aria-current")).toBe("true");
+    expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.locator("#conversation-stop").getAttribute("aria-disabled")).toBe("true");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
 });
 
 describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product audit)", () => {

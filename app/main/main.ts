@@ -74,7 +74,7 @@ import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent
 import { ProjectWorkspaceStore, workspaceAction, type ProjectExchange } from "./agent/project-workspaces";
 import { memoryRefusal } from "./memory/guard";
 import { correctMemoryRequest } from "./memory/correction";
-import { expandedBubble, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
+import { expandedBubble, keysLanding, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
@@ -724,12 +724,13 @@ function start(): void {
   /** A shortcut as the copy names it ("Ctrl+Alt+E"), by the chord Ember holds; null while it holds neither. */
   const keyName = (id: ShortcutId) => holding(id)?.label ?? null;
   /**
-   * Settings opened from the keyboard (Ember started again, its settings shortcut, the Dock): while another app holds
-   * the ask or stop shortcut and its fallback, at Ask Ember… or Stop everything, the keyboard's way to them then (review #45).
+   * Settings opened from the keyboard (Ember started again, its settings shortcut, the Dock): while the bubble says Ember
+   * is still waiting, at Stop response, as its step says (accessibility-visual-2); while another app holds the ask or
+   * stop shortcut and its fallback, at Ask Ember… or Stop everything, the keyboard's way to them then (review #45).
    */
   const showHomeFromKeys = () => {
     showHome();
-    const at = keyboardRoute(shortcutsTaken ?? [], sc, fb);
+    const at = keysLanding(agent?.conversationTurn ?? "idle", keyboardRoute(shortcutsTaken ?? [], sc, fb));
     if (at) sendToHome(IPC.focusSection, at);
   };
   const greet = () => {
@@ -3674,7 +3675,7 @@ function start(): void {
 
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {
-        settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
+        settings, setState, greet, showHome, showHomeFromKeys, overlay: () => overlay, handle: () => handle,
         agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string, how?: { heardId?: number }) => { captureContext(); return askEmber(text, how?.heardId ? { heardId: how.heardId } : {}); }, showAsk: () => openAsk({ source: "test" }),
         showMenu, state: () => lastState, extensions: () => extensionsRef, stopEverything, personal: () => personalRef,
       };

@@ -150,7 +150,8 @@ runtime. It does not change the app's consent or speaking settings.
   task cards go to the other bottom corner) and **Quit Ember** (Quit asks first while a task is running). Until first
   run is done, the handle says "Finish setting up" and its menu starts with **Finish setting up…**, which opens it again.
 - The shortcuts here are Linux's: Windows uses Win+Alt+… and macOS Control+Shift+Command+… with the same letters.
-- **Ctrl+Alt+E** opens settings from anywhere. **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
+- **Ctrl+Alt+E** opens settings from anywhere (while the bubble says Ember is still waiting for the model service, at
+  **Stop response**, so Enter stops that reply). **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
   will look at, and ↑/↓ bring back earlier questions. It opens above Ember (below it near the top of the screen),
   clear of Ember's handle and of the answer or question Ember shows: on the other side of Ember from it, else beside
   it. While Ember can't answer a request (not connected, offline), the line under its field says so first, in the

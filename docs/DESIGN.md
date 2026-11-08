@@ -90,7 +90,8 @@ They share one emotion rig, so switching never changes behaviour.
   "Thinking…" has heard nothing from Copilot for 10 seconds it says "Still waiting for Copilot…"
   (or "Still waiting for your model provider…" or "…for the model service…" when that is the one in use) with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. Its step names the keyboard's ways to stop,
   which the bubble's Stop can't offer ("Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops
-  everything.", each key only while Ember holds it), and screen readers hear the wait and that step once. A problem
+  everything.", each key only while Ember holds it), and screen readers hear the wait and that step once. Meanwhile the
+  settings key opens Home at **Stop response**, whatever pane it was left on, so Enter stops the reply. A problem
   offers **Open settings** where settings can fix it, otherwise **Try again** where asking again is
   safe (the conversation's own request, whose turn ran no tool). A request the runtime stopped under
   before it reached the model keeps its Try again while Ember reconnects, and once Copilot is back

@@ -18,6 +18,8 @@ describe("a section request from main", () => {
     expect(sectionRequest("access:ask")).toEqual({ section: "home", control: "p-ask" });
     expect(sectionRequest("access:stop")).toEqual({ section: "home", control: "p-stop" });
     expect(sectionRequest("memory:memory-yes")).toEqual({ section: "memory", control: "memory-yes" });
+    // The settings key while the bubble says Ember is still waiting: at Stop response, as its step says (accessibility-visual-2).
+    expect(sectionRequest("conversation:stop")).toEqual({ section: "conversation", control: "conversation-stop" });
   });
 
   it("opens the conversation at its newest answer for \"Read the last answer\", not at its oldest message (home-v1)", () => {

@@ -5,6 +5,7 @@
  */
 
 import type { BubbleState, EmberState } from "../../shared/overlay";
+import type { ConversationTurn } from "../../shared/conversation";
 import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
@@ -567,6 +568,16 @@ const isStillWaiting = (title: string) => title === stillWaiting(false) || title
 export function stalledStep(settingsKey: string | null, stopKey: string | null): string {
   const turn = settingsKey ? `Or press ${settingsKey} and use Stop response in Home.` : "Or use Stop response in Ember's settings, on Home.";
   return stopKey ? `${turn} ${stopKey} stops everything.` : turn;
+}
+
+/**
+ * Where settings opened from the keyboard lands (main's showHomeFromKeys): while the conversation's turn is stalled, at
+ * Stop response, as stalledStep says, whatever pane Home was left on (accessibility-visual-2: it reopened there, Stop
+ * response about nine Tab stops into another pane); else the keyboard's way to a shortcut another app holds (`route`,
+ * environment.ts keyboardRoute), or nowhere in particular.
+ */
+export function keysLanding(turn: ConversationTurn, route: "access:ask" | "access:stop" | null): string | null {
+  return turn === "slow" ? "conversation:stop" : route;
 }
 
 /** The model service in use, as a sentence starts with it. */
