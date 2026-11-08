@@ -15,6 +15,7 @@ import { factLine, memoryBlock } from "../../app/main/memory/format";
 import { SEMANTIC_K } from "../../app/main/memory/embed";
 import { MemoryGraph, type EntityKind, type GraphClock } from "../../app/main/memory/graph";
 import { memoryRefusal } from "../../app/main/memory/guard";
+import { introFacts } from "../../app/main/memory/intro";
 import { SEMANTIC_FLOOR, bm25, personalizedPageRank, recall } from "../../app/main/memory/recall";
 import { memoryFile } from "../../app/main/memory/store";
 import { MemoryService } from "../../app/main/memory/service";
@@ -262,6 +263,42 @@ describe("the memory graph", () => {
     for (const [before, now] of [["Prefers dark mode", "Prefers light mode"], ["Prefers short answers", "Prefers long answers"], ["Prefers dark mode in Slack", "Prefers light mode in Slack"]]) {
       expect(after({ text: before }, now), `${before} → ${now}`).toEqual({ closed: [before], open: [now] });
     }
+  });
+
+  it("closes a preference only for another value of the same kind: how long, how set out, what tone, when, how often (memory-r1)", () => {
+    const U = [{ name: "User", kind: "person" as const }];
+    const after = (before: { text: string; predicate?: string }, text: string) => {
+      const c = clock();
+      const g = new MemoryGraph(undefined, c);
+      g.add({ ...before, about: U, source: "user" });
+      c.advance(1);
+      const r = g.add({ text, about: U, source: "user" });
+      return { closed: r.kind === "added" ? r.closed.map(f => f.text) : [], open: g.allFacts(true).map(f => f.text).sort() };
+    };
+    // How long, set out how, in what tone, when, how often and by what: each holds beside the others.
+    for (const [before, now] of [
+      ["Prefers short answers", "Prefers bulleted answers"], ["Prefers short answers", "Prefers spoken answers"], ["Prefers short answers", "Prefers written answers"],
+      ["Prefers short answers", "Prefers numbered answers"], ["Prefers short answers", "Prefers casual answers"], ["Prefers short answers", "Prefers direct answers"],
+      ["Prefers detailed answers", "Prefers friendly answers"], ["Prefers email updates", "Prefers weekly updates"], ["Prefers morning meetings", "Prefers short meetings"],
+      ["Prefers short meetings", "Prefers remote meetings"], ["Prefers video calls", "Prefers short calls"], ["Prefers dark mode", "Prefers focus mode"],
+    ]) expect(after({ text: before }, now), `${before} → ${now}`).toEqual({ closed: [], open: [before, now].sort() });
+    // About you's answer length stays in the profile however answers are to be set out.
+    expect(after({ text: "Prefers short answers", predicate: "answer_length" }, "Prefers bulleted answers").closed).toEqual([]);
+    // Another value of the same kind is a change: the older is closed.
+    for (const [before, now] of [
+      ["Prefers short answers", "Prefers detailed answers"], ["Prefers casual answers", "Prefers formal answers"], ["Prefers written answers", "Prefers spoken answers"],
+      ["Prefers morning meetings", "Prefers afternoon meetings"], ["Prefers daily updates", "Prefers weekly updates"], ["Prefers email updates", "Prefers Slack updates"],
+      ["Prefers green tea", "Prefers black tea"],
+    ]) expect(after({ text: before }, now), `${before} → ${now}`).toEqual({ closed: [before], open: [now] });
+  });
+
+  it("keeps About you's answer length in the profile sent with every request after “remember that I prefer bulleted answers” (memory-r1)", async () => {
+    const s = new MemoryService({ dir: fs.mkdtempSync(path.join(os.tmpdir(), "ember-memory-r1-")), log: { info: () => undefined, warn: () => undefined }, inForce: () => true });
+    for (const f of introFacts({ name: "Ram", length: "short" })) s.learn(f);
+    expect(s.remember("Prefers bulleted answers", [{ name: "User", kind: "person" }], "Remember that I prefer bulleted answers")).not.toMatch(/replacing/);
+    const profile = (await s.requestContext("open Firefox")).text;
+    expect(profile).toContain("Prefers short answers");
+    expect(profile).toContain("Likes to be called Ram");
   });
 
   it("lets nothing it saw overrule what the user said", () => {
