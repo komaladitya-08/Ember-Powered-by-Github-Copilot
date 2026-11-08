@@ -85,14 +85,16 @@ They share one emotion rig, so switching never changes behaviour.
   the goal passed off as theirs);
   its title ("May I?") is the quieter lead-in, its keys show as keycaps under the buttons (under a
   note's line when a spoken answer wasn't taken, never replaced by it: `stepParts`; on the
-  no-compositor corner card too, above its buttons; on both each chord kept on one line with its word, and on the
-  bubble broken under its keycaps only where it alone is wider than the row, with the " · " between two only where
+  no-compositor corner card too, above its buttons; on both each chord kept on one line with its word, broken under
+  its keycaps only where it alone is wider than the row, and on the bubble with the " · " between two only where
   they share a line, and none before the first, which a screen reader read though it was clipped from sight), four corner
   brackets lock onto the bubble once (180 ms) and then hold still, and nothing about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
   install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
   than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. The
   no-compositor corner card marks it the same way: the tag beside Ember's name and the bordered
-  Allow; in its narrow column each chord is a line of its own, with no " · " left at a line's end.
+  Allow; in its narrow column each chord is a line of its own, with no " · " left at a line's end, its
+  keycaps together and its words wrapping under them where the column can't hold both (the Shift chords'
+  "shows the next part" at Large and Larger).
   The card grows for any question (up to 640 px, inside the work area) so its sentence shows
   whole at Large and Larger text too, and where even that can't hold it, its answers but Not now
   take no press until the sentence shows. A step Ember took **without asking** (Work without asking) shows its announcement with a

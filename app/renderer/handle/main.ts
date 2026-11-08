@@ -194,7 +194,9 @@ function renderTarget(s: EmberState, given?: TargetBadge | null): void {
  * The card's step row: the keys a question's hint names as keycaps beside their words, as the bubble draws them
  * (stepParts; accessibility-visual-r3: one grey run of text here), each chord on a line of its own with its word and no
  * " · " between them (the card's column always wrapped the two and left "allow ·" ending the first line:
- * accessibility-visual-r2-2), anything else as words. Drawn again only on a change.
+ * accessibility-visual-r2-2), its keycaps kept together and its words free to wrap under them (accessibility-visual-c3-1:
+ * on one unbroken line, "Ctrl Alt Shift Y shows the next part" ran off the card at Larger), anything else as words.
+ * Drawn again only on a change.
  */
 let stepShown: string | null = null;
 function drawStep(step: string | null): void {
@@ -206,7 +208,9 @@ function drawStep(step: string | null): void {
   if (!keys) { el.textContent = step ?? ""; return; }
   el.replaceChildren(...(lead ? [document.createTextNode(lead)] : []), ...keys.map(k => {
     const hint = Object.assign(document.createElement("span"), { className: "key-hint" });
-    hint.append(...k.keys.map(key => Object.assign(document.createElement("kbd"), { textContent: key })), Object.assign(document.createElement("span"), { className: "key-word", textContent: k.word }));
+    const caps = Object.assign(document.createElement("span"), { className: "key-caps" });
+    caps.append(...k.keys.map(key => Object.assign(document.createElement("kbd"), { textContent: key })));
+    hint.append(caps, Object.assign(document.createElement("span"), { className: "key-word", textContent: k.word }));
     return hint;
   }));
 }
