@@ -103,6 +103,18 @@ describe("gate 2 for commands (§3.16)", () => {
     expect(await real(true)).toMatchObject({ status: "needs_confirm", rules: ["posix.mv"], says: expect.arrayContaining(["Replaces /home/deploy/Documents/report.pdf if it exists."]) });
   });
 
+  it("asks, as the PC does, before a Mac here copies a folder's contents into a folder, or cp --parents does, whatever is missing (commands-remote-c2-1)", async () => {
+    const real = (command: string, os: RunnerFacts["os"], home: string) => gateCommand(input({
+      spec: spec({}, { command, shell: os === "darwin" ? "zsh" : "bash", cwd: `${home}/proj` }), classify: classifyCommand,
+      facts: facts({ os, home, shells: [os === "darwin" ? "zsh" : "bash"] }),
+      inspect: async paths => paths.map(p => (p.endsWith("/Documents") || p.endsWith("/backup") ? { exists: true, real: p, dir: true } : { exists: !/\/(Documents\/build|backup\/(a\.txt|src))$/.test(p), real: p })),
+    }));
+    expect(await real("cp -R build/ /Users/deploy/Documents", "darwin", "/Users/deploy")).toMatchObject({ status: "needs_confirm", rules: ["posix.cp"], says: expect.arrayContaining(["Replaces files in /Users/deploy/Documents if they exist."]) });
+    expect(await real("cp --parents src/a.txt /home/deploy/backup", "linux", "/home/deploy")).toMatchObject({ status: "needs_confirm", rules: ["posix.cp"] });
+    // GNU cp puts build at Documents/build, which isn't there.
+    expect((await real("cp -r build/ /home/deploy/Documents", "linux", "/home/deploy")).status).toBe("ok");
+  });
+
   it("asks, as the PC does, before a loop or an if runs a command with a library preloaded or PATH changed (commands-remote-c1-1)", async () => {
     const real = (command: string) => gateCommand(input({ spec: spec({}, { command, shell: "bash" }), classify: classifyCommand }));
     for (const command of [

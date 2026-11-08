@@ -2737,10 +2737,14 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   if (destObj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name.", { objects: [destObj] }); return; }
   // `.` and `..` are always folders: `cp x .` puts x in the current folder (commands-remote-v1).
   const intoFolder = target !== undefined || sources.length > 1 || /[\\/]$/.test(dest.v ?? "") || /^\.\.?$/.test(dest.v ?? "");
+  // Copies that don't land at folder/<name>: `cp --parents src/a.txt dir` makes dir/src/a.txt, and a Mac's own cp
+  // (BSD) copies what is in `build/` into the folder itself rather than the folder (commands-remote-c2-1).
+  const parents = kind === "cp" && has(p, "parents");
+  const bsdContents = (s: Arg): boolean => h.key === "cp" && h.sc.os === "darwin" && /[\\/]$/.test(s.v ?? "");
   /** The file a source becomes in the folder (`cp a dir` makes dir/a), probed; null for files Ember can't name. */
   const inside = (s: Arg): Obj | null => {
     // A glob, or a folder's contents (`cp -r /tmp/x/. .`): files of their own names.
-    const name = s.v === null || s.glob ? null : baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour);
+    const name = s.v === null || s.glob || parents || bsdContents(s) ? null : baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour);
     if (name === null || name === "." || name === ".." || destObj.abs === null) return null;
     const p2 = (h.sc.path.flavour === "win32" ? win32 : posix).join(destObj.abs, name);
     // Into a folder named with `..` (`cp a sub/../`): the file lands beside where sub leads, so that name (its `..`

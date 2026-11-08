@@ -68,6 +68,31 @@ describe("decideCommand: the rules in order", () => {
     expect(decide("mv report.pdf ~/Documents", { exists: { [docs]: false } }).verdict).toBe("run");
   });
 
+  it("3: a copy that doesn't land at folder/name asks whenever the folder is there: cp --parents, and a Mac's cp -R of a folder written with a slash (commands-remote-c2-1)", () => {
+    const backup = "/home/ana/backup";
+    // --parents puts src/a.txt at ~/backup/src/a.txt, never ~/backup/a.txt: whatever is missing, it asks.
+    for (const cmd of ["cp --parents src/a.txt ~/backup", "cp --parents src/a.txt ~/backup/", "cp -r --parents src ~/backup", "cp --parents -t ~/backup src/a.txt"]) {
+      const d = decide(cmd, { dirs: [backup], exists: { [`${backup}/a.txt`]: false, [`${backup}/src`]: false } });
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.says, cmd).toContainEqual(expect.stringMatching(/^Replaces files in \/home\/ana\/backup\/? if they exist\.$/));
+    }
+    // A Mac's cp copies what is in build/ straight into the folder (BSD cp), so any file there may be replaced.
+    const docs = "/Users/ana/Documents";
+    for (const cmd of ["cp -R build/ ~/Documents", "cp -r build/ ~/Documents", "cp -a src/ ~/Documents", "cp -R build/ ~/Documents/"]) {
+      const d = decide(cmd, { where: "darwin", shell: "zsh", dirs: [docs], exists: { [`${docs}/build`]: false, [`${docs}/src`]: false } });
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.says, cmd).toContainEqual(expect.stringMatching(/^Replaces files in \/Users\/ana\/Documents\/? if they exist\.$/));
+    }
+    // Without the slash, or with GNU cp (here, or gcp on a Mac), the folder lands as folder/build: only that asks.
+    const gone = { [`${docs}/build`]: false };
+    expect(decide("cp -R build ~/Documents", { where: "darwin", shell: "zsh", dirs: [docs], exists: gone }).verdict).toBe("run");
+    expect(decide("gcp -r build/ ~/Documents", { where: "darwin", shell: "zsh", dirs: [docs], exists: gone }).verdict).toBe("run");
+    expect(decide("cp -r build/ ~/Documents", { dirs: ["/home/ana/Documents"], exists: { "/home/ana/Documents/build": false } }).verdict).toBe("run");
+    expect(decide("cp -r build/ ~/Documents", { dirs: ["/home/ana/Documents"] }).says).toContain("Replaces /home/ana/Documents/build if it exists.");
+    // A new folder: BSD cp makes it from build's contents, replacing nothing.
+    expect(decide("cp -R build/ ~/site", { where: "darwin", shell: "zsh", exists: { "/Users/ana/site": false } }).verdict).toBe("run");
+  });
+
   it("4: root or an elevated token asks for everything, its line first, as a system change", () => {
     const d = decide("ls", { privileged: true });
     expect(d).toMatchObject({ verdict: "ask", classes: ["system"], armMs: ARM_ASK_MS });

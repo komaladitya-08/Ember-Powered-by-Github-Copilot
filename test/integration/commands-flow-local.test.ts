@@ -268,6 +268,21 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(result.textResultForLlm).toContain("got-[ a ]");
   }, 20_000);
 
+  it("asks before a copy into a folder replaces a file away from folder/name (cp --parents; a Mac's cp -R src/), and keeps it on deny (commands-remote-c2-1)", async () => {
+    w.verdicts = () => "deny";
+    fs.mkdirSync(path.join(w.work, "src"), { recursive: true });
+    fs.writeFileSync(path.join(w.work, "src", "a.txt"), "new");
+    // --parents writes backup/src/a.txt; BSD cp writes what is in src/ as backup/a.txt. Neither is backup/src's name.
+    const kept = platform === "darwin" ? path.join(w.home, "backup-c21", "a.txt") : path.join(w.home, "backup-c21", "src", "a.txt");
+    fs.mkdirSync(path.dirname(kept), { recursive: true });
+    fs.writeFileSync(kept, "precious");
+    const { result } = await run(platform === "darwin" ? "cp -R src/ ~/backup-c21" : "cp --parents src/a.txt ~/backup-c21", "");
+    expect(w.cards).toHaveLength(1);
+    expect(w.cards[0].says).toContainEqual(expect.stringMatching(/^Replaces files in \S*backup-c21 if they exist\.$/));
+    expect(result.resultType).toBe("denied");
+    expect(fs.readFileSync(kept, "utf8")).toBe("precious");
+  }, 20_000);
+
   it("asks before `rm -r build` (the user didn't ask), shows the whole command on the card, and runs it after Allow", async () => {
     const { result } = await run("rm -r build", "");
     expect(w.cards).toHaveLength(1);
