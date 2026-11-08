@@ -1097,11 +1097,16 @@ function conversationTurn(value: unknown): void {
   conversationTurnNow = turn;
   conversationTurnEnded = change.ended;
   if (conversationAwaitingReply && turn !== "idle") conversationTurnSeen = true;
+  const waiting = composerStillWaiting(agent?.service?.kind);
   if (conversationAwaitingReply && conversationSendTaken) {
     // Still waiting as the bubble says it (nothing written yet), and back to thinking once it is heard from.
-    const waiting = composerStillWaiting(agent?.service?.kind);
     if (turn === "slow" && !answerStream.row) keepingComposer(() => { conversationComposeStatus.textContent = waiting; });
     else if (turn === "thinking" && conversationComposeStatus.textContent === waiting) conversationComposeStatus.textContent = COMPOSER_THINKING;
+  } else if (!conversationAwaitingReply) {
+    // A request from the Ask box or by voice that the bubble says is still waiting: the line under Stop response (where
+    // the settings key lands then) says so, not an older message's outcome, and goes once the wait does (home-r2-3).
+    if (turn === "slow" && !answerStream.row) conversationComposeStatus.textContent = waiting;
+    else if (conversationComposeStatus.textContent === waiting) conversationComposeStatus.textContent = "";
   }
   endComposerWait();
   renderStatus();

@@ -696,6 +696,31 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  it("says under Stop response that Ember is still waiting for a request from the Ask box or by voice, not an older message's outcome (home-r2-3)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await page.locator("#conversation-message").fill("What's the weather?");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await reply(page, [], "What's the weather?", 2);
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      // Asked in the Ask box, and the bubble says Ember is still waiting: so does the line under Stop response.
+      await turn(page, "thinking");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      await turn(page, "slow");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Still waiting for Copilot… Stop response ends this reply.");
+      // Heard from again, or over: the line goes, rather than say a wait that has ended.
+      await turn(page, "thinking");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("");
+      await turn(page, "slow");
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("keeps the line saying how the request is going in view under the buttons after a reply, at 760×640 (home-7)", async () => {
     const seed = exchange(12);
     const { page, errors } = await home(seed);
