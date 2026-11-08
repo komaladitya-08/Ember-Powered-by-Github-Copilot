@@ -510,6 +510,7 @@ html[data-glass="clear"] .ember-bubble :is(.eb-chip, .eb-risk, .eb-auto) { backg
   background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px var(--separator, rgba(255, 255, 255, 0.09)), 0 1px 0 rgba(0, 0, 0, 0.5);
 }
 .eb-step .eb-key-word { margin: 0 4px 0 2px; }
+.eb-step .eb-key { white-space: nowrap; }
 /* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. So
    is a problem's, the keyboard's way to what its buttons do ("Or press Ctrl+Alt+E and go to Computers."), and an
    answer's cut short, where it is whole ("… go to Conversation."). */
@@ -985,10 +986,13 @@ export class ReasoningBubble {
     const { lead, keys } = stepParts(text);
     if (!keys) this.stepText.textContent = text ?? "";
     else {
+      // Each chord on one line with its word (companion-r2-4: narrowed beside the Ask box, "Ctrl Alt" / "N not now").
       this.stepText.replaceChildren(...(lead ? [document.createTextNode(lead), document.createElement("br")] : []), ...keys.flatMap((k, i) => {
         const caps = k.keys.map(key => Object.assign(document.createElement("kbd"), { textContent: key }));
         const word = Object.assign(document.createElement("span"), { className: "eb-key-word", textContent: k.word });
-        return [...(i ? [document.createTextNode(" · ")] : []), ...caps, word];
+        const chord = Object.assign(document.createElement("span"), { className: "eb-key" });
+        chord.append(...caps, word);
+        return [...(i ? [document.createTextNode(" · ")] : []), chord];
       }));
     }
     this.changed();
