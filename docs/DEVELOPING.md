@@ -2102,7 +2102,8 @@ longer offered as context, so an answer from one service is never sent to anothe
 
 Open **Run a project command** to choose a local starting folder and enter a command. While commands are off on
 this computer (the default), the form says so with **Open Commands** before anything is typed, and the command field
-and **Review command…** wait. Ember applies the same settings, classifier and stop controls as its command window. Each run waits for approval of the
+and **Review command…** wait. Where the organisation's policy turned them off, it says "Your organisation has turned
+off commands on this computer." with no **Open Commands**. Ember applies the same settings, classifier and stop controls as its command window. Each run waits for approval of the
 exact command and folder. Output stays in the command window. The connected model does not receive it.
 
 **Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or connected

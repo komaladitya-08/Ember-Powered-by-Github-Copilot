@@ -30,7 +30,7 @@ const BUILT_IN = { name: "awesome-copilot", source: "GitHub: github/awesome-copi
 const OWN = { name: "octo-tools", source: "GitHub: octo/tools" };
 const ENTRY: MarketplaceEntry = { marketplace: "awesome-copilot", name: "fake", description: "A fake.", source: "plugins/fake", kind: "plugin", installed: false };
 
-interface Seed { extensions?: Partial<ExtensionsState>; entries?: MarketplaceEntry[]; agent?: Record<string, unknown>; settings?: Record<string, unknown>; targets?: boolean }
+interface Seed { extensions?: Partial<ExtensionsState>; entries?: MarketplaceEntry[]; agent?: Record<string, unknown>; settings?: Record<string, unknown>; targets?: boolean; admin?: Record<string, unknown> }
 
 let browser: Browser;
 let server: http.Server;
@@ -57,7 +57,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...seed.settings };
   settings.onboarded = true;
   settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
-  const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] };
+  const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [], ...seed.admin };
   const extensions: ExtensionsState = { available: true, allowed: true, consented: false, installed: [], marketplaces: [BUILT_IN, OWN], ...seed.extensions };
   const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
   const errors: string[] = [];
@@ -162,6 +162,22 @@ describe.skipIf(gate)("Home's Projects, as the person sets up a command (2026-11
     await expect.poll(() => note.isVisible()).toBe(true);
     await page.getByRole("button", { name: "Open Commands" }).click();
     await expect.poll(() => page.locator("#commands-h").isVisible()).toBe(true);
+    await page.close();
+  });
+});
+
+describe.skipIf(gate)("Home's Projects, where the organisation turned commands off (2026-11-07 product audit)", () => {
+  it("says the organisation turned them off, with no Open Commands to a switch the person can't turn on (integrations-12)", async () => {
+    const page = await open("project", { targets: true, admin: { source: "/etc/ember/policy.json", commands: { local: "off", wsl: "off", ssh: "off" } } });
+    await page.locator("#project-commands summary").click();
+    const note = page.locator("#project-commands-off");
+    await expect.poll(() => note.isVisible()).toBe(true);
+    expect(await page.locator("#project-commands-off-text").innerText()).toBe("Your organisation has turned off commands on this computer.");
+    expect(await page.getByRole("button", { name: "Open Commands" }).isVisible()).toBe(false);
+    expect(await page.locator("#project-command-text").isDisabled()).toBe(true);
+    expect(await page.locator("#project-command-send").isDisabled()).toBe(true);
+    await evidence(page, "project-commands-managed");
+    expect((page as Page & { errors: string[] }).errors).toEqual([]);
     await page.close();
   });
 });

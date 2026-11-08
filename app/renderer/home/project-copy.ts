@@ -3,8 +3,15 @@
 /** Said over a project command's controls while commands are off on this computer (integrations-12), before any is typed. */
 export const PROJECT_COMMANDS_OFF = "Commands are off on this computer. Turn them on in Commands to run one here.";
 export const PROJECT_COMMANDS_OPEN = "Open Commands";
+/** Said instead where the organisation's policy turned commands off here: no switch to send the person to (integrations-12). */
+export const PROJECT_COMMANDS_MANAGED = "Your organisation has turned off commands on this computer.";
 /** Whether commands may run on this computer, as the settings say (the organisation's policy already applied). */
 export const projectCommandsOn = (s: { commands?: Partial<Record<string, { on?: boolean }>> } | null | undefined): boolean => s?.commands?.local?.on === true;
+/** Commands on this computer: on, off by the person's switch, or off by the organisation (`admin`: its local mode). */
+export function projectCommandsState(s: Parameters<typeof projectCommandsOn>[0], admin: "off" | "ask" | "on" | undefined): "on" | "off" | "managed" {
+  if (admin === "off") return "managed";
+  return projectCommandsOn(s) ? "on" : "off";
+}
 /**
  * Projects' status line as Ember connects, or can't for now (integrations-r1): only sending waits, and what the person
  * chose and wrote stays. `files`: files are chosen; `work`: anything is (files, a request, an answer, a command).
