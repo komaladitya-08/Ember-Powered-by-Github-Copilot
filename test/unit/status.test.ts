@@ -309,7 +309,11 @@ describe("stopRequest", () => {
     for (const t of ["stop", "Stop!", "stop it", "stop that", "Ember, stop", "stop everything", "Stop all tasks", "stop the task", "please stop", "cancel", "cancel that", "cancel everything", "stop now", "hey Ember, stop everything please"]) expect(stopRequest(t), t).toBe(true);
   });
 
+  it("hears the other short ways people type a stop of what Ember is doing (tasks-approvals-v2)", () => {
+    for (const t of ["stop typing", "Stop doing that!", "stop working", "stop what you're doing", "abort", "halt", "stop stop", "no, stop", "wait stop", "Ember, abort the task"]) expect(stopRequest(t), t).toBe(true);
+  });
+
   it("leaves a stop of something else to the conversation", () => {
-    for (const t of ["stop the music", "stop the timer at 5", "cancel my 3pm meeting", "don't stop", "stop sharing my screen", "how do I stop a task?", ""]) expect(stopRequest(t), t).toBe(false);
+    for (const t of ["stop the music", "stop the timer at 5", "cancel my 3pm meeting", "don't stop", "stop sharing my screen", "how do I stop a task?", "stop typing in caps", "forget that", "abort the merge", ""]) expect(stopRequest(t), t).toBe(false);
   });
 });
