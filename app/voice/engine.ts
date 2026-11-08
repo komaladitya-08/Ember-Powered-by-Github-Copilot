@@ -552,6 +552,21 @@ const LONG_CAP_FRAMES = 625;
  * long from the press (ms), where it is sent as heard so far, `cut`. VoiceService's own wait is set above it.
  */
 export const MANUAL_MAX_MS = 20_000;
+/**
+ * …and only for speech that stands out from the room: its loudest 0.3 s (LOUD_FRAMES) this much (energy: 10 dB) over the
+ * window's first second (MANUAL_ROOM_FRAMES), or over the room's own noise. Without it, a TV or a colleague talking on
+ * when nothing was said kept "Listening…" up for 20 s, and their words went as the request (3 of 3 cases on the real
+ * models, where the window had ended at 8 s with "No request heard": voice-listening-c1-1). The user's own request,
+ * said up close over that talk, still goes on to its end.
+ */
+const MANUAL_OVER_ROOM = 10;
+const MANUAL_ROOM_FRAMES = 31;
+/**
+ * The VAD hears speech about 0.25 s after it starts: sound that stands out so in the last 8 frames before the deadline
+ * puts it back once, by this long (ms), for the VAD to say (speech begun at 7.9 s was "No request heard").
+ */
+const MANUAL_ONSET_FRAMES = 8;
+const MANUAL_ONSET_MS = 400;
 /** A request reaching the cap was cut when the speaker's voice was heard in its last second. */
 const STILL_TALKING_FRAMES = 32;
 const BREATH_FRAMES = 3;
@@ -617,6 +632,9 @@ export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
   private manualFrom = 0;
   private manualReady = false;
+  /** Listen once: the frame energies of its first second (the room as it opened), and whether its deadline was put back for speech just begun (MANUAL_ONSET_MS). */
+  private manualRoom: number[] = [];
+  private manualOnset = false;
   /** What was heard for the request just emitted ("utterance"), for Voice Match; it never goes to main. */
   requestAudio: Float32Array | null = null;
   /** That audio starts with the wake phrase (heard with it in one breath): Voice Match vouches only for what follows it. */
@@ -917,6 +935,8 @@ export class VoiceEngine {
   listenOnce(from: number, ms: number): void {
     this.manualFrom = from;
     this.manualReady = false;
+    this.manualRoom = [];
+    this.manualOnset = false;
     this.peak = 0;
     this.wakePeak = 0;
     this.busyRoom = false;
@@ -924,6 +944,20 @@ export class VoiceEngine {
     this.tail = [];
     this.tailFrom = 0;
     this.mode = { kind: "listening", until: from + ms, ms, heardSpeech: false, first: false, reason: "manual", checkAt: null, keyword: "" };
+  }
+
+  /**
+   * At Listen once's deadline, does it wait on? Only for speech that stands out from the room as the window opened
+   * (MANUAL_OVER_ROOM): under way (the VAD hears it), or just begun (MANUAL_ONSET_FRAMES), once.
+   */
+  private manualGoesOn(now: number): boolean {
+    const silence = Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ** 2;
+    const over = Math.max(loudest(this.manualRoom), this.floor ** 2) * MANUAL_OVER_ROOM;
+    if (this.backend.speaking()) return loudest(this.segment) >= over;
+    if (this.manualOnset || !this.micLevels.slice(-MANUAL_ONSET_FRAMES).some(e => e >= over && e >= silence)) return false;
+    this.manualOnset = true;
+    if (this.mode.kind === "listening") this.mode.until = now + MANUAL_ONSET_MS;
+    return true;
   }
 
   /** Stop listening for a command, and drop a wake or stop still being checked (the kill switch, Esc). */
@@ -958,8 +992,8 @@ export class VoiceEngine {
         if (this.mode.kind === "listening") this.endListening("timeout");
         return;
       }
-      // No speech under way at the deadline: nothing more is waited for. Speech under way goes on (the end of feed()).
-      if (now >= this.mode.until && !this.backend.speaking()) { this.endListening("timeout"); return; }
+      // No speech of the user's under way at the deadline: nothing more is waited for. Speech under way goes on (the end of feed()).
+      if (now >= this.mode.until && !this.manualGoesOn(now)) { this.endListening("timeout"); return; }
       else if (capturedAt === undefined || capturedAt <= Math.max(this.manualFrom, this.selfSpeakingUntil)) return;
       else if (!this.manualReady) {
         this.manualReady = true;
@@ -979,6 +1013,7 @@ export class VoiceEngine {
     this.micLevels.push(energy);
     this.micSelf.push(own);
     if (this.micLevels.length > SPEAKERS_RING_FRAMES) { this.micLevels.shift(); this.micSelf.shift(); }
+    if (this.mode.kind === "listening" && this.mode.reason === "manual" && this.manualRoom.length < MANUAL_ROOM_FRAMES) this.manualRoom.push(energy);
 
     // Nobody is saying "Hey Ember" unless someone is speaking: the spotter (most of the idle CPU) rests
     // after half a second without speech, and the frames it missed are replayed when speech returns.
@@ -1961,6 +1996,14 @@ function framesOf(seg: Float32Array): number[] {
 function soundMedian(e: number[], from: number, to: number, silent: number): number {
   const a = e.slice(Math.max(0, from), Math.min(e.length, to)).filter(x => x > silent).sort((x, y) => x - y);
   return a.length * 2 >= to - from ? a[a.length >> 1] : 0;
+}
+
+/** The loudest stretch of `e` (the median of LOUD_FRAMES frames; of all of them when it has fewer), or 0. */
+function loudest(e: number[]): number {
+  if (e.length <= LOUD_FRAMES) return median(e, 0, e.length);
+  let out = 0;
+  for (let i = LOUD_FRAMES; i <= e.length; i++) out = Math.max(out, median(e, i - LOUD_FRAMES, i));
+  return out;
 }
 
 /** The median of `e[from..to)` (clipped to it). */

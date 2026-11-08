@@ -231,8 +231,9 @@ describe("VoiceEngine", () => {
     const events = run(fake(["Open the calendar and show me next Tuesday."]), (e, c) => {
       c.t = 1000;
       e.listenOnce(c.t, 8000);
-      // Speech from 7.9 s to 10 s after the press.
-      for (c.t = 8900; c.t < 11_000; c.t += 32) e.feed(frame(0, true), c.t);
+      // A quiet room, then speech from 7.9 s to 10 s after the press.
+      for (c.t = 1032; c.t < 8900; c.t += 32) e.feed(frame(0), c.t);
+      for (; c.t < 11_000; c.t += 32) e.feed(frame(0, true), c.t);
       e.feed(frame(0), c.t);
     });
     expect(events.filter(e => e.type === "utterance")).toEqual([{ type: "utterance", text: "Open the calendar and show me next Tuesday.", window: "manual", ms: 0 }]);
@@ -274,6 +275,80 @@ describe("VoiceEngine", () => {
     expect(long.filter(e => e.type === "utterance")).toEqual([{ type: "utterance", text: expect.stringMatching(/^And then there was the time when/), window: "manual", ms: 0, cut: true }]);
     expect(endedAt).toBeGreaterThanOrEqual(1000 + MANUAL_MAX_MS);
     expect(endedAt).toBeLessThan(1000 + MANUAL_MAX_MS + 100);
+  });
+
+  describe("Listen once in a room where others talk (voice-listening-c1-1)", () => {
+    /**
+     * A scripted VAD that hears speech wherever f[2] > 0, from `lag` frames into it (Silero's own lag: about 0.25 s),
+     * and hands its segment over at the first frame without it, or when flushed.
+     */
+    const vadOf = (lag = 0): VoiceBackend => {
+      let segment: number[] = [], run = 0;
+      return {
+        spot: () => [], speaking: () => run > lag, transcribe: () => "Turn on do not disturb and set a timer for ten minutes.",
+        vad: f => {
+          if (f[2] > 0) { run++; if (run > lag) segment.push(...f); return []; }
+          run = 0;
+          const s = Float32Array.from(segment); segment = [];
+          return s.length ? [s] : [];
+        },
+        flushVad: () => { const s = Float32Array.from(segment); segment = []; run = 0; return s.length ? [s] : []; },
+        resetVad: () => { segment = []; run = 0; },
+      };
+    };
+    /** A frame of speech at `level` (RMS): talk across the room, or the user up close. */
+    const talk = (level: number) => { const f = new Float32Array(512).fill(level); f[2] = level; return f; };
+    const room = (from: number, to: number, e: VoiceEngine, c: { t: number }, level = 0.01) => { for (c.t = from; c.t < to && e.listening; c.t += 32) e.feed(talk(level), c.t); };
+    const sent = (events: VoiceEvent[]) => events.filter(e => e.type === "utterance");
+
+    it("ends at its deadline, as no request heard, when the only speech is talk that was going on as it opened (a TV, a colleague)", () => {
+      let endedAt = 0;
+      const events = run(vadOf(), (e, c) => {
+        c.t = 1000; e.listenOnce(c.t, 8000);
+        room(1032, 30_000, e, c);
+        endedAt = c.t;
+      });
+      expect(sent(events)).toEqual([]);
+      expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual" });
+      expect(endedAt).toBeLessThan(1000 + 8000 + 100);
+    });
+
+    it("still hears the user's own request said over that talk, up close, to its end past the deadline", () => {
+      const events = run(vadOf(), (e, c) => {
+        c.t = 1000; e.listenOnce(c.t, 8000);
+        room(1032, 8500, e, c);
+        // The user, 20 dB over the room's talk, from 7.5 s to 11 s; then the talk goes on.
+        for (; c.t < 12_000; c.t += 32) e.feed(talk(0.1), c.t);
+        room(c.t, 20_000, e, c);
+      });
+      expect(sent(events)).toEqual([{ type: "utterance", text: "Turn on do not disturb and set a timer for ten minutes.", window: "manual", ms: 0 }]);
+    });
+
+    it("waits out the VAD's lag for speech that began just before the deadline, in a quiet room (voice-listening-1)", () => {
+      let endedAt = 0;
+      const events = run(vadOf(8), (e, c) => {
+        c.t = 1000; e.listenOnce(c.t, 8000);
+        for (c.t = 1032; c.t < 8900; c.t += 32) e.feed(new Float32Array(512), c.t);
+        // Said from 7.9 s to 10 s; the VAD hears it from 8.16 s.
+        for (; c.t < 11_000; c.t += 32) e.feed(talk(0.05), c.t);
+        for (let i = 0; i < 10 && e.listening; i++, c.t += 32) e.feed(new Float32Array(512), c.t);
+        endedAt = c.t;
+      });
+      expect(sent(events)).toHaveLength(1);
+      expect(endedAt).toBeGreaterThan(11_000);
+      // A click or a cough at the deadline costs at most 0.4 s more of "Listening…".
+      let quietEnd = 0;
+      const cough = run(vadOf(8), (e, c) => {
+        c.t = 1000; e.listenOnce(c.t, 8000);
+        for (c.t = 1032; c.t < 8940; c.t += 32) e.feed(new Float32Array(512), c.t);
+        for (let i = 0; i < 3; i++, c.t += 32) e.feed(talk(0.05), c.t);
+        for (; c.t < 12_000 && e.listening; c.t += 32) e.feed(new Float32Array(512), c.t);
+        quietEnd = c.t;
+      });
+      expect(sent(cough)).toEqual([]);
+      expect(cough.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual" });
+      expect(quietEnd).toBeLessThanOrEqual(1000 + 8000 + 450);
+    });
   });
 
   describe("a request that trails off (voice-listening-3)", () => {
