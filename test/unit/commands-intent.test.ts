@@ -607,6 +607,37 @@ describe("matchIntent: words that hold the step back (commands-remote-c4-4)", ()
   });
 });
 
+describe("matchIntent: plain chains and a hung thing referred back to (commands-remote-r4-4)", () => {
+  it.each([
+    ["systemctl stop nginx", "stop apache, then nginx", "Stopping nginx, as you asked."],
+    ["systemctl stop nginx", "stop apache and then nginx", "Stopping nginx, as you asked."],
+    ["systemctl stop nginx", "stop apache. nginx too.", "Stopping nginx, as you asked."],
+    ["rm -rf build dist", "delete build/, then dist/", "Deleting build and dist, as you asked."],
+    ["rm -rf dist", "delete build/. dist/ as well.", "Deleting dist, as you asked."],
+    ["kill 1234", "1234 is hung, kill it", "Stopping 1234, as you asked."],
+    ["kill 1234", "1234 is frozen. kill it", "Stopping 1234, as you asked."],
+    ["systemctl restart nginx", "nginx is stuck, restart it", "Restarting nginx, as you asked."],
+    ["systemctl restart nginx", "the nginx service seems hung, please restart it", "Restarting nginx, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // Another verb, something said of the thing, a question, or "it" for something that isn't hung.
+    ["systemctl stop nginx", "stop apache, then look at nginx"],
+    ["systemctl stop nginx", "stop apache, then nginx is fine"],
+    ["systemctl stop nginx", "stop apache, then nginx restarts itself"],
+    ["systemctl stop nginx", "stop apache. nginx too?"],
+    ["kill 1234", "1234 is my editor, kill it"],
+    ["kill 1234", "1234 is hung and 5678 is my editor, kill it"],
+    ["kill 1234", "1234 is hung. 5678 is fine. kill it"],
+    ["systemctl restart nginx", "nginx is fine, restart it"],
+    ["kill 1234", "1234 is hung, kill 5678 and leave it"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+});
+
 describe("matchIntent: things kept together, and a folder named after a comma (commands-remote-v4-3)", () => {
   it.each([
     // What is said of the last thing listed is said of every thing listed with it.

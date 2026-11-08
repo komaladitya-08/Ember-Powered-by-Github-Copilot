@@ -305,6 +305,10 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
   };
   /** A thing of its own: a number, a path or one of the step's objects. */
   const thing = (t: string): boolean => /^#?\d+$/.test(t) || /[\\/*~]|\p{L}\.\p{L}|^\.\p{L}/u.test(t) || names(t);
+  // The part a sentence ended on, which a fragment after it may go on ("stop apache. nginx too."), and the one thing the
+  // clause just before said is hung, which "it" stands for ("1234 is hung, kill it": commands-remote-r4-4).
+  let carried: number | null = null;
+  let stuck: string | null = null;
   for (const sentence of sentencesOf(raw)) {
     const question = /\?["'”’)\]]*\s*$/.test(sentence);
     // Clauses as written: [tokens, whether a list joined it to the clause before ("," "and" "or" "plus")].
@@ -320,7 +324,8 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
         if (ws.some(x => JOINERS.has(x))) {
           if (cur.length) clauses.push([cur, list]);
           cur = [];
-          list = ws.length === 1 && ["and", "or", "plus"].includes(ws[0]);
+          // "stop apache, then nginx" lists nginx for the same verb, as "and" does (commands-remote-r4-4).
+          list = ws.length === 1 && ["and", "or", "plus", "then"].includes(ws[0]);
           continue;
         }
         cur.push(t);
@@ -334,12 +339,21 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
     // A clause that is only a place ("in dist,"), read with the verb's clause after it.
     let place: string[] = [];
     const end = () => { if (chain) out.push(chain.join(" and ")); chain = null; more = 0; };
-    clauses.forEach(([tokens0, listed], n) => {
+    const after = carried;
+    clauses.forEach(([tokens0, listed0], n) => {
       const starts = clauseStarts(userWordList(tokens0.join(" ")), n, question, polite);
       const leads = asksVerb(starts);
       const before = place;
       place = !leads && onlyPlace(tokens0) ? tokens0 : [];
-      const tokens = leads ? [...before, ...tokens0] : tokens0;
+      const prior = stuck;
+      stuck = leads ? null : stuckThing(tokens0, names);
+      const tokens = leads ? [...before, ...referBack(tokens0, prior, names)] : tokens0;
+      // "stop apache. nginx too.": a sentence that only adds a thing goes on with the one before it.
+      let listed = listed0;
+      if (n === 0 && after !== null && !leads && !question && tooFragment(tokens) && tokens.some(t => thing(t))) {
+        chain = [out.splice(after, 1)[0]];
+        listed = true;
+      }
       const first = tokens.find(t => !userWordList(t).every(x => FILLERS.has(x)));
       if (chain && listed && !leads) {
         // ", which is in dist", ", it's in dist": where the thing before it is, read with it (folderNamed).
@@ -377,9 +391,47 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
       if (!leads && kept.trim() !== "") more++;
       if (cut < tokens.length) end();
     });
+    const open = chain !== null;
     end();
+    carried = open ? out.length - 1 : null;
   }
   return out;
+}
+
+/** Words that say a program or a service is hung ("1234 is hung", "nginx is stuck", "the nginx service seems frozen"). */
+const STUCK = new Set([
+  "stuck", "hung", "hanging", "frozen", "freezing", "unresponsive", "broken", "dead", "wedged", "crashed", "crashing",
+  "spinning", "looping", "misbehaving", "down", "leaking",
+]);
+const STUCK_WITH = new Set([
+  "is", "s", "are", "was", "seems", "looks", "has", "got", "gone", "went", "really", "totally", "completely", "still",
+  "again", "just", "kind", "sort", "of", "the", "my", "our", "this", "that",
+]);
+
+/**
+ * The one thing a clause says is hung, and nothing else ("1234 is hung", "nginx's stuck", "the nginx service seems
+ * frozen"), as written, or null: "it" in the verb's clause right after it stands for it (commands-remote-r4-4).
+ */
+function stuckThing(tokens: readonly string[], names: (t: string) => boolean): string | null {
+  const named = tokens.filter(t => names(t));
+  if (named.length !== 1) return null;
+  const ws = userWordList(tokens.filter(t => t !== named[0]).join(" "));
+  if (!ws.some(x => STUCK.has(x))) return null;
+  if (!ws.every(x => STUCK.has(x) || STUCK_WITH.has(x) || OF_THING.has(x) || AFTER_OBJECT.has(x) || FILLERS.has(x))) return null;
+  return named[0].replace(/^[("'`“‘[{<]+|[)"'`”’\]}>.,;:!?]+$/gu, "").replace(/['’]s$/u, "");
+}
+
+/** The verb's clause with "it" for the hung thing the clause before named, when it names no thing of its own. */
+function referBack(tokens: readonly string[], thing: string | null, names: (t: string) => boolean): readonly string[] {
+  if (thing === null || tokens.some(t => names(t))) return tokens;
+  return tokens.map(t => (userWordList(t).join(" ") === "it" ? thing : t));
+}
+
+/** A clause that only adds a thing, ending "too", "also" or "as well" ("nginx too.", "dist/ as well."). */
+function tooFragment(tokens: readonly string[]): boolean {
+  const ws = userWordList(tokens.join(" "));
+  const last = ws[ws.length - 1] ?? "";
+  return last === "too" || last === "also" || (last === "well" && ws[ws.length - 2] === "as");
 }
 
 /** Words that stand for things already named, never a thing of their own ("they are huge", "both are big"). */
