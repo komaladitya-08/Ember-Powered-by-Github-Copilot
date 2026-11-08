@@ -438,6 +438,75 @@ describe("matchIntent: only what the asked-for verb acts on (commands-remote-c3-
   });
 });
 
+describe("matchIntent: a name that only places, describes or does something else (commands-remote-c3-1, r3-x1)", () => {
+  it.each([
+    // [command, words]: the name follows in, of, for, into or by, is the subject of another verb, or isn't the head.
+    ["rm -rf frontend", "delete node_modules in the frontend folder"],
+    ["rm -rf frontend", "delete the node_modules folder inside frontend"],
+    ["rm -rf build", "delete the logs in the build folder"],
+    ["rm -rf build", "delete the old logs inside the build folder"],
+    ["rm -rf build", "delete the backup of the build folder"],
+    ["rm -rf src", "delete the test files for the src folder"],
+    ["rm -rf dist", "delete the build folder in dist"],
+    ["rm -rf dist", "remove the build folder from dist"],
+    ["rm -rf build", "in dist delete the build folder"],
+    ["rm -rf build", "in dist, delete the build folder"],
+    ["rm -rf build", "delete the build logs"],
+    ["rm build", "delete the build logs"],
+    ["rm -r build", "delete the folders that build creates"],
+    ["git branch -D main", "delete the branches merged into main"],
+    ["git branch -D main", "delete every branch that main already has"],
+    ["kill 1234", "kill the children of 1234"],
+    ["kill 1234", "kill the process that 1234 started"],
+    ["kill 1234", "kill the processes started by 1234"],
+    ["kill 1234", "kill 5678, the child of 1234"],
+    ["kill 1234", "kill 5678, 1234 = my editor"],
+    ["kill 1234", "kill 5678, 1234 my editor"],
+    ["kill 1234", "kill 5678, 1234 started it"],
+    ["kill 1234", "kill 5678 since 1234 depends on it"],
+    ["systemctl restart nginx", "restart php-fpm, nginx depends on it"],
+    ["systemctl stop nginx", "stop apache, nginx serves the site"],
+    ["systemctl stop nginx", "stop apache since nginx serves the site"],
+    ["systemctl stop nginx", "stop apache, nginx handles the traffic now"],
+    ["systemctl stop nginx", "stop apache because nginx wants port 80"],
+    ["systemctl stop nginx", "stop the service nginx forwards to"],
+    ["kill 1234", "kill 1234's parent"],
+    ["rm -rf build", "delete what's inside build/"],
+    ["rm -rf build", "delete everything in build/"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBeNull();
+  });
+
+  it.each([
+    // What the verb itself acts on, with words that place it, say how or name where it goes.
+    ["rm -rf dist/build", "delete the build folder in dist", "Deleting dist/build, as you asked."],
+    ["rm -rf dist/build", "in dist delete the build folder", "Deleting dist/build, as you asked."],
+    ["rm -rf dist/build", "in dist, delete the build folder", "Deleting dist/build, as you asked."],
+    ["rm -rf build", "delete build/ in the repo", "Deleting build, as you asked."],
+    ["rm -rf build", "get rid of build/", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ completely, for me", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the old build folder that nobody uses", "Deleting build, as you asked."],
+    ["kill 1234", "kill the process with pid 1234", "Stopping 1234, as you asked."],
+    ["kill 1234", "kill 1234 now please", "Stopping 1234, as you asked."],
+    ["systemctl stop nginx", "stop the nginx service", "Stopping nginx, as you asked."],
+    ["npm uninstall lodash", "remove lodash from the frontend", "Removing lodash, as you asked."],
+    ["npm install lodash", "install lodash for the frontend", "Installing lodash, as you asked."],
+    ["git push origin feature-x", "push feature-x for review to origin", "Pushing feature-x to origin, as you asked."],
+    ["git push origin feature-x", "push my feature-x changes to origin", "Pushing feature-x to origin, as you asked."],
+    ["git checkout -- src/a.ts", "discard the changes in src/a.ts", "Discarding changes to src/a.ts, as you asked."],
+    ["git clean -fd build", "clean the untracked files in build/", "Deleting untracked files, as you asked."],
+    ["echo x > out.txt", "save the list in out.txt", "Overwriting out.txt, as you asked."],
+    ["echo x > out.txt", "write the list into out.txt", "Overwriting out.txt, as you asked."],
+    ["scp report.pdf build-01:/tmp", "copy report.pdf onto the build-01 server", "Copying report.pdf to build-01, as you asked."],
+    ["git branch -D feature old", "delete the feature and old branches", "Deleting the branch feature and old, as you asked."],
+    ["pkill node", "kill the node process that's hogging the CPU", "Stopping node, as you asked."],
+    ["rm -rf build dist", "delete build/ and dist/ both", "Deleting build and dist, as you asked."],
+    ["git push origin feature-x", "push feature-x up to origin", "Pushing feature-x to origin, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe(said);
+  });
+});
+
 describe("matchIntent: a pull request numbered anywhere in the words (commands-remote-v4-2)", () => {
   it.each([
     "look at pull request 45. merge the pr",

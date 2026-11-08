@@ -283,8 +283,15 @@ const RELATIVE = new Set(["that", "which", "who"]);
  * where the thing before it is (", which is in dist") stays with it, for folderNamed. Each part is returned as words of
  * its own for the row to read. Conservative: a clause that begins with any other word ends the list, and only makes
  * the step ask.
+ *
+ * Only a thing in the verb's own phrase counts (commands-remote-c3-1, r3-x1; objectWords): never one named after of,
+ * for, into or by ("the backup of the build folder", "the branches merged into main"), a folder after in or from, which
+ * only says where it is ("node_modules in the frontend folder"), one in a reason, a condition or a relative clause
+ * ("because nginx wants port 80", "the process that 1234 started"), or a name some other word follows ("nginx serves
+ * the site", "1234 my editor", "the build logs"). A list goes on only with a thing ("my editor 1234" ends it), and a
+ * place alone before the verb ("in dist, delete the build folder") is read with it.
  */
-function actedOn(raw: string, verbs: readonly string[], names: (token: string) => boolean): string[] {
+function actedOn(raw: string, verbs: readonly string[], names: (token: string) => boolean, shape: RowShape = {}): string[] {
   const out: string[] = [];
   const asksVerb = (starts: readonly string[][]) => verbs.some(v => {
     const parts = v.split(" ");
@@ -296,6 +303,8 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
     if (ws.every(x => LISTS_MORE.has(x) || OF_THING.has(x)) || /^#?\d+$/.test(t)) return true;
     return /[\\/*~]|\p{L}\.\p{L}|^\.\p{L}/u.test(t) || names(t);
   };
+  /** A thing of its own: a number, a path or one of the step's objects. */
+  const thing = (t: string): boolean => /^#?\d+$/.test(t) || /[\\/*~]|\p{L}\.\p{L}|^\.\p{L}/u.test(t) || names(t);
   for (const sentence of sentencesOf(raw)) {
     const question = /\?["'”’)\]]*\s*$/.test(sentence);
     // Clauses as written: [tokens, whether a list joined it to the clause before ("," "and" "or" "plus")].
@@ -322,17 +331,26 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
     let chain: string[] | null = null;
     // How many of the chain's last entries only list more things after the verb's own clause.
     let more = 0;
+    // A clause that is only a place ("in dist,"), read with the verb's clause after it.
+    let place: string[] = [];
     const end = () => { if (chain) out.push(chain.join(" and ")); chain = null; more = 0; };
-    clauses.forEach(([tokens, listed], n) => {
-      const starts = clauseStarts(userWordList(tokens.join(" ")), n, question, polite);
+    clauses.forEach(([tokens0, listed], n) => {
+      const starts = clauseStarts(userWordList(tokens0.join(" ")), n, question, polite);
       const leads = asksVerb(starts);
+      const before = place;
+      place = !leads && onlyPlace(tokens0) ? tokens0 : [];
+      const tokens = leads ? [...before, ...tokens0] : tokens0;
       const first = tokens.find(t => !userWordList(t).every(x => FILLERS.has(x)));
       if (chain && listed && !leads) {
         // ", which is in dist", ", it's in dist": where the thing before it is, read with it (folderNamed).
-        if (chain.length > 0 && placesIt(tokens)) { chain[chain.length - 1] += ` ${tokens.join(" ")}`; return; }
+        if (chain.length > 0 && placesIt(tokens)) { chain[chain.length - 1] += ` ${placed(tokens, shape).join(" ")}`; return; }
         // "main and develop stay", "nginx and postgres are fine": what is said of the last thing listed is said of
         // every thing listed with it since the verb's clause, so none of them counts (commands-remote-v4-3).
         if (saysOfAll(tokens)) { chain.splice(chain.length - more); end(); return; }
+        // A list goes on only with a thing, after words that only describe it ("the old dist folder"): "my editor
+        // 1234" says what 1234 is (commands-remote-r3-x1).
+        const at = tokens.findIndex(t => thing(t));
+        if (at > 0 && tokens.slice(0, at).some(t => !userWordList(t).every(x => LISTS_MORE.has(x) || OF_THING.has(x) || AFTER_OBJECT.has(x) || FILLERS.has(x)))) { end(); return; }
       }
       if (!leads && !(chain && listed && first !== undefined && nounish(first))) { end(); return; }
       if (leads) end();
@@ -353,7 +371,8 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
         if (j > 0 && RELATIVE.has(word(j - 1))) j--;
         cut = j;
       }
-      const kept = tokens.slice(0, cut).join(" ").replace(/\?+(?=["'”’)\]]*$)/, "");
+      cut = Math.min(cut, objectEnd(tokens, names, nounish, shape));
+      const kept = objectWords(tokens.slice(0, cut), shape).join(" ").replace(/\?+(?=["'”’)\]]*$)/, "");
       chain = [...(chain ?? []), ...(kept.trim() !== "" ? [kept] : [])];
       if (!leads && kept.trim() !== "") more++;
       if (cut < tokens.length) end();
@@ -423,6 +442,138 @@ const NOT_A_FOLDER = new Set([
 const HERE_FOLDER = new Set(["folder", "directory", "dir", "repo", "repository", "project", "here", "current", "workspace", "checkout"]);
 
 /**
+ * How a row's words name its objects (commands-remote-c3-1): `places`, the words whose phrase names one of them ("save
+ * the list in out.txt", "copy it onto build-01", "discard the changes in a.ts"), and `heads`, the words that may follow
+ * one as the end of its name ("my feature-x changes", "the build-01 server", "the node processes").
+ */
+interface RowShape { places?: readonly string[]; heads?: readonly string[] }
+const PUSHED: RowShape = { places: ["into"], heads: ["changes", "commits", "work", "fixes", "edits", "code"] };
+const ROW_SHAPE: Readonly<Record<string, RowShape>> = {
+  "git.push": PUSHED,
+  "git.push.force": PUSHED,
+  "git.discard": { places: ["in", "inside", "within", "under", "of"] },
+  "git.clean": { places: ["in", "inside", "within", "under"] },
+  "overwrite.file": { places: ["in", "inside", "within", "under", "into", "onto"] },
+  "p4.revert": { places: ["in", "inside", "within", "under"] },
+  "pkg.install": { heads: ["library", "libraries", "module", "modules", "dependency", "dependencies", "version"] },
+  "service.restart": { heads: ["server", "daemon", "unit", "units"] },
+  "upload.host": { places: ["into", "onto"], heads: ["server", "host", "machine", "box", "computer", "vm"] },
+  "kill.process": { heads: ["program", "programs", "app", "apps", "instance", "instances", "job", "jobs", "daemon"] },
+};
+
+/**
+ * Words whose phrase only says more about the thing before it ("the backup of the build folder", "the branches merged
+ * into main", "the processes started by 1234", "the test files for the src folder"): what it names isn't what the verb
+ * acts on, so the phrase is left out (objectWords).
+ */
+const ATTACHED = new Set([
+  "of", "for", "into", "onto", "by", "with", "about", "like", "than", "near", "behind", "against", "between", "among",
+  "around", "across", "beside", "via", "through", "over", "toward", "towards", "per", "upon", "below", "above", "beneath",
+  "underneath", "past", "alongside",
+]);
+/** Every word that starts a phrase of its own: where an attached phrase ends. */
+const PREPOSITION = new Set([...ATTACHED, ...IN_FOLDER, "to", "on", "at", "as"]);
+/** "all of build/", "both of them", "get rid of build/": an "of" that names what the verb acts on. */
+const OF_WHAT = new Set(["rid", "all", "both", "each", "any", "either", "one", "two", "three", "most", "many", "several", "some"]);
+/** Words that start a reason, a time or a condition ("because nginx wants port 80", "after dist/ finishes"). */
+const SUBORDINATE_CUT = new Set([
+  "because", "cause", "cuz", "since", "before", "after", "while", "whilst", "though", "although", "whereas", "if", "when",
+  "whenever", "once", "until", "till", "unless",
+]);
+/** Words that start a relative clause after a thing ("the process that 1234 started", "every branch that main has"). */
+const RELATIVE_CUT = new Set(["that", "which", "who", "whom", "whose", "where"]);
+/** Words a thing's name may end with ("the build folder", "the nginx service", "1234 and 5678 processes", "build/ too"). */
+const AFTER_NAME = new Set([
+  ...OF_THING, ...AFTER_OBJECT, ...FILLERS, "folders", "directories", "dirs", "files", "branches", "stashes", "packages",
+  "images", "changelists", "prs", "processes", "services", "tree", "again", "already", "here", "anyway", "well", "away",
+  "asap", "thanks", "thank", "today", "altogether", "forever", "quick", "fast", "up", "down", "out", "off", "back",
+  "both", "all", "each",
+]);
+/** Marks a folder the words only place a thing in ("in the ǂfrontend folder"): folderNamed reads it, no row names it. */
+const PLACED = "\u01c2";
+
+/**
+ * Where the clause's words stop naming what the verb acts on (commands-remote-c3-1, r3-x1): at a reason, a time or a
+ * condition ("because nginx wants port 80"), a relative clause after a thing ("the process that 1234 started"; "the
+ * build folder that is in dist" only places it), or a name followed by a word that isn't the end of its name ("nginx
+ * serves the site", "1234 my editor", "1234 = my editor", "the build logs", "the service nginx forwards to"): there,
+ * from the start of that name's phrase.
+ */
+function objectEnd(tokens: readonly string[], names: (t: string) => boolean, nounish: (t: string) => boolean, shape: RowShape): number {
+  const word = (k: number) => userWordList(tokens[k] ?? "")[0] ?? "";
+  const heads = new Set(shape.heads ?? []);
+  const kind = (k: number) => AFTER_OBJECT.has(word(k)) || OF_THING.has(word(k)) || heads.has(word(k));
+  const another = (t: string) => /^#?\d+$/.test(t) || /[\\/*~]|\p{L}\.\p{L}|^\.\p{L}/u.test(t) || names(t);
+  const endsName = (t: string): boolean => {
+    // An aside in brackets ("(the one in dist)"), and "&" or "+" between two things.
+    if (/^[([{]/.test(t)) return true;
+    const ws = userWordList(t);
+    if (ws.length === 0) return /^[&+/|–—-]+$/.test(t);
+    const w0 = ws[0];
+    return AFTER_NAME.has(w0) || heads.has(w0) || PREPOSITION.has(w0) || RELATIVE_CUT.has(w0) || SUBORDINATE_CUT.has(w0) || JOINERS.has(w0) || /ly$/.test(w0) || another(t);
+  };
+  for (let k = 1; k < tokens.length; k++) {
+    if (SUBORDINATE_CUT.has(word(k))) return k;
+    if (RELATIVE_CUT.has(word(k)) && nounish(tokens[k - 1]) && !placesIt(tokens.slice(k))) return k;
+    let i = k - 1;
+    while (i >= 0 && kind(i) && !names(tokens[i])) i--;
+    if (i < 0 || !names(tokens[i]) || endsName(tokens[k])) continue;
+    let j = i;
+    while (j > 0 && !RELATIVE.has(word(j - 1)) && nounish(tokens[j - 1])) j--;
+    return j;
+  }
+  return tokens.length;
+}
+
+/**
+ * The clause's words a row reads for its objects (commands-remote-c3-1): a phrase after of, for, into, by and the like
+ * left out ("delete the backup of the build folder" → "delete the backup"), except "get rid of", "all of", "with pid
+ * 1234", "I'd like to" and the row's own places; a folder after in, inside, within, under or from marked (placed).
+ */
+function objectWords(tokens: readonly string[], shape: RowShape): string[] {
+  const word = (k: number) => userWordList(tokens[k] ?? "")[0] ?? "";
+  const keeps = new Set(shape.places ?? []);
+  const out: string[] = [];
+  for (let k = 0; k < tokens.length; k++) {
+    const w0 = word(k);
+    // "I'd like to delete build/" asks for it.
+    const names = (w0 === "of" && OF_WHAT.has(word(k - 1))) || (w0 === "with" && /^(pid|id|name|number|process)$/.test(word(k + 1) === "the" ? word(k + 2) : word(k + 1)))
+      || (w0 === "like" && (word(k + 1) === "to" || word(k + 1) === "you"));
+    if (ATTACHED.has(w0) && !keeps.has(w0) && !names) {
+      let q = k + 1;
+      while (q < tokens.length && !PREPOSITION.has(word(q)) && !RELATIVE_CUT.has(word(q))) q++;
+      k = q - 1;
+      continue;
+    }
+    out.push(tokens[k]);
+  }
+  return placed(out, shape);
+}
+
+/** The tokens with the folder after each place word marked (PLACED), unless the row names its objects there. */
+function placed(tokens: readonly string[], shape: RowShape): string[] {
+  const keeps = new Set(shape.places ?? []);
+  const out = [...tokens];
+  for (let k = 0; k < out.length; k++) {
+    const w0 = userWordList(out[k])[0] ?? "";
+    if (!IN_FOLDER.has(w0) || keeps.has(w0) || userWordList(out[k]).length !== 1) continue;
+    let m = k + 1;
+    while (m < out.length && BEFORE_FOLDER.has(userTokens(out[m])[0] ?? "")) m++;
+    if (m < out.length && userWordList(out[m]).length > 0) out[m] = out[m].replace(/^([("'`“‘[{<]*)/u, `$1${PLACED}`);
+  }
+  return out;
+}
+
+/** Whether a clause is only a place ("in dist", "inside the frontend folder"), said before the verb's clause. */
+function onlyPlace(tokens: readonly string[]): boolean {
+  const ts = userTokens(tokens.join(" ")).filter(t => !FILLERS.has(t));
+  if (ts.length < 2 || !IN_FOLDER.has(ts[0])) return false;
+  let k = 1;
+  while (BEFORE_FOLDER.has(ts[k] ?? "")) k++;
+  return ts.slice(k + 1).every(t => AFTER_OBJECT.has(t)) && k < ts.length;
+}
+
+/**
  * The folder the user's words put the path at token `idx` in ("delete build/ in my-app", "the build folder in
  * packages/app", "the build folder in dist"), "~" for the home folder ("in my home folder"), else null. Any word
  * there names a folder (commands-remote-c3-1: "the build folder in dist" is dist/build, never ./build); amounts ("in 5
@@ -434,10 +585,18 @@ function folderNamed(idx: number, w: Words): string | null {
   if (owner !== undefined && !PRONOUN.has(owner) && !RELATIVE.has(owner) && !HERE_FOLDER.has(owner)) return owner === "home" ? "~" : owner;
   let k = idx + 1;
   while (AFTER_OBJECT.has(w.tokens[k] ?? "") || SAYS_WHERE.has(w.tokens[k] ?? "")) k++;
-  if (!IN_FOLDER.has(w.tokens[k] ?? "")) return null;
+  if (IN_FOLDER.has(w.tokens[k] ?? "")) return folderAfter(k, w);
+  // "in dist delete the build folder", "in dist, delete the build folder": a place before the verb (commands-remote-c3-1).
+  let s = 0;
+  while (FILLERS.has(w.tokens[s] ?? "")) s++;
+  return s < idx && IN_FOLDER.has(w.tokens[s] ?? "") ? folderAfter(s, w) : null;
+}
+
+/** The folder after the place word at `k` ("in dist", "inside the frontend folder"), "~" for the home folder, or null. */
+function folderAfter(k: number, w: Words): string | null {
   k++;
   while (BEFORE_FOLDER.has(w.tokens[k] ?? "")) k++;
-  const t = w.tokens[k] ?? "";
+  const t = (w.tokens[k] ?? "").replaceAll(PLACED, "");
   if (t === "" || /^\d+(?:[.,:/-]\d+)*[a-z]{0,3}$/i.test(t)) return null;
   if (NOT_A_FOLDER.has(t) || HERE_FOLDER.has(t)) return null;
   if (t === "home" || t === "~") return "~";
@@ -897,7 +1056,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     const names = (t: string) => fs.some(f => f.objects.some(o => namesObject(o, t)));
     const verbs = row.startsWith("git.push") ? ["push", "force push"] : ROW_VERBS[row] ?? [];
     let m: IntentMatch | null = null;
-    const acted = actedOn(w.raw, verbs, names);
+    const acted = actedOn(w.raw, verbs, names, ROW_SHAPE[row]);
     for (const part of acted) if ((m = fn(fs, wordsOf(part), ctx, F, w))) break;
     // The verb said again ("delete build/ and delete dist/", "kill 1234. Kill 5678 too."): the parts that ask for that
     // same verb are read together, so each thing is still named where the verb asks for it (commands-remote-v4-6), and
