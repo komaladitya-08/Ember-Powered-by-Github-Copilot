@@ -300,7 +300,8 @@ minutes", "in 1h", "at 5pm", "at 5.30pm", "at the end of the task"), asking to b
 with me", "wait for my ok", "show me the command first", "run it by me", "on my go", "hold off", "I'll say when") or
 asking how ("explain how to delete build/ and delete src/"); "tell me if it worked", "let me know when it's done", "if you can", "as soon as possible", "if it exists" and a time or
 a condition of another step of yours said after it ("delete build/ now, I'll rebuild later", "then run the tests once
-it's gone") hold nothing back. So do words that say not to, or
+it's gone") hold nothing back, but the step itself said again with a time does ("delete build/, but run the command
+tomorrow", "… start the cleanup tomorrow"), and so does "wait, then delete build/". So do words that say not to, or
 that keep or leave something out ("don't delete build/", "delete everything but build/", "delete dist/ and keep
 build/", "instead of", "other than"), since the step may be on what you meant to keep. Only what the verb you
 asked with acts on counts, in its own part of the sentence: "kill 5678, 1234 is my editor" doesn't cover `kill 1234`,

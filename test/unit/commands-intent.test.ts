@@ -701,6 +701,29 @@ describe("matchIntent: words that hold the step back (commands-remote-c4-4)", ()
   });
 
   it.each([
+    // A later clause whose object is the step itself keeps its time or condition, and a wait a sequence follows waits.
+    ["rm -rf build", "delete build/, but run the command tomorrow"],
+    ["rm -rf build", "delete build/, but run the command only if the tests pass"],
+    ["rm -rf build", "delete build/, but I'll run the command myself tomorrow"],
+    ["rm -rf build", "delete build/ and start the cleanup tomorrow"],
+    ["git branch -D main", "delete the main branch, but run the command next week"],
+    ["kill 1234", "kill 1234 and run the command if it hangs again"],
+    ["rm -rf build", "wait, then delete build/"],
+    ["rm -rf build", "Wait. Then delete build/."],
+  ])("asks for `%s` after %j, which holds the step itself back (commands-remote-w5-2)", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
+    // Another thing to run, named after the verb, keeps its own time.
+    ["rm -rf build", "delete build/ and start the dev server tomorrow", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/, then run the build later", "Deleting build, as you asked."],
+    ["rm -rf build", "Wait! Delete build/ instead.", "Deleting build, as you asked."],
+  ])("still announces `%s` after %j (commands-remote-w5-2)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
     // The contents of the file a copy reads from: after "with", or as what "save" writes somewhere else.
     ["cp config.yml config.yml.bak", "overwrite config.yml with the contents of config.yml.bak"],
     ["mv config.yml config.yml.bak", "overwrite config.yml with the contents of config.yml.bak"],

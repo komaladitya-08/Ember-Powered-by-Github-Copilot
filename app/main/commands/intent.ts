@@ -860,11 +860,21 @@ const OTHER_STEP = new Set([
   "download", "email", "copy", "move", "rename", "add", "edit", "publish", "release", "make", "set",
 ]);
 /**
- * Of OTHER_STEP, the verbs that can stand for the step itself ("run it later", "make that happen", "start tomorrow"):
- * another step only with one of these after them ("run the tests", "start the server").
+ * Of OTHER_STEP, the verbs that can stand for the step itself ("run it later", "make that happen", "start tomorrow",
+ * "run the command tomorrow", "start the cleanup tomorrow"): another step only when what follows them, after a
+ * determiner, names another thing to run (STEP_OBJECT: "run the tests", "start the dev server"), and nothing that is
+ * the step itself (STEP_SELF: "run the test command": commands-remote-w5-2).
  */
 const STEP_ITSELF = new Set(["run", "rerun", "make", "set", "start"]);
-const STEP_OBJECT = new Set(["the", "a", "an", "my", "our", "your", "all", "some", "tests", "test", "server", "app", "linter", "script", "build"]);
+const STEP_OBJECT = new Set([
+  "tests", "test", "suite", "specs", "server", "servers", "app", "apps", "application", "linter", "lint", "linters",
+  "formatter", "script", "scripts", "build", "builds", "docs", "migrations", "migration", "benchmarks", "benchmark", "checks",
+]);
+const STEP_DETERMINER = new Set(["the", "a", "an", "my", "our", "your", "all", "some", "these", "those"]);
+const STEP_SELF = new Set([
+  "command", "commands", "deletion", "delete", "rm", "cleanup", "clean", "change", "changes", "it", "this", "that", "step",
+  "steps", "kill", "removal", "operation", "job", "task", "thing", "one",
+]);
 /** Words between a subject and its verb ("I'll rebuild", "we can redeploy", "I'm going to rebuild"). */
 const STEP_MODALS = new Set(["ll", "will", "shall", "can", "could", "d", "would", "should", "might", "may", "must", "m", "am", "are", "re", "going", "gonna", "to", "want", "wanna", "need", "have", "ve", "got", "also", "probably"]);
 
@@ -878,7 +888,11 @@ function otherStep(words: readonly string[]): boolean {
   }
   const v = words[k] ?? "";
   if (!OTHER_STEP.has(v)) return false;
-  return !STEP_ITSELF.has(v) || STEP_OBJECT.has(words[k + 1] ?? "");
+  if (!STEP_ITSELF.has(v)) return true;
+  let j = k + 1;
+  while (j < words.length && STEP_DETERMINER.has(words[j])) j++;
+  const object = words.slice(j, j + 2);
+  return object.some(x => STEP_OBJECT.has(x)) && !object.some(x => STEP_SELF.has(x));
 }
 
 /**
@@ -924,6 +938,11 @@ const LATER_TOO = /(^|[^\p{L}\p{N}])((at|by|towards?|near|until|till)\s+the\s+(v
  * "I'll confirm".
  */
 const HELD_FIRST = /(^|[^\p{L}\p{N}])(but\s+first|first\s+(show|tell|let|ask|check|run|give|send|list|explain|describe|walk)|(show|tell|give|send|list|explain|describe)\s+(me|us)(?=\s)[^.;!?]{0,80}?\s(first|beforehand)|run\s+(it|this|that|them|these|those|the\s+commands?|everything)\s+(by|past)\s+(me|us)|(on|at|upon)\s+my\s+(go|word|signal|mark|command|cue|count|say|call)|on\s+go|get\s+(the|my|an?)\s+(ok|okay|go[-\s]?ahead|approval|green\s+light|nod|sign[-\s]?off)|prompt\s+(me|us)|let\s+(me|us)\s+see|(upon|on|after|pending|awaiting|with|subject\s+to)\s+(the\s+|a\s+|my\s+|your\s+)?(confirmation|approval|review|sign[-\s]?off)|hold\s+(off|on|it|up|fire)|hang\s+(on|tight|fire)|stand\s+by|sit\s+tight|(i|we)(\s*['’]ll|\s+will|\s+shall|\s*['’]d|\s+can)?\s+(confirm|approve|decide|sign\s+off|give\s+(you\s+)?the\s+(word|go|signal|nod|green\s+light)|say\s+(go|when|so|the\s+word)|let\s+you\s+know))(?=$|[^\p{L}\p{N}])/iu;
+/**
+ * A leading "wait," that only interrupts ("wait, delete build/ instead"), never one a word of sequence follows ("wait,
+ * then delete build/", "Wait. Then delete build/.", "wait, and after that …": commands-remote-w5-2).
+ */
+const WAIT_ONLY = /^\s*wait\s*[,!.:;–—-]+(?!\s*(and\s+)?(then|after|afterwards|until|till|before|once|first|next|later)(?=$|[^\p{L}\p{N}]))\s*/iu;
 /** Asking to be asked first ("ask me first", "check with me", "wait for my ok", "let me check first", "a dry run"). */
 const ASK_FIRST = /(^|[^\p{L}\p{N}])(ask\s+(me|us|first|before)|(check|confirm|clear\s+it)\s+with\s+(me|us)|confirm\s+(first|before)|(tell|show|warn|ping)\s+(me|us)\s+(first|before|beforehand)|let\s+(me|us)\s+(know\s+(first|before|beforehand)|check|look|review|decide|confirm|approve|think|see\s+(it\s+|that\s+|this\s+|them\s+)?first)|wait|waits|waiting|my\s+(go[-\s]?ahead|approval|ok|okay|permission|say[-\s]?so|signal|confirmation|green\s+light|nod)|dry[-\s]?run)(?=$|[^\p{L}\p{N}])/iu;
 
@@ -934,8 +953,8 @@ const ASK_FIRST = /(^|[^\p{L}\p{N}])(ask\s+(me|us|first|before)|(check|confirm|c
  */
 function holdsBack(userWords: string, verbs: readonly string[]): boolean {
   // "as soon as possible" asks for it now, and a leading "wait," only interrupts ("wait, delete build/ instead":
-  // commands-remote-v5-5).
-  const said = userWords.normalize("NFKC").replace(SOON_AS_ASKED, "$1now").replace(/^\s*wait\s*[,!.:;–—-]+\s*/iu, "");
+  // commands-remote-v5-5), unless what follows says what comes after the wait ("wait, then delete build/": w5-2).
+  const said = userWords.normalize("NFKC").replace(SOON_AS_ASKED, "$1now").replace(WAIT_ONLY, "");
   if (ASK_FIRST.test(said) || HELD_FIRST.test(said)) return true;
   const text = ownSteps(said, verbs);
   if (LATER.test(text) || LATER_TOO.test(text)) return true;
