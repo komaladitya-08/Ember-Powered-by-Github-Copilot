@@ -89,19 +89,46 @@ export const COMPOSER_SAYS = {
 } as const;
 /**
  * A Problem line as Home shows it (home-7): Home is Ember's settings, so where the line sends the user to "Ember's
- * settings (Ctrl+Alt+E)" it names the section that helps, Models & connections, and `settings` says the row offers a
- * way there (PROBLEM_SETTINGS), as it does where the line names that section itself (LOST_GAVE_UP's Check again:
- * reliability-performance-r3-2). Its words are Ember's own (friendlyError, the connection's notices), never a model's.
+ * settings (Ctrl+Alt+E)" it names the section that helps, Models & connections (once: home-r3-2), and `settings` says
+ * the row offers a way there (PROBLEM_SETTINGS). Only where the line sends the user there: a setting, a sign-in, Check
+ * again, as LOST_GAVE_UP's does (accessibility-visual-c3-2, reliability-performance-r3-2); never a line for their
+ * administrator, whoever manages their plan, IT or GitHub, where nothing in Ember's settings helps (home-r3-2). Its
+ * words are Ember's own (friendlyError, the connection's notices), never a model's.
  */
 export function problemInHome(text: string): { text: string; settings: boolean } {
-  const settings = /\bsettings\b|\bModels & connections\b/i.test(text);
-  return { text: text.replace(/\bOpen settings\b/g, "Open Models & connections").replace(/\bin (?:Ember's )?settings(?: \([^)]*\))?/g, "in Models & connections"), settings };
+  const there = /\bin (?:Ember's )?settings\b|\bOpen settings\b|\bin Models & connections\b|\bCheck again\b|\bsign(?:-| )?in\b|\bConnect your GitHub account\b/i.test(text);
+  const elsewhere = /\badministrator\b|\bask whoever\b|\bask IT\b|\bon GitHub\b/i.test(text);
+  return { text: text.replace(/\bOpen settings\b/g, "Open Models & connections").replace(/\bin (?:Ember's )?settings(?: \([^)]*\))?(?:, under Models & connections\b)?/g, "in Models & connections"), settings: there && !elsewhere };
 }
 /** A Problem line's way to Models & connections, in Home (as the status panel's own button says it). */
 export const PROBLEM_SETTINGS = "Models & connections…";
 /** Stop response, pressed: what it stopped, or that nothing was under way (home-3: never a stop that didn't happen). */
 export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";
 export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything right now, so there was nothing to stop.";
+/**
+ * How a Stop ended the composer's `messages` (`stopped`: CONVERSATION_STOPPED, COMPOSER_SAYS.stoppedAll) when they
+ * hadn't gone yet (they waited for a reconnect), so their words are back in the composer (home-r3-1), above the `draft`
+ * typed since where there is one (home-v4-2).
+ */
+export function composerGivenBack(stopped: string, messages = 1, draft = false): string {
+  const which = messages > 1 ? `Your ${messages} messages weren't sent, so they're` : "Your message wasn't sent, so it's";
+  return `${stopped} ${which} back here${draft ? ", above what you were writing," : ""} to edit or send again.`;
+}
+/** The composer's lines that say how something earlier went: they give way to a wait of the Ask box's or voice's. */
+const COMPOSER_OUTCOMES: ReadonlySet<string> = new Set([
+  COMPOSER_SAYS.copied, COMPOSER_SAYS.copyFailed, COMPOSER_SAYS.replyFailed, COMPOSER_SAYS.replied, COMPOSER_SAYS.loadFailed, COMPOSER_SAYS.started,
+  COMPOSER_SAYS.startFailed, COMPOSER_SAYS.editCancelled, COMPOSER_SAYS.stopFailed, COMPOSER_SAYS.noReply, COMPOSER_SAYS.replyStopped,
+  COMPOSER_SAYS.stoppedAll, CONVERSATION_STOPPED, CONVERSATION_NOTHING_TO_STOP,
+]);
+/**
+ * Whether the composer's line (`line`) may say that a request from the Ask box or by voice is still waiting (home-r2-3):
+ * when it is empty or says how an earlier message went. Never over a note about the draft being written (Edit's caution
+ * that sending again may repeat actions, the over-limit note, a refused send's reason): the wait isn't the draft's, and
+ * the note would be gone once the wait ends (home-c3-1). An allow-list: a line it doesn't know stays.
+ */
+export function composerLineYields(line: string): boolean {
+  return line === "" || COMPOSER_OUTCOMES.has(line);
+}
 /**
  * The composer's hint, with its send key as `os` names it (accessibility-visual-7): the composer takes Ctrl+Enter and
  * Command+Enter alike, but a ⌘ on Linux or Windows names a key that isn't there.

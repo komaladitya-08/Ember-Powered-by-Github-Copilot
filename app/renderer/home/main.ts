@@ -50,9 +50,9 @@ import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
 import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
-import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
+import { conversationAdded, conversationChange, conversationShown, earlierLabel, stillUnsent } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { problemInHome, PROBLEM_SETTINGS, composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { problemInHome, PROBLEM_SETTINGS, composerCount, composerGivenBack, composerLineYields, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -1096,15 +1096,41 @@ function awaitingReply(on: boolean): void {
 function endComposerWait(): void {
   if (!conversationAwaitingReply || !conversationSendTaken || !conversationTurnSeen || conversationTurnNow !== "idle") return;
   awaitingReply(false);
-  // What came after the last message there was as it was sent (rows are matched by what they are).
+  const said = sinceSend().filter(e => e.who === "ember" || e.who === "problem").at(-1);
+  // A Stop that ended it left no line to read it from (the bubble's own Stop: home-c2-2).
+  const stopped = conversationTurnEnded === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : conversationTurnEnded === "stopped" ? CONVERSATION_STOPPED : null;
+  const words = stopped ? stoppedLine(stopped)
+    : said?.who === "problem" ? COMPOSER_SAYS.replyFailed : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
+  keepingComposer(() => { conversationComposeStatus.textContent = words; });
+}
+/** What came after the last message there was as the composer's request was sent (rows are matched by what they are). */
+function sinceSend(): Entry[] {
   const was = conversationLastAtSend;
   let at = -1;
   if (was) for (let i = conversationAll.length - 1; i >= 0 && at < 0; i--) if (conversationAll[i].t === was.t && conversationAll[i].who === was.who && conversationAll[i].text === was.text) at = i;
-  const said = conversationAll.slice(at + 1).filter(e => e.who === "ember" || e.who === "problem").at(-1);
-  // A Stop that ended it left no line to read it from (the bubble's own Stop: home-c2-2).
-  const words = conversationTurnEnded === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : conversationTurnEnded === "stopped" ? CONVERSATION_STOPPED
-    : said?.who === "problem" ? COMPOSER_SAYS.replyFailed : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
-  keepingComposer(() => { conversationComposeStatus.textContent = words; });
+  return conversationAll.slice(at + 1);
+}
+/**
+ * How a Stop ended the composer's request (`stopped`), and the words given back (home-r3-1): main keeps a request's line
+ * once it goes to the model (or is answered, or refused), so every message main took whose line never came was dropped
+ * unsent, waiting for a reconnect. They go back in the composer, oldest first, and never over anything typed since: it
+ * stays after them, the caret where it was in it (home-v4-2). Said once however the Stop is told.
+ */
+function stoppedLine(stopped: string): string {
+  const unsent = conversationUnsent.filter(u => u.taken).map(u => u.text.trim());
+  conversationUnsent = conversationUnsent.filter(u => !u.taken);
+  if (!unsent.length) return conversationGivenBack !== null && conversationComposeStatus.textContent === conversationGivenBack ? conversationGivenBack : stopped;
+  const words = unsent.join("\n\n");
+  const draft = conversationMessage.value.trim() ? conversationMessage.value : "";
+  if (draft) {
+    const { selectionStart, selectionEnd, selectionDirection } = conversationMessage;
+    const by = words.length + 2;
+    conversationMessage.value = `${words}\n\n${draft}`;
+    conversationMessage.setSelectionRange(selectionStart + by, selectionEnd + by, selectionDirection);
+  } else conversationMessage.value = words;
+  syncComposerCount();
+  conversationGivenBack = composerGivenBack(stopped, unsent.length, !!draft);
+  return conversationGivenBack;
 }
 /** Main's word of the conversation's turn: the status panel, and the composer's line while its request waits. */
 function conversationTurn(value: unknown): void {
@@ -1121,11 +1147,19 @@ function conversationTurn(value: unknown): void {
     else if (turn === "thinking" && conversationComposeStatus.textContent === waiting) conversationComposeStatus.textContent = COMPOSER_THINKING;
   } else if (!conversationAwaitingReply) {
     // A request from the Ask box or by voice that the bubble says is still waiting: the line under Stop response (where
-    // the settings key lands then) says so, not an older message's outcome, and goes once the wait does (home-r2-3).
-    if (turn === "slow" && !answerStream.row) conversationComposeStatus.textContent = waiting;
+    // the settings key lands then) says so, not an older message's outcome, and goes once the wait does (home-r2-3). A
+    // note about the draft (Edit's caution, the over-limit note) stays: the wait isn't the draft's (home-c3-1).
+    if (turn === "slow" && !answerStream.row) { if (composerLineYields(conversationComposeStatus.textContent ?? "")) keepingComposer(() => { conversationComposeStatus.textContent = waiting; }); }
     else if (conversationComposeStatus.textContent === waiting) conversationComposeStatus.textContent = "";
   }
   endComposerWait();
+  if (turn === "idle") {
+    // Nothing waits in main now. With no Stop, every message it took has its line, or never will (home-v4-1); a Stop
+    // dropped those still without one, given back though the composer waited for none of them (a later send was
+    // refused: home-v4-2).
+    if (!change.ended) conversationUnsent = conversationUnsent.filter(u => !u.taken);
+    else if (conversationUnsent.some(u => u.taken)) keepingComposer(() => { conversationComposeStatus.textContent = stoppedLine(change.ended === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : CONVERSATION_STOPPED); });
+  }
   renderStatus();
 }
 window.ember.onConversationTurn(conversationTurn);
@@ -1134,9 +1168,16 @@ void window.ember.conversationTurn().then(conversationTurn, () => undefined);
 window.ember.onStopped(() => {
   if (!conversationAwaitingReply) return;
   awaitingReply(false);
-  conversationComposeStatus.textContent = COMPOSER_SAYS.stoppedAll;
+  keepingComposer(() => { conversationComposeStatus.textContent = stoppedLine(COMPOSER_SAYS.stoppedAll); });
 });
 let conversationLastAtSend: Entry | undefined;
+/**
+ * The composer's messages being sent, or main took (`taken`), each until its own line comes (stillUnsent): given back
+ * if a Stop dropped them unsent (stoppedLine: home-r3-1, home-v4-2), never once Ember answered them (home-v4-1).
+ */
+let conversationUnsent: { text: string; taken: boolean }[] = [];
+/** The line that last said a Stop gave words back (stoppedLine). */
+let conversationGivenBack: string | null = null;
 let conversationDraftBeforeEdit: string | null = null;
 let conversationGeneration = 0;
 $("conversation-scope").textContent = CONVERSATION_SCOPE;
@@ -1287,6 +1328,9 @@ function renderConversation(raw: Entry[]): void {
   if (!entries.length) {
     conversationAllShown = false;
   }
+  // A message of the composer's whose own line came went: no Stop gives it back after that, however far the
+  // conversation has moved past it (home-v4-1: main keeps 60 lines).
+  if (conversationUnsent.length) conversationUnsent = stillUnsent(conversationUnsent, conversationAdded(conversationAll, raw));
   conversationAll = raw;
   const list = $("conversation");
   // Out of the way while the messages' rows change (their changes count rows from the top), back at the end after.
@@ -1384,6 +1428,8 @@ const resetConversationView = () => {
   conversationComposeStatus.textContent = "";
   awaitingReply(false);
   conversationLastAtSend = undefined;
+  conversationUnsent = [];
+  conversationGivenBack = null;
   conversationDraftBeforeEdit = null;
   conversationGeneration++;
   $("conversation-cancel-edit").hidden = true;
@@ -1401,8 +1447,9 @@ window.ember.onConversationStream(e => {
   if (!ev || !Number.isSafeInteger(ev.id) || typeof ev.text !== "string" || !["streaming", "done", "interrupted"].includes(ev.state ?? "")) return;
   answerStream = streamEvent(answerStream, ev as StreamEvent, conversationAll, new Date().toISOString());
   keepingComposer(() => syncStreamRow($("conversation")));
-  // Written to at last: no longer a wait (the reply, or what stopped it, says the rest).
-  if (answerStream.row && conversationComposeStatus.textContent === composerStillWaiting(agent?.service?.kind)) conversationComposeStatus.textContent = COMPOSER_THINKING;
+  // Written to at last: no longer a wait (the reply, or what stopped it, says the rest). The composer's own request is
+  // thinking still; another's wait goes with the turn's next word (home-c3-1).
+  if (conversationAwaitingReply && answerStream.row && conversationComposeStatus.textContent === composerStillWaiting(agent?.service?.kind)) conversationComposeStatus.textContent = COMPOSER_THINKING;
 });
 /** New conversation asks first while there are messages to clear (home-9): Keep, or Escape, leaves them be. */
 const newConfirm = $("conversation-new-confirm");
@@ -1442,7 +1489,7 @@ $("conversation-compose").addEventListener("submit", event => {
   if (send.getAttribute("aria-disabled") === "true") return;
   const text = conversationMessage.value;
   if (!text.trim() || text.length > CONVERSATION_REQUEST_LIMIT) {
-    conversationComposeStatus.textContent = text.trim() ? COMPOSER_OVER : COMPOSER_SAYS.empty;
+    keepingComposer(() => { conversationComposeStatus.textContent = text.trim() ? COMPOSER_OVER : COMPOSER_SAYS.empty; });
     conversationMessage.focus();
     return;
   }
@@ -1457,7 +1504,11 @@ $("conversation-compose").addEventListener("submit", event => {
   awaitingReply(true);
   conversationLastAtSend = conversationAll.at(-1);
   const generation = conversationGeneration;
-  conversationComposeStatus.textContent = COMPOSER_SAYS.sending;
+  // Kept from now, so its own line coming before main answers the send still takes it off (home-v4-1).
+  const unsent = { text, taken: false };
+  conversationUnsent.push(unsent);
+  // Each of the line's words while the send goes is brought into view under the buttons, where they push it (home-c3-2).
+  keepingComposer(() => { conversationComposeStatus.textContent = COMPOSER_SAYS.sending; });
   void window.ember.conversationSend(text).then(sent => {
     if (generation !== conversationGeneration) return;
     // Preserve any edits made while the acknowledgement was pending.
@@ -1467,20 +1518,24 @@ $("conversation-compose").addEventListener("submit", event => {
     $("conversation-cancel-edit").hidden = true;
     // A typed "stop" stopped everything at once: no turn comes, so nothing is awaited (home-c1-1).
     if (sent === "stopped") {
+      conversationUnsent = conversationUnsent.filter(u => u !== unsent);
       awaitingReply(false);
-      conversationComposeStatus.textContent = COMPOSER_SAYS.stoppedAll;
+      keepingComposer(() => { conversationComposeStatus.textContent = COMPOSER_SAYS.stoppedAll; });
       return;
     }
+    // Main has it: given back if a Stop drops it before its line comes (home-r3-1), whichever send the composer waits for.
+    unsent.taken = true;
     if (!conversationAwaitingReply) return;
     conversationSendTaken = true;
     // Main answers already (this request, or one before it that it waits behind): its end is this one's too.
     if (conversationTurnNow !== "idle") conversationTurnSeen = true;
-    conversationComposeStatus.textContent = conversationTurnNow === "slow" && !answerStream.row ? composerStillWaiting(agent?.service?.kind) : COMPOSER_THINKING;
+    keepingComposer(() => { conversationComposeStatus.textContent = conversationTurnNow === "slow" && !answerStream.row ? composerStillWaiting(agent?.service?.kind) : COMPOSER_THINKING; });
     endComposerWait();
   }, error => {
     if (generation !== conversationGeneration) return;
+    conversationUnsent = conversationUnsent.filter(u => u !== unsent);
     awaitingReply(false);
-    conversationComposeStatus.textContent = ipcErrorText(error) || COMPOSER_SAYS.sendFailed;
+    keepingComposer(() => { conversationComposeStatus.textContent = ipcErrorText(error) || COMPOSER_SAYS.sendFailed; });
   }).finally(() => { if (generation === conversationGeneration) { send.removeAttribute("aria-disabled"); send.textContent = "Send"; } });
 });
 $("conversation-cancel-edit").addEventListener("click", () => {
@@ -1524,9 +1579,9 @@ $("conversation-stop").addEventListener("click", () => {
   void window.ember.conversationStop().then(stopped => {
     if (generation !== conversationGeneration) return;
     awaitingReply(false);
-    // (An older main answers nothing: as before, taken as stopped.)
-    conversationComposeStatus.textContent = stopped === false ? CONVERSATION_NOTHING_TO_STOP : CONVERSATION_STOPPED;
-  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = COMPOSER_SAYS.stopFailed; })
+    // (An older main answers nothing: as before, taken as stopped.) Said under the buttons, in view (home-c3-2).
+    keepingComposer(() => { conversationComposeStatus.textContent = stopped === false ? CONVERSATION_NOTHING_TO_STOP : stoppedLine(CONVERSATION_STOPPED); });
+  }, () => { if (generation === conversationGeneration) keepingComposer(() => { conversationComposeStatus.textContent = COMPOSER_SAYS.stopFailed; }); })
     .finally(() => { if (generation === conversationGeneration) stop.removeAttribute("aria-disabled"); });
 });
 

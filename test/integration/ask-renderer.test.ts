@@ -418,41 +418,124 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
-  it("puts its suggestions away while a question is up, and back once it is answered, never moving a draft being typed (companion-r2-1)", async () => {
+  it("puts its suggestions away while a question is up, and back once it is answered, never moving the field, empty or typed in (companion-r2-1, companion-r3-1)", async () => {
     const page = await pageAt();
     try {
       const harness = () => page.evaluate(() => (window as unknown as TestWindow).askHarness);
       const offer = (list: string[]) => page.evaluate(list => (window as unknown as TestWindow).askHarness.suggestions(list), list);
+      // Main keeps the box's bottom beside Ember while it grows or shrinks: the field stays put on screen while the
+      // window's rows and the field's distance from its bottom stay the same.
+      const fieldFromBottom = () => page.evaluate(() => Math.round(innerHeight - document.getElementById("q")!.getBoundingClientRect().top));
+      const reachable = async (name: string) => page.getByRole("button", { name, exact: true }).count();
       await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions: ["Yes, please", "No, thanks"], listenOnce: { phase: "ready", detail: "" } }));
       await fit(page);
       const chips = page.locator("#suggest button");
       const rows = (await harness()).rows;
+      const at = await fieldFromBottom();
       expect(await chips.count()).toBe(2);
-      // A keyboard user is on "Yes, please" when a task asks: the chips go, the field has the keyboard, the box a row less.
+      // A keyboard user is on "Yes, please" when a task asks: the chips go out of sight and reach, the field has the
+      // keyboard, and the box keeps its height, so the empty field doesn't move 48 px (companion-r3-1).
       await chips.first().focus();
       await offer([]);
       await fit(page);
-      expect(await chips.count()).toBe(0);
-      expect(await page.locator("#suggest").isVisible()).toBe(false);
+      expect(await chips.first().isVisible()).toBe(false);
+      expect(await reachable("Yes, please")).toBe(0);
       expect(await page.locator("#q").evaluate(e => e === document.activeElement)).toBe(true);
-      const without = (await harness()).rows;
-      expect(without).toBeLessThan(rows);
-      // Answered: what stands on its own comes back.
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      expect(await page.evaluate(() => document.activeElement?.closest("#suggest") === null)).toBe(true);
+      await page.locator("#q").focus();
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+      // Answered: what stands on its own comes back, in the same room.
       await offer(["Remind me in an hour"]);
       await fit(page);
       expect(await chips.allTextContents()).toEqual(["Remind me in an hour"]);
+      expect(await chips.first().isVisible()).toBe(true);
       expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
       // A question comes while a reply is typed: the chips are already put away and keep their room, so nothing moves;
-      // they go once the field is cleared, and none of them can be clicked or reached meanwhile.
+      // nor when the field is cleared under the question, and none of them can be clicked or reached meanwhile.
       await page.locator("#q").fill("add one for Sydney too");
       await offer([]);
       await fit(page);
       expect((await harness()).rows).toBe(rows);
-      expect(await page.getByRole("button", { name: "Remind me in an hour", exact: true }).count()).toBe(0);
+      expect(await reachable("Remind me in an hour")).toBe(0);
       await page.locator("#q").fill("");
       await fit(page);
-      expect(await chips.count()).toBe(0);
-      expect((await harness()).rows).toBe(without);
+      expect(await reachable("Remind me in an hour")).toBe(0);
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+      expect((await harness()).calls).toEqual([]);
+      // A box that opened with none doesn't grow a row for ones that come while it is open (an answer arriving with
+      // "Yes, please": the bubble shows them under it); the next opening shows them.
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], listenOnce: { phase: "ready", detail: "" } }));
+      await fit(page);
+      const bare = (await harness()).rows, bareAt = await fieldFromBottom();
+      expect(await page.locator("#suggest").isVisible()).toBe(false);
+      await offer(["Yes, please", "No, thanks"]);
+      await fit(page);
+      expect(await page.locator("#suggest").isVisible()).toBe(false);
+      expect(await reachable("Yes, please")).toBe(0);
+      expect((await harness()).rows).toBe(bare);
+      expect(await fieldFromBottom()).toBe(bareAt);
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions: ["Yes, please", "No, thanks"], listenOnce: { phase: "ready", detail: "" } }));
+      await fit(page);
+      expect(await reachable("Yes, please")).toBe(1);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("keeps the room its suggestions opened with, on two rows, so neither a question nor fewer or more of them after it moves the empty field (companion-v4-1)", async () => {
+    const page = await pageAt();
+    try {
+      const harness = () => page.evaluate(() => (window as unknown as TestWindow).askHarness);
+      const open = (list: string[]) => page.evaluate(suggestions => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions, listenOnce: { phase: "ready", detail: "" } }), list);
+      const offer = (list: string[]) => page.evaluate(list => (window as unknown as TestWindow).askHarness.suggestions(list), list);
+      const fieldFromBottom = () => page.evaluate(() => Math.round(innerHeight - document.getElementById("q")!.getBoundingClientRect().top));
+      // Every chip shown sits whole inside the row's glass (none clipped or past it).
+      const inside = () => page.evaluate(() => {
+        const row = document.getElementById("suggest")!.getBoundingClientRect();
+        return [...document.querySelectorAll("#suggest button")].every(b => { const r = b.getBoundingClientRect(); return r.top >= row.top && r.bottom <= row.bottom && r.right <= row.right; });
+      });
+      const chips = page.locator("#suggest button");
+      // Beside an answer that offered something: its two offers and a request said twice, wrapping to two rows.
+      const all = ["Yes, please", "No, thanks", "What's the weather in London now"];
+      const alone = all.slice(2);
+      await open(all);
+      await fit(page);
+      expect(await chips.count()).toBe(3);
+      expect(await page.evaluate(() => {
+        const b = [...document.querySelectorAll("#suggest button")].map(e => e.getBoundingClientRect());
+        return b[2].top >= b[0].bottom;
+      })).toBe(true);
+      const rows = (await harness()).rows, at = await fieldFromBottom();
+      // A question takes them away; "Not now" and its "Okay, I won't." bring back only the one that stands on its own
+      // (it moved the field 48 px down for 1.4 s); the answer back brings all three.
+      for (const list of [[], alone, all]) {
+        await offer(list);
+        await fit(page);
+        const what = list.join(", ") || "none";
+        expect(await page.locator("#suggest button:visible").allTextContents(), what).toEqual(list);
+        expect((await harness()).rows, what).toBe(rows);
+        expect(await fieldFromBottom(), what).toBe(at);
+        expect(await inside(), what).toBe(true);
+      }
+      // Opened beside "Okay, I won't." with the one alone, on one row: the answer back offers all three, which need a
+      // second row. The one shown stays and the others wait for the next opening, so the field doesn't move up.
+      await open(alone);
+      await fit(page);
+      const oneRow = (await harness()).rows, oneAt = await fieldFromBottom();
+      expect(oneRow).toBeLessThan(rows);
+      await offer(all);
+      await fit(page);
+      expect(await chips.allTextContents()).toEqual(alone);
+      expect((await harness()).rows).toBe(oneRow);
+      expect(await fieldFromBottom()).toBe(oneAt);
+      expect(await inside()).toBe(true);
+      await open(all);
+      await fit(page);
+      expect(await chips.allTextContents()).toEqual(all);
+      expect((await harness()).rows).toBe(rows);
       expect((await harness()).calls).toEqual([]);
     } finally { await page.close(); }
   }, 30_000);

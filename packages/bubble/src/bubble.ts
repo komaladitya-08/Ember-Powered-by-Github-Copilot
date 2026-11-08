@@ -510,7 +510,14 @@ html[data-glass="clear"] .ember-bubble :is(.eb-chip, .eb-risk, .eb-auto) { backg
   background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px var(--separator, rgba(255, 255, 255, 0.09)), 0 1px 0 rgba(0, 0, 0, 0.5);
 }
 .eb-step .eb-key-word { margin: 0 4px 0 2px; }
-.eb-step .eb-key { white-space: nowrap; }
+/* Each chord on one line with its word, breaking under its keycaps only where it alone is wider than the row (a Mac's
+   four keys narrowed to 220 px: companion-r3-2). The " · " between two is the later chord's own, in the room before it;
+   the list starts that room left of the row, where it is clipped, so a chord that starts a line shows none, and no line
+   ends with one (accessibility-visual-r3-2). The first chord keeps the room but has no dot: clipped from sight, it was
+   still read first ("· Ctrl Alt Y allow", companion-v4-3). */
+.eb-step .eb-keys { display: flex; flex-wrap: wrap; margin-left: -1em; clip-path: inset(-4px -4px -4px 1em); }
+.eb-step .eb-key { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; box-sizing: border-box; min-width: 0; max-width: 100%; padding-left: 1em; white-space: nowrap; }
+.eb-step .eb-key + .eb-key::before { content: "·"; position: absolute; left: 0; top: 0; width: 1em; text-align: center; }
 /* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. So
    is a problem's, the keyboard's way to what its buttons do ("Or press Ctrl+Alt+E and go to Computers."), and an
    answer's cut short, where it is whole ("… go to Conversation."). */
@@ -986,14 +993,18 @@ export class ReasoningBubble {
     const { lead, keys } = stepParts(text);
     if (!keys) this.stepText.textContent = text ?? "";
     else {
-      // Each chord on one line with its word (companion-r2-4: narrowed beside the Ask box, "Ctrl Alt" / "N not now").
-      this.stepText.replaceChildren(...(lead ? [document.createTextNode(lead), document.createElement("br")] : []), ...keys.flatMap((k, i) => {
+      // Each chord on one line with its word (companion-r2-4: narrowed beside the Ask box, "Ctrl Alt" / "N not now"), in a
+      // list on a line of its own under the note; the " · " between them is drawn before each after the first
+      // (BUBBLE_CSS .eb-keys).
+      const list = Object.assign(document.createElement("span"), { className: "eb-keys" });
+      list.append(...keys.map(k => {
         const caps = k.keys.map(key => Object.assign(document.createElement("kbd"), { textContent: key }));
         const word = Object.assign(document.createElement("span"), { className: "eb-key-word", textContent: k.word });
         const chord = Object.assign(document.createElement("span"), { className: "eb-key" });
         chord.append(...caps, word);
-        return [...(i ? [document.createTextNode(" · ")] : []), chord];
+        return chord;
       }));
+      this.stepText.replaceChildren(...(lead ? [document.createTextNode(lead)] : []), list);
     }
     this.changed();
   }

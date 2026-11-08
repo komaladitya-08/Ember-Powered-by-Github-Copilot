@@ -104,6 +104,72 @@ function chips(): { row: { x: number; y: number; w: number; h: number } | null; 
   host.remove();
   return gone ? out : { ...out, row: null };
 }
+/**
+ * A question's key hint on each OS, at the narrowest the bubble gets and beside the Ask box, at Default and Larger text:
+ * how far its keys reach past the glass's inner edge (the bubble's content box, px), how far the step's own text does
+ * (a flex item as wide as its widest chord, so it widened with a hint that ran past and hid it: companion-v4-2), and for
+ * each chord after the first whether the " · " before it shows and whether it shares a line with the chord before it.
+ */
+function keyHints(): { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[] {
+  const out: { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[] = [];
+  const html = document.documentElement;
+  const steps: [string, string][] = [["linux", "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"], ["windows", "Win+Alt+Y allow · Win+Alt+N not now"],
+    ["mac", "Control+Shift+Command+Y allow · Control+Shift+Command+N not now"], ["mac whole text", "Control+Shift+Command+Y shows the next part · Control+Shift+Command+N not now"]];
+  for (const [size, scale] of [["default", "1"], ["larger", "1.3"]]) {
+    html.dataset.textSize = size;
+    html.style.setProperty("--text-scale", scale);
+    for (const [os, step] of steps) for (const width of [0, 220, 273]) {
+      const host = document.createElement("div");
+      host.style.cssText = "position:absolute;inset:0";
+      document.body.append(host);
+      const b = new ReasoningBubble(host);
+      b.setMood("attention");
+      b.setThought("May I click Apply in Settings?");
+      b.setActions([{ key: "q1:once", label: "Allow", primary: true, onClick: () => undefined }, { key: "q1:deny", label: "Not now", onClick: () => undefined }]);
+      b.setStep(step);
+      b.setVisible(true);
+      // Its own width (0), or narrowed as place() narrows it (useWidth).
+      if (width) { b.root.style.width = width + "px"; b.root.style.boxSizing = "border-box"; }
+      const text = b.root.querySelector<HTMLElement>(".eb-step-text")!.getBoundingClientRect();
+      const rs = getComputedStyle(b.root);
+      const inner = b.root.getBoundingClientRect().right - parseFloat(rs.paddingRight) - parseFloat(rs.borderRightWidth);
+      const reach = Math.max(...[...b.root.querySelectorAll<HTMLElement>(".eb-step kbd, .eb-step .eb-key-word")].map(e => e.getBoundingClientRect().right));
+      const chords = [...b.root.querySelectorAll<HTMLElement>(".eb-key")];
+      const em = parseFloat(getComputedStyle(b.root.querySelector(".eb-step-text")!).fontSize);
+      // A chord's " · " is in the 1em before its keys; the list's first 1em, left of the row, is clipped.
+      const seps = chords.slice(1).map((c, i) => {
+        const r = c.getBoundingClientRect(), prev = chords[i].getBoundingClientRect();
+        return { shown: r.left >= text.left - 0.5, sameLine: r.top < prev.bottom - 1 };
+      });
+      out.push({ name: os + " " + (width ? width + " px" : "at its own width") + " at " + size + " text", over: Math.max(0, reach - inner), textOver: Math.max(0, text.right - inner), seps });
+      host.remove();
+    }
+  }
+  delete html.dataset.textSize;
+  html.style.removeProperty("--text-scale");
+  return out;
+}
+/**
+ * Question hints left in the page for main to read from its accessibility tree: Linux's at the bubble's own width (the
+ * two chords on one line) and a Mac's narrowed to 220 px (each chord on a line of its own). Their hosts' ids.
+ */
+function axHints(): string[] {
+  const hints: [string, string, number][] = [["ax-linux", "Ctrl+Alt+Y allow · Ctrl+Alt+N not now", 0],
+    ["ax-mac", "Control+Shift+Command+Y allow · Control+Shift+Command+N not now", 220]];
+  for (const [id, step, width] of hints) {
+    const host = document.createElement("div");
+    host.id = id;
+    host.style.cssText = "position:absolute;inset:0";
+    document.body.append(host);
+    const b = new ReasoningBubble(host);
+    b.setMood("attention");
+    b.setThought("May I click Apply in Settings?");
+    b.setStep(step);
+    b.setVisible(true);
+    if (width) { b.root.style.width = width + "px"; b.root.style.boxSizing = "border-box"; }
+  }
+  return hints.map(h => h[0]);
+}
 (window as unknown as { start: () => Promise<void> }).start = async () => {
   // A first run, thrown away: the page's fonts, layout and the bubble's style sheet in place before anything counts.
   await question("thinking", true);
@@ -114,6 +180,8 @@ function chips(): { row: { x: number; y: number; w: number; h: number } | null; 
     idleNext: await question("idle", false),
     answer: await answer(),
     chips: chips(),
+    keyHints: keyHints(),
+    axHints: axHints(),
   };
   (window as unknown as { done: unknown }).done = result;
 };
@@ -122,6 +190,35 @@ function chips(): { row: { x: number; y: number; w: number; h: number } | null; 
 const MAIN = `
 const { app, BrowserWindow } = require("electron");
 const path = require("node:path");
+/**
+ * The words a screen reader is given for each hint left in the page (ids): the text of the accessibility tree under its
+ * step, in order, as Orca's flat review reads it. Generated content is in that tree whatever clips it from sight.
+ */
+async function axTexts(win, ids) {
+  const out = {};
+  const dbg = win.webContents.debugger;
+  try {
+    dbg.attach("1.3");
+    await dbg.sendCommand("Accessibility.enable");
+    const { root } = await dbg.sendCommand("DOM.getDocument", { depth: -1 });
+    const { nodes } = await dbg.sendCommand("Accessibility.getFullAXTree");
+    const byId = new Map(nodes.map(n => [n.nodeId, n]));
+    for (const id of ids) {
+      const { nodeId } = await dbg.sendCommand("DOM.querySelector", { nodeId: root.nodeId, selector: "#" + id + " .eb-step-text" });
+      const { node } = await dbg.sendCommand("DOM.describeNode", { nodeId });
+      const words = [];
+      const walk = n => {
+        if (!n) return;
+        if (!n.ignored && n.role && n.role.value === "StaticText") { words.push(n.name ? n.name.value : ""); return; }
+        for (const c of n.childIds || []) walk(byId.get(c));
+      };
+      const start = nodes.find(n => n.backendDOMNodeId === node.backendNodeId);
+      walk(start);
+      out[id] = start ? words.join(" ").split(" ").filter(Boolean).join(" ") : null;
+    }
+  } catch (e) { out.error = String(e); }
+  return out;
+}
 app.whenReady().then(async () => {
   setTimeout(() => app.exit(3), 30_000);
   const win = new BrowserWindow({ width: 1000, height: 700, show: true, webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
@@ -129,7 +226,7 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript("document.fonts.ready.then(() => { window.start(); return true; })");
   for (let i = 0; i < 200; i++) {
     const r = await win.webContents.executeJavaScript("window.done ?? null");
-    if (r) { process.stdout.write("RESULT " + JSON.stringify(r) + "\\n"); app.exit(0); return; }
+    if (r) { r.axHints = await axTexts(win, r.axHints); process.stdout.write("RESULT " + JSON.stringify(r) + "\\n"); app.exit(0); return; }
     await new Promise(r => setTimeout(r, 100));
   }
   app.exit(4);
@@ -139,6 +236,9 @@ app.whenReady().then(async () => {
 type Sample = { scale: string; translate: string; opacity: number };
 type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext" | "answer", Sample[]> & {
   chips: { row: { x: number; y: number; w: number; h: number } | null; covered: boolean; buttons: number; labelledBy: string };
+  keyHints: { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[];
+  /** What a screen reader reads of each hint left in the page (by its host's id). */
+  axHints: Record<string, string | null>;
 };
 
 /** How far a sample is from at rest: its scale's distance from 1, its translate in px. */
@@ -212,5 +312,30 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
     expect(c.buttons).toBe(2);
     expect(c.covered).toBe(true);
     expect(c.labelledBy).toMatch(/^eb-suggest-cap-\d+$/);
+  });
+
+  it("keeps a question's key hint inside a narrowed bubble on every OS and text size, with no \" · \" ending or starting a line (companion-r3-2, accessibility-visual-r3-2, accessibility-visual-c3-1, companion-v4-2)", () => {
+    const all = result.keyHints;
+    expect(all.length).toBe(24);
+    for (const k of all) {
+      // A Mac's four keys at 220 px reached 34 px (Default) and 88 px (Larger) past the glass's inner edge, a whole
+      // text's 173 px; measured against the step's own text, which widened with them, it read 0.
+      expect(k.over, k.name).toBeLessThan(0.5);
+      expect(k.textOver, k.name).toBeLessThan(0.5);
+      // The " · " shows only between two chords on one line: never left at a line's end, nor starting the next.
+      for (const sep of k.seps) expect(sep.shown, k.name).toBe(sep.sameLine);
+    }
+    // Where there is room, the two chords still share a line with the " · " between them.
+    for (const name of ["linux at its own width at default text", "windows at its own width at larger text"]) {
+      expect(all.find(k => k.name === name)!.seps, name).toEqual([{ shown: true, sameLine: true }]);
+    }
+  });
+
+  it("reads a question's key hint to a screen reader with the \" · \" only between its chords, never before the first (companion-v4-3)", () => {
+    // The first chord's own dot, clipped from sight, was read all the same: "· Ctrl Alt Y allow · Ctrl Alt N not now".
+    expect(result.axHints).toEqual({
+      "ax-linux": "Ctrl Alt Y allow · Ctrl Alt N not now",
+      "ax-mac": "Control Shift Command Y allow · Control Shift Command N not now",
+    });
   });
 });

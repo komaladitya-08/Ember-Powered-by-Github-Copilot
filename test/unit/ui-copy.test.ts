@@ -25,7 +25,7 @@ import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
-import { lostWords } from "../../app/main/agent/presenter";
+import { friendlyError, lostWords } from "../../app/main/agent/presenter";
 import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerCardShown, providerConsentText, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
@@ -1148,6 +1148,53 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
       // Reconnecting by itself, or connected again: nothing in Models & connections helps.
       expect(conv.problemInHome(w.reconnecting).settings).toBe(false);
       expect(conv.problemInHome(w.reconnected).settings).toBe(false);
+    }
+  });
+
+  it("says a Stop ended my messages before they were sent, and that their words are back, above any draft, to edit or send again (home-r3-1, home-v4-2)", () => {
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED)).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here to edit or send again.");
+    expect(conv.composerGivenBack(conv.COMPOSER_SAYS.stoppedAll)).toBe("Stopped everything, running tasks included. Your message wasn't sent, so it's back here to edit or send again.");
+    // Every message a Stop dropped, and above what was typed since (home-v4-2).
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2)).toBe("Response stopped. Running tasks continue. Your 2 messages weren't sent, so they're back here to edit or send again.");
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true)).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above what you were writing, to edit or send again.");
+    expect(conv.composerGivenBack(conv.COMPOSER_SAYS.stoppedAll, 3, true)).toBe("Stopped everything, running tasks included. Your 3 messages weren't sent, so they're back here, above what you were writing, to edit or send again.");
+    // A line about the draft: another request's wait leaves it be.
+    expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED))).toBe(false);
+    expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, true))).toBe(false);
+  });
+
+  it("lets another request's wait take the composer's line only from an earlier outcome, never from a note about my draft (home-c3-1)", () => {
+    for (const line of ["", conv.COMPOSER_SAYS.replied, conv.COMPOSER_SAYS.replyFailed, conv.COMPOSER_SAYS.noReply, conv.COMPOSER_SAYS.stoppedAll, conv.COMPOSER_SAYS.copied, conv.COMPOSER_SAYS.editCancelled, conv.CONVERSATION_STOPPED, conv.CONVERSATION_NOTHING_TO_STOP]) {
+      expect(conv.composerLineYields(line), line).toBe(true);
+    }
+    for (const line of [conv.CONVERSATION_EDIT, conv.COMPOSER_OVER, conv.COMPOSER_SAYS.empty, conv.COMPOSER_SAYS.sendFailed, conv.COMPOSER_SAYS.sending, "Ember can't reach the model service right now. Your message is still here: send it again once you're online."]) {
+      expect(conv.composerLineYields(line), line).toBe(false);
+    }
+  });
+
+  it("offers Models & connections only on a Problem line that sends me there, never one for my administrator or GitHub, and names it once (home-r3-2, accessibility-visual-c3-2)", () => {
+    // Ember's own lines, as friendlyError and the connection write them.
+    const org = friendlyError("401 Unauthorized", undefined, { provider: true, statusCode: 401 });
+    expect(org).toBe("Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings.");
+    expect(conv.problemInHome(org)).toEqual({ text: org, settings: false });
+    const github = "No Copilot model I can use: None of the models Copilot lists are enabled for this account. Turn one on in your Copilot settings on GitHub.";
+    expect(conv.problemInHome(github)).toEqual({ text: github, settings: false });
+    expect(conv.problemInHome("Copilot isn't available to this account: This GitHub account doesn't have Copilot. Add Copilot to it, or ask whoever manages your GitHub plan.").settings).toBe(false);
+    // The user's own provider with no model set: the section named once, with the way there.
+    expect(conv.problemInHome("No model set for your provider: Enter the model your provider should use in Ember's settings, under Models & connections.")).toEqual({
+      text: "No model set for your provider: Enter the model your provider should use in Models & connections.", settings: true,
+    });
+    // Ember gave up reconnecting: Check again is in Models & connections, so the line that names it has the way there.
+    for (const w of [lostWords(false), lostWords("user"), lostWords(true)]) expect(conv.problemInHome(w.gaveUp)).toEqual({ text: w.gaveUp, settings: true });
+    expect(conv.problemInHome("Copilot isn't running: Ember's Copilot runtime stopped while connecting. Press Check again.").settings).toBe(true);
+    // Lines the user can act on in Models & connections keep it.
+    expect(conv.problemInHome(friendlyError("401", "authentication")).settings).toBe(true);
+    expect(conv.problemInHome(friendlyError("401", undefined, { provider: "user", statusCode: 401 })).settings).toBe(true);
+    expect(conv.problemInHome(friendlyError("model_not_supported")).settings).toBe(true);
+    expect(conv.problemInHome(friendlyError("something odd")).settings).toBe(true);
+    // Nothing there helps: a hiccup, the network, ending a conversation, a reconnect under way.
+    for (const said of [friendlyError("502 Bad Gateway"), friendlyError("ECONNRESET"), friendlyError("prompt token count exceeds the limit"), lostWords(false).reconnecting]) {
+      expect(conv.problemInHome(said).settings, said).toBe(false);
     }
   });
 

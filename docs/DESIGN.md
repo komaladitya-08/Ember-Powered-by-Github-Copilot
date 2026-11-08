@@ -85,7 +85,9 @@ They share one emotion rig, so switching never changes behaviour.
   the goal passed off as theirs);
   its title ("May I?") is the quieter lead-in, its keys show as keycaps under the buttons (under a
   note's line when a spoken answer wasn't taken, never replaced by it: `stepParts`; on the
-  no-compositor corner card too, above its buttons; on both each chord kept on one line with its word), four corner
+  no-compositor corner card too, above its buttons; on both each chord kept on one line with its word, and on the
+  bubble broken under its keycaps only where it alone is wider than the row, with the " · " between two only where
+  they share a line, and none before the first, which a screen reader read though it was clipped from sight), four corner
   brackets lock onto the bubble once (180 ms) and then hold still, and nothing about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
   install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
   than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. The
@@ -112,7 +114,11 @@ They share one emotion rig, so switching never changes behaviour.
   same as a row of 20 px capsules under its hint line while the field is empty (docs/ASSISTANT.md §7); a typed letter
   puts them out of sight but keeps their room, so the box and its field don't move. Neither shows any while a question
   is up, and the box shows the ones that answer or follow the answer ("Yes, please", "Close it", "Read it out") only
-  while that answer shows (`askSuggestions`; a change while a reply is typed waits until the field is cleared). A question's
+  while that answer shows (`askSuggestions`; a change while a reply is typed waits until the field is cleared). While
+  the box is open its row keeps the room it opened with, rows and all: none to offer puts the row out of sight, fewer
+  keep its height, ones that would need more rows than it opened with wait for its next opening (those it shows that are
+  still offered stay), and ones that come into a box that opened with none wait too, so a question coming or going never
+  moves the field. A question's
   answer ("Thanks! Carrying on.", "Okay, I won't.") stays 1.5 s; then what the question covered or held off shows
   again, or the bubble empties and the ring rests, so a task that ends on its card never leaves "Working" behind. A
   turn that only ran steps (it started a task and said nothing) leaves no "Working" bubble either, and one that
@@ -153,7 +159,9 @@ They share one emotion rig, so switching never changes behaviour.
   keeps off it where it can (never hiding for it); a question, or its own Listen once's
   "Listening…" (never a wake's), that finds no room moves the box aside once, and a bubble already
   shown, a question or an answer being read, never moves for the box: where the box can't keep
-  clear of it whole (a small screen at Larger text), the box may come against it. While the box is
+  clear of it whole (a small screen at Larger text), the box may come against it. An answer still
+  coming in when the box opened that grows into it keeps off it from there, so the field never
+  covers its last lines or its Read all. While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
   More time to read). Without a
@@ -314,7 +322,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   state in a few words ("Ready", "Working on 2 tasks", "Thinking…" while it answers what you sent from Home, "A task
   needs you" with **Open approval**, "Not connected",
   "Needs setting up", "Locked by your organisation"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
-  you, then two facts (which of listening, memory and commands are on; today's tasks by outcome and the steps you
+  you, then two facts (which of listening, memory and commands are on; today's tasks by outcome, in their rows' words (a task
+  whose question went unanswered is "no answer in time", never "stopped": tasks-approvals-r3-1), and the steps you
   allowed, from the same tasks Task activity lists) and **Ask Ember…** (the one prominent button; **Connect Copilot…**
   takes that place while Ember isn't connected, **Check my provider…** for the user's own provider and **Models &
   connections…** for the organisation's service (first-run-r1), and nothing does while the organisation's policy locks
@@ -330,23 +339,32 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries (a search left typed in is cleared when you send, so your message and
   its reply show; the composer's line, right under its buttons, says "Thinking…" until the reply, "Still waiting for
   Copilot… Stop response ends this reply." while the bubble says so (for a request from the Ask box or by voice too,
-  where the settings key lands on Stop response, until the wait ends: home-r2-3), and, when main says the turn ended with nothing
+  where the settings key lands on Stop response, until the wait ends: home-r2-3, but never over a note about the draft
+  being written, such as Edit's caution that sending again may repeat actions or the over-limit note: home-c3-1), and, when main says the turn ended with nothing
   written (it only started a task or ran a step), "Ember didn't write a reply. Task activity shows any task it
   started."; main sends a turn's lines (its reply, its Problem line) before its end, so a model error says "Ember
   couldn't finish this reply…" (home-r2-1), never counts a request waiting for a reconnect as over (home-r2-2), and says
   with the end when a Stop ended it: "Response stopped. Running tasks continue." for the bubble's Stop too, "Stopped
-  everything, running tasks included." for Stop everything (home-c2-2); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's
+  everything, running tasks included." for Stop everything (home-c2-2); a Stop ends a request still waiting for a
+  reconnect at once, and every message of the composer's that it ended before it went (its own line never came) comes
+  back in the composer, oldest first, never over anything typed since (above it, the caret kept where it was), with
+  "Your message wasn't sent, so it's back here to edit or send again." ("Your 2 messages weren't sent…", "…back here,
+  above what you were writing, …": home-r3-1, home-v4-2); one whose line came (Ember answered it itself, or it went to
+  the model) never does, however far the conversation has moved past it (home-v4-1); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's
   "Okay, I've stopped everything."; the status panel says "Thinking…" while Ember answers any request, from the Ask
   box and by voice too: main's `conversationTurn`, never a guess, home-c1-1), shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. A Problem line that settings can help with names Models & connections
-  where the bubble says "Ember's settings (Ctrl+Alt+E)" (Home is them), and offers **Models & connections…**, which
-  goes there (home-7; Try again stays the bubble's). A long paste is kept whole: from 1,800 characters the composer counts
+  (once) where the bubble says "Ember's settings (Ctrl+Alt+E)" (Home is them), and offers **Models & connections…**, which
+  goes there (home-7; Try again stays the bubble's): only where the line sends the person there (a setting, a sign-in,
+  Check again), never on one that sends them to their administrator, whoever manages their plan, IT or GitHub
+  (home-r3-2, accessibility-visual-c3-2). A long paste is kept whole: from 1,800 characters the composer counts
   them, and over 2,000 it says how many too many and Send refuses until it fits. Its hint names the send key as the OS
   does (Ctrl+Enter; Command+Enter on a Mac), and a message's Copy says Copied on itself for 2 s. Messages kept from before a restart
   (**Keep my recent conversation**) show their day beside their time, and a quiet line under the last of them says
   they are for reading and Ember starts afresh below. Edit only fills the composer; a fresh Send is required. Home sends
   no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer, its
-  buttons and the line under them in view (also as a search cleared by Send brings the hidden messages back); nothing
+  buttons and the line under them in view (also as a search cleared by Send brings the hidden messages back, and as
+  the line itself says why a send was refused, that it is sending or thinking, or how a Stop ended it: home-c3-2); nothing
   scrolls for someone reading elsewhere, or who scrolled away from it. A message whose Copy or Edit has the keyboard
   focus stays on the page, with those after it, while newer ones come, and Send, Stop response and Copy keep the focus
   while main answers them (`aria-disabled`, never `disabled`, which drops it to the page). **Read the last
@@ -364,7 +382,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   folded behind a chevron, a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged
   **Note** in the secondary label. Then how it ended: the worker's summary in the secondary label and its view, drawn
   by the cards' catalog code. A finished task folds to its head. Home offers exact-task Stop, retained safe retry (Try again
-  wherever its card has it: a failure, and a task whose question went unanswered), verified Show app and
+  wherever its card has it: a failure, and a task whose question went unanswered; none once the card has gone, never a
+  greyed one nothing explains: tasks-approvals-r3-5), verified Show app and
   focusable View result. Capability hints never authorise an action: main revalidates the exact task and native window
   identity, while stale/remote/desk/locked/borrowing cases cannot raise another window. While a task waits for an answer, a callout in its
   group says where it is asked (the bubble, with the keys that answer it; the command window; or a consent card's window); Open approval opens the exact live question in a focusable card or its existing panel; Home never answers from

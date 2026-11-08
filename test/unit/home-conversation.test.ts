@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CONVERSATION_SHOWN, conversationChange, conversationShown, earlierLabel } from "../../app/renderer/home/conversation-view";
+import { CONVERSATION_SHOWN, conversationAdded, conversationChange, conversationShown, earlierLabel, stillUnsent } from "../../app/renderer/home/conversation-view";
 import { pushLater } from "../../app/main/push-later";
 import { askedWhere } from "../../app/renderer/home/tasks-copy";
 import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT, conversationRequest, retainedConversationText } from "../../app/shared/conversation";
@@ -84,6 +84,30 @@ describe("Home's conversation", () => {
     const line = { ...msg(1), who: "problem" };
     const bounded = { ...line, truncated: true };
     expect(conversationChange([line], [bounded])).toEqual({ drop: 1, add: [bounded] });
+  });
+
+  it("finds the messages that came since the last list, also once main's 60 entries drop the oldest and a Problem line is said again in place", () => {
+    expect(conversationAdded(range(0, 10), range(0, 12))).toEqual([msg(10), msg(11)]);
+    expect(conversationAdded(range(10, 70), range(12, 72))).toEqual([msg(70), msg(71)]);
+    // The same list again (a search typed, earlier messages shown): nothing came.
+    expect(conversationAdded(range(0, 10), range(0, 10))).toEqual([]);
+    // The last line restated (one failure, one line): the lines after the one before it.
+    const problem = { ...msg(3), who: "problem" };
+    expect(conversationAdded([...range(0, 3), problem], [...range(0, 3), { ...problem, text: "said again" }, msg(4)])).toEqual([{ ...problem, text: "said again" }, msg(4)]);
+    // Nothing in common (the first list, or another account's): every one.
+    expect(conversationAdded([], range(0, 3))).toEqual(range(0, 3));
+    expect(conversationAdded(range(0, 3), range(5, 7))).toEqual(range(5, 7));
+  });
+
+  it("keeps a composer message given back on a Stop only until its own line comes, oldest first among the same words (home-v4-1, home-v4-2)", () => {
+    const you = (text: string, i = 0) => ({ t: `2026-11-08T10:0${i}:00.000Z`, who: "you", text });
+    const a = { text: "status?", taken: true }, b = { text: "Book the meeting room  ", taken: true }, c = { text: "status?", taken: false };
+    // Its line came (Ember answered it itself, or it went to the model): it is no longer one to give back.
+    expect(stillUnsent([a, b], [you("status?"), { t: "x", who: "ember", text: "Nothing's running right now." }])).toEqual([b]);
+    // Matched by its words as main keeps them (trimmed), one line for one message.
+    expect(stillUnsent([a, b, c], [you("Book the meeting room", 1), you("status?", 2)])).toEqual([c]);
+    // Ember's lines, and lines of yours with other words, take nothing off.
+    expect(stillUnsent([a, b], [{ t: "x", who: "ember", text: "status?" }, you("And tell Sam")])).toEqual([a, b]);
   });
 });
 

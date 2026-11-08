@@ -41,6 +41,16 @@ export function stateWord(t: Pick<TaskEntry, "status" | "unanswered">): string {
 }
 
 /**
+ * Whether a task's row offers Try again (the card's, for the keyboard and screen readers): a failure, or a task whose
+ * question went unanswered while the user was away (tasks-approvals-c1-2), while main says it can be pressed. Once the
+ * card has gone (its time ran out, or Ember reconnected) or for a guide, none: never a greyed button nothing explains,
+ * as for an unanswered task (tasks-approvals-r3-5). Asking again still works.
+ */
+export function offersRetry(t: Pick<TaskEntry, "status" | "controls">): boolean {
+  return (t.status === "failed" || t.status === "stopped") && t.controls?.retry === true;
+}
+
+/**
  * The line under a task's title: its state, how long it has worked (or took), how it works now and where ("Waiting for
  * you · 1:14 · In the background", "Done · Took 1:12", "Working · Just started · On my desk · on build-01", "Waiting its
  * turn").

@@ -100,7 +100,8 @@ export function bubbleHere(f: { ember: { x: number; y: number }; on?: number }, 
  * comes up while the box is open is placed clear of it where it can (companion-c1-1: a question came up under the
  * field). A bubble already shown keeps off the box where the box was when it came (nowhere, if it came first), so it
  * never moves for the box opening, stepping aside, growing or closing: nothing near a pending question moves, and an
- * answer being read isn't thrown across the screen (companion-c2-4); the box keeps clear of it instead (ask.ts).
+ * answer being read isn't thrown across the screen (companion-c2-4); the box keeps clear of it instead (ask.ts). One
+ * still streaming in that grows into the box keeps off it from then on (askGrownInto).
  */
 export function askKeepOff(box: Rect | null, question: string, held: { box: Rect | null; question: string }): { box: Rect | null; question: string } {
   return question && question === held.question ? held : { box, question };
@@ -114,4 +115,20 @@ export function askKeepOff(box: Rect | null, question: string, held: { box: Rect
 export function askKeepOffKey(b: Pick<BubbleState, "visible" | "mood" | "title" | "actions" | "expanded">): string {
   if (!b.visible) return "";
   return b.actions.filter(a => !a.id.startsWith("ui:")).map(a => a.id).join(",") || `${b.mood}|${b.title}${b.expanded ? "|expanded" : ""}`;
+}
+
+/** A bubble still growing: its words stream in, and it asks nothing (a question never moves for the box). */
+export const askGrows = (b: Pick<BubbleState, "visible" | "streaming" | "actions">): boolean =>
+  b.visible && b.streaming && !b.actions.some(a => !a.id.startsWith("ui:"));
+
+/**
+ * What the bubble keeps off of the open box (`box`, global DIP) now that it is at `at` (global DIP): a bubble still
+ * growing (`grows`: askGrows) that has grown into the box keeps off the box where it is now from then on, though it held
+ * off the box elsewhere, or nowhere (it showed before the box opened; companion-c3-1: an answer still streaming when Ask
+ * opened beside it grew under the field, which covered its last lines, its Read all and its hint). Otherwise, `held`.
+ */
+export function askGrownInto(held: { box: Rect | null; question: string }, box: Rect | null, at: Rect | null, grows: boolean): { box: Rect | null; question: string } {
+  if (!grows || !box || !at || overlap(at, box) === 0) return held;
+  const same = held.box && held.box.x === box.x && held.box.y === box.y && held.box.width === box.width && held.box.height === box.height;
+  return same ? held : { box, question: held.question };
 }

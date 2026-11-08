@@ -16,7 +16,7 @@ interface LifecycleFixture {
   resolveControl(index: number, accepted: boolean): void;
 }
 
-it.skipIf(process.env.EMBER_TASK_CONTROLS_TEST !== "1")("stops one of two tasks, focuses its result, and disables expired retry", async () => {
+it.skipIf(process.env.EMBER_TASK_CONTROLS_TEST !== "1")("stops one of two tasks, focuses its result, and drops Try again once its card has gone (tasks-approvals-r3-5)", async () => {
   const root = process.cwd(), dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-task-controls-"));
   const requireCjs = createRequire(import.meta.url);
   let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
@@ -55,7 +55,9 @@ it.skipIf(process.env.EMBER_TASK_CONTROLS_TEST !== "1")("stops one of two tasks,
     await result.getByRole("button", { name: "View result: Result", exact: true }).click();
     expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Result: Result");
     await app.evaluate(() => (globalThis as unknown as { __tasks: { expire(): void } }).__tasks.expire());
-    await expect.poll(() => result.getByRole("button", { name: "Try again: Result", exact: true }).isDisabled()).toBe(true);
+    // Never a greyed Try again nothing explains: none, as for a task nobody answered.
+    await expect.poll(() => result.getByRole("button", { name: "Try again: Result", exact: true }).count()).toBe(0);
+    expect(await result.getByRole("button", { name: "View result: Result", exact: true }).isEnabled()).toBe(true);
   } finally { await app?.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 }, 90_000);
 

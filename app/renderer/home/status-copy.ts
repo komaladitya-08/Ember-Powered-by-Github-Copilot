@@ -6,7 +6,7 @@
  */
 
 import type { ActivityEntry } from "../../shared/ipc";
-import type { TaskEntry } from "../../shared/activity";
+import { STATUS_WORDS, type TaskEntry } from "../../shared/activity";
 import { dayLabel } from "./copy";
 
 /**
@@ -137,14 +137,16 @@ export function todayCounts(entries: readonly ActivityEntry[], now = new Date())
 
 /**
  * Today, from the same tasks Task activity lists, so the panel and the list below it always agree: how many need the
- * user, are at work, are done, didn't finish or stopped, and the steps the user allowed ("1 needs you · 1 done · 1
- * didn't finish · 1 approval"). Tasks of earlier runs today are only in the audit (`audit`): counted as "earlier"
- * when the audit has more than this run's list. Only the tasks begun today count.
+ * user, are at work, are done, didn't finish, stopped or stopped with no answer in time (a question nobody answered,
+ * in its row's words: tasks-approvals-r3-1), and the steps the user allowed ("1 needs you · 1 done · 1 didn't finish ·
+ * 1 approval"). Tasks of earlier runs today are only in the audit (`audit`): counted as "earlier" when the audit has
+ * more than this run's list. Only the tasks begun today count.
  */
-export function todaySummary(tasks: readonly Pick<TaskEntry, "status" | "activity">[], audit: { tasks: number; approvals: number }, now = new Date()): string {
+export function todaySummary(tasks: readonly Pick<TaskEntry, "status" | "activity" | "unanswered">[], audit: { tasks: number; approvals: number }, now = new Date()): string {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const mine = tasks.filter(t => t.activity.startedAt >= start);
-  const by = (s: TaskEntry["status"][]) => mine.filter(t => s.includes(t.status)).length;
+  const by = (s: TaskEntry["status"][]) => mine.filter(t => s.includes(t.status) && !(t.status === "stopped" && t.unanswered)).length;
+  const unanswered = mine.filter(t => t.status === "stopped" && t.unanswered).length;
   const approvals = Math.max(audit.approvals, mine.reduce((n, t) => n + t.activity.approvals, 0));
   const earlier = Math.max(0, audit.tasks - mine.length);
   const parts = [
@@ -153,6 +155,7 @@ export function todaySummary(tasks: readonly Pick<TaskEntry, "status" | "activit
     by(["done"]) ? `${by(["done"])} done` : "",
     by(["failed"]) ? `${by(["failed"])} didn't finish` : "",
     by(["stopped"]) ? `${by(["stopped"])} stopped` : "",
+    unanswered ? `${unanswered} ${STATUS_WORDS.unanswered.toLowerCase()}` : "",
     earlier ? `${count(earlier, "earlier task")}` : "",
     approvals ? count(approvals, "approval") : "",
   ].filter(Boolean);

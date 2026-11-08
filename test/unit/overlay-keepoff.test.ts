@@ -33,7 +33,8 @@ import type { Logger } from "../../app/main/logger";
 import type { Settings } from "../../app/main/settings";
 import type { OverlayShaper } from "../../app/main/platform/types";
 import { besideControl, followTarget } from "../../app/main/follow";
-import { askKeepOff, askKeepOffKey, bubbleHere, cardsCorner, handleSide, stackPlace } from "../../app/renderer/overlay/layout";
+import { askGrownInto, askGrows, askKeepOff, askKeepOffKey, bubbleHere, cardsCorner, handleSide, stackPlace } from "../../app/renderer/overlay/layout";
+import { bubbleFit } from "../../packages/bubble/src/bubble";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const shaper: OverlayShaper = { setInputRegion: () => false, release() {}, forward: false, floating: () => ({ options: {}, allWorkspaces: null }) };
@@ -383,11 +384,50 @@ describe("the open Ask box, for a bubble that comes up while it is open (compani
     expect(askKeepOffKey({ ...answer, mood: "attention", actions: [{ id: "q1:once", label: "Allow" }, { id: "ui:more", label: "More" }] })).toBe("q1:once");
   });
 
+  it("keeps an answer still streaming when the box opened out from under the field as it grows into it; once it has finished it holds still (companion-c3-1)", () => {
+    const answer = { visible: true, mood: "idle" as const, title: "Ember", streaming: true, actions: [] as { id: string; label: string }[] };
+    // Shown before the box opened: it held off nothing of the box, and the box opened clear of it, beside it.
+    const shown = askKeepOff(null, askKeepOffKey(answer), none);
+    const at = { x: 490, y: 102, width: 330, height: 123 };
+    const opened = { x: 232, y: 233, width: 560, height: 140 };
+    expect(askGrownInto(shown, opened, at, askGrows(answer))).toBe(shown);
+    // Its words go on streaming in and it grows into the box: from then on it keeps off the box where it is now, so
+    // the field never covers its last lines, its Read all and its hint (22,776 to 41,250 px² of it were covered).
+    const grown = { ...at, height: 200 };
+    const kept = askGrownInto(shown, opened, grown, askGrows(answer));
+    expect(kept).toEqual({ box: opened, question: askKeepOffKey(answer) });
+    // ... and it is placed clear of the box, by Ember (Ember at the top of a 1024 x 768 screen: beside it).
+    const spot = bubbleFit({ x: 512, y: 84 }, { width: 330, height: 200 }, { width: 1024, height: 768 }, 60, [opened], () => 200);
+    expect(spot).toMatchObject({ x: 563, y: 8 });
+    const clear = (r: Box, b: Box) => r.x >= b.x + b.width || r.x + r.width <= b.x || r.y >= b.y + b.height || r.y + r.height <= b.y;
+    expect(clear(spot!, opened)).toBe(true);
+    // The same box again: nothing changes (it doesn't re-place on every drawing).
+    expect(askGrownInto(kept, opened, grown, askGrows(answer))).toBe(kept);
+    // Finished: it never grows again, so it holds still where it is, for the box growing or closing (companion-c2-4).
+    const done = { ...answer, streaming: false };
+    expect(askGrows(done)).toBe(false);
+    expect(askGrownInto(shown, opened, grown, askGrows(done))).toBe(shown);
+    expect(askKeepOff(null, askKeepOffKey(done), kept)).toBe(kept);
+    // A question never moves for the box, even one whose words come in a line at a time: nothing near it moves.
+    const question = { ...answer, mood: "attention" as const, actions: [{ id: "q1:once", label: "Allow" }] };
+    expect(askGrows(question)).toBe(false);
+    // Its own Stop or More is not a question: an acting step streaming in grows like an answer.
+    const step = { ...answer, mood: "acting" as const, actions: [{ id: "ui:more", label: "More" }] };
+    expect(askGrows(step)).toBe(true);
+    // No box, nothing on screen, or not into the box: what it held.
+    expect(askGrownInto(shown, null, grown, true)).toBe(shown);
+    expect(askGrownInto(shown, opened, null, true)).toBe(shown);
+    expect(askGrownInto(shown, opened, at, true)).toBe(shown);
+  });
+
   it("is a place the bubble keeps off where it can, never one it hides from (main sends it apart from the windows)", async () => {
     const { readFileSync } = await import("node:fs");
     const overlayPage = readFileSync("app/renderer/overlay/main.ts", "utf8");
     expect(overlayPage).toContain("bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff)");
     expect(overlayPage).toMatch(/askHeld = askKeepOff\(state\?\.askBox \?\? null, askKeepOffKey\(state\?\.bubble \?\? IDLE_BUBBLE\), askHeld\);\n\s+if \(askHeld\.box\) list\.push\(/);
+    // Grown into the box while it streams: placed again at once, clear of it (companion-c3-1).
+    expect(overlayPage).toContain("if (showBubble && grewIntoAsk() && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff)) interactiveDirty = true;");
+    expect(overlayPage).toContain("const next = askGrownInto(askHeld, state?.askBox ?? null, at, askGrows(state?.bubble ?? IDLE_BUBBLE));");
     const main = readFileSync("app/main/main.ts", "utf8");
     expect(main).toMatch(/onBounds: askBox => \{ if \(JSON\.stringify\(lastState\.askBox \?\? null\) !== JSON\.stringify\(askBox\)\) showState\(\{ askBox \}\); agent\?\.holdForAsk\(askBox !== null\); \},/);
     expect(main).toMatch(/overlay\.setBubble\(event\.sender, rect\);\n(\s+\/\/[^\n]*\n)+\s+askWindow\.bubbleChanged\(stepsAsideFor\(lastState\.bubble, manualCall\?\.source === "ask"\)\);/);
