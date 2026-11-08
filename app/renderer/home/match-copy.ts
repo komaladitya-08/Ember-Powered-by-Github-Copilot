@@ -144,6 +144,7 @@ export function trustView(trust: { askedApps: boolean; reviewCommands: boolean }
   return TRUST_ROWS.map(({ id, key }) => {
     const locked = managed.has(key);
     // aria-describedby wins over the title, so the managed note is one of the descriptions too.
-    return { id, checked: trust[key], disabled: locked, locked, title: locked ? MANAGED_TEXT : "", describedBy: locked ? `${id}-hint trust-managed` : `${id}-hint` };
+    // Off while the organisation turns it off, as in force (the settings may still hold it on: safety-privacy-w5-2).
+    return { id, checked: trust[key] && !locked, disabled: locked, locked, title: locked ? MANAGED_TEXT : "", describedBy: locked ? `${id}-hint trust-managed` : `${id}-hint` };
   });
 }

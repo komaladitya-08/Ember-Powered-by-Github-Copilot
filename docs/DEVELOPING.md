@@ -412,7 +412,9 @@ first run's "Before Ember starts" again, word for word as it reads now (Search f
 "audit" and the like), but for pointing to the never-look list below and saying when screenshots are off, when Work
 without asking is on (ordinary steps are said instead of asked) or apps were let in without asking (each as the policy
 in force allows it: while Ember holds itself locked down after a policy change, it says screenshots are off and Ember
-asks before acting in an app, and both switches below show off), and which of other
+asks before acting in an app, and every switch the lockdown turns off shows off, there and in the other panes:
+screenshots, Work without asking, working in an app you asked for help with, listening for the name, memory, routines
+and update notices), and which of other
 computers, WSL and commands you turned on or your organisation turned off; while open it follows where requests go, the
 policy and those settings, and isn't drawn again for an unrelated change.
 **What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80
