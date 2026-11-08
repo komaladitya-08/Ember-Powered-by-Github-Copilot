@@ -23,7 +23,7 @@ const SIZE = { width: 560, height: 92 };
 const GROWS = 46 + 17;
 /**
  * The field grows a line at a time (its line height, at the text size), up to MAX_LINES, as the user types or pastes
- * several lines; the cut note and wait tip each take another row. Comfortable controls and wrapped suggestions use
+ * several lines; the count near the limit and the wait tip each take another row. Comfortable controls and wrapped suggestions use
  * their measured rows; the work area caps the window and the page scrolls on very small displays.
  */
 const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 20;
@@ -130,7 +130,7 @@ function clearOf(b: Box, wa: Box, keepOff?: Box | null): Box {
 }
 
 /**
- * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, the note's when a paste was cut, the tip's):
+ * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, the count's near the limit, the tip's):
  * growing upward when the box is above Ember (`up`, its hint row stays put beside Ember's head), else downward; always
  * inside the work area and clear of `keepOff`. `scale`: the text's (askSize), by which each row is taller too.
  */
@@ -390,7 +390,7 @@ export class AskWindow {
     });
     // Right-click in the field: Cut, Copy, Paste and Select all, for a mouse-only paste or copy.
     win.webContents.on("context-menu", (_e, p) => this.editMenu(win, p.editFlags));
-    // The page asks for the rows its field and note need (Shift+Enter, a pasted traceback, a paste cut at the limit):
+    // The page asks for the rows its field and count need (Shift+Enter, a pasted traceback, a paste near the limit):
     // only this box's page is heard here.
     win.webContents.ipc.on(IPC.askFit, (_e, rows: unknown) => { if (this.win === win && typeof rows === "number" && Number.isFinite(rows)) this.fit(rows); });
     // Where it shows something: a short list of boxes inside a window this size, or nothing is changed.
@@ -498,7 +498,7 @@ export class AskWindow {
   }
 
   /**
-   * The page needs `rows` rows (the field, cut note, wait tip and measured controls): the box grows
+   * The page needs `rows` rows (the field, the count, wait tip and measured controls): the box grows
    * or shrinks to fit, away from Ember.
    */
   fit(rows: number): void {

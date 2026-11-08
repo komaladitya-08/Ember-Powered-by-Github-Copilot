@@ -167,7 +167,7 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
         // The window's name keeps the room it aims for (or all it needs), and nothing is pushed off the line.
         expect.soft(r.name, label).toBeGreaterThanOrEqual(Math.min(160, r.nameWhole));
         expect.soft(r.overflow, label).toBe(0);
-        // The cut note gets a row and the comfortable Listen once group gets two under the four lines of text.
+        // The count gets a row and the comfortable Listen once group gets two under the four lines of text.
         expect.soft(r.cut, label).toBe(!!text);
         expect.soft(r.cutOnLine, label).toBe(false);
         if (text) expect.soft(r.height, label).toBe(askHeight("default", 7));

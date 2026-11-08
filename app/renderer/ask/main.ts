@@ -6,7 +6,7 @@ import { listenOnceShown, type AskContext, type EmberAskApi, type ListenOnceStat
 import type { TargetSummary } from "../../shared/targets";
 import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
-import { CUT_NOTE, WAIT_TIP, atLimit, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "./field";
+import { ASK_OVER, WAIT_TIP, askCount, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, overLimit, sendKey, textScaleOf } from "./field";
 import { liveWords, seesView, unavailableLine, type SeesView } from "./chips";
 import { watchPixels } from "../shared/pixels";
 import { mountListenOnce } from "../shared/listen-once";
@@ -83,21 +83,29 @@ let suggested: string[] = [];
  * The window opens with one field row and two rows for the comfortable Listen once control, plus any wait tip.
  */
 let shownRows = 3;
+/** The request is over the most that is sent (said once as it goes over: companion-i1). */
+let over = false;
 /**
- * The field as tall as its text (one line to four, then it scrolls), the note on a line of its own when the text
- * reached the most that is sent (a longer paste was cut at the limit), the tip while it shows, and the window with all;
- * its lines at the text size now.
+ * The field as tall as its text (one line to four, then it scrolls), the count on a line of its own near the most
+ * that is sent (a longer paste kept whole, and not sent until it fits), the tip while it shows, and the window with
+ * all; its lines at the text size now.
  */
 function fit(): void {
   const s = scale();
-  send.disabled = !input.value.trim();
+  send.disabled = !input.value.trim() || overLimit(input.value.trim());
   syncSuggestions();
   field.style.flexBasis = `${fieldHeight(1, s)}px`;
   const lines = fieldLines(input.scrollHeight, s);
   field.style.flexBasis = `${fieldHeight(lines, s)}px`;
   input.classList.toggle("scrolls", input.scrollHeight > fieldHeight(lines, s) + 1);
-  const full = atLimit(input.value);
-  if (cut.hidden === full) { cut.hidden = !full; cut.textContent = full ? CUT_NOTE : ""; }
+  const count = askCount(input.value.length);
+  const full = !!count;
+  if (cut.textContent !== count) cut.textContent = count;
+  cut.hidden = !full;
+  const nowOver = overLimit(input.value.trim());
+  if (nowOver) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
+  if (nowOver && !over) seesLive.textContent = ASK_OVER;
+  over = nowOver;
   // Layout heights: the opening animation's scale must not make the window too short for its final contents.
   const listenRows = auxiliaryRows(listenRow.offsetHeight, s);
   const suggestRows = auxiliaryRows(suggest.offsetHeight, s);
@@ -174,6 +182,8 @@ const history = new AskHistory();
 form.addEventListener("submit", e => {
   e.preventDefault();
   const text = input.value.trim();
+  // Longer than is sent: nothing goes, and the request stays to be shortened (companion-i1: it was cut unseen).
+  if (overLimit(text)) { seesLive.textContent = ASK_OVER; return; }
   if (text) window.emberAsk.ask(text);
   input.value = "";
   fit();

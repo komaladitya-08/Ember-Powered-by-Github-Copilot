@@ -8,7 +8,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { notificationBody } from "../../app/main/notification";
-import { CUT_NOTE, atLimit, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "../../app/renderer/ask/field";
+import { ASK_OVER, askCount, auxiliaryRows, boxRows, enterAction, fieldHeight, fieldLines, historyKey, overLimit, sendKey, textScaleOf } from "../../app/renderer/ask/field";
+import { composerCount } from "../../app/renderer/home/copy";
 import { liveWords, seesView, unavailableLine } from "../../app/renderer/ask/chips";
 import { targetChip, targetChipParts } from "../../app/renderer/handle/badge";
 import { askSees } from "../../app/main/ask-sees";
@@ -45,10 +46,12 @@ describe("the ask box when Ember can't answer a request now (companion-6)", () =
 
 describe("the ask box's field", () => {
   it("is a growing text area that keeps lines, not a one-line input that flattens them", () => {
-    expect(ASK_HTML).toMatch(/<textarea id="q" rows="1"[^>]*maxlength="2000"/);
+    expect(ASK_HTML).toMatch(/<textarea id="q" rows="1"/);
+    // A paste is kept whole (no maxlength cutting its end off unseen): the count says how much to shorten it (companion-i1).
+    expect(ASK_HTML).not.toContain("maxlength");
     expect(ASK_HTML).not.toMatch(/<input id="q"/);
     // On its own line under the one that says what Ember will see, never crowding it (the window grows a line for it).
-    expect(ASK_HTML).toMatch(/<\/p>\s*(<!--[^>]*-->\s*)?<p id="cut" class="cut" role="status" hidden><\/p>/);
+    expect(ASK_HTML).toMatch(/<\/p>\s*(<!--[^>]*-->\s*)?<p id="cut" class="cut" hidden><\/p>/);
     expect(/<p class="meta">[\s\S]*?<\/p>/.exec(ASK_HTML)?.[0]).not.toContain('id="cut"');
   });
 
@@ -107,10 +110,15 @@ describe("the ask box's field", () => {
     expect(ASK_HTML).toMatch(/<kbd id="key-send">Enter<\/kbd> to send/);
   });
 
-  it("says when the text reached the most that is sent", () => {
-    expect(atLimit("x".repeat(1999))).toBe(false);
-    expect(atLimit("x".repeat(2000))).toBe(true);
-    expect(CUT_NOTE).toBe("Only the first 2000 characters will be sent.");
+  it("counts a long request near the most that is sent, and says how much to shorten one over it, as Home does (companion-i1)", () => {
+    expect(askCount(1799)).toBe("");
+    expect(askCount(1800)).toBe("1,800 of 2,000 characters.");
+    expect(askCount(2000)).toBe("2,000 of 2,000 characters.");
+    expect(askCount(2423)).toBe("2,423 of 2,000 characters, 423 too many.");
+    for (const n of [1799, 1800, 2000, 2001, 3263]) expect(askCount(n), String(n)).toBe(composerCount(n));
+    expect(overLimit("x".repeat(2000))).toBe(false);
+    expect(overLimit("x".repeat(2001))).toBe(true);
+    expect(ASK_OVER).toBe("This request is longer than 2,000 characters. Shorten it to send it.");
   });
 });
 

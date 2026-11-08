@@ -219,6 +219,33 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("keeps a long paste whole, says how much to shorten it, and sends nothing until it fits (companion-i1, as home-5)", async () => {
+    const page = await pageAt();
+    try {
+      const long = `${"A long log line that matters. ".repeat(80)}THE IMPORTANT LAST LINE`;
+      expect(long.length).toBe(2423);
+      const input = page.locator("#q");
+      await input.focus();
+      await page.keyboard.insertText(long);
+      // Whole, never cut at the limit unseen (maxlength dropped its end, the important last line with it).
+      expect(await input.inputValue()).toBe(long);
+      expect(await page.locator("#cut").innerText()).toBe("2,423 of 2,000 characters, 423 too many.");
+      expect(await input.getAttribute("aria-invalid")).toBe("true");
+      expect(await page.locator("#sees-live").textContent()).toBe("This request is longer than 2,000 characters. Shorten it to send it.");
+      expect(await page.locator("#send").isDisabled()).toBe(true);
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.calls)).toEqual([]);
+      expect(await input.inputValue()).toBe(long);
+      // Cut to fit: the count stays while it is near the limit, and Enter sends it.
+      await input.fill(long.slice(-1900));
+      expect(await page.locator("#cut").innerText()).toBe("1,900 of 2,000 characters.");
+      expect(await input.getAttribute("aria-invalid")).toBeNull();
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.calls)).toEqual([{ kind: "ask", text: long.slice(-1900) }]);
+      expect(await page.locator("#cut").isHidden()).toBe(true);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("retains the draft and selection through late context, microphone updates and dismissal", async () => {
     const page = await pageAt();
     try {

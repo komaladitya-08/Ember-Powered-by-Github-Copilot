@@ -142,8 +142,9 @@ They share one emotion rig, so switching never changes behaviour.
   compositor the box moves off the corner card as it grows for a question. On Linux it takes clicks only on what it
   shows (an X input shape the page reports), so a click in its clear margins reaches the app
   beneath and closes it. The line under its field is as wide as the field while the quick look
-  runs; when it finds nothing to show, it narrows to its keys at the trailing edge. In Calm, each of them
-  fades over 150 ms instead.
+  runs; when it finds nothing to show, it narrows to its keys at the trailing edge. A long paste is kept
+  whole there as in Home's composer: from 1,800 characters a line under the field counts them, and over
+  2,000 says how many too many while Enter sends nothing. In Calm, each of them fades over 150 ms instead.
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
 - **Mini-Embers** mark tasks running in background windows or on Ember's desk.
