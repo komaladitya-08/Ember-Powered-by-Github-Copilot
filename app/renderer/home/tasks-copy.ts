@@ -42,10 +42,12 @@ export function stateWord(t: Pick<TaskEntry, "status" | "unanswered">): string {
 
 /**
  * The line under a task's title: its state, how long it has worked (or took), how it works now and where ("Waiting for
- * you · 1:14 · In the background", "Done · Took 1:12", "Working · Just started · On my desk · on build-01").
+ * you · 1:14 · In the background", "Done · Took 1:12", "Working · Just started · On my desk · on build-01", "Waiting its
+ * turn").
  */
 export function taskMeta(t: Pick<TaskEntry, "status" | "unanswered" | "hand" | "where" | "activity">, now: number): string {
-  return [stateWord(t), clockText(t.activity, now), t.hand ? HAND_WORDS[t.hand] : "", t.where ?? ""]
+  // A task in line hasn't begun, so it has no clock (tasks-approvals-r3: not "Just started").
+  return [stateWord(t), t.status === "queued" ? "" : clockText(t.activity, now), t.hand ? HAND_WORDS[t.hand] : "", t.where ?? ""]
     .filter(Boolean).join(" · ");
 }
 

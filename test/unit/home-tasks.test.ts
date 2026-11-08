@@ -63,6 +63,12 @@ describe("a task's rows in Home", () => {
     expect(taskAnnouncement("Turn on Night Light", "failed")).toBe("Turn on Night Light: Didn't finish");
   });
 
+  it("gives a task still in line no clock: it hasn't begun, so never “Just started” (tasks-approvals-r3)", () => {
+    const a: TaskActivity = { startedAt: 0, items: [], dropped: 0, steps: 0, failedSteps: 0, counts: {}, questions: 0, approvals: 0, asking: false, retry: 0, slow: false, nearLimit: false, live: "" };
+    expect(taskMeta({ status: "queued", activity: a }, 2000)).toBe("Waiting its turn");
+    expect(taskMeta({ status: "queued", where: "on build-01", activity: a }, 74_000)).toBe("Waiting its turn · on build-01");
+  });
+
   it("says a task whose question went unanswered ended for that, never that it was stopped (tasks-approvals-c1-2)", () => {
     const a: TaskActivity = { startedAt: 0, endedAt: 125_000, items: [], dropped: 0, steps: 0, failedSteps: 0, counts: {}, questions: 1, approvals: 0, asking: false, retry: 0, slow: false, nearLimit: false, live: "" };
     expect(stateWord({ status: "stopped", unanswered: true })).toBe("No answer in time");

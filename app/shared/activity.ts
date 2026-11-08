@@ -260,7 +260,7 @@ export function doingWords(step: string | undefined, app?: string): string {
  * minute…" (tasks-approvals-2: a pause, never a refusal).
  */
 export function pacedWords(perMinute: number): string {
-  return `Pausing to keep to ${perMinute} steps a minute…`;
+  return `Pausing to keep to ${perMinute} ${perMinute === 1 ? "step" : "steps"} a minute…`;
 }
 
 /** The live line while Copilot is tried again after a failed call: "Retrying…", then "Retrying (try 3)…". */
