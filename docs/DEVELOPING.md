@@ -360,8 +360,10 @@ or steer a task. If an app can't be operated through accessibility, Ember asks t
 your mouse**: it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse, turn
 the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
 acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
-take screenshots or press keys; while GNOME Shell's own prompt is up (or the shell is too busy to tell), it also sends
-no window's text or titles with your request and takes no step in any app, until the prompt is done. If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
+take screenshots or press keys; while GNOME Shell's own prompt is up (or Ember can't tell, because the shell is too busy
+or didn't answer), it also sends no window's text or titles with your request and takes no step in any app, until the
+prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
+windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
 still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
 **Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop” in the Ask box while a task is
 at work) stops every task, question, borrowed mouse,

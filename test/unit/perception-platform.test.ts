@@ -386,8 +386,9 @@ describe("Perception with the OS's security-window check", () => {
     expect((await desktop(consent).perception.focused()).blocked).toBe(false);
   });
 
+  // describe_screen's list of open windows (the request's context lists none: safety-privacy-r2).
   const quick = async (clients: Win[], check?: PerceptionOptions["isSecurityWindow"]) =>
-    (await desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit gedit"), clients, isSecurityWindow: check }).perception.quickContext())!.text;
+    desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit gedit"), clients, isSecurityWindow: check }).perception.describe();
 
   it("leaves a security window out of the open-window lines, by its program and title", async () => {
     const clients = [win(5, 42, "notes.txt", "gedit gedit"), win(6, 50, "Windows Security", "explorer")];

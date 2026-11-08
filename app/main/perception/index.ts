@@ -363,11 +363,10 @@ export class Perception {
     }
     const stop = await prompt;
     if (stop) return promptContext(stop.why);
-    // Every window, not just the focused one: "what apps are open" is answered from this context, without a read.
-    // X11's list is used here because it is immediate: the sidecar answers one request at a time, and the focused
-    // read already took its turn. (Listed only when the context will say it: not for a private or untitled window.)
-    const title = seen.window?.name || seen.x11Window?.title || "";
-    return quickContextText(seen, seen.blocked || !title ? [] : openWindowLines(this.x11Windows()));
+    // The window the user is in, and only that: "Before Ember starts" says Ember reads the window you're working in, so
+    // other windows' titles (a mail's subject, a file's name) go only when the conversation asks describe_screen, which
+    // its prompt says lists them ("what apps are open"; safety-privacy-r2).
+    return quickContextText(seen, []);
   }
 
   /**
@@ -962,6 +961,7 @@ export function describeText(seen: Seen, openBlock: string): string {
 /**
  * The quick context for what was read (the window the user is in, what has focus, its selection or text), with
  * `openLines` (openWindowLines's lines) as its list of open windows; null for a window with no title. Pure (§5.5).
+ * Ember's own contexts pass no lines: a request carries only the window the user is in (safety-privacy-r2).
  */
 export function quickContextText(seen: Seen, openLines: string[]): QuickContext | null {
   const pid = seen.window?.pid ?? seen.x11Window?.pid ?? undefined;
