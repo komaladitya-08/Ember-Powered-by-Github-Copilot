@@ -1108,6 +1108,16 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true, service: { kind: "user", host: "llm.local" } })).toBe("Your model provider isn't answering: Ember reconnects once the tasks that are running finish. Your message is still here.");
   });
 
+  it("asks whether my model server on this computer is running, never to wait until I'm online (integrations-r2-2)", () => {
+    for (const host of ["127.0.0.1:11434", "localhost:1234", "[::1]:8080"]) {
+      expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "user", host } }), host)
+        .toBe("Ember can't reach the model server on this computer. Is it running? Your message is still here: send it again once it is.");
+    }
+    // A provider elsewhere, and the organisation's service on this computer, are still out of reach over the network.
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "user", host: "api.example.com" } })).toBe("Ember can't reach your model provider right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "127.0.0.1:11434" } })).toBe("Ember can't reach the model service right now. Your message is still here: send it again once you're online.");
+  });
+
   it("asks before New conversation clears the messages, and names the saved copy when there is one (home-9)", () => {
     expect(conv.conversationNewQuestion(1, false)).toBe("Start a new conversation? This clears the message here.");
     expect(conv.conversationNewQuestion(12, false)).toBe("Start a new conversation? This clears the 12 messages here.");
