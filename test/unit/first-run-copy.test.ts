@@ -261,7 +261,9 @@ describe("first run says main's connection words as mine, on every visit (first-
     expect(line(own.keepsStopping)).toBe("My model connection keeps stopping. Press Check again to retry, or restart me.");
     expect(line(own.noWatchersWhy)).toBe("My model connection isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.");
     expect(inMyVoice(runtimeWords(true).keepsStopping)).toBe("My model connection keeps stopping. Press Check again to retry, or restart me.");
-    expect(inMyVoice(own.cutOff)).toBe("My model connection stopped unexpectedly; the task didn't finish.");
+    // A cut-off task's words are main's own, in my voice already: only ever a task's outcome (first-run-w5-1).
+    expect(own.cutOff).toBe("My model connection stopped unexpectedly; the task didn't finish.");
+    expect(inMyVoice(own.cutOff)).toBe(own.cutOff);
     // Said once: welcome.ts says the status' detail as mine, and the line says it again.
     expect(line(inMyVoice(own.keepsStopping))).toBe(line(own.keepsStopping));
   });

@@ -1102,8 +1102,9 @@ the address in force and its saved key are kept and come back with the switch (i
   (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
   title names the provider ("No model set for your provider", "I'm still connecting to your model provider").
   Ember's Copilot runtime, which still carries the requests, is "Ember's model connection" then ("My model connection
-  stopped unexpectedly. I'm reconnecting…", "Ember's model connection keeps stopping…", a task cut off by it, and
-  the file watchers running out: `runtimeWords`, `lostWords`), never Copilot.
+  stopped unexpectedly. I'm reconnecting…", "Ember's model connection keeps stopping…", and the file watchers running
+  out: `runtimeWords`, `lostWords`), never Copilot; a task cut off by it ends, in the bubble and the conversation, with
+  "My model connection stopped unexpectedly; the task didn't finish."
   **Check again** connects to the provider (or the organisation's service) again and never looks for or names a GitHub
   sign-in (`checkAgain`, app/main/provider.ts): connected, the status line says so; out of reach, it says "Checked
   again: Ember still can't connect to <host>."; reached but still unusable (no model named, a refused key), "Checked

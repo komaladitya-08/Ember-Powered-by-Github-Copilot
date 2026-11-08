@@ -1792,6 +1792,23 @@ describe("review round 3", () => {
     await host.stop();
   });
 
+  it("a task cut off under my own provider ends in the bubble and the conversation with my model connection, as the bubble's title says it (first-run-w5-1)", async () => {
+    vi.useFakeTimers();
+    const finished: { status: string; text: string }[] = [];
+    const own: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example.com/v1", apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } };
+    const { host, screen } = makeHost({ hands: hands(), healthMs: 1000, provider: () => own, onTaskFinished: t => finished.push(t) });
+    await host.start(null);
+    host.tasks!.start("turn on night light");
+    await vi.advanceTimersByTimeAsync(50);
+    let once = true;
+    sim.ping = async () => { if (once) { once = false; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(5000);
+    const cut = "My model connection stopped unexpectedly; the task didn't finish.";
+    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `turn on night light: didn't finish. ${cut}` })]);
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "error", title: "turn on night light", thought: cut });
+    await host.stop();
+  });
+
   it("a task the user stopped ends calmly: no sad face, no lasting card, no failure", async () => {
     vi.useFakeTimers();
     const finished: { status: string }[] = [];
