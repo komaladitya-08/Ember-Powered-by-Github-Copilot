@@ -312,7 +312,27 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await copy.focus();
       const where = (await copy.boundingBox())?.y;
       await reply(page, more, "One more", 9);
-      expect((await copy.boundingBox())?.y).toBe(where);
+      // Within a pixel: where the browser's anchoring doesn't hold it, Home scrolls back by whole pixels.
+      expect(Math.abs((await copy.boundingBox())!.y - where!)).toBeLessThanOrEqual(1.5);
+      expect(await page.evaluate(() => document.activeElement?.textContent)).toBe("Copy");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps the place of someone reading elsewhere when the rows above them go, without the browser's scroll anchoring (home-1)", async () => {
+    // Only the last messages show, so a reply takes rows off the top, above the message being read. The browser's scroll
+    // anchoring usually holds the place; once in CI it didn't, and the focused Copy jumped 333 px. Home holds it itself.
+    const seed = exchange(16);
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(() => { document.documentElement.style.overflowAnchor = "none"; });
+      const copy = (await page.locator("#conversation li.ember").last().getByRole("button", { name: /Copy/ }).elementHandle())!;
+      await copy.focus();
+      const where = (await copy.boundingBox())?.y;
+      expect(where).toBeGreaterThan(0);
+      await reply(page, [...seed, ...exchange(2, seed.length)], "One more", 3);
+      // Within a pixel: the page scrolls by whole pixels.
+      expect(Math.abs((await copy.boundingBox())!.y - where!)).toBeLessThanOrEqual(1.5);
       expect(await page.evaluate(() => document.activeElement?.textContent)).toBe("Copy");
       expect(errors).toEqual([]);
     } finally { await page.close(); }

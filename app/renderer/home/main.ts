@@ -1344,9 +1344,18 @@ const inWindow = (el: Element, whole = false) => {
  */
 function keepingComposer(change: () => void): void {
   const form = $("conversation-compose");
-  const focused = document.activeElement instanceof HTMLElement && form.contains(document.activeElement) ? document.activeElement : null;
+  const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+  const focused = active && form.contains(active) ? active : null;
   const showed = !!focused && inWindow(focused);
+  // Someone reading elsewhere (the focus on a message's Copy) keeps their place when rows above go (only the last
+  // messages show). The browser's scroll anchoring holds it at once, mostly; where it didn't, the Copy jumped 333 px in
+  // CI (home-1). Measured after the change, so what the anchoring already did isn't done twice.
+  const reading = !focused && active && inWindow(active) ? { el: active, top: active.getBoundingClientRect().top } : null;
   change();
+  if (reading?.el.isConnected) {
+    const moved = reading.el.getBoundingClientRect().top - reading.top;
+    if (Math.abs(moved) >= 1) window.scrollBy(0, moved);
+  }
   if (!focused || !showed) return;
   const actions = form.querySelector(".conversation-compose-actions");
   // With the line under them that says how the request is going, while it says something (home-7).
