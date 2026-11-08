@@ -114,7 +114,12 @@ export function registerExtensionsIpc(
     if (why) return fail(why);
     const source = marketplaceSource(s);
     if (!source) return fail(MARKETPLACE_INVALID);
-    try { return outcome(await api!.addMarketplace(source)); } catch (err) { return raw(EXTENSIONS_IPC.addMarketplace, err); }
+    try {
+      // Ember's own sentence, with the address and what to check (integrations-r2-3: addMarketplaceFailed), said as it
+      // is, as browse's is: never cut to a generic line for its length or for naming the network.
+      const r = await api!.addMarketplace(source);
+      return r.ok ? { ok: true } : fail(typeof r.why === "string" && r.why ? r.why : EXTENSIONS_FAILED);
+    } catch (err) { return raw(EXTENSIONS_IPC.addMarketplace, err); }
   });
 
   change(EXTENSIONS_IPC.removeMarketplace, one, async name => outcome(await api!.removeMarketplace(name)));

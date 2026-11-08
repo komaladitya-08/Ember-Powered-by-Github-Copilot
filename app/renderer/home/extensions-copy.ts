@@ -195,6 +195,14 @@ export function browseFailed(name: string, why: "offline" | "fetch" | "read"): s
   if (why === "offline") return `Ember couldn't reach “${name}”. Check the network, then press Browse again.`;
   return why === "fetch" ? `Ember couldn't fetch “${name}”'s list. Press Browse again in a moment.` : `Ember couldn't read “${name}”'s list. Press Browse again in a moment.`;
 }
+/**
+ * Why a marketplace couldn't be added (integrations-r2-3), with the address the person typed: the runtime couldn't
+ * reach it (`offline`), or reached it but got no marketplace from it (`fetch`: a private repository, not a marketplace).
+ */
+export function addMarketplaceFailed(address: string, why: "offline" | "fetch"): string {
+  return why === "offline" ? `Ember couldn't reach “${address}”. Check the address and the network, then press Add again.`
+    : `Ember couldn't fetch a marketplace from “${address}”. Check that it's a marketplace repository you can open, then press Add again.`;
+}
 export const BROWSE_AGAIN = "Browse again";
 export const BROWSE_DONE = "Done";
 
