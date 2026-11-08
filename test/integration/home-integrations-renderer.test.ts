@@ -21,6 +21,7 @@ declare global {
     __ixBrowsed: string[];
     __ixEmit: (name: string, value: unknown) => void;
     __ixExtChanged: () => void;
+    __ixProjectFails: string[];
   }
 }
 
@@ -71,6 +72,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
     window.__ixEntries = entries;
     window.__ixBrowseFails = [];
     window.__ixBrowsed = [];
+    window.__ixProjectFails = [];
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     window.__ixEmit = (name, value) => { for (const fn of subs[name] ?? []) fn(value); };
     const status = () => ({ appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin });
@@ -82,7 +84,10 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
       if (name === "conversation") return async () => [];
       // Projects, as main answers when connected: one file chosen, a drafted patch.
       if (name === "projectPick") return async () => ({ names: ["greeting.ts"], sizes: [46], changed: true });
-      if (name === "projectRun") return async () => ({ answer: "```diff\n-hi\n+hello\n```", patch: { name: "greeting.ts", diff: "-hi\n+hello" }, canContinue: true });
+      if (name === "projectRun") return async () => {
+        const error = window.__ixProjectFails.shift();
+        return error ? { error } : { answer: "```diff\n-hi\n+hello\n```", patch: { name: "greeting.ts", diff: "-hi\n+hello" }, canContinue: true };
+      };
       return () => new Promise(() => undefined);
     } }) as never;
     let changed = () => undefined as void;
@@ -223,6 +228,30 @@ describe.skipIf(gate)("Home's Projects, as Ember's connection changes (2026-11-0
     await expect.poll(() => page.locator("#project-files").isVisible()).toBe(false);
     expect(await page.locator("#project-answer").isVisible()).toBe(false);
     expect(await page.locator("#project-question").inputValue()).toBe("");
+    await page.close();
+  });
+
+  it("keeps a failed request's reason in view when the check it starts takes Ember off Ready (integrations-r2-5)", async () => {
+    const page = await open("project");
+    await page.locator("#project-pick").click();
+    await expect.poll(() => page.locator("#project-files").innerText()).toContain("greeting.ts");
+    const why = "I can't reach the model server on this computer. Is it running? Start it, then ask again.";
+    await page.evaluate(w => { window.__ixProjectFails.push(w); }, why);
+    await page.locator("#project-question").fill("Review this file.");
+    await page.locator("#project-send").click();
+    await expect.poll(() => page.locator("#project-status").innerText()).toBe(why);
+    // Main then found nothing listening there: the status leaves Ready, and the reason stays under the request.
+    const down = { ...READY, phase: "error", reason: "network", detail: "Ember can't reach the model server on this computer (127.0.0.1:18109). Start it, and Ember will connect in a moment.", service: { kind: "user", host: "127.0.0.1:18109" } };
+    await page.evaluate(st => window.__ixEmit("onAgentStatus", st), down);
+    await expect.poll(() => page.locator("#project-send").isDisabled()).toBe(true);
+    expect(await page.locator("#project-status").innerText()).toBe(why);
+    expect(await page.locator("#project-question").inputValue()).toBe("Review this file.");
+    // Back once the server answers: the line says what to do next, as always.
+    await page.evaluate(st => window.__ixEmit("onAgentStatus", st), { ...READY, service: { kind: "user", host: "127.0.0.1:18109" } });
+    await expect.poll(() => page.locator("#project-status").innerText()).toBe("Review the selection before sending.");
+    // A reconnect with no failure before it says only that sending waits.
+    await page.evaluate(st => window.__ixEmit("onAgentStatus", st), down);
+    await expect.poll(() => page.locator("#project-status").innerText()).toBe("Ember isn't connected right now. Your work here stays, and you can send once it connects.");
     await page.close();
   });
 });

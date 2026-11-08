@@ -996,8 +996,9 @@ kept) or, without one, the saved key only when it was entered for that very host
 answers; then the details, the key and the card's yes are saved as usual.
 
 - **Is it there?** Nothing else contacts the endpoint before the first request, so the same GET (`probeProvider`,
-  main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn there
-  fails without an answer from it (no status code). Where nothing answers (`providerDown`: refused, timed out or
+  main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn or a
+  project request there fails without an answer from it (no status code; Projects keeps the request's own reason in
+  view as Ember leaves Ready: integrations-r2-5). Where nothing answers (`providerDown`: refused, timed out or
   unreachable), Ember leaves Ready for that reason: the status says "Ember can't reach the model server on this computer
   (127.0.0.1:11434). Start it, and Ember will connect in a moment.", the handle "Can't connect", and the next request
   says why at once instead of waiting about 24 s. The failed request's own bubble (and a project request's line) asks

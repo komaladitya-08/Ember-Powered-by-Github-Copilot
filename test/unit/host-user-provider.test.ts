@@ -12,7 +12,7 @@ import path from "node:path";
 import type { Logger } from "../../app/main/logger";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- a pretend SDK */
-const sim = vi.hoisted(() => ({ clients: [] as any[], sessions: [] as any[], listeners: [] as ((e: any) => void)[], refuse: null as null | { errorType: string; statusCode: number; message: string } }));
+const sim = vi.hoisted(() => ({ clients: [] as any[], sessions: [] as any[], listeners: [] as ((e: any) => void)[], refuse: null as null | { errorType: string; statusCode?: number; message: string } }));
 vi.mock("@github/copilot-sdk", async importOriginal => {
   const real = await importOriginal<typeof import("@github/copilot-sdk")>();
   class FakeClient {
@@ -285,6 +285,33 @@ describe("AgentHost with the user's own model provider", () => {
     // Copilot's own words stay as they were.
     expect(idleWord({ phase: "error", reason: "network" })).toBe("Offline");
     expect(idleWord({ phase: "error", reason: "network", service: { kind: "admin", host: "x" } })).toBe("Offline");
+  });
+
+  it("leaves Ready when a project request on its provider fails and nothing answers there, as a turn does (integrations-r2-5)", async () => {
+    sim.clients = []; sim.sessions = []; sim.listeners = [];
+    let answer: TestResult = { ok: true, host: "127.0.0.1:18109", models: 1 };
+    let probes = 0;
+    const { host } = makeHost(() => LOCAL, async () => { probes++; return answer; });
+    expect(await host.start(null)).toBe("ready");
+    probes = 0;
+    try {
+      // The service answered (a status code): its refusal says why, and nothing is asked.
+      sim.refuse = { errorType: "rate_limit", statusCode: 429, message: "Rate limit reached" };
+      await expect(host.runProject("Review this.", new AbortController())).rejects.toThrow("The model service's usage limit was reached for now. Try again a bit later.");
+      await new Promise(r => setTimeout(r, 20));
+      expect(probes).toBe(0);
+      expect(host.getStatus().phase).toBe("ready");
+      // Nothing answered: the server is asked, and Models & connections, the handle and the hero leave Ready for why.
+      answer = REFUSED;
+      sim.refuse = { errorType: "query", message: "Failed native model HTTP request: error sending request for url (http://127.0.0.1:18109/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 111)" };
+      await expect(host.runProject("Review this.", new AbortController())).rejects.toThrow("I can't reach the model server on this computer. Is it running? Start it, then ask again.");
+      expect(await until(() => host.getStatus().phase === "error", 2000)).toBe(true);
+      expect(probes).toBe(1);
+      expect(host.getStatus()).toMatchObject({ reason: "network", detail: "Ember can't reach the model server on this computer (127.0.0.1:18109). Start it, and Ember will connect in a moment." });
+    } finally {
+      sim.refuse = null;
+      await host.stop();
+    }
   });
 
   it("says why the provider refused a project request instead of \"Try again\" (integrations-5)", async () => {

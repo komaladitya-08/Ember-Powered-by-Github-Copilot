@@ -65,6 +65,12 @@ export function mountProject() {
   let ready = false;
   let busy: "picking" | "running" | "applying" | "command" | "workspace" | "export" | null = null;
   let revision = 0;
+  /**
+   * A request's failure as the status line shows it, and when: Ember going off Ready because of it (main's check of the
+   * provider, which answers within its 10 s test) never hides why (integrations-r2-5).
+   */
+  let failedLine = "";
+  let failedAt = 0;
   const draw = () => {
     pick.disabled = !ready || !!busy;
     apply.disabled = !ready || !!busy || !patchCurrent;
@@ -345,7 +351,10 @@ export function mountProject() {
           patchSummary.textContent = "Review changes before applying";
         }
         status.textContent = result.patch ? "Patch ready to review." : sent.mode === "patch" ? "Draft ready. Ember could not verify an exact patch to apply." : "Project answer ready.";
-      } else status.textContent = result.error + (answer.hidden ? "" : " Previous output is still shown; its diff cannot be applied.");
+      } else {
+        status.textContent = failedLine = result.error + (answer.hidden ? "" : " Previous output is still shown; its diff cannot be applied.");
+        failedAt = Date.now();
+      }
     } catch {
       if (at === revision) status.textContent = "Couldn't finish the project request." + (answer.hidden ? "" : " Previous output is still shown; its diff cannot be applied.");
     } finally {
@@ -382,7 +391,11 @@ export function mountProject() {
       saved.replaceChildren();
       workspaceStatus.textContent = "";
     }
-    status.textContent = projectConnectionText(on, kept());
+    // A failed request's own reason (a model server that isn't running) stays: main's check of it is what took Ember
+    // off Ready (integrations-r2-5). Anything else says only that sending waits.
+    const why = !on && failedLine && status.textContent === failedLine && Date.now() - failedAt < 15_000;
+    if (!why) status.textContent = projectConnectionText(on, kept());
+    failedLine = "";
     draw();
   };
 }

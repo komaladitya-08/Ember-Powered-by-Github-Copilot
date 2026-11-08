@@ -3009,6 +3009,9 @@ export class AgentHost {
       let failure: ProjectModelFailure | null = null;
       const answer = await this.projectModel(PROJECT_SYSTEM, prompt, run.signal, f => { failure = f; });
       if (answer === null && failure && !run.signal.aborted) {
+        // Nothing answered at the user's own provider (no status code): is anything listening there? Asked as a failed
+        // turn asks (checkProvider), so Projects-only use leaves Ready for the reason too (integrations-r2-5).
+        if (this.active?.kind === "user" && typeof (failure as ProjectModelFailure).statusCode !== "number") void this.checkProvider(this.gen);
         throw new ProjectModelError(projectFailureText(failure, { provider: this.projectService, settingsKey: this.o.settingsKey ? this.o.settingsKey() : this.sys.shortcuts?.settings.label, local: this.ownServiceHere() }));
       }
       return answer;
