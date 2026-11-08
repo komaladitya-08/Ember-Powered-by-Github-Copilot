@@ -1820,11 +1820,17 @@ export function downloadHelp(message: string, bytes = VOICE_MODELS_BYTES): strin
     return "The download couldn't reach github.com right now. Check the network or proxy, then try again.";
   }
   if (/HTTP 4\d\d/i.test(message)) return "The download site refused the request. Try again later; if it keeps happening, ask IT whether github.com downloads are blocked.";
-  if (/ENOSPC|no space left/i.test(message)) return `There isn't enough free disk space for the speech models (about ${Math.round(bytes / 1e6)} MB).`;
+  if (/ENOSPC|EDQUOT|no space left|quota exceeded/i.test(message)) return `There isn't enough free disk space for the speech models (about ${Math.round(bytes / 1e6)} MB).`;
   if (/EACCES|EPERM|EROFS|permission denied|read-only/i.test(message)) return "The speech models can't be written to the data folder (permission denied).";
   if (/checksum mismatch/i.test(message)) return "The download arrived damaged or changed, so it wasn't used. Try again; if it keeps happening, something on the network may be altering downloads.";
-  if (/\btar\b/i.test(message)) return "The download couldn't be unpacked. Try again.";
-  return message;
+  // (Not an archive's name in a path, ".download-….tar.bz2": that is a file error, below.)
+  if (/(?<!\.)\btar\b/i.test(message)) return "The download couldn't be unpacked. Try again.";
+  // Never the raw message (main logs it): a file error carries the data folder's path, …/ember/models, and said into the
+  // wake word's microphone that woke Ember (voice-listening-w5-2). EBUSY: on Windows, still held after RENAME_WAIT_MS.
+  if (/\b(EBUSY|ENOTEMPTY|EEXIST|ENOENT|EMFILE|ENFILE|EXDEV|EIO|EISDIR|ENOTDIR)\b/.test(message)) {
+    return "The download couldn't be saved in the data folder. Try again; if it keeps happening, restart this computer.";
+  }
+  return "Something went wrong with the download. Try again.";
 }
 
 /** The microphone's error in plain words; `hint` says where to allow it when the system refused it. */

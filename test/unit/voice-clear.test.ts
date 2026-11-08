@@ -64,4 +64,30 @@ describe("the clearer recognizer", () => {
       for (let i = 0; i < words.length; i++) expect(calledByName(words.slice(i).join(" ")), `${message} from “${words[i]}”`).toBe(false);
     }
   });
+
+  it("never reads out a raw error, whose data folder path names Ember, when its download can't be saved (voice-listening-w5-2)", async () => {
+    // downloadHelp handed back word for word any error it didn't know, and a file error carries the data folder's path
+    // (…/ember/models): said into an idle wake microphone, the ENOENT line woke Ember and was sent as a request in 1
+    // of 40 real-model placements.
+    const { downloadHelp } = await import("../../app/main/voice");
+    const raw = [
+      "EBUSY: resource busy or locked, rename 'C:\\Users\\me\\AppData\\Local\\ember\\models\\.unpack-parakeet\\parakeet' -> 'C:\\Users\\me\\AppData\\Local\\ember\\models\\parakeet'",
+      "ENOENT: no such file or directory, open '/home/me/.config/ember/models/.download-parakeet.tar.bz2'",
+      "ENOTEMPTY: directory not empty, rename '/home/me/.config/ember/models/.unpack-parakeet/parakeet' -> '/home/me/.config/ember/models/parakeet'",
+      "EEXIST: file already exists, mkdir '/home/me/.config/ember/models/.unpack-parakeet'",
+      "EDQUOT: disk quota exceeded, write",
+      "Unexpected end of stream in /home/me/.config/ember/models",
+    ];
+    for (const message of raw) {
+      const line = clearHearingLine({ state: "failed", detail: downloadHelp(message, CLEAR_SPEECH.bytes) });
+      expect(line, message).not.toMatch(/\bEmber\b/i);
+      expect(line, message).not.toMatch(/\bE[A-Z]{3,}\b|[\\/]/); // (no error code, no path)
+      const words = line.split(/\s+/);
+      for (let i = 0; i < words.length; i++) expect(calledByName(words.slice(i).join(" ")), `${message} from “${words[i]}”`).toBe(false);
+    }
+    expect(downloadHelp(raw[0])).toBe("The download couldn't be saved in the data folder. Try again; if it keeps happening, restart this computer.");
+    expect(downloadHelp(raw[1])).toBe(downloadHelp(raw[0]));
+    expect(downloadHelp(raw[4], CLEAR_SPEECH.bytes)).toBe(`There isn't enough free disk space for the speech models (about ${Math.round(CLEAR_SPEECH.bytes / 1e6)} MB).`);
+    expect(downloadHelp(raw[5])).toBe("Something went wrong with the download. Try again.");
+  });
 });

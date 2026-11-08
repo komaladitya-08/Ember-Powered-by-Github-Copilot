@@ -1487,10 +1487,14 @@ describe("a failed download, in plain words", () => {
     ["Command failed: tar -xjf x.tar.bz2\ntar: Cannot write: No space left on device", /enough free disk space/],
     ["EACCES: permission denied, open '/x'", /permission denied/],
     ["Moonshine: checksum mismatch (got 0123456789ab…). The download was not used.", /arrived damaged or changed/],
+    ["EDQUOT: disk quota exceeded, write", /enough free disk space/],
+    ["EBUSY: resource busy or locked, rename 'C:\\Users\\me\\AppData\\Local\\ember\\models\\.unpack-x\\x' -> 'C:\\Users\\me\\AppData\\Local\\ember\\models\\x'", /couldn't be saved in the data folder/],
+    ["ENOENT: no such file or directory, open '/home/me/.config/ember/models/.download-x'", /couldn't be saved in the data folder/],
+    ["download failed: too many redirects", /^Something went wrong with the download\. Try again\.$/],
   ])("%s", async (raw, plain) => {
     const { downloadHelp } = await import("../../app/main/voice");
     expect(downloadHelp(raw)).toMatch(plain);
-    expect(downloadHelp(raw)).not.toMatch(/net::|ERR_|ENOSPC|EACCES/);
+    expect(downloadHelp(raw)).not.toMatch(/net::|ERR_|ENOSPC|EACCES|EDQUOT|EBUSY|ENOENT|ember/i);
   });
 
   it("puts what went wrong on the download or the site, never on this computer, which reached it (voice-listening-w5-1)", async () => {
