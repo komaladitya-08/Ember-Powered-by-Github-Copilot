@@ -177,7 +177,7 @@ Ember stops and asks before a command that:
   `make`, ask only when the download could be one of their files), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy` (a folder's copy keeps each download under its own name, so the folder's other files and tools are as before), run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
   by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder;
   a download whose saved name Ember can't tell (one the server or a list picks: `curl -OJ`, `wget
-  --content-disposition`, `wget -r`, `wget -i`; one in a variable or an expression: `curl -o "$f"`,
+  --content-disposition`, `wget -r`, `wget -i`, `aria2c -i`; one in a variable or an expression: `curl -o "$f"`,
   `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
   `DownloadFile`) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
   saved into or below, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the

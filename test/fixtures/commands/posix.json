@@ -12506,7 +12506,13 @@
   },
   {
    "cmd": "aria2c -i urls.txt -d build",
-   "verdict": "run"
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "download.unnamed"
+   ]
   },
   {
    "cmd": "aria2c https://example.com/x.tar.gz",

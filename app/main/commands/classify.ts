@@ -6129,6 +6129,8 @@ reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
     return;
   }
   if (outs.length === 0) for (const u of p.operands) { const name = named(u); if (name) saveAs(h, at(name)); }
+  // aria2c's list of addresses (-i): names Ember can't see, in its folder (commands-remote-c5-2).
+  if (h.key === "aria2c" && values(p, "i", "input-file").length && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
 });
 
 reg(NATIVE, ["scp", "pscp"], h => {
