@@ -1121,10 +1121,20 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     if (!m) return null;
     parts.push(m);
   }
-  if (parts.length === 1) return parts[0];
   // git.push.force covers git.push's finding too: keep one announcement per command.
   const uniq = parts.filter((p, k) => parts.findIndex(q => q.announce === p.announce) === k);
-  return { intent: uniq.map(p => p.intent).join("+"), announce: uniq.map(p => p.announce).join(" ") };
+  return { intent: uniq.map(p => p.intent).join("+"), announce: homeShown(uniq.map(p => p.announce).join(" "), cls.shell, ctx.home) };
+}
+
+/**
+ * An announcement's paths in the home folder said from ~, as a POSIX shell's card says them ("Deleting ~/proj/build, as
+ * you asked.": commands-remote-r4-7); PowerShell's and cmd's keep the whole path, as their cards do.
+ */
+function homeShown(text: string, shell: Classification["shell"], home: string): string {
+  const h = home.replace(/\/+$/, "");
+  if (!(shell === "bash" || shell === "zsh" || shell === "sh") || !h.startsWith("/") || h.length < 2) return text;
+  const esc = h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`(^|[\\s(])${esc}(?=/|[\\s,;:)]|\\.?$)`, "g"), "$1~");
 }
 
 /**

@@ -638,6 +638,23 @@ describe("matchIntent: plain chains and a hung thing referred back to (commands-
   });
 });
 
+describe("matchIntent: a path in the home folder, said as the card says it (commands-remote-r4-7)", () => {
+  it.each([
+    ["rm -rf ~/proj/build", "delete the build folder in this repo", "Deleting ~/proj/build, as you asked."],
+    ["rm -rf /home/ana/proj/build", "delete the build folder", "Deleting ~/proj/build, as you asked."],
+    ["echo x > ~/proj/notes.txt", "overwrite notes.txt", "Overwriting ~/proj/notes.txt, as you asked."],
+    ["git checkout -- ~/proj/src/a.ts", "discard the changes to src/a.ts", "Discarding changes to ~/proj/src/a.ts, as you asked."],
+    // A folder that only starts like the home folder's name is said as written.
+    ["rm /home/ananas/x.txt", "delete /home/ananas/x.txt", "Deleting /home/ananas/x.txt, as you asked."],
+  ])("announces `%s` after %j as %j", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it("keeps a Windows path as PowerShell's card shows it", () => {
+    expect(announce("Remove-Item -Recurse C:\\Users\\ana\\proj\\build", "delete the build folder", { where: "win32" })).toBe("Deleting C:\\Users\\ana\\proj\\build, as you asked.");
+  });
+});
+
 describe("matchIntent: things kept together, and a folder named after a comma (commands-remote-v4-3)", () => {
   it.each([
     // What is said of the last thing listed is said of every thing listed with it.

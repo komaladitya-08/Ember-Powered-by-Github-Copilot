@@ -265,7 +265,8 @@ that folder, for that task: any change asks again. After a "no", Ember doesn't t
 If your own words for this task asked for that kind of operation on that computer and that object, a dangerous command
 runs without a question, after an announcement: "delete build/" covers `rm -r build`, "push my branch to GitHub" covers
 `git push origin <that branch>`, "submit my changelist" covers `p4 submit -c <n>`. The bubble shows the announcement
-("Pushing feature-x to origin, as you asked.", with "It starts in 4 seconds. Ctrl+Alt+X stops everything at once." and
+("Pushing feature-x to origin, as you asked.", naming a path in the home folder from ~ as the card does: "Deleting
+~/proj/build, as you asked.", with "It starts in 4 seconds. Ctrl+Alt+X stops everything at once." and
 **Stop**), the command window shows "About to run this, as you asked" with the command, what it does and the model's
 reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop**. While another app holds the stop
 chord, both name its fallback (Ctrl+Alt+Shift+X); while another app holds that too,
