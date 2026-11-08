@@ -9,7 +9,7 @@ import { CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
 import { CONSENT_CHANGES, CONSENT_VERSION, consentChangesSince } from "../../app/shared/consent";
 import {
   CONSENT_AGAIN, CONSENT_CHANGE_SOURCES, CONSENT_SOURCES, CONSENT_TEXT, recheckMessage, STEP_TEXT, aboutNext, askWhy, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
-  gated, plainChecks, serviceSummary, signInView, SKIP_OWN, SKIP_SIGN_IN, stepAfter, stepBefore, stepCount, summaryRows, voiceTry,
+  gated, plainChecks, serviceSummary, signInView, SKIP_OWN, SKIP_SIGN_IN, stepAfter, stepBefore, stepCount, summaryRows, switchedLine, voiceTry,
 } from "../../app/renderer/home/welcome-copy";
 
 const read = (f: string) => readFileSync(new URL(`../../app/${f}`, import.meta.url), "utf8");
@@ -172,6 +172,11 @@ describe("the sign-in step", () => {
     expect(SCRIPT).toContain("noSignIn: !!status?.admin.provider || ownInUse() || toCopilotLater");
     // Only while main leaves my own provider for Copilot: never for a switch the other way.
     expect(SCRIPT).toContain("toCopilotLater = leaving && reported?.switchPending === true;");
+  });
+
+  it("says the switch to Copilot was made once the step's Continue becomes a sign-in, by the way this build signs in (first-run-c4-1)", () => {
+    expect(switchedLine("github-app")).toBe("I've switched to Copilot. Sign in with GitHub to go on, or skip for now.");
+    expect(switchedLine("github-cli")).toBe("I've switched to Copilot. Connect with GitHub CLI to go on, or skip for now.");
   });
 
   it("offers Check again while signed out, and shows the page main offers for a GitHub CLI sign-in (review of #124)", () => {

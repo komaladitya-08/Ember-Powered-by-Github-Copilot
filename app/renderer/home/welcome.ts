@@ -24,7 +24,7 @@ import {
   ACTION_LABEL, failureView, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
-  CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
+  CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
   DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
@@ -79,6 +79,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let offPending = 0;
   /** Main moves from the user's own provider to Copilot once what it is doing is done (see(), first-run-v4-1). */
   let toCopilotLater = false;
+  /**
+   * That switch was made while the sign-in step offered Continue: once the step's button becomes the sign-in, the line
+   * says so and a focus on it goes to the title, so a press meant for Continue starts nothing (first-run-c4-1).
+   */
+  let switchMade = false;
+  /** The line it said, kept until the step changes or a sign-in starts. */
+  let switchedSaid = false;
   let voice: VoiceStatus | null = null;
   let signingIn = false;
   let signInMessage: { text: string; tone: string } | null = null;
@@ -173,6 +180,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
 
   /** Moves to `to` (held at the consent step without agreement), focusing its title so the step is read from the top. */
   function go(to: WelcomeStep): void {
+    if (to !== step) { switchMade = false; switchedSaid = false; }
     // The step comes in from the side it lies on (motion only; focus moves at once, as the motion starts).
     root.dataset.dir = stepPosition(to) < stepPosition(step) ? "back" : "next";
     // Leaving the provider step: an older check is dropped, and going back to Copilot puts away a provider this visit
@@ -292,8 +300,17 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       switching: toCopilotLater,
     });
     const line = $("w-signin-line");
+    // The waiting switch made, and the step's Continue now its sign-in (or a failure's way on): a focus on it goes to the
+    // title, and the line says so until a sign-in starts or the step changes. Connected instead: nothing changed meaning.
+    if (switchMade && (signingIn || agent?.phase === "ready")) switchMade = false;
+    if (switchMade && v.primary === "sign-in") {
+      switchMade = false;
+      switchedSaid = true;
+      if (document.activeElement === next) $("w-title").focus({ preventScroll: true });
+    }
+    if (signingIn || v.primary !== "sign-in") switchedSaid = false;
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
-    const detail = signInMessage?.text ?? (agent?.phase === "error" && !signingIn ? agent.detail : v.line);
+    const detail = signInMessage?.text ?? (agent?.phase === "error" && !signingIn ? agent.detail : switchedSaid ? switchedLine(agent?.signInWith) : v.line);
     if (line.textContent !== detail) line.textContent = detail;
     line.className = `w-status ${signInMessage?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
     $("w-signin-later").hidden = v.primary === "continue" && !v.why;
@@ -321,6 +338,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     else if (!signingIn && v.skip && ownInUse()) extras = ["provider"];
     else if (!signingIn && v.primary !== "continue" && offer.offered) extras = ["own-provider"];
     else if (!signingIn && v.skip && offer.offered) extras = ["own-provider"];
+    // While the switch to Copilot waits, the lead's own provider still has its button (first-run-r4-1).
+    else if (!signingIn && toCopilotLater && offer.offered) extras = ["own-provider"];
     // A policy that forbids the user's own provider says so; Copilot's step is then the only way and the choice isn't drawn.
     const help = fv?.help || (!offer.offered && !signingIn && agent?.phase !== "ready" ? offer.why : "");
     const helpEl = $("w-signin-help");
@@ -456,16 +475,17 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
         if (epoch !== checkEpoch) return { epoch, result: { ok: false, why: "" } };
         if (!tried.ok) return { epoch, result: tried, kept: keep };
         // It answers: adopted whole (moments, not a network wait), unless a choice made since (“Use GitHub Copilot
-        // instead”, or Home's own) owns the provider now.
-        const ours = () => since === providerChoice();
-        const saved = await deps.save({ provider: { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null } } as SettingsPatch);
-        if (!saved) return { epoch, result: { ok: false, why: "I couldn't save these details. The notice at the top says why." } };
-        if (f.key.trim() && ours()) {
+        // instead”, or Home's own) owns the provider now. The details go with the card's yes for their host in one
+        // change, so the provider in use never leaves force for Copilot between, then a typed key for it, as Home's
+        // held edit does (first-run-r4-3).
+        if (since !== providerChoice()) return { epoch, result: tried };
+        const agreed = await api.agree(host, { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null });
+        if (!agreed.ok) return { epoch, result: { ok: false, why: agreed.why } };
+        if (f.key.trim()) {
           const k = await api.saveKey(f.key);
           if (!k.ok) return { epoch, result: { ok: false, why: k.why } };
         }
-        const agreed = ours() ? await api.agree(host) : { ok: true as const };
-        return { epoch, result: agreed.ok ? tried : { ok: false, why: agreed.why } };
+        return { epoch, result: tried };
       }
       // Back, an edit or another check can come between any two steps. Each step that does something (the card's yes
       // turns the provider on) first looks whether this check was abandoned; one abandoned after the yes was recorded
@@ -992,7 +1012,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
    */
   function see(): void {
     const leaving = reported?.service?.kind === "user" && (offPending > 0 || settings?.provider.on === false);
+    const was = toCopilotLater;
     toCopilotLater = leaving && reported?.switchPending === true;
+    // Made (or put back) while the sign-in step showed its Continue: the step says what changed (first-run-c4-1).
+    if (was && !toCopilotLater) switchMade = active && step === "sign-in";
     agent = leaving && reported ? { ...reported, phase: "starting", detail: "", reason: undefined, login: undefined, service: undefined, models: [], conductorModel: null, workerModel: null } : reported;
   }
   const onAgent = (a: AgentStatus) => { reported = a; see(); if (active && (step === "sign-in" || step === "provider" || step === "try" || step === "done")) render(); };

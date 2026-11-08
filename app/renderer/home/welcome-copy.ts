@@ -237,6 +237,14 @@ export function signInView(o: { phase: string | null; reason?: string; login?: s
 /** The sign-in step's line while Ember finishes what it is doing before it moves to Copilot (first-run-v4-1). */
 export const SWITCH_WAITS = "I'll switch to Copilot once I've finished what I'm doing.";
 
+/**
+ * The line once that switch is made and the step's Continue has become its sign-in (`signInWith` as signInLabel names
+ * it): said, as the focus leaves that button, so a press meant for Continue starts nothing (first-run-c4-1).
+ */
+export function switchedLine(signInWith?: string): string {
+  return `I've switched to Copilot. ${signInWith === "github-cli" ? "Connect with GitHub CLI" : "Sign in with GitHub"} to go on, or skip for now.`;
+}
+
 /** "Check again": looks for a sign-in made elsewhere (the GitHub CLI's) and connects with it. */
 export const CHECK_AGAIN = "Check again";
 

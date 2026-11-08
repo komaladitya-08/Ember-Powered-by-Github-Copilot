@@ -1030,7 +1030,9 @@ First run's provider step, opened for a provider already in use, checks edited d
 details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the
 card's yes for exactly its host given by the same press, with a key just typed (refused, unsent, where it couldn't be
 kept) or, without one, the saved key only when it was entered for that very host. Nothing is saved or recorded until it
-answers; then the details, the key and the card's yes are saved as usual.
+answers; then the details are written with the card's yes for their host in one change (`agree(host, move)`, as Home's
+held edit is), so the provider in use never leaves force for Copilot between, and a typed key is saved after
+(first-run-r4-3).
 Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
 held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
 answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
@@ -1108,7 +1110,10 @@ the address in force and its saved key are kept and come back with the switch (i
   again: Ember still can't use <host>. The line above says why."; either goes once the provider connects.
 - **Switching** applies from the next message, without a restart; tasks already running finish on the service they
   started with. While a turn or a task is under way, Ember's status says the switch waits (`switchPending`; first
-  run's sign-in step: "I'll switch to Copilot once I've finished what I'm doing.", with Continue open), and Ember
+  run's sign-in step: "I'll switch to Copilot once I've finished what I'm doing.", with Continue open and **Use my own
+  provider** still offered; once the switch is made and Continue has become its sign-in, a focus on it moves to the
+  title and the line says "I've switched to Copilot. Sign in with GitHub to go on, or skip for now.": first-run-r4-1,
+  first-run-c4-1), and Ember
   reconnects to the new service as soon as they are done (the turn's end, a Stop, the last task's end), not at the
   next request. A request asked while a turn or a task is still under way on the service before is held, with a bubble
   saying so ("Switching model service", up for as long as anything is held), and sent to the new one once they are

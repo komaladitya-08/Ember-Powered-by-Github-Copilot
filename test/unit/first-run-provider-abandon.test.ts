@@ -64,7 +64,7 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   let agrees = 0;
   const api = {
     saveKey: (k: string) => service.api.saveKey(k),
-    agree: async (h: string) => { const gate = agreeGates[agrees++]; if (gate) await gate.promise; return service.api.agree(h); },
+    agree: async (h: string, move?: never) => { const gate = agreeGates[agrees++]; if (gate) await gate.promise; return service.api.agree(h, move); },
     test: (draft?: never) => service.api.test(draft),
   };
   const nodes: Record<string, { hidden: boolean; textContent: string; focus(): void }> = {};
@@ -73,7 +73,7 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   const ctx: Record<string, unknown> = {
     active: true, step: "provider", checkEpoch: 0, checkRun: 0, providerCheck: { phase: "checking", line: "Checking" }, navigation: 0, heardBefore: -1,
     // The visit set the provider up (it wasn't in use as the step opened): Back to Copilot puts it away (first-run-c1-2).
-    visitInUse: false, checkSaves: true, edited: false, ownInForce: () => false, inUseHost: () => null, offPending: 0, see() {},
+    visitInUse: false, checkSaves: true, edited: false, ownInForce: () => false, inUseHost: () => null, offPending: 0, see() {}, switchMade: false, switchedSaid: false,
     get settings() { return settings.get(); },
     latestOnly, endpointHost, providerChoice, showOffFailureText: "", providerCheckLine, providerFailField, providerKeptLine, PROVIDER_STEP, gated, stepPosition,
     root: { dataset: {} }, consented: () => true, render() {}, $: (id: string) => (nodes[id] ??= { hidden: true, textContent: "", focus() {} }), provField: () => ({ focus() {} }), next: { focus() {} },
@@ -271,6 +271,22 @@ describe("first run's check of an edit to the provider in use (first-run-r2-1)",
     h.http.resolve(OK);
     await done;
     await unchanged(h);
+  });
+
+  it("an edit that answers is written with its yes in one change, so Copilot is never in force between, and its key saved after (first-run-r4-3)", async () => {
+    const h = await inUse();
+    const kinds: (string | null)[] = [];
+    h.settings.onChange(() => kinds.push(activeProvider({ fixed: null, settings: h.settings.get(), admin, key: h.service.key() })?.kind ?? null));
+    const done = h.f.checkProvider();
+    await vi.waitFor(() => expect(h.tested()).toBe(true));
+    h.http.resolve(OK);
+    await done;
+    expect(kinds.length).toBeGreaterThan(0);
+    expect(kinds).not.toContain(null);
+    expect(h.agrees()).toBe(1);
+    expect(h.service.key()).toMatchObject({ key: NEW, host: "b.example" });
+    await vi.waitFor(() => expect(h.host.getStatus().service?.host).toBe("b.example"));
+    await h.host.stop();
   });
 
   it("an edit that answers replaces the details, the key and the agreement, and stays on", async () => {
