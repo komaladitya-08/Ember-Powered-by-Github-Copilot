@@ -368,14 +368,15 @@ for them. Each task card has **Stop**, says what Ember is doing now in its own w
 under **Details**; a failed card goes on its own after about a minute when not being read (Home's Conversation keeps
 what went wrong). So does the card of a task whose question ran out of time while you were away: it says so ("No
 answer in time", on the card and in Home's Task activity, where its **Try again** is too), offers **Try again**, the
-bubble's note points to it, and a notification says Ember couldn't finish it; **Stop everything** clears both kinds of
-card at once; "What did I miss?" says the question wasn't answered
+bubble's note points to it, and a notification says Ember couldn't finish it. While you are away (idle for 30 s, or
+Ember hidden) neither kind of card goes, nor one showing a result: each waits, and has its whole time again once you
+are back. **Stop everything** clears both kinds of card at once; "What did I miss?" says the question wasn't answered
 in time, never "you stopped it". More time multiplies the lifetime by ten; expanded Details, hover or keyboard focus pauses expiry,
 with at least five seconds to move on after the last reader leaves. Its **Try again** starts the latest accepted request again, retaining any changed instructions,
 restrictions and the original computer and window, and asking every question again. Saying or typing “try again” right
 after such a task (or “can you try again?”, “yes” to its “Want me to try again?”, or “try again” after asking why it
-didn't work) asks for it again in your words then, as the button does: its card goes, and a try that did part of the
-work is told so. A change the worker could not accept
+didn't work) asks for it again in your words then, as the button does, within ten minutes or while its card still
+offers **Try again**: its card goes, and a try that did part of the work is told so. A change the worker could not accept
 does not replace that retry request. Conversation requests are dispatched in order even when memory recall finishes out
 of order; each turn keeps its own words, screen context and voice provenance. An unmatched runtime message cannot start
 or steer a task. If an app can't be operated through accessibility, Ember asks to **borrow

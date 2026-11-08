@@ -361,6 +361,8 @@ export interface HostOptions {
   /** The audit log and Confirmer tasks use when there are no `hands` (no window system: commands-only targets, §2.6). */
   taskBase?: { audit: AuditLog; confirmer: Confirmer };
   taskWindow?: (task: Task, focus: boolean) => boolean;
+  /** The user isn't looking (idle, or Ember hidden): a card kept to be read waits for them (TaskManagerDeps.userAway). */
+  userAway?: () => boolean;
   /** Ember's own pids now (app.getAppMetrics() and its helpers'), for commands on this computer (D4.5, live). */
   emberPids?: () => number[];
   /** A task announced a command the user asked for (D4.4): main speaks it when replies are spoken. */
@@ -1553,7 +1555,8 @@ export class AgentHost {
    * nearest line before it, Ember's lines aside and at most two short questions of the user's own about what happened
    * ("why didn't it work?", naming nothing risky), is of a task that may be tried again (it failed, or its question went
    * unanswered: never one the user said "Not now" to or stopped); or `r` agrees ("yes please") to that task's own offer
-   * to try again ("Want me to try again?") with nothing asked since. All within ten minutes, and the request is the user's own
+   * to try again ("Want me to try again?") with nothing asked since. All within ten minutes, or for as long as that task's
+   * card still offers Try again (one kept while the user was away: tasks-approvals-4), and the request is the user's own
    * (not heard where Ember can't tell them from its speakers, not a suggestion). Those are the words that task was asked
    * with, and what they agreed to, as its card's Try again carries them: never its goal, which the model wrote. A
    * request of the user's own in between ends the search.
@@ -1564,9 +1567,11 @@ export class AgentHost {
     const retry = retryRequest(r.words);
     const now = Date.parse(log[at].t);
     let k = at - 1;
+    let old = false;
     for (let asked = 0; k >= 0; k--) {
       const e = log[k];
-      if (this.restored.has(e) || now - Date.parse(e.t) > 10 * 60_000) return null;
+      if (this.restored.has(e)) return null;
+      if (now - Date.parse(e.t) > 10 * 60_000) old = true;
       if (e.who === "ember") continue;
       const t = e.text.trim();
       const why = e.who === "you" && t.length <= 80 && (ASKS_WHAT_HAPPENED.test(t) || retryRequest(t)) && !isRiskyLabel(t, this.sys.os);
@@ -1575,7 +1580,7 @@ export class AgentHost {
     }
     const line = log[k];
     const words = line?.who === "task" ? this.retryWords.get(line) : undefined;
-    if (!words) return null;
+    if (!words || (old && !this.tasks?.canRetry(words.task))) return null;
     if (retry) return words;
     // Its offer is the last question before the yes: only Ember's lines that ask nothing lie between.
     const offer = log.slice(k + 1, at).every(e => e.who === "ember" && !asks(e.text)) ? questionOf(this.results.get(line) ?? "") : "";
@@ -1894,6 +1899,7 @@ export class AgentHost {
         log: this.o.log.child("tasks"),
         ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
         ...(this.o.taskWindow ? { taskWindow: this.o.taskWindow } : {}),
+        ...(this.o.userAway ? { userAway: this.o.userAway } : {}),
         currentWindow: hands?.currentWindow ?? (() => null),
         setCards: cards => this.o.setState({ tasks: cards }),
         onView: (id, view) => this.o.showView?.(id, view),

@@ -2754,7 +2754,7 @@ describe("review round 6: a request sent while the conversation is busy waits fo
 
   describe("“try again” after a task that didn't finish asks for that task again (tasks-approvals-1)", () => {
     /** The host with tasks whose workers end as `outcomes` say, in turn (then as withTasks's do). */
-    async function retrying(outcomes: { success: boolean; summary: string; stopped?: boolean; declined?: boolean }[]) {
+    async function retrying(outcomes: { success: boolean; summary: string; stopped?: boolean; declined?: boolean; expired?: boolean }[]) {
       const made = await withTasks();
       const d = (made.host.tasks as any).d;
       const make = d.makeWorker;
@@ -2888,6 +2888,34 @@ describe("review round 6: a request sent while the conversation is busy waits fo
       await vi.waitFor(() => expect(specs).toHaveLength(4));
       expect(specs[3].userWords).toMatch(/^send the report to Ana\.\n/);
       expect(send(specs[3].userWords).aligned).toBeUndefined();
+      await host.stop();
+    });
+
+    it("carries the words of a task whose question went unanswered for as long as its card offers Try again, past ten minutes (tasks-approvals-4)", async () => {
+      const EXPIRED = { success: false, stopped: true, expired: true, summary: "My question ran out of time with no answer, so I didn't do it." };
+      const { host, specs, tool, say, ended } = await retrying([EXPIRED, EXPIRED]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      // The user was away for a quarter of an hour: the card waited for them (userAway), and so does a typed "try again".
+      const age = () => { for (const e of (host as any).transcript) e.t = new Date(Date.parse(e.t) - 15 * 60_000).toISOString(); };
+      age();
+      const first = host.tasks!.list()[0];
+      expect(host.tasks!.canRetry(first.id)).toBe(true);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].userWords).toBe("send the report to Ana.\ntry again");
+      expect(send(specs[1].userWords).aligned).toBeUndefined();
+      // Its card closed, and over ten minutes on: "try again" carries nothing of it.
+      await ended(2);
+      age();
+      host.tasks!.dismiss(host.tasks!.list()[0].id);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      expect(specs[2].userWords).toBe("try again");
       await host.stop();
     });
 

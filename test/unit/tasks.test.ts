@@ -602,6 +602,33 @@ describe("a task whose question went unanswered while the user was away (tasks-a
     } finally { vi.useRealTimers(); }
   });
 
+  it("keeps its card and Try again for as long as the user is away, and its whole time once they are back (tasks-approvals-4)", async () => {
+    vi.useFakeTimers();
+    try {
+      let away = true;
+      const { tm } = manager(() => fakeWorker(async () => EXPIRED), { failureCardMs: 20_000, userAway: () => away });
+      const t = tm.start("Send the Q3 report to Priya", { userWords: "send the Q3 report to Priya" });
+      await vi.advanceTimersByTimeAsync(10);
+      // Three minutes away (the question's two, and one more): still there, with Try again on its card and in Home.
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(tm.canRetry(t.id)).toBe(true);
+      expect(tm.activities()[0]).toMatchObject({ id: t.id, unanswered: true, controls: { retry: true } });
+      expect(tm.askedWith(t.id)).toMatchObject({ userWords: "send the Q3 report to Priya" });
+      // Back: the card has its whole time from then, then goes as it would have.
+      away = false;
+      await vi.advanceTimersByTimeAsync(19_000);
+      expect(tm.get(t.id)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(6_100);
+      expect(tm.get(t.id)).toBeUndefined();
+      // A task that finished waits for nobody: its short card goes on time.
+      away = true;
+      const done = manager(() => fakeWorker(async () => ({ success: true, summary: "Sent." })), { userAway: () => away });
+      const d = done.tm.start("Send it");
+      await vi.advanceTimersByTimeAsync(200);
+      expect(done.tm.get(d.id)).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("offers no Try again after “Not now”, a Stop or the mouse taken back: those were the user's own choice (tasks-approvals-4)", async () => {
     vi.useFakeTimers();
     try {

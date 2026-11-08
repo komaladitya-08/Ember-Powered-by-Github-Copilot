@@ -3338,6 +3338,8 @@ function start(): void {
         blocked: () => !inputRef || !!screenLock?.locked || !!borrowRef?.driving,
         activate: id => inputRef?.activate(id),
       }),
+      // A card kept to be read (an unanswered question's Try again) waits for a user who is away (tasks-approvals-4).
+      userAway,
       // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
       textScale: () => textScale(settings.get().textSize),
       userData, runtimePath: runtime.path, settings, log: redactingLogger(log, () => providers.secrets()).child("agent"), setState, provider: providerNow, probeProvider: () => providers.api.test(), admin: () => policy, signInWith: signInWith(),
