@@ -45,7 +45,7 @@ import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip, stepsAsideFo
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
-import { VoiceService, electronDownloader, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
+import { LISTEN_CUT_BY_QUESTION, VoiceService, cutByQuestion, electronDownloader, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { capiChoice, type BackendChoice } from "../voice/runtime";
@@ -1025,6 +1025,8 @@ function start(): void {
   /** The keys that answer the question now up, for its bubble (only keys Ember actually holds). */
   const questionKeyHint = () => { holdQuestionKeys(); return heldKeys().map(k => k.hint).join(" · ") || undefined; };
   const questionChanged = (q: { n: number; question: Question } | null) => {
+    // A Listen once hearing a request ends for the question (below): its control says so while one is up (companion-r2-2).
+    listenCutFor = q ? listenCutFor ?? cutByQuestion(manualCall?.source, voice?.listenOnceStatus) : null;
     // The keys are held first, so a command card names the keys that answer it (the targets runtime asks keyHint).
     if (q) holdQuestionKeys();
     // A question with a panel (a command, a consent card) shows its window; the window goes with it. While a command
@@ -1253,6 +1255,8 @@ function start(): void {
   let callContext: Promise<QuickContext | null> = Promise.resolve(null);
   let askContextRead = callContext;
   let manualCall: { source: "ask" | "home"; context: Promise<QuickContext | null>; before?: Pick<EmberState, "emotion" | "bubble"> } | null = null;
+  /** The control whose Listen once the question now up ended mid-request (cutByQuestion), or null. */
+  let listenCutFor: "ask" | "home" | null = null;
   // Nothing is read from the screen or sent anywhere until the user has agreed (M8.8).
   const consented = () => hasConsent(settings.get());
   /**
@@ -1489,6 +1493,8 @@ function start(): void {
     if (screenLock?.locked) return blocked("The screen is locked.");
     if (s.voice.muted) return blocked("Unmute the microphone first.");
     if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
+    // A Listen once of this control's that the question ended says so while it is up (companion-r2-2).
+    if (confirmer?.waiting && listenCutFor === source) return blocked(LISTEN_CUT_BY_QUESTION);
     // A question holds it back, but not this control's own Listen once under way: its Cancel listening stays (companion-r1).
     if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return blocked("Answer Ember's question first.");
     const now = voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
