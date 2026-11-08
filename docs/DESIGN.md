@@ -118,7 +118,11 @@ They share one emotion rig, so switching never changes behaviour.
   the box is open its row keeps the room it opened with, rows and all: none to offer puts the row out of sight, fewer
   keep its height, ones that would need more rows than it opened with wait for its next opening (those it shows that are
   still offered stay), and ones that come into a box that opened with none wait too, so a question coming or going never
-  moves the field. A question's
+  moves the field. A box that opens beside an answer still coming in, with none to offer yet, keeps their row's room,
+  empty and out of sight, so the answer's follow-ups land in it, where the keyboard reaches them (the bubble takes no
+  keyboard), and the field doesn't move (`askSuggestionsComing`), but only where the tallest finished answer still has
+  a place by Ember clear of the box with that row (`answerRoom`, `ANSWER_MAX_HEIGHT`): elsewhere the row would take the
+  room the answer needs once it finishes, so there they wait for the next opening. A question's
   answer ("Thanks! Carrying on.", "Okay, I won't.") stays 1.5 s; then what the question covered or held off shows
   again, or the bubble empties and the ring rests, so a task that ends on its card never leaves "Working" behind. A
   turn that only ran steps (it started a task and said nothing) leaves no "Working" bubble either, and one that

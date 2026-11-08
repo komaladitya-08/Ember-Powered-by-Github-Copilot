@@ -512,6 +512,64 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("opened while an answer still comes in, keeps its follow-ups' room, so they land where the keyboard reaches them and the field doesn't move (accessibility-visual-c4-1)", async () => {
+    const page = await pageAt();
+    try {
+      const harness = () => page.evaluate(() => (window as unknown as TestWindow).askHarness);
+      const offer = (list: string[]) => page.evaluate(list => (window as unknown as TestWindow).askHarness.suggestions(list), list);
+      const fieldFromBottom = () => page.evaluate(() => Math.round(innerHeight - document.getElementById("q")!.getBoundingClientRect().top));
+      const reachable = async (name: string) => page.getByRole("button", { name, exact: true }).count();
+      const chips = page.locator("#suggest button");
+      // The room a row of chips takes, in layout px: none in a box that opened with nothing to offer and nothing coming.
+      const room = () => page.evaluate(() => document.getElementById("suggest")!.offsetHeight);
+      await fit(page);
+      expect(await room()).toBe(0);
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions: ["Yes, please", "Read it out"], listenOnce: { phase: "ready", detail: "" } }));
+      await fit(page);
+      const oneRow = await room();
+      expect(oneRow).toBeGreaterThan(0);
+      // Opened while the answer streams, with nothing offered yet: that row's room, empty, out of sight and out of reach.
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestionsComing: true, listenOnce: { phase: "ready", detail: "" } }));
+      await fit(page);
+      const rows = (await harness()).rows, at = await fieldFromBottom();
+      expect(await room()).toBe(oneRow);
+      expect(await page.locator("#suggest").isVisible()).toBe(false);
+      expect(await chips.count()).toBe(0);
+      expect(await reachable("Yes, please")).toBe(0);
+      // The answer is whole and its follow-ups come: into that row, the field where it was.
+      await offer(["Yes, please", "Read it out"]);
+      await fit(page);
+      expect(await page.locator("#suggest button:visible").allTextContents()).toEqual(["Yes, please", "Read it out"]);
+      expect(await reachable("Yes, please")).toBe(1);
+      expect(await room()).toBe(oneRow);
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+      // From the field, Tab reaches them (the bubble's own chips take no keyboard), and Enter sends one.
+      await page.locator("#q").focus();
+      let on = "";
+      for (let i = 0; i < 4 && on !== "Yes, please"; i++) {
+        await page.keyboard.press("Tab");
+        on = await page.evaluate(() => document.activeElement?.closest("#suggest") ? document.activeElement.textContent ?? "" : "");
+      }
+      expect(on).toBe("Yes, please");
+      await page.keyboard.press("Enter");
+      expect((await harness()).calls).toEqual([{ kind: "suggestion", text: "Yes, please" }]);
+      // More than the row holds: those that fit it show, in order, and the field still doesn't move.
+      await offer(["Yes, please", "Read it out", "What's the weather in London now and for the rest of the week"]);
+      await fit(page);
+      expect((await page.locator("#suggest button:visible").allTextContents()).slice(0, 2)).toEqual(["Yes, please", "Read it out"]);
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+      // An answer that brought none: the room stays, out of sight, until the box closes.
+      await offer([]);
+      await fit(page);
+      expect(await page.locator("#suggest button:visible").count()).toBe(0);
+      expect(await reachable("Read it out")).toBe(0);
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("keeps the room its suggestions opened with, on two rows, so neither a question nor fewer or more of them after it moves the empty field (companion-v4-1)", async () => {
     const page = await pageAt();
     try {

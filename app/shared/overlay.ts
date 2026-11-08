@@ -221,6 +221,16 @@ export function askSuggestions(s: Pick<EmberState, "bubble" | "suggest">, items:
   return items.filter(i => !i.follows || answerShown).map(i => i.text).slice(0, 3);
 }
 
+/**
+ * Whether the Ask box opening for state `s` keeps its suggestions' row for follow-ups still to come: an answer is still
+ * coming in (they are offered once it is whole) and nothing is asked (`questionUp`: the Confirmer waits), so they land in
+ * the box, where the keyboard reaches them, without moving the field (accessibility-visual-c4-1).
+ */
+export function askSuggestionsComing(s: Pick<EmberState, "bubble">, questionUp: boolean): boolean {
+  const b = s.bubble;
+  return !questionUp && b.visible && b.streaming && b.mood === "idle" && !b.actions.some(a => !a.id.startsWith("ui:"));
+}
+
 export const IDLE_BUBBLE: BubbleState = {
   visible: false, mood: "idle", title: "", thought: "", step: null, streaming: false, actions: [],
 };

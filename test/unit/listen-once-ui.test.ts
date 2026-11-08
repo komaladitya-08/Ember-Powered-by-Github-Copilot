@@ -140,5 +140,8 @@ describe("Listen once controls", () => {
     expect(askOpeningRows({ ...context({ phase: "blocked", detail: "", fix: "settings" }), tip: true, suggestions: ["What's next?"] })).toBe(5);
     expect(askOpeningRows(context({ phase: "blocked", detail: "Your organisation has turned voice off.", fix: "admin" }))).toBe(1);
     expect(askOpeningRows({ ...context({ phase: "blocked", detail: "", fix: "admin" }), suggestions: ["What's next?"] })).toBe(2);
+    // Beside an answer still coming in, the row for its follow-ups is reserved too, as tall as a row of chips is in the
+    // box (two of its rows), so the box opens as tall as it stays (accessibility-visual-c4-1).
+    expect(askOpeningRows({ ...context(), suggestionsComing: true })).toBe(5);
   });
 });

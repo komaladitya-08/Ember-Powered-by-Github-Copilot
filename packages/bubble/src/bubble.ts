@@ -187,6 +187,12 @@ const MARGIN = 8;
 const GAP = 6;
 /** The narrowest the bubble gets (border box, px) to fit beside something it keeps off. */
 export const MIN_BUBBLE_WIDTH = 220;
+/**
+ * The tallest a finished answer's bubble gets at the default text size (border box, px; times the text's scale at the
+ * others): six lines cut short with Read all and the longest keyboard hint under it, or a whole one with Ember's
+ * suggestions. Measured in Ember's own font by bubble-motion-live.test.ts.
+ */
+export const ANSWER_MAX_HEIGHT = 230;
 
 /** Where the bubble goes: its top-left corner and the size it has there. */
 export interface BubbleSpot extends Point { width: number; height: number }
@@ -245,6 +251,22 @@ function clearPlace(anchor: Point, box: Size, bounds: Size, size: number, avoid:
   for (const y of acrossAt) for (const x of acrossX) if (!onEmber({ x, y })) tries.push({ x, y });
   const clear = (p: Point) => !avoid.some(r => p.x < r.x + r.width + GAP && p.x + w > r.x - GAP && p.y < r.y + r.height + GAP && p.y + h > r.y - GAP);
   return tries.find(clear) ?? null;
+}
+
+/**
+ * Whether the tallest finished answer at text `scale` (ANSWER_MAX_HEIGHT) has a place in Ember's column clear of `box`
+ * (in `bounds`' coordinates): below or above Ember (`anchor`: its base; `size` px), or below or above `box` where that is
+ * clear of Ember (clearPlace's `across`). Places beside it, or slid sideways to a screen's edge, don't count. The Ask box
+ * keeps a row for an answer's follow-ups only where one does (companion-c3-1, accessibility-visual-c4-1).
+ */
+export function answerRoom(anchor: Point, size: number, bounds: Size, box: Rect, scale = 1): boolean {
+  const h = Math.ceil(ANSWER_MAX_HEIGHT * scale);
+  const { below, above } = placesFor(anchor, { width: 0, height: h }, bounds, size);
+  const fitsY = (y: number) => y >= MARGIN && y + h <= bounds.height - MARGIN;
+  const clearOfBox = (y: number) => y >= box.y + box.height + GAP || y + h <= box.y - GAP;
+  const emberTop = anchor.y - size * 1.5, emberBottom = anchor.y + size * 0.2;
+  const clearOfEmber = (y: number) => size <= 0 || y >= emberBottom || y + h <= emberTop;
+  return [below, above].some(y => fitsY(y) && clearOfBox(y)) || [box.y + box.height + GAP, box.y - h - GAP].some(y => fitsY(y) && clearOfEmber(y));
 }
 
 /**

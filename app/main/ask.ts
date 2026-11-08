@@ -5,6 +5,7 @@
 
 import { BrowserWindow, Menu, screen } from "electron";
 import path from "node:path";
+import { answerRoom } from "@ember/bubble";
 import { IPC, listenOnceShown, type AskContext, type ListenOnceStatus } from "../shared/ipc";
 import type { BubbleState } from "../shared/overlay";
 import type { OS } from "../shared/shortcuts";
@@ -39,10 +40,12 @@ export function showsWaitTip(holds: boolean, opened: number): boolean {
 }
 /**
  * The rows an opening reserves before the page measures them: the field's line, Listen once's two (none where the
- * organisation turned voice off: companion-3), and one each for the wait tip and the suggestions.
+ * organisation turned voice off: companion-3), and one each for the wait tip and the suggestions; the room kept for
+ * those still to come (AskContext.suggestionsComing) is one row of chips, two of the box's rows as the page measures it
+ * (auxiliaryRows), so the box opens as tall as it stays and roomForAnswer judges the box it will be.
  */
 export const askOpeningRows = (c: AskContext): number =>
-  1 + (listenOnceShown(c.listenOnce) ? 2 : 0) + (c.tip ? 1 : 0) + (c.suggestions?.length ? 1 : 0);
+  1 + (listenOnceShown(c.listenOnce) ? 2 : 0) + (c.tip ? 1 : 0) + (c.suggestions?.length ? 1 : c.suggestionsComing ? 2 : 0);
 
 /** Ember's size when the caller doesn't say (the default setting). */
 const EMBER_SIZE = 60;
@@ -198,6 +201,18 @@ export function openingBounds(near: { x: number; y: number; size?: number } | nu
   if (rows > 1) bounds = grownBounds(bounds, rows, wa, above(bounds), keepOff, scale);
   bounds = clearOfBubble(bounds, wa, bubble, keepOff, near);
   return { bounds, up: above(bounds) };
+}
+
+/**
+ * Whether the box opening at `b` (global DIP) leaves the answer Ember streams beside it room to finish whole in Ember's
+ * column (`near`: Ember's centre and size; `display`: its display's bounds; `scale`: the text's): answerRoom, in the
+ * overlay's coordinates. Without Ember to go by, none is assumed.
+ */
+export function roomForAnswer(b: Box, near: { x: number; y: number; size?: number } | null, display: Box, scale: number): boolean {
+  if (!near) return false;
+  const size = near.size ?? EMBER_SIZE;
+  const anchor = { x: near.x - display.x, y: near.y + size * 0.4 - display.y };
+  return answerRoom(anchor, size, { width: display.width, height: display.height }, { ...b, x: b.x - display.x, y: b.y - display.y }, scale);
 }
 
 /**
@@ -467,7 +482,15 @@ export class AskWindow {
     const scale = this.scale();
     // Reserve the first rows before showing (the page measures any further wrapping at the work area's width), clear of
     // the answer or question Ember shows as well as its handle.
-    const { bounds, up } = openingBounds(near, display.workArea, this.keepOff(), scale, askOpeningRows(this.context), this.bubble());
+    let { bounds, up } = openingBounds(near, display.workArea, this.keepOff(), scale, askOpeningRows(this.context), this.bubble());
+    // Room for follow-ups still to come only where the answer coming in still has room to finish whole by Ember, clear
+    // of the box with it (answerRoom): the row would take what it needs once it finishes (companion-c3-1: the field
+    // covered its last lines and its Read all). Otherwise they wait for the next opening, as before.
+    if (this.context.suggestionsComing && !roomForAnswer(bounds, near, display.bounds, scale)) {
+      const { suggestionsComing: _kept, ...rest } = this.context;
+      this.context = rest;
+      ({ bounds, up } = openingBounds(near, display.workArea, this.keepOff(), scale, askOpeningRows(this.context), this.bubble()));
+    }
     this.up = up;
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }

@@ -603,6 +603,13 @@ export interface AskContext {
    * (with `opened`: the box opens a row taller). Choosing one sends it as if typed.
    */
   suggestions?: string[];
+  /**
+   * With `opened` and no `suggestions`: an answer is still coming in, whose follow-ups ("Yes, please", "Read it out") are
+   * offered once it is whole, so the box opens with their row's room, empty and out of sight, for them to land in without
+   * moving the field (askSuggestionsComing; accessibility-visual-c4-1: they showed only on the bubble, which takes no
+   * keyboard, until the box was opened again). Only where the answer still has room by Ember (ask.ts roomForAnswer).
+   */
+  suggestionsComing?: boolean;
   listenOnce?: ListenOnceStatus;
   /**
    * Why a request would go unanswered now, in the handle's word (host.ts unansweredWord: "Not connected", "Offline"…);

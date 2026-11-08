@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { announcement, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, stepParts, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, SUGGEST_CAPTION, type BubbleView } from "./bubble";
+import { announcement, answerRoom, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, stepParts, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, SUGGEST_CAPTION, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -314,6 +314,19 @@ describe("bubbleFit: across the open Ask box an answer grew into (companion-c3-1
     // No room above or below the box either (it fills the screen's height): none.
     const full = { x: 195, y: 20, width: 728, height: 700 };
     expect(bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, full], tall, [full])).toBeNull();
+  });
+
+  it("tells whether the tallest finished answer still has a place in Ember's column beside a box, for the Ask box to keep a row only then (accessibility-visual-c4-1)", () => {
+    // 1024 x 768 at Larger text, Ember in the middle and the box above it, a row taller: no room left for the answer.
+    expect(answerRoom({ x: 512, y: 474 }, 60, screen, { x: 195, y: 245, width: 728, height: 236 }, 1.3)).toBe(false);
+    // Lower down, room above the box; at the top with the box under Ember, room below a box a row shorter.
+    expect(answerRoom({ x: 512, y: 584 }, 60, screen, { x: 195, y: 355, width: 728, height: 236 }, 1.3)).toBe(true);
+    expect(answerRoom({ x: 512, y: 134 }, 60, screen, { x: 195, y: 245, width: 728, height: 236 }, 1.3)).toBe(false);
+    expect(answerRoom({ x: 512, y: 134 }, 60, screen, { x: 195, y: 245, width: 728, height: 173 }, 1.3)).toBe(true);
+    // Room below Ember (the bubble's own place), clear of a box above it, at the default text size on 1280 x 800.
+    expect(answerRoom({ x: 640, y: 474 }, 60, { width: 1280, height: 800 }, { x: 360, y: 243, width: 560, height: 188 }, 1)).toBe(true);
+    // Never over Ember: under a box at the top whose only room below is where Ember is.
+    expect(answerRoom({ x: 512, y: 450 }, 60, screen, { x: 195, y: 8, width: 728, height: 300 }, 1.3)).toBe(false);
   });
 });
 
