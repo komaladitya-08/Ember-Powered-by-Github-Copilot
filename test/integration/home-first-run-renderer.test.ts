@@ -28,7 +28,12 @@ const READY_MODELS = [
 ];
 const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, signInWith: "github-app" };
 
-interface Seed { consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown> }
+/**
+ * `liveState`: as over IPC, the page holds its own copy of the settings; the provider's state follows them as main's
+ * does (in force while on and agreed for the address's host; a saved key kept only for its own host), and the card's
+ * yes is saved and broadcast.
+ */
+interface Seed { consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -61,14 +66,18 @@ async function open(seed: Seed = {}): Promise<Page> {
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
-  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff }) => {
+  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState }) => {
     window.__frFailOff = failOff;
     window.__frCalls = []; window.__frPend = {};
     window.__frState = { settings, agent };
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     window.__frEmit = (name, value) => { for (const fn of subs[name] ?? []) fn(value); };
     const defer = (name: string) => new Promise((resolve, reject) => { (window.__frPend[name] ??= []).push({ resolve, reject }); });
-    const status = () => ({ appVersion: "0.1.1", settings: window.__frState.settings, environment, logFile: "/test/ember.log", settingsNotice: null, admin });
+    const copy = <T>(v: T): T => (liveState ? structuredClone(v) : v);
+    const hostOf = (url: unknown) => { try { return new URL(String(url)).host; } catch { return null; } };
+    /** The host the saved key is for (liveState): main deletes a key saved for another host than the address. */
+    let keyHost = liveState && providerState.keySaved ? hostOf(settings.provider.baseUrl) : null;
+    const status = () => ({ appVersion: "0.1.1", settings: copy(window.__frState.settings), environment, logFile: "/test/ember.log", settingsNotice: null, admin });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return async () => status();
@@ -78,7 +87,8 @@ async function open(seed: Seed = {}): Promise<Page> {
         if (window.__frFailOff && (patch.provider as { on?: boolean } | undefined)?.on === false) throw new Error("disk full");
         const s = window.__frState.settings;
         for (const [k, v] of Object.entries(patch)) s[k] = v && typeof v === "object" && !Array.isArray(v) && typeof s[k] === "object" ? { ...(s[k] as object), ...v } : v;
-        window.__frEmit("onSettingsChanged", s);
+        if (keyHost && keyHost !== hostOf(s.provider.baseUrl)) keyHost = null;
+        window.__frEmit("onSettingsChanged", copy(s));
       };
       if (name === "signIn") return () => { window.__frCalls.push("signIn"); return defer("signIn"); };
       if (name === "retrySignIn") return () => { window.__frCalls.push("retry"); return defer("retry"); };
@@ -93,16 +103,29 @@ async function open(seed: Seed = {}): Promise<Page> {
     } }) as never;
     if (!noBridge) {
       window.emberProvider = {
-        state: async () => ({ allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false, ...providerState }),
+        state: async () => {
+          const p = window.__frState.settings.provider as { on: boolean; baseUrl: string; consent?: { host?: string } };
+          const host = hostOf(p.baseUrl);
+          const agreed = !!host && p.consent?.host === host;
+          const live = liveState ? { inForce: p.on && agreed, host, agreed, keySaved: !!host && keyHost === host } : {};
+          return { allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false, ...providerState, ...live };
+        },
         onChanged: () => () => undefined,
-        saveKey: () => { window.__frCalls.push("saveKey"); return Promise.resolve({ ok: true }); },
+        saveKey: () => { window.__frCalls.push("saveKey"); keyHost = hostOf(window.__frState.settings.provider.baseUrl); return Promise.resolve({ ok: true }); },
         removeKey: async () => ({ ok: true }),
-        agree: (host: string) => { window.__frCalls.push(`agree:${host}`); if (slowAgree) return (defer("agree") as Promise<unknown>).then(r => { window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return r; }) as never; window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return Promise.resolve({ ok: true }); },
+        agree: (host: string) => {
+          window.__frCalls.push(`agree:${host}`);
+          if (liveState) {
+            window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true, consent: { version: 1, at: "2026-11-08T12:00:00Z", host } };
+            window.__frEmit("onSettingsChanged", copy(window.__frState.settings));
+            return Promise.resolve({ ok: true });
+          }
+          if (slowAgree) return (defer("agree") as Promise<unknown>).then(r => { window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return r; }) as never; window.__frState.settings.provider = { ...window.__frState.settings.provider, on: true }; return Promise.resolve({ ok: true }); },
         // A draft of typed details (first-run-r2-1) is told apart by its host, and whether a key came with it (never the key).
         test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
@@ -719,6 +742,50 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => f.locator("#w-lead").innerText()).not.toContain("I'm using");
     for (const page of [a, b, c, d, e, f]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
   }, 30_000);
+
+  it("(af) after “Use GitHub Copilot instead”, my provider's step opened again isn't in use: a failed check switches it off, never says “I'm using” it, and Back is Copilot's sign-in (first-run-r3-1)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const off = `save:${JSON.stringify({ provider: { on: false } })}`;
+    const p = await open({ provider, liveState: true, providerState: { keySaved: true }, agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }) });
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
+    await p.locator("#w-alt").click();
+    await expect.poll(() => calls(p)).toContain(off);
+    // The connection follows, as main's does: no Copilot sign-in yet.
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, SIGNED_OUT);
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    // No Copilot after all: my own provider again, as a step to set up, not one in use.
+    await p.getByRole("button", { name: "Use my own provider" }).click();
+    expect(await p.locator("#w-title").innerText()).toBe("Use your own model provider");
+    expect(await p.locator("#w-alt").isHidden()).toBe(true);
+    await p.fill("#w-p-url", "https://api3.example.com/v1");
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("test");
+    expect(await calls(p)).not.toContain("test-draft:api3.example.com");
+    const why = "Ember can't reach api3.example.com. Check the address and the network.";
+    await settle(p, "test", { ok: false, why, cause: "unreachable" });
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe(why);
+    // Not verified: nothing stays pointed at it, and nothing says it is in use.
+    await expect.poll(() => p.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
+    expect((await calls(p)).lastIndexOf(off)).toBeGreaterThan((await calls(p)).indexOf("test"));
+    expect(await p.locator("#w-title").innerText()).toBe("Use your own model provider");
+    expect(await p.locator("#w-lead").innerText()).not.toContain("I'm using");
+    // Back is the way to Copilot again.
+    await p.locator("#w-back").click();
+    expect(await p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    expect(await next(p).innerText()).toBe("Sign in with GitHub");
+    // Opened again, it goes on main's state as it is now: the key saved for the old address went with it.
+    await p.getByRole("button", { name: "Use my own provider" }).click();
+    expect(await p.inputValue("#w-p-url")).toBe("https://api3.example.com/v1");
+    expect(await p.getAttribute("#w-p-key", "placeholder")).toBe("Paste your key");
+    await next(p).click();
+    expect(await p.locator("#w-p-result").innerText()).toBe("Paste the API key first.");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
 
   it("(z) resumed while the user's own provider connects or fails, the sign-in step names it, with no Copilot or sign-in words (first-run-1, first-run-c1-3)", async () => {
     const service = { kind: "user", host: "localhost:11434" };

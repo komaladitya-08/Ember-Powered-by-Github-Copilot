@@ -103,6 +103,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
    */
   let visitInUse = false;
   let edited = false;
+  /**
+   * The newest check saved the typed details and gave the card's yes before it asked (any visit that didn't begin in
+   * use): its failure, or an edit after it, puts the provider away again. A check of an edit to a provider in use saved
+   * nothing, so its failure leaves that provider as it was (first-run-r3-1).
+   */
+  let checkSaves = true;
   /** The step's main button goes on (the provider answered, or is in use as it was): set as the step is drawn. */
   let providerGoesOn = false;
   /** The edit area of "Models I'll use" is open. */
@@ -165,10 +171,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // set up; one in use as the step opened stays on (first-run-c1-2).
     if (step === "provider" && to !== "provider") {
       checkEpoch++;
-      if (to === "sign-in" && !visitInUse) { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
+      if (to === "sign-in" && checkSaves) { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
     }
     if (to === "provider" && step !== "provider") {
-      visitInUse = ownInForce();
+      // In use now, by the settings as they are: a provider switched off ("Use GitHub Copilot instead") isn't in use,
+      // whatever an older read of main's state said (first-run-r3-1).
+      visitInUse = !!settings?.provider.on && ownInForce();
+      checkSaves = !visitInUse;
       edited = false;
       // In use: its fields show the details it uses now, not an edit left unchecked on an earlier visit.
       if (visitInUse) { providerCheck = { phase: "idle", line: "" }; prefilled.done = false; }
@@ -431,6 +440,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       // In use (first-run-r2-1): nothing replaces the details that work until the new ones answer, with the card's yes
       // for their host given by this press. A check that fails, or that the user leaves or edits under, changes nothing.
       const keep = visitInUse && settings?.provider.on ? inUseHost() : null;
+      checkSaves = !keep;
       if (keep) {
         const since = providerChoice();
         const tried = await api.test({ type: f.type, baseUrl: f.baseUrl, host, ...(f.key.trim() ? { key: f.key } : {}) });
@@ -486,8 +496,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   function finishCheck(ok: boolean, line: string, field: "address" | "key" = "key"): void {
     providerCheck = { phase: ok ? "ok" : "failed", line };
     // Not verified: nothing stays pointed at a service that didn't answer. One in use as the step opened is left as it
-    // was: its edit was checked before it replaced anything (first-run-r2-1).
-    if (!ok && !visitInUse) void turnOwnOff();
+    // was: its edit was checked before it replaced anything (first-run-r2-1); one this check turned on goes (first-run-r3-1).
+    if (!ok && checkSaves) void turnOwnOff();
     render();
     // The field the failure names takes the focus: the address when nothing answered there (first-run-r2-1).
     if (!ok) provField(field === "address" ? "w-p-url" : "w-p-key").focus(); else next.focus();
@@ -899,7 +909,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       checkEpoch++;
       edited = true;
       // A provider in use as the step opened stays on: its edit is checked before it counts (first-run-r2-1).
-      if (providerCheck.phase !== "idle") { providerCheck = { phase: "idle", line: "" }; if (!visitInUse) void turnOwnOff(); }
+      if (providerCheck.phase !== "idle") { providerCheck = { phase: "idle", line: "" }; if (checkSaves) void turnOwnOff(); }
       if (active && step === "provider") render();
     });
   }
@@ -957,7 +967,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   return {
     settings(s: Settings): boolean {
       const was = active;
+      // The provider switched on or off, or agreed for another host: main's state of it is read again (main says
+      // provider:changed only for its key), so nothing here goes on an older answer (first-run-r3-1). An address saved
+      // alone waits for its card's yes, so a check adopting new details never reads it as off between its steps.
+      const consentOf = (x: Settings | null) => JSON.stringify([x?.provider.on, x?.provider.consent]);
+      const providerMoved = active && consentOf(s) !== consentOf(settings);
       settings = s;
+      if (providerMoved) void readOwn();
       about.refresh(s, memoryManaged());
       if (!s.onboarded && !active) begin();
       else if (s.onboarded && active) finish();
