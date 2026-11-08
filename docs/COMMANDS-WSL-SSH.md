@@ -309,8 +309,10 @@ develop stay") doesn't cover deleting main, so those ask. Nor does a name you us
 something else of: "delete node_modules in the frontend folder" doesn't cover `rm -r frontend`, and neither do "the
 backup of the build folder", "the branches merged into main", "the children of 1234", "the process that 1234 started",
 "stop apache because nginx wants port 80", "stop apache, nginx serves the site", "kill 5678, 1234 my editor", "the
-build logs", "the process blocking 1234", "whatever is blocking 1234", "the services that depend on nginx" or "the
-branches based on main". "delete build/, dist/ and the cache folder" covers all three, and so do the same verb
+build logs", "the process blocking 1234", "whatever is blocking 1234", "the services that depend on nginx", "the
+parent process for pid 1234" or "the branches based on main". Nor is a file whose contents you name to copy from the one
+to overwrite: "overwrite config.yml with the contents of config.yml.bak" and "save the contents of notes.txt to out.txt"
+never cover writing over config.yml.bak or notes.txt. "delete build/, dist/ and the cache folder" covers all three, and so do the same verb
 said again ("delete build/ and delete dist/", "delete build/. Delete dist/ too.") and a list after a colon ("delete
 these folders: build/ and dist/"), a thing after "then" or a sentence that only adds one ("stop apache, then nginx",
 "stop apache. nginx too."; "then nginx back up" or "and nginx on 80" asks, since that is another verb's), and "it" for the one thing you just said is hung ("1234 is hung, kill it", "nginx is

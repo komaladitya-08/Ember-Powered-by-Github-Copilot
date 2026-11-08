@@ -701,6 +701,42 @@ describe("matchIntent: words that hold the step back (commands-remote-c4-4)", ()
   });
 
   it.each([
+    // The contents of the file a copy reads from: after "with", or as what "save" writes somewhere else.
+    ["cp config.yml config.yml.bak", "overwrite config.yml with the contents of config.yml.bak"],
+    ["mv config.yml config.yml.bak", "overwrite config.yml with the contents of config.yml.bak"],
+    ["cat config.yml > config.yml.bak", "overwrite config.yml with the contents of config.yml.bak"],
+    ["cp report.md README.md", "replace report.md with the contents of README.md"],
+    ["cp out.txt notes.txt", "save the contents of notes.txt to out.txt"],
+    ["Copy-Item config.yml config.yml.bak", "overwrite config.yml with the contents of config.yml.bak", "win32"],
+  ] as [string, string, ContextName?][])("asks for `%s` after %j, which overwrites the file the words read from (commands-remote-w5-1)", (cmd, words, where) => {
+    expect(announce(cmd, words, { where })).toBeNull();
+  });
+
+  it.each([
+    // A word between the verb and the process word says the process is another one.
+    ["kill 1234", "kill the parent process for pid 1234"],
+    ["kill 1234", "kill the child process for pid 1234"],
+    ["kill 1234", "kill the other process for pid 1234"],
+    ["kill 1234", "kill the watchdog process for pid 1234"],
+    ["Stop-Process -Id 1234", "kill the parent process for pid 1234", "win32"],
+    ["taskkill /PID 1234", "kill the parent process for pid 1234", "win32", "cmd"],
+  ] as [string, string, ContextName?, ShellId?][])("asks for `%s` after %j, which names another process (commands-remote-w5-3)", (cmd, words, where, shell) => {
+    expect(announce(cmd, words, { where, shell })).toBeNull();
+  });
+
+  it.each([
+    // The same words with the copy the right way round, and the process the verb itself acts on.
+    ["cp config.yml.bak config.yml", "overwrite config.yml with the contents of config.yml.bak", "Overwriting config.yml, as you asked."],
+    ["cp README.md report.md", "replace report.md with the contents of README.md", "Overwriting report.md, as you asked."],
+    ["cp notes.txt out.txt", "save the contents of notes.txt to out.txt", "Overwriting out.txt, as you asked."],
+    ["echo hi > out.txt", "update the text of out.txt to hi", "Overwriting out.txt, as you asked."],
+    ["kill 1234", "stop that job for pid 1234", "Stopping 1234, as you asked."],
+    ["kill 1234", "please kill the process for pid 1234", "Stopping 1234, as you asked."],
+  ])("still announces `%s` after %j (commands-remote-w5-1, w5-3)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
     // Asking for the step now, with words that only ask for something else or say why, still announces.
     ["rm -rf src", "delete src/", "Deleting src, as you asked."],
     ["rm -rf src", "can you delete src/?", "Deleting src, as you asked."],

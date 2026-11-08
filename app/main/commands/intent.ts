@@ -398,7 +398,7 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
       // Where what the verb acts on starts: after the verb in its own clause, after fillers in a list.
       const from = leads ? before.length + verbEnd(tokens0, words0, starts, verbs) : Math.max(tokens.indexOf(first ?? ""), 0);
       cut = Math.min(cut, objectEnd(tokens, names, nounish, shape, from));
-      const kept = objectWords(tokens.slice(0, cut), shape).join(" ").replace(/\?+(?=["'”’)\]]*$)/, "");
+      const kept = objectWords(tokens.slice(0, cut), shape, leads ? from : -1).join(" ").replace(/\?+(?=["'”’)\]]*$)/, "");
       chain = [...(chain ?? []), ...(kept.trim() !== "" ? [kept] : [])];
       if (!leads && kept.trim() !== "") more++;
       if (cut < tokens.length) end();
@@ -563,15 +563,17 @@ const HERE_FOLDER = new Set(["folder", "directory", "dir", "repo", "repository",
  * the list in out.txt", "copy it onto build-01", "discard the changes in a.ts"), and `heads`, the words that may follow
  * one as the end of its name ("my feature-x changes", "the build-01 server", "the node processes").
  */
-interface RowShape { places?: readonly string[]; heads?: readonly string[]; contents?: readonly string[] }
+interface RowShape { places?: readonly string[]; heads?: readonly string[]; contents?: readonly string[]; contentsVerbs?: readonly string[] }
 const PUSHED: RowShape = { places: ["into"], heads: ["changes", "commits", "work", "fixes", "edits", "code"] };
 const ROW_SHAPE: Readonly<Record<string, RowShape>> = {
   "git.push": PUSHED,
   "git.push.force": PUSHED,
   "git.discard": { places: ["in", "inside", "within", "under", "of"] },
   "git.clean": { places: ["in", "inside", "within", "under"] },
-  // "replace the contents of out.txt with hi" names out.txt (commands-remote-v5-5).
-  "overwrite.file": { places: ["in", "inside", "within", "under", "into", "onto"], contents: ["contents", "content", "text"] },
+  // "replace the contents of out.txt with hi" names out.txt (commands-remote-v5-5), but only as what a verb that
+  // replaces acts on: "save the contents of notes.txt to out.txt" and "… with the contents of a.bak" name the file read
+  // from (commands-remote-w5-1).
+  "overwrite.file": { places: ["in", "inside", "within", "under", "into", "onto"], contents: ["contents", "content", "text"], contentsVerbs: ["replace", "overwrite", "update"] },
   "p4.revert": { places: ["in", "inside", "within", "under"] },
   "pkg.install": { heads: ["library", "libraries", "module", "modules", "dependency", "dependencies", "version"] },
   "service.restart": { heads: ["server", "daemon", "unit", "units"] },
@@ -638,6 +640,8 @@ const AFTER_NAME = new Set([
 const PLACED = "\u01c2";
 /** Words for a running program before "for pid 1234". */
 const PROCESS_WORDS = new Set(["process", "processes", "program", "programs", "job", "jobs", "task", "tasks", "app", "instance"]);
+/** A determiner between a verb and what it acts on ("kill the process", "stop that job", "replace the contents"). */
+const OWN_DETERMINER = new Set(["the", "that", "this", "these", "those", "my", "our", "your", "a", "an", "its", "all"]);
 
 /**
  * Where a phrase that only says the folder goes with what is in it ends ("with everything in it", "along with its
@@ -703,10 +707,14 @@ function objectEnd(tokens: readonly string[], names: (t: string) => boolean, nou
  * The clause's words a row reads for its objects (commands-remote-c3-1): a phrase after of, for, into, by and the like
  * left out ("delete the backup of the build folder" → "delete the backup"), except "get rid of", "all of", "with pid
  * 1234", "I'd like to" and the row's own places; a folder after in, inside, within, under or from marked (placed).
+ * `verbAt` is the token after the verb when the clause is the verb's own (actedOn), else -1.
  */
-function objectWords(tokens: readonly string[], shape: RowShape): string[] {
+function objectWords(tokens: readonly string[], shape: RowShape, verbAt = -1): string[] {
   const word = (k: number) => userWordList(tokens[k] ?? "")[0] ?? "";
   const keeps = new Set(shape.places ?? []);
+  // The word at `k` is what the verb itself acts on, right after it or its determiner ("replace the contents", "kill
+  // the process", "stop that job"), never a word after another one ("the parent process": commands-remote-w5-1, w5-3).
+  const verbsOwn = (k: number) => verbAt > 0 && (k === verbAt || (k === verbAt + 1 && OWN_DETERMINER.has(word(verbAt))));
   const out: string[] = [];
   for (let k = 0; k < tokens.length; k++) {
     const w0 = word(k);
@@ -714,10 +722,12 @@ function objectWords(tokens: readonly string[], shape: RowShape): string[] {
     const with_ = contentsEnd(tokens, k);
     if (with_ > k) { k = with_ - 1; continue; }
     const next = word(k + 1) === "the" ? word(k + 2) : word(k + 1);
-    // "I'd like to delete build/" asks for it; "kill the process for pid 1234" names it as "with pid 1234" does, but
-    // never "the parent of pid 1234".
-    const names = (w0 === "of" && (OF_WHAT.has(word(k - 1)) || (shape.contents ?? []).includes(word(k - 1)))) || (w0 === "with" && /^(pid|id|name|number|process)$/.test(next))
-      || (w0 === "for" && /^(pid|id)$/.test(next) && PROCESS_WORDS.has(word(k - 1)))
+    // "I'd like to delete build/" asks for it; "replace the contents of out.txt" names out.txt, never "save the contents
+    // of notes.txt to out.txt" or "… with the contents of a.bak", which name the file read from; "kill the process for
+    // pid 1234" names it as "with pid 1234" does, but never "the parent of pid 1234" or "the parent process for pid 1234".
+    const contents = (shape.contents ?? []).includes(word(k - 1)) && verbsOwn(k - 1) && (shape.contentsVerbs ?? []).includes(word(verbAt - 1));
+    const names = (w0 === "of" && (OF_WHAT.has(word(k - 1)) || contents)) || (w0 === "with" && /^(pid|id|name|number|process)$/.test(next))
+      || (w0 === "for" && /^(pid|id)$/.test(next) && PROCESS_WORDS.has(word(k - 1)) && verbsOwn(k - 1))
       || (w0 === "like" && (word(k + 1) === "to" || word(k + 1) === "you"));
     // "the build folder of the frontend app", "… for the docs": the folder it is in (placeWord).
     const places = (w0 === "of" || w0 === "for") && FOLDER_WORDS.has(word(k - 1));
