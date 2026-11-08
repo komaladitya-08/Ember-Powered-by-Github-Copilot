@@ -191,6 +191,37 @@ export function clearOfBubble(b: Box, wa: Box, bubble?: Box | null, keepOff?: Bo
   return b;
 }
 
+const overlapArea = (a: Box, b: Box) =>
+  Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+
+/**
+ * `b` moved off the task cards (`cards`, global DIP) where what it shows (`parts`: the page's shape, window-local; none
+ * yet: all of it) is over them (companion-r5-1: at Larger text the box opened under Ember's "I've started on that" ran
+ * its field, Send and its hint over the card's ring, title and status). The least move that clears them, sideways first
+ * (it stays clear as a card grows taller), then up; each inside the work area, clear of the handle (`keepOff`), never
+ * over Ember (`near`), and never more over Ember's bubble (`bubble`) than before, which comes first. Else `b` as it was.
+ */
+export function clearOfCards(b: Box, parts: readonly Box[], wa: Box, cards: readonly Box[], keepOff?: Box | null, bubble?: Box | null, near?: { x: number; y: number; size?: number } | null): Box {
+  const shown = (at: Box) => (parts.length ? parts : [{ x: 0, y: 0, width: at.width, height: at.height }]).map(p => ({ x: at.x + p.x, y: at.y + p.y, width: p.width, height: p.height }));
+  const over = (at: Box) => shown(at).filter(p => cards.some(c => overlap(p, c)));
+  const hit = over(b);
+  if (!hit.length) return b;
+  const gapY = gapIn(wa.height, b.height), gapX = gapIn(wa.width, b.width);
+  const left = wa.x + gapX, right = wa.x + wa.width - b.width - gapX, top = wa.y + gapY, bottom = wa.y + wa.height - b.height - gapY;
+  const size = near?.size ?? EMBER_SIZE;
+  const ember = near ? { x: near.x - size * 0.75, y: near.y - Math.max(18, size * 0.5 - 8), width: size * 1.5, height: Math.max(18, size * 0.5 - 8) + size * 0.6 } : null;
+  const onBubble = bubble ? overlapArea(b, bubble) : 0;
+  const sideways = cards.flatMap(c => hit.flatMap(p => [c.x - GAP - (p.x + p.width), c.x + c.width + GAP - p.x])).sort((p, q) => Math.abs(p) - Math.abs(q));
+  const upward = cards.flatMap(c => hit.map(p => c.y - GAP - (p.y + p.height))).filter(d => d < 0).sort((p, q) => q - p);
+  const tries = [...sideways.map(dx => ({ ...b, x: Math.round(b.x + dx) })), ...upward.map(dy => ({ ...b, y: Math.round(b.y + dy) }))];
+  for (const at of tries) {
+    if (at.x < left || at.x > right || at.y < top || at.y > bottom || over(at).length) continue;
+    if ((keepOff && overlap(at, keepOff)) || (ember && overlap(at, ember)) || (bubble && overlapArea(at, bubble) > onBubble)) continue;
+    return at;
+  }
+  return b;
+}
+
 /**
  * Where the box opens (global DIP) as tall as `rows` rows, and whether it grows upward (it sits above Ember): askBounds,
  * grown to its rows as the page will need them, then clear of Ember's bubble (`bubble`) as of the handle (companion-1).
@@ -307,13 +338,14 @@ export class AskWindow {
    * inside the handover (OPENING_MS), so it closes the box; unset, every blur in the handover takes the keyboard back
    * (Windows, where Ember's own windows finishing their load or the OS can take it straight back). macOS: MAC_SETTLE_MS.
    * `onBounds`: where the box is on screen (global DIP) each time it shows or moves, null once it is closed: a bubble
-   * that comes up meanwhile keeps off it (companion-c1-1).
+   * that comes up meanwhile keeps off it (companion-c1-1). `cards`: the task cards on screen (global DIP), which what the
+   * box shows keeps off where it can (clearOfCards, companion-r5-1).
    */
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
     windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void; textScale?: () => number;
     settleMs?: number; onHide?: () => void; bubble?: () => Box | null; shape?: (w: BrowserWindow, rects: readonly Box[]) => boolean;
-    onBounds?: (b: Box | null) => void;
+    onBounds?: (b: Box | null) => void; cards?: () => readonly Box[];
   } = {}) {}
 
   /** Tells main where the box is now (null: closed), when that changed. */
@@ -419,6 +451,8 @@ export class AskWindow {
       if (!rects.every(ok)) return;
       this.shown = rects.map(r => ({ x: r.x, y: r.y, width: r.width, height: r.height }));
       this.applyShape(win);
+      // What it shows now (a row of suggestions came) may be over a task card: off it.
+      this.keepClear();
     });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
     win.webContents.on("render-process-gone", () => { if (this.win === win) this.hide(); if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
@@ -491,6 +525,8 @@ export class AskWindow {
       this.context = rest;
       ({ bounds, up } = openingBounds(near, display.workArea, this.keepOff(), scale, askOpeningRows(this.context), this.bubble()));
     }
+    // Off the task cards where it can be, by what it showed last (the page says again once it has laid out).
+    bounds = clearOfCards(bounds, this.shown, display.workArea, this.cards(), this.keepOff(), this.bubble(), near);
     this.up = up;
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
@@ -534,18 +570,20 @@ export class AskWindow {
     const wa = screen.getDisplayMatching(b).workArea;
     // Grown over Ember's bubble (more lines, wrapped suggestions): aside, at the height it grew to, else stacked by it;
     // never across Ember, nor over it.
-    const next = clearOfBubble(grownBounds(b, rows, wa, this.up, this.keepOff(), this.scale()), wa, this.bubble(), this.keepOff(), this.near, false);
+    const grown = clearOfBubble(grownBounds(b, rows, wa, this.up, this.keepOff(), this.scale()), wa, this.bubble(), this.keepOff(), this.near, false);
+    const next = clearOfCards(grown, this.shown, wa, this.cards(), this.keepOff(), this.bubble(), this.near);
     if (next.height !== b.height || next.y !== b.y || next.x !== b.x) { this.win.setBounds(next); this.tellBounds(); }
   }
 
   /**
-   * Ember's handle changed (the compositor came or went, or the corner card grew for a question: companion-c1-1): a box
-   * open over the new one moves off it.
+   * Ember's handle changed (the compositor came or went, or the corner card grew for a question: companion-c1-1), or the
+   * task cards did (companion-r5-1), or what the box shows: a box open over the new one moves off it.
    */
   keepClear(): void {
     if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) return;
     const b = this.win.getBounds();
-    const next = clearOf(b, screen.getDisplayMatching(b).workArea, this.keepOff());
+    const wa = screen.getDisplayMatching(b).workArea;
+    const next = clearOfCards(clearOf(b, wa, this.keepOff()), this.shown, wa, this.cards(), this.keepOff(), this.bubble(), this.near);
     if (next !== b) { this.win.setBounds(next); this.tellBounds(); }
   }
 
@@ -564,8 +602,10 @@ export class AskWindow {
     if (!bubble || (asideFor === this.steppedFor && bubble.height <= this.steppedHeight)) return;
     const b = win.getBounds();
     if (!overlap(b, bubble)) return;
-    const next = clearOfBubble(b, screen.getDisplayMatching(b).workArea, bubble, this.keepOff(), this.near);
+    const wa = screen.getDisplayMatching(b).workArea;
+    let next = clearOfBubble(b, wa, bubble, this.keepOff(), this.near);
     if (next === b) return;
+    next = clearOfCards(next, this.shown, wa, this.cards(), this.keepOff(), bubble, this.near);
     this.steppedFor = asideFor;
     this.steppedHeight = bubble.height;
     // It grows away from Ember from here: up when it is above Ember now.
@@ -576,6 +616,11 @@ export class AskWindow {
 
   private keepOff(): Box | null {
     try { return this.o.keepOff?.() ?? null; } catch { return null; }
+  }
+
+  /** The task cards on screen now (global DIP); none when they can't be told (the box goes where it always has). */
+  private cards(): readonly Box[] {
+    try { return this.o.cards?.() ?? []; } catch { return []; }
   }
 
   /** Ember's bubble on screen now (global DIP), or null: none, or it can't be told (the box goes where it always has). */

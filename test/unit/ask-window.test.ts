@@ -60,7 +60,9 @@ vi.mock("electron", () => {
   };
 });
 
-const { AskWindow, MAC_SETTLE_MS, roomForAnswer, stepsAsideFor } = await import("../../app/main/ask");
+const { AskWindow, MAC_SETTLE_MS, clearOfCards, roomForAnswer, stepsAsideFor } = await import("../../app/main/ask");
+type Box = { x: number; y: number; width: number; height: number };
+const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 const { IDLE_BUBBLE, askSuggestions, askSuggestionsComing } = await import("../../app/shared/overlay");
 
 afterEach(() => { made.length = 0; menus.length = 0; vi.useRealTimers(); });
@@ -255,6 +257,79 @@ describe("the ask box", () => {
     bubble = { ...again, height: 287 };
     ask.bubbleChanged("q1:once,q1:always,q1:deny");
     expect(win.bounds).toEqual(again);
+  });
+
+  it("keeps what it shows off the task cards by the least sideways move, never onto Ember's answer, the handle or Ember (companion-r5-1)", () => {
+    // As measured live at Larger text with Ember at the top, Ask opened under "I've started on that. Its card shows how
+    // it's going.": the field and its hint ran over the running card's ring and title (2,210 and 1,846 px² of them at
+    // 1366 x 768, the hint's 2,736 at 1280 x 800). What the page showed, window-local: the field, the hint, "Set up
+    // voice in Settings…" and the suggestions.
+    const parts = [{ x: 10, y: 10, width: 708, height: 62 }, { x: 476, y: 76, width: 228, height: 26 }, { x: 24, y: 106, width: 230, height: 50 }, { x: 24, y: 160, width: 326, height: 50 }];
+    const near = { x: 730, y: 113, size: 60 };
+    const wide = { x: 0, y: 0, width: 1366, height: 768 };
+    const box = { x: 366, y: 360, width: 728, height: 236 }, card = { x: 999, y: 406, width: 351, height: 290 };
+    const handle = { x: 1094, y: 700, width: 260, height: 56 }, answer = { x: 708, y: 155, width: 330, height: 197 };
+    const moved = clearOfCards(box, parts, wide, [card], handle, answer, near);
+    expect(moved).toEqual({ x: 273, y: 360, width: 728, height: 236 });
+    const shown = (b: Box) => parts.map(p => ({ x: b.x + p.x, y: b.y + p.y, width: p.width, height: p.height }));
+    expect(shown(box).some(p => overlaps(p, card))).toBe(true);
+    expect(shown(moved).some(p => overlaps(p, card))).toBe(false);
+    expect(overlaps(moved, answer) || overlaps(moved, handle)).toBe(false);
+    // 1280 x 800: only the hint was over the card; it moves as far as that takes.
+    const at1280 = clearOfCards({ x: 323, y: 360, width: 728, height: 236 }, parts, { x: 0, y: 0, width: 1280, height: 800 }, [{ x: 913, y: 438, width: 351, height: 290 }],
+      { x: 1008, y: 732, width: 260, height: 56 }, { x: 665, y: 155, width: 330, height: 197 }, { x: 687, y: 113, size: 60 });
+    expect(at1280).toEqual({ x: 201, y: 360, width: 728, height: 236 });
+    // Clear of them already, or no cards: where it was.
+    expect(clearOfCards(moved, parts, wide, [card], handle, answer, near)).toBe(moved);
+    expect(clearOfCards(box, parts, wide, [], handle, answer, near)).toBe(box);
+    // Where no move clears them without going onto the answer being replied to or off the screen (a 1024-wide screen,
+    // the box as it opens before the page says what it shows), the answer comes first: where it was.
+    const narrow = { x: 0, y: 0, width: 1024, height: 768 };
+    const tight = { x: 148, y: 370, width: 728, height: 221 };
+    expect(clearOfCards(tight, [], narrow, [{ x: 592, y: 483, width: 416, height: 213 }], { x: 752, y: 700, width: 260, height: 56 }, { x: 537, y: 155, width: 330, height: 207 }, { x: 559, y: 113, size: 60 })).toBe(tight);
+  });
+
+  it("opens off the task cards and moves off one that comes up under it while it is open (companion-r5-1)", () => {
+    let cards: Box[] = [];
+    const bubble = { x: 665, y: 155, width: 330, height: 197 };
+    const ask = new AskWindow({ bubble: () => bubble, cards: () => cards, keepOff: () => ({ x: 1008, y: 732, width: 260, height: 56 }) });
+    ask.prepare();
+    const [win] = made;
+    win.emit("ready-to-show");
+    // No cards: where it always opened, under the answer.
+    ask.show({ x: 687, y: 113, size: 60 });
+    const plain = { ...win.bounds };
+    expect(overlaps(plain, bubble)).toBe(false);
+    ask.hide();
+    // A running card in the corner, under where it would open: it opens beside where it was, at the same height.
+    const card = { x: plain.x + plain.width - 60, y: plain.y + 20, width: 351, height: 290 };
+    cards = [card];
+    ask.show({ x: 687, y: 113, size: 60 });
+    expect(win.bounds.y).toBe(plain.y);
+    expect(overlaps(win.bounds, card)).toBe(false);
+    expect(overlaps(win.bounds, bubble)).toBe(false);
+    ask.hide();
+    // Opened with none, then a task's card comes up under it (asked for in the box): it moves off the card once.
+    cards = [];
+    ask.show({ x: 687, y: 113, size: 60 });
+    expect(win.bounds).toEqual(plain);
+    cards = [card];
+    ask.keepClear();
+    expect(overlaps(win.bounds, card)).toBe(false);
+    const off = { ...win.bounds };
+    ask.keepClear();
+    expect(win.bounds).toEqual(off);
+    // The page says what it shows: a row of suggestions over a card that is lower down moves it off that card too.
+    ask.hide();
+    cards = [];
+    ask.show({ x: 687, y: 113, size: 60 });
+    const low = { x: plain.x + 300, y: plain.y + plain.height - 30, width: 351, height: 200 };
+    cards = [low];
+    win.heard.get("agent:ask-shape")!({}, [{ x: 10, y: 10, width: 708, height: 62 }]);
+    expect(win.bounds).toEqual(plain);
+    win.heard.get("agent:ask-shape")!({}, [{ x: 10, y: 10, width: 708, height: 62 }, { x: 24, y: plain.height - 20, width: 326, height: 18 }]);
+    expect(win.bounds).toEqual({ ...plain, x: plain.x - 58 });
+    expect(overlaps({ x: win.bounds.x + 24, y: win.bounds.y + plain.height - 20, width: 326, height: 18 }, low)).toBe(false);
   });
 
   it("steps aside for a question or Listen once's \"Listening…\", never for an answer it can be typed beside (companion-c1-1)", () => {

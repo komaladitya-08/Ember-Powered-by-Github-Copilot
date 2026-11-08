@@ -98,6 +98,22 @@ describe("what Ember keeps off, with more than one display", () => {
     expect(Math.abs(withCards.y - free.y)).toBeLessThan(1);
   });
 
+  it("tells the open Ask box where every display's cards are, so what it shows keeps off them too, and again as they change (companion-r5-1)", async () => {
+    const left = display(2, -1920, 0);
+    const c = cardsOn(primary), d = cardsOn(left);
+    const { m } = await manager([primary, left], [c, d], handle);
+    expect(m.cardsRects()).toEqual([c, d]);
+    const { m: one } = await manager([primary, left], [null, d], handle);
+    expect(one.cardsRects()).toEqual([d]);
+    // Ember hidden: no cards show.
+    one.setHidden(true);
+    expect(one.cardsRects()).toEqual([]);
+    const { readFileSync } = await import("node:fs");
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("cards: () => overlay?.cardsRects() ?? [],");
+    expect(main).toMatch(/overlay\.setCards\(event\.sender, rect\);\n(\s+\/\/[^\n]*\n)+\s+askWindow\.keepClear\(\);/);
+  });
+
   it("still keeps off the cards of the display it is on", async () => {
     const left = display(2, -1920, 0);
     const c = cardsOn(primary);

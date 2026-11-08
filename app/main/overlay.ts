@@ -278,6 +278,12 @@ export class OverlayManager {
     return null;
   }
 
+  /** The task cards on screen now, each display's (global DIP): the open Ask box keeps off them too (companion-r5-1). */
+  cardsRects(): Rect[] {
+    if (this.hidden) return [];
+    return [...this.overlays.values()].filter(o => !o.win.isDestroyed()).flatMap(o => (o.cards ? [o.cards] : []));
+  }
+
   /** Called by IPC when a renderer reports where its task cards are. */
   setCards(sender: Electron.WebContents, r: Rect | null): void {
     this.wake();

@@ -186,7 +186,10 @@ They share one emotion rig, so switching never changes behaviour.
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
   More time to read). Without a
-  compositor the box moves off the corner card as it grows for a question. On Linux it takes clicks only on what it
+  compositor the box moves off the corner card as it grows for a question. What the box shows keeps off the task cards
+  too, as it opens, grows, shows a new row and as a card comes up or grows under it: by the least sideways move (else
+  up) that keeps it clear of the answer or question, the handle and Ember, which come first (on a 1024-wide screen at
+  Larger text there may be none). On Linux it takes clicks only on what it
   shows (an X input shape the page reports), so a click in its clear margins reaches the app
   beneath and closes it. The line under its field is as wide as the field while the quick look
   runs; when it finds nothing to show, it narrows to its keys at the trailing edge. A long paste is kept

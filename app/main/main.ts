@@ -1219,6 +1219,8 @@ function start(): void {
   const askWindow = new AskWindow({
     os: platform.os,
     keepOff: () => handle?.bounds ?? null,
+    // The task cards: what the box shows keeps off them where it can (companion-r5-1).
+    cards: () => overlay?.cardsRects() ?? [],
     // The answer or question Ember shows: the box opens beside it, not on it (companion-1).
     bubble: () => overlay?.bubbleRect() ?? null,
     // Where the box is while it is open: a bubble that comes up meanwhile keeps off it (companion-c1-1).
@@ -2740,6 +2742,8 @@ function start(): void {
   ipcMain.on(OVERLAY.cards, (event, rect: unknown) => {
     if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
     overlay.setCards(event.sender, rect);
+    // A card that came up or grew under the open box: the box moves off it (companion-r5-1).
+    askWindow.keepClear();
   });
   ipcMain.on(OVERLAY.bubble, (event, rect: unknown) => {
     if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
