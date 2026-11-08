@@ -784,13 +784,15 @@ once it has 4 words, or else at its last space before 90 ("I looked through the 
 streamed or whole, and never inside a code span or a link's words. No piece of speech is longer than 120
 characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of speech ahead of what has played
 (`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
-it. A Markdown list is said item by item: each item, a heading, the line that leads into a list and a paragraph end
-with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
+it. A Markdown list is said item by item: each item, a heading (a line that is all bold too), the line that leads into
+a list, three or more short lines in a row that each start with a capital (a list without its markers) and a
+paragraph end with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
 its number ("2. Choose Privacy", never "Open Settings 2."), and a streamed list is said as each item's line ends, not
 after the whole answer. What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
-last part, "~75%" as "about 75%", "#45" as "number 45", "Tue." as "Tuesday", and emoji and typed smileys not at all
-(Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
+last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
+"Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", and other emoji and typed smileys not at
+all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
 reply that is clearly in another language (mostly another script, or two or more different short words of a European
 language, not counting names such as "La Vie en Rose" or "Los Angeles": `speechLanguage`) is said by a local system
 voice for that language, or not at all when there is none, which isn't reported as Ember failing to speak, even with no

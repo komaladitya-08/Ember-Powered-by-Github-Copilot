@@ -145,12 +145,17 @@ const SHORT_NAME: Readonly<Record<string, string>> = {
 };
 const SHORT_NAMES = new RegExp(`\\b(${Object.keys(SHORT_NAME).join("|")})\\.(?=\\s+[\\p{Ll}\\d])`, "gu");
 
-/** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%" and "#45". */
+/** A duration as written ("2h 15m", "1h30m"): Kitten read "2h" as "two h". */
+const DURATION = /\b(\d+)h[ \t]?(\d+)m\b/g;
+const duration = (_m: string, h: string, m: string) => `${h} ${h === "1" ? "hour" : "hours"} ${m} ${m === "1" ? "minute" : "minutes"}`;
+
+/** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
   return text
     .replace(PATH, pathSaid)
     .replace(AMOUNT, money)
     .replace(CLOCK, clock)
+    .replace(DURATION, duration)
     .replace(SHORT_NAMES, (_m, name: string) => SHORT_NAME[name])
     .replace(/(?<![\w~])[~≈][ \t]?(?=\d)/g, "about ")
     .replace(/(?<![\w&#])#(\d+)\b/g, "number $1");
@@ -162,6 +167,11 @@ const HEADING = /^[ \t]{0,3}#{1,6}[ \t]+\S/;
 const RULE = /^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
 /** A line that ends as a sentence does already, or with a pause (a colon, a comma). */
 const ENDED = /[.!?…:;,]["”’')\]*_]*$/;
+/**
+ * A line of a few words starting with a capital ("Firefox", "Your windows"): three or more in a row are a list written
+ * without its markers. A line wrapped inside a paragraph goes on in lower case ("folder and found").
+ */
+const BARE_ITEM = (body: string) => body.length <= 40 && body.trim().split(/\s+/).length <= 4 && /^[ \t]*[\p{Lu}\p{N}]/u.test(body);
 
 /**
  * Each list item, heading, line leading into a list and paragraph ends with a full stop where it has no ending of its
@@ -170,10 +180,15 @@ const ENDED = /[.!?…:;,]["”’')\]*_]*$/;
  */
 function endLines(text: string): string {
   const lines = text.split("\n");
+  // How many bare items run together through each line (voice-speaking-3: "Your windows\nFirefox\nFiles").
+  const bare = lines.map(l => (l.trim() && !ITEM.test(l) && !HEADING.test(l) && BARE_ITEM(l.trimEnd()) ? 1 : 0));
+  const run: number[] = [...bare];
+  for (let i = 1; i < run.length; i++) if (bare[i] && bare[i - 1]) run[i] = run[i - 1] + 1;
+  for (let i = run.length - 2; i >= 0; i--) if (bare[i] && bare[i + 1]) run[i] = run[i + 1];
   return lines.map((line, i) => {
     const body = line.trimEnd(), next = lines[i + 1];
     if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
-    const alone = ITEM.test(body) || HEADING.test(body) || (next !== undefined && (!next.trim() || ITEM.test(next)));
+    const alone = ITEM.test(body) || HEADING.test(body) || run[i] >= 3 || (next !== undefined && (!next.trim() || ITEM.test(next)));
     return alone ? `${body}.` : line;
   }).join("\n");
 }
@@ -185,6 +200,8 @@ export function spokenText(markdown: string): string {
     // Tables: a header row and its |---| line, and the rows after it.
     .replace(/(^|\n)[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}[\s\S]*?(?=\n[ \t]*(?!\|)|$)/g, `$1${TABLE}`);
   const plain = linkLabels(prose)
+    // A heart between words is a word ("I ❤️ Paris"): dropped with the other emoji, it was "I Paris".
+    .replace(/([\p{L}\p{N}])[ \t]*[\u2764\u2665]\uFE0F?[ \t]*(?=[\p{L}\p{N}])/gu, "$1 love ")
     .replace(EMOJI_BETWEEN, "$1. ")
     // Before a word, a space stays where there was one, or goes between two words the emoji joined ("Saved✅Next").
     .replace(EMOJI_ANY, (m: string, at: number, all: string) => (at > 0 && /[\p{L}\p{N}]/u.test(all[at + m.length] ?? "") && (/^[ \t]/.test(m) || /[\p{L}\p{N}]/u.test(all[at - 1])) ? " " : ""))
@@ -192,6 +209,10 @@ export function spokenText(markdown: string): string {
     // An item that was only emoji is no item.
     .replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]*$/gm, "")
     .replace(/<?\b(?:https?:\/\/|www\.)([^\s/<>()]+?)(?:[/?#][^\s<>()]*?)?>?(?=[.,;:!?)]*(?:\s|$))/gi, (_m, host: string) => host.replace(/^www\./i, ""))
+    // An address written without its scheme is said by its host too ("github.com/foo/bar": voice-speaking-2).
+    .replace(/(?<![\w@./~-])((?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|app|ai|co|edu|gov|uk|de|fr))\/[^\s<>()]*?(?=[.,;:!?)]*(?:\s|$))/gi, "$1")
+    // A line that is all bold is a heading ("**Done**"): it ends as one does (voice-speaking-3).
+    .replace(/^([ \t]*)\*\*(?=[^\s*])([^*\n]*[^\s*])\*\*[ \t]*$/gm, (_m, space: string, body: string) => `${space}${body}${ENDED.test(body) ? "" : "."}`)
     .replace(/(?<![\\`])(`+)(?!`)([^\n]*?)(?<!`)\1(?!`)/g, "$2")
     // Emphasis as CommonMark sees it: no space just inside a marker ("6 * 7 * 1" and "*.tmp and *.log" are said with their
     // stars), and underscores only around whole words ("__init__.py" keeps them).

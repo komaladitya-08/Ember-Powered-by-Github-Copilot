@@ -53,6 +53,13 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     ["Saved✅next time, ✅Done.", "Saved next time, Done."],
   ])("%j is said %j", (text, said) => expect(spokenText(text)).toBe(said));
 
+  it.each([
+    ["I ❤️ it.", "I love it."],
+    ["I ❤ Paris, and ♥️ jazz too.", "I love Paris, and love jazz too."],
+    ["It took 2h 15m, then 1h30m more.", "It took 2 hours 15 minutes, then 1 hour 30 minutes more."],
+    ["It's at github.com/foo/bar and docs.python.org/3/library.", "It's at github.com and docs.python.org."],
+  ])("%j is said %j, a heart as a word, a duration and an address without its path (voice-speaking-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
   it("says nothing for an answer that is only emoji", () => {
     expect(spokenText("🎉🎉")).toBe("");
     expect(spokenText("- 🎉\n- ✅")).toBe("");
@@ -63,7 +70,8 @@ describe("spokenText says money, times, paths and numbers as people say them, an
     "Use $HOME and A$5 as they are.",
     "The ratio is 16:9, and John 3:16 is a verse.",
     "It ran for 10:00:05 in all.",
-    "Read and/or write 1/2 of it, at github.com/foo/bar.",
+    "Read and/or write 1/2 of it, at github.com.",
+    "Open src/main.ts and notes.txt/old, about 15m away.",
     "Install C++ and © 2026 Ember™.",
   ])("leaves %j as it is", text => expect(spokenText(text)).toBe(text.replace("John 3:16", "John 3 16")));
 });
@@ -98,6 +106,11 @@ describe("spokenText", () => {
     // A line wrapped inside a paragraph is one sentence still, and what is shown in the bubble keeps its words.
     ["I opened the file and\nfound three errors.", "I opened the file and\nfound three errors."],
     ["Run this:\n\n```sh\nls\n```\n\nThen restart.", "Run this:\n(code shown in the bubble)\nThen restart."],
+    // Lines with no list marker, each a few words, are a list too; a line that is all bold is a heading.
+    ["Your windows\nFirefox\nFiles\nTerminal", "Your windows.\nFirefox.\nFiles.\nTerminal."],
+    ["**Done**\nI closed it.", "Done.\nI closed it."],
+    ["**Next steps:**\nOpen the file.", "Next steps:\nOpen the file."],
+    ["I looked at the\nfolder and found\nthree errors.", "I looked at the\nfolder and found\nthree errors."],
   ])("ends the lines of %j so they are said apart (voice-speaking-3)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
 
   // Stars and underscores that aren't emphasis are said as they are shown: a marker with a space on its inner side is
