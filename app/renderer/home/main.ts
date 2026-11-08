@@ -2059,13 +2059,15 @@ function syncPrivacyTerms(): void {
   for (const el of [copy, ...copy.querySelectorAll("[id]")]) el.removeAttribute("id");
   // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4); Work without
   // asking and the apps let in without asking are below too (safety-privacy-c4-1); other computers and commands are on
-  // or off as the settings and the policy leave them (safety-privacy-r4-2).
+  // or off as the settings and the policy leave them (safety-privacy-r4-2). Either is in force only where the policy in
+  // force allows it: held locked down after a policy change, the settings still say what the person left on
+  // (safety-privacy-v5-1).
   const s = settings;
   const a = lastAdmin;
   const fold = {
     screenImages: s?.screenImages !== false,
-    autonomy: !!s && s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION,
-    grants: !!s && !confirmEvery && Object.values(s.grants).includes("act"),
+    autonomy: !!s && s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION && !managed.has("autonomy"),
+    grants: !!s && !confirmEvery && !managed.has("grants") && Object.values(s.grants).includes("act"),
     ...(s && a ? { targets: targetsFoldRest(s, { source: a.error ? "error" : a.source, features: { wsl: a.features?.wsl, ssh: a.features?.ssh }, ...(a.commands ? { commands: a.commands } : {}) }, platform?.os) } : {}),
   };
   const walk = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);

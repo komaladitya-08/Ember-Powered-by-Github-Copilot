@@ -8,6 +8,7 @@ import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AdminPolicySchema, auditRetentionDays, commandMode, heldUntilRestart, managedKeys } from "../../app/main/admin";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
@@ -620,6 +621,32 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     await fold.locator("summary").click();
     expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
     expect(await page.locator("#privacy-terms li[data-icon='hand']").innerText()).toContain("It asks before acting in an app, and always before anything hard to undo.");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("never says Work without asking or apps let in without asking go ahead while Ember holds itself locked down after a policy change (safety-privacy-v5-1)", async () => {
+    // As main sends it once the policy changed mid-run: the settings still as the person left them (the store took its
+    // policy at start), the admin the held lockdown.
+    const held = heldUntilRestart({ policy: AdminPolicySchema.parse({ commands: { local: "on" } }), source: "/etc/ember/policy.json" });
+    const p = held.policy;
+    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const page = await open("privacy", {
+      settings: {
+        commands: { local: { on: true, askEvery: false, consent: agreed } },
+        autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } },
+        grants: { gedit: "act" },
+      },
+      admin: { source: held.source, error: held.error ?? null, held: true, managed: managedKeys(p), features: p.features, provider: null, confirmEveryAction: p.confirmEveryAction,
+        allowGrants: p.allowGrants, retentionDays: auditRetentionDays(held), neverLook: p.neverLook, commands: { local: commandMode(held, "local"), wsl: commandMode(held, "wsl"), ssh: commandMode(held, "ssh") }, sshHostsLimited: false },
+    });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const hand = await page.locator("#privacy-terms li[data-icon='hand']").innerText();
+    expect(hand).not.toContain("Work without asking is on");
+    expect(hand).not.toContain("without asking (below)");
+    expect(hand).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never types passwords\./);
+    expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
     expect(page.errors).toEqual([]);
     await page.close();
   });
