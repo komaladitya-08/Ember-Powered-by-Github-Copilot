@@ -3,7 +3,8 @@
  * announcement with a Stop window, only when the user's OWN words for this task explicitly ask for that kind of
  * operation on that target and that object. It reads only `userWords` (the worker's `commandWords`: never the
  * conductor's goal, the model's text, screen text, files or output; critique security-1); empty words never match.
- * Deterministic and conservative: every finding must be covered by a row whose verbs and objects the words name, and
+ * Deterministic and conservative: every finding must be covered by a row whose verbs the words ask for and whose
+ * objects that verb acts on (actedOn: never a thing only placed, described or kept by other words), and
  * anything broader than what they name (force, wildcards, recursion the user didn't ask for, another branch, remote,
  * host or changelist) asks. Secrets, download-and-run, outliving the kill switch and anything unclear always ask.
  * Pure.
@@ -206,8 +207,7 @@ function skipLead(c: readonly string[], k: number): [number, boolean] {
  */
 function requestStarts(raw: string): string[][] {
   const out: string[][] = [];
-  for (const sentence of raw.split(/\r?\n+|(?<=[.!?;])\s+/)) {
-    if (sentence.trim() === "") continue;
+  for (const sentence of sentencesOf(raw)) {
     const question = /\?["'”’)\]]*\s*$/.test(sentence);
     const clauses: string[][] = [];
     for (const part of sentence.split(/[,:;]\s+|\s+[-–—]\s+/)) {
@@ -217,21 +217,129 @@ function requestStarts(raw: string): string[][] {
       }
       if (cur.length) clauses.push(cur);
     }
-    let politeFirst = false;
-    clauses.forEach((c, n) => {
-      const [k, polite] = skipLead(c, 0);
-      if (n === 0) politeFirst = polite;
-      // A question asks for something only when it is a way of asking ("can you delete build/?").
-      if (question && !politeFirst) return;
-      if (c.some(x => HYPOTHETICAL.has(x))) return;
-      if (k < c.length) out.push(c.slice(k));
-      if (PLACE_WORDS.has(c[k] ?? "")) {
-        for (let j = k + 2; j <= k + 4 && j < c.length; j++) {
-          if (c.slice(k + 1, j).some(x => NOT_A_PLACE.has(x))) break;
-          out.push(c.slice(j));
+    const polite = { first: false };
+    clauses.forEach((c, n) => out.push(...clauseStarts(c, n, question, polite)));
+  }
+  return out;
+}
+
+/** The sentences of the user's words (at line breaks and after ".", "!", "?" or ";"). */
+const sentencesOf = (raw: string): string[] => raw.split(/\r?\n+|(?<=[.!?;])\s+/).filter(s => s.trim() !== "");
+
+/** Where a request's verb can stand in clause `n` of a sentence (requestStarts), as the words from there on. */
+function clauseStarts(c: readonly string[], n: number, question: boolean, polite: { first: boolean }): string[][] {
+  const out: string[][] = [];
+  const [k, isPolite] = skipLead(c, 0);
+  if (n === 0) polite.first = isPolite;
+  // A question asks for something only when it is a way of asking ("can you delete build/?").
+  if (question && !polite.first) return out;
+  if (c.some(x => HYPOTHETICAL.has(x))) return out;
+  if (k < c.length) out.push(c.slice(k));
+  if (PLACE_WORDS.has(c[k] ?? "")) {
+    for (let j = k + 2; j <= k + 4 && j < c.length; j++) {
+      if (c.slice(k + 1, j).some(x => NOT_A_PLACE.has(x))) break;
+      out.push(c.slice(j));
+    }
+  }
+  return out;
+}
+
+/**
+ * Words that may begin a clause that only names more of what the verb before it acts on ("delete build/ and the dist
+ * folder", "kill 1234 and 5678"): a determiner, an adjective or a plural noun, never a word that is also a verb
+ * ("branch", "stash", "pull", "process", "file"), so "stop apache and check nginx" ends the list at "check".
+ */
+const LISTS_MORE = new Set([
+  "the", "my", "our", "your", "their", "its", "this", "that", "these", "those", "both", "all", "a", "an", "any", "each",
+  "every", "other", "old", "unused", "stale", "temp", "temporary", "untracked", "ignored", "generated", "extra",
+  "folders", "directories", "dirs", "files", "branches", "stashes", "packages", "images", "changelists", "prs", "processes",
+]);
+/** Words between a thing and what is said of it ("build itself stays", "the build folder is huge"). */
+const OF_THING = new Set(["itself", "themselves", "too", "also", "still", "folder", "directory", "dir", "file", "branch", "service", "process", "package", "image"]);
+/**
+ * Words that say something of the thing before them rather than ask for anything ("1234 is my editor", "main stays",
+ * "postgresql has to stay up", "nginx is fine"): that thing isn't what the verb acts on.
+ */
+const PREDICATE = new Set([
+  "is", "are", "was", "were", "isn", "aren", "wasn", "weren", "stays", "stay", "stayed", "remains", "remain", "must",
+  "mustn", "should", "shouldn", "has", "have", "needs", "need", "keeps", "can", "cannot", "will", "won", "shall",
+  "belongs", "belong", "matters", "means", "holds", "contains", "runs", "looks", "seems", "sits", "lives", "does",
+  "doesn",
+]);
+const RELATIVE = new Set(["that", "which", "who"]);
+
+/**
+ * The parts of the user's words a row's verb acts on (commands-remote-c3-1): each clause that asks for one of `verbs`
+ * (as requestStarts reads it), with the clauses after it that only list more things for it ("delete build/, dist/ and
+ * the cache folder"), up to the next verb, a new sentence, a colon, a dash, "then", "but" or "so". What the words say
+ * of a thing (its subject before "is", "stays", "must", "has to" and the like: "kill 5678, 1234 is my editor") is cut
+ * out, so it never counts as named. Each part is returned as words of its own for the row to read. Conservative: a
+ * clause that begins with any other word ends the list, and only makes the step ask.
+ */
+function actedOn(raw: string, verbs: readonly string[], names: (token: string) => boolean): string[] {
+  const out: string[] = [];
+  const asksVerb = (starts: readonly string[][]) => verbs.some(v => {
+    const parts = v.split(" ");
+    return starts.some(s => parts.every((p, j) => s[j] === p));
+  });
+  const nounish = (t: string): boolean => {
+    const ws = userWordList(t);
+    if (ws.length === 0) return false;
+    if (ws.every(x => LISTS_MORE.has(x) || OF_THING.has(x)) || /^#?\d+$/.test(t)) return true;
+    return /[\\/*~]|\p{L}\.\p{L}|^\.\p{L}/u.test(t) || names(t);
+  };
+  for (const sentence of sentencesOf(raw)) {
+    const question = /\?["'”’)\]]*\s*$/.test(sentence);
+    // Clauses as written: [tokens, whether a list joined it to the clause before ("," "and" "or" "plus")].
+    const clauses: [string[], boolean][] = [];
+    const pieces = sentence.split(/([,:;]\s+|\s+[-–—]\s+)/);
+    let list = false;
+    for (let p = 0; p < pieces.length; p++) {
+      if (p % 2 === 1) { list = /^,/.test(pieces[p]); continue; }
+      let cur: string[] = [];
+      for (const t of pieces[p].split(/\s+/).filter(x => x !== "")) {
+        const ws = userWordList(t);
+        if (ws.some(x => JOINERS.has(x))) {
+          if (cur.length) clauses.push([cur, list]);
+          cur = [];
+          list = ws.length === 1 && ["and", "or", "plus"].includes(ws[0]);
+          continue;
         }
+        cur.push(t);
       }
+      if (cur.length) clauses.push([cur, list]);
+    }
+    const polite = { first: false };
+    let chain: string[] | null = null;
+    const end = () => { if (chain) out.push(chain.join(" and ")); chain = null; };
+    clauses.forEach(([tokens, listed], n) => {
+      const starts = clauseStarts(userWordList(tokens.join(" ")), n, question, polite);
+      const leads = asksVerb(starts);
+      const first = tokens.find(t => !userWordList(t).every(x => FILLERS.has(x)));
+      if (!leads && !(chain && listed && first !== undefined && nounish(first))) { end(); return; }
+      if (leads) end();
+      // Cut from the thing something is said of ("…, 1234 is my editor"), and end the list there.
+      let cut = tokens.length;
+      const word = (k: number) => userWordList(tokens[k] ?? "")[0] ?? "";
+      for (let k = 0; k < tokens.length && cut === tokens.length; k++) {
+        const ws = userWordList(tokens[k]);
+        // "main's sacred" says it in one word; otherwise a word such as "is" or "must" right after a thing ("1234 is my
+        // editor", "build itself stays"). "can you", "I need to" and "it is huge" say nothing of a thing the step names.
+        const says = ws.length === 2 && ws[1] === "s" && names(ws[0]);
+        if (!says && !(PREDICATE.has(ws[0] ?? "") && k > 0 && nounish(tokens[k - 1]))) continue;
+        // "the build folder that is in dist" says where it is (folderNamed), not something of it.
+        if (RELATIVE.has(word(k - 1)) && IN_FOLDER.has(word(k + 1))) continue;
+        let j = k;
+        while (j > 0 && !RELATIVE.has(word(j - 1)) && nounish(tokens[j - 1])) j--;
+        // "the build folder that is huge": what follows "that" is about it, the folder before it is still asked for.
+        if (j > 0 && RELATIVE.has(word(j - 1))) j--;
+        cut = j;
+      }
+      const kept = tokens.slice(0, cut).join(" ").replace(/\?+(?=["'”’)\]]*$)/, "");
+      chain = [...(chain ?? []), ...(kept.trim() !== "" ? [kept] : [])];
+      if (cut < tokens.length) end();
     });
+    end();
   }
   return out;
 }
@@ -254,41 +362,55 @@ function wordsOf(userWords: string): Words {
 const IN_FOLDER = new Set(["in", "inside", "within", "under"]);
 const AFTER_OBJECT = new Set(["folder", "folders", "directory", "directories", "dir", "file", "files"]);
 const BEFORE_FOLDER = new Set(["the", "my", "our", "your", "this", "that"]);
+/** "the build folder that is in dist", "which sits inside docs". */
+const SAYS_WHERE = new Set(["that", "which", "that's", "is", "are", "sits", "lives"]);
+/** Words after "in" that say when or how, not which folder ("in a moment", "in the background", "in one go"). */
+const NOT_A_FOLDER = new Set([
+  "a", "an", "one", "minute", "minutes", "moment", "second", "seconds", "sec", "hour", "hours", "bit", "while",
+  "background", "parallel", "order", "case", "turn", "time", "advance", "full", "go", "bulk", "meantime", "future",
+]);
+/** Words after "in" that name the task's own folder ("in this folder", "in the repo", "in here"): no other one. */
+const HERE_FOLDER = new Set(["folder", "directory", "dir", "repo", "repository", "project", "here", "current", "workspace", "checkout"]);
 
 /**
- * The folder the user's words put the path at token `idx` in, when they name one by a path or a name with a dot, a
- * hyphen or a digit ("delete build/ in my-app", "the build folder in packages/app"), else null. Everyday words ("in my
- * home folder") and amounts ("in 5 minutes") name none.
+ * The folder the user's words put the path at token `idx` in ("delete build/ in my-app", "the build folder in
+ * packages/app", "the build folder in dist"), "~" for the home folder ("in my home folder"), else null. Any word
+ * there names a folder (commands-remote-c3-1: "the build folder in dist" is dist/build, never ./build); amounts ("in 5
+ * minutes"), times and ways ("in a moment", "in the background") and the task's own folder ("in this repo") name none.
  */
 function folderNamed(idx: number, w: Words): string | null {
   let k = idx + 1;
-  while (AFTER_OBJECT.has(w.tokens[k] ?? "")) k++;
+  while (AFTER_OBJECT.has(w.tokens[k] ?? "") || SAYS_WHERE.has(w.tokens[k] ?? "")) k++;
   if (!IN_FOLDER.has(w.tokens[k] ?? "")) return null;
   k++;
   while (BEFORE_FOLDER.has(w.tokens[k] ?? "")) k++;
   const t = w.tokens[k] ?? "";
-  if (/^\d+(?:[.,:/-]\d+)*[a-z]{0,3}$/i.test(t)) return null;
-  return /[\\/]/.test(t) || /^[\p{L}\p{N}_]+(?:[.-][\p{L}\p{N}_]+)+$/u.test(t) || /\p{L}\d|\d\p{L}/u.test(t) ? t : null;
+  if (t === "" || /^\d+(?:[.,:/-]\d+)*[a-z]{0,3}$/i.test(t)) return null;
+  if (NOT_A_FOLDER.has(t) || HERE_FOLDER.has(t)) return null;
+  if (t === "home" || t === "~") return "~";
+  return t;
 }
 
 /**
  * Whether `resolved` is directly in a folder the words named (folderNamed): the folder's path, as written, ends the
- * folders above it ("my-app" in /home/ana/my-app/build, "packages/app" in …/packages/app/build). Review #31: once
- * "in my-app" no longer counts as another computer, the path must really be in it, and not in a folder further down
- * (/home/ana/my-app/packages/core/build is not "build/ in my-app").
+ * folders above it ("my-app" in /home/ana/my-app/build, "packages/app" in …/packages/app/build), or "~" is the home
+ * folder itself. Review #31: once "in my-app" no longer counts as another computer, the path must really be in it, and
+ * not in a folder further down (/home/ana/my-app/packages/core/build is not "build/ in my-app").
  */
-function inNamedFolder(resolved: string, folder: string): boolean {
+function inNamedFolder(resolved: string, folder: string, home: string): boolean {
   const above = resolved.toLowerCase().split(/[\\/]+/).filter(Boolean).slice(0, -1);
-  const want = normPath(folder).split(/[\\/]+/).filter(x => x !== "" && x !== ".");
-  if (want.length === 0 || want.length > above.length) return false;
+  const want = folder === "~"
+    ? home.toLowerCase().split(/[\\/]+/).filter(Boolean)
+    : normPath(folder).split(/[\\/]+/).filter(x => x !== "" && x !== ".");
+  if (want.length === 0 || want.length > above.length || (folder === "~" && want.length !== above.length)) return false;
   const tail = above.slice(above.length - want.length);
   return want.every((x, j) => tail[j] === x);
 }
 
 /** The path at `idx` is where the words put it: in the folder they named after it, when they named one. */
-const whereNamed = (resolved: string, idx: number, w: Words): boolean => {
+const whereNamed = (resolved: string, idx: number, w: Words, ctx: Ctx): boolean => {
   const folder = folderNamed(idx, w);
-  return folder === null || inNamedFolder(resolved, folder);
+  return folder === null || inNamedFolder(resolved, folder, ctx.home);
 };
 
 /**
@@ -338,7 +460,8 @@ function envOf(ctx: Ctx): PathEnv {
   return pathEnv({ flavour: flavourOf(ctx.os), os: ctx.os, home: ctx.home || null, cwd: ctx.cwd || null, ember: [] });
 }
 
-type RowFn = (fs: Finding[], w: Words, ctx: Ctx, all: readonly Finding[]) => IntentMatch | null;
+/** A row: its announcement when the part of the words its verb acts on (`w`) covers the findings, else null. */
+type RowFn = (fs: Finding[], w: Words, ctx: Ctx, all: readonly Finding[], whole: Words) => IntentMatch | null;
 
 /** git push (critique security-8): bare pushes need single-branch git facts; explicit refspecs must be named. */
 function gitPush(force: boolean): RowFn {
@@ -428,7 +551,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     if (objs.length === 0 || fs.some(f => f.widening.some(x => x === "--source" || x === "real-path"))) return null;
     for (const o of objs) {
       const idx = o.resolved ? pathToken(o, w, ctx) : -1;
-      if (idx < 0 || !whereNamed(o.resolved!, idx, w)) return null;
+      if (idx < 0 || !whereNamed(o.resolved!, idx, w, ctx)) return null;
     }
     return { intent: "git.discard", announce: `Discarding changes to ${joinList(objs.map(o => o.text))}, as you asked.` };
   },
@@ -458,7 +581,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
         if (["/", "~", ".", "..", "*", "\\"].includes(o.text) || /^[A-Za-z]:\\?$/.test(o.text)) return null;
         if (isBroadPath(o.resolved, env)) return null;
         const idx = o.kind === "glob" ? w.tokens.indexOf(o.text.toLowerCase()) : pathToken(o, w, ctx);
-        if (idx < 0 || !whereNamed(o.resolved, idx, w)) return null;
+        if (idx < 0 || !whereNamed(o.resolved, idx, w, ctx)) return null;
         const inside = isUnder(o.resolved, ctx.cwd, env) || (ctx.home !== "" && isUnder(o.resolved, ctx.home, env));
         if (!inside && !w.tokens.some(t => normPath(t) === normPath(o.resolved!) || (isAbsoluteText(o.text, ctx.os) && normPath(t) === normPath(o.text)))) return null;
         if (recursive && !recursionNear(idx, w)) return null;
@@ -475,7 +598,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
       if (f.widening.includes("real-path")) return null;
       const o = f.objects.find(x => x.kind === "path");
       const idx = o?.resolved ? pathToken(o, w, ctx) : -1;
-      if (!o || !o.resolved || idx < 0 || !whereNamed(o.resolved, idx, w)) return null;
+      if (!o || !o.resolved || idx < 0 || !whereNamed(o.resolved, idx, w, ctx)) return null;
       if (homeDotFile(o.resolved, env)) return null;
       texts.push(o.text);
     }
@@ -501,10 +624,11 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     if (fs.some(f => f.widening.some(x => /^(-B|--base|-H|--head|-R|--repo|--web|-w)$/.test(x)))) return null;
     return { intent: "gh.pr.create", announce: "Opening a pull request, as you asked." };
   },
-  "gh.pr.merge": (fs, w) => {
+  "gh.pr.merge": (fs, w, _ctx, _all, whole) => {
     if (!asks(w, ["merge"]) || !hasWord(w.list, ["pull request", "pr"])) return null;
     if (fs.some(f => f.widening.some(x => /^(--admin|-R|--repo)$/.test(x)))) return null;
-    if (fs.some(f => f.rule === "gh.pr.merge.delete-branch") && !(asks(w, ["delete"]) && hasWord(w.list, ["branch"]))) return null;
+    // Deleting the branch is a request of its own ("merge pr 12 and delete the branch"), so it is read in all the words.
+    if (fs.some(f => f.rule === "gh.pr.merge.delete-branch") && !actedOn(whole.raw, ["delete"], () => false).some(p => hasWord(wordsOf(p).list, ["branch"]))) return null;
     const nums = [...new Set(fs.flatMap(f => f.objects.filter(o => o.kind === "other").map(o => o.text.replace(/^#/, ""))))];
     if (nums.some(n => !w.list.includes(n.toLowerCase()))) return null;
     // `gh pr merge` alone merges the current branch's pull request, which may not be the one the user numbered.
@@ -604,6 +728,14 @@ const ROWS: Readonly<Record<string, RowFn>> = {
   },
 };
 
+/** Whether a token of the user's words names this object (its text, its last segment or its name without a suffix). */
+function namesObject(o: CommandObject, token: string): boolean {
+  const t = token.replace(/^[("'`“‘[{<]+|[)"'`”’\]}>.,;:!?]+$/g, "");
+  if (t === "" || o.text === "") return false;
+  const forms = [o.text, o.text.replace(/\.service$/i, ""), o.text.replace(/(:[^/:]+)?(@sha256:[0-9a-f]+)?$/i, "")];
+  return forms.some(x => x !== "" && (normPath(x) === normPath(t) || (lastSegment(x) !== "" && lastSegment(x) === lastSegment(t)) || nameNamed(x, t)));
+}
+
 function isAbsoluteText(p: string, os: OS): boolean {
   return os === "win32" ? /^[A-Za-z]:[\\/]|^[\\/]{2}/.test(p) : p.startsWith("/");
 }
@@ -652,7 +784,13 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
   const parts: IntentMatch[] = [];
   for (const [row, fs] of groups) {
     const fn = ROWS[row];
-    const m = fn ? fn(fs, w, ctx, F) : null;
+    if (!fn) return null;
+    // Each row reads only what its verb acts on (commands-remote-c3-1): "kill 5678, 1234 is my editor" never covers
+    // `kill 1234`, nor "stop apache and check nginx" `systemctl stop nginx`.
+    const names = (t: string) => fs.some(f => f.objects.some(o => namesObject(o, t)));
+    const verbs = row.startsWith("git.push") ? ["push", "force push"] : ROW_VERBS[row] ?? [];
+    let m: IntentMatch | null = null;
+    for (const part of actedOn(w.raw, verbs, names)) if ((m = fn(fs, wordsOf(part), ctx, F, w))) break;
     if (!m) return null;
     parts.push(m);
   }

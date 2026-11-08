@@ -284,7 +284,12 @@ build/", "Ember, delete build/", "can you delete build/?" and "I want to delete 
 my branch?"), something already done ("I pushed my branch"), a maybe ("I might delete build/ later") and words about
 something else ("fix the script that deletes build/") don't, so the command asks. So do words that say not to, or
 that keep or leave something out ("don't delete build/", "delete everything but build/", "delete dist/ and keep
-build/", "instead of", "other than"), since the step may be on what you meant to keep. Anything broader than what you named asks: a force flag, a
+build/", "instead of", "other than"), since the step may be on what you meant to keep. Only what the verb you
+asked with acts on counts, in its own part of the sentence: "kill 5678, 1234 is my editor" doesn't cover `kill 1234`,
+"stop apache and check nginx" doesn't cover stopping nginx, and "delete my old branches, main stays" doesn't cover
+deleting main, so those ask; "delete build/, dist/ and the cache folder" covers all three. A folder you place a name
+in is where it must be: "delete the build folder in dist" covers `rm -r dist/build`, never `rm -r build`, and "in my
+home folder" means the home folder. Anything broader than what you named asks: a force flag, a
 wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
 as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
 build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).

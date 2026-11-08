@@ -340,7 +340,10 @@ describe("matchIntent: the folder the words put a path in (review #31)", () => {
     ["rm -r step2/cache", "clean up the cache folder in step2", "Deleting step2/cache, as you asked."],
     ["rm -r cache", "clean up the cache folder in step2", null],
     ["rm -r build", "delete build/ in 5 minutes", "Deleting build, as you asked."],
-    ["rm -r build", "delete build/ in my home folder", "Deleting build, as you asked."],
+    ["rm -r build", "delete build/ in a moment", "Deleting build, as you asked."],
+    ["rm -r build", "delete the build folder in this repo", "Deleting build, as you asked."],
+    // The home folder is a folder too: build/ there is not the task's build/ (commands-remote-c3-1).
+    ["rm -r build", "delete build/ in my home folder", null],
     ["echo x > notes.txt", "overwrite notes.txt in my-app", null],
     ["echo x > my-app/notes.txt", "overwrite notes.txt in my-app", "Overwriting my-app/notes.txt, as you asked."],
   ])("`%s` after %j", (cmd, words, said) => {
@@ -369,5 +372,62 @@ describe("matchIntent: the folder the words put a path in (review #31)", () => {
     expect(said("rm -r my-app/build/", "/home/ana", "delete build/ in my-app")).toBe("Deleting my-app/build/, as you asked.");
     expect(said("rm -r build", "/home/ana/my-app/packages/core", "delete build/ in packages/core")).toBe("Deleting build, as you asked.");
     expect(said("rm -r build", "/home/ana/my-app/packages/core", "delete build/ in my-app/packages")).toBeNull();
+    expect(said("rm -r build", "/home/ana", "delete build/ in my home folder")).toBe("Deleting build, as you asked.");
+  });
+
+  it("takes any word after \"in\" as the folder the path is in, so a path elsewhere asks (commands-remote-c3-1)", () => {
+    for (const [cmd, words] of [
+      ["rm -rf build", "delete the build folder in dist"],
+      ["rm -rf build", "delete the build folder inside docs"],
+      ["rm -rf build", "delete the build folder that is in dist"],
+      ["rm -rf cache", "delete the cache folder in src"],
+      ["echo x > notes.txt", "overwrite notes.txt in docs"],
+    ]) expect(announce(cmd, words), `${cmd} / ${words}`).toBeNull();
+    expect(announce("rm -rf dist/build", "delete the build folder in dist")).toBe("Deleting dist/build, as you asked.");
+    expect(announce("rm -rf dist/build", "delete the build folder that is in dist")).toBe("Deleting dist/build, as you asked.");
+    expect(announce("rm -rf src/cache", "delete the cache folder in src")).toBe("Deleting src/cache, as you asked.");
+  });
+});
+
+describe("matchIntent: only what the asked-for verb acts on (commands-remote-c3-1)", () => {
+  it.each([
+    // [command, words]: the object is named, but only to say what it is, that it stays, or for another verb.
+    ["rm -rf build", "Delete the old build folder in dist, build itself stays"],
+    ["kill 1234", "kill 5678, 1234 is my editor"],
+    ["kill 1234", "kill 5678 and 1234 is my editor"],
+    ["kill 1234", "kill 5678 since 1234 is my editor"],
+    ["kill 1234", "1234 is my editor; kill the stuck build"],
+    ["pkill code", "kill the stuck build, code is my editor"],
+    ["systemctl stop nginx", "stop apache and check nginx"],
+    ["systemctl stop nginx", "stop apache, then look at nginx"],
+    ["systemctl restart nginx", "restart apache, nginx is fine"],
+    ["systemctl stop postgresql", "stop nginx; postgresql has to stay up"],
+    ["systemctl stop postgresql", "stop nginx, postgresql must stay up"],
+    ["systemctl stop apache", "restart apache and stop nginx"],
+    ["git branch -D main", "delete the feature branch, main is sacred"],
+    ["git branch -D main", "delete my old branches, main stays"],
+    ["git branch -D main", "delete the feature branch, main's sacred"],
+    ["git push origin feature-x main", "push feature-x to origin and pull main"],
+    ["rm -r build dist", "delete build/ and dist/ is next"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBeNull();
+  });
+
+  it.each([
+    // What the verb itself acts on still announces, listed after it or beside words about something else.
+    ["kill 1234 5678", "kill 1234 and 5678", "Stopping 1234 and 5678, as you asked."],
+    ["kill 1234", "kill 1234 which is stuck", "Stopping 1234, as you asked."],
+    ["kill 1234", "kill 1234, 5678 is my editor", "Stopping 1234, as you asked."],
+    ["rm -r build dist", "delete build/ and dist/", "Deleting build and dist, as you asked."],
+    ["rm -r build dist", "delete build/, dist/", "Deleting build and dist, as you asked."],
+    ["rm -r build dist", "delete the build folder and the dist folder", "Deleting build and dist, as you asked."],
+    ["rm -r build", "delete build/ because it is huge", "Deleting build, as you asked."],
+    ["rm -r build", "delete the build folder that is huge", "Deleting build, as you asked."],
+    ["rm -r build", "delete build/ so I can rebuild it", "Deleting build, as you asked."],
+    ["systemctl restart nginx", "restart nginx and check apache", "Restarting nginx, as you asked."],
+    ["git branch -D old-ui", "delete the branch old-ui, main stays", "Deleting the branch old-ui, as you asked."],
+    ["git clean -fdx", "clean untracked and ignored files", "Deleting untracked files, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe(said);
   });
 });
