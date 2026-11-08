@@ -80,6 +80,12 @@ const field = input.parentElement!;
 const listenRow = document.getElementById("listen-once-row")!;
 let suggested: string[] = [];
 /**
+ * The suggestions' row has its room in this opening (it opened with some): kept until the next opening, so the box keeps
+ * its height and the field doesn't move while it is open (companion-r3-1: a question coming or going moved an empty
+ * field 48 px).
+ */
+let suggestRoom = false;
+/**
  * What main offers now, while the field holds a draft (companion-r2-1, companion-c2-2): the chips are put away then
  * (keeping their room), so the change waits until the field is cleared, and the field never jumps while it is typed in.
  */
@@ -166,9 +172,13 @@ window.emberAsk.onListenOnce(showListenOnce);
  * room, so the box keeps its height and the field doesn't jump (companion-v1: main keeps the box's bottom by Ember, and
  * the first letter moved the field 48 px down).
  */
-function showSuggestions(list: string[]): void {
+function showSuggestions(list: string[], opening = false): void {
   offered = null;
-  suggested = list.slice(0, 3);
+  if (opening) suggestRoom = list.length > 0;
+  // Only into the room the box opened with: ones that come into a box that opened with none wait for its next opening
+  // (the bubble shows them under their answer meanwhile), and none puts the row away with its chips (companion-r3-1).
+  suggested = suggestRoom ? list.slice(0, 3) : [];
+  if (!suggested.length && !opening) { syncSuggestions(); return; }
   for (const b of [...suggest.querySelectorAll("button")]) b.remove();
   for (const text of suggested) {
     const b = document.createElement("button");
@@ -181,8 +191,8 @@ function showSuggestions(list: string[]): void {
 }
 function syncSuggestions(): void {
   if (offered && input.value.trim() === "") { showSuggestions(offered); return; }
-  suggest.hidden = !suggested.length;
-  suggest.classList.toggle("away", input.value.trim() !== "");
+  suggest.hidden = !suggestRoom;
+  suggest.classList.toggle("away", input.value.trim() !== "" || !suggested.length);
 }
 /** Earlier questions (↑/↓), and what was being typed meanwhile. */
 const history = new AskHistory();
@@ -267,7 +277,7 @@ window.emberAsk.onContext(c => {
     tip.hidden = c.tip !== true;
     tip.textContent = tip.title = c.tip === true ? WAIT_TIP : "";
     shownRows = boxRows(1, false, c.tip === true, c.suggestions?.length ? 1 : 0, listenOnceShown(c.listenOnce) ? 2 : 0);
-    showSuggestions(c.suggestions ?? []);
+    showSuggestions(c.suggestions ?? [], true);
   }
   if (c.listenOnce) showListenOnce(c.listenOnce);
   else fit();

@@ -110,7 +110,9 @@ They share one emotion rig, so switching never changes behaviour.
   same as a row of 20 px capsules under its hint line while the field is empty (docs/ASSISTANT.md §7); a typed letter
   puts them out of sight but keeps their room, so the box and its field don't move. Neither shows any while a question
   is up, and the box shows the ones that answer or follow the answer ("Yes, please", "Close it", "Read it out") only
-  while that answer shows (`askSuggestions`; a change while a reply is typed waits until the field is cleared). A question's
+  while that answer shows (`askSuggestions`; a change while a reply is typed waits until the field is cleared). While
+  the box is open its row keeps the room it opened with: none to offer puts the row out of sight, and ones that come
+  into a box that opened with none wait for its next opening, so a question coming or going never moves the field. A question's
   answer ("Thanks! Carrying on.", "Okay, I won't.") stays 1.5 s; then what the question covered or held off shows
   again, or the bubble empties and the ring rests, so a task that ends on its card never leaves "Working" behind. A
   turn that only ran steps (it started a task and said nothing) leaves no "Working" bubble either, and one that
