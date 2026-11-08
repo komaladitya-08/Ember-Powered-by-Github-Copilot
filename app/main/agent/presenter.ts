@@ -106,8 +106,10 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens/i.test(m)) return CONVERSATION_TOO_LONG;
   if (/context.?(length|limit|window)/i.test(m)) return CONVERSATION_TOO_LONG;
   if (/too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
-  // The runtime's own connection went away ("Pending response rejected since connection got disposed").
-  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) {
+  // The runtime's own connection went away ("Pending response rejected since connection got disposed"). Its native
+  // client says "error sending request … client error (Connect): tunnel error / dns error …" for a proxy that refused
+  // the tunnel or a name that didn't resolve (integrations-r2-1).
+  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected|error sending request|client error \(connect\)|dns error|tunnel error|failed to lookup address/i.test(m)) {
     // The user's own model server on this computer (`local`): it is most likely not running, not the network (integrations-1).
     return mine && ctx.local ? "I can't reach the model server on this computer. Is it running? Start it, then ask again." : `I can't reach ${service} right now. Check the network, then ask again.`;
   }
