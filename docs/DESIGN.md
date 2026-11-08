@@ -413,7 +413,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   window is open, and Listen once's line is said through a status line of its own, which never says "Ember is already
   listening.", nor "Answer Ember's question first." while a conversation waits for that answer (shown under the button,
   as its description). While they say nothing new, both of those status lines are emptied, so reading the page never
-  finds a line beside the one shown that no longer holds.
+  finds a line beside the one shown that no longer holds. Hear me more clearly's line is said the same way, through a
+  status line of its own: once it has held, only when its words change, and never while the microphone opens or is
+  open for a request; none of its lines names Ember, which a screen reader saying it into the wake word's microphone
+  woke.
 - **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
   from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
 

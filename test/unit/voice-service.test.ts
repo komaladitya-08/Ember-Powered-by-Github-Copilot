@@ -184,6 +184,21 @@ describe("Hear me more clearly", () => {
     expect(electron.procs[0].kill).not.toHaveBeenCalled();
   });
 
+  it("says how it stands once as each voice process is ready, never \"Starting…\" between (voice-listening-c4-1)", async () => {
+    // Each ready set "starting" and then what checkClear found: the line under the switch changed twice as a Listen once
+    // with wake listening off opened its window, and a screen reader said it over the request.
+    const seen: string[] = [];
+    const { v } = service(true, { native: false, onNatural: () => { seen.push(v.clearStatus.state); } });
+    v.setClearHearing(true);
+    expect(v.clearStatus.state).toBe("needs-native");
+    v.listenOnce();
+    const [temporary] = electron.procs;
+    seen.length = 0;
+    temporary.emit("message", { type: "ready", loadMs: 20 });
+    expect(seen).not.toContain("starting");
+    expect(v.clearStatus.state).toBe("needs-native");
+  });
+
   it("fetches nothing where speech doesn't run natively", () => {
     const downloader = vi.fn();
     const { v } = service(true, { native: false, downloader });

@@ -1404,14 +1404,18 @@ export const NATURAL_HINT = naturalModelHint("kitten");
 /** Hear me more clearly's note: what it fetches and what it costs. */
 export const CLEAR_HINT = "Downloads a 482 MB speech model that gets about half as many words wrong, above all with an accent or across a room. Each request takes about 0.3 s longer and listening uses about 550 MB more memory. It runs on this computer, and nothing you say leaves it.";
 
-/** How Hear me more clearly stands, under its switch ("" while off). */
+/**
+ * How Hear me more clearly stands, under its switch ("" while off). Never with Ember's name: a screen reader says the
+ * line into the wake word's microphone, and "On. Ember writes what you say…" woke Ember and was sent as a request
+ * (voice-listening-c4-1).
+ */
 export function clearHearingLine(s: ClearHearingStatus | undefined): string {
   switch (s?.state) {
     case "downloading": return `Downloading… ${s.percent}%`;
     case "starting": return "Starting…";
-    case "on": return "On. Ember writes what you say with the clearer model.";
-    case "wont-load": return "It wouldn't start on this computer, so Ember is using its usual speech model.";
-    case "needs-native": return "This computer can't run it, so Ember is using its usual speech model.";
+    case "on": return "On. The clearer model writes what you say.";
+    case "wont-load": return "It wouldn't start on this computer, so the usual speech model writes what you say.";
+    case "needs-native": return "This computer can't run it, so the usual speech model writes what you say.";
     case "failed": return `${s.detail} Turn this off and on to try again.`;
     default: return "";
   }

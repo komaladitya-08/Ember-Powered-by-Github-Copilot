@@ -12,6 +12,7 @@ import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, conversationTurnChangeOf, type ConversationTurn, type ConversationTurnEnd, type HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
+import { heldLive } from "../shared/held-live";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
   memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, memoryTroubleText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateOut, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
@@ -2425,6 +2426,11 @@ let voiceTold = "";
  * comes back to as the window closes is the one said before it, so nothing is said then (voice-listening-c3-1).
  */
 const VOICE_LINE_SETTLE_MS = 1000;
+/**
+ * The microphone opens or is open for a request: a wake's window, a conversation's or Listen once's, or listening (or a
+ * Listen once's own voice process) starting. Status lines besides the voice line's are held then (held-live.ts).
+ */
+const micHeld = (v: VoiceStatus): boolean => v.state === "active" || v.state === "starting" || v.listenOnce?.phase === "starting" || v.listenOnce?.phase === "listening";
 let voiceLineSoon: ReturnType<typeof setTimeout> | undefined;
 /** The microphone's fix beside a voice error (Windows' privacy switch, macOS's permission), when the setup check has it. */
 function renderVoiceFix(): void {
@@ -2448,6 +2454,7 @@ $("voice-fix").addEventListener("click", () => {
 function renderVoice(v: VoiceStatus): void {
   if (v !== voice) showListenOnce(v.listenOnce);
   voice = v;
+  clearLive.hold(micHeld(v));
   renderVoiceFix();
   const text = heardThrough(v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);
   $("voice-text").textContent = text;
@@ -2592,12 +2599,21 @@ $("consent-yes").addEventListener("click", () => {
 $("consent-no").addEventListener("click", () => { consentClosed(); $("consent").hidden = true; $("wake").focus(); });
 /** The voice choice discloses the optional Kokoro download before switching. */
 const naturalUI = mountNaturalVoice({ save, live: voiceLive, managed: () => managed.has("naturalVoice") });
+/**
+ * Hear me more clearly's line, said through its own status line as the voice line is: once it has held, only when its
+ * words change, and never while the microphone opens or is open for a request (`micHeld`). Written on every voice push,
+ * a screen reader said it as Listen once opened, over the request after "Hey Ember" and into the conversation, where it
+ * was sent with the request or as one (voice-listening-c4-1). A download is said every 25 %.
+ */
+const clearLive = heldLive($("clear-live"));
 function renderNatural(): void {
   // Kitten remains the baseline choice even when speech must use the system voice.
   $("natural-row").hidden = false;
   naturalUI.status(voice?.natural, voice?.naturalModels ?? []);
   const clearLine = clearHearingLine(voice?.clear);
-  $("clear-text").textContent = clearLine;
+  if ($("clear-text").textContent !== clearLine) $("clear-text").textContent = clearLine;
+  const c = voice?.clear;
+  clearLive.say(c?.state === "downloading" ? clearHearingLine({ ...c, percent: progressStep(c.percent / 100) }) : clearLine);
 }
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("speak-rate").addEventListener("change", e => {

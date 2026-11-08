@@ -1461,8 +1461,11 @@ export class VoiceService {
         if (b?.wasmModels?.length) this.o.log.warn("voice.model_wasm_fallback", { models: b.wasmModels, detail: b.detail });
         this.clearLoaded = !!b?.clear;
         if (this.clearWanted && !this.clearFetch && this.clear.state !== "failed") {
-          this.setClear({ state: b?.clear ? "on" : this.rootOf("clear") === null ? "starting" : "wont-load" });
+          // Not fetched yet: checkClear says what comes next (it can't run here, or its download), never "Starting…"
+          // first. Home's line changed twice as each ready came, a temporary Listen once's as its window opened, and a
+          // screen reader said it over the request (voice-listening-c4-1).
           if (!b?.clear && this.rootOf("clear") === null) this.checkClear();
+          else this.setClear({ state: b?.clear ? "on" : "wont-load" });
         }
         // (A Listen once with wake listening off stays "Starting…" until its window opens: "Listening for “Ember”" was up
         // a moment, untrue, and a screen reader said it over the microphone as the request began: voice-listening-r3-1.)
