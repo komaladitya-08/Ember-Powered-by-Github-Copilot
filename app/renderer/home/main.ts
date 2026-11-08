@@ -1143,7 +1143,7 @@ function conversationTurn(value: unknown): void {
     // A request from the Ask box or by voice that the bubble says is still waiting: the line under Stop response (where
     // the settings key lands then) says so, not an older message's outcome, and goes once the wait does (home-r2-3). A
     // note about the draft (Edit's caution, the over-limit note) stays: the wait isn't the draft's (home-c3-1).
-    if (turn === "slow" && !answerStream.row) { if (composerLineYields(conversationComposeStatus.textContent ?? "")) conversationComposeStatus.textContent = waiting; }
+    if (turn === "slow" && !answerStream.row) { if (composerLineYields(conversationComposeStatus.textContent ?? "")) keepingComposer(() => { conversationComposeStatus.textContent = waiting; }); }
     else if (conversationComposeStatus.textContent === waiting) conversationComposeStatus.textContent = "";
   }
   endComposerWait();
@@ -1155,7 +1155,7 @@ void window.ember.conversationTurn().then(conversationTurn, () => undefined);
 window.ember.onStopped(() => {
   if (!conversationAwaitingReply) return;
   awaitingReply(false);
-  conversationComposeStatus.textContent = stoppedLine(COMPOSER_SAYS.stoppedAll);
+  keepingComposer(() => { conversationComposeStatus.textContent = stoppedLine(COMPOSER_SAYS.stoppedAll); });
 });
 let conversationLastAtSend: Entry | undefined;
 /** The composer's request main took, until its wait ends: given back if a Stop dropped it unsent (stoppedLine, home-r3-1). */
@@ -1467,7 +1467,7 @@ $("conversation-compose").addEventListener("submit", event => {
   if (send.getAttribute("aria-disabled") === "true") return;
   const text = conversationMessage.value;
   if (!text.trim() || text.length > CONVERSATION_REQUEST_LIMIT) {
-    conversationComposeStatus.textContent = text.trim() ? COMPOSER_OVER : COMPOSER_SAYS.empty;
+    keepingComposer(() => { conversationComposeStatus.textContent = text.trim() ? COMPOSER_OVER : COMPOSER_SAYS.empty; });
     conversationMessage.focus();
     return;
   }
@@ -1482,7 +1482,8 @@ $("conversation-compose").addEventListener("submit", event => {
   awaitingReply(true);
   conversationLastAtSend = conversationAll.at(-1);
   const generation = conversationGeneration;
-  conversationComposeStatus.textContent = COMPOSER_SAYS.sending;
+  // Each of the line's words while the send goes is brought into view under the buttons, where they push it (home-c3-2).
+  keepingComposer(() => { conversationComposeStatus.textContent = COMPOSER_SAYS.sending; });
   void window.ember.conversationSend(text).then(sent => {
     if (generation !== conversationGeneration) return;
     // Preserve any edits made while the acknowledgement was pending.
@@ -1493,7 +1494,7 @@ $("conversation-compose").addEventListener("submit", event => {
     // A typed "stop" stopped everything at once: no turn comes, so nothing is awaited (home-c1-1).
     if (sent === "stopped") {
       awaitingReply(false);
-      conversationComposeStatus.textContent = COMPOSER_SAYS.stoppedAll;
+      keepingComposer(() => { conversationComposeStatus.textContent = COMPOSER_SAYS.stoppedAll; });
       return;
     }
     if (!conversationAwaitingReply) return;
@@ -1501,12 +1502,12 @@ $("conversation-compose").addEventListener("submit", event => {
     conversationUnsent = text;
     // Main answers already (this request, or one before it that it waits behind): its end is this one's too.
     if (conversationTurnNow !== "idle") conversationTurnSeen = true;
-    conversationComposeStatus.textContent = conversationTurnNow === "slow" && !answerStream.row ? composerStillWaiting(agent?.service?.kind) : COMPOSER_THINKING;
+    keepingComposer(() => { conversationComposeStatus.textContent = conversationTurnNow === "slow" && !answerStream.row ? composerStillWaiting(agent?.service?.kind) : COMPOSER_THINKING; });
     endComposerWait();
   }, error => {
     if (generation !== conversationGeneration) return;
     awaitingReply(false);
-    conversationComposeStatus.textContent = ipcErrorText(error) || COMPOSER_SAYS.sendFailed;
+    keepingComposer(() => { conversationComposeStatus.textContent = ipcErrorText(error) || COMPOSER_SAYS.sendFailed; });
   }).finally(() => { if (generation === conversationGeneration) { send.removeAttribute("aria-disabled"); send.textContent = "Send"; } });
 });
 $("conversation-cancel-edit").addEventListener("click", () => {
@@ -1550,9 +1551,9 @@ $("conversation-stop").addEventListener("click", () => {
   void window.ember.conversationStop().then(stopped => {
     if (generation !== conversationGeneration) return;
     awaitingReply(false);
-    // (An older main answers nothing: as before, taken as stopped.)
-    conversationComposeStatus.textContent = stopped === false ? CONVERSATION_NOTHING_TO_STOP : stoppedLine(CONVERSATION_STOPPED);
-  }, () => { if (generation === conversationGeneration) conversationComposeStatus.textContent = COMPOSER_SAYS.stopFailed; })
+    // (An older main answers nothing: as before, taken as stopped.) Said under the buttons, in view (home-c3-2).
+    keepingComposer(() => { conversationComposeStatus.textContent = stopped === false ? CONVERSATION_NOTHING_TO_STOP : stoppedLine(CONVERSATION_STOPPED); });
+  }, () => { if (generation === conversationGeneration) keepingComposer(() => { conversationComposeStatus.textContent = COMPOSER_SAYS.stopFailed; }); })
     .finally(() => { if (generation === conversationGeneration) stop.removeAttribute("aria-disabled"); });
 });
 

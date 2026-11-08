@@ -19,7 +19,7 @@ declare global {
       resolveInitial(): void;
     };
     /** The journeys' preload (home() below): what Home asked main for, and main's events. */
-    __home: { sent: string[]; stops: number; news: number; copied: string[]; stopResult: boolean; sendResult: string | undefined; hold: boolean; release(): void; emit(name: string, value: unknown): void };
+    __home: { sent: string[]; stops: number; news: number; copied: string[]; stopResult: boolean; sendResult: string | undefined; sendError?: string; hold: boolean; release(): void; emit(name: string, value: unknown): void };
   }
 }
 
@@ -249,11 +249,11 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       // `hold`: Stop response and Copy wait for release() before main answers them.
       let held: (() => void)[] = [];
       const wait = () => h.hold ? new Promise<void>(resolve => { held.push(resolve); }) : Promise.resolve();
-      const h = window.__home = { sent: [] as string[], stops: 0, news: 0, copied: [] as string[], stopResult: true, sendResult: undefined as string | undefined, hold: false, release: () => { for (const r of held) r(); held = []; }, emit };
+      const h = window.__home = { sent: [] as string[], stops: 0, news: 0, copied: [] as string[], stopResult: true, sendResult: undefined as string | undefined, sendError: undefined as string | undefined, hold: false, release: () => { for (const r of held) r(); held = []; }, emit };
       window.ember = new Proxy({}, { get: (_target, name: string) => {
         if (name.startsWith("on")) return (fn: (value: unknown) => void) => { (listeners[name] ??= new Set()).add(fn); return () => { listeners[name]?.delete(fn); }; };
         if (name === "conversation") return async () => entries;
-        if (name === "conversationSend") return async (text: string) => { h.sent.push(text); await wait(); return h.sendResult; };
+        if (name === "conversationSend") return async (text: string) => { h.sent.push(text); await wait(); if (h.sendError) throw new Error(`Error invoking remote method 'agent:conversation-send': Error: ${h.sendError}`); return h.sendResult; };
         if (name === "conversationStop") return async () => { h.stops++; await wait(); return h.stopResult; };
         if (name === "conversationNew") return async () => { h.news++; emit("onConversation", []); };
         if (name === "copyText") return async (text: string) => { h.copied.push(text); await wait(); };
@@ -921,6 +921,63 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       const waiting = await rect(page, "#conversation-compose-status");
       expect(waiting.top).toBeGreaterThanOrEqual(0);
       expect(waiting.bottom).toBeLessThanOrEqual(waiting.height);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("brings the line under Send into view when it says why a send was refused, that a send is waiting, or how a Stop ended it, at 760×640 (home-c3-2)", async () => {
+    const seed = exchange(12);
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const inView = async () => { const r = await rect(page, "#conversation-compose-status"); return r.top >= 0 && r.bottom <= r.height; };
+      // Send's foot at the window's foot, as a reply leaves it: the line under it starts below the window.
+      const sendAtBottom = () => page.evaluate(() => { window.scrollBy(0, document.getElementById("conversation-send")!.getBoundingClientRect().bottom - innerHeight); });
+      await page.locator("#conversation-message").focus();
+      await page.keyboard.type("What should I do next?");
+      await page.keyboard.press("Control+Enter");
+      await turn(page, "thinking");
+      const after = await reply(page, seed, "What should I do next?", 7);
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      // Refused while Ember can't reach the model service: what to do is the line's second half, and it shows.
+      const refused = "Ember can't reach the model service right now. Your message is still here: send it again once you're online.";
+      await page.evaluate(e => { window.__home.sendError = e; }, refused);
+      await page.keyboard.type("Q2 while offline");
+      await page.keyboard.press("Control+Enter");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe(refused);
+      expect(await inView()).toBe(true);
+      expect(await page.locator("#conversation-message").inputValue()).toBe("Q2 while offline");
+      // A message copied, then a request from the Ask box came and went, leaving the line empty; then a send that waits for
+      // a reconnect (no line of its own yet): its "Thinking…" shows, and so does how Stop everything ended it.
+      await page.evaluate(() => { window.__home.sendError = undefined; });
+      await page.locator("#conversation-message").fill("");
+      await page.locator("#conversation li.ember").last().getByRole("button", { name: /^Copy/ }).click();
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Copied message.");
+      await turn(page, "slow");
+      await turn(page, "idle");
+      await page.evaluate(e => window.__home.emit("onConversation", e), after);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("");
+      await sendAtBottom();
+      await page.locator("#conversation-message").focus();
+      await page.keyboard.type("Q3 during reconnect");
+      await page.keyboard.press("Control+Enter");
+      await turn(page, "thinking");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(await inView()).toBe(true);
+      await page.evaluate(() => window.__home.emit("onStopped", "hotkey"));
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Stopped everything, running tasks included. Your message wasn't sent, so it's back here to edit or send again.");
+      expect(await inView()).toBe(true);
+      // Stop response's own outcome, said under it.
+      await page.locator("#conversation-message").fill("");
+      await page.keyboard.type("Q4");
+      await page.keyboard.press("Control+Enter");
+      await turn(page, "thinking");
+      await sendAtBottom();
+      await page.locator("#conversation-stop").focus();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here to edit or send again.");
+      expect(await inView()).toBe(true);
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
