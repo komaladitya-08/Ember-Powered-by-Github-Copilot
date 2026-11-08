@@ -344,6 +344,7 @@ describe("matchIntent: the folder the words put a path in (review #31)", () => {
     ["rm -r cache", "clean up the cache folder in step2", null],
     ["rm -r build", "delete build/ in 5 minutes", "Deleting build, as you asked."],
     ["rm -r build", "delete build/ in a moment", "Deleting build, as you asked."],
+    ["echo x > notes.txt", "overwrite notes.txt in place", "Overwriting notes.txt, as you asked."],
     ["rm -r build", "delete the build folder in this repo", "Deleting build, as you asked."],
     // The home folder is a folder too: build/ there is not the task's build/ (commands-remote-c3-1).
     ["rm -r build", "delete build/ in my home folder", null],

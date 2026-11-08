@@ -364,10 +364,11 @@ const AFTER_OBJECT = new Set(["folder", "folders", "directory", "directories", "
 const BEFORE_FOLDER = new Set(["the", "my", "our", "your", "this", "that"]);
 /** "the build folder that is in dist", "which sits inside docs". */
 const SAYS_WHERE = new Set(["that", "which", "that's", "is", "are", "sits", "lives"]);
-/** Words after "in" that say when or how, not which folder ("in a moment", "in the background", "in one go"). */
+/** Words after "in" that say when or how, not which folder ("in a moment", "in the background", "in place"). */
 const NOT_A_FOLDER = new Set([
   "a", "an", "one", "minute", "minutes", "moment", "second", "seconds", "sec", "hour", "hours", "bit", "while",
   "background", "parallel", "order", "case", "turn", "time", "advance", "full", "go", "bulk", "meantime", "future",
+  "place", "general", "fact", "particular", "short",
 ]);
 /** Words after "in" that name the task's own folder ("in this folder", "in the repo", "in here"): no other one. */
 const HERE_FOLDER = new Set(["folder", "directory", "dir", "repo", "repository", "project", "here", "current", "workspace", "checkout"]);
