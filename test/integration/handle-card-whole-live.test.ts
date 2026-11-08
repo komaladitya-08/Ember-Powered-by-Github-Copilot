@@ -26,7 +26,7 @@ const required = process.env.EMBER_ATSPI_TEST === "1" && process.platform === "l
 interface Box { top: number; bottom: number; ch: number; sh: number; lh: number; shown: boolean }
 interface Layout { vh: number; thought: Box; whole: Box; hint: Box; step: Box; actions: Box; task: Box }
 /** An ordinary question (no whole text, accessibility-visual-1): fitted, then squeezed, then fitted again; Allow's hold and what a click on it sent. */
-interface Plain { height: number; layout: Layout; held: string | null; squeezedHeld: string | null; squeezedClick: string[]; freedHeld: string | null; freedClick: string[] }
+interface Plain { height: number; layout: Layout; keys: { caps: string[]; text: string }; held: string | null; squeezedHeld: string | null; squeezedClick: string[]; freedHeld: string | null; freedClick: string[] }
 interface Report { size: string; height: number; layout: Layout; before: string[]; scrolled: string[]; squeezed: Layout; squeezedSent: string[]; fits: string[]; plain: Plain }
 
 /** Ember's own HandleWindow and page prefs, in Electron: the card for one text size, the question, what the page sent. */
@@ -100,6 +100,7 @@ app.whenReady().then(async () => {
   await sleep(1200);
   const plainHeight = card.win.getContentSize()[1];
   const plainLayout = await measure();
+  const plainKeys = await wc.executeJavaScript('({ caps: [...document.querySelectorAll("#step kbd")].map(k => k.textContent), text: document.getElementById("step").textContent })');
   const allowHeld = (): Promise<string | null> => wc.executeJavaScript('document.querySelector("#actions button").getAttribute("aria-disabled")');
   const clickAllow = async (): Promise<string[]> => {
     const at = await wc.executeJavaScript('(() => { const r = document.querySelector("#actions button").getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()') as { x: number; y: number };
@@ -119,7 +120,7 @@ app.whenReady().then(async () => {
   await sleep(500);
   const freedHeld = await allowHeld();
   const freedClick = await clickAllow();
-  const plain = { height: plainHeight, layout: plainLayout, held, squeezedHeld, squeezedClick, freedHeld, freedClick };
+  const plain = { height: plainHeight, layout: plainLayout, keys: plainKeys, held, squeezedHeld, squeezedClick, freedHeld, freedClick };
   process.stdout.write("RESULT " + JSON.stringify({ size, height, layout, before, scrolled, squeezed, squeezedSent, fits, plain }) + "\\n");
   app.exit(0);
 });
@@ -210,6 +211,14 @@ describe.skipIf(!required && (!xvfb || !built))("the corner card with a question
       // Room again: Allow works.
       expect(plain.freedHeld).toBeNull();
       expect(plain.freedClick).toEqual(["q4:allow"]);
+    }, 90_000);
+
+    it(`shows a question's keys as keycaps beside their words, as the bubble does (accessibility-visual-r3, ${size} text)`, async () => {
+      const { plain } = await report(size);
+      // It was one grey run of text: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now".
+      expect(plain.keys.caps).toEqual(["Ctrl", "Alt", "Y", "Ctrl", "Alt", "N"]);
+      expect(plain.keys.text).toBe("CtrlAltYallow · CtrlAltNnot now");
+      clear(plain.layout);
     }, 90_000);
   }
 });

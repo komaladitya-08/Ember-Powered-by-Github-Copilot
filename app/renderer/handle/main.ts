@@ -1,7 +1,7 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character, type Emotion } from "@ember/characters";
-import { AUTONOMOUS_TAG, RISKY_TAG, WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
+import { AUTONOMOUS_TAG, RISKY_TAG, WHOLE_READ_HINT, announcement, onPress, plainStream, stepParts, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
 import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type WholeText } from "../../shared/overlay";
 import { cardAutonomous, cardRisky, cardTask, cardText } from "./card";
 import { cardClear, cardNeed, linesKept, waitsForRoom, type CardMeasure, type CardRow } from "./fit";
@@ -190,6 +190,26 @@ function renderTarget(s: EmberState, given?: TargetBadge | null): void {
   $("target-text").textContent = badge.text;
 }
 
+/**
+ * The card's step row: the keys a question's hint names as keycaps beside their words, as the bubble draws them
+ * (stepParts; accessibility-visual-r3: one grey run of text here), each chord kept on one line with its word (the card
+ * is narrow), anything else as words. Drawn again only on a change.
+ */
+let stepShown: string | null = null;
+function drawStep(step: string | null): void {
+  const el = $("step");
+  el.hidden = !step;
+  if (step === stepShown) return;
+  stepShown = step;
+  const { lead, keys } = stepParts(step);
+  if (!keys) { el.textContent = step ?? ""; return; }
+  el.replaceChildren(...(lead ? [document.createTextNode(lead), document.createElement("br")] : []), ...keys.flatMap((k, i) => {
+    const hint = Object.assign(document.createElement("span"), { className: "key-hint" });
+    hint.append(...k.keys.map(key => Object.assign(document.createElement("kbd"), { textContent: key })), Object.assign(document.createElement("span"), { className: "key-word", textContent: k.word }));
+    return [...(i ? [document.createTextNode(" · ")] : []), hint];
+  }));
+}
+
 api.onState(s => {
   if (!fallback) renderTarget(s);
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
@@ -254,8 +274,7 @@ api.onState(s => {
   // mouse…", "I only caught the first part…") takes the step's place: without a compositor it has nowhere else to
   // show. A question keeps its keyboard hint there. A step the task row already shows isn't repeated.
   const step = b.visible && s.status && !asks ? s.status : b.visible && b.step !== task?.detail ? b.step : null;
-  $("step").hidden = !step;
-  $("step").textContent = step ?? "";
+  drawStep(step);
 
   document.body.classList.toggle("asking", actions.length > 0);
   $("actions").hidden = actions.length === 0;
