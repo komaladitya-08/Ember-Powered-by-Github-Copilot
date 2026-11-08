@@ -10,7 +10,7 @@ import type { SettingsPatch } from "../../app/main/settings";
 
 declare global {
   interface Window {
-    __fullNaturalTest: { patches: SettingsPatch[]; retries: number; downloads: number; hears: number; status(value: VoiceStatus): void };
+    __fullNaturalTest: { patches: SettingsPatch[]; retries: number; downloads: number; hears: number; status(value: VoiceStatus): void; heard(result: unknown): void };
     __naturalTest: {
       patches: SettingsPatch[]; fail: boolean; retries: number; managed: boolean;
       status(value: NaturalVoiceStatus): void;
@@ -159,7 +159,8 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("keeps the default voice sele
       const listeners: Record<string, Set<(value: unknown) => void>> = {};
       let current = seed.status;
       const emit = (name: string, value: unknown) => { for (const listener of listeners[name] ?? []) listener(value); };
-      const test = window.__fullNaturalTest = { patches: [] as SettingsPatch[], retries: 0, downloads: 0, hears: 0, status: (voice: VoiceStatus) => emit("onVoiceStatus", voice) };
+      const heard: ((r: unknown) => void)[] = [];
+      const test = window.__fullNaturalTest = { patches: [] as SettingsPatch[], retries: 0, downloads: 0, hears: 0, status: (voice: VoiceStatus) => emit("onVoiceStatus", voice), heard: (r: unknown) => { for (const fn of heard.splice(0)) fn(r); } };
       window.ember = new Proxy({}, { get: (_target, name: string) => {
         if (name.startsWith("on")) return (fn: (value: unknown) => void) => { (listeners[name] ??= new Set()).add(fn); return () => { listeners[name]?.delete(fn); }; };
         if (name === "getStatus") return async () => current;
@@ -169,7 +170,8 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("keeps the default voice sele
         };
         if (name === "downloadVoice") return async () => { test.downloads++; };
         if (name === "retryNaturalVoice") return async () => { test.retries++; };
-        if (name === "hearEmber") return async () => { test.hears++; return { spoke: true, voice: "kitten" }; };
+        // Main answers once the sample is heard (voice-speaking-r3).
+        if (name === "hearEmber") return () => { test.hears++; return new Promise(resolve => heard.push(resolve)); };
         return () => new Promise(() => undefined);
       } }) as EmberHomeApi;
     }, { status, voice: seedVoice });
@@ -200,6 +202,9 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("keeps the default voice sele
     const hear = page.locator("#voice-hear");
     expect(await hear.isEnabled()).toBe(true);
     await hear.click();
+    // No voice is named before one is heard (voice-speaking-r3).
+    await expect.poll(() => page.locator("#voice-hear-status").innerText()).toBe("Getting Ember's voice ready…");
+    await page.evaluate(() => window.__fullNaturalTest.heard({ spoke: true, voice: "kitten" }));
     await expect.poll(() => page.locator("#voice-hear-status").innerText()).toBe("Ember spoke in Kitten Nano.");
     expect(await page.evaluate(() => window.__fullNaturalTest.hears)).toBe(1);
     expect(await page.locator("#speak-rate").inputValue()).toBe("1");

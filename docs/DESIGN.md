@@ -137,11 +137,16 @@ They share one emotion rig, so switching never changes behaviour.
   decision moves. Streamed text is drawn at most 15 times a second. A card's plan dot fills as its
   step starts, and a finished card's tick settles in once on the reward spring; a failure just shows
   its mark (no shake, no flash). The Ask box grows out of Ember beneath it, and opens beside the
-  bubble, never on it (the bubble never moves for it). On Linux it takes clicks only on what it
+  bubble, or over or under it where it fits beside neither (larger text, a 1024-wide screen), never
+  on it nor on Ember (the bubble never moves for it). A bubble that comes up while the box is open
+  keeps off it where it can (never hiding for it); a question or "Listening…" that finds no room
+  moves the box aside once, and a question already shown never moves for the box. Without a
+  compositor the box moves off the corner card as it grows for a question. On Linux it takes clicks only on what it
   shows (an X input shape the page reports), so a click in its clear margins reaches the app
   beneath and closes it. The line under its field is as wide as the field while the quick look
-  runs; when it finds nothing to show, it narrows to its keys at the trailing edge. In Calm, each of them
-  fades over 150 ms instead.
+  runs; when it finds nothing to show, it narrows to its keys at the trailing edge. A long paste is kept
+  whole there as in Home's composer: from 1,800 characters a line under the field counts them, and over
+  2,000 says how many too many while Enter sends nothing. In Calm, each of them fades over 150 ms instead.
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
 - **Mini-Embers** mark tasks running in background windows or on Ember's desk.

@@ -1,6 +1,6 @@
 /**
  * The ask box's field: one line that grows to four as the user adds lines (Shift+Enter) or pastes several (a traceback,
- * a config file keep their lines), Enter sends, and a note says when the text reached the most that is sent; the box's
+ * a config file keep their lines), Enter sends, and a count shows near the most that is sent; the box's
  * first few openings on Windows and macOS say to wait for it. Pure and renderer-safe; the page measures and main sizes
  * the window. Its sizes grow with the text size (Settings > Comfort & access), as main grows the window (ask.ts).
  */
@@ -17,8 +17,21 @@ export function textScaleOf(value: string): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
-/** The note shown while the field holds as much as is sent (a longer paste was cut). */
-export const CUT_NOTE = `Only the first ${FIELD.maxChars} characters will be sent.`;
+/** From how many characters the box counts them (90% of the most that is sent, as Home's composer: home-5). */
+export const COUNT_FROM = 1800;
+const num = (k: number) => k.toLocaleString("en-GB");
+/**
+ * The count on its own line under the field once a request nears the most that is sent, and how far over it is
+ * (companion-i1): a paste is kept whole, never cut at the limit unseen, and nothing is sent until it fits. "" while
+ * well under the limit. Worded as Home's composer is (home/copy.ts composerCount).
+ */
+export function askCount(n: number): string {
+  if (n < COUNT_FROM) return "";
+  const over = n - FIELD.maxChars;
+  return `${num(n)} of ${num(FIELD.maxChars)} characters${over > 0 ? `, ${num(over)} too many` : ""}.`;
+}
+/** Said as a request goes over the limit, and when Enter is pressed while it is (companion-i1). */
+export const ASK_OVER = `This request is longer than ${num(FIELD.maxChars)} characters. Shorten it to send it.`;
 
 /**
  * The tip the box's first few openings show where Ember can't hold the letters typed while it opens (Windows, macOS):
@@ -64,8 +77,8 @@ export function historyKey(value: string, start: number, end: number, key: "Arro
   return key === "ArrowUp" ? !value.slice(0, start).includes("\n") : !value.slice(end).includes("\n");
 }
 
-/** The field holds as much as is sent: anything typed or pasted beyond it was left out, so the note shows. */
-export const atLimit = (value: string): boolean => value.length >= FIELD.maxChars;
+/** The request is longer than is sent: it isn't sent until it is shortened (companion-i1). */
+export const overLimit = (value: string): boolean => value.length > FIELD.maxChars;
 
 /** The send key as the keyboard names it: Return on a Mac, Enter elsewhere (`os` from main, in the page's address). */
 export const sendKey = (os: string | null): string => (os === "darwin" ? "Return" : "Enter");

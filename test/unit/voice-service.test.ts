@@ -43,7 +43,7 @@ const electron = vi.hoisted(() => {
 vi.mock("electron", () => electron);
 
 import { VoiceGate } from "../../app/voice/match";
-import { VoiceService, listenOnceInSettings, type VoiceOptions } from "../../app/main/voice";
+import { VoiceService, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import crypto from "node:crypto";
 import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
@@ -304,7 +304,23 @@ describe("VoiceService", () => {
     expect(main).not.toMatch(/Wait for Ember['’]s answer to finish\./);
     expect(main).toContain(`const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;`);
     expect(main).toMatch(/listenOnceStatus\(source\)\.phase === "ready"\) \{\s*\/\/[^\n]*\n\s*if \(agent\?\.answerOpen\) agent\.interruptAnswer\(\);/);
-    expect(main).toContain(`if (confirmer?.waiting) return blocked("Answer Ember's question first.");`);
+    expect(main).toContain(`if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return blocked("Answer Ember's question first.");`);
+  });
+
+  it("keeps Cancel listening for a Listen once under way when a task asks a question, and holds back a new one (companion-r1)", async () => {
+    // Pressed in Ask, then a question came before the request was said: the microphone still listens, so its control
+    // still says Cancel listening (it turned into a dimmed Listen once that took no press).
+    for (const phase of ["starting", "listening", "checking"] as const) expect(questionHoldsListen(true, { phase, detail: "" }), phase).toBe(false);
+    // Nothing under way from that control (or the other control's, which isn't passed): a question holds it back.
+    expect(questionHoldsListen(true, undefined)).toBe(true);
+    expect(questionHoldsListen(true, { phase: "ready", detail: "" })).toBe(true);
+    expect(questionHoldsListen(true, { phase: "blocked", detail: "The microphone is muted." })).toBe(true);
+    expect(questionHoldsListen(false, undefined)).toBe(false);
+    // Main asks the voice only for the control whose listen it is, before the question holds it back.
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    const at = (t: string) => main.indexOf(t);
+    expect(at(`if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");`)).toBeGreaterThan(0);
+    expect(at(`if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");`)).toBeLessThan(at("if (questionHoldsListen("));
   });
 
   it("says which microphone it hears through while it captures, and nothing once it doesn't (voice-listening-v2)", async () => {
@@ -1471,6 +1487,45 @@ describe("speech models", () => {
       expect(posted(electron.procs[0], "say")).toEqual([{ type: "say", id: 1, text: "Night Light is on." }]);
     });
 
+    it("says each piece of an answer in the answer's language, never judging one piece on its own (voice-speaking-r1)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("Here are three films you might like:", { lang: null });
+      v.speak("1. La La Land.", { append: true, lang: null });
+      await flush();
+      expect(posted(electron.procs[0], "say").map(m => (m as { text?: string }).text)).toEqual(["Here are three films you might like:", "1. La La Land."]);
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.anything());
+      // Speech that isn't an answer's is still judged whole.
+      v.speak("Playing La Vie en Rose.");
+      expect(posted(electron.procs[0], "say").at(-1)).toEqual(expect.objectContaining({ text: "Playing La Vie en Rose." }));
+    });
+
+    it("says another language's words only after the pieces Ember's own voice is still making, never ahead of them (voice-speaking-r1)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("Claro.", { lang: null });
+      await flush();
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      v.speak("Aquí tienes los archivos que pediste.", { append: true, lang: "es" });
+      await flush();
+      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.anything());
+      electron.procs[0].emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      electron.procs[0].emit("message", { type: "audio", id: 1, samples: new Float32Array(4), rate: 22_050, remaining: "" });
+      await flush();
+      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.anything());
+      electron.procs[0].emit("message", { type: "done", id: 1 });
+      await flush();
+      const sent = speech.webContents.send.mock.calls.map(c => c[0]);
+      expect(sent.lastIndexOf(VOICE.audioDone)).toBeLessThan(sent.lastIndexOf(VOICE.speak));
+      expect(speech.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, { text: "Aquí tienes los archivos que pediste.", append: true, lang: "es" });
+      // A hush drops what was waiting.
+      v.speak("Vale.", { lang: null });
+      v.speak("Hasta luego, y gracias por todo.", { append: true, lang: "es" });
+      v.hush();
+      electron.procs[0].emit("message", { type: "done", id: 2 });
+      await flush();
+      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.objectContaining({ text: "Hasta luego, y gracias por todo." }));
+    });
+
     it("loads the voice and its speak-only page when a request is likely, once, and lets them go when idle (voice-speaking-1)", async () => {
       vi.useFakeTimers();
       const { v } = service(true, { neuralVoice: true });
@@ -1676,6 +1731,21 @@ describe("speech models", () => {
       expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
       expect(v.isEnrolling).toBe(false);
     });
+
+    it("says so too when teaching starts while a conversation is listening, and the window it ends says it stopped (voice-listening-r2)", async () => {
+      const { v, states } = service(true, { voiceprint: () => null });
+      await v.setWanted(true);
+      const proc = electron.procs.at(-1)!;
+      proc.emit("message", { type: "ready", loadMs: 10 });
+      proc.emit("message", { type: "listening", on: true, reason: "conversation", window: "conversation", generation: 0 });
+      expect(states.at(-1)).toMatchObject({ s: "active" });
+      expect(v.enrol()).toBe(true);
+      expect(states.at(-1)).toEqual({ s: "waiting", detail: "Learning your voice. Until that's done, Ember hears only “Ember, stop”." });
+      // The voice process ends that window at once (engine.cancel()), and says so.
+      const { generation } = posted(proc, "enrol")[0] as { type: string; generation?: number };
+      proc.emit("message", { type: "listening", on: false, reason: "stop", window: "conversation", generation });
+      expect(states.at(-1)).toEqual({ s: "waiting", detail: "Learning your voice. Until that's done, Ember hears only “Ember, stop”." });
+    });
   });
 
   describe("the native build (Windows and macOS)", () => {
@@ -1753,6 +1823,39 @@ describe("speech models", () => {
       expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Night Light is on.", append: true });
     });
 
+    it("tells Hear Ember which voice it was heard in only once the sample starts, and when none spoke it (voice-speaking-r3)", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true, native: true });
+      let heard: unknown = "waiting";
+      void v.sample("This is how I sound.").then(r => { heard = r; });
+      await vi.advanceTimersByTimeAsync(2000);
+      // Kitten is still loading: nothing has been heard, so nothing is named yet.
+      expect(heard).toBe("waiting");
+      electron.procs[0].emit("message", { type: "ready", loadMs: 1800, rate: 22_050, voice: kitten() });
+      electron.procs[0].emit("message", { type: "audio", id: 1, samples: new Float32Array(4), rate: 22_050, remaining: "" });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(heard).toBe("waiting");
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      speaking(speech, true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(heard).toBe("kitten");
+      // Kitten too slow, and no voice at all: the line says none spoke, not that Kitten did.
+      const slow = service(true, { neuralVoice: true, native: true });
+      let none: unknown = "waiting";
+      void slow.v.sample("This is how I sound.").then(r => { none = r; });
+      electron.procs.at(-1)!.emit("message", { type: "error", message: "too slow here: 0.81 of real time", reason: "slow" });
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(none).toBe("waiting");
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(none).toBeNull();
+      // Cut off by other speech before it started: neither named nor failed.
+      let cut: unknown = "waiting";
+      void v.sample("This is how I sound.").then(r => { cut = r; });
+      v.speak("Your reminder is due.");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cut).toBe("stopped");
+    });
+
     it("says Kitten stopped working when it fails after it spoke, and brings it back on Try again (voice-speaking-6)", async () => {
       const { v } = service(true, { neuralVoice: true, native: true });
       v.speak("Night Light is on.");
@@ -1780,6 +1883,42 @@ describe("speech models", () => {
       expect(electron.procs).toHaveLength(2);
       electron.procs[1].emit("message", { type: "ready", loadMs: 900, rate: 22_050, voice: kitten() });
       expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
+    });
+
+    it("times Kitten again by itself, once, at a request a while after a busy moment made it too slow (voice-speaking-6)", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true, native: true });
+      v.speak("A reply.");
+      electron.procs[0].emit("message", { type: "error", message: "too slow here: 0.81 of real time", reason: "slow" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(v.naturalStatus).toEqual({ state: "too-slow", model: "kitten", voice: "system" });
+      // Straight after, the system voice goes on.
+      v.warmSpeech();
+      expect(electron.procs).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      v.warmSpeech();
+      expect(electron.procs).toHaveLength(2);
+      expect(v.naturalStatus).toEqual({ state: "checking", model: "kitten", voice: "system" });
+      electron.procs[1].emit("message", { type: "ready", loadMs: 900, rate: 22_050, voice: kitten() });
+      expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
+      v.speak("Back in Kitten.");
+      expect(posted(electron.procs[1], "say")).toEqual([expect.objectContaining({ text: "Back in Kitten." })]);
+      // Too slow again: once a session, then Try again in Settings is the way.
+      electron.procs[1].emit("message", { type: "error", message: "too slow here: 0.9 of real time", reason: "slow" });
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      v.warmSpeech();
+      expect(electron.procs).toHaveLength(2);
+      expect(v.naturalStatus).toEqual({ state: "too-slow", model: "kitten", voice: "system" });
+    });
+
+    it("never times Kitten again by itself when it couldn't load at all (voice-speaking-6)", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { neuralVoice: true, native: true });
+      v.speak("A reply.");
+      electron.procs[0].emit("exit", 1);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      v.warmSpeech();
+      expect(electron.procs).toHaveLength(1);
     });
 
     it("logs which voice speaks, on which build, how fast", async () => {

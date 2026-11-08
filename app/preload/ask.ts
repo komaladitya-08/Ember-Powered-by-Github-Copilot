@@ -6,6 +6,7 @@ const api: EmberAskApi = {
   askSuggestion: text => ipcRenderer.send(IPC.askSuggestion, text),
   close: () => ipcRenderer.send(IPC.askClose),
   onContext: fn => { ipcRenderer.on(IPC.askContext, (_e, c: AskContext) => fn(c)); },
+  onUnavailable: fn => { ipcRenderer.on(IPC.askUnavailable, (_e, w: unknown) => fn(typeof w === "string" && w.length <= 80 ? w : null)); },
   listenOnce: on => ipcRenderer.invoke(IPC.listenOnce, on),
   onListenOnce: fn => { ipcRenderer.on(IPC.listenOnceStatus, (_e, status: ListenOnceStatus) => fn(status)); },
   onTyped: fn => { ipcRenderer.on(IPC.askTyped, (_e, t: { text: string; submit: boolean; cancel: boolean }) => fn(t)); },

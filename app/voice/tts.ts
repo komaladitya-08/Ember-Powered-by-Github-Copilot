@@ -61,18 +61,30 @@ const ABBREVIATIONS = /(?:^|\s)(?:e\.g|i\.e|etc|vs|mr|mrs|ms|dr|st|no|approx|fig
 const SHORT_NAMES = /(?:^|\s)(?:Mon|Tue|Tues|Wed|Thu|Thur|Thurs|Fri|Sat|Sun|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.$/;
 
 /**
- * Where `text` can be cut after a sentence (or a paragraph): the indexes just past each ending, in order. A list's item
- * and a heading end at their line too, and a numbered step starts its own piece ("2. Choose Privacy"): its number is
- * never said at the end of the step before it (voice-speaking-v1).
+ * Where `text` can be cut after a sentence (or a paragraph): the indexes just past each ending after `from`, in order.
+ * A list's item and a heading end at their line too, and a numbered step starts its own piece ("2. Choose Privacy"):
+ * its number is never said at the end of the step before it (voice-speaking-v1). Each ending is checked by the few
+ * characters before it, never by all the text before it, so a long answer streams cheaply (voice-speaking-r4: a
+ * heading's lookbehind made a 3,000-character paragraph cost 4 s).
  */
-function sentenceEnds(text: string): number[] {
+function sentenceEnds(text: string, from = 0): number[] {
   const ends: number[] = [];
-  const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n|\n(?=[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S)|(?<=^[ \t]{0,3}#{1,6}[ \t]+\S[^\n]*)\n/gm;
+  const re = /[.!?…]+["”’')\]]*(?=\s)|\n[ \t]*\n|\n(?=[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\S)|(\n)/g;
+  re.lastIndex = from;
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const end = m.index + m[0].length;
-    const before = text.slice(0, end);
-    // "e.g." and "Dr." don't end a sentence, nor does a numbered list's "1." at the start of a line.
-    if (m[0].startsWith(".") && (ABBREVIATIONS.test(before) || SHORT_NAMES.test(before) || /(?:^|\n)[ \t]*\d+\.$/.test(before))) continue;
+    // A lone line break ends only a heading's line ("## Totals").
+    if (m[1]) {
+      const start = text.lastIndexOf("\n", m.index - 1) + 1;
+      if (!/^[ \t]{0,3}#{1,6}[ \t]+\S/.test(text.slice(start, Math.min(m.index, start + 12)))) continue;
+    }
+    // "e.g." and "Dr." don't end a sentence, nor does a numbered list's "1." at the start of a line (the longest of
+    // them is "approx.", so 16 characters show it whole, with what is before it).
+    if (m[0].startsWith(".")) {
+      const near = text.slice(Math.max(0, end - 16), end);
+      const line = text.slice(text.lastIndexOf("\n", m.index) + 1, end);
+      if (ABBREVIATIONS.test(near) || SHORT_NAMES.test(near) || (line.length <= 16 && /^[ \t]*\d+\.$/.test(line))) continue;
+    }
     ends.push(end);
   }
   return ends;
@@ -92,22 +104,24 @@ function cutAtClause(chunk: string, min: number, max: number): [string, string] 
 
 /**
  * Words a long sentence with no comma can be cut before: the voice pauses there as a speaker would ("I looked through
- * the folder you mentioned | and found…").
+ * the folder you mentioned | and found…"). Not "to", "for", "from" or "with", which so often follow a verb ("is going
+ * | to take" was said with a full stop's fall: voice-speaking-r2).
  */
-const JOINS = /\s+(?=(?:and|but|or|so|because|which|that|while|when|where|until|after|before|with|from|for|to|together)\s)/gi;
+const JOINS = /\s+(?=(?:and|but|or|so|because|which|that|while|when|where|until|after|before|together)\s)/gi;
 
 /**
  * Where to cut `chunk`: before its first joining word between `min` and `max` characters that leaves FIRST_WORDS words
- * or more before it, else at its last space before `max` (voice-speaking-8); -1 when neither fits.
+ * or more before it, else at its last space before `max` (voice-speaking-8); -1 when neither fits. `ok`: whether a cut
+ * there may be made (a stream's Markdown is closed there: voice-speaking-r2).
  */
-function joinAt(chunk: string, min: number, max: number): number {
+function joinAt(chunk: string, min: number, max: number, ok: (at: number) => boolean = () => true): number {
   for (const m of chunk.matchAll(JOINS)) {
     if (m.index < min) continue;
     if (m.index > max) break;
-    if ((chunk.slice(0, m.index).match(/[\p{L}\p{N}]+/gu) ?? []).length >= FIRST_WORDS) return m.index;
+    if ((chunk.slice(0, m.index).match(/[\p{L}\p{N}]+/gu) ?? []).length >= FIRST_WORDS && ok(m.index)) return m.index;
   }
-  const at = chunk.lastIndexOf(" ", max);
-  return at > min ? at : -1;
+  for (let at = chunk.lastIndexOf(" ", max); at > min; at = chunk.lastIndexOf(" ", at - 1)) if (ok(at)) return at;
+  return -1;
 }
 
 /** `chunk` cut where joinAt says, or null. */
@@ -254,8 +268,9 @@ export class SpeechStream {
     if (this.raw.length <= FIRST_MAX) return 0;
     const head = this.raw.slice(0, FIRST_MAX + 1);
     // Only on the answer's first line, as a sentence: not in a list, a heading, a quote or a table.
-    if (head.includes("\n") || speechMarkupOpen(head) || /^[ \t]*(?:[|#>*+-]|\d+[.)])/.test(head)) return 0;
-    return Math.max(0, joinAt(this.raw, FIRST_MIN, FIRST_MAX));
+    if (head.includes("\n") || /^[ \t]*(?:[|#>*+-]|\d+[.)])/.test(head)) return 0;
+    // Never inside a code span or a link's words: cut there, its backtick or its address would be said (voice-speaking-r2).
+    return Math.max(0, joinAt(this.raw, FIRST_MIN, FIRST_MAX, at => !speechMarkupOpen(this.raw.slice(0, at))));
   }
 
   /** The first clause break of the answer, when it can be said on its own (0: none yet). */
@@ -276,7 +291,7 @@ export class SpeechStream {
 
   private sentenceCut(): number {
     let best = 0;
-    for (const end of sentenceEnds(this.raw)) {
+    for (const end of sentenceEnds(this.raw, this.said)) {
       if (end <= this.said) continue;
       const before = this.raw.slice(0, end);
       if (speechMarkupOpen(before)) continue;

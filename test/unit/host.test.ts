@@ -115,6 +115,7 @@ import { SettingsStore } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { HISTORY_FILE, HistoryStore } from "../../app/main/agent/conversation-store";
 import { MemoryOwner } from "../../app/main/memory/owner";
+import { MemoryLearning } from "../../app/main/memory/learning";
 import { LOCKED_DESCRIBE } from "../../app/main/screen-lock";
 import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
 
@@ -4033,6 +4034,39 @@ describe("memory hears whose words a request was (review of PR #142, B2)", () =>
   });
 });
 
+
+describe("“remember…” while memory is off (memory-c1-1, memory-i1)", () => {
+  it("sends the request to the conversation, which keeps it until Ember closes, and says after the answer that memory won't", async () => {
+    vi.useFakeTimers();
+    try {
+      const learning = new MemoryLearning({ memory: { learn: () => ({ kind: "refused" }) } as never, inForce: () => false, questionsOn: () => false, askedAt: () => null, setAskedAt: () => undefined, idle: () => true, locked: () => false, say: () => true, openMemory: () => { throw new Error("Settings opened"); }, log: quiet });
+      const memory = { remember: () => "", context: () => "", forget: () => false, forgetAll: () => undefined, intent: (t: string, how: { own: boolean }) => learning.intent(t, how), rememberNote: (t: string) => learning.rememberNote(t) };
+      let bubble: any = null;
+      const { host } = makeHost({ memory, setState: (p: any) => { if (p.bubble) bubble = p.bubble; } });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      await host.ask("Keep in mind the file is in Downloads");
+      expect(conductorSession().sent.at(-1)).toContain("Keep in mind the file is in Downloads");
+      conductorSession().emit("assistant.message", { content: "Noted: the file is in Downloads." });
+      conductorSession().emit("session.idle", {});
+      const said = host.getTranscript().map(e => [e.who, e.text]);
+      expect(said.slice(-3)).toEqual([["you", "Keep in mind the file is in Downloads"], ["ember", "Noted: the file is in Downloads."], ["ember", "Memory is off, so I won't keep this after Ember closes."]]);
+      // The answer is read first; the note follows it, with Open Memory, never Settings opened on its own.
+      expect(bubble.title).not.toBe("Memory is off");
+      let seen: any = null;
+      for (let i = 0; i < 30 && !seen; i++) { await vi.advanceTimersByTimeAsync(1000); if (bubble?.title === "Memory is off" && bubble?.visible) seen = bubble; }
+      expect(seen).toMatchObject({ visible: true, title: "Memory is off", thought: "Memory is off, so I won't keep this after Ember closes.", actions: [{ id: "ui:memory", label: "Open Memory" }] });
+      // An ordinary request that starts with "forget" reaches the conversation too, with no note.
+      await host.ask("Forget what I said, open Firefox instead");
+      expect(conductorSession().sent.at(-1)).toContain("Forget what I said, open Firefox instead");
+      conductorSession().emit("assistant.message", { content: "Opening Firefox." });
+      conductorSession().emit("session.idle", {});
+      expect(host.getTranscript().at(-1)).toMatchObject({ who: "ember", text: "Opening Firefox." });
+      await host.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("memory erasure at account boundaries", () => {
   function failingMemory() {

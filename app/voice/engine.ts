@@ -552,6 +552,21 @@ const LONG_CAP_FRAMES = 625;
  * long from the press (ms), where it is sent as heard so far, `cut`. VoiceService's own wait is set above it.
  */
 export const MANUAL_MAX_MS = 20_000;
+/**
+ * …and only for speech that stands out from the room: its loudest 0.3 s (LOUD_FRAMES) this much (energy: 10 dB) over the
+ * window's first second (MANUAL_ROOM_FRAMES), or over the room's own noise. Without it, a TV or a colleague talking on
+ * when nothing was said kept "Listening…" up for 20 s, and their words went as the request (3 of 3 cases on the real
+ * models, where the window had ended at 8 s with "No request heard": voice-listening-c1-1). The user's own request,
+ * said up close over that talk, still goes on to its end.
+ */
+const MANUAL_OVER_ROOM = 10;
+const MANUAL_ROOM_FRAMES = 31;
+/**
+ * The VAD hears speech about 0.25 s after it starts: sound that stands out so in the last 8 frames before the deadline
+ * puts it back once, by this long (ms), for the VAD to say (speech begun at 7.9 s was "No request heard").
+ */
+const MANUAL_ONSET_FRAMES = 8;
+const MANUAL_ONSET_MS = 400;
 /** A request reaching the cap was cut when the speaker's voice was heard in its last second. */
 const STILL_TALKING_FRAMES = 32;
 const BREATH_FRAMES = 3;
@@ -607,13 +622,19 @@ type Mode =
   | { kind: "idle" }
   | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean; maybeAmber?: boolean };
 
-/** A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. */
-type PendingStop = { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean; checked?: boolean; bargeIn?: boolean };
+/**
+ * A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. `teaching`: the name
+ * spotted while Voice Match is taught (stopsOnly), a stop only if "stop" was said with it.
+ */
+type PendingStop = { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean; checked?: boolean; bargeIn?: boolean; teaching?: boolean };
 
 export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
   private manualFrom = 0;
   private manualReady = false;
+  /** Listen once: the frame energies of its first second (the room as it opened), and whether its deadline was put back for speech just begun (MANUAL_ONSET_MS). */
+  private manualRoom: number[] = [];
+  private manualOnset = false;
   /** What was heard for the request just emitted ("utterance"), for Voice Match; it never goes to main. */
   requestAudio: Float32Array | null = null;
   /** That audio starts with the wake phrase (heard with it in one breath): Voice Match vouches only for what follows it. */
@@ -819,11 +840,17 @@ export class VoiceEngine {
   /**
    * Voice Match is being taught (process.ts): its phrases sound like requests ("Hey Ember, open my calendar."), so no
    * wake, follow-up or request is taken, but "Ember, stop" still is, checked as ever (voice-listening-v1: it went unheard
-   * for as long as teaching lasted). The VAD is the enrolment's meanwhile: nothing here feeds it.
+   * for as long as teaching lasted). The real spotter takes the bare name first in "Ember, stop", and "Hey Ember" in "Hey
+   * Ember, stop", so the name is a stop too where the recognizer heard "stop" said with it, as while Ember speaks (only
+   * "ember_stop" counted, and it stopped 0 times in 24 on the real models: voice-listening-r1). The VAD is the
+   * enrolment's meanwhile: nothing here feeds it.
    */
   private onlyStops = false;
-  /** A request that trailed off, waiting until `until` for the rest of it (trailsOff); `t0`: when it was heard. */
-  private held: { text: string; audio: Float32Array; withWake: boolean; until: number; t0: number } | null = null;
+  /**
+   * A request that trailed off, waiting until `until` for the rest of it (trailsOff); `t0`: when it was heard; `level`:
+   * its loudness (soundLevel: with the wake phrase, when it was said in the same breath), which the rest must come near.
+   */
+  private held: { text: string; audio: Float32Array; withWake: boolean; until: number; t0: number; level: number } | null = null;
   stopsOnly(on: boolean): void {
     this.onlyStops = on;
     this.pendingWake = null;
@@ -911,6 +938,8 @@ export class VoiceEngine {
   listenOnce(from: number, ms: number): void {
     this.manualFrom = from;
     this.manualReady = false;
+    this.manualRoom = [];
+    this.manualOnset = false;
     this.peak = 0;
     this.wakePeak = 0;
     this.busyRoom = false;
@@ -918,6 +947,20 @@ export class VoiceEngine {
     this.tail = [];
     this.tailFrom = 0;
     this.mode = { kind: "listening", until: from + ms, ms, heardSpeech: false, first: false, reason: "manual", checkAt: null, keyword: "" };
+  }
+
+  /**
+   * At Listen once's deadline, does it wait on? Only for speech that stands out from the room as the window opened
+   * (MANUAL_OVER_ROOM): under way (the VAD hears it), or just begun (MANUAL_ONSET_FRAMES), once.
+   */
+  private manualGoesOn(now: number): boolean {
+    const silence = Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ** 2;
+    const over = Math.max(loudest(this.manualRoom), this.floor ** 2) * MANUAL_OVER_ROOM;
+    if (this.backend.speaking()) return loudest(this.segment) >= over;
+    if (this.manualOnset || !this.micLevels.slice(-MANUAL_ONSET_FRAMES).some(e => e >= over && e >= silence)) return false;
+    this.manualOnset = true;
+    if (this.mode.kind === "listening") this.mode.until = now + MANUAL_ONSET_MS;
+    return true;
   }
 
   /** Stop listening for a command, and drop a wake or stop still being checked (the kill switch, Esc). */
@@ -952,8 +995,8 @@ export class VoiceEngine {
         if (this.mode.kind === "listening") this.endListening("timeout");
         return;
       }
-      // No speech under way at the deadline: nothing more is waited for. Speech under way goes on (the end of feed()).
-      if (now >= this.mode.until && !this.backend.speaking()) { this.endListening("timeout"); return; }
+      // No speech of the user's under way at the deadline: nothing more is waited for. Speech under way goes on (the end of feed()).
+      if (now >= this.mode.until && !this.manualGoesOn(now)) { this.endListening("timeout"); return; }
       else if (capturedAt === undefined || capturedAt <= Math.max(this.manualFrom, this.selfSpeakingUntil)) return;
       else if (!this.manualReady) {
         this.manualReady = true;
@@ -973,6 +1016,7 @@ export class VoiceEngine {
     this.micLevels.push(energy);
     this.micSelf.push(own);
     if (this.micLevels.length > SPEAKERS_RING_FRAMES) { this.micLevels.shift(); this.micSelf.shift(); }
+    if (this.mode.kind === "listening" && this.mode.reason === "manual" && this.manualRoom.length < MANUAL_ROOM_FRAMES) this.manualRoom.push(energy);
 
     // Nobody is saying "Hey Ember" unless someone is speaking: the spotter (most of the idle CPU) rests
     // after half a second without speech, and the frames it missed are replayed when speech returns.
@@ -1014,7 +1058,12 @@ export class VoiceEngine {
 
     const checkAt = (at: number) => (this.o.verifyWake === false ? null : at + (this.o.checkAfterMs ?? (paused ? PAUSED_CHECK_MS : 0)));
     for (const keyword of keywords) {
-      if (this.onlyStops && keyword !== "ember_stop") continue;
+      if (this.onlyStops && keyword !== "ember_stop") {
+        // While Voice Match is taught, the name (said first in "Ember, stop" and "Hey Ember, stop") is checked once "stop"
+        // can have been said (see decideStop); the teaching's own phrases are nothing here.
+        if (!this.pendingStop) { this.pendingStop = { keyword, at: now, checkAt: now + SELF_STOP_MAX_MS, teaching: true }; this.watchSpeakers(); }
+        continue;
+      }
       if (keyword !== "ember_stop" && this.inConversation) this.spottedAt = now;
       if (keyword === "ember_stop") {
         // The kill phrase works in every state (also while Ember speaks: that's when it's needed). It goes once
@@ -1190,7 +1239,7 @@ export class VoiceEngine {
       this.emit({ type: "rejected", keyword: s.keyword, reason: "speakers" });
       return;
     }
-    if (s.keyword !== "ember_stop" && !s.checked && !this.inConversation && now < this.selfSpeakingUntil && this.speakersClear(s.at, now) && (this.hearsSpeakers(now) || s.keyword !== BARE_NAME)) {
+    if (s.keyword !== "ember_stop" && !s.teaching && !s.checked && !this.inConversation && now < this.selfSpeakingUntil && this.speakersClear(s.at, now) && (this.hearsSpeakers(now) || s.keyword !== BARE_NAME)) {
       // "Hey Ember" while Ember speaks, and its speakers' own stream didn't say it: the user is cutting in (see bargeIn).
       // Without that stream (Windows, macOS, Linux without parec) "Hey Ember" cuts in too: Ember never says it there
       // (VoiceService.speak drops its own wake and stop phrases, withoutOwnPhrases), the check below takes back "they
@@ -1207,8 +1256,13 @@ export class VoiceEngine {
     const emberSpeaking = now < this.selfSpeakingUntil;
     if (s.keyword !== "ember_stop") {
       // "Hey Ember" while Ember spoke: a stop if "stop" came with it, otherwise Ember's own voice (or a wake it can't take now).
+      // The name while Voice Match is taught: a stop if "stop" came with it ("Ember stopped the task." too, as the
+      // recognizer writes it), otherwise one of the teaching's phrases.
       const heard = this.backend.transcribe(this.fromSound(this.recentAudio(this.fedAt - s.at + SELF_STOP_BEFORE_MS)), "keyword");
-      if (!saidWakeStop(heard)) { if (!s.bargeIn) this.emit({ type: "rejected", keyword: s.keyword, reason: "self", heard }); return; }
+      if (!saidWakeStop(heard) && !(s.teaching && EMBER_STOP.test(heard.toLowerCase()))) {
+        if (!s.bargeIn && !s.teaching) this.emit({ type: "rejected", keyword: s.keyword, reason: "self", heard });
+        return;
+      }
     } else if (s.checkAt !== null) {
       const heard = this.backend.transcribe(this.fromSound(this.recentAudio(s.again ? this.fedAt - s.at + SELF_STOP_BEFORE_MS : STOP_CHECK_SECONDS * 1000)), "keyword");
       const empty = !/[a-z]/i.test(heard);
@@ -1707,7 +1761,15 @@ export class VoiceEngine {
       // it waiting; a stop said on its own still stops (below), and the half request goes.
       if (!saysSomething(text)) return;
       this.held = null;
-      if (!stopped(text)) {
+      if (!stopped(text) && !this.asLoudAs(clip.audio, held.level * CLOSE_RATIO)) {
+        // Not as loud as the voice that paused (within 6 dB, as a follow-up must come near the wake's): others' talk, a TV.
+        // Their words aren't the user's: the half request goes as it was, and a conversation hears theirs as what was said
+        // next, as before the hold (on the real models they were joined to it in 12 of 18 cases at 12–19 dB under:
+        // voice-listening-c1-2).
+        const listensOn = this.mode.reason === "conversation";
+        this.sendRequest(held.text, held.audio, held.withWake, false, held.t0);
+        if (!listensOn || this.mode.kind !== "listening") return;
+      } else if (!stopped(text)) {
         text = `${held.text.replace(/[\s,.…-]+$/, "")} ${text.replace(/^[A-Z](?![A-Z.])/, c => c.toLowerCase())}`;
         withWake = held.withWake;
         audio = new Float32Array(held.audio.length + clip.audio.length);
@@ -1771,7 +1833,7 @@ export class VoiceEngine {
     }
     if (!held && !cut && !bargeIn && !this.overEmber && !this.overSound && trailsOff(text) && !(this.questionWaiting && isAnswerWord(text))) {
       // "And make the text a.": the speaker paused to think. Held for the rest of it (the window stays open meanwhile).
-      this.held = { text, audio, withWake, until: this.now() + TRAIL_HOLD_MS, t0 };
+      this.held = { text, audio, withWake, until: this.now() + TRAIL_HOLD_MS, t0, level: this.soundLevel(audio) };
       this.mode.until = Math.max(this.mode.until, this.held.until);
       return;
     }
@@ -1815,6 +1877,14 @@ export class VoiceEngine {
     const e = framesOf(audio), half = LOUD_FRAMES >> 1, silent = Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ** 2;
     for (let i = 0; i < e.length; i++) if (soundMedian(e, i - half, i + half + 1, silent) >= energy) return true;
     return false;
+  }
+
+  /** The loudness of `audio`'s loudest 9 frames (of those with sound), as asLoudAs measures it; 0 with none. */
+  private soundLevel(audio: Float32Array): number {
+    const e = framesOf(audio), half = LOUD_FRAMES >> 1, silent = Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ** 2;
+    let out = 0;
+    for (let i = 0; i < e.length; i++) out = Math.max(out, soundMedian(e, i - half, i + half + 1, silent));
+    return out;
   }
 
   /** At most 12 s at a time goes to the recognizer, split where it's quietest (between 6 and 12 s in). */
@@ -1945,6 +2015,14 @@ function framesOf(seg: Float32Array): number[] {
 function soundMedian(e: number[], from: number, to: number, silent: number): number {
   const a = e.slice(Math.max(0, from), Math.min(e.length, to)).filter(x => x > silent).sort((x, y) => x - y);
   return a.length * 2 >= to - from ? a[a.length >> 1] : 0;
+}
+
+/** The loudest stretch of `e` (the median of LOUD_FRAMES frames; of all of them when it has fewer), or 0. */
+function loudest(e: number[]): number {
+  if (e.length <= LOUD_FRAMES) return median(e, 0, e.length);
+  let out = 0;
+  for (let i = LOUD_FRAMES; i <= e.length; i++) out = Math.max(out, median(e, i - LOUD_FRAMES, i));
+  return out;
 }
 
 /** The median of `e[from..to)` (clipped to it). */

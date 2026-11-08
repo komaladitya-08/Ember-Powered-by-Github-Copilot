@@ -154,8 +154,9 @@ runtime. It does not change the app's consent or speaking settings.
   **Stop response**, so Enter stops that reply). **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
   will look at, and ↑/↓ bring back earlier questions. It opens above Ember (below it near the top of the screen),
   clear of Ember's handle and of the answer or question Ember shows: on the other side of Ember from it, else beside
-  it. While Ember can't answer a request (not connected, offline), the line under its field says so first, in the
-  handle's words ("Not connected: I can't answer yet").
+  it, else over or under it; a question that comes up while it is open shows beside it too. While Ember can't answer
+  a request (not connected, offline), the line under its field says so first, in the handle's words ("Not connected:
+  I can't answer yet"), and follows the connection while the box is open.
 - **The settings window** shows one pane at a time, picked in its sidebar as System Settings does: **Home**, **Projects**, **Models & connections**,
   **Voice**, **Your Ember** (character, size, start at login, and **Ember on screen**: **Handle position**, **Follow my
   cursor**, **Hide Ember until it needs me**, **Quit Ember**), **Memory** (with routines and reminders), **Apps &
@@ -226,19 +227,25 @@ runtime. It does not change the app's consent or speaking settings.
   - A fact counts as yours only when it is mostly your own words. Otherwise it is the model's inference, and context
     only.
   - It never keeps passwords, codes, keys or card numbers.
+  - If `memory.json` can't be read (it is left as it was), isn't memory (it is set aside as `memory.json.broken`) or
+    can't be saved (a full or read-only disk), Settings › Memory says so under the list.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
     signing out forgets it all. The list says where each fact came from (you, our conversation, a task, Ember's
     summary or guess). After Forget, focus goes to a line saying what went, with **Undo** for a minute, never to the
-    next row's Forget, so a second Enter forgets nothing more. **Forget all words** (Settings › Voice) asks first.
+    next row's Forget, so a second Enter forgets nothing more; so does forgetting one learnt word in Settings › Voice,
+    whose **Forget all words** asks first.
   - Ember forgets a memory in conversation only when your own words ask it to and name what to forget; the
-    conversation then says "Ember forgot: …" with Undo. With memory off or paused, "Remember that…" and "Forget
-    my…" get a plain answer saying so, never a promise.
+    conversation then says "Ember forgot: …" with Undo. With memory off or paused, "Forget that I…" or "Forget
+    my…" gets a plain answer saying so, never a promise; "Remember that…" goes to the conversation as usual, which
+    knows it until Ember closes, and Ember then says memory won't keep it, with **Open Memory**. Any other request
+    that starts with "forget" or "remember" ("Forget what I said, open Firefox instead") is answered as usual.
   - Memory belongs to the verified GitHub account. While Ember can't open it, the pane says why instead of the list:
     "Checking your GitHub account…" while connecting, that memory works only with GitHub Copilot while your own
     model provider (or your organisation's model service) is in force, or that Ember couldn't check the account.
     Forget everything is offered then only for another account's memory or memory with no owner, and Home's status
     line says "Memory paused". When a reconnect finds the same account again, a correction you were typing, the
-    search and where focus was come back with the list, and a Better recall download carries on.
+    search, a "Forgotten: …" line with its Undo and where focus was come back with the list, and a Better recall
+    download carries on.
   - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
   - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so since `FEATURE_CONSENT_VERSION.memory` went to
     2, and each bump asks again: someone who agreed to an earlier note has memory off until they agree to this one). With
@@ -252,11 +259,14 @@ runtime. It does not change the app's consent or speaking settings.
     in. After 5 idle minutes (no turn, no task,
     the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
     idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
-    fact shows in the conversation as "Ember learned: …" with **Undo**. The kill switch stops all of it (`memory`).
+    fact shows in the conversation as "Ember learned: …" with **Undo**; once forgotten the line says "Ember forgot: …"
+    with an Undo that puts it back, and focus stays on it. The kill switch stops all of it (`memory`).
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
-    from its speakers isn't kept. Spoken or not changes Ember's speaking choice in Voice too.
+    from its speakers isn't kept. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
+    (your own model provider or your organisation's model service in force), both places say why instead of asking,
+    and first run's step offers only Continue.
   - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model
     (all-MiniLM-L6-v2, int8, pinned by SHA-256 in `app/voice/models.ts`) that runs on this computer, so Ember finds a
     fact when you ask in other words ("Who is my manager?" finds "Priya leads the platform team"). It comes from
@@ -545,15 +555,17 @@ beside its progress stops it, as turning listening off does; what was half fetch
 While it listens, the voice line names the microphone it hears through (“Listening for “Ember” through Built-in Audio
 Analog Stereo”): Ember uses the system's default input, so choose another in the system's sound settings.
 Then say “Ember, …” (or “Hey Ember, …”) with your request. You can say it in one breath, or pause after the name; a
-pause to think after a word such as “the” or “and” waits 0.9 s more for the rest.
+pause to think after a word such as “the” or “and” waits 0.9 s more for the rest, said in your voice (a TV's or
+someone else's talk well under it isn't joined to it).
 Ember answers out loud in the default Kitten voice when its native runtime and model are ready, or a local system
 voice otherwise, sentence by sentence as the answer
 arrives. **Speaking speed** in Settings › Voice (`voice.rate`, Slower 0.8 to Faster 1.3, Normal 1; settings keep 0.8
 to 1.4) sets how fast it speaks, in its own voice and the system's, and **Hear Ember** says one fixed sentence the way
-replies are said and which voice said it (not with **Never**, while the screen is locked or when the organisation has
-turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
+replies are said and, once it is heard, which voice said it ("Getting Ember's voice ready…" until then, and "Ember
+couldn't speak just now" when no voice spoke it within 12 s; not with **Never**, while the screen is locked or when the
+organisation has turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
 the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
-“Learning your voice”) and hears only “Ember, stop”, which stops the teaching with everything else. Teaching also
+“Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
 stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted),
 after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases that don't sound alike; settings says which.
 It decides only what a voice may approve: every voice is heard, and a request it doesn't
@@ -674,9 +686,11 @@ speech capability where that runtime is supported.
 complete Apache-2.0 archive includes the matching style tables and phonemiser data. It uses one CPU thread and the
 measured `NATURAL_MAX_RTF` <= 0.5 gate, timed afresh at every start (an optional voice's slow verdict is kept for a
 week per model/provider/thread configuration; corrupt, future and expired verdicts are ignored). A failed gate, a reply
-Kitten couldn't make or its process ending uses the local system voice for the rest of the session, and Settings ›
-Voice says which ("too slow just now", "stopped working", "couldn't load") with **Try again**, which loads and times
-Kitten again at once.
+Kitten couldn't make or its process ending uses the local system voice, and Settings › Voice says which ("too slow
+just now", "stopped working", "couldn't load") with **Try again**, which loads and times Kitten again at once. After a
+failed gate or a stop once it had spoken (a busy moment may pass), Kitten is also timed again by itself, once a
+session, at the first request 5 minutes or more later (`KITTEN_RECHECK_MS`, `voice.kitten_recheck`); one that
+couldn't load at all waits for **Try again**.
 
 Kokoro v1.0 FP32 (`af_heart`, Apache-2.0, about 350 MB) is an explicit optional download in Voice settings on Windows
 and macOS (the native addon: on Linux's C API `naturalVoiceChoices()` offers Kitten alone). Saving
@@ -775,20 +789,28 @@ one,"). Ember doesn't wait for Copilot to finish the whole first sentence (`Spee
 first sentence of more than 48 characters said whole is cut at its first such clause: the voice takes about 18 ms a
 character in WebAssembly. A list can be split after its first item that way ("The bench has a name field, a password
 field…" starts with "The bench has a name field,"). A first sentence of more than 90 characters with no comma is cut
-before its first joining word ("and", "which", "with"…) once it has 4 words, or else at its last space before 90 ("I
-looked through the folder you mentioned | and found…"), streamed or whole. No piece of speech is longer than 120
+before its first joining word ("and", "which", "because"…, never "to", "for", "from" or "with", which follow verbs)
+once it has 4 words, or else at its last space before 90 ("I looked through the folder you mentioned | and found…"),
+streamed or whole, and never inside a code span or a link's words. No piece of speech is longer than 120
 characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of speech ahead of what has played
 (`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
-it. A Markdown list is said item by item: each item, a heading, the line that leads into a list and a paragraph end
-with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
+it. A Markdown list is said item by item: each item, a heading (a line that is all bold too), the line that leads into
+a list, three or more short lines in a row that each start with a capital (a list without its markers) and a
+paragraph end with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
 its number ("2. Choose Privacy", never "Open Settings 2."), and a streamed list is said as each item's line ends, not
 after the whole answer. What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
-last part, "~75%" as "about 75%", "#45" as "number 45", "Tue." as "Tuesday", and emoji and typed smileys not at all
-(Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
-reply that is clearly in another language (mostly another script, or two or more of a European language's short words:
-`speechLanguage`) is said by a local system voice for that language, or not at all when there is none; a Chinese reply
-was 7 s of "Chinese letter".
+last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
+"Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", and other emoji and typed smileys not at
+all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
+reply that is clearly in another language (mostly another script, or two or more different short words of a European
+language, not counting names such as "La Vie en Rose" or "Los Angeles": `speechLanguage`) is said by a local system
+voice for that language, or not at all when there is none, which isn't reported as Ember failing to speak, even with no
+voices installed; a Chinese reply was 7 s of "Chinese letter". An answer's language is decided once, from its first 60
+letters (`AnswerLanguage`, app/voice/spoken.ts), and kept for every piece of it: an English list's "1. La La Land." is
+Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters English seldom writes) or
+any piece after a request typed in another language waits for more of the answer, a reply too short to tell follows the
+request's language, and words for the system voice wait until the pieces Kitten is still making are done.
 
 **When a request ends.** The VAD ends a request after 0.6 s of silence (about 0.72 s after the voice, with Silero's own
 lag). At a quiet pause of 0.35 s in it, what was said so far is transcribed ahead (`SPECULATE_FRAMES`,

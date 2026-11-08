@@ -27,6 +27,7 @@ interface Harness {
   /** Where the page last said the box takes clicks (window-local CSS px). */
   shape: { x: number; y: number; width: number; height: number }[] | null;
   context(c: AskContext): void;
+  unavailable(word: string | null): void;
   typed(t: Typed): void;
   hidden(): void;
   listen(s: ListenOnceStatus): void;
@@ -56,7 +57,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       await route.fulfill({ body: fs.readFileSync(file), contentType });
     });
     await page.addInitScript(() => {
-      const state: Harness = { rows: 3, calls: [], closes: 0, listens: 0, voiceSettings: 0, shape: null, context() {}, typed() {}, hidden() {}, listen() {} };
+      const state: Harness = { rows: 3, calls: [], closes: 0, listens: 0, voiceSettings: 0, shape: null, context() {}, unavailable() {}, typed() {}, hidden() {}, listen() {} };
       (window as unknown as TestWindow).askHarness = state;
       window.emberAsk = {
         ask: text => { state.calls.push({ kind: "ask", text }); },
@@ -64,6 +65,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
         close: () => { state.closes++; },
         fit: rows => { state.rows = rows; },
         onContext: fn => { state.context = fn; },
+        onUnavailable: fn => { state.unavailable = fn; },
         onTyped: fn => { state.typed = fn; },
         onHidden: fn => { state.hidden = fn; },
         onListenOnce: fn => { state.listen = fn; },
@@ -188,6 +190,59 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       // Connected again by the next update: gone.
       await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ sees: "Text Editor · Notes.txt", history: [] }));
       expect(await line.isVisible()).toBe(false);
+      // The connection lost while the box is open (main sends the word as it changes): the line comes back, and a
+      // screen reader hears it, as the field's description isn't read again; nothing else changes (companion-6).
+      await page.locator("#q").fill("draft");
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.unavailable("Offline"));
+      expect(await line.textContent()).toBe("Offline: I can't answer yet");
+      expect(await page.locator("#sees-live").textContent()).toBe("Offline: I can't answer yet");
+      expect(await page.locator("#q").inputValue()).toBe("draft");
+      expect(await page.locator("#sees").isVisible()).toBe(true);
+      expect(await page.locator(".meta").evaluate(e => e.scrollWidth - e.clientWidth)).toBe(0);
+      // Back: the line goes, and the window's name stays.
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.unavailable(null));
+      expect(await line.isVisible()).toBe(false);
+      expect(await page.locator("#sees").isVisible()).toBe(true);
+      // A crowded line (another computer that is lost, a long window name, what else goes): the line says just why, in
+      // the handle's word, before the window's name is cut short; its whole sentence stays for screen readers and the
+      // tooltip (the live X11 suite found the name cut to 5 px; a request wouldn't be answered now, so why comes first).
+      const ssh = { id: "ssh:deploy@build-server-01", kind: "ssh", label: "deploy@build-server-01", state: "lost", can: "", active: true };
+      await page.evaluate(t => (window as unknown as TestWindow).askHarness.context({ sees: "Terminal · deploy@build-server-01: ~/src", carries: { selection: false, fieldText: true, windows: 2 }, history: ["a"], target: t } as AskContext), ssh);
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.unavailable("Not connected"));
+      const crowded = await page.evaluate(() => {
+        const t = document.getElementById("sees-text")!, u = document.getElementById("unavailable")!;
+        return { name: t.clientWidth, whole: t.scrollWidth, text: u.textContent, label: u.getAttribute("aria-label"), title: u.title };
+      });
+      expect(crowded.name, JSON.stringify(crowded)).toBeGreaterThanOrEqual(100);
+      expect(crowded).toMatchObject({ text: "Not connected", label: "Not connected: I can't answer yet", title: "Not connected: I can't answer yet" });
+      expect(await page.locator(".meta").evaluate(e => e.scrollWidth - e.clientWidth)).toBe(0);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("keeps a long paste whole, says how much to shorten it, and sends nothing until it fits (companion-i1, as home-5)", async () => {
+    const page = await pageAt();
+    try {
+      const long = `${"A long log line that matters. ".repeat(80)}THE IMPORTANT LAST LINE`;
+      expect(long.length).toBe(2423);
+      const input = page.locator("#q");
+      await input.focus();
+      await page.keyboard.insertText(long);
+      // Whole, never cut at the limit unseen (maxlength dropped its end, the important last line with it).
+      expect(await input.inputValue()).toBe(long);
+      expect(await page.locator("#cut").innerText()).toBe("2,423 of 2,000 characters, 423 too many.");
+      expect(await input.getAttribute("aria-invalid")).toBe("true");
+      expect(await page.locator("#sees-live").textContent()).toBe("This request is longer than 2,000 characters. Shorten it to send it.");
+      expect(await page.locator("#send").isDisabled()).toBe(true);
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.calls)).toEqual([]);
+      expect(await input.inputValue()).toBe(long);
+      // Cut to fit: the count stays while it is near the limit, and Enter sends it.
+      await input.fill(long.slice(-1900));
+      expect(await page.locator("#cut").innerText()).toBe("1,900 of 2,000 characters.");
+      expect(await input.getAttribute("aria-invalid")).toBeNull();
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.calls)).toEqual([{ kind: "ask", text: long.slice(-1900) }]);
+      expect(await page.locator("#cut").isHidden()).toBe(true);
     } finally { await page.close(); }
   }, 30_000);
 
@@ -287,6 +342,12 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       const setup = page.getByRole("button", { name: "Set up voice in Settings…", exact: true });
       expect(await setup.isVisible()).toBe(true);
       expect(await setup.getAttribute("aria-disabled")).toBeNull();
+      // Its capsule is as wide as the one button it holds, not a full-width strip with nothing after it (companion-r2),
+      // and the clicks it takes (the input shape) end there too.
+      const row = await page.locator("#listen-once-row").boundingBox(), only = await setup.boundingBox();
+      expect(row!.width, JSON.stringify([row, only])).toBeLessThanOrEqual(only!.width + 2 * 6 + 2 * 1 + 1);
+      const taken = await page.evaluate(() => (window as unknown as TestWindow).askHarness.shape ?? []);
+      expect(taken.some(r => r.y <= row!.y && r.y + r.height >= row!.y + row!.height && r.width <= row!.width + 4 + 1), JSON.stringify(taken)).toBe(true);
       await setup.click();
       expect(await harness()).toMatchObject({ rows: -1, listens: 0, voiceSettings: 1 });
       // Turned off by the organisation: nothing here can change that, so the row is left out and the box is a row shorter.

@@ -145,12 +145,17 @@ const SHORT_NAME: Readonly<Record<string, string>> = {
 };
 const SHORT_NAMES = new RegExp(`\\b(${Object.keys(SHORT_NAME).join("|")})\\.(?=\\s+[\\p{Ll}\\d])`, "gu");
 
-/** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%" and "#45". */
+/** A duration as written ("2h 15m", "1h30m"): Kitten read "2h" as "two h". */
+const DURATION = /\b(\d+)h[ \t]?(\d+)m\b/g;
+const duration = (_m: string, h: string, m: string) => `${h} ${h === "1" ? "hour" : "hours"} ${m} ${m === "1" ? "minute" : "minutes"}`;
+
+/** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
   return text
     .replace(PATH, pathSaid)
     .replace(AMOUNT, money)
     .replace(CLOCK, clock)
+    .replace(DURATION, duration)
     .replace(SHORT_NAMES, (_m, name: string) => SHORT_NAME[name])
     .replace(/(?<![\w~])[~≈][ \t]?(?=\d)/g, "about ")
     .replace(/(?<![\w&#])#(\d+)\b/g, "number $1");
@@ -162,6 +167,11 @@ const HEADING = /^[ \t]{0,3}#{1,6}[ \t]+\S/;
 const RULE = /^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
 /** A line that ends as a sentence does already, or with a pause (a colon, a comma). */
 const ENDED = /[.!?…:;,]["”’')\]*_]*$/;
+/**
+ * A line of a few words starting with a capital ("Firefox", "Your windows"): three or more in a row are a list written
+ * without its markers. A line wrapped inside a paragraph goes on in lower case ("folder and found").
+ */
+const BARE_ITEM = (body: string) => body.length <= 40 && body.trim().split(/\s+/).length <= 4 && /^[ \t]*[\p{Lu}\p{N}]/u.test(body);
 
 /**
  * Each list item, heading, line leading into a list and paragraph ends with a full stop where it has no ending of its
@@ -170,10 +180,15 @@ const ENDED = /[.!?…:;,]["”’')\]*_]*$/;
  */
 function endLines(text: string): string {
   const lines = text.split("\n");
+  // How many bare items run together through each line (voice-speaking-3: "Your windows\nFirefox\nFiles").
+  const bare = lines.map(l => (l.trim() && !ITEM.test(l) && !HEADING.test(l) && BARE_ITEM(l.trimEnd()) ? 1 : 0));
+  const run: number[] = [...bare];
+  for (let i = 1; i < run.length; i++) if (bare[i] && bare[i - 1]) run[i] = run[i - 1] + 1;
+  for (let i = run.length - 2; i >= 0; i--) if (bare[i] && bare[i + 1]) run[i] = run[i + 1];
   return lines.map((line, i) => {
     const body = line.trimEnd(), next = lines[i + 1];
     if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
-    const alone = ITEM.test(body) || HEADING.test(body) || (next !== undefined && (!next.trim() || ITEM.test(next)));
+    const alone = ITEM.test(body) || HEADING.test(body) || run[i] >= 3 || (next !== undefined && (!next.trim() || ITEM.test(next)));
     return alone ? `${body}.` : line;
   }).join("\n");
 }
@@ -185,6 +200,8 @@ export function spokenText(markdown: string): string {
     // Tables: a header row and its |---| line, and the rows after it.
     .replace(/(^|\n)[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}[\s\S]*?(?=\n[ \t]*(?!\|)|$)/g, `$1${TABLE}`);
   const plain = linkLabels(prose)
+    // A heart between words is a word ("I ❤️ Paris"): dropped with the other emoji, it was "I Paris".
+    .replace(/([\p{L}\p{N}])[ \t]*[\u2764\u2665]\uFE0F?[ \t]*(?=[\p{L}\p{N}])/gu, "$1 love ")
     .replace(EMOJI_BETWEEN, "$1. ")
     // Before a word, a space stays where there was one, or goes between two words the emoji joined ("Saved✅Next").
     .replace(EMOJI_ANY, (m: string, at: number, all: string) => (at > 0 && /[\p{L}\p{N}]/u.test(all[at + m.length] ?? "") && (/^[ \t]/.test(m) || /[\p{L}\p{N}]/u.test(all[at - 1])) ? " " : ""))
@@ -192,6 +209,10 @@ export function spokenText(markdown: string): string {
     // An item that was only emoji is no item.
     .replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]*$/gm, "")
     .replace(/<?\b(?:https?:\/\/|www\.)([^\s/<>()]+?)(?:[/?#][^\s<>()]*?)?>?(?=[.,;:!?)]*(?:\s|$))/gi, (_m, host: string) => host.replace(/^www\./i, ""))
+    // An address written without its scheme is said by its host too ("github.com/foo/bar": voice-speaking-2).
+    .replace(/(?<![\w@./~-])((?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|app|ai|co|edu|gov|uk|de|fr))\/[^\s<>()]*?(?=[.,;:!?)]*(?:\s|$))/gi, "$1")
+    // A line that is all bold is a heading ("**Done**"): it ends as one does (voice-speaking-3).
+    .replace(/^([ \t]*)\*\*(?=[^\s*])([^*\n]*[^\s*])\*\*[ \t]*$/gm, (_m, space: string, body: string) => `${space}${body}${ENDED.test(body) ? "" : "."}`)
     .replace(/(?<![\\`])(`+)(?!`)([^\n]*?)(?<!`)\1(?!`)/g, "$2")
     // Emphasis as CommonMark sees it: no space just inside a marker ("6 * 7 * 1" and "*.tmp and *.log" are said with their
     // stars), and underscores only around whole words ("__init__.py" keeps them).
@@ -222,23 +243,51 @@ const SCRIPTS: readonly [RegExp, string][] = [
 ];
 /**
  * The commonest short words of the languages people most often write to Ember in besides English, leaving out those
- * English writes too ("as", "no", "he", "per", "come", "com" of an address, "d" of "I'd"); and English's own, to weigh.
+ * English writes too ("as", "no", "he", "per", "come", "do", "um", "er", "bin", "hat", "son", "com" of an address, "d"
+ * of "I'd", "o" of "o'clock"); and English's own, to weigh.
  */
 const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   en: new Set("the a an and is are was were to of in on at by or from as do no he she it i you we they my your that this with for not have has what can will if so but all just there here".split(" ")),
-  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu".split(" ")),
-  de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe".split(" ")),
-  es: new Set("el la los las del que y en un una es por para con se está como pero muy yo".split(" ")),
-  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel".split(" ")),
-  pt: new Set("os que e é uma para não da em na por se eu você".split(" ")),
-  nl: new Set("de het een en niet ik je van dat op te met zijn voor maar ook wat".split(" ")),
+  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces".split(" ")),
+  de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe es sind des im nur noch dir mich mir kann wird".split(" ")),
+  es: new Set("el la los las del que y en un una es por para con se está como pero muy yo de lo al eso esto hay su sus mi te le".split(" ")),
+  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle".split(" ")),
+  pt: new Set("os que e é uma para não da em na por se eu você de dos das ao às mas isso seu sua ele ela foi".split(" ")),
+  nl: new Set("de het een en niet ik je van dat op te met zijn voor maar ook wat om naar uit bij nog aan heb kan".split(" ")),
 };
+
+/** Short lower-case words that join the parts of a name ("La Vie en Rose", "Hotel de la Paix", "Ludwig van Beethoven"). */
+const NAME_JOINS = new Set("de del della di da do dos das du des la le les el en y van von der den of the".split(" "));
+
+/**
+ * The words of `text`, lower-cased, less those of names: two or more capitalised words in a row, perhaps joined by
+ * NAME_JOINS ("Los Angeles", "La Vie en Rose", "Por Una Cabeza"). An English sentence naming a film, a song or a place
+ * isn't in that place's language (voice-speaking-r1).
+ */
+function wordsBesidesNames(text: string): string[] {
+  const kept: string[] = [];
+  const capital = (t: string) => /^(?:[dl][’'])?\p{Lu}/u.test(t);
+  for (const clause of text.split(/[.,;:!?¡¿()[\]{}"“”«»„—–\n]+/u)) {
+    const tokens = clause.split(/\s+/u).filter(t => /\p{L}/u.test(t));
+    for (let i = 0; i < tokens.length;) {
+      let capitals = 0, end = i;
+      if (capital(tokens[i])) {
+        for (let j = i; j < tokens.length; j++) {
+          if (capital(tokens[j])) { capitals++; end = j + 1; } else if (!NAME_JOINS.has(tokens[j].toLowerCase())) break;
+        }
+      }
+      if (capitals >= 2) { i = end; continue; }
+      kept.push(tokens[i++]);
+    }
+  }
+  return kept.join(" ").toLowerCase().split(/[^\p{L}]+/u).filter(Boolean);
+}
 
 /**
  * The language a reply is in when it clearly isn't English, or null (English, or too little to tell): Kitten reads only
  * English, so a Chinese reply was 7 s of "Chinese letter" and a French one was gibberish (voice-speaking-11). Mostly
- * one script names its language; Latin text needs at least two of a language's short words, a quarter of its words,
- * and more than English has. Pure and local: nothing is sent anywhere to tell.
+ * one script names its language; Latin text, less its names (wordsBesidesNames), needs two different short words of a
+ * language, a quarter of its words, and more than English has. Pure and local: nothing is sent anywhere to tell.
  */
 export function speechLanguage(text: string): string | null {
   const letters = text.match(/\p{L}/gu) ?? [];
@@ -248,16 +297,61 @@ export function speechLanguage(text: string): string | null {
     // Japanese mixes kana with Han: any kana among them is Japanese.
     if (lang === "ja" ? n && letters.filter(c => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(c)).length * 2 > letters.length : n * 2 > letters.length) return lang;
   }
-  const words = text.toLowerCase().split(/[^\p{L}]+/u).filter(Boolean);
-  const hits = (lang: string) => words.filter(w => STOPWORDS[lang].has(w)).length;
-  const english = hits("en");
-  let best: string | null = null, most = 0;
+  const words = wordsBesidesNames(text);
+  const hits = (lang: string) => words.filter(w => STOPWORDS[lang].has(w));
+  const english = hits("en").length;
+  let best: string | null = null, most = 0, different = 0;
   for (const lang of Object.keys(STOPWORDS)) {
     if (lang === "en") continue;
-    const n = hits(lang);
-    if (n > most) { best = lang; most = n; }
+    const found = hits(lang);
+    if (found.length > most) { best = lang; most = found.length; different = new Set(found).size; }
   }
-  return best && most >= 2 && most * 4 >= words.length && most > english ? best : null;
+  return best && different >= 2 && most * 4 >= words.length && most > english ? best : null;
+}
+
+/** An answer's language is decided from this many of its letters, or from all of a shorter one (voice-speaking-r1). */
+export const DECIDE_LETTERS = 60;
+/** Letters and marks English seldom writes: a short piece with them may be in another language ("Bien sûr !", "¡Listo!"). */
+const ANOTHER_LANGUAGE = /[\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F¡¿«»]|\s[!?:;»](?=\s|$)/u;
+
+/**
+ * The language each piece of a streamed answer is said in (null: English, in Ember's own voice), decided once for the
+ * whole answer: piece by piece, an English list's "1. La La Land." went to a Spanish or French voice, or was dropped
+ * (voice-speaking-r1), and a French reply's "Bien sûr !" was said by Kitten with English sounds (voice-speaking-11).
+ * Until DECIDE_LETTERS letters have come, English-looking pieces are said at once; a piece that may be in another
+ * language waits for more of the answer, as does every piece when the request was typed in another language. A message
+ * that ends shorter is judged by itself, or by the request's language when it can't be told.
+ */
+export class AnswerLanguage {
+  private text = "";
+  private held: string[] = [];
+  private lang: string | null | undefined;
+  /** The request's language, when it was clearly another (speechLanguage of what the user typed). */
+  private asked: string | null = null;
+
+  /** A new answer, to `request` (the user's words). */
+  reset(request = ""): void {
+    this.text = "";
+    this.held = [];
+    this.lang = undefined;
+    this.asked = speechLanguage(request);
+  }
+
+  /** The pieces to say now, each with its language: `pieces` just made, `end` when the message is complete. */
+  take(pieces: readonly string[], end = false): { text: string; lang: string | null }[] {
+    for (const p of pieces) if (p.trim()) { this.held.push(p); this.text += ` ${p}`; }
+    if (this.lang === undefined) {
+      if (!this.text.trim()) return [];
+      const found = speechLanguage(this.text);
+      if ((this.text.match(/\p{L}/gu) ?? []).length >= DECIDE_LETTERS) this.lang = found;
+      else if (end) this.lang = found ?? this.asked;
+      else if (found || this.asked || ANOTHER_LANGUAGE.test(this.text)) return [];
+    }
+    const lang = this.lang ?? null;
+    const out = this.held.map(text => ({ text, lang }));
+    this.held = [];
+    return out;
+  }
 }
 
 /**

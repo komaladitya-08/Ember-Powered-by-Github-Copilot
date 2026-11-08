@@ -10,11 +10,11 @@ import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RetryResult, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, conversationTurnOf, type ConversationTurn, type HistoryProblemKind } from "../../shared/conversation";
-import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
   AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
-  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, memoryEmptyText,
+  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, memoryTroubleText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -1105,11 +1105,18 @@ $("keep-conversation").addEventListener("change", e => { void save({ keepConvers
 function conversationRow(e: Entry): HTMLLIElement {
   const li = document.createElement("li");
   li.className = e.who;
-  // "Ember learned: …" with Undo (forgets that fact): a small line of its own, not a message.
+  // "Ember learned: …" with Undo (forgets that fact): a small line of its own, not a message. Once forgotten it says
+  // so where it was, with the Undo that puts it back, and once put back that it is remembered again (memory-c1-3).
   if (e.who === "learned") {
-    const text = Object.assign(document.createElement("p"), { textContent: e.forgot ? forgotLine(e.text) : learnedLine(e.text) });
+    const text = Object.assign(document.createElement("p"), {
+      textContent: e.again ? rememberedAgainLine(e.text) : e.forgot ? forgotLine(e.text, e.derived, e.back) : learnedLine(e.text),
+      // Where focus goes when its own Undo changed the line, so a second Enter does nothing and the change is read out.
+      tabIndex: -1,
+    });
     li.append(text);
+    li.dataset.state = learnedState(e);
     const id = e.fact;
+    if (e.again) return li;
     if (e.forgot) mountForgotUndo(li, e.text, e.forgot, window.ember.restoreMemory);
     else if (id) mountLearnedUndo(li, e.text, id, async fact => { await window.ember.forgetMemory(fact); });
     return li;
@@ -1201,6 +1208,21 @@ function syncStreamRow(list: HTMLElement): void {
   li.hidden = !!q && !conversationMatchesText(row.text, q);
   if (li.parentElement !== list || li !== list.lastElementChild) list.append(li);
 }
+/** What a "learned" line says now: learned (its fact), forgotten (its Undo's token) or remembered again (memory-c1-3). */
+const learnedState = (e: Entry) => (e.again ? "again" : e.forgot ? `forgot:${e.forgot}` : `fact:${e.fact ?? ""}`);
+/**
+ * A "learned" line whose state changed (main keeps the line where it was): drawn again in place. Focus in it, on the
+ * Undo just pressed, moves to its new words, which a screen reader then reads (memory-c1-3).
+ */
+function redrawLearned(row: HTMLElement, e: Entry): HTMLElement {
+  if (e.who !== "learned" || row.dataset.state === undefined || row.dataset.state === learnedState(e)) return row;
+  const had = row.contains(document.activeElement);
+  const next = conversationRow(e);
+  next.hidden = row.hidden;
+  row.replaceWith(next);
+  if (had) next.querySelector("p")?.focus();
+  return next;
+}
 function renderConversation(raw: Entry[]): void {
   answerStream = streamEntries(answerStream, raw);
   const entries = raw;
@@ -1225,7 +1247,7 @@ function renderConversation(raw: Entry[]): void {
   let matches = 0;
   for (let i = 0; i < shown.length; i++) {
     const match = !searching || conversationMatchesText(shown[i].text, conversationSearch.value);
-    (list.children[i] as HTMLElement).hidden = !match;
+    redrawLearned(list.children[i] as HTMLElement, shown[i]).hidden = !match;
     if (match) matches++;
   }
   $("conversation-search-status").textContent = searching ? conversationSearchCount(matches) : "";
@@ -1514,8 +1536,23 @@ function renderMemory(rows: MemoryRow[]): void {
     if (document.activeElement === $("memory-on")) memoryFocusBack.el.focus();
     memoryFocusBack = null;
   }
-  // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause).
-  if (unavailable && !$("memory-forgotten").hidden) hideForgotten();
+  // What was forgotten belonged to the list that was open: it goes when the list does (another account, a pause), and
+  // waits out of sight while the same account is checked again, its Undo with it (memory-8).
+  if (forgottenHeld && forgottenHeld.epoch !== memoryEpoch) hideForgotten();
+  if (unavailable && !$("memory-forgotten").hidden) {
+    const box = $("memory-forgotten");
+    if (memoryUndo && forgottenEpoch === memoryEpoch) {
+      forgottenHeld = { epoch: memoryEpoch, focused: box.contains(document.activeElement) };
+      box.hidden = true;
+      if (forgottenHeld.focused) $("memory-on").focus();
+    } else hideForgotten();
+  }
+  if (!unavailable && forgottenHeld) {
+    const held = forgottenHeld;
+    forgottenHeld = null;
+    $("memory-forgotten").hidden = false;
+    if (held.focused && document.activeElement === $("memory-on")) $("memory-forgotten-text").focus();
+  }
   // An empty list says so in its own row, never "0 of 0 memories" above it (memory-13).
   $("memory-count").textContent = unavailable || !rows.length ? "" : memoryCountText(page.rows.length, page.total, rows.length);
   const more = $("memory-more");
@@ -1527,6 +1564,9 @@ function renderMemory(rows: MemoryRow[]): void {
   $("memory-owner").textContent = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn()) ? "" : ownerText;
   // Tell Ember about you can't keep answers then: it says why instead of its questions.
   aboutYou.owner(memoryOwner === "ready" || !memoryOn() ? null : ownerText);
+  // First run's "Tell me about you" too, and before memory is on while a model service keeps it paused (memory-c1-2).
+  const provider = memoryReason === "own-provider" || memoryReason === "org-provider";
+  welcome.memoryOwner(memoryOwner === "ready" || (!memoryOn() && !provider) ? null : ownerText);
   const all = $("memory-forget-all");
   const wasFocused = document.activeElement === all;
   all.hidden = !rows.length && !memoryOwnerOffersErase(memoryReason, memoryOwner === "locked");
@@ -1548,6 +1588,12 @@ let memoryForgetting = false;
 /** Undo for the last Forget: its token and the fact's words, until MEMORY_UNDO_MS. */
 let memoryUndo: { token: string; text: string } | null = null;
 let memoryUndoTimer: ReturnType<typeof setTimeout> | undefined;
+/**
+ * The "Forgotten … Undo" line, held out of sight while the same account is checked again (a reconnect: memory-8): the
+ * epoch it belongs to, and whether focus was in it. It comes back with the list; another account's epoch drops it.
+ */
+let forgottenHeld: { epoch: number; focused: boolean } | null = null;
+let forgottenEpoch = -1;
 /** After Forget: what went, with Undo, where focus goes (the status line, never the next row's Forget: memory-7). */
 function showForgotten(text: string, gone: MemoryForgotten | null): void {
   clearTimeout(memoryUndoTimer);
@@ -1558,6 +1604,8 @@ function showForgotten(text: string, gone: MemoryForgotten | null): void {
   undo.removeAttribute("aria-disabled");
   undo.setAttribute("aria-label", undoForgotLabel(gone?.text ?? text));
   $("memory-forgotten").hidden = false;
+  forgottenEpoch = memoryEpoch;
+  forgottenHeld = null;
   said.focus();
   // Main lets go of what Undo needs after MEMORY_UNDO_MS: the line goes a little before, and focus with it to the switch.
   memoryUndoTimer = setTimeout(() => hideForgotten(), MEMORY_UNDO_MS - 2000);
@@ -1565,6 +1613,7 @@ function showForgotten(text: string, gone: MemoryForgotten | null): void {
 function hideForgotten(): void {
   clearTimeout(memoryUndoTimer);
   memoryUndo = null;
+  forgottenHeld = null;
   const box = $("memory-forgotten");
   const had = box.contains(document.activeElement);
   box.hidden = true;
@@ -1588,7 +1637,13 @@ $("memory-undo").addEventListener("click", () => {
     $("memory-error").textContent = memoryRestoreFailedText(err);
   });
 });
-const showMemory = (view: MemoryView) => { memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0; renderMemory(view.rows); renderStatus(); };
+const showMemory = (view: MemoryView) => {
+  memoryOwner = view.ownership; memoryReason = view.reason; memoryEpoch = view.epoch ?? 0;
+  // memory.json couldn't be read, was set aside or couldn't be saved: said, never an empty list alone (memory-r2).
+  const trouble = memoryTroubleText(view.trouble);
+  setText("memory-trouble", trouble);
+  renderMemory(view.rows); renderStatus();
+};
 /** Memory's settings as they are, so a change to one of its fields keeps the others (the patch replaces it whole). */
 const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, at: null }, questions: true, askedAt: null };
 /** "Tell Ember about you" (about-you.ts): its Turn on memory… opens the switch's own note. */
@@ -2361,11 +2416,15 @@ $("speak-rate").addEventListener("change", e => {
 function renderHear(s: Settings | null = settings): void {
   ($("voice-hear") as HTMLButtonElement).disabled = managed.has("speak") || !s || speakChoice(s) === "never";
 }
+/** Each click's own answer: an older sample's late one never overwrites a newer one's line. */
+let hearClicks = 0;
 $("voice-hear").addEventListener("click", () => {
   const line = $("voice-hear-status");
-  // Cleared first, so the same words again are news again.
-  line.textContent = "";
-  const show = (text: string) => { line.textContent = text; };
+  const click = ++hearClicks;
+  const show = (text: string) => { if (click === hearClicks) line.textContent = text; };
+  // Main answers once the sample is heard (Kitten may take 2 s to load first): until then no voice is named. The waiting
+  // words come first, so the same result again is news again.
+  show(HEAR_WAITING);
   window.ember.hearEmber().then(r => show(hearEmberLine(r)), () => show("Couldn't play the sample. Try again."));
 });
 $("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });

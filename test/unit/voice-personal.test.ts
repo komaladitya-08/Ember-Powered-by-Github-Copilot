@@ -23,7 +23,7 @@ import { wordsStore } from "../../app/main/personal/words-store";
 import { isRiskyLabel } from "../../app/main/policy/policy";
 import { suggestOf, suggestionsShown, suggestAction, IDLE_BUBBLE } from "../../app/shared/overlay";
 import { boxRows } from "../../app/renderer/ask/field";
-import { PERSONAL_TEXT, learntText, personalView, teachOutcomeText, wordRowText, forgetWordLabel } from "../../app/renderer/home/copy";
+import { PERSONAL_TEXT, learntText, personalView, teachOutcomeText, wordRowText, forgetWordLabel, wordForgottenText } from "../../app/renderer/home/copy";
 
 /** A seeded random unit voiceprint of 256 numbers. */
 function randomPrint(seed: number): Float32Array {
@@ -572,6 +572,7 @@ describe("Settings › Voice's personalisation words", () => {
     expect(learntText(5)).toBe("Learnt from 5 of your requests since you taught it.");
     expect(wordRowText({ heard: "jeera", meant: "Jira" })).toBe("“jeera” → “Jira”");
     expect(forgetWordLabel({ meant: "Jira" })).toBe("Forget “Jira”");
+    expect(wordForgottenText({ heard: "jeera", meant: "Jira" })).toBe("Forgotten: “jeera” → “Jira”.");
     expect(teachOutcomeText("learnt", " Jira ")).toBe("Got it: Ember will hear that as “Jira” from now on.");
     expect(teachOutcomeText("off", "x")).toBe("Learn my words is off (Settings › Voice), so Ember didn't keep that.");
     expect(teachOutcomeText("same", "x")).toBe("That's what Ember heard, so there's nothing to learn.");

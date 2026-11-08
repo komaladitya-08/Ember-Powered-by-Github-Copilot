@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { consolidate } from "../../app/main/memory/consolidate";
 import { factLine, memoryBlock } from "../../app/main/memory/format";
 import { SEMANTIC_K } from "../../app/main/memory/embed";
@@ -17,6 +17,8 @@ import { MemoryGraph, type EntityKind, type GraphClock } from "../../app/main/me
 import { memoryRefusal } from "../../app/main/memory/guard";
 import { SEMANTIC_FLOOR, bm25, personalizedPageRank, recall } from "../../app/main/memory/recall";
 import { memoryFile } from "../../app/main/memory/store";
+import { MemoryService } from "../../app/main/memory/service";
+import { memoryTroubleText } from "../../app/renderer/home/copy";
 import { nameKey, similarity, terms } from "../../app/main/memory/text";
 import { MEMORY_MODEL } from "../../app/voice/models";
 
@@ -96,6 +98,28 @@ describe("what memory never keeps", () => {
     const g = new MemoryGraph(undefined, clock());
     expect(g.add({ text, about: [{ name: "User", kind: "person" }], source: "user" }).kind).toBe("refused");
     expect(g.toJSON().facts).toEqual([]);
+  });
+
+  // The phrasings the re-rating still found kept (memory-1, round two).
+  const SAID_OTHERWISE = [
+    "My password's hunter2", "Password is: summer", "Use hunter2 as the password for the staging DB", "The garage opener code is 5512",
+    "The combination to my bike lock is 1234", "Login for the router: admin / P@ssw0rd", "Credentials for staging are admin and hunter22",
+    `My AWS secret access key is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`, "The code for the front door is 4821", "The code to the safe is 32-18-04",
+    "Gate code is #4821", "The office keycode is 4821", "My card ends 4242 and expires 04/29 with CVV 123",
+    "Recovery phrase is abandon ability able about above absent absorb abstract absurd abuse access accident", "Bitcoin seed: abandon ability able",
+    "Wifi: BlueSky99", "pw: hunter2!", "My Netflix login is ram@example.com and Summer2024",
+  ];
+  it.each(SAID_OTHERWISE.map(s => [s]))("refuses %j too (memory-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+
+  it.each([
+    ["The area code for London is 020"], ["The random seed is 42"], ["Login for the wiki is via SSO and Okta"], ["Uses a combination of tabs and spaces"],
+    ["The garage opener is broken"], ["The gate code changes every month"], ["Wifi is slow on Fridays"], ["Seeds the database before tests"],
+    ["The recovery phrase is stored in the safe"], ["Uses the same password for nothing"], ["The office is on floor 4"], ["The code for the report is in GitHub"],
+    ["Use Firefox as the default browser"], ["Use Edge as the PIN pad app"], ["Credentials for staging are in 1Password"], ["The CVV is on the back of the card"],
+  ])("keeps the look-alike %j too (memory-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
   });
 
   it.each([
@@ -180,6 +204,30 @@ describe("the memory graph", () => {
     // Something else entirely, said the other way round, closes nothing.
     const other = g.add({ text: "Doesn't work on weekends", about: U, source: "user" });
     expect(other.kind === "added" && other.closed).toEqual([]);
+  });
+
+  it("closes a preference only when what is preferred changed, never one that differs by the thing or the place it is about (memory-r1)", () => {
+    const U = [{ name: "User", kind: "person" as const }];
+    const after = (before: { text: string; predicate?: string }, text: string) => {
+      const c = clock();
+      const g = new MemoryGraph(undefined, c);
+      g.add({ ...before, about: U, source: "user" });
+      c.advance(1);
+      const r = g.add({ text, about: U, source: "user" });
+      return { closed: r.kind === "added" ? r.closed.map(f => f.text) : [], open: g.allFacts(true).map(f => f.text).sort() };
+    };
+    // Another thing preferred, or the same in another place: both still hold.
+    for (const [before, now] of [
+      ["Prefers dark mode", "Prefers dark chocolate"], ["Prefers short answers", "Prefers short meetings"],
+      ["Prefers detailed answers", "Prefers detailed reports"], ["Prefers morning meetings", "Prefers morning runs"],
+      ["Prefers dark mode in Slack", "Prefers dark mode in Outlook"], ["Prefers short answers at work", "Prefers short answers at home"],
+    ]) expect(after({ text: before }, now), `${before} → ${now}`).toEqual({ closed: [], open: [before, now].sort() });
+    // About you's answer length stays in the profile sent with every request.
+    expect(after({ text: "Prefers short answers", predicate: "answer_length" }, "Prefers short emails").closed).toEqual([]);
+    // What is preferred changed: the older is closed, kept as history.
+    for (const [before, now] of [["Prefers dark mode", "Prefers light mode"], ["Prefers short answers", "Prefers long answers"], ["Prefers dark mode in Slack", "Prefers light mode in Slack"]]) {
+      expect(after({ text: before }, now), `${before} → ${now}`).toEqual({ closed: [before], open: [now] });
+    }
   });
 
   it("lets nothing it saw overrule what the user said", () => {
@@ -470,6 +518,47 @@ describe("the memory file", () => {
     expect(broken).toBe(true);
     expect(g.size.facts).toBe(0);
     expect(fs.readFileSync(path.join(dir, "memory.json.broken"), "utf8")).toBe("{ not json");
+  });
+
+  it("says when memory.json was set aside, can't be read or can't be saved, instead of showing an empty memory alone (memory-r2)", () => {
+    vi.useFakeTimers();
+    try {
+      const quietLog = { info: () => undefined, warn: () => undefined };
+      // Not memory: set aside, and said so.
+      const broken = tmp();
+      fs.writeFileSync(path.join(broken, "memory.json"), "{ not json");
+      const reset = new MemoryService({ dir: broken, log: quietLog });
+      expect(reset.list()).toEqual([]);
+      expect(reset.trouble).toBe("reset");
+      expect(memoryTroubleText("reset")).toBe("Your saved memory couldn't be read, so Ember set it aside as memory.json.broken in its data folder and started afresh.");
+      reset.forgetAll();
+      expect(reset.trouble).toBeNull();
+      // Can't be saved: said once the save fails, and no longer once one works.
+      let fails = true;
+      const changes = vi.fn();
+      const file = { path: "/x/memory.json", load: () => new MemoryGraph(), erase: () => undefined, save: () => { if (fails) throw new Error("ENOSPC"); } };
+      const s = new MemoryService({ dir: tmp(), log: quietLog, file, onChange: changes });
+      s.remember("Works on Atlas", [{ name: "User" }], "I work on Atlas");
+      expect(s.trouble).toBeNull();
+      vi.advanceTimersByTime(1500);
+      expect(s.trouble).toBe("unsaved");
+      // The model is told, so it never promises what can't be kept.
+      expect(s.remember("Prefers tea", [{ name: "User" }], "I prefer tea")).toMatch(/^Remembered \[f\w+\]\. Saving memory on this computer is failing, so tell the user it may be gone when Ember closes\.$/);
+      expect(memoryTroubleText("unsaved")).toBe("Ember couldn't save memory on this computer, so what it keeps now may be gone when Ember closes.");
+      fails = false;
+      s.remember("Uses Firefox", [{ name: "User" }], "I use Firefox");
+      vi.advanceTimersByTime(1500);
+      expect(s.trouble).toBeNull();
+      expect(changes.mock.calls.length).toBeGreaterThanOrEqual(4);
+      // There but out of reach: left as it was, and said so.
+      const locked = tmp();
+      fs.mkdirSync(path.join(locked, "memory.json"));
+      const unreadable = new MemoryService({ dir: locked, log: quietLog });
+      expect(unreadable.list()).toEqual([]);
+      expect(unreadable.trouble).toBe("unreadable");
+      expect(memoryTroubleText("unreadable")).toBe("Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again.");
+      expect(memoryTroubleText(null)).toBe("");
+    } finally { vi.useRealTimers(); }
   });
 
   it("forgets everything when erased", () => {

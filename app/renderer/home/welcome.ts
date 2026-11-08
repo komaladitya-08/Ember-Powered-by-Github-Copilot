@@ -48,6 +48,8 @@ export interface Welcome {
   status(st: Status): void;
   /** Something needs the consent first (signing in from elsewhere): go to that step. */
   toConsent(): void;
+  /** Why saved memory is paused, in Memory's own words, or null: the optional "about you" step says it (memory-c1-2). */
+  memoryOwner(why: string | null): void;
 }
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -928,6 +930,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (active) render();
     },
     toConsent(): void { if (active) go("consent"); },
+    memoryOwner(why: string | null): void { about.owner(why); },
   };
 }
 

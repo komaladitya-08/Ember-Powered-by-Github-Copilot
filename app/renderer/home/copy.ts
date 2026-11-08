@@ -482,6 +482,15 @@ export function memoryPaused(m: { on: boolean; consent: { version: number } }): 
 }
 /** Said in Settings › Memory while memory is paused, above its new note. */
 export const MEMORY_PAUSED_TEXT = "Memory is paused until you review its updated note, which now says everything it sends to Copilot.";
+/** What Settings › Memory says when memory.json couldn't be read, was set aside or couldn't be saved (memory-r2). */
+export function memoryTroubleText(trouble: "unreadable" | "reset" | "unsaved" | null | undefined): string {
+  switch (trouble) {
+    case "unreadable": return "Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again.";
+    case "reset": return "Your saved memory couldn't be read, so Ember set it aside as memory.json.broken in its data folder and started afresh.";
+    case "unsaved": return "Ember couldn't save memory on this computer, so what it keeps now may be gone when Ember closes.";
+    default: return "";
+  }
+}
 /** Memory's line while its saved memory can't be opened, and whether to offer Forget everything (memory-2): shared with main. */
 export { memoryOwnerOffersErase, memoryOwnerText } from "../../shared/memory-owner";
 
@@ -492,8 +501,14 @@ export function memorySourceLabel(source: string): string {
 
 /** The conversation's line when Ember keeps something new on its own, and its Undo button's name for screen readers. */
 export const learnedLine = (text: string) => `Ember learned: ${text}`;
-/** The conversation's line when Ember forgot a fact you asked it to forget (memory-v2), and its Undo's name. */
-export const forgotLine = (text: string) => `Ember forgot: ${text}`;
+/**
+ * The conversation's line when Ember forgot a fact (memory-v2: asked to; memory-c1-3: by its "Ember learned" line's
+ * Undo, or Forget), with the notes that went with it and what holds again (memory-12); and its Undo's name.
+ */
+export const forgotLine = (text: string, derived = 0, back: readonly string[] = []) =>
+  `Ember forgot: ${text}${derived ? ` (and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it)` : ""}${back.length ? `. Ember remembers ${quotedAnd(back)} again.` : ""}`;
+/** The same line once its Undo put the fact back (memory-c1-3). */
+export const rememberedAgainLine = (text: string) => `Ember remembers “${text.replace(/[“”]/g, "")}” again.`;
 export const undoForgotLabel = (text: string) => `Undo: remember “${text}” again`;
 /**
  * What Memory's list says after Forget, where focus goes (never the next row's Forget, so a second Enter forgets
@@ -1262,6 +1277,10 @@ export function wordRowText(w: { heard: string; meant: string }): string {
 export function forgetWordLabel(w: { meant: string }): string {
   return `Forget “${w.meant}”`;
 }
+/** What Settings › Voice says, where focus goes, once a word is forgotten (memory-7). */
+export function wordForgottenText(w: { heard: string; meant: string }): string {
+  return `Forgotten: ${wordRowText(w)}.`;
+}
 
 /** What the conversation says after the user retyped what they said (PersonalVoice.teach's outcome). */
 export function teachOutcomeText(outcome: "learnt" | "off" | "unknown" | "unlike" | "same", meant: string): string {
@@ -1332,11 +1351,19 @@ export function nearestRate(rate: number): number {
   return SPEAK_RATES.reduce((best, r) => (Math.abs(r.rate - rate) < Math.abs(best - rate) ? r.rate : best), 1);
 }
 
-/** What Hear Ember's status line says: which voice spoke, or why none did (voice-speaking-7). */
+/** Hear Ember's status line until the sample is heard: no voice is named before one speaks (voice-speaking-r3). */
+export const HEAR_WAITING = "Getting Ember's voice ready…";
+
+/**
+ * What Hear Ember's status line says: which voice spoke, or why none did (voice-speaking-7); "" when something else
+ * Ember said cut the sample off.
+ */
 export function hearEmberLine(r: HearResult): string {
   if (r.spoke) return `Ember spoke in ${r.voice === "system" ? "this computer's system voice" : NATURAL_CHOICES[r.voice].name}.`;
   if (r.why === "managed") return "Your organisation has turned speaking off.";
   if (r.why === "locked") return "Ember doesn't speak while the screen is locked.";
+  if (r.why === "silent") return "Ember couldn't speak just now. The setup check says why.";
+  if (r.why === "stopped") return "";
   return "Ember isn't speaking out loud now. Choose Always above to hear it.";
 }
 

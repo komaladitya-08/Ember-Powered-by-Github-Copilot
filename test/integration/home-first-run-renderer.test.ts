@@ -742,6 +742,35 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((c as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(q2) tells me about you says why memory is paused under a model service, shows no answers it couldn't keep, and goes on with Continue (memory-c1-2)", async () => {
+    const p = await open({ agent: readyAgent() });
+    await next(p).click();
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
+    await emit(p, "onMemory", { rows: [], ownership: "waiting", reason: "org-provider", epoch: 1 });
+    await p.locator("#w-alt").click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Tell me about you");
+    await expect.poll(() => p.locator("#w-about .about-paused").innerText()).toBe("Memory works only with GitHub Copilot, so it's paused while Ember uses your organisation's model service. What Ember remembers stays on this computer.");
+    expect(await p.locator("#w-ay-name").isVisible()).toBe(false);
+    expect(await p.locator("#w-about").getByRole("button", { name: "I agree, remember" }).count()).toBe(0);
+    expect(await next(p).innerText()).toBe("Continue");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    expect((await calls(p)).some(c => c.startsWith("introduce"))).toBe(false);
+    // Memory on and agreed to, still paused: the same, never "Couldn't save your answers".
+    const on = await open({ agent: readyAgent() });
+    await on.evaluate(() => { window.__frState.settings.memory = { on: true, questions: true, askedAt: null, consent: { version: 99, at: "2026-11-04T12:00:00Z" } }; window.__frEmit("onSettingsChanged", window.__frState.settings); });
+    await next(on).click();
+    await next(on).click();
+    await expect.poll(() => on.locator("#w-title").innerText()).toBe("Try me out");
+    await on.locator("#w-alt").click();
+    await emit(on, "onMemory", { rows: [], ownership: "waiting", reason: "own-provider", epoch: 1 });
+    await expect.poll(() => on.locator("#w-about .about-paused").innerText()).toContain("your own model provider");
+    expect(await on.locator("#w-ay-name").isVisible()).toBe(false);
+    expect(await next(on).innerText()).toBe("Continue");
+    expect([...(p as Page & { errors: string[] }).errors, ...(on as Page & { errors: string[] }).errors]).toEqual([]);
+  });
+
   it("(q) someone who agreed to an earlier version starts at the consent and is told what changed (first-run-4, safety-privacy-8)", async () => {
     const p = await open({ consent: 6, agent: readyAgent() });
     expect(await p.locator("#w-title").innerText()).toBe("What's changed since you last agreed");

@@ -33,7 +33,7 @@ import type { Logger } from "../../app/main/logger";
 import type { Settings } from "../../app/main/settings";
 import type { OverlayShaper } from "../../app/main/platform/types";
 import { besideControl, followTarget } from "../../app/main/follow";
-import { bubbleHere, cardsCorner, handleSide, stackPlace } from "../../app/renderer/overlay/layout";
+import { askKeepOff, bubbleHere, cardsCorner, handleSide, stackPlace } from "../../app/renderer/overlay/layout";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const shaper: OverlayShaper = { setInputRegion: () => false, release() {}, forward: false, floating: () => ({ options: {}, allWorkspaces: null }) };
@@ -330,5 +330,45 @@ describe("where Ember's bubble is, for the Ask box to open beside it (companion-
     const main = readFileSync("app/main/main.ts", "utf8");
     expect(main).toMatch(/ipcMain\.on\(OVERLAY\.bubble, \(event, rect: unknown\) => \{\n\s+if \(!overlay\?\.owns\(event\.sender\) \|\| !\(rect === null \|\| isRect\(rect\)\)\) return;/);
     expect(main).toContain("bubble: () => overlay?.bubbleRect() ?? null,");
+  });
+});
+
+describe("the open Ask box, for a bubble that comes up while it is open (companion-c1-1)", () => {
+  const box = { x: 407, y: 149, width: 560, height: 188 };
+  const moved = { x: 97, y: 149, width: 560, height: 188 };
+  const none = { box: null, question: "" };
+
+  it("is kept off by a bubble that comes up while it is open, wherever main says the box is now", () => {
+    // No question up: the box where main says it is, as it moves and when it closes.
+    expect(askKeepOff(box, "", none)).toEqual({ box, question: "" });
+    expect(askKeepOff(moved, "", { box, question: "" })).toEqual({ box: moved, question: "" });
+    expect(askKeepOff(null, "", { box: moved, question: "" })).toEqual(none);
+    // A question that comes up while the box is open is placed clear of it, where it is then.
+    expect(askKeepOff(box, "q1:once,q1:deny", { box, question: "" })).toEqual({ box, question: "q1:once,q1:deny" });
+  });
+
+  it("never moves a question already shown: it keeps off the box where the box was when it came", () => {
+    const held = askKeepOff(box, "q1:once,q1:deny", none);
+    // The box steps aside, grows or closes while the same question shows: the question stays where it is.
+    expect(askKeepOff(moved, "q1:once,q1:deny", held)).toBe(held);
+    expect(askKeepOff(null, "q1:once,q1:deny", held)).toBe(held);
+    // The question answered, or the next one: the box where it is now.
+    expect(askKeepOff(moved, "", held)).toEqual({ box: moved, question: "" });
+    expect(askKeepOff(moved, "q2:once,q2:deny", held)).toEqual({ box: moved, question: "q2:once,q2:deny" });
+    // A question that was up before the box opened: the box opens clear of it (ask.ts), and it doesn't move for the box.
+    const before = askKeepOff(null, "q3:once", none);
+    expect(askKeepOff(box, "q3:once", before)).toBe(before);
+  });
+
+  it("is a place the bubble keeps off where it can, never one it hides from (main sends it apart from the windows)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const overlayPage = readFileSync("app/renderer/overlay/main.ts", "utf8");
+    expect(overlayPage).toContain("bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff)");
+    expect(overlayPage).toMatch(/askHeld = askKeepOff\(state\?\.askBox \?\? null, questionOf\(state\), askHeld\);\n\s+if \(askHeld\.box\) list\.push\(/);
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toMatch(/onBounds: askBox => \{ if \(JSON\.stringify\(lastState\.askBox \?\? null\) !== JSON\.stringify\(askBox\)\) showState\(\{ askBox \}\); \},/);
+    expect(main).toMatch(/overlay\.setBubble\(event\.sender, rect\);\n\s+\/\/[^\n]*\n\s+askWindow\.bubbleChanged\(stepsAsideFor\(lastState\.bubble\)\);/);
+    // Without a compositor, the corner card grows for a question: the open box moves off it.
+    expect(main).toMatch(/handle\.fit\(height\); deskViewRef\?\.handleMoved\(\); askWindow\.keepClear\(\);/);
   });
 });

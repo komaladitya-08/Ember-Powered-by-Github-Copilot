@@ -3,7 +3,7 @@
 import type { EnvReport, FixId, TargetFixId } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
-import type { MemoryItem } from "../main/memory/service";
+import type { MemoryItem, MemoryTrouble } from "../main/memory/service";
 import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { MemoryOwnerReason, MemoryOwnership } from "../main/memory/owner";
@@ -43,7 +43,11 @@ export interface MemoryForgotten { text: string; derived: number; undo: string; 
  * `reason`: why memory isn't open, so Home says it truthfully (memory-2); `erasesOnSignOut`: whether Sign out erases
  * what is saved (only memory verified as this account's in this run: memory-11). Both absent from an older main.
  */
-export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number; reason?: MemoryOwnerReason | null; erasesOnSignOut?: boolean }
+export interface MemoryView {
+  rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number; reason?: MemoryOwnerReason | null; erasesOnSignOut?: boolean;
+  /** memory.json couldn't be read, was set aside, or couldn't be saved this run: Settings › Memory says so (memory-r2). */
+  trouble?: MemoryTrouble | null;
+}
 import type { ConversationSent, ConversationTurn, HistoryProblemKind } from "./conversation";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
@@ -163,6 +167,8 @@ export const IPC = {
   focusSection: "ember:focus-section",
   /** The ask box: what Ember will read when you ask (shown as a chip), and your earlier questions. */
   askContext: "agent:ask-context",
+  /** Why a request would go unanswered now, as it changes while the box is open (companion-6): the word, or null. */
+  askUnavailable: "agent:ask-unavailable",
   /** What was typed while the ask box was opening (Ember held the keyboard meanwhile). */
   askTyped: "agent:ask-typed",
   /** The ask box's field needs this many lines (1 to 4) for its text: the box grows to fit. */
@@ -276,7 +282,11 @@ export type ClearHearingStatus =
   | { state: "failed"; detail: string };
 
 /** What Hear Ember did: which voice spoke, or why none did (speaking off, the organisation's policy, the screen lock). */
-export type HearResult = { spoke: true; voice: "kitten" | "kokoro" | "supertonic" | "system" } | { spoke: false; why: "off" | "managed" | "locked" };
+/**
+ * What Hear Ember found: the voice the sample was heard in, once it started, or why none was: "silent" when no voice
+ * spoke it, "stopped" when something else Ember said cut it off first (voice-speaking-r3).
+ */
+export type HearResult = { spoke: true; voice: "kitten" | "kokoro" | "supertonic" | "system" } | { spoke: false; why: "off" | "managed" | "locked" | "silent" | "stopped" };
 
 export type NaturalVoiceStatus = (
   | { state: "off" | "later" | "checking" | "needs-voice" | "ready" | "on" | "too-slow" | "wont-load" | "needs-native" }
@@ -599,6 +609,8 @@ export interface EmberAskApi {
   listenOnce(on: boolean): Promise<ListenOnceStatus>;
   onListenOnce(fn: (s: ListenOnceStatus) => void): void;
   onContext(fn: (c: AskContext) => void): void;
+  /** Why a request would go unanswered changed while the box is open (the handle's word; null: it would be answered). */
+  onUnavailable?(fn: (word: string | null) => void): void;
   /** Text typed before the box had the keyboard: it goes in the box (Enter sends it, Esc closes the box). */
   onTyped(fn: (t: { text: string; submit: boolean; cancel: boolean }) => void): void;
   /** The box went away (nothing can be typed in it now): what was left in the field is selected for the next opening. */

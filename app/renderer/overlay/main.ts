@@ -26,7 +26,7 @@ import { ArmClock, TASK_ARM_MS } from "../handle/arm";
 /** The bubble's Try again and Stop ignore presses for a moment after they come up, as a task card's buttons do. */
 const bubbleArm = new ArmClock();
 import { shortWhere, whereText } from "../handle/badge";
-import { bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
+import { askKeepOff, bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
 import { handleCorner, type HandleSide } from "../../shared/handle-place";
 import { presenceOf } from "../../shared/presence";
 import { PresenceView } from "./presence";
@@ -105,6 +105,8 @@ let statusClear: ReturnType<typeof setTimeout> | null = null;
 /** The windows main names (the settings window while the user works in it), in this overlay's coordinates. */
 let windows: Rect[] = [];
 let avoidKey = "null";
+/** The Ask box the bubble keeps off, and for which question it was held (askKeepOff). */
+let askHeld: { box: Rect | null; question: string } = { box: null, question: "" };
 
 function applyReducedMotion(): void {
   rig.reducedMotion = reducedMotionQuery.matches || settings?.reduceMotion === true;
@@ -345,6 +347,10 @@ function measureTasks(): void {
   avoidKey = keepOffKey(state);
   windows = (state?.avoid ?? []).map(r => ({ x: r.x - bounds.x, y: r.y - bounds.y, width: r.width, height: r.height }));
   list.push(...windows);
+  // The open Ask box: kept off where the bubble can, never hidden from (the box is where the user answers it), and a
+  // question already shown doesn't move for it (companion-c1-1).
+  askHeld = askKeepOff(state?.askBox ?? null, questionOf(state), askHeld);
+  if (askHeld.box) list.push({ x: askHeld.box.x - bounds.x, y: askHeld.box.y - bounds.y, width: askHeld.box.width, height: askHeld.box.height });
   // The control Ember works on: the bubble keeps off its ring (what Ember is about to click, or is showing you) where
   // it can do that and still keep off the handle, the cards and the windows above.
   const f = state?.focus;
@@ -405,8 +411,11 @@ setInterval(reportReading, TASK_READING_LEASE_MS / 3);
 document.addEventListener("visibilitychange", reportReading);
 window.addEventListener("pagehide", () => { for (const id of readingCards) api.taskReading(id, false); readingCards.clear(); });
 
-/** What the bubble keeps off besides the cards: the windows main names and the control Ember works on. */
-const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null]);
+/** The question the bubble shows (its answers' ids), "" for none. */
+const questionOf = (s: EmberState | null): string =>
+  s?.bubble.visible ? s.bubble.actions.filter(a => !a.id.startsWith("ui:")).map(a => a.id).join(",") : "";
+/** What the bubble keeps off besides the cards: the windows main names, the open Ask box and the control Ember works on. */
+const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null, s?.askBox ?? null, questionOf(s)]);
 const cards = new Map<string, CardEls>();
 let tasksKey = "";
 /** The cards in stack order (top first), as last rendered. */

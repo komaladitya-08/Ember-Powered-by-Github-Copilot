@@ -41,11 +41,11 @@ import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
 import { warmText } from "./perception/capture";
 import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
-import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask";
+import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip, stepsAsideFor } from "./ask";
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
-import { VoiceService, electronDownloader, listenOnceInSettings, voicePermissions } from "./voice";
+import { VoiceService, electronDownloader, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { capiChoice, type BackendChoice } from "../voice/runtime";
@@ -79,7 +79,7 @@ import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
-import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
+import { AnswerLanguage, cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
 import { SpeechStream } from "../voice/tts";
 import { ENROL_PHRASES, encodePrint } from "../voice/voiceprint";
 import { voiceprintStore } from "./voiceprint-store";
@@ -108,7 +108,7 @@ import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
 import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
-import { MemoryLearning, withLearned } from "./memory/learning";
+import { MemoryLearning, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { BetterRecall } from "./memory/better-recall";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
@@ -976,6 +976,9 @@ function start(): void {
     if (where) sendToHome(IPC.focusSection, where);
   };
 
+  /** Settings › Memory, at its switch. */
+  const openMemory = () => { showHome(); sendToHome(IPC.focusSection, "memory:memory-yes"); };
+
   const sendToHome = (channel: string, value: unknown) => {
     const send = () => { if (home && !home.isDestroyed()) home.webContents.send(channel, value); };
     if (home && !home.isDestroyed() && home.webContents.isLoading()) home.webContents.once("did-finish-load", send); else send();
@@ -1074,8 +1077,15 @@ function start(): void {
    * answer always did), the rest follow it.
    */
   const answerSpeech = new SpeechStream();
+  /** The answer's language, decided once for all its pieces (voice-speaking-r1): Kitten reads only English. */
+  const answerLanguage = new AnswerLanguage();
   let answerSpoken = false;
   let answerInterrupted = false;
+  /**
+   * Stop speaking silenced this answer: the rest of it isn't said, but its words still reach the bubble, Home and the
+   * transcript, and it is still the answer (the suggestions, Read the last answer: voice-speaking-c1-1).
+   */
+  let answerHushed = false;
   let answerEpoch = 0;
   /** How long each spoken request takes to be answered aloud, step by step: one `voice.latency` line, times only. */
   const turnLatency = new TurnLatency({ log: times => log.info("voice.latency", { ...times }) });
@@ -1091,13 +1101,14 @@ function start(): void {
     if (speechSilenced(!!voice?.speaking, allowed)) { cancelAck(); voice?.hush(); }
     return allowed;
   };
-  const sayStreamed = (chunks: string[]) => {
+  /** `end`: the message is complete, so nothing of it waits any longer to tell its language. */
+  const sayStreamed = (chunks: string[], end = false) => {
     if (answerInterrupted || confirmer?.waiting || !silenceIfOff()) return;
-    for (const chunk of chunks) {
+    for (const { text: chunk, lang } of answerLanguage.take(chunks, end)) {
       const c = afterAck(chunk, ackSaid);
       ackSaid = null;
       if (!c.trim()) continue;
-      turnLatency.mark("firstChunk"); voice?.speak(c, { append: answerSpoken }); answerSpoken = true;
+      turnLatency.mark("firstChunk"); voice?.speak(c, { append: answerSpoken, lang }); answerSpoken = true;
     }
   };
   /**
@@ -1128,28 +1139,33 @@ function start(): void {
     answerInterrupted = true;
     cancelAck();
     answerSpeech.reset();
+    answerLanguage.reset();
     answerSpoken = false;
     ackSaid = null;
     lastAskByVoice = false;
     turnAnswer = "";
     lastReply = "";
+    answerHushed = false;
     voice?.hush();
   };
   /**
-   * Stop speaking (the handle's menu, while Ember talks): its voice stops and the rest of this answer isn't said, as on
-   * a cut-in, while the answer's words and every task go on (voice-speaking-5). Stop everything stays the kill switch.
+   * Stop speaking (the handle's menu, while Ember talks): its voice stops and the rest of this answer isn't said, while
+   * the answer's words and every task go on (voice-speaking-5). The conductor's answer isn't interrupted, which would
+   * drop the rest of its words and mark it stopped (voice-speaking-c1-1). Stop everything stays the kill switch.
    */
   const stopSpeaking = (source: "menu") => {
     log.info("voice.stop_speaking", { source });
-    if (agent?.answerOpen) agent.interruptAnswer();
+    const open = !!agent?.answerOpen;
     resetAnswerSpeech();
+    answerHushed = open;
   };
   /** A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. */
   const pauseAnswerSpeech = () => {
-    const spoken = lastAskByVoice, interrupted = answerInterrupted;
+    const spoken = lastAskByVoice, interrupted = answerInterrupted, hushed = answerHushed;
     resetAnswerSpeech();
     lastAskByVoice = spoken;
     answerInterrupted = interrupted;
+    answerHushed = hushed;
     agent?.pauseAnswer();
   };
 
@@ -1163,6 +1179,8 @@ function start(): void {
     keepOff: () => handle?.bounds ?? null,
     // The answer or question Ember shows: the box opens beside it, not on it (companion-1).
     bubble: () => overlay?.bubbleRect() ?? null,
+    // Where the box is while it is open: a bubble that comes up meanwhile keeps off it (companion-c1-1).
+    onBounds: askBox => { if (JSON.stringify(lastState.askBox ?? null) !== JSON.stringify(askBox)) showState({ askBox }); },
     // Clicks only on what it shows, where the window system can say so (Linux's input shape: companion-4).
     shape: (w, rects) => platform.overlay.setInputRegion(w, rects, screen.getDisplayMatching(w.getBounds()).scaleFactor || 1),
     windowId: w => ownId(w),
@@ -1448,7 +1466,8 @@ function start(): void {
     if (screenLock?.locked) return blocked("The screen is locked.");
     if (s.voice.muted) return blocked("Unmute the microphone first.");
     if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");
-    if (confirmer?.waiting) return blocked("Answer Ember's question first.");
+    // A question holds it back, but not this control's own Listen once under way: its Cancel listening stays (companion-r1).
+    if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return blocked("Answer Ember's question first.");
     const now = voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
     // An answer on its way: Listen once stops it first, as a wake does (requestListenOnce; voice-listening-7).
     const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;
@@ -1519,6 +1538,8 @@ function start(): void {
   // in the "Ember memory" utility process, used only while memory is on.
   const memoryConfigured = () => consented() && memoryAllowed() && settings.get().memory.on && settings.get().memory.consent.version >= FEATURE_CONSENT_VERSION.memory;
   const memoryOn = () => memoryOwner.ready && memoryConfigured();
+  /** On under an earlier note than today's: paused until the user reviews it, as Home says (memory-r4). */
+  const memoryNoteOutdated = (m: { on: boolean; consent: { version: number } }) => m.on && m.consent.version > 0 && m.consent.version < FEATURE_CONSENT_VERSION.memory;
   const betterRecall = new BetterRecall({
     dir: userData, modelsRoot: path.join(userData, "models"), log: log.child("memory"), download: electronDownloader, memoryOn, memoryWanted: memoryConfigured,
     fork: () => {
@@ -1540,6 +1561,8 @@ function start(): void {
   const memoryView = () => ({
     rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.list() : [],
     ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason, erasesOnSignOut: memoryOwner.mayEraseOnSignOut,
+    // After the rows, which read memory.json first: what was wrong with it, only for the account's open memory (memory-r2).
+    trouble: memoryOwner.ready ? memory.trouble : null,
   });
   const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
   const publishMemoryOwner = () => {
@@ -1567,14 +1590,16 @@ function start(): void {
   // Memory that learns on its own (app/main/memory/learning.ts): only while memory is in force (memoryOn: on, its own
   // consent, the organisation's features.memory; LOCKDOWN turns that off). Its "Ember learned" lines join the
   // conversation Home shows.
-  let learnedLines: TranscriptEntry[] = [];
+  let learnedLines: MemoryLine[] = [];
   const conversationNow = (entries: TranscriptEntry[] = agent?.getTranscript() ?? []) => withLearned(entries, learnedLines);
   const learning = new MemoryLearning({
     memory, inForce: memoryOn, managed: () => !memoryAllowed(),
     // "Spoken aloud or not" in the spoken interview is Ember's real speaking choice (memory-5).
     setSpoken: on => { try { settings.update(speakSettings(on ? "always" : "never")); } catch (err) { log.warn("memory.spoken_not_saved", { err }); } },
     // On and agreed to, but its owner isn't verified: Ember says why rather than asking to turn memory on (memory-2).
-    paused: () => (memoryConfigured() && !memoryOwner.ready ? memoryOwner.reason ?? "checking" : null),
+    // On under an earlier note the user hasn't reviewed: paused, as Home says, until they do (memory-r4).
+    paused: () => (memoryConfigured() ? (memoryOwner.ready ? null : memoryOwner.reason ?? "checking")
+      : consented() && memoryAllowed() && memoryNoteOutdated(settings.get().memory) ? "note" : null),
     questionsOn: () => settings.get().memory.questions,
     askedAt: () => settings.get().memory.askedAt,
     setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
@@ -1582,7 +1607,7 @@ function start(): void {
     // Fail closed: without a lock watcher the screen counts as locked (nothing runs while away).
     locked: () => screenLock?.locked ?? true,
     say: text => agent?.sayFromMemory(text) ?? false,
-    openMemory: () => { showHome(); sendToHome(IPC.focusSection, "memory:memory-yes"); },
+    openMemory,
     onLearned: items => {
       const t = new Date().toISOString();
       learnedLines = [...learnedLines, ...items.map(i => ({ t, who: "learned" as const, text: i.text.slice(0, 400), fact: i.id }))].slice(-30);
@@ -1593,16 +1618,21 @@ function start(): void {
       learnedLines = [];
       broadcast(IPC.conversationChanged, conversationNow());
     },
-    // One fact forgotten (Forget, Undo, forget_memory, "forget that"): its line and its Undo go.
-    onForgot: id => {
-      const before = learnedLines.length;
-      learnedLines = learnedLines.filter(l => l.fact !== id);
-      if (learnedLines.length !== before) broadcast(IPC.conversationChanged, conversationNow());
+    // One fact forgotten (Forget, Undo, forget_memory, "forget that"): its "Ember learned" line stays where it was and
+    // says Ember forgot it, with the Undo that puts it back, so focus and a screen reader keep their place (memory-c1-3).
+    // A correction changed its words: the line goes.
+    onForgot: (id, gone) => {
+      const next = linesAfterForget(learnedLines, id, gone);
+      if (!next) return;
+      learnedLines = next;
+      broadcast(IPC.conversationChanged, conversationNow());
     },
-    // forget_memory forgot what the user asked: the conversation says so, in the fact's own words, with Undo (memory-v2).
+    // forget_memory forgot what the user asked: the conversation says so, in the fact's own words, with Undo (memory-v2),
+    // unless the line of when Ember learned it says so already.
     onAskedForget: f => {
-      const t = new Date().toISOString();
-      learnedLines = [...learnedLines, { t, who: "learned" as const, text: f.text.slice(0, 400), forgot: f.undo }].slice(-30);
+      const next = linesAfterAskedForget(learnedLines, f, new Date().toISOString());
+      if (!next) return;
+      learnedLines = next;
       broadcast(IPC.conversationChanged, conversationNow());
     },
     log: log.child("memory"),
@@ -1629,6 +1659,7 @@ function start(): void {
     useModel: (model: OneShot | null) => learning.setModel(model),
     taskDone: (title: string, result: string) => learning.taskDone(title, result),
     intent: (text: string, how: { own: boolean }) => learning.intent(text, how),
+    rememberNote: (text: string) => learning.rememberNote(text),
   };
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
@@ -2187,15 +2218,14 @@ function start(): void {
   ipcMain.handle(IPC.voiceNaturalRetry, guard(() => voice?.retryNaturalVoice()));
   /**
    * Hear Ember (Settings › Voice; it takes no arguments): one fixed sentence, as replies are said, only where Ember may
-   * speak now, and which voice said it (voice-speaking-7).
+   * speak now (voice-speaking-7), and which voice said it once it was heard, never a guess before (voice-speaking-r3).
    */
-  const hearEmber = (): HearResult => {
+  const hearEmber = async (): Promise<HearResult> => {
     if (policy.features.speak === false) return { spoke: false, why: "managed" };
     if (screenLock?.locked) return { spoke: false, why: "locked" };
     if (!voice || !maySpeak()) return { spoke: false, why: "off" };
-    const said = voice.nextVoice;
-    voice.speak(HEAR_SAMPLE);
-    return { spoke: true, voice: said };
+    const heard = await voice.sample(HEAR_SAMPLE);
+    return heard === "stopped" ? { spoke: false, why: "stopped" } : heard ? { spoke: true, voice: heard } : { spoke: false, why: "silent" };
   };
   ipcMain.handle(IPC.voiceHear, guard(() => hearEmber()));
   const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay, approval: confirmer?.waiting ?? false });
@@ -2501,14 +2531,17 @@ function start(): void {
     // Through learning: its "Ember learned" line and "forget that" let go of it too. Home says what went, with Undo.
     return learning.forgetCounted(id);
   }));
-  // Undo of a recent Forget (Home's list, or an "Ember forgot" line): only while the account's memory is open.
+  // Undo of a recent Forget (Home's list, or an "Ember forgot" line): only while the account's memory is open, as its
+  // list and Forget are (also while memory is switched off: memory-r3), never once the organisation turned memory off.
   ipcMain.handle(IPC.memoryRestore, guard((token: unknown) => {
-    if (!memoryOwner.ready || !memoryOn()) throw new Error("Ember couldn't put this memory back. Wait until your saved memory is available, then try Undo again.");
+    const open = memoryOwner.ready && memoryAllowed() && consented();
+    if (!open) throw new Error("Ember couldn't put this memory back. Wait until your saved memory is available, then try Undo again.");
     if (typeof token !== "string" || token.length < 8 || token.length > 64) return false;
-    const restored = learning.restore(token);
-    // Its "Ember forgot" line goes: what it said is no longer true.
-    if (restored && learnedLines.some(l => l.forgot === token)) {
-      learnedLines = learnedLines.filter(l => l.forgot !== token);
+    const restored = learning.restore(token, open);
+    // Its "Ember forgot" line says it is remembered again, where it was (memory-c1-3).
+    const next = restored ? linesAfterRestore(learnedLines, token) : null;
+    if (next) {
+      learnedLines = next;
       broadcast(IPC.conversationChanged, conversationNow());
     }
     return restored;
@@ -2636,6 +2669,8 @@ function start(): void {
   ipcMain.on(OVERLAY.bubble, (event, rect: unknown) => {
     if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
     overlay.setBubble(event.sender, rect);
+    // A question (or "Listening…") that found no room clear of the open Ask box: the box steps aside, once (companion-c1-1).
+    askWindow.bubbleChanged(stepsAsideFor(lastState.bubble));
   });
   ipcMain.on(OVERLAY.motion, (event, on: unknown) => {
     if (overlay?.owns(event.sender) && typeof on === "boolean") overlay.reducedMotionChanged(on);
@@ -2689,6 +2724,8 @@ function start(): void {
       return;
     }
     if (id === "ui:settings") { openSettings(); return; }
+    // "Memory is off" behind the answer to a "remember…" memory couldn't keep (memory-c1-1): Settings › Memory.
+    if (id === "ui:memory") { openMemory(); return; }
     if (id === "ui:setup-check") { showHome(); sendToHome(IPC.focusSection, "checks"); agent?.releaseBubble(lastState.bubble); return; }
     if (id === "ui:more") { expandAnswer(); return; }
     if (id === "ui:conversation") { readLastAnswer(); return; }
@@ -2709,7 +2746,7 @@ function start(): void {
     if (isHandle(event.sender)) showMenu();
   });
   ipcMain.on(OVERLAY.handleFit, (event, height: unknown) => {
-    if (handle && isHandle(event.sender) && typeof height === "number") { handle.fit(height); deskViewRef?.handleMoved(); }
+    if (handle && isHandle(event.sender) && typeof height === "number") { handle.fit(height); deskViewRef?.handleMoved(); askWindow.keepClear(); }
   });
 
   settings.onChange((s) => {
@@ -3293,17 +3330,20 @@ function start(): void {
         if (maySpeak()) voice?.warmSpeech();
         askedAt = Date.now();
         answerInterrupted = false;
+        // A request typed in another language: its answer's short first words are said in that language (voice-speaking-11).
+        answerLanguage.reset(turn.text);
         lastAskByVoice = turn.spoken && !turn.manual;
         if (turn.spoken) ackLater(turn.text);
         syncListenOnce();
       },
       onAnswerInterrupted: resetAnswerSpeech,
       onAnswerDelta: delta => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
-      onAnswerEnd: text => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); lastReply = text; sayStreamed(answerSpeech.finish(text)); },
-      onAnswer: text => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; sayStreamed(answerSpeech.finish(text)); },
+      // An answer whose voice Stop speaking silenced is still the answer, unsaid (voice-speaking-c1-1).
+      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
+      onAnswer: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
-        aborted ||= answerInterrupted || !!confirmer?.waiting;
+        aborted ||= (answerInterrupted && !answerHushed) || !!confirmer?.waiting;
         cancelAck();
         // Nothing will be heard of a turn that was stopped, or not spoken: it is logged as it stands.
         if (aborted || !answerSpoken) turnLatency.end();
@@ -3314,12 +3354,14 @@ function start(): void {
         if (next?.suggestions.length && lastState.bubble.visible) showState({ suggest: { thought: lastState.bubble.thought, items: next.suggestions.map(s => s.text) } });
         lastReply = "";
         answerSpeech.reset();
+        answerLanguage.reset();
         answerSpoken = false;
         ackSaid = null;
         if (lastAskByVoice && !aborted) voice?.followUp(next?.followUpMs ?? 8000, { afterQuestion: endsWithQuestion(turnAnswer) });
         lastAskByVoice = false;
         turnAnswer = "";
         answerInterrupted = true;
+        answerHushed = false;
         syncListenOnce();
       },
       onStatus: status => {
@@ -3336,6 +3378,8 @@ function start(): void {
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
         showState({ idle: idleNow(status), setup: setupNow(status) });
+        // An open Ask box says it too, as it changes (companion-6).
+        askWindow.setUnavailable(unansweredWord(status) ?? undefined);
       },
       // Home's conversation shows the answer as it develops (the same words as the bubble's).
       onAnswerStream: e => broadcast(IPC.conversationStream, e),

@@ -42,8 +42,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   - A near-duplicate reinforces the fact already there.
   - A `single` predicate (`works_at`, `lives_in`) closes the open facts it replaces. So does the same statement about
     the same subject said the other way round ("Likes Teams" → "Doesn't like Teams any more": opposite polarity, 0.8
-    alike without the words that turn it round), and a preference whose one word changed ("Prefers dark mode" →
-    "Prefers light mode"; never "Prefers tea" and "Prefers coffee"). A weaker source never closes what the user said,
+    alike without the words that turn it round), and a preference whose one word changed before the same thing in the
+    same place ("Prefers dark mode" → "Prefers light mode"; never "Prefers tea" and "Prefers coffee", "…dark mode"
+    and "…dark chocolate", "…short answers" and "…short emails", or dark mode in Slack and in Outlook: memory-r1). A
+    weaker source never closes what the user said,
     and the closed fact stays as history, so Undo of the newer puts it back.
 - `recall.ts`: BM25 over fact text plus entity names. The matched facts and named entities then seed a Personalized
   PageRank over the bipartite entity–fact graph:
@@ -63,12 +65,16 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   - What the user said is never dropped for age.
 - `guard.ts`: refuses any fact holding a token, key, password, PIN, code, card number, IBAN or social security
   number, however it is said: "the password for the HR portal is…", "VPN password hunter2", "my debit card pin 4821",
-  "the door code is 4821". It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  "the door code is 4821", "the code for the front door is 4821", "use hunter2 as the password for…", "login for the
+  router: admin / P@ssw0rd", "…with CVV 123", a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value. Secrets are refused whole, never
   stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
-- `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten.
+- `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
+  set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
+  (`MemoryService.trouble`, in every `MemoryView`), and the remember tool tells the model while saving fails
+  (memory-r2).
 
 **Better recall** (step 8) adds matching by meaning, once the user downloads its model:
 - `embed-model.ts`: all-MiniLM-L6-v2 (int8, 23 MB, Apache-2.0) on onnxruntime-web's WebAssembly with one thread, the
@@ -163,7 +169,7 @@ download, so English-only MiniLM is the trade-off for now.
   signing out is offered Forget everything; Home's status line says "Memory paused", Tell Ember about you says why
   instead of its questions, and "get to know me" answers with the same reason. A reconnect (a network retry, the
   runtime restarting) checks the account again: the list is hidden meanwhile, but if the same account comes back
-  Home keeps its correction draft, the search and where focus was, and a Better recall download goes on (only the
+  Home keeps its correction draft, the search, a "Forgotten" line with its Undo and where focus was, and a Better recall download goes on (only the
   model's use waits). Main's epoch moves on, and Home lets go of them, only for another account or none
   (`MemoryEpochAccount`, memory-8).
 - **Admin.** A new `features.memory` key lets an administrator turn memory off. LOCKDOWN turns it off.
@@ -191,7 +197,7 @@ download, so English-only MiniLM is the trade-off for now.
      `forget_memory` forgets a fact only when the user's own words this turn ask to forget it, with a word of the
      fact after the request (`asksToForget`: "forget that I work at Globex", "remove Priya from your memory"; never
      "don't forget", a routine's steps or unchecked speech), as `delete_routine` does. What it forgot shows in the
-     conversation as "Ember forgot: …" in the fact's stored words, with Undo.
+     conversation as "Ember forgot: …" in the fact's stored words, with what holds again, and Undo.
    - Undo after any Forget (Home's list, "Ember forgot", "forget that") puts the fact back exactly: its notes, what
      it had replaced closed again, its vector rebuilt (`MemoryService.restore`, once per Forget, within 60 seconds,
      held in main's memory only and dropped at Forget everything).
@@ -230,12 +236,20 @@ download, so English-only MiniLM is the trade-off for now.
      line's **Undo**, "forget that", a Forget soon after) undoes it: the one it had replaced is open again
      (`reopenSuperseded`), and Home's line and the reply say so ("Ember remembers “Works at Globex” again").
      Forgetting an older fact forgets it alone, so forgetting "Works at Initech" after leaving never makes "Works at
-     Globex" current again; it stays what used to be true (memory-12). Either way the "Ember learned" line goes;
-     **Forget everything** clears the lines too.
+     Globex" current again; it stays what used to be true (memory-12). Either way the "Ember learned" line stays
+     where it was and says "Ember forgot: …" (with the notes that went and what holds again), with the Undo that puts
+     it back; that Undo makes it "Ember remembers “…” again". Focus moves to the line's new words, never to the page
+     (memory-c1-3). **Forget everything** clears the lines too.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
-   - While memory isn't in force (off, paused, managed), a request that is only "remember that…" or "forget my…"
-     (`memoryAsk`, never "remember to…", a reminder) is answered in code with the truth: memory is off (and Memory
-     opens), why it is paused, or that the organisation turned it off. A model with no memory tools never answers it.
+   - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
+     only for Ember to forget something about the user ("forget that I…", "forget my…", "forget where I live";
+     `memoryAsk`) is answered in code with the truth: memory is off (and Memory opens), why it is paused, or that the
+     organisation turned it off. A request that is only "remember that…" or "keep in mind…" goes to the conversation,
+     which knows it until Ember closes, and Ember says behind the answer that memory won't keep it (`rememberNote`:
+     a line in the conversation and a bubble with **Open Memory**, never Settings opened on its own). A question
+     ("Remember when we…?", "Remember me?"), a reminder ("remember to…") and a request with more in it ("Forget what
+     I said, open Firefox instead", "Forget the formatting and just give me plain text") are the conversation's like
+     any other (memory-c1-1).
 4. **Sleep-time refinement** (done; `refine.ts`). After 5 minutes idle (no turn, no task, the screen unlocked; an
    unknown lock counts as locked), `MemoryLearning` runs `consolidate()`, then one model pass (the same one-shot
    session) over up to 40 facts changed or used since the last pass:

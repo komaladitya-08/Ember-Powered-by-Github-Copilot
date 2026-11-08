@@ -6,7 +6,7 @@
 
 import type { VoiceStatus, VoiceWord } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
-import { CLEAR_HINT, PERSONAL_TEXT, WORD_DELETE_FAILED, WORDS_DELETE_FAILED, forgetAllWordsAsk, forgetWordLabel, personalView, teachOutcomeText, wordRowText } from "./copy";
+import { CLEAR_HINT, PERSONAL_TEXT, WORD_DELETE_FAILED, WORDS_DELETE_FAILED, forgetAllWordsAsk, forgetWordLabel, personalView, teachOutcomeText, wordForgottenText, wordRowText } from "./copy";
 import { KeyedRows } from "./keyed-rows";
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -41,7 +41,15 @@ function renderWords(list: VoiceWord[]): void {
         if (button.getAttribute("aria-disabled") === "true" || KeyedRows.justFocused(button)) return;
         button.setAttribute("aria-disabled", "true");
         $("words-note").textContent = "";
-        void window.ember.forgetVoiceWord(read()).then(renderWords, () => {
+        const word = read();
+        void window.ember.forgetVoiceWord(word).then(list => {
+          const had = document.activeElement === button;
+          renderWords(list);
+          // Said, and focus goes to the words that say it, never to the next word's Forget (memory-7).
+          const note = $("words-note");
+          note.textContent = wordForgottenText(word);
+          if (had || $("words-list").contains(document.activeElement)) { note.tabIndex = -1; note.focus(); }
+        }, () => {
           button.removeAttribute("aria-disabled");
           $("words-note").textContent = WORD_DELETE_FAILED;
         });

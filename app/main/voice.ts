@@ -37,8 +37,18 @@ const STALL_MS = 30_000;
 const SPEECH_START_MS = 3000;
 /** The same while Ember's own voice is still loading (its first reply: 1–2.5 s to load, then its first sentence; ms). */
 const VOICE_START_MS = 8000;
+/**
+ * How long Hear Ember waits for its sample to be heard before saying no voice spoke it: Ember's voice loading, or the
+ * system voice's own 8 s check of an utterance that never starts (mic/main.ts), with a little to spare (ms).
+ */
+const SAMPLE_WAIT_MS = 12_000;
 /** One synthesis failure retires this engine, keeping recovery and subsequent streamed sentences in order. */
 const VOICE_FAILURES = 1;
+/**
+ * Kitten too slow at a busy moment, or stopped after it had spoken, is timed again by itself once a session, at the
+ * first request this long after (ms): the system voice no longer stays for the whole session (voice-speaking-6).
+ */
+const KITTEN_RECHECK_MS = 5 * 60_000;
 /** Longest Ember counts as speaking without hearing so again (the mic window repeats it while it speaks; ms). */
 const SPEAKING_MAX_MS = 60_000;
 /**
@@ -255,6 +265,9 @@ export class VoiceService {
   private ttsFailures = 0;
   /** Ember's own voice failed after it had loaded (a reply it couldn't make, or its process ended): Home says it stopped. */
   private ttsStopped = false;
+  /** When Kitten may be timed again by itself (0: not), and whether it was this session (KITTEN_RECHECK_MS). */
+  private kittenRecheckAt = 0;
+  private kittenRechecked = false;
   /** How fast replies are said (voice-speaking-7): sent with each reply only when it isn't 1. */
   private rate = 1;
   /** Replies are numbered; those up to `ttsHushed` were hushed (their late audio is dropped). */
@@ -262,6 +275,13 @@ export class VoiceService {
   private ttsHushed = 0;
   /** Replies still being synthesised: original text, producer-reported ungenerated suffix, and their page. */
   private ttsPending = new Map<number, { text: string; remaining: string; send: PageSend }>();
+  /**
+   * Words for the system's voice (another language's) that follow pieces Ember's own voice is still making: sent once
+   * those are done, so they are never said ahead of them (voice-speaking-r1). A hush drops them.
+   */
+  private afterVoice: { send: PageSend; request: SpeakRequest }[] = [];
+  /** Hear Ember's sample waiting to be heard, in the speech generation it was said in (voice-speaking-r3). */
+  private sampleWait: { generation: number; done: (heard: NaturalVoiceModel | "system" | "stopped" | null) => void } | null = null;
   /** Enrolment (Voice Match) is under way in the voice process, and how far it got (said if it is cut short). */
   private enrolling = false;
   private enrolGot = { got: 0, of: 0 };
@@ -331,6 +351,7 @@ export class VoiceService {
     });
     ipcMain.on(VOICE.speech, (e, ok: unknown) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
+      if (ok !== true) this.sampleWait?.done(null);
       this.o.onSpeech?.(ok === true);
     });
     ipcMain.on(VOICE.played, (e, p: SpeechPlayed) => {
@@ -359,6 +380,8 @@ export class VoiceService {
         this.o.log.info("voice.hush_ack", { page: measure.page, ms: Math.round(performance.now() - measure.at) });
       }
       if (on && !this.saidSpeaking) this.awaitingSpeechStart = false;
+      // Hear Ember's sample is heard now: in the voice speaking it (Kitten's, or the system's after it failed).
+      if (on && this.sampleWait?.generation === generation) this.sampleWait.done(this.nextVoice);
       this.speakingPage = !on ? null : this.mic && e.sender === this.mic.webContents ? "mic" : "speaker";
       // (Repeated every 20 s while it lasts: the voice process is told each time, the log only when it changes.)
       if (!!on !== this.saidSpeaking) { this.saidSpeaking = !!on; this.o.log.info("voice.self_speaking", { on: !!on, listening: !!this.proc }); this.o.onSelfSpeaking?.(!!on); }
@@ -751,7 +774,8 @@ export class VoiceService {
     this.enrolling = true;
     this.enrolGot = { got: 0, of: 0 };
     this.proc.postMessage({ type: "enrol", generation: ++this.listeningGeneration });
-    if (this.state === "waiting") this.setState("waiting", ENROL_TEXT);
+    // (A conversation or follow-up listening now ends at once in the voice process: voice-listening-r2.)
+    if (this.state === "waiting" || this.state === "active") this.setState("waiting", ENROL_TEXT);
     this.o.onListenOnce?.();
     return true;
   }
@@ -826,9 +850,10 @@ export class VoiceService {
 
   /**
    * Says `text` (plain words: spokenText). `append`: after what Ember is saying (the next sentences of an answer that is
-   * still streaming), instead of cutting it off.
+   * still streaming), instead of cutting it off. `lang`: the language of the answer this piece is part of, decided once
+   * for all its pieces (main's AnswerLanguage; null: English); without it, `text` is judged on its own.
    */
-  speak(text: string, o: { append?: boolean } = {}): void {
+  speak(text: string, o: { append?: boolean; lang?: string | null } = {}): void {
     if (this.locked || !text.trim()) return;
     if (this.manual) this.cancelListenOnce();
     // Listening without the speakers' stream, the microphone would take Ember's own "Ember, stop" for the user's.
@@ -836,17 +861,46 @@ export class VoiceService {
     // What is heard over Ember's voice is told from Ember's own words by these (engine.ts spokenByEmber).
     this.proc?.postMessage({ type: "self-words", text });
     // Kitten reads only English: a reply in another language goes to a local system voice for it, or isn't said.
-    const lang = speechLanguage(text);
+    const lang = o.lang !== undefined ? o.lang : speechLanguage(text);
     const neural = this.neuralVoice && !lang;
     if (!o.append) this.hush();
     if (!o.append || !this.saidSpeaking) this.awaitingSpeechStart = true;
     this.speakingUntil = Math.max(this.speakingUntil, Date.now() + (neural && !this.tts?.ready ? VOICE_START_MS : SPEECH_START_MS));
     const send = this.pageSend();
-    if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}), ...(lang ? { lang } : {}), ...this.rateField } satisfies SpeakRequest); return; }
+    if (!neural) {
+      const request: SpeakRequest = { text, ...(o.append ? { append: true } : {}), ...(lang ? { lang } : {}), ...this.rateField };
+      if (o.append && (this.ttsPending.size || this.afterVoice.length)) this.afterVoice.push({ send, request });
+      else send(VOICE.speak, request);
+      return;
+    }
     const id = ++this.ttsId;
     this.ttsPending.set(id, { text, remaining: speechChunks(text).join(" "), send });
     this.cancelVoiceIdle();
     this.voiceProcess().postMessage({ type: "say", id, text, ...this.speedField });
+  }
+
+  /**
+   * Hear Ember's sample (Settings › Voice), said as a reply is: the voice it was heard in once it starts, "stopped" when
+   * something else Ember said cut it off first, or null when no voice spoke it within SAMPLE_WAIT_MS or the page said
+   * speech failed. Named only once heard: a guess before Kitten loaded named a voice that might never speak (voice-speaking-r3).
+   */
+  sample(text: string): Promise<NaturalVoiceModel | "system" | "stopped" | null> {
+    this.speak(text);
+    const generation = this.speechGeneration;
+    return new Promise(resolve => {
+      const wait = {
+        generation,
+        done: (heard: NaturalVoiceModel | "system" | "stopped" | null) => {
+          clearTimeout(timer);
+          if (this.sampleWait === wait) this.sampleWait = null;
+          resolve(heard);
+        },
+      };
+      const timer = setTimeout(() => wait.done(null), SAMPLE_WAIT_MS);
+      timer.unref?.();
+      this.sampleWait?.done("stopped");
+      this.sampleWait = wait;
+    });
   }
 
   /** The speaking speed setting changed: replies from now on are said at it. */
@@ -932,6 +986,7 @@ export class VoiceService {
     this.naturalOff = this.naturalWanted && this.o.naturalSupported === false;
     this.ttsFailures = 0;
     this.ttsStopped = false;
+    this.kittenRecheckAt = 0;
     this.checkNatural();
   }
 
@@ -1009,8 +1064,10 @@ export class VoiceService {
       this.ttsPending.clear();
       this.tts?.proc.postMessage({ type: "hush", id: this.ttsHushed });
     }
+    this.afterVoice = [];
     this.idleVoice();
     const generation = ++this.speechGeneration;
+    this.sampleWait?.done("stopped");
     const hushPage = (wc: Electron.WebContents) => { this.pageGenerations.set(wc, generation); wc.send(VOICE.hush, generation); };
     if (this.mic && !this.mic.isDestroyed()) hushPage(this.mic.webContents);
     // A page still loading receives the current hush once ready; old queued sends check their captured generation.
@@ -1023,6 +1080,13 @@ export class VoiceService {
    * memory. After a conversation it is released (VOICE_IDLE_MS), and the next wake warms it again.
    */
   warmVoice(): void {
+    if (this.kittenRecheckAt && Date.now() >= this.kittenRecheckAt && !this.locked && this.selectedVoice === "kitten" && !this.naturalFetch) {
+      this.kittenRecheckAt = 0;
+      this.kittenRechecked = true;
+      this.o.log.info("voice.kitten_recheck");
+      this.ttsFailures = 0;
+      this.ttsStopped = false;
+    }
     if (this.neuralVoice && !this.locked) {
       if (!this.tts && !this.naturalFetch && (!this.naturalWanted || !this.naturalOff)) this.setNatural({ state: "checking" });
       this.voiceProcess(); this.idleVoice();
@@ -1132,6 +1196,7 @@ export class VoiceService {
       if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); if (this.ttsInfo?.voice === "kokoro" || this.ttsInfo?.voice === "supertonic") this.kokoroFailed(); else this.voiceFailed("load", true); return; }
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
+      this.sendAfterVoice();
       if (!this.saidSpeaking) { this.awaitingSpeechStart = true; this.speakingUntil = Date.now() + SPEECH_START_MS; }
       this.openFollowUp();
       this.switchWhenIdle();
@@ -1239,6 +1304,8 @@ export class VoiceService {
   private voiceFailed(reason: "slow" | "load" | "native" = "load", stopped = false): void {
     this.ttsFailures = VOICE_FAILURES;
     this.ttsStopped = stopped;
+    // A busy moment or a crash after it spoke may pass: Kitten is timed again later, once (KITTEN_RECHECK_MS).
+    if (!this.kittenRechecked && this.selectedVoice === "kitten" && (reason === "slow" || (reason === "load" && stopped))) this.kittenRecheckAt = Date.now() + KITTEN_RECHECK_MS;
     this.switchVoice = false;
     this.currentVoice = "system";
     this.setNatural({ state: reason === "native" ? "needs-native" : reason === "slow" ? "too-slow" : "wont-load" });
@@ -1254,7 +1321,16 @@ export class VoiceService {
       const text = p.remaining;
       if (text) p.send(VOICE.speak, { text, append: true, ...this.rateField } satisfies SpeakRequest);
     }
+    this.sendAfterVoice();
     this.openFollowUp();
+  }
+
+  /** The system voice's words that waited for Ember's own (afterVoice), once it has nothing left to make. */
+  private sendAfterVoice(): void {
+    if (this.ttsPending.size) return;
+    const waiting = this.afterVoice;
+    this.afterVoice = [];
+    for (const w of waiting) w.send(VOICE.speak, w.request);
   }
 
   /** Retire optional Kokoro and append only its ungenerated suffix through baseline Kitten. */
@@ -1590,6 +1666,7 @@ export class VoiceService {
     this.closeSpeaker();
     this.releaseVoice();
     this.ttsPending.clear();
+    this.afterVoice = [];
   }
 
   private closeSpeaker(): void {
@@ -1602,6 +1679,9 @@ export class VoiceService {
   }
 
   private setState(s: MicState, detail?: string): void {
+    // While Ember learns a voice, the voice line says so whenever it has nothing of its own to say: a window that ended
+    // as teaching began (a conversation's) left "Listening for “Ember”" beside the phrase to say (voice-listening-r2).
+    if (s === "waiting" && detail === undefined && this.enrolling) detail = ENROL_TEXT;
     const hearing = s === "active";
     if (hearing !== (this.state === "active")) {
       // The mic page sends the microphone's level only while Ember hears a request; the meter stops at once after.
@@ -1634,6 +1714,16 @@ export function listenOnceInSettings(s: ListenOnceStatus): ListenOnceStatus {
   if (s.reason === "needs-models") return { ...s, detail: "Download the speech models below first." };
   if (s.reason === "voice-error") return { ...s, detail: "Check the microphone and the voice status above." };
   return s;
+}
+
+/**
+ * Whether a question up holds Listen once back for a control (Ask's, or Home's): it does, but never that control's own
+ * Listen once under way (`own`: the voice's status, given only while the request being heard is that control's), whose
+ * Cancel listening stays (companion-r1: a question that came mid-request turned it into a dimmed Listen once that took
+ * no press, while the microphone still listened).
+ */
+export function questionHoldsListen(question: boolean, own: ListenOnceStatus | undefined): boolean {
+  return question && !(own?.phase === "starting" || own?.phase === "listening" || own?.phase === "checking");
 }
 
 /** What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…). */

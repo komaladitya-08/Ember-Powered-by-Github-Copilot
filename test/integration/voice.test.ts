@@ -389,6 +389,106 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     }
   });
 
+  it("sends “And make the text a” alone when a TV or colleague talks on after the pause, never with their words (voice-listening-c1-2)", () => {
+    // The same split as above; then the room's talk (the test clips' lines, 12–19 dB under), from 0.75 or 1 s after the
+    // voice stopped. It was joined to the half request in 12 of these 18 cases.
+    const b = read("bigger");
+    const rms = (a: Float32Array) => Math.sqrt(a.reduce((n, x) => n + x * x, 0) / a.length);
+    const loud: number[] = [];
+    for (let i = 0; i + 512 <= b.length; i += 512) loud.push(rms(b.subarray(i, i + 512)));
+    const voiced = loud.flatMap((e, i) => (e > 0.01 ? [i] : []));
+    const first = voiced[0], last = voiced.at(-1)!;
+    let cut = first, low = Infinity;
+    for (let i = Math.round(first + (last - first) * 0.4); i < first + (last - first) * 0.65; i++) { const e = loud[i] + loud[i + 1] + loud[i + 2]; if (e < low) { low = e; cut = i + 1; } }
+    const head = b.subarray(0, cut * 512);
+    let voiceEnd = head.length;
+    while (voiceEnd > 0 && Math.abs(head[voiceEnd - 1]) < 0.01) voiceEnd--;
+    const talk = (g: number) => cat(...["chat", "remember", "followup", "chat"].flatMap(n => [trimmed(n).map(x => x * g), silence(0.25)]));
+    const mix = (a: Float32Array, add: Float32Array, from: number) => { const o = a.slice(); for (let i = 0; i < add.length && from + i < o.length; i++) o[from + i] += add[i]; return o; };
+    for (const g of [0.08, 0.12, 0.18]) for (const gap of [0.75, 1]) {
+      const heard = inRoom(mix(cat(head, silence(12)), talk(g), voiceEnd + at(gap)));
+      const woken = session();
+      woken.hear(cat(inRoom(cat(silence(1), read("wake_pause").subarray(0, at(1.52)), silence(1))), heard));
+      woken.end();
+      const followUp = session();
+      followUp.engine.followUp(8000);
+      followUp.hear(cat(inRoom(silence(0.5)), heard));
+      followUp.end();
+      // Listen once (it hears only audio captured after the press).
+      const events: VoiceEvent[] = [];
+      let t = 0;
+      const once = new VoiceEngine(backend, e => events.push(e), { now: () => t });
+      once.listenOnce(0, 8000);
+      const mic = cat(inRoom(silence(0.5)), heard);
+      try { for (let i = 0; i + 512 <= mic.length; i += 512) { once.feed(mic.subarray(i, i + 512), t + 1); t += 32; } } finally { backend.resetVad(); }
+      for (const [window, said] of [["wake", sent(woken.events)], ["follow-up", sent(followUp.events)], ["manual", sent(events)]] as const) {
+        expect(said.map(u => u.text), `${window}, talk at ${g}, ${gap} s on`).toEqual([expect.stringMatching(/^And make the text a\.?$/i)]);
+      }
+    }
+  });
+
+  it("stops on “Ember, stop” and “Hey Ember, stop” while Voice Match is taught, and takes its phrases as nothing (voice-listening-r1)", () => {
+    // The engine as the voice process runs it then: stopsOnly, the VAD fed apart from it (the enrolment's). The spotter
+    // takes the bare name in "Ember, stop" and "Hey Ember" in "Hey Ember, stop": only "ember_stop" counted, and teaching
+    // stopped 0 times in 24 on these clips (24 of 24 when not teaching).
+    const teaching = (clip: Float32Array) => {
+      const events: VoiceEvent[] = [];
+      let t = 0;
+      const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") events.push(e); }, { now: () => t });
+      engine.cancel();
+      engine.stopsOnly(true);
+      const mic = inRoom(cat(silence(4), clip, silence(3)));
+      try {
+        for (let i = 0; i + 512 <= mic.length; i += 512) { const f = mic.subarray(i, i + 512); engine.feed(f, t + 1); backend.vad(f); t += 32; }
+      } finally { backend.resetVad(); backend.resetSpot?.(); }
+      return events;
+    };
+    const stop = read("stop");
+    const heyStop = cat(read("wake_pause").subarray(0, at(1.52)), silence(0.1), stop.subarray(at(1.09)), silence(1));
+    for (const [name, clip] of [["Ember, stop!", stop], ["Ember, stop! (softer)", stop.map(x => x * 0.6)], ["Ember, … stop!", cat(stop.subarray(0, at(0.62)), silence(0.6), stop.subarray(at(0.62)))], ["Hey Ember, stop", heyStop]] as const) {
+      for (const lead of [0, 0.1, 0.25]) expect(teaching(cat(silence(lead), clip)).filter(e => e.type === "stop"), `${name}, ${lead} s in`).toHaveLength(1);
+    }
+    // Phrases like the teaching's, and the name inside another word: nothing.
+    for (const clip of ["wake", "dnd", "name_wake", "remember"]) expect(teaching(read(clip)), clip).toEqual([]);
+  });
+
+  it("ends Listen once at 8 s when only a TV talks, and hears the user's own request past it to its end (voice-listening-c1-1, voice-listening-1)", () => {
+    /** Listen once pressed `from` ms into `mic`: the request heard (`at`, ms after the press) and how the window ended. */
+    const once = (mic: Float32Array, from = 0) => {
+      const events: (VoiceEvent & { at: number })[] = [];
+      let t = 0;
+      const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") events.push({ ...e, at: t - from }); }, { now: () => t });
+      try {
+        for (let i = 0; i + 512 <= mic.length; i += 512) {
+          if (t === from) engine.listenOnce(from, 8000);
+          if (t >= from) engine.feed(mic.subarray(i, i + 512), t + 1);
+          t += 32;
+        }
+      } finally { backend.resetVad(); }
+      return { sent: sent(events), ended: events.find(e => e.type === "listening" && !e.on) };
+    };
+    const mix = (a: Float32Array, b: Float32Array, from: number) => { const o = a.slice(); for (let i = 0; i < b.length && from + i < o.length; i++) o[from + i] += b[i]; return o; };
+    // A TV's (or colleague's) talk, 8–14 dB under the user, the test clips' lines back to back, for 25 s.
+    const tv = (g: number) => { const lines = cat(...["chat", "remember", "followup", "chat", "amber", "chat"].flatMap(n => [trimmed(n).map(x => x * g), silence(0.25)])); return cat(lines, lines, lines); };
+    for (const g of [0.2, 0.4]) {
+      // Nothing said: it went on for 20 s, and sent the TV's words as the request.
+      for (const [how, mic, from] of [["from 0.5 s", inRoom(mix(new Float32Array(at(26)), tv(g), at(0.5))), 0], ["on as it opens", inRoom(mix(new Float32Array(at(29)), tv(g), 0)), 3200]] as const) {
+        const r = once(mic, from);
+        expect(r.sent, `TV at ${g}, ${how}`).toEqual([]);
+        expect(r.ended, `TV at ${g}, ${how}`).toMatchObject({ reason: "timeout", window: "manual", at: 8000 });
+      }
+    }
+    // The user's own 7 s request, begun at 6.5 s, over the TV and in a quiet room: heard to its end, whole.
+    const long = cat(trimmed("bigger"), silence(0.3), trimmed("followup"), silence(0.3), trimmed("chat"));
+    for (const [how, mic] of [["over the TV", inRoom(mix(mix(new Float32Array(at(18)), tv(0.1), at(0.5)), long, at(6.5)))], ["in a quiet room", inRoom(cat(silence(6.5), long, silence(4)))]] as const) {
+      expect(once(mic).sent.map(u => u.text), how).toEqual([expect.stringMatching(/^And make the text a bit bigger.*lunch\.?$/i)]);
+    }
+    // Begun at 7.9 s: the VAD hears speech 0.25 s into it, after the deadline ("No request heard").
+    expect(once(inRoom(cat(silence(7.9), trimmed("bigger"), silence(4)))).sent.map(u => u.text)).toEqual([expect.stringMatching(/make the text a bit bigger/i)]);
+    // Silence still ends it at 8 s.
+    expect(once(inRoom(silence(10))).ended).toMatchObject({ reason: "timeout", at: 8000 });
+  });
+
   it("hears a one-word reply in a follow-up (the VAD hears speech only 0.2 s into it)", () => {
     // "Bigger." alone, and "Stop!" 3 dB softer than the request: both were dropped before the recognizer.
     for (const [word, then] of [[trimmed("bigger").subarray(at(1.45)), "utterance"], [trimmed("stop").subarray(at(0.45)).map(x => x * 0.7), "stop"]] as const) {

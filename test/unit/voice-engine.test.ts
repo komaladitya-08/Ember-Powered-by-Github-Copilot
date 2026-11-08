@@ -231,8 +231,9 @@ describe("VoiceEngine", () => {
     const events = run(fake(["Open the calendar and show me next Tuesday."]), (e, c) => {
       c.t = 1000;
       e.listenOnce(c.t, 8000);
-      // Speech from 7.9 s to 10 s after the press.
-      for (c.t = 8900; c.t < 11_000; c.t += 32) e.feed(frame(0, true), c.t);
+      // A quiet room, then speech from 7.9 s to 10 s after the press.
+      for (c.t = 1032; c.t < 8900; c.t += 32) e.feed(frame(0), c.t);
+      for (; c.t < 11_000; c.t += 32) e.feed(frame(0, true), c.t);
       e.feed(frame(0), c.t);
     });
     expect(events.filter(e => e.type === "utterance")).toEqual([{ type: "utterance", text: "Open the calendar and show me next Tuesday.", window: "manual", ms: 0 }]);
@@ -276,6 +277,80 @@ describe("VoiceEngine", () => {
     expect(endedAt).toBeLessThan(1000 + MANUAL_MAX_MS + 100);
   });
 
+  describe("Listen once in a room where others talk (voice-listening-c1-1)", () => {
+    /**
+     * A scripted VAD that hears speech wherever f[2] > 0, from `lag` frames into it (Silero's own lag: about 0.25 s),
+     * and hands its segment over at the first frame without it, or when flushed.
+     */
+    const vadOf = (lag = 0): VoiceBackend => {
+      let segment: number[] = [], run = 0;
+      return {
+        spot: () => [], speaking: () => run > lag, transcribe: () => "Turn on do not disturb and set a timer for ten minutes.",
+        vad: f => {
+          if (f[2] > 0) { run++; if (run > lag) segment.push(...f); return []; }
+          run = 0;
+          const s = Float32Array.from(segment); segment = [];
+          return s.length ? [s] : [];
+        },
+        flushVad: () => { const s = Float32Array.from(segment); segment = []; run = 0; return s.length ? [s] : []; },
+        resetVad: () => { segment = []; run = 0; },
+      };
+    };
+    /** A frame of speech at `level` (RMS): talk across the room, or the user up close. */
+    const talk = (level: number) => { const f = new Float32Array(512).fill(level); f[2] = level; return f; };
+    const room = (from: number, to: number, e: VoiceEngine, c: { t: number }, level = 0.01) => { for (c.t = from; c.t < to && e.listening; c.t += 32) e.feed(talk(level), c.t); };
+    const sent = (events: VoiceEvent[]) => events.filter(e => e.type === "utterance");
+
+    it("ends at its deadline, as no request heard, when the only speech is talk that was going on as it opened (a TV, a colleague)", () => {
+      let endedAt = 0;
+      const events = run(vadOf(), (e, c) => {
+        c.t = 1000; e.listenOnce(c.t, 8000);
+        room(1032, 30_000, e, c);
+        endedAt = c.t;
+      });
+      expect(sent(events)).toEqual([]);
+      expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual" });
+      expect(endedAt).toBeLessThan(1000 + 8000 + 100);
+    });
+
+    it("still hears the user's own request said over that talk, up close, to its end past the deadline", () => {
+      const events = run(vadOf(), (e, c) => {
+        c.t = 1000; e.listenOnce(c.t, 8000);
+        room(1032, 8500, e, c);
+        // The user, 20 dB over the room's talk, from 7.5 s to 11 s; then the talk goes on.
+        for (; c.t < 12_000; c.t += 32) e.feed(talk(0.1), c.t);
+        room(c.t, 20_000, e, c);
+      });
+      expect(sent(events)).toEqual([{ type: "utterance", text: "Turn on do not disturb and set a timer for ten minutes.", window: "manual", ms: 0 }]);
+    });
+
+    it("waits out the VAD's lag for speech that began just before the deadline, in a quiet room (voice-listening-1)", () => {
+      let endedAt = 0;
+      const events = run(vadOf(8), (e, c) => {
+        c.t = 1000; e.listenOnce(c.t, 8000);
+        for (c.t = 1032; c.t < 8900; c.t += 32) e.feed(new Float32Array(512), c.t);
+        // Said from 7.9 s to 10 s; the VAD hears it from 8.16 s.
+        for (; c.t < 11_000; c.t += 32) e.feed(talk(0.05), c.t);
+        for (let i = 0; i < 10 && e.listening; i++, c.t += 32) e.feed(new Float32Array(512), c.t);
+        endedAt = c.t;
+      });
+      expect(sent(events)).toHaveLength(1);
+      expect(endedAt).toBeGreaterThan(11_000);
+      // A click or a cough at the deadline costs at most 0.4 s more of "Listening…".
+      let quietEnd = 0;
+      const cough = run(vadOf(8), (e, c) => {
+        c.t = 1000; e.listenOnce(c.t, 8000);
+        for (c.t = 1032; c.t < 8940; c.t += 32) e.feed(new Float32Array(512), c.t);
+        for (let i = 0; i < 3; i++, c.t += 32) e.feed(talk(0.05), c.t);
+        for (; c.t < 12_000 && e.listening; c.t += 32) e.feed(new Float32Array(512), c.t);
+        quietEnd = c.t;
+      });
+      expect(sent(cough)).toEqual([]);
+      expect(cough.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "manual" });
+      expect(quietEnd).toBeLessThanOrEqual(1000 + 8000 + 450);
+    });
+  });
+
   describe("a request that trails off (voice-listening-3)", () => {
     /** "Hey Ember", then `first` said, a pause of `pauseMs`, then `rest` (each segment is one frame of speech). */
     const pausedRequest = (pauseMs: number, transcripts: string[], window: "wake" | "manual" = "wake") => run(fake(transcripts), (e, c) => {
@@ -313,6 +388,30 @@ describe("VoiceEngine", () => {
       const events = pausedRequest(500, ["Hey Ember, and make the text a.", "Stop."]);
       expect(said(events)).toEqual([]);
       expect(events.filter(e => e.type === "stop")).toHaveLength(1);
+    });
+
+    it("sends the half request as it was when what follows is others' talk, well under the voice that paused (voice-listening-c1-2)", () => {
+      // The user up close ("And make the text a"), a pause, then a TV or colleague 8 dB under: their words aren't the user's.
+      const close = () => { const f = frame(0, true); f.fill(0.05, 2); return f; };
+      for (const window of ["wake", "follow-up", "manual", "conversation"] as const) {
+        const events = run(fake([...(window === "conversation" ? ["Turn on night light."] : []), "And make the text a.", "Let's meet at the station."]), (e, c) => {
+          if (window === "manual") { c.t = 1000; e.listenOnce(c.t, 8000); }
+          else if (window === "follow-up") e.followUp(8000);
+          else { e.conversation(window === "conversation"); e.feed(frame(1)); }
+          if (window === "conversation") {
+            // A first request opens the conversation.
+            for (let i = 0; i < 10; i++) { c.t += 32; e.feed(close(), c.t); }
+            for (let i = 0; i < 30; i++) { c.t += 32; e.feed(frame(0), c.t); }
+          }
+          for (let i = 0; i < 10; i++) { c.t += 32; e.feed(close(), c.t); }
+          c.t += 32; e.feed(frame(0), c.t); // the VAD ends the first part here
+          for (let i = 0; i < 10; i++) { c.t += 32; e.feed(frame(0), c.t); }
+          for (let i = 0; i < 10; i++) { c.t += 32; e.feed(frame(0, true), c.t); }
+          for (let i = 0; i < 40 && e.listening; i++) { c.t += 32; e.feed(frame(0), c.t); }
+        });
+        // (A conversation hears on: there the talk is what was said next, as it was before the hold.)
+        expect(said(events), window).toEqual(window === "conversation" ? ["Turn on night light.", "And make the text a.", "Let's meet at the station."] : ["And make the text a."]);
+      }
     });
 
     it("never sends the half request after a cancel (the kill switch)", () => {
@@ -1122,6 +1221,49 @@ describe("'Ember, stop' is checked", () => {
     for (let i = 0; i < 6; i++) { c.t += 32; e.feed(new Float32Array(512).fill(0.05)); }
     for (let i = 0; i < 8; i++) { c.t += 32; e.feed(frame(0)); }
     expect(events).toEqual([{ type: "stop" }]);
+  });
+});
+
+describe("while Voice Match is taught, only the kill phrase is heard (stopsOnly)", () => {
+  /**
+   * The engine as the voice process runs it then (stopsOnly, the VAD the enrolment's): the spotter takes `keyword` 0.5 s
+   * into a phrase, as the real one takes the bare name in "Ember, stop" and "Hey Ember" in "Hey Ember, stop", and the
+   * recognizer hears `heard`. `speaking`: Ember is speaking meanwhile.
+   */
+  const teach = (keyword: string, heard: string, o: { speaking?: boolean } = {}) => {
+    const b = fake([heard, heard]);
+    b.spot = f => (f[0] === 3 ? [keyword] : []);
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+    e.cancel();
+    e.stopsOnly(true);
+    if (o.speaking) e.selfSpeaking(true);
+    const voice = new Float32Array(512).fill(0.05), spotted = voice.slice();
+    spotted[0] = 3;
+    for (let i = 0; i < 80; i++) { c.t += 32; e.feed(frame(0)); }
+    for (let i = 0; i < 16; i++) { c.t += 32; e.feed(voice); }
+    c.t += 32; e.feed(spotted);
+    for (let i = 0; i < 10; i++) { c.t += 32; e.feed(voice); }
+    for (let i = 0; i < 50; i++) { c.t += 32; e.feed(frame(0)); }
+    return events;
+  };
+
+  it("stops on “Ember, stop”, though the real spotter takes the bare name first (voice-listening-r1)", () => {
+    for (const heard of ["Ember, stop.", "Ember stopped.", "Hey, Amber stop."]) expect(teach("ember", heard), heard).toEqual([{ type: "stop" }]);
+  });
+
+  it("stops on “Hey Ember, stop”, which the spotter hears as “Hey Ember”, also while Ember speaks (voice-listening-r1)", () => {
+    expect(teach("hey_ember", "Hey Ember, stop.")).toEqual([{ type: "stop" }]);
+    expect(teach("hey_ember", "Hey Ember, stop.", { speaking: true })).toEqual([{ type: "stop" }]);
+    expect(teach("ember", "Ember, stop!", { speaking: true })).toEqual([{ type: "stop" }]);
+  });
+
+  it("takes the teaching's phrases, and the name inside other words, as nothing: no stop, wake or request (voice-listening-r1)", () => {
+    for (const [keyword, heard] of [["hey_ember", "Hey Ember, open my calendar."], ["hey_ember", "Hey Ember, what's on my schedule today?"], ["ember", "I remember the September weather."], ["hey_ember", "Hey Ember, turn on night light."]] as const) {
+      expect(teach(keyword, heard), heard).toEqual([]);
+      expect(teach(keyword, heard, { speaking: true }), `${heard} (while Ember speaks)`).toEqual([]);
+    }
   });
 });
 

@@ -412,11 +412,24 @@ const withoutPolarity = (s: string) => fold(s).replace(POLARITY_WORDS, " ");
  * than "prefers" in common, are one preference that changed. "Prefers tea" and "Prefers coffee" may both hold.
  */
 function preferenceChanged(before: string, after: string): boolean {
-  const a = terms(before), b = terms(after);
-  if (a[0] !== "prefer" || b[0] !== "prefer" || negated(before) || negated(after)) return false;
-  const x = new Set(a), y = new Set(b);
-  const shared = [...x].filter(t => y.has(t)).length;
-  return shared >= 2 && x.size - shared === 1 && y.size - shared === 1;
+  const a = preference(before), b = preference(after);
+  if (!a || !b || negated(before) || negated(after)) return false;
+  // The same thing (its last word: "mode", "answers") in the same place ("in Slack", "at work"), with one word before it
+  // changed ("dark" → "light"). "Dark mode" and "dark chocolate", or dark mode in Slack and in Outlook, both hold
+  // (memory-r1).
+  if (a.what.length < 2 || a.what.length !== b.what.length || a.what.at(-1) !== b.what.at(-1) || a.where !== b.where) return false;
+  return a.what.filter((w, i) => w !== b.what[i]).length === 1;
+}
+/** Where a preference's place or occasion begins: "…in Slack", "…for calls", "…at work", "…over tabs". */
+const PREFERENCE_PLACE = /\s(?:in|on|at|for|with|during|when|while|over|to|from|by|before|after|instead)\s/i;
+/** "Prefers dark mode in Slack": what is preferred (["dark", "mode"]) and where (its terms), or null for no preference. */
+function preference(text: string): { what: string[]; where: string } | null {
+  const m = /^\s*prefer(?:s|red)?\s+(.+)$/i.exec(fold(text).replace(/[.!]+$/, ""));
+  if (!m) return null;
+  const cut = PREFERENCE_PLACE.exec(` ${m[1]} `);
+  const what = cut ? m[1].slice(0, Math.max(0, cut.index)) : m[1];
+  const where = cut ? m[1].slice(cut.index) : "";
+  return { what: terms(what), where: terms(where).join(" ") };
 }
 /** Two records of what a note was made from, together (MAX_DERIVED at most), or undefined for none. */
 const mergeDerived = (a: string[] | undefined, b: string[] | undefined): string[] | undefined => {
