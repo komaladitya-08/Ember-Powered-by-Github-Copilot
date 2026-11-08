@@ -201,6 +201,8 @@ function sayable(text: string): string {
  * a line that is a rule between parts.
  */
 const ITEM = /^[ \t]*(?:[-*+→]|\d{1,9}[.)])[ \t]+\S/;
+/** An arrow starting a line, which ITEM takes for its bullet. */
+const ARROW_BULLET = /^[ \t]*→/;
 const HEADING = /^[ \t]{0,3}#{1,6}[ \t]+\S/;
 const RULE = /^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;
 /** A line that ends as a sentence does already, or with a pause (a colon, a comma). */
@@ -220,12 +222,14 @@ const LABEL = /^[ \t]*\p{Lu}[\p{L}\p{N} ]{0,24}:[ \t]+\S/u;
  * Each list item, heading, line leading into a list and paragraph ends with a full stop where it has no ending of its
  * own, so the voice pauses between them: "Firefox Files Terminal Mail" in one breath was heard as one name
  * (voice-speaking-3). A line wrapped inside a paragraph is left as it is, and so is what is only shown in the bubble.
- * `ledIn`: a line ending with a colon, said already, leads into the first line.
+ * `ledIn`: a line ending with a colon, said already, leads into the first line. `midLine`: the first line is the rest
+ * of one whose start was said already, so an arrow starting it is no bullet.
  */
-function endLines(text: string, ledIn = false): string {
+function endLines(text: string, ledIn = false, midLine = false): string {
   const lines = text.split("\n");
+  const item = lines.map((l, i) => ITEM.test(l) && !(i === 0 && midLine && ARROW_BULLET.test(l)));
   // How many bare items run together through each line (voice-speaking-3: "Your windows\nFirefox\nFiles").
-  const bare = lines.map(l => (l.trim() && !ITEM.test(l) && !HEADING.test(l) && BARE_ITEM(l.trimEnd()) ? 1 : 0));
+  const bare = lines.map((l, i) => (l.trim() && !item[i] && !HEADING.test(l) && BARE_ITEM(l.trimEnd()) ? 1 : 0));
   const run: number[] = [...bare];
   for (let i = 1; i < run.length; i++) if (bare[i] && bare[i - 1]) run[i] = run[i - 1] + 1;
   for (let i = run.length - 2; i >= 0; i--) if (bare[i] && bare[i + 1]) run[i] = run[i + 1];
@@ -235,23 +239,25 @@ function endLines(text: string, ledIn = false): string {
   const led = lines.map(() => false);
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
-    led[i] = !!l.trim() && !ITEM.test(l) && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (led[i - 1] || colon(i - 1) || (i > 0 && !lines[i - 1].trim() && colon(i - 2)));
+    led[i] = !!l.trim() && !item[i] && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (led[i - 1] || colon(i - 1) || (i > 0 && !lines[i - 1].trim() && colon(i - 2)));
   }
   const label = lines.map(l => LABEL.test(l));
   return lines.map((line, i) => {
     const body = line.trimEnd(), next = lines[i + 1];
     if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
     const listed = (led[i] && (led[i - 1] || led[i + 1])) || (label[i] && (label[i - 1] || label[i + 1]));
-    const alone = ITEM.test(body) || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || ITEM.test(next)));
+    const alone = item[i] || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || item[i + 1]));
     return alone ? `${body}.` : line;
   }).join("\n");
 }
 
 /**
  * What Ember says for `markdown`. `o.ledIn`: its first line follows a line ending with a colon that was said already, as
- * a streamed answer is cut just after "Here's what I'll do:" (voice-speaking-3).
+ * a streamed answer is cut just after "Here's what I'll do:" (voice-speaking-3). `o.midLine`: it starts inside a line
+ * whose start was said already, as a long first sentence is cut at a space before an arrow (" → Accessibility" is "to
+ * Accessibility", never a bullet's line: voice-speaking-v4-3).
  */
-export function spokenText(markdown: string, o: { ledIn?: boolean } = {}): string {
+export function spokenText(markdown: string, o: { ledIn?: boolean; midLine?: boolean } = {}): string {
   const prose = markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
     .replace(FENCED_CODE, `$1${CODE}`)
@@ -283,10 +289,10 @@ export function spokenText(markdown: string, o: { ledIn?: boolean } = {}): strin
     // "2**8", "_config.yml" or "__init__.py".
     .replace(/(^|[\s(])(?:\*\*?|_(?=\p{L}+(?:[\s,;:!?)]|$)))(?=\p{L})/gu, "$1")
     .replace(/(?<=[\p{L}\p{N}.,!?;:])(?:\*\*?|_)(?=[\s.,!?;:)]|$)/gu, "");
-  const said = endLines(plain, o.ledIn)
+  const said = endLines(plain, o.ledIn, o.midLine)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")
-    .replace(/^[ \t]*[-*+→][ \t]+/gm, "")
+    .replace(/^[ \t]*[-*+→][ \t]+/gm, (m: string, at: number) => (at === 0 && o.midLine && ARROW_BULLET.test(m) ? m : ""))
     .replace(/^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$/gm, "")
     // Key chords as said ("Ctrl+Shift+T" is "Control Shift T", not "C T R L plus…"), and a path through menus or
     // settings ("Settings › Voice") as "Settings, then Voice"; an arrow as "to", an ampersand between words as "and".

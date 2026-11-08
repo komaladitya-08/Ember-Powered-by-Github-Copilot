@@ -368,6 +368,15 @@ describe("SpeechStream", () => {
     }
   });
 
+  it("says a long menu path cut at a space before an arrow with that arrow's 'to', not as a bullet (voice-speaking-v4-3)", () => {
+    const path = "Go to Network → Privacy & Security → Display → Additional mouse settings → System Services → Accessibility → Advanced and turn it off.";
+    for (const delta of [1, 4, 16]) {
+      expect(streamed(path, delta), `${delta}`).toEqual(["Go to Network to Privacy and Security to Display to Additional mouse settings to System Services", "to Accessibility to Advanced and turn it off."]);
+    }
+    // An arrow at the start of a line is still its bullet, streamed too.
+    for (const delta of [1, 4, 16]) expect(streamed("Here is what to do:\n→ Open the file\n→ Save it", delta), `${delta}`).toEqual(["Here is what to do:", "Open the file.\nSave it."]);
+  });
+
   it("says a whole answer that wasn't streamed", () => {
     expect(new SpeechStream().finish("Hello there.")).toEqual(["Hello there."]);
   });
