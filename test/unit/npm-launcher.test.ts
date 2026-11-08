@@ -22,7 +22,7 @@ vi.mock("node:child_process", async importOriginal => {
   return { ...real, spawn: vi.fn(real.spawn) };
 });
 
-const read =(f: string) => fs.readFileSync(path.resolve(f), "utf8");
+const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8");
 const root = JSON.parse(read("package.json"));
 const launcher = JSON.parse(read("packages/npm/package.json"));
 
@@ -924,7 +924,7 @@ describe("starting Ember from the launcher", () => {
     }) as never);
     try {
       await ensureInstalled({ version: v, platform: "linux", arch: "x64", env });
-      const r = await captured(() => main([], { platform: "linux", env }).then(c => c, (e: Error) => e));
+      const r = await captured(() => main([], { platform: "linux", arch: "x64", env }).then(c => c, (e: Error) => e));
       expect((r.result as Error).message).toBe(`There isn't room in ${cache} for Ember ${v}: the disk is full (ENOSPC). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run 'ember' again.`);
     } finally {
       open.mockRestore();
@@ -947,6 +947,21 @@ describe("starting Ember from the launcher", () => {
   }
   const refusedBy = (exe: string, code: string) => `This computer didn't let Ember start (${code}): a security policy such as fapolicyd, antivirus, or a disk that doesn't let programs run may be blocking ${exe}. Ask whoever manages this computer to allow it, or set EMBER_NPM_CACHE to a folder where programs may run, then run 'ember' again.`;
 
+  it("starts the build a test names, not this runner's, so the Linux start tests also run on CI's Apple silicon Mac (install-docs-w5-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const { installed, env } = await installedStandIn();
+    // As on CI's macos-15 runner: Ember has no linux-arm64 release, so without the test's own arch main() refused.
+    const arch = Object.getOwnPropertyDescriptor(process, "arch")!;
+    Object.defineProperty(process, "arch", { ...arch, value: "arm64" });
+    try {
+      const r = await captured(() => main(["--npm-install-only"], { platform: "linux", arch: "x64", env }).then(c => c, (e: Error) => e));
+      expect(r.result).toBe(0);
+      expect(r.out).toBe(`${installed.exe}\n`);
+    } finally {
+      Object.defineProperty(process, "arch", arch);
+    }
+  });
+
   it("says this computer didn't let Ember start, not that the cache folder is another user's, when a security policy refuses to run it (install-docs-v5-1)", async () => {
     vi.stubEnv("EMBER_NPM_QUIET", "1");
     const { cache, env, installed } = await installedStandIn();
@@ -958,7 +973,7 @@ describe("starting Ember from the launcher", () => {
     }) as never);
     try {
       for (const args of [[], ["doctor"]]) {
-        const r = await captured(() => main(args, { platform: "linux", env, earlyMs: 300 }).then(c => c, (e: Error) => e));
+        const r = await captured(() => main(args, { platform: "linux", arch: "x64", env, earlyMs: 300 }).then(c => c, (e: Error) => e));
         expect((r.result as Error).message, `ember ${args.join(" ")}`).toBe(refusedBy(installed.exe, "EPERM"));
       }
     } finally {
@@ -974,7 +989,7 @@ describe("starting Ember from the launcher", () => {
     // As a disk mounted noexec answers, so does a program with no execute bit: EACCES, which Node reports as an event.
     fs.chmodSync(installed.exe, 0o644);
     for (const args of [[], ["doctor"]]) {
-      const r = await captured(() => main(args, { platform: "linux", env, earlyMs: 300 }).then(c => c, (e: Error) => e));
+      const r = await captured(() => main(args, { platform: "linux", arch: "x64", env, earlyMs: 300 }).then(c => c, (e: Error) => e));
       expect((r.result as Error).message, `ember ${args.join(" ")}`).toBe(refusedBy(installed.exe, "EACCES"));
     }
   });
@@ -1010,10 +1025,10 @@ describe("starting Ember from the launcher", () => {
       vi.stubEnv("EMBER_TEST_PID", pidFile);
       let pid = 0;
       try {
-        const reinstall = await captured(() => main(["--npm-reinstall"], { platform: "linux", env }).then(c => c, (e: Error) => e));
+        const reinstall = await captured(() => main(["--npm-reinstall"], { platform: "linux", arch: "x64", env }).then(c => c, (e: Error) => e));
         expect((reinstall.result as Error).message, code).toBe(`Ember can't write to ${cache}: ${why}, then run 'ember --npm-reinstall' again.`);
         // As it says: 'ember' starts it, without a start log, and leaves it running.
-        const r = await captured(() => main([], { platform: "linux", env, earlyMs: 1000 }).then(c => c, (e: Error) => e));
+        const r = await captured(() => main([], { platform: "linux", arch: "x64", env, earlyMs: 1000 }).then(c => c, (e: Error) => e));
         expect(r.result, code).toBe(0);
         expect(r.err, code).toBe("");
         pid = Number(fs.readFileSync(pidFile, "utf8"));

@@ -21,4 +21,4 @@ export declare function afterHandover(o: { version: string; platform: string; na
 export declare function invokedAs(script: string | undefined, env: Record<string, string | undefined>): string;
 export declare function usage(name: string): string;
 export declare function noDisplay(platform: string, env: Record<string, string | undefined>, name: string): string | null;
-export declare function main(argv: string[], o?: { platform?: string; env?: Record<string, string | undefined>; earlyMs?: number }): Promise<number>;
+export declare function main(argv: string[], o?: { platform?: string; arch?: string; env?: Record<string, string | undefined>; earlyMs?: number }): Promise<number>;

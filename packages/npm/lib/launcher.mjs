@@ -1123,7 +1123,7 @@ export function noDisplay(platform, env, name) {
 /**
  * The `ember` command.
  * @param {string[]} argv the arguments after the script
- * @param {{ platform?: string; env?: Record<string, string | undefined>; earlyMs?: number }} [o] this computer's, unless a test says otherwise
+ * @param {{ platform?: string; arch?: string; env?: Record<string, string | undefined>; earlyMs?: number }} [o] this computer's, unless a test says otherwise
  * @returns {Promise<number>} the exit code
  */
 export async function main(argv, o = {}) {
@@ -1143,7 +1143,7 @@ export async function main(argv, o = {}) {
   // Said before any download: the setup check and an install-only run need no display, and go ahead.
   const blocked = mode.attached || flags.has("--npm-install-only") ? null : noDisplay(platform, env, name);
   if (blocked) { process.stderr.write(`ember-copilot: ${blocked}\n`); return 1; }
-  const installed = await ensureInstalled({ version, platform, env, force: flags.has("--npm-reinstall"), name });
+  const installed = await ensureInstalled({ version, platform, arch: o.arch, env, force: flags.has("--npm-reinstall"), name });
   if (flags.has("--npm-install-only")) { process.stdout.write(`${installed.exe}\n`); return 0; }
   const p = platform === "win32" ? pathWin32 : pathPosix;
   const log = p.join(p.dirname(installed.dir), `.${version}-start.log`);
