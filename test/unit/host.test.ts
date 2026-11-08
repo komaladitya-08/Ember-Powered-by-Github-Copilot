@@ -4438,6 +4438,34 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     await host.stop();
   });
 
+  it("starts a card's Try again on another model service from the user's own words, never the goal or screen text the conversation before wrote, and doesn't list it there (integrations-v5-1)", async () => {
+    let now: ActiveProvider | null = at("local.example");
+    const { host, screen } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    // The conductor on the service before wrote the goal from the conversation; the user's own words were short.
+    const goal = "Reply to Dr Smith confirming the biopsy appointment on 12 Nov (results discussed earlier: benign)";
+    const t = host.tasks!.start(goal, { userWords: "do that", screen: "Mail – Inbox – Dr Smith: Biopsy results" });
+    await vi.waitFor(() => expect(taskSession(t.id)).toBeDefined());
+    now = at("cloud.example");
+    expect(host.providerChanged()).toBeNull();
+    await tool(taskSession(t.id), "finish_task").handler({ success: false, summary: "Mail wasn't open for Dr Smith." });
+    taskSession(t.id).emit("session.idle", {});
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "cloud.example" } }), { timeout: 3000 });
+    // The card and its Try again stay (tasks-approvals-r4-2), and its title on screen, but the new conversation isn't told of it.
+    await vi.waitFor(() => expect(cardOf(screen, t.id)?.actions?.map(a => a.label)).toEqual(["Try again", "Close"]));
+    expect(cardOf(screen, t.id)?.title).toContain("Dr Smith");
+    expect(await tool(conductorSession(), "list_tasks").handler({})).toBe("No tasks.");
+    expect(host.retryTask(t.id)).toBe(true);
+    await vi.waitFor(() => expect(taskSessions().length).toBe(2));
+    const retried = taskSessions().at(-1);
+    await vi.waitFor(() => expect(retried.sent.length).toBeGreaterThan(0));
+    expect(retried.config.provider.baseUrl).toBe("https://cloud.example/v1");
+    const sent = [retried.sent.join("\n"), JSON.stringify(retried.config.systemMessage ?? "")].join("\n");
+    for (const word of ["Dr Smith", "biopsy", "benign", "Biopsy results"]) expect(sent).not.toContain(word);
+    expect(retried.sent[0]).toMatch(/^Task: do that\b/);
+    await host.stop();
+  });
+
   it("tells Home a request held for the new service waits for the switch, never that Ember is thinking, until it is sent (home-r4-4)", async () => {
     let now: ActiveProvider | null = at("a.example");
     const turns: string[] = [];

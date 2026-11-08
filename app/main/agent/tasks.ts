@@ -143,6 +143,22 @@ export interface TaskManagerDeps {
  */
 export interface KeptCard { task: Task; spec?: { goal: string; opts: StartOptions }; log?: ActivityLog; left: number; at: number; whole?: number; away?: boolean }
 
+/**
+ * A finished card handed to a connection on another model service (integrations-v5-1). The conversation isn't resumed
+ * there, so nothing it wrote goes there either: Try again starts from the user's own words, as a spoken or typed "try
+ * again" carries them (askedWith), never the goal the conversation's model wrote nor what that conversation read on the
+ * screen. Without the user's words it offers Close only.
+ */
+export function handedElsewhere(c: KeptCard): KeptCard {
+  if (!c.spec) return c;
+  const opts: StartOptions = { ...c.spec.opts };
+  delete opts.screen;
+  if (opts.userWords !== undefined) return { ...c, spec: { goal: opts.userWords, opts } };
+  const rest = { ...c };
+  delete rest.spec;
+  return rest;
+}
+
 /** Longest task title (its card shows two lines of it). */
 const TITLE_MAX = 72;
 

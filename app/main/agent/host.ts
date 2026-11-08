@@ -24,7 +24,7 @@ import type { Logger } from "../logger";
 import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
-import { TaskManager, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
+import { TaskManager, handedElsewhere, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
 import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
@@ -930,6 +930,10 @@ export class AgentHost {
    * (tasks-approvals-r4-2). Any other restart takes them off for good, as before.
    */
   private keptCards: KeptCard[] = [];
+  /** The model service the kept cards' tasks used: on another, nothing the conversation wrote goes with them (integrations-v5-1). */
+  private keptService = "";
+  /** Tasks whose cards came from a connection on another model service: the conversation here isn't told of them (integrations-v5-1). */
+  private fromElsewhere = new WeakSet<Task>();
   /** The next stop is the waiting switch's own reconnect (switchWhenQuiet, releaseHeld): its cards are kept. */
   private keepCards = false;
   private status: AgentStatus;
@@ -2050,7 +2054,7 @@ export class AgentHost {
         // No Try again while the switch waits: a task started on the service before would be refused at once
         // (tasks-approvals-c4-1). The cards before this connection go on here (tasks-approvals-r4-2).
         retryWaits: () => this.providerMoved(),
-        carried: this.keptCards,
+        carried: this.carriedTo(service),
         makeWorker: (spec, progress, update, activity) => {
           // The model service changed since this connection started: no task starts on the one before (a queued task, or
           // one a turn already under way asked for). Tasks running now finish where they started.
@@ -2282,7 +2286,8 @@ export class AgentHost {
         // Taken for a request that couldn't be sent (the runtime died): kept for the next conductor after the reconnect.
         returnReports: reports => { this.carried.unshift(...reports); },
         tasks: tasks ? {
-          list: () => tasks.list().map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
+          // (Never a card from a connection on another model service: its title and words are that conversation's, integrations-v5-1.)
+          list: () => tasks.list().filter(t => !this.fromElsewhere.has(t)).map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
           // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
           // (A change of plan is the user's own words: a routine run this turn doesn't steer a task.)
@@ -3535,6 +3540,17 @@ export class AgentHost {
     return erased;
   }
 
+  /**
+   * The finished cards handed on to the manager of a connection to `service` (tasks-approvals-r4-2). From another model
+   * service they go on without what the conversation there wrote, as it isn't resumed here (integrations-v5-1): Try again
+   * starts from the user's own words (handedElsewhere), and this conversation isn't told of them (list_tasks).
+   */
+  private carriedTo(service: string): KeptCard[] {
+    if (this.keptService === service) return this.keptCards;
+    for (const c of this.keptCards) this.fromElsewhere.add(c.task);
+    return this.keptCards.map(handedElsewhere);
+  }
+
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
   private async forgetCurrent(ms: number): Promise<void> {
     this.conversationEpoch++;
@@ -3569,6 +3585,7 @@ export class AgentHost {
     // this stop, each within the time it had left; never the tasks a stop cuts off, nor after a sign-out, an account
     // change or when quitting, nor when Ember doesn't connect (tasks-approvals-r4-2).
     this.keptCards = !forget && this.keepCards && this.tasks && this.tasks !== this.tasksForgotten ? this.tasks.keptCards() : [];
+    this.keptService = serviceOf(this.active);
     this.keepCards = false;
     // Nothing keeps acting or asking once the brain goes away (sign-out, restart, quit). Cut off by a runtime
     // that stopped (or stopped answering), tasks end as failed.

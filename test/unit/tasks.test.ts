@@ -782,6 +782,27 @@ describe("Home's Task activity across a reconnect (tasks-approvals-c2-1)", () =>
     } finally { vi.useRealTimers(); }
   });
 
+  it("hands a card to another model service with only the user's own words for its Try again (integrations-v5-1)", async () => {
+    const { handedElsewhere } = await import("../../app/main/agent/tasks");
+    const old = manager(() => fakeWorker(async () => ({ success: false, summary: "Mail wasn't open." })));
+    const agreed = [{ asked: "Reply now?", answer: "yes" }];
+    const t = old.start("Reply to Dr Smith: the results were benign", { userWords: "do that", agreed, commandWords: "do that", screen: "Dr Smith: Biopsy results", target: { title: "Inbox", pid: 3 } });
+    await vi.waitFor(() => expect(old.get(t.id)?.status).toBe("failed"));
+    const [card] = old.keptCards();
+    const handed = handedElsewhere(card);
+    expect(handed.spec?.goal).toBe("do that");
+    expect(handed.spec?.opts).toMatchObject({ userWords: "do that", commandWords: "do that", agreed, target: { title: "Inbox", pid: 3 } });
+    expect(handed.spec?.opts.screen).toBeUndefined();
+    // The card itself is as it was (its title is shown only here), and the card before isn't changed.
+    expect(handed.task).toBe(card.task);
+    expect(card.spec?.goal).toContain("benign");
+    // Without the user's words there is nothing of theirs to start from: Close only.
+    expect(handedElsewhere({ ...card, spec: { goal: "x", opts: {} } }).spec).toBeUndefined();
+    const next = manager(() => fakeWorker(async () => ({ success: true, summary: "" })), { carried: [handed] });
+    const retried = next.retry(t.id)!;
+    expect(retried.goal).toBe("do that");
+  });
+
   it("offers no Try again while the next try would wait for a switch of model service (tasks-approvals-c4-1)", async () => {
     vi.useFakeTimers();
     try {
