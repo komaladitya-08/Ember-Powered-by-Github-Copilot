@@ -151,7 +151,9 @@ They share one emotion rig, so switching never changes behaviour.
   keeps off it where it can (never hiding for it); a question, or its own Listen once's
   "Listening…" (never a wake's), that finds no room moves the box aside once, and a bubble already
   shown, a question or an answer being read, never moves for the box: where the box can't keep
-  clear of it whole (a small screen at Larger text), the box may come against it. While the box is
+  clear of it whole (a small screen at Larger text), the box may come against it. An answer still
+  coming in when the box opened that grows into it keeps off it from there, so the field never
+  covers its last lines or its Read all. While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
   More time to read). Without a
