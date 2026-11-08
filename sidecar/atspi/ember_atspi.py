@@ -2698,7 +2698,11 @@ def shell_overlays(params):
             complete = False
             break
         app = child_at(desktop, a)
-        if app is None or not is_shell(app, process_id(app)):
+        if app is None:
+            # Listed but not handed over: it may be the shell (fail closed, safety-privacy-3).
+            complete = False
+            continue
+        if not is_shell(app, process_id(app)):
             continue
         started = time.monotonic()
         budget = Budget(SHELL_BUDGET_S)
