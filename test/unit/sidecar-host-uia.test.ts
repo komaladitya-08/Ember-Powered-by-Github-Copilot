@@ -11,6 +11,7 @@ import {
 } from "../../app/sidecar-host/providers/uia";
 import { ProviderError, ownerPid } from "../../app/sidecar-host/provider";
 import { TEST_SWITCHES, hostLaunch } from "../../app/sidecar-host/launch";
+import { helperCantRun } from "../../app/main/perception/sidecar";
 
 describe("the bridge's elements as the host's", () => {
   it("turns UI Automation patterns into the host's facts and action words", () => {
@@ -347,7 +348,8 @@ describe("the bridge client", () => {
     expect(BACKOFF_MS).toEqual([5_000, 30_000, 120_000, 600_000]);
     const { p, spawned } = provider({ FAKE_BRIDGE_EXIT: "3" }, { backoffMs: [300, 2000] });
     const failed = async (n: number) => {
-      expect(await failure(p.start())).toBe("error: the accessibility bridge stopped (exit code 3)");
+      // Once it stopped before it was ready twice in a row, it can't start here (reliability-performance-i3).
+      expect(await failure(p.start())).toBe(n === 1 ? "error: the accessibility bridge stopped (exit code 3)" : "error: the accessibility bridge could not start (it stopped before it was ready again: exit code 3)");
       expect(spawned).toHaveLength(n);
     };
     await failed(1);
@@ -364,6 +366,20 @@ describe("the bridge client", () => {
     await new Promise(r => setTimeout(r, 400));
     await failed(3);
   }, 15_000);
+
+  it("says it can't work here, never to try again in a moment, once the bridge stopped before it was ready twice in a row (reliability-performance-i3)", async () => {
+    const { p, spawned } = provider({ FAKE_BRIDGE_EXIT: "3" }, { backoffMs: [50] });
+    const once = await p.start().catch((e: Error) => e);
+    // Once may be a one-off (an antivirus scan, a crash): it may pass, so it is said as a stop.
+    expect(helperCantRun(once)).toBe(false);
+    await new Promise(r => setTimeout(r, 100));
+    const again = await p.start().catch((e: Error) => e);
+    expect(spawned).toHaveLength(2);
+    expect(helperCantRun(again)).toBe(true);
+    // And so it stays, through the back-off, until a start works.
+    expect(helperCantRun(await p.start().catch((e: Error) => e))).toBe(true);
+    expect(p.health()).toEqual({ ok: false, detail: "Windows PowerShell stopped before the bridge was ready (exit code 3)" });
+  });
 
   it("never starts again in this host's life after a fatal line in Constrained Language mode, and says why for good (W4)", async () => {
     const { p, spawned } = provider({ FAKE_BRIDGE_FATAL: "Cannot add type. Definition of new types is not supported in this language mode.", FAKE_BRIDGE_LANGUAGE: "ConstrainedLanguage" }, { backoffMs: [50] });

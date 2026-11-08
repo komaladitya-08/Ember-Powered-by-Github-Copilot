@@ -1465,7 +1465,7 @@ borrowed mouse.
 | `AllSigned` or `Restricted`, or scripts turned off | Says "Your organisation allows only signed PowerShell scripts…". The helper isn't signed (PLAN.md §9), so an administrator has to allow it |
 | `RemoteSigned`, and the helper's files carry the Mark-of-the-Web (a zip downloaded by a browser and extracted by Explorer) | Says "Windows blocked Ember's accessibility helper because it came from the internet" and offers **Unblock it**, which removes the `Zone.Identifier` stream from exactly `ember_uia.ps1` and `ember_uia.cs` (what `Unblock-File` does), only when the user presses it. The host starts the bridge again on its next request |
 | Constrained Language Mode (AppLocker, WDAC, `__PSLockdownPolicy`) | Says "Windows PowerShell is restricted on this computer…". `Add-Type` can't run, and the host doesn't try again until Ember restarts |
-| Any other failed start | The host tries again after 5 s, 30 s and 2 min, then every 10 min |
+| Any other failed start | The host tries again after 5 s, 30 s and 2 min, then every 10 min. A bridge that stopped before it was ready once (an antivirus scan, a crash) is said as a stop that may pass; twice in a row, Ember says its helper isn't working and points to the setup check until a start works |
 
 For an endpoint-protection or application-control allow-list, the setup check's **Helper command line** row prints the
 exact command line, the script's path, and the compiled DLL's path and SHA-256. When Group Policy turns on PowerShell

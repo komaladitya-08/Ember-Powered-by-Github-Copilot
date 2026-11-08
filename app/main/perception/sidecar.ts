@@ -38,9 +38,10 @@ export class SidecarVersionError extends Error {
  * The helper's answers that it can't work at all on this computer, whatever is asked, until the user fixes something
  * (the setup check says what): Linux's Python bindings missing (ember_atspi.py) or no session bus (inside WSL), macOS
  * not having given Ember the Accessibility permission or its AX API not loading (app/sidecar-host/providers), the
- * helper or Windows' bridge unable to run or start, or out of date (SidecarVersionError, uia.ts). Never a request that
- * only timed out, a helper restarted because another request took too long, one that stopped (it starts again), or a
- * bridge still starting: those may work in a moment (safety-privacy-c2-1).
+ * helper or Windows' bridge unable to run or start (also one that stopped before it was ready twice in a row: uia.ts,
+ * reliability-performance-i3), or out of date (SidecarVersionError, uia.ts). Never a request that only timed out, a
+ * helper restarted because another request took too long, one that stopped once (it starts again), or a bridge still
+ * starting: those may work in a moment (safety-privacy-c2-1).
  */
 const CANT_RUN = /python3-pyatspi is not installed|^no session bus$|\bAccessibility permission\b|accessibility API couldn't be loaded|accessibility (helper|bridge)\b.*?\b(could not (run|start)|not running|is out of date|doesn't match)/i;
 
