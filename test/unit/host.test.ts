@@ -261,6 +261,36 @@ describe("connecting and signing in", () => {
     // (The hung start never lets the runtime go: the stop isn't waited for.)
     void host.stop();
   });
+  it("ends a request waiting for a reconnect at once when Stop or Stop everything ends it, never still thinking (home-r3-1)", async () => {
+    let generation = 1;
+    const told: string[] = [];
+    const { host } = makeHost({ connectWaitMs: 60_000, extensions: { forSession: () => undefined, get generation() { return generation; } },
+      onConversationTurn: (t, ended) => { told.push(ended ? `${t} ${ended}` : t); }, stopEverything: () => undefined });
+    await host.start(TOKEN, "stored");
+    // An extension changed: the next request reconnects first, and the reconnect takes its time.
+    generation = 2;
+    sim.startHangs = true;
+    const asked = host.ask("Q2 during reconnect");
+    await vi.waitFor(() => expect(told).toEqual(["thinking"]));
+    expect(await host.stopAnswer()).toBe(true);
+    // Over at once, and said to be stopped: not after the wait for the connection runs out.
+    await vi.waitFor(() => expect(told).toEqual(["thinking", "idle stopped"]), { timeout: 500 });
+    expect(host.conversationTurn).toBe("idle");
+    expect(await asked).toBe(false);
+    // Pressed again: nothing is under way, as the status says.
+    expect(await host.stopAnswer()).toBe(false);
+    // The same for Stop everything.
+    told.length = 0;
+    const again = host.ask("Q3 during reconnect");
+    await vi.waitFor(() => expect(told).toEqual(["thinking"]));
+    await host.abortAll();
+    await vi.waitFor(() => expect(told).toEqual(["thinking", "idle stopped-everything"]), { timeout: 500 });
+    expect(await again).toBe(false);
+    // Neither went to the model, nor became a line of the conversation.
+    expect(host.getTranscript().filter(e => e.who === "you").map(e => e.text)).toEqual([]);
+    // (The hung start never lets the runtime go: the stop isn't waited for.)
+    void host.stop();
+  });
   it("tells Home its turn ended because Stop ended it, from the bubble's Stop as from Home's (home-c2-2)", async () => {
     const told: string[] = [];
     const { host } = makeHost({ onConversationTurn: (t, ended) => { told.push(ended ? `${t} ${ended}` : t); }, turnSlowMs: 30 });

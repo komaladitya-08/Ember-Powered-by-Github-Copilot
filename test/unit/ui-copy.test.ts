@@ -1142,6 +1142,13 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(conv.PROBLEM_SETTINGS).toBe("Models & connections…");
   });
 
+  it("says a Stop ended my message before it was sent, and that its words are back to edit or send again (home-r3-1)", () => {
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED)).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here to edit or send again.");
+    expect(conv.composerGivenBack(conv.COMPOSER_SAYS.stoppedAll)).toBe("Stopped everything, running tasks included. Your message wasn't sent, so it's back here to edit or send again.");
+    // A line about the draft: another request's wait leaves it be.
+    expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED))).toBe(false);
+  });
+
   it("lets another request's wait take the composer's line only from an earlier outcome, never from a note about my draft (home-c3-1)", () => {
     for (const line of ["", conv.COMPOSER_SAYS.replied, conv.COMPOSER_SAYS.replyFailed, conv.COMPOSER_SAYS.noReply, conv.COMPOSER_SAYS.stoppedAll, conv.COMPOSER_SAYS.copied, conv.COMPOSER_SAYS.editCancelled, conv.CONVERSATION_STOPPED, conv.CONVERSATION_NOTHING_TO_STOP]) {
       expect(conv.composerLineYields(line), line).toBe(true);

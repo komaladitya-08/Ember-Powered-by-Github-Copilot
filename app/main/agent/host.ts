@@ -547,6 +547,12 @@ export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/** A promise and the call that settles it: a Stop's word to a request that waits (AgentHost.stopSignal). */
+function signal(): { promise: Promise<void>; fire: () => void } {
+  let fire = () => undefined as void;
+  const promise = new Promise<void>(resolve => { fire = resolve; });
+  return { promise, fire };
+}
 
 const SOURCE_TEXT: Record<string, string> = { stored: "Ember's saved sign-in", environment: "a token from the environment", "github-cli": "the GitHub CLI sign-in" };
 
@@ -922,6 +928,11 @@ export class AgentHost {
   private starting = 0;
   /** Bumped by every Stop (abortAll): a request still waiting to be sent is dropped. */
   private stops = 0;
+  /**
+   * Settled by every Stop (stopped()): a request waiting for a connection, or for a silent turn to end, is dropped at
+   * once, not when the wait runs out (home-r3-1: Home said "Thinking…" for up to CONNECT_WAIT_MS after the Stop).
+   */
+  private stopSignal = signal();
   /** This run's conversation: a reconnect resumes it; quitting (stop()) and signing out delete it. */
   private conversation: string | null = null;
   /** The account the conversation belongs to: signed in as another, it isn't resumed. */
@@ -2966,7 +2977,7 @@ export class AgentHost {
     if (ending) {
       if (!waiting.counted) { waiting.counted = true; this.waitingAsks++; }
       this.presenter.userPrompt(text);
-      await ending;
+      await Promise.race([ending, this.stopSignal.promise]);
       if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
     // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
@@ -3011,8 +3022,8 @@ export class AgentHost {
     if (this.starting > 0 || this.status.phase === "starting") {
       if (!waiting.counted) { waiting.counted = true; this.waitingAsks++; }
       this.presenter.userPrompt(text);
-      await Promise.race([this.settled(), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]);
-      // Stop was pressed while it waited: the request is dropped, not sent once connected.
+      await Promise.race([this.settled(), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS), this.stopSignal.promise]);
+      // Stop was pressed while it waited: the request is dropped at once, not sent once connected.
       if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
     if (!this.conductor?.sessionId || this.status.phase !== "ready") {
@@ -3156,6 +3167,14 @@ export class AgentHost {
     return !!this.o.stopEverything && stopRequest(text) && this.tasksAtWork();
   }
 
+  /** A Stop: requests asked before it are dropped (stopEpoch), those still waiting at once (stopSignal, home-r3-1). */
+  private stopped(): void {
+    this.stops++;
+    const was = this.stopSignal;
+    this.stopSignal = signal();
+    was.fire();
+  }
+
   /**
    * The conversation's own Stop (its bubble's, while Copilot keeps it waiting: presenter STOP_ANSWER): the turn under
    * way ends, and so does a request still waiting to be sent. Tasks and their questions go on (the kill switch stops
@@ -3168,7 +3187,7 @@ export class AgentHost {
     // (Its turn is over from Ember's side at once, whether or not the runtime confirms it: Home says so now, and that
     // Stop ended it: home-c2-2.)
     if (underWay) this.turnChanged("stopped");
-    this.stops++;
+    this.stopped();
     this.queued = [];
     this.dropHeld();
     if (underWay) this.presenter.stopped();
@@ -3197,7 +3216,7 @@ export class AgentHost {
   async abortAll(): Promise<void> {
     this.turnChanged("stopped-everything");
     this.projectRun?.abort();
-    this.stops++;
+    this.stopped();
     // Requests still waiting for their turn are dropped with it (the runtime runs none of them), and those held for a
     // new model service.
     this.queued = [];
