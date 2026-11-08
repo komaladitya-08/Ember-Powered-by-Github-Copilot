@@ -1241,7 +1241,10 @@ function renderConversation(raw: Entry[]): void {
   const latest = raw.at(-1);
   const newReply = latest && (latest.t !== conversationLastAtSend?.t || latest.who !== conversationLastAtSend?.who || latest.text !== conversationLastAtSend?.text);
   // (An answer stopped short is not a reply received: the problem that follows it, or the Stop, says what happened.)
-  if (conversationAwaitingReply && newReply && (latest.who === "problem" || (latest.who === "ember" && !latest.stopped))) {
+  // Once main said it is answering this request, its turn's end says it (endComposerWait): a line of Ember's that comes
+  // meanwhile (a reminder, the answer to a request asked before) isn't taken for this reply (home-7). A request answered
+  // with no turn (Ember's own answers, one it couldn't send) ends here.
+  if (conversationAwaitingReply && !conversationTurnSeen && newReply && (latest.who === "problem" || (latest.who === "ember" && !latest.stopped))) {
     awaitingReply(false);
     conversationComposeStatus.textContent = raw.at(-1)?.who === "problem" ? COMPOSER_SAYS.replyFailed : COMPOSER_SAYS.replied;
   }

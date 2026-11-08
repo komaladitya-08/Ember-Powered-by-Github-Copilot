@@ -588,6 +588,28 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  it("waits for its own turn's end, not another line of Ember's that comes meanwhile, such as a reminder (home-7)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await page.locator("#conversation-message").fill("Summarise my mail");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      const asked: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Summarise my mail" }];
+      await page.evaluate(e => window.__home.emit("onConversation", e), asked);
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      // A reminder comes due while Ember answers: Ember's line, but not this reply.
+      const reminded = [...asked, { t: at(1), who: "ember" as const, text: "Reminder: call the dentist" }];
+      await page.evaluate(e => window.__home.emit("onConversation", e), reminded);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...reminded, { t: at(2), who: "ember" as const, text: "Three new messages, none urgent." }]);
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("says a typed \"stop\" stopped everything, and waits for no reply after it (home-c1-1)", async () => {
     const { page, errors } = await home([]);
     try {
