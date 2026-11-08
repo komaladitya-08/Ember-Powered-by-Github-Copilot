@@ -561,8 +561,9 @@ class Parser {
       if (this.shell === "zsh" && /^[(=~^]/.test(body)) this.note("zsh", "It uses zsh-only syntax.");
       // A default, a check or a cut end (`${d:-x}`, `${d:?}`, `${d%/}`, `${d#./}`) stands for the variable's value, so
       // Ember's own refusal follows the variable through it (commands-remote-v5-2); `${d:+x}` gives other text.
-      const op = /^([A-Za-z_][A-Za-z0-9_]*)(:?[-=?]|%|#)/.exec(body);
-      const seg: Seg = !op ? { t: "unres", why: "expansion" } : op[2].endsWith("?") ? { t: "unres", why: "expansion", of: op[1], exact: true } : { t: "unres", why: "expansion", of: op[1] };
+      // An array's elements (`${a[@]}`, `${a[0]}`) stand for the values the text gives it, among others (w5-5).
+      const op = /^([A-Za-z_][A-Za-z0-9_]*)(\[(?:[@*]|\d+)\])?(:?[-=?]|%|#|$)/.exec(body);
+      const seg: Seg = !op ? { t: "unres", why: "expansion" } : op[3].endsWith("?") && !op[2] ? { t: "unres", why: "expansion", of: op[1], exact: true } : { t: "unres", why: "expansion", of: op[1] };
       return { segs: [seg], subs: [], quoted: false };
     }
     if (n !== undefined && /[A-Za-z_]/.test(n)) {

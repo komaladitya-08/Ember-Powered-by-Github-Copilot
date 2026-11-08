@@ -366,10 +366,12 @@ Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`, or a cut or a default
 of a variable, `~/.config/"${x%y}"`, which may be other text than its value) or a pattern before it could match one
 (`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is. A variable is judged where a command uses it, so one that only names Ember's
-folder to test or print it (`p=~/.config/ember; [ -d "$p" ] && echo yes`) runs, unless it is exported to a program
-(`export p`, `set -a`) or a program gets it some other way: as its own name (`"$p/bin/ember"`), through a wrapper's
-option (`xargs -a "$p/settings.json"`), on its input (`xargs rm -rf <<< "$p"`, `read -r f <<< "$p"; rm -rf "$f"`) or
-through `${p:?}`, `${p:-…}` or `${p%/}`. A value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
+folder to test or print it (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
+input while nothing takes what it prints (`grep -q ember <<< "$p"`, `wc -c <<< "$p"`), runs, unless it is exported to a
+program (`export p`, `set -a`) or a program gets it some other way: as its own name (`"$p/bin/ember"`), through a
+wrapper's option (`xargs -a "$p/settings.json"`), on its input (`xargs rm -rf <<< "$p"`, `read -r f <<< "$p"; rm -rf
+"$f"`, `mapfile -t a <<< "$p"; rm -rf "${a[@]}"`) or through `${p:?}`, `${p:-…}` or `${p%/}`. Handed to a program that
+may change what it names (an export, the input of a program Ember can't follow), Ember says it would change its files. A value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
 does.
 
 ### 2.7 What Copilot gets back

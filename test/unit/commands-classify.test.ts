@@ -200,10 +200,9 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     // Used in a word Ember doesn't judge as a path (inline code, a program's own option), its value is judged as before.
     for (const cmd of ["d=~/.config/ember; python3 -c \"import shutil; shutil.rmtree('$d')\"", "d=~/.config/ember; some-tool --dir=\"$d\""]) expect(refused(cmd), cmd).toBe(READ);
     // A value that may reach a program's environment (exported, before a command, or an environment variable's name)
-    // is still judged when it is set.
-    for (const cmd of ["export d=~/.config/ember; make", "D=~/.config/ember make", "XDG_CONFIG_HOME=~/.config/ember; gedit-like-tool", "declare -x d=~/.config/ember; make"]) {
-      expect(refused(cmd), cmd).toBe(READ);
-    }
+    // is still judged when it is set; one handed to a program's environment may be changed there (commands-remote-w5-5).
+    for (const cmd of ["export d=~/.config/ember; make", "D=~/.config/ember make", "declare -x d=~/.config/ember; make"]) expect(refused(cmd), cmd).toBe(CHANGE);
+    expect(refused("XDG_CONFIG_HOME=~/.config/ember; gedit-like-tool")).toBe(READ);
   });
 
   it("refuses a variable set to Ember's folder that reaches a program through a wrapper's option, its input, an expansion, its name or a later export (commands-remote-v5-2)", () => {
@@ -223,6 +222,33 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
       "d=build; xargs rm -rf <<< \"$d\"", "d=./bin; \"$d/tool\" --x", "f=notes.txt; xargs -a \"$f\" echo", "d=x; rm -rf \"${d:+y}\"",
     ]) expect(refused(cmd), cmd).toBeUndefined();
     expect(classifyCommand("f=notes.txt; xargs -a \"$f\" echo", "bash", contextOf("linux")).findings).toEqual([]);
+  });
+
+  it("runs a text filter that only reads a variable set to Ember's folder on its input, and refuses a program that acts on it (commands-remote-w5-4)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(`d=~/.config/ember; ${cmd}`, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "grep -q ember <<< \"$d\" && echo yes", "wc -c <<< \"$d\"", "tr / _ <<< \"$d\"", "sed s/a/b/ <<< \"$d\"", "cat <<< \"$d\"", "cat <<EOF\n$d\nEOF",
+      "awk '{print $1}' <<< \"$d\"", "sort <<< \"$d\"", "head -n 1 <<< \"$d\"", "cut -d / -f 2 <<< \"$d\"", "mapfile -t a <<< \"$d\"; echo \"${a[@]}\"",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+    // What it prints going on to another program, a program file of its own, or a program that acts on its input.
+    for (const cmd of [
+      "xargs rm -rf <<< \"$d\"", "cat <<< \"$d\" | xargs rm -rf", "tr -d x <<< \"$d\" | sh", "rm -rf \"$(cat <<< \"$d\")\"", "sed -f s.sed <<< \"$d\"",
+      "awk -f p.awk <<< \"$d\"", "python3 <<< \"$d\"", "bash <<< \"$d\"", "sudo xargs rm -rf <<< \"$d\"", "parallel rm -rf <<< \"$d\"", "mapfile -t a <<< \"$d\"; rm -rf \"${a[@]}\"",
+      "./tool <<< \"$d\"",
+    ]) expect(refused(cmd), cmd).toBeDefined();
+  });
+
+  it("says a command that hands Ember's folder to a program that deletes it would change Ember's files, not read them (commands-remote-w5-5)", () => {
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(`d=~/.config/ember; ${cmd}`, "bash", contextOf("linux")), "bash").refuse?.says;
+    const change = "Ember won't run this: it would change Ember's own safety settings, records or programs.";
+    const read = "Ember won't run this: it would read Ember's own safety settings, records or programs.";
+    for (const cmd of [
+      "xargs rm -rf <<< \"$d\"", "xargs -I{} rm -rf {}/x <<< \"$d\"", "parallel rm -rf <<< \"$d\"", "mapfile -t a <<< \"$d\"; rm -rf \"${a[@]}\"",
+      "export d; python3 -c 'import os,shutil; shutil.rmtree(os.environ[\"d\"])'", "python3 <<EOF\nimport shutil; shutil.rmtree(\"$d\")\nEOF", "./tool <<< \"$d\"",
+    ]) expect(refused(cmd), cmd).toBe(change);
+    expect(classifyCommand("xargs rm -rf <<< ~/.config/ember", "bash", contextOf("linux")).refuse?.says).toBe(change);
+    // A program that reads what it is given still says it would read.
+    for (const cmd of ["xargs cat <<< \"$d\"", "xargs -a \"$d/settings.json\" echo", "mapfile -t a <<< \"$d\"; cat \"${a[0]}/settings.json\""]) expect(refused(cmd), cmd).toBe(read);
   });
 
   it("keeps a download a download through a cut or a default, and refuses Ember's folder that one could name (commands-remote-w5-1)", () => {

@@ -15675,6 +15675,24 @@
    "rules": [
     "unclear.target"
    ]
+  },
+  {
+   "cmd": "d=~/.config/ember; grep -q ember <<< \"$d\" && echo yes",
+   "verdict": "run"
+  },
+  {
+   "cmd": "d=~/.config/ember; cat <<< \"$d\" | xargs rm -rf",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "d=~/.config/ember; mapfile -t a <<< \"$d\"; rm -rf \"${a[@]}\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }
