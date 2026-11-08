@@ -231,6 +231,19 @@ describe("matchIntent: words that don't ask, and objects the words don't name ex
     expect(announce("rm notes.txt", "delete notes.txt")).not.toBeNull();
   });
 
+  it("never announces a step on what the words leave out or keep, however they say it (found fixing commands-remote-r2-1)", () => {
+    for (const words of [
+      "delete everything but build/", "delete everything other than build/", "delete everything apart from build/",
+      "delete everything aside from build/", "delete everything excluding build/", "delete everything besides build/",
+      "delete dist/ instead of build/", "delete dist/ rather than build/", "delete dist/ and keep build/",
+      "delete dist/ but leave build/", "delete dist/, leaving build/", "delete dist/ and spare build/",
+    ]) expect(announce("rm -r build", words), words).toBeNull();
+    expect(announce("git push origin main", "commit instead of pushing to main")).toBeNull();
+    // What they asked for, without those words, is still announced.
+    expect(announce("rm -r build", "delete build/")).not.toBeNull();
+    expect(announce("rm -r build", "delete build/ and dist/")).not.toBeNull();
+  });
+
   it("names a path by its last segment only inside the task's folder, and a written path only where it leads", () => {
     expect(announce("rm -r src/build", "delete the build folder")).not.toBeNull();
     expect(announce("rm -r ../build", "delete the build folder")).toBeNull();

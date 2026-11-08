@@ -302,6 +302,12 @@ function scriptNamed(name: string, w: Words): boolean {
   return stem !== lower && nameNamed(stem, w.raw) && hasWord(w.list, ["script", "scripts"]);
 }
 
+/**
+ * Words that keep something or leave it out ("delete everything but build/", "delete dist/ and keep build/", "other
+ * than", "instead of"): nothing announces then, as with NEGATION, since the step may be on what they keep.
+ */
+const KEEPS = /(^|[^\p{L}\p{N}])((everything|anything|all)\s+but|other\s+than|apart\s+from|aside\s+from|excluding|besides|instead\s+of|rather\s+than|keep|keeping|leave|leaving|spare|sparing|preserve|preserving)(?=$|[^\p{L}\p{N}])/iu;
+
 /** Words that turn a request around ("don't delete build", "never push to main"): nothing announces then. */
 const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
 
@@ -635,7 +641,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
   if (F.length === 0) return null;
   if (F.some(f => ALWAYS_ASK.has(f.cls))) return null;
   if (F.some(f => f.widening.some(x => ALWAYS_BROADER.has(x)))) return null;
-  if (NEGATION.test(userWords.normalize("NFKC"))) return null;
+  if (NEGATION.test(userWords.normalize("NFKC")) || KEEPS.test(userWords.normalize("NFKC"))) return null;
   const groups = new Map<string, Finding[]>();
   for (const f of F) {
     const row = rowOf(f, F);

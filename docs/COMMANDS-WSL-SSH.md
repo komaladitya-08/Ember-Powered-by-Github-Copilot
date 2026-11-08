@@ -278,7 +278,9 @@ voice asks ("You asked by voice. Ember can't tell your voice from what your spea
 typed words still count. Your words have to ask for it: "delete build/", "please delete
 build/", "Ember, delete build/", "can you delete build/?" and "I want to delete build/" do; a question ("should I delete build/?", "how do I push
 my branch?"), something already done ("I pushed my branch"), a maybe ("I might delete build/ later") and words about
-something else ("fix the script that deletes build/") don't, so the command asks. Anything broader than what you named asks: a force flag, a
+something else ("fix the script that deletes build/") don't, so the command asks. So do words that say not to, or
+that keep or leave something out ("don't delete build/", "delete everything but build/", "delete dist/ and keep
+build/", "instead of", "other than"), since the step may be on what you meant to keep. Anything broader than what you named asks: a force flag, a
 wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
 as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
 build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).
