@@ -276,7 +276,8 @@ export class TaskManager {
 
   constructor(private d: TaskManagerDeps) {
     for (const c of d.carried ?? []) this.adopt(c);
-    if (this.tasks.size) this.publish();
+    // The cards handed on are still on screen (integrations-v5-2): this manager's list takes their place at once.
+    if (d.carried?.length) this.publish();
   }
 
   /**
@@ -287,7 +288,9 @@ export class TaskManager {
     // (A reconnect that took longer than the card's whole time, a user away included, doesn't bring it back.)
     const elapsed = Date.now() - c.at;
     const left = c.away ? c.left : c.left - elapsed;
-    if (left <= 0 || elapsed > Math.max(c.left, c.whole ?? 0) || this.tasks.has(c.task.id)) return;
+    if (this.tasks.has(c.task.id)) return;
+    // (Its view, left on screen for this manager, goes with it: integrations-v5-2.)
+    if (left <= 0 || elapsed > Math.max(c.left, c.whole ?? 0)) { this.dropView(c.task); return; }
     const id = c.task.id;
     this.tasks.set(id, c.task);
     if (c.spec) this.specs.set(id, c.spec);
@@ -628,10 +631,15 @@ export class TaskManager {
     try { this.d.onView?.(task.id, null); } catch (err) { this.d.log.warn("task.view_failed", { id: task.id, err }); }
   }
 
-  /** Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). */
-  close(): void {
+  /**
+   * Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). `keep`:
+   * the next manager was handed them (keptCards) and lists them at once, so they and their views stay on screen
+   * meanwhile, never gone while Ember reconnects (integrations-v5-2).
+   */
+  close(keep = false): void {
     this.closed = true;
     for (const id of new Set([...this.expiry.keys(), ...this.readers.keys()])) this.forgetCardTime(id);
+    if (keep) return;
     for (const t of this.tasks.values()) this.dropView(t);
     this.d.setCards([]);
   }

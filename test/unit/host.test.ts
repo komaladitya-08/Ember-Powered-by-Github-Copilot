@@ -51,6 +51,8 @@ const sim = vi.hoisted(() => ({
   /** client.start() and client.listModels() never settle (a runtime that stalls in its handshake, a black-holed network). */
   startHangs: false,
   modelsHang: false,
+  /** client.start() waits for this (a runtime that takes a moment to start, as a real one does). */
+  startGate: null as Promise<void> | null,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -89,7 +91,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     stopped = false;
     forced = false;
     constructor(public opts: any) { sim.clients.push(this); }
-    async start() { if (sim.startHangs) await hang(); if (sim.startError) throw sim.startError; }
+    async start() { if (sim.startGate) await sim.startGate; if (sim.startHangs) await hang(); if (sim.startError) throw sim.startError; }
     async stop() { if (sim.stopHangs) await hang(); this.stopped = true; return []; }
     async forceStop() { this.forced = true; }
     getAuthStatus() { return sim.auth(); }
@@ -162,6 +164,7 @@ beforeEach(() => {
   sim.toolsHang = false;
   sim.startHangs = false;
   sim.modelsHang = false;
+  sim.startGate = null;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -4464,6 +4467,75 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     for (const word of ["Dr Smith", "biopsy", "benign", "Biopsy results"]) expect(sent).not.toContain(word);
     expect(retried.sent[0]).toMatch(/^Task: do that\b/);
     await host.stop();
+  });
+
+  /** Two tasks fail while a switch waits for them, and the switch's connect waits for `gate`: the cards on screen as it begins. */
+  const failBoth = async (host: AgentHost, gate: Promise<void>, now: (p: ActiveProvider) => void) => {
+    const t = host.tasks!.start("turn on night light", { userWords: "turn on night light" });
+    const u = host.tasks!.start("tidy my desktop", { userWords: "tidy my desktop" });
+    await vi.waitFor(() => expect(taskSession(t.id) && taskSession(u.id)).toBeDefined());
+    now(at("b.example"));
+    expect(host.providerChanged()).toBeNull();
+    sim.startGate = gate;
+    for (const [x, why] of [[u, "No desktop."], [t, "The switch wasn't there."]] as const) {
+      await tool(taskSession(x.id), "finish_task").handler({ success: false, summary: why });
+      taskSession(x.id).emit("session.idle", {});
+    }
+    // The switch is made: Ember is connecting to the new service.
+    await vi.waitFor(() => expect(sim.clients.length).toBe(2));
+    return { t, u };
+  };
+
+  it("keeps a finished task's card on screen, with Close that closes it, for the whole reconnect of the switch it waited for (integrations-v5-2)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host, screen, patches } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    let open!: () => void;
+    const { t, u } = await failBoth(host, new Promise<void>(r => { open = r; }), p => { now = p; });
+    const mark = patches.length;
+    await new Promise(r => setTimeout(r, 300));
+    expect(host.getStatus().phase).toBe("starting");
+    // While Ember connects: both cards, Close only (Try again would start on the connection that went), and Close works.
+    expect(cardOf(screen, t.id)?.actions?.map(a => a.label)).toEqual(["Close"]);
+    expect(host.taskActivities().find(e => e.id === t.id)?.controls?.retry).toBe(false);
+    expect(host.retryTask(t.id)).toBe(false);
+    host.tasks!.dismiss(u.id);
+    expect(cardOf(screen, u.id)).toBeUndefined();
+    open();
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "b.example" } }), { timeout: 3000 });
+    await vi.waitFor(() => expect(cardOf(screen, t.id)?.actions?.map(a => a.label)).toEqual(["Try again", "Close"]));
+    // Never off the screen meanwhile, and the one closed doesn't come back.
+    expect(patches.slice(mark).filter(p => p.tasks !== undefined).every(p => p.tasks!.some(c => c.id === t.id))).toBe(true);
+    expect(cardOf(screen, u.id)).toBeUndefined();
+    expect(host.taskActivities().filter(e => e.id === t.id)).toHaveLength(1);
+    await host.stop();
+  });
+
+  it("takes the cards off when the switch's connect fails, or a sign-out comes while it connects (integrations-v5-2)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const made = makeHost({ hands: hands(), provider: () => now });
+    expect(await made.host.start(null)).toBe("ready");
+    let open!: () => void;
+    const failing = await failBoth(made.host, new Promise<void>(r => { open = r; }), p => { now = p; });
+    sim.startError = new Error("spawn copilot ENOENT");
+    open();
+    await vi.waitFor(() => expect(made.host.getStatus().phase).toBe("error"), { timeout: 3000 });
+    expect(made.screen().tasks).toEqual([]);
+    expect(made.host.tasks).toBeNull();
+    await made.host.stop();
+    sim.startError = null;
+    sim.clients = [];
+    now = at("a.example");
+    const again = makeHost({ hands: hands(), provider: () => now });
+    expect(await again.host.start(null)).toBe("ready");
+    const signingOut = await failBoth(again.host, new Promise<void>(r => { open = r; }), p => { now = p; });
+    await again.host.forgetConversation();
+    expect(again.screen().tasks).toEqual([]);
+    open();
+    await vi.waitFor(() => expect(again.host.getStatus().phase).toBe("ready"), { timeout: 3000 });
+    expect(cardOf(again.screen, signingOut.t.id)).toBeUndefined();
+    expect(failing.t.id).toBeDefined();
+    await again.host.stop();
   });
 
   it("tells Home a request held for the new service waits for the switch, never that Ember is thinking, until it is sent (home-r4-4)", async () => {

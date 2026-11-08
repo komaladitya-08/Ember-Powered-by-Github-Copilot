@@ -1127,8 +1127,10 @@ the address in force and its saved key are kept and come back with the switch (i
   for the switch, never "Thinking…": the `held` turn, home-r4-4), and sent to the new one once they are
   done, in the order asked (one asked during the switch goes behind them); it never goes to the one before, and no new
   task starts on it (a queued one ends saying the service changed). A finished task's card stays through the switch's
-  reconnect with the time it had left (`TaskManager.keptCards`): its Try again is held back while the switch waits (a
-  try then would start on the service before) and offered again once the switch is made. On another service it starts
+  reconnect with the time it had left (`TaskManager.keptCards`), on screen and with a Close that closes it while Ember
+  connects (the manager before keeps it until the next one lists it: integrations-v5-2); it goes if the connect fails or
+  a sign-out or an account change comes first. Its Try again is held back while the switch waits and while Ember
+  connects (a try then would start on the service before) and offered again once the switch is made. On another service it starts
   from the user's own words, as a typed "try again" does (`handedElsewhere`): the conversation isn't resumed there, so
   neither is the goal it wrote nor what it read on the screen, and the new conversation isn't told of the card
   (integrations-v5-1). "Done" is the runtime's own word for the turn, not

@@ -782,6 +782,33 @@ describe("Home's Task activity across a reconnect (tasks-approvals-c2-1)", () =>
     } finally { vi.useRealTimers(); }
   });
 
+  it("leaves handed cards and their views on screen until the next manager lists them, and takes the view of one whose time ran out (integrations-v5-2)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { upgradeView } = await import("../../app/shared/view");
+      const shown: TaskCard[][] = [];
+      const views: [string, unknown][] = [];
+      const screen = { setCards: (c: TaskCard[]) => shown.push(c), onView: (id: string, v: unknown) => views.push([id, v]) };
+      const old = manager(() => fakeWorker(async () => ({ success: false, summary: "It broke.", view: upgradeView([{ kind: "text", text: "Half done" }]) })), { failureCardMs: 1000, ...screen });
+      const kept = old.start("Rename the report", { userWords: "rename the report" });
+      const gone = old.start("Tidy the desktop", { userWords: "tidy the desktop" });
+      await vi.advanceTimersByTimeAsync(10);
+      const cards = old.keptCards();
+      const [before, viewsBefore] = [shown.length, views.length];
+      old.close(true);
+      // Nothing is taken off the screen: the next manager lists them at once.
+      expect([shown.length, views.length]).toEqual([before, viewsBefore]);
+      const next = manager(() => fakeWorker(async () => ({ success: true, summary: "" })), { failureCardMs: 1000, ...screen, carried: cards.map(c => (c.task.id === gone.id ? { ...c, left: 0 } : c)) });
+      expect(shown.at(-1)?.map(c => c.id)).toEqual([kept.id]);
+      expect(views.slice(viewsBefore)).toEqual(expect.arrayContaining([[kept.id, expect.objectContaining({ rev: expect.any(Number) })], [gone.id, null]]));
+      expect(next.get(gone.id)).toBeUndefined();
+      // And a manager closed for good takes them off.
+      next.close();
+      expect(shown.at(-1)).toEqual([]);
+      expect(views.at(-1)).toEqual([kept.id, null]);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("hands a card to another model service with only the user's own words for its Try again (integrations-v5-1)", async () => {
     const { handedElsewhere } = await import("../../app/main/agent/tasks");
     const old = manager(() => fakeWorker(async () => ({ success: false, summary: "Mail wasn't open." })));

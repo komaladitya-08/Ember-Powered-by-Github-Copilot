@@ -925,13 +925,13 @@ export class AgentHost {
   /** The manager whose tasks were forgotten with the conversation (sign-out): its history isn't handed on. */
   private tasksForgotten: TaskManager | null = null;
   /**
-   * The finished cards of the manager before a reconnect, for the next one (TaskManager.keptCards): a switch of model
-   * service made once the work under way was done keeps its cards' Try again, Close and View result
-   * (tasks-approvals-r4-2). Any other restart takes them off for good, as before.
+   * The manager before a reconnect while it hands its finished cards to the next one (TaskManager.keptCards): a switch of
+   * model service made once the work under way was done keeps its cards' Try again, Close and View result
+   * (tasks-approvals-r4-2). It stays `tasks` until the next manager takes them, so they stay on screen and Close closes
+   * them while Ember reconnects (integrations-v5-2); `service`: the one its tasks used (integrations-v5-1). Any other
+   * restart takes them off for good, as before.
    */
-  private keptCards: KeptCard[] = [];
-  /** The model service the kept cards' tasks used: on another, nothing the conversation wrote goes with them (integrations-v5-1). */
-  private keptService = "";
+  private handing: { tasks: TaskManager; service: string } | null = null;
   /** Tasks whose cards came from a connection on another model service: the conversation here isn't told of them (integrations-v5-1). */
   private fromElsewhere = new WeakSet<Task>();
   /** The next stop is the waiting switch's own reconnect (switchWhenQuiet, releaseHeld): its cards are kept. */
@@ -1848,11 +1848,13 @@ export class AgentHost {
     if (refused) {
       this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined, service: undefined });
       this.o.memory?.pauseAccount?.("unverified");
+      this.dropHanded();
       return;
     }
     if (!token && !provider) {
       this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? this.signedOut, login: undefined, source: undefined, service: undefined });
       this.o.memory?.pauseAccount?.("signed-out");
+      this.dropHanded();
       return;
     }
     // The service is named from the start, so a failure to reach it is never explained as Copilot's (integrations-3).
@@ -1988,7 +1990,9 @@ export class AgentHost {
       // (And the user's own switch, Send screenshots for tasks, read as each task's worker is made: safety-privacy-7.)
       const workerVision = () => this.models.find(m => m.id === this.status.workerModel)?.capabilities?.supports?.vision === true
         && this.o.admin?.().features.screenImages !== false && this.o.settings.get().screenImages !== false;
-      this.tasks = hands || (targets && this.targetsTakeTasks()) ? new TaskManager({
+      const takesTasks = !!hands || (!!targets && this.targetsTakeTasks());
+      const carried = this.handOn(service, takesTasks);
+      this.tasks = takesTasks ? new TaskManager({
         log: this.o.log.child("tasks"),
         ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
         ...(this.o.taskWindow ? { taskWindow: this.o.taskWindow } : {}),
@@ -2052,13 +2056,14 @@ export class AgentHost {
         actionsAllowed: () => this.actionsAllowed(),
         earlier: () => this.earlierTasks,
         // No Try again while the switch waits: a task started on the service before would be refused at once
-        // (tasks-approvals-c4-1). The cards before this connection go on here (tasks-approvals-r4-2).
-        retryWaits: () => this.providerMoved(),
-        carried: this.carriedTo(service),
+        // (tasks-approvals-c4-1); nor while its cards are handed to the next connection, this one gone (integrations-v5-2).
+        // The cards before this connection go on here (tasks-approvals-r4-2).
+        retryWaits: () => this.providerMoved() || this.handing !== null,
+        carried,
         makeWorker: (spec, progress, update, activity) => {
           // The model service changed since this connection started: no task starts on the one before (a queued task, or
           // one a turn already under way asked for). Tasks running now finish where they started.
-          if (this.providerMoved()) return refusedWorker(spec, PROVIDER_MOVED_TASK);
+          if (this.providerMoved() || this.handing !== null) return refusedWorker(spec, PROVIDER_MOVED_TASK);
           // The hands of the task's target now (its state may have changed while the task waited), or why it can't take
           // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before,
           // and only for a task on this computer: one bound elsewhere never runs on this screen's hands (fail closed).
@@ -2096,8 +2101,6 @@ export class AgentHost {
           }, spec);
         },
       }) : null;
-      // Handed on once: a later reconnect hands on that manager's own (tasks-approvals-r4-2).
-      this.keptCards = [];
       const tasks = this.tasks;
       // What the conversation's prompt may promise is fixed when it is created and kept for its resumes (§3.15).
       const caps = this.conversation && this.convoCaps ? this.convoCaps : targets?.caps() ?? NO_CAPS;
@@ -3420,6 +3423,8 @@ export class AgentHost {
       this.tasks?.takeReports();
       this.earlierTasks = [];
       this.tasksForgotten = this.tasks;
+      // Cards a reconnect was handing on were this conversation's too (integrations-v5-2).
+      this.dropHanded();
       this.finishedLately = [];
       this.carried = [];
       this.transcript.length = 0;
@@ -3513,7 +3518,7 @@ export class AgentHost {
     // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one, nor Task activity.
     this.finishedLately = [];
     this.earlierTasks = [];
-    this.keptCards = [];
+    this.dropHanded();
     this.o.onAccountChanged?.();
     // Never without a word: the new account's conversation starts by saying what went (memory-11).
     if (erased) this.remember("ember", ACCOUNT_CHANGED_FORGOT);
@@ -3541,14 +3546,31 @@ export class AgentHost {
   }
 
   /**
-   * The finished cards handed on to the manager of a connection to `service` (tasks-approvals-r4-2). From another model
-   * service they go on without what the conversation there wrote, as it isn't resumed here (integrations-v5-1): Try again
-   * starts from the user's own words (handedElsewhere), and this conversation isn't told of them (list_tasks).
+   * The finished cards the manager before kept on screen through the reconnect, for this connection's (`takes`: there is
+   * one), which lists them at once (tasks-approvals-r4-2, integrations-v5-2); with none to take them, they go now. From
+   * another model service (`service`: this connection's) they go on without what the conversation there wrote, as it
+   * isn't resumed here (integrations-v5-1): Try again starts from the user's own words (handedElsewhere), and this
+   * conversation isn't told of them (list_tasks).
    */
-  private carriedTo(service: string): KeptCard[] {
-    if (this.keptService === service) return this.keptCards;
-    for (const c of this.keptCards) this.fromElsewhere.add(c.task);
-    return this.keptCards.map(handedElsewhere);
+  private handOn(service: string, takes: boolean): KeptCard[] {
+    const from = this.handing;
+    this.handing = null;
+    if (!from) return [];
+    const kept = takes ? from.tasks.keptCards() : [];
+    from.tasks.close(kept.length > 0);
+    if (this.tasks === from.tasks) this.tasks = null;
+    if (from.service === service) return kept;
+    for (const c of kept) this.fromElsewhere.add(c.task);
+    return kept.map(handedElsewhere);
+  }
+
+  /** The cards a reconnect was handing on go after all: a sign-out, an account change, or no connection (integrations-v5-2). */
+  private dropHanded(): void {
+    const from = this.handing;
+    if (!from) return;
+    this.handing = null;
+    from.tasks.close();
+    if (this.tasks === from.tasks) this.tasks = null;
   }
 
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
@@ -3581,11 +3603,10 @@ export class AgentHost {
     this.reconnectAfterTasks = null;
     const cutOff = this.cutOff;
     this.cutOff = null;
-    // The waiting switch's reconnect: the finished cards go on with the next connection's manager, as they were before
-    // this stop, each within the time it had left; never the tasks a stop cuts off, nor after a sign-out, an account
-    // change or when quitting, nor when Ember doesn't connect (tasks-approvals-r4-2).
-    this.keptCards = !forget && this.keepCards && this.tasks && this.tasks !== this.tasksForgotten ? this.tasks.keptCards() : [];
-    this.keptService = serviceOf(this.active);
+    // The waiting switch's reconnect: the finished cards stay with their manager, on screen, until the next connection's
+    // takes them, each within the time it has left; never the tasks a stop cuts off, nor after a sign-out, an account
+    // change or when quitting, nor when Ember doesn't connect (tasks-approvals-r4-2, integrations-v5-2).
+    const keep = !forget && this.keepCards && !!this.tasks && this.tasks !== this.tasksForgotten;
     this.keepCards = false;
     // Nothing keeps acting or asking once the brain goes away (sign-out, restart, quit). Cut off by a runtime
     // that stopped (or stopped answering), tasks end as failed.
@@ -3602,9 +3623,14 @@ export class AgentHost {
     if (forget) this.earlierTasks = [];
     else if (this.tasks && this.tasks !== this.tasksForgotten) this.earlierTasks = this.tasks.history();
     this.tasksForgotten = null;
-    // The cards go with their manager: a failed card's Close would reach nobody after a restart.
-    this.tasks?.close();
-    this.tasks = null;
+    // The cards go with their manager: a failed card's Close would reach nobody after a restart. (A second switch before
+    // the next manager took them hands on the same cards, from the service they ran on.)
+    if (keep && this.tasks) this.handing = { tasks: this.tasks, service: this.handing?.tasks === this.tasks ? this.handing.service : serviceOf(this.active) };
+    else {
+      this.handing = null;
+      this.tasks?.close();
+      this.tasks = null;
+    }
     this.outcomes.clear();
     // The session goes, and with it every turn of it, running or waiting.
     this.queued = [];
