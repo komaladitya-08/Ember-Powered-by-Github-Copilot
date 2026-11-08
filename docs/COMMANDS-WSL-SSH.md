@@ -124,7 +124,9 @@ Ember stops and asks before a command that:
 
 - **deletes or destroys data**: `rm`, `rmdir`, `del`, `Remove-Item`, `find -delete`, `git clean`,
   `git reset --hard`, discarding changes (`git checkout -- <file>`, `git restore`), `git branch -D`,
-  `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`),
+  `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`; a `cp`
+  or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it
+  exists.", where the computer says which names are folders: this computer and an SSH computer, not yet WSL),
   `truncate`, formatting or partitioning a disk, emptying the trash, giving a container a folder outside your project
   that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), and package scripts or
   make targets named clean, wipe, purge, reset and the like;
@@ -169,9 +171,12 @@ Ember stops and asks before a command that:
 **Loops and `if` on a command line** are read as they are in a script (below): in bash or sh, `if`, `for`, `while`
 and `until` and a plain `[[ … ]]` test don't ask by themselves, because Ember judges every command inside them. So
 `for i in 1 2 3; do echo $i; done` and `if [ -f package.json ]; then npm test; fi` run, `if [ -f x ]; then rm x; fi`
-asks only to delete x, and `while read -r l; do …; done < list.txt` isn't taken for a command waiting for your typing.
-zsh's, PowerShell's and cmd's `if` and `for` still ask, and so do a loop in a shell the command starts (`bash -c '…'`),
-a loop whose variable is `PATH` or another that changes how commands are found, `case`, functions and `{ … }` groups.
+asks only to delete x, and `while IFS= read -r l; do …; done < list.txt` isn't taken for a command waiting for your
+typing (`IFS` in front of `read` changes only how that `read` splits the line). zsh's, PowerShell's and cmd's `if` and
+`for` still ask, and so do a loop in a shell the command starts (`bash -c '…'`), a loop whose variable is `PATH` or
+another that changes how commands are found, `case`, functions and `{ … }` groups. A variable set after `then`, `do`,
+`else`, `!` or `time` is judged as one set at the start of a command: `if true; then LD_PRELOAD=./x.so ls; fi` asks, as
+`LD_PRELOAD=./x.so ls` does.
 
 **Shell scripts are read first.** When a command runs a shell script (`sh deploy.sh`, `bash t.sh`, `source env.sh`,
 `./t.sh`, `powershell -File t.ps1`, `& .\t.ps1`, `cmd /c t.bat`, and the same behind `env`, `nice`, `timeout` and the
@@ -214,7 +219,9 @@ then why it asks ("Deletes build and everything in it.", "Pushes feature-x to or
 "This can reach your Windows files."); then the model's reason, quoted. "You didn't ask for this." means your words
 asked for nothing of the kind; when they asked for that kind of step but not exactly this one ("push my changes" for
 `git push origin main`, "reinstall the dependencies" for `npm ci`) the card says "Your words don't name exactly this,
-so Ember checks first." instead, and a command whose program you named in full ("run npm ci") says neither. A
+so Ember checks first." instead, and a command whose program you named in full ("run npm ci") says neither. Words
+that say not to ("don't git push yet", "never force push") ask for nothing, so the card still says "You didn't ask for
+this.", typed or spoken. A
 command that asks for what it does (deleting, publishing, secrets, system changes, downloading and running code, or
 what Ember can't read with certainty), which the bubble tags "Risky step", has a yellow bar on its card's edge, and
 its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
@@ -678,7 +685,7 @@ build-01's row in Settings › **Computers** keeps the reason until it connects.
 |---|---|
 | "Ember can't find SSH on this computer.", then how to install it on yours alone: on Linux "Install OpenSSH with sudo dnf install openssh-clients, then try again.", on Windows "Install the OpenSSH Client in Settings › Apps › Optional features, then try again." (through a WSL distro, the Linux line) | As it says; on a Mac, SSH comes with macOS at /usr/bin/ssh |
 | "Ember can't find build-01. Check the name, or add it to your SSH config." (for a computer you were adding, "It wasn't added to Computers." too: a name Ember can't find on its first connection isn't kept, so fixing a typo adds one row) | Check the name, then connect again (the field keeps what you typed) |
-| "Ember can't reach build-01 (&lt;reason in a few words&gt;). Check you're on the right network or VPN." | On macOS 15, for a computer on your local network, also allow Ember in System Settings › Privacy & Security › Local Network |
+| "Ember can't reach build-01 (&lt;reason in a few words&gt;). Check you're on the right network or VPN." (also "its name couldn't be looked up just now" when this computer is offline: a computer you were adding is kept) | On macOS 15, for a computer on your local network, also allow Ember in System Settings › Privacy & Security › Local Network |
 | "Your SSH settings for build-01 have a line this SSH can't use: &lt;the line&gt;. Fix or remove it, then connect again." | As it says |
 | "build-01 took too long to answer (a jump host or sign-in helper may be waiting)." | Check the jump host or sign-in helper |
 | "build-01 refused after too many keys. In your SSH config, add IdentitiesOnly yes and an IdentityFile line with the right key for build-01." | As it says |

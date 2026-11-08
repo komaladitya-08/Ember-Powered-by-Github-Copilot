@@ -11,7 +11,7 @@
 import type {
   Classification, ClassifyContext, CommandObject, DangerClass, Finding, ParsedCommand, ShellFamily, ShellId, WindowsContext,
 } from "./types";
-import { SHELL_FAMILY } from "./types";
+import { PKG_REMOVES, SHELL_FAMILY } from "./types";
 import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
@@ -252,22 +252,26 @@ class Classifier {
   // ----------------------------------------------------------------------------------------------------------------
   // Findings.
 
-  add(cls: DangerClass, rule: string, said: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string } = {}): void {
+  add(cls: DangerClass, rule: string, said: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string; inFolder?: { says: string; objects: Obj[]; ifExists: string } } = {}): void {
     const program = o.program ?? this.program;
-    const says = cardWords(said, o.objects ?? [], this.commands[this.at]?.wrappers ?? []);
+    const wrappers = this.commands[this.at]?.wrappers ?? [];
+    const says = cardWords(said, o.objects ?? [], wrappers, this.ctx.cwd || null, this.ctx.os);
     // "If it exists" is asked of the file the kernel opens: `> sub/../x` overwrites the x beside sub's target.
-    const ifExists = o.ifExists === undefined ? undefined : (o.objects ?? []).find(ob => ob.abs === o.ifExists && ob.phys !== undefined)?.phys ?? o.ifExists;
+    const opened = (objs: readonly Obj[], p: string): string => objs.find(ob => ob.abs === p && ob.phys !== undefined)?.phys ?? p;
+    const ifExists = o.ifExists === undefined ? undefined : opened(o.objects ?? [], o.ifExists);
     if (this.findings.some(f => f.rule === rule && f.says === says && f.at === this.at && f.ifExists === ifExists)) return;
-    const objects: CommandObject[] = (o.objects ?? []).map(ob => {
+    const shown = (objs: readonly Obj[]): CommandObject[] => objs.map(ob => {
       const out: CommandObject = { kind: ob.kind, text: ob.text };
       if (ob.resolved !== undefined) out.resolved = ob.resolved;
       return out;
     });
+    const objects = shown(o.objects ?? []);
     const widening = [...(o.widening ?? [])];
     if (this.globalOpts.has(this.at) && !widening.includes("global-option")) widening.push("global-option");
     if ((o.objects ?? []).some(ob => ob.realDiffers) && !widening.includes("real-path")) widening.push("real-path");
     const f: Finding = { cls, rule, says, program, objects, widening, at: this.at };
     if (ifExists !== undefined) f.ifExists = ifExists;
+    if (o.inFolder) f.inFolder = { says: cardWords(o.inFolder.says, o.inFolder.objects, wrappers, this.ctx.cwd || null, this.ctx.os), objects: shown(o.inFolder.objects), ifExists: opened(o.inFolder.objects, o.inFolder.ifExists) };
     this.findings.push(f);
   }
 
@@ -924,6 +928,15 @@ function setsRiskyName(key: string, args: readonly Arg[]): boolean {
 const COMPOUND_CLOSER: Readonly<Record<string, string>> = { if: "fi", while: "done", until: "done", for: "done" };
 /** The keywords the classifier unwraps a command from (`then rm x`): they stay in the text's own shell. */
 export const FLOW_WRAPPER: ReadonlySet<string> = new Set(["if", "then", "elif", "else", "while", "until", "do", "!"]);
+/**
+ * The reserved words after which bash and zsh still read `NAME=value` words as assignments (`then LD_PRELOAD=./x.so
+ * ls`, `time PATH=/tmp/x ls`), unlike a program that runs the next word (`command`, `nice`, `nohup`).
+ */
+const ASSIGNS_AFTER: ReadonlySet<string> = new Set([...FLOW_WRAPPER, "time"]);
+/** The built-ins that read lines and run nothing: a variable set in front of one lasts only while it reads. */
+const READS_LINES: ReadonlySet<string> = new Set(["read", "mapfile", "readarray"]);
+/** An unquoted `NAME=value` or `NAME+=value` word, as the parser takes one at the start of a command. */
+const ASSIGNMENT_WORD = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
 
 /**
  * The `read` commands (by index) whose `if` or loop takes its input from a file or text (`while read -r l; do …; done
@@ -1253,7 +1266,7 @@ class Engine extends Classifier {
       return;
     }
     this.simple({ words, redirs, stdin, stdinText, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom }, sc, () => {
-      this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc);
+      this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v);
     });
   }
 
@@ -1322,10 +1335,16 @@ class Engine extends Classifier {
     }
   }
 
-  /** Assignments before a command or alone (§3.4.1): ones that change how commands are found or run are unclear. */
-  private assignments(list: { name: string; value: Arg }[], sc: Scope): void {
+  /**
+   * Assignments before a command or alone (§3.4.1): ones that change how commands are found or run are unclear. `IFS`
+   * before `read`, `mapfile` or `readarray` (`IFS= read -r l`) lasts only while that built-in splits what it reads, in
+   * bash, zsh and sh alike, so it changes how nothing else runs (commands-remote-2).
+   */
+  private assignments(list: { name: string; value: Arg }[], sc: Scope, program: string | null = null): void {
     if (list.length) this.envChanged = true;
+    const splitOnly = sc.family === "posix" && program !== null && READS_LINES.has(program);
     for (const a of list) {
+      if (splitOnly && a.name === "IFS") continue;
       if (RISKY_ASSIGNMENTS.has(a.name) || RISKY_ASSIGNMENT_PREFIX.test(a.name)) {
         this.unclear("unclear.assignment", "It changes how commands are found or run.");
       }
@@ -1720,15 +1739,35 @@ class Engine extends Classifier {
   }
 
   /** Unwraps a wrapper: the same command now runs `words`, with the wrapper recorded (sudo rm → program rm, wrappers sudo). */
-  unwrap(h: H, words: Arg[], wrapper: string, o: Partial<Scope> = {}): void {
-    if (words.length === 0) return;
+  unwrap(h: H, all: Arg[], wrapper: string, o: Partial<Scope> = {}): void {
+    if (all.length === 0) return;
     const pc = this.commands[this.at];
-    const nameArg = words[0];
+    // After a reserved word the shell still takes `NAME=value` words as assignments: `then LD_PRELOAD=./x.so ls` runs ls
+    // with the library loaded, and `do PATH=/tmp/x:/usr/bin` changes where later commands are found. They are judged as
+    // at the start of a command, never as the program (commands-remote-c1-1).
+    let lead = 0;
+    if (h.sc.family === "posix" && ASSIGNS_AFTER.has(wrapper)) while (lead < all.length && ASSIGNMENT_WORD.test(all[lead].raw)) lead++;
+    const assigns = all.slice(0, lead).map(a => {
+      const eq = a.raw.indexOf("=");
+      const value: Arg = { v: a.v === null ? null : a.v.slice(a.v.indexOf("=") + 1), raw: a.raw.slice(eq + 1), glob: false };
+      return { name: a.raw.slice(0, eq).replace(/\+$/, ""), value };
+    });
+    const words = all.slice(lead);
     const sc = child(h.sc, { ...o, wrappers: [...h.sc.wrappers, wrapper] }, more(h.sc));
     pc.wrappers = [...sc.wrappers];
+    if (words.length === 0) {
+      pc.program = "";
+      pc.args = [];
+      this.program = "";
+      this.assignments(assigns, sc);
+      return;
+    }
+    const nameArg = words[0];
     if (nameArg.v === null) {
       pc.program = nameArg.raw;
       pc.args = words.slice(1).map(a => a.v);
+      this.program = nameArg.raw;
+      this.assignments(assigns, sc, null);
       this.unclear("unclear.program", "It runs a program Ember can't name.");
       if (nameArg.fetch) this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
       this.readArgs(words.slice(1), sc);
@@ -1745,7 +1784,18 @@ class Engine extends Classifier {
     pc.args = words.slice(1).map(a => a.v);
     this.program = prog;
     this.noteProgram(prog);
+    this.assignments(assigns, sc, nameArg.v);
     if (nonAsciiLetters(nameArg.v)) this.unclear("unclear.program-letters", "Its program name has letters from another alphabet.");
+    // As simple() checks a program's name and a Windows program's arguments: `then`, `do` and `time` run it as if it
+    // stood first (commands-remote-c1-1).
+    // eslint-disable-next-line no-control-regex -- control characters are exactly what is looked for here
+    if (/[\x00-\x1f\x7f]/.test(nameArg.v)) this.unclear("unclear.program", "It runs a program Ember can't name.");
+    if (pn.interop) {
+      this.windowsReach = true;
+      if (words.slice(1).some(a => a.v !== null && (a.v.includes("\t") || a.v.includes("\"") || (a.v.endsWith("\\") && a.v.length > 1)))) {
+        this.unclear("unclear.interop-args", "Windows would get different arguments than this shows.");
+      }
+    }
     const inner: H = { e: this, sc, s: { ...h.s, ps: undefined }, key, prog, nameArg, args: words.slice(1), pn };
     // Native rows only: a wrapper runs a program, never a cmdlet or a cmd built-in.
     if (pn.isPath) {
@@ -1764,7 +1814,10 @@ class Engine extends Classifier {
     optionPaths(inner, !n);
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
-    this.afterRun(key, inner.args, { ...h.s, redirs: [] }, sc);
+    // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
+    // there is a download, and a pipe after it carries what it fetched (commands-remote-c1-1).
+    this.afterRun(key, inner.args, h.s, sc);
+    if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
     // `command printf -v …` and `time unset …` run the same built-ins.
     this.hiddenNames(key, inner.args, sc);
   }
@@ -1832,11 +1885,20 @@ const objsOf = (h: H, list: Arg[], use: PathUse): Obj[] => list.map(a => h.e.use
  * word of its own ("under .." is "under" and "." and the full stop), and find's `{}` as each file it finds. Only the
  * words change: the objects, their paths and the matching stay as written.
  */
-function cardWords(says: string, objects: readonly Obj[], wrappers: readonly string[]): string {
+function cardWords(says: string, objects: readonly Obj[], wrappers: readonly string[], start: string | null = null, os: OS = "linux"): string {
   let out = says;
   for (const text of new Set(objects.map(o => o.text))) {
-    const shown = shownPath(text);
+    let shown = shownPath(text);
     if (shown === text) continue;
+    // After a cd in the same command (`cd ~ && git checkout .`), a dot folder isn't the one the card says the command
+    // starts in: it is named (commands-remote-v1).
+    const abs = objects.find(o => o.text === text)?.abs ?? null;
+    if (abs !== null && start !== null && /^\.\.?[\\/]*$/.test(text)) {
+      const P = os === "win32" ? win32 : posix;
+      const trim = (p: string) => (p.length > 1 ? p.replace(/[\\/]+$/, "") : p);
+      const here = trim(start);
+      shown = trim(abs) === here ? "the current folder" : trim(abs) === P.dirname(here) ? "the folder above the current one" : trim(abs);
+    }
     const esc = text.replace(/[.\\/]/g, c => `\\${c}`);
     out = out.replace(new RegExp(`(^|[\\s(])${esc}(?=[\\s,;:)]|\\.?$)`, "g"), (_m, pre: string) => `${pre}${shown}`);
   }
@@ -1847,6 +1909,18 @@ function cardWords(says: string, objects: readonly Obj[], wrappers: readonly str
 }
 
 const listOf = (objs: Obj[], fallback = "files Ember can't name"): string => (objs.length ? joinList(objs.map(o => o.text || fallback)) : fallback);
+/** A bare `*` (`./*`, `build/*`): everything in a folder. */
+const STAR = /^(?:(.*?)[\\/]+)?\*$/;
+/**
+ * `rm -rf *` said as what it deletes: "Deletes everything in the current folder." (without -r, the files in it), not
+ * "Deletes * and everything in it." (commands-remote-r1). Null when an operand is anything else.
+ */
+function starDeletes(objs: readonly Obj[], rec: boolean): string | null {
+  const dirs = objs.map(o => STAR.exec(o.text)?.[1]);
+  if (!objs.length || objs.some(o => !STAR.test(o.text))) return null;
+  const where = joinList([...new Set(dirs.map(d => shownPath(d === undefined || d === "" ? "." : d)))]);
+  return rec ? `Deletes everything in ${where}.` : `Deletes the files in ${where}.`;
+}
 const lower = (a: Arg | undefined): string | null => (a && a.v !== null ? a.v.toLowerCase() : null);
 
 /** The words of a script, target or package-script name (§3.5.9): split on - _ : . / \ and camel case. */
@@ -2448,7 +2522,7 @@ reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir"], h => {
   if (has(p, "no-preserve-root")) widening.push("--no-preserve-root");
   if (h.key === "rmdir" && has(p, "p", "parents")) widening.push("--parents");
   const list = listOf(objs);
-  h.e.add("destroy", `posix.${h.key}`, rec ? `Deletes ${list} and everything in ${objs.length > 1 ? "them" : "it"}.` : `Deletes ${list}.`, { objects: objs, widening });
+  h.e.add("destroy", `posix.${h.key}`, starDeletes(objs, rec) ?? (rec ? `Deletes ${list} and everything in ${objs.length > 1 ? "them" : "it"}.` : `Deletes ${list}.`), { objects: objs, widening });
   if (objs.some(o => o.abs !== null && /\/\.local\/share\/Trash(\/|$)/.test(o.abs))) h.e.add("destroy", "trash.empty", "Empties the trash.");
 });
 
@@ -2663,25 +2737,36 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   if (destObj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name.", { objects: [destObj] }); return; }
   // `.` and `..` are always folders: `cp x .` puts x in the current folder (commands-remote-v1).
   const intoFolder = target !== undefined || sources.length > 1 || /[\\/]$/.test(dest.v ?? "") || /^\.\.?$/.test(dest.v ?? "");
+  /** The file a source becomes in the folder (`cp a dir` makes dir/a), probed; null for files Ember can't name. */
+  const inside = (s: Arg): Obj | null => {
+    // A glob, or a folder's contents (`cp -r /tmp/x/. .`): files of their own names.
+    const name = s.v === null || s.glob ? null : baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour);
+    if (name === null || name === "." || name === ".." || destObj.abs === null) return null;
+    const p2 = (h.sc.path.flavour === "win32" ? win32 : posix).join(destObj.abs, name);
+    // Into a folder named with `..` (`cp a sub/../`): the file lands beside where sub leads, so that name (its `..`
+    // kept, never joined lexically) is probed and is what "if it exists" asks about.
+    const o2 = h.e.usePath(lit(destObj.phys !== undefined ? `${destObj.phys}/${name}` : p2), "write", h.sc);
+    return { kind: "path", text: p2, resolved: p2, abs: p2, ...(o2.phys !== undefined ? { phys: o2.phys } : {}), ...(o2.realDiffers ? { realDiffers: true } : {}) };
+  };
   if (intoFolder) {
     for (const s of sources) {
-      if (s.v === null || s.glob) {
+      const obj = inside(s);
+      if (obj === null) {
         h.e.judgeInside(destObj.abs, "write", h.sc, destObj.text);
         h.e.add("destroy", rule, `Replaces files in ${destObj.text} if they exist.`, { objects: [destObj] });
         continue;
       }
-      const mod = h.sc.path.flavour === "win32" ? win32 : posix;
-      const name = baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour);
-      const p2 = mod.join(destObj.abs, name);
-      // Into a folder named with `..` (`cp a sub/../`): the file lands beside where sub leads, so that name (its `..`
-      // kept, never joined lexically) is probed and is what "if it exists" asks about.
-      const o2 = h.e.usePath(lit(destObj.phys !== undefined ? `${destObj.phys}/${name}` : p2), "write", h.sc);
-      const obj: Obj = { kind: "path", text: p2, resolved: p2, abs: p2, ...(o2.phys !== undefined ? { phys: o2.phys } : {}), ...(o2.realDiffers ? { realDiffers: true } : {}) };
-      h.e.add("destroy", rule, `Replaces ${p2} if it exists.`, { objects: [obj], ifExists: p2 });
+      h.e.add("destroy", rule, `Replaces ${obj.abs} if it exists.`, { objects: [obj], ifExists: obj.abs! });
     }
     return;
   }
-  h.e.add("destroy", rule, `Replaces ${destObj.text} if it exists.`, { objects: [destObj], ifExists: destObj.abs });
+  // A name without a slash may be a folder there (`mv report.pdf ~/Documents`): then the file goes inside it, and only
+  // a file of its name there is replaced (commands-remote-r1). -T, and ln's -n, take the name as it is.
+  const asIs = has(p, "T", "no-target-directory") || (kind === "ln" && has(p, "n", "no-dereference"));
+  const obj = asIs || sources.length !== 1 ? null : inside(sources[0]);
+  const inFolder = obj ? { says: `Replaces ${obj.abs} if it exists.`, objects: [obj], ifExists: obj.abs! }
+    : asIs || sources.length !== 1 ? undefined : { says: `Replaces files in ${destObj.text} if they exist.`, objects: [destObj], ifExists: destObj.abs };
+  h.e.add("destroy", rule, `Replaces ${destObj.text} if it exists.`, { objects: [destObj], ifExists: destObj.abs, ...(inFolder ? { inFolder } : {}) });
 }
 reg(NATIVE, ["cp", "gcp"], h => copyLike(h, "cp"));
 reg(NATIVE, ["mv", "gmv"], h => copyLike(h, "mv"));
@@ -3181,6 +3266,9 @@ reg(NATIVE, ["trap", "alias", "unalias", "enable", "builtin", "shopt", "fc", "bi
   // A keyword in front of a command (`then rm x`, `do rm x`): the command after it is classified too.
   if (["then", "elif", "else", "do", "if", "while", "until", "!"].includes(h.key) && h.args.length) h.e.unwrap(h, h.args, h.key);
 });
+// `!` after a flow word (`if ! grep -q x f`, `then ! LD_PRELOAD=./x.so ls`) only turns round what the command after it
+// returns: that command is judged, assignments and all (commands-remote-c1-1).
+reg(NATIVE, ["!"], h => { if (h.sc.family === "posix") h.e.unwrap(h, h.args, "!"); else generic(h); });
 reg(NATIVE, ["read", "mapfile", "readarray"], h => {
   if (h.s.stdin === null && h.key === "read") h.e.unclear("unclear.interactive", SAYS.interactive);
   // mapfile's callback (-C) is shell text it runs for every line.
@@ -3398,7 +3486,8 @@ reg(NATIVE, ["start-stop-daemon", "daemon", "tsp", "pm2", "forever", "supervisor
 reg(NATIVE, ["bg"], h => { h.e.add("escape", "escape.background", SAYS.keepsRunning); });
 reg(NATIVE, ["at", "batch", "atq", "atrm"], h => {
   if (h.key === "atq") return;
-  if (h.key === "atrm") { h.e.add("system", "system.schedule", "Schedules something to run later or at login."); return; }
+  // Removing jobs is said as such (commands-remote-r1).
+  if (h.key === "atrm") { h.e.add("system", "system.unschedule", h.args.filter(a => !isOption(a)).length > 1 ? "Removes scheduled jobs." : "Removes a scheduled job."); return; }
   if (h.args.some(a => a.v === "-l" || a.v === "-c")) return;
   h.e.add("system", "system.schedule", "Schedules something to run later or at login.");
   h.e.add("escape", "escape.schedule", SAYS.keepsRunning);
@@ -3406,6 +3495,8 @@ reg(NATIVE, ["at", "batch", "atq", "atrm"], h => {
 reg(NATIVE, ["crontab"], h => {
   if (h.args.length === 1 && h.args[0].v === "-l") return;
   if (h.args.some(a => a.v === "-e")) h.e.unclear("unclear.interactive", SAYS.interactive);
+  // `crontab -r` (or -ir) deletes every job in the crontab, not schedules one (commands-remote-r1).
+  if (h.args.some(a => a.v !== null && /^-[a-z]*r[a-z]*$/.test(a.v))) { h.e.add("system", "system.unschedule", "Deletes your scheduled jobs."); return; }
   h.e.add("system", "system.schedule", "Schedules something to run later or at login.");
 });
 
@@ -3547,7 +3638,10 @@ git(["reset"], h => {
   if (has(p, "p", "patch")) h.e.unclear("unclear.interactive", SAYS.interactive);
   const ops = p.operands.filter(a => a.v !== "--");
   const objects: Obj[] = ops.slice(0, 1).map(a => ({ kind: "other", text: a.v ?? a.raw, abs: null }));
-  if (has(p, "hard")) h.e.add("destroy", "git.reset.hard", "Throws away changes that aren't committed.", { objects, program: "git reset" });
+  // To another commit (`origin/main`, `HEAD~1`), the branch moves too and drops what isn't in it (commands-remote-r1).
+  const to = ops[0] && ops[0].v !== "HEAD" && ops[0].v !== "@" ? (ops[0].v ?? ops[0].raw) : null;
+  const hard = to === null ? "Throws away changes that aren't committed." : `Moves the branch to ${to}, throwing away changes that aren't committed and any commits not in ${to}.`;
+  if (has(p, "hard")) h.e.add("destroy", "git.reset.hard", hard, { objects, program: "git reset" });
   if (has(p, "merge")) h.e.add("destroy", "git.reset.merge", "Throws away changes that aren't committed.", { objects, program: "git reset" });
   if (has(p, "keep")) h.e.add("destroy", "git.reset.keep", "Throws away changes that aren't committed.", { objects, program: "git reset" });
 });
@@ -4212,9 +4306,22 @@ function packageObjects(h: H, specs: Arg[]): Obj[] {
   return out;
 }
 
+/** Verbs that only take packages away (`npm uninstall`, `poetry remove`, `cargo rm`); `r` is npm's alone. */
+const REMOVE_VERBS = new Set(["uninstall", "un", "remove", "rm", "uninject"]);
+/** Words before the verb in a tool's own group of commands (`uv pip uninstall`, `dotnet tool uninstall`). */
+const VERB_GROUPS = new Set(["pip", "tool", "tools", "workload", "global", "pub"]);
+
+/** Whether a language package command only removes packages (commands-remote-r1). */
+function removesPackages(h: H): boolean {
+  const words = h.args.filter(a => !isOption(a)).map(a => a.v);
+  const verb = VERB_GROUPS.has(words[0] ?? "") ? words[1] : words[0];
+  return typeof verb === "string" && (REMOVE_VERBS.has(verb) || (h.key === "npm" && verb === "r"));
+}
+
 function languageInstall(h: H, specs: Arg[], widening: string[] = []): void {
   const objects = packageObjects(h, specs);
-  h.e.add("system", "pkg.language", "Installs packages (they can run their own setup code).", { objects, widening, program: `${h.prog} ${h.args.find(a => !isOption(a))?.v ?? ""}`.trim() });
+  const says = removesPackages(h) ? PKG_REMOVES : "Installs packages (they can run their own setup code).";
+  h.e.add("system", "pkg.language", says, { objects, widening, program: `${h.prog} ${h.args.find(a => !isOption(a))?.v ?? ""}`.trim() });
 }
 
 /** A package publish (`npm publish`, `yarn npm publish`): its tag, access and registry say how broad it is (§3.7). */
@@ -4358,7 +4465,7 @@ function pip(h: H): void {
     const reqs = values(p, "r", "requirement").map(r => ({ kind: "path" as const, text: r ?? "?", abs: null }));
     const objects = [...packageObjects(h, [...p.operands, ...editable]), ...reqs];
     if (values(p, "index-url", "extra-index-url", "i", "find-links").length) h.e.add("escape", "pkg.off-registry", "Installs a package from a URL, a git repository or a file; its setup code runs.");
-    h.e.add("system", "pkg.language", "Installs packages (they can run their own setup code).", { objects, widening: has(p, "user") ? [] : [], program: `pip ${verb}` });
+    h.e.add("system", "pkg.language", verb === "uninstall" ? PKG_REMOVES : "Installs packages (they can run their own setup code).", { objects, widening: has(p, "user") ? [] : [], program: `pip ${verb}` });
     return;
   }
   if (verb === "config" && rest.some(a => a.v === "--global")) h.e.add("system", "pip.config.global", "Changes settings for every user.");

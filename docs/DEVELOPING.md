@@ -133,7 +133,8 @@ runtime. It does not change the app's consent or speaking settings.
   agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Your Ember** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on and only **Use GitHub Copilot instead** switches it off; or **Skip for now**); the setup check shows only
   the rows that need you (and, once **Turn on** has switched screen reading on, that apps already open need a restart), in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission), and
   **Check again**, which reads the rows anew once you have run the command or changed the setting yourself (Home's
-  setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s) (**Show the details** has every
+  setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s, in the background, so Ember
+  keeps answering while that import takes up to 5 s) (**Show the details** has every
   row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
   request in the ask box; and **Your Ember** sums it up before **Start Ember**. Nothing is read, heard or sent before
   **Agree and continue** (it saves the consent; the steps after it can't be reached without it). Back works on every
@@ -364,27 +365,34 @@ shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always 
 for them. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
 "Waiting for you" while it asks, "Starts when another task ends" while two others are at work), how long it has worked and which step of its plan it is on, and shows what it did
 under **Details**; a failed card goes on its own after about a minute when not being read (Home's Conversation keeps
-what went wrong). So does the card of a task whose question ran out of time while you were away: it says so, offers
-**Try again**, and a notification says Ember couldn't finish it; "What did I miss?" says the question wasn't answered
+what went wrong). So does the card of a task whose question ran out of time while you were away: it says so ("No
+answer in time", on the card and in Home's Task activity, where its **Try again** is too), offers **Try again**, the
+bubble's note points to it, and a notification says Ember couldn't finish it; **Stop everything** clears both kinds of
+card at once; "What did I miss?" says the question wasn't answered
 in time, never "you stopped it". More time multiplies the lifetime by ten; expanded Details, hover or keyboard focus pauses expiry,
 with at least five seconds to move on after the last reader leaves. Its **Try again** starts the latest accepted request again, retaining any changed instructions,
 restrictions and the original computer and window, and asking every question again. Saying or typing “try again” right
-after such a task asks for it again in your words then, as the button does. A change the worker could not accept
+after such a task (or “can you try again?”, “yes” to its “Want me to try again?”, or “try again” after asking why it
+didn't work) asks for it again in your words then, as the button does: its card goes, and a try that did part of the
+work is told so. A change the worker could not accept
 does not replace that retry request. Conversation requests are dispatched in order even when memory recall finishes out
 of order; each turn keeps its own words, screen context and voice provenance. An unmatched runtime message cannot start
 or steer a task. If an app can't be operated through accessibility, Ember asks to **borrow
 your mouse**: it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse, turn
 the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
 acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
-take screenshots or press keys; while GNOME Shell's own prompt is up (or the shell is too busy to tell), it also sends
-no window's text or titles with your request and takes no step in any app, until the prompt is done. If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
+take screenshots or press keys; while GNOME Shell's own prompt is up (or Ember can't tell, because the shell is too busy
+or didn't answer), it also sends no window's text or titles with your request and takes no step in any app, until the
+prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
+windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
 still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
-**Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop” in the Ask box while a task is
-at work) stops every task, question, borrowed mouse,
+**Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop”, “stop typing” or “abort” in
+the Ask box while a task is at work) stops every task, question, borrowed mouse,
 desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for
 are listed in **Apps & privacy** in the settings window (with **Remove**), next to the never-look list, which you can
 edit there too; each Remove says what it changed. **Send screenshots for tasks** there (on by default) turns tasks'
-screenshots off from the next task: Ember then works only from what apps tell it through accessibility. **What Ember
+screenshots off at once, for a task already at work too (from its next look): Ember then works only from what apps
+tell it through accessibility. **What Ember
 reads, sends and keeps**, at the top of that pane, is
 first run's "Before Ember starts" again, word for word as it reads now (Search finds it by "data", "screenshot",
 "audit" and the like). **What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80
@@ -915,7 +923,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Conversation (Copilot session state), only while Ember runs: resumed if Ember reconnects, deleted when it quits (one left by a crash is deleted at the next start) | `~/.config/ember/copilot/`, id in `~/.config/ember/agent.json` |
 | GitHub token (encrypted with your keyring) | `~/.config/ember/github-token.bin` |
 | Logs (JSON lines, rotated at 5 MB) | `~/.config/ember/logs/ember.log` |
-| While Ember runs: its process id, when it started and its version (0600), removed as it quits; one left at the next start means the last run ended unexpectedly | `~/.config/ember/run.json` |
+| While Ember runs: its process id, when it started and its version (0600), removed as it quits or as you log out (the X server ending under it); one left at the next start means the last run ended unexpectedly | `~/.config/ember/run.json` |
 | Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days) | `~/.config/ember/audit/audit-YYYY-MM.jsonl` |
 | Speech models and Better recall's model (downloaded once, SHA-256 checked) | `~/.config/ember/models/` |
 | Long-term memory, and Better recall's vectors of it (0600) | `~/.config/ember/memory.json`, `~/.config/ember/memory-vectors.json` |
@@ -1278,8 +1286,8 @@ On Linux (Windows: §10.9, macOS: §11.8):
 | Ember doesn't react to “Hey Ember” | Check the **Voice** section: the speech models must be there (the packages carry them; a development build downloads them) and the state must say “Listening for “Ember””. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
 | "Copilot isn't answering. Reconnecting…", or "this computer has run out of file watchers" | Each Copilot conversation holds a file watcher (an inotify instance) and the per-user limit is often 128. Run `ember doctor`; raise the limit with `sudo sysctl -w fs.inotify.max_user_instances=512` and keep it with `fs.inotify.max_user_instances = 512` in `/etc/sysctl.d/90-ember.conf` |
 | "Copilot isn't answering. Ember will try again in a moment." | The Copilot runtime started but didn't answer a step of connecting in time (30 s to start or open the conversation, 20 s for the sign-in check or the model list). Ember stops it and tries again after 15 s, 30 s, then every minute; `ember.log` has `agent.start_failed` with `why: "timeout"` and the step. A proxy or VPN that drops GitHub's traffic without refusing it does this: check `HTTPS_PROXY` and the system proxy |
-| Home says "Ember closed unexpectedly last time" | Ember's main process ended without quitting (a crash, `kill -9`, the computer losing power): the log says `app.previous_run_ended` with when that run started, and its last lines are what it was doing. That run's conversation is deleted at this start, as after any crash. If it keeps happening, report it with `ember.log` (see "Sharing a log") |
-| Ember is slow, or uses a lot of the processor | At rest Ember's processes together use a few percent of one core, most of it drawing the character. `node scripts/perf/footprint.mjs` (a development build, Linux) measures each process and page (docs/ASSISTANT.md phase 0). In `ember.log` (`EMBER_LOG_LEVEL=debug` for more), a line that repeats many times a minute points to the part at fault: `sidecar.revive_backoff` the accessibility helper, `agent.runtime_lost` the Copilot runtime, `window.renderer_gone` or `app.child_process_gone` one of Ember's windows or its GPU process |
+| Home says "Ember closed unexpectedly last time" | Ember's main process ended without quitting (a crash, `kill -9`, the computer losing power): the log says `app.previous_run_ended` with when that run started, and its last lines are what it was doing. Logging out isn't this: on Linux the X server ending under Ember is the session ending, logged as `app.session_end` with `"source":"display-gone"`, and the next login says nothing. That run's conversation is deleted at this start, as after any crash. If it keeps happening, report it with `ember.log` (see "Sharing a log") |
+| Ember is slow, or uses a lot of the processor | Awake with nothing happening, Ember's processes together use about 7–10 % of one core on a computer with no GPU (Xvfb with a compositor, listening off), most of it drawing the character in the overlay and the handle (Home open in front adds about 3 %; behind other windows it draws nothing); listening for “Hey Ember” adds about 5 % more. After 3 minutes with the pointer still Ember dozes and draws nothing: about 2 %, or 6 % while listening. `node scripts/perf/footprint.mjs` (a development build, Linux) measures each process and page (docs/ASSISTANT.md phase 0). In `ember.log` (`EMBER_LOG_LEVEL=debug` for more), a line that repeats many times a minute points to the part at fault: `sidecar.revive_backoff` the accessibility helper, `agent.runtime_lost` the Copilot runtime, `window.renderer_gone` or `app.child_process_gone` one of Ember's windows or its GPU process |
 | Sharing a log | **Setup & about › About this build** lists the log file with **Copy** and **Show in Files** (Finder, File Explorer). Attach `ember.log`, and `ember.log.1` too if the problem was a while ago (each is rotated at 5 MB). It says what Ember did and what failed, with app names and error messages; it isn't meant to hold what you typed or said, window titles or keys (tokens are taken out), but read it before you share it |
 | Ember says it can't read the screen | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Apps started before it was turned on must be restarted |
 | "Ember couldn't start: Ember can't write to its data folder" | Make the folder yours again, for example `sudo chown -R $USER ~/.config/ember` (starting Ember with `sudo` can leave it owned by root); when the dialog says the disk is full or can only be read, free some space or start Ember where your home folder can be written to |

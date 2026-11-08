@@ -18,6 +18,8 @@ export const STATUS_WORDS = {
   done: "Done",
   failed: "Didn't finish",
   stopped: "Stopped",
+  /** A stopped task whose question went unanswered: the user stopped nothing (tasks-approvals-r1). */
+  unanswered: "No answer in time",
 } as const;
 export type StatusWord = keyof typeof STATUS_WORDS;
 
@@ -92,6 +94,8 @@ export interface TaskEntry {
   view?: ViewDoc;
   /** Main's current capabilities; every activation rechecks the exact task ID. Historical rows have none. */
   controls?: { stop: boolean; retry: boolean; window: boolean };
+  /** It stopped because its question went unanswered (StopCause "expired"): its state's word is STATUS_WORDS.unanswered. */
+  unanswered?: true;
   activity: TaskActivity;
 }
 
@@ -256,7 +260,7 @@ export function doingWords(step: string | undefined, app?: string): string {
  * minute…" (tasks-approvals-2: a pause, never a refusal).
  */
 export function pacedWords(perMinute: number): string {
-  return `Pausing to keep to ${perMinute} steps a minute…`;
+  return `Pausing to keep to ${perMinute} ${perMinute === 1 ? "step" : "steps"} a minute…`;
 }
 
 /** The live line while Copilot is tried again after a failed call: "Retrying…", then "Retrying (try 3)…". */

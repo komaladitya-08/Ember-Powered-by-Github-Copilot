@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ActivityLog } from "../../app/main/agent/activity";
 import {
-  cardApp, CARD_APP_MAX, ACTIVITY_LIMIT, STATUS_WORDS, activityRows, clockText, doingWords, elapsedText, planStepText, retryWords, stepsWords,
+  cardApp, CARD_APP_MAX, ACTIVITY_LIMIT, STATUS_WORDS, activityRows, clockText, doingWords, elapsedText, pacedWords, planStepText, retryWords, stepsWords,
   summarizeActivity, telemetryItems, type ActivityItem,
 } from "../../app/shared/activity";
 import { stepOf } from "../../app/main/agent/presenter";
@@ -105,7 +105,7 @@ describe("a task's live line", () => {
     l.add({ type: "end", status: "failed" }, T0 + 5000);
     expect(l.card()).toMatchObject({ live: "Didn't finish", endedAt: T0 + 5000 });
     expect(l.add({ type: "turn" }, T0 + 6000)).toBe(false);
-    expect(STATUS_WORDS).toEqual({ running: "Working", waiting: "Waiting for you", queued: "Waiting its turn", retrying: "Retrying", done: "Done", failed: "Didn't finish", stopped: "Stopped" });
+    expect(STATUS_WORDS).toEqual({ running: "Working", waiting: "Waiting for you", queued: "Waiting its turn", retrying: "Retrying", done: "Done", failed: "Didn't finish", stopped: "Stopped", unanswered: "No answer in time" });
   });
 });
 
@@ -265,6 +265,11 @@ describe("the telemetry row (HUD direction: three items at most, readable in a g
     expect(l.card().rows.map(r => r.words)).toEqual(["Clicking in Text Editor…"]);
     l.add({ type: "tool-end", id: "c1", ok: true }, T0 + 2);
     expect(l.card().live).toBe("Thinking…");
+  });
+
+  it("says one step a minute, not “1 steps”, where the administrator's limit is one (tasks-approvals-r4)", () => {
+    expect(pacedWords(1)).toBe("Pausing to keep to 1 step a minute…");
+    expect(pacedWords(2)).toBe("Pausing to keep to 2 steps a minute…");
   });
 });
 

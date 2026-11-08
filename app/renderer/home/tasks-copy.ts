@@ -33,11 +33,21 @@ export function offsetWords(ms: number): string {
 }
 
 /**
- * The line under a task's title: its state, how long it has worked (or took), how it works now and where ("Waiting for
- * you · 1:14 · In the background", "Done · Took 1:12", "Working · Just started · On my desk · on build-01").
+ * A task's state in words, as its card says it: a stopped task whose question went unanswered says so, never
+ * "Stopped" (tasks-approvals-c1-2: the user stopped nothing).
  */
-export function taskMeta(t: Pick<TaskEntry, "status" | "hand" | "where" | "activity">, now: number): string {
-  return [STATUS_WORDS[t.status === "queued" ? "queued" : t.status], clockText(t.activity, now), t.hand ? HAND_WORDS[t.hand] : "", t.where ?? ""]
+export function stateWord(t: Pick<TaskEntry, "status" | "unanswered">): string {
+  return t.status === "stopped" && t.unanswered ? STATUS_WORDS.unanswered : STATUS_WORDS[t.status];
+}
+
+/**
+ * The line under a task's title: its state, how long it has worked (or took), how it works now and where ("Waiting for
+ * you · 1:14 · In the background", "Done · Took 1:12", "Working · Just started · On my desk · on build-01", "Waiting its
+ * turn").
+ */
+export function taskMeta(t: Pick<TaskEntry, "status" | "unanswered" | "hand" | "where" | "activity">, now: number): string {
+  // A task in line hasn't begun, so it has no clock (tasks-approvals-r3: not "Just started").
+  return [stateWord(t), t.status === "queued" ? "" : clockText(t.activity, now), t.hand ? HAND_WORDS[t.hand] : "", t.where ?? ""]
     .filter(Boolean).join(" · ");
 }
 
@@ -96,8 +106,8 @@ export function droppedText(n: number): string | null {
 }
 
 /** What the screen reader hears when a task's state changes (once per change, from the polite live region). */
-export function taskAnnouncement(title: string, status: TaskEntry["status"]): string {
-  return `${title}: ${STATUS_WORDS[status]}`;
+export function taskAnnouncement(title: string, status: TaskEntry["status"], unanswered = false): string {
+  return `${title}: ${stateWord({ status, ...(unanswered ? { unanswered: true as const } : {}) })}`;
 }
 
 /** Where the question a task waits on is answered (its latest question still waiting); the bubble when not said. */

@@ -135,6 +135,17 @@ export const SCREEN_IMAGES_TEXT = {
   hint: "A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.",
 } as const;
 
+/**
+ * A piece of the text in Apps & privacy's copy of "Before Ember starts" (safety-privacy-9), said as it is there
+ * (safety-privacy-r4): the never-look list is below in that pane, not somewhere "in settings", and with Send
+ * screenshots for tasks off the screenshot clause says so. First run's own words stay as they are.
+ */
+export function privacyFoldWords(text: string, o: { screenImages: boolean }): string {
+  const out = text.replace("The list is in settings", "The list is below, under Never look at");
+  return o.screenImages ? out
+    : out.replace(", and for tasks it may take a screenshot of it.", `. ${SCREEN_IMAGES_TEXT.label} is off (below), so it takes no screenshots for tasks.`);
+}
+
 /** How a never-look entry reads on screen (the defaults are stored lower-case, as matched). */
 export function neverLookLabel(item: string): string {
   return NEVER_LOOK_NAMES[item.trim().toLowerCase()] ?? item;
@@ -1119,6 +1130,21 @@ export function activityLines(entries: readonly ActivityEntry[], words: EntryWor
     if (view) out.push({ t: e.t, day: dayLabel(e.t, now), view });
   }
   return out;
+}
+
+/**
+ * The entries What Ember did holds after a refresh that read only the newest `page` (`fresh`): those, then what `held`
+ * (an earlier, deeper read: Show earlier's) has behind them, `most` in all. The 3 s refresh then reads one page however
+ * far back the person looked (safety-privacy-r3: it re-read up to 10,000 entries every 3 s). Null when the page can't be
+ * placed against what is held (more came than a page holds, or the record was cleared): read as deep again.
+ */
+export function withEarlier(fresh: readonly ActivityEntry[], held: readonly ActivityEntry[], page: number, most: number): ActivityEntry[] | null {
+  // Nothing older is held, or the page is the whole record.
+  if (held.length <= page || fresh.length < page) return [...fresh];
+  // Where the held list's newest entries begin in the page (its first few, so two alike can't misplace it).
+  const keys = held.slice(0, 3).map(e => JSON.stringify(e));
+  const at = fresh.findIndex((_, k) => keys.every((key, j) => k + j >= fresh.length || JSON.stringify(fresh[k + j]) === key));
+  return at < 0 ? null : [...fresh.slice(0, at), ...held].slice(0, most);
 }
 
 /**

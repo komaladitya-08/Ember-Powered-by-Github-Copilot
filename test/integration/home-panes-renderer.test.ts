@@ -9,6 +9,7 @@ import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
 import type { ActivityEntry, StatusPlatform, UpdateStatus } from "../../app/shared/ipc";
 import { FALLBACK_SHORTCUTS, heldShortcuts, SHORTCUTS, shownShortcuts } from "../../app/shared/shortcuts";
@@ -20,13 +21,15 @@ declare global {
       emit(name: string, value: unknown): void;
       activity: ActivityEntry[] | "fail";
       reads: number;
+      /** How many entries each read asked for. */
+      limits: number[];
     };
   }
 }
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
-interface Seed { settings?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus }
+interface Seed { settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus }
 
 let browser: Browser;
 let server: http.Server;
@@ -53,7 +56,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...seed.settings };
   settings.onboarded = true;
   settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
-  const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] };
+  const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [], ...seed.admin };
   const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
@@ -66,6 +69,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       emit: (name: string, value: unknown) => { if (name === "onTasks") tasks = value; for (const fn of subs[name] ?? []) fn(value); },
       activity: activity as ActivityEntry[] | "fail",
       reads: 0,
+      limits: [] as number[],
     };
     const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}) });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
@@ -77,7 +81,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "tasks") return async () => tasks;
       if (name === "taskControl") return async (id: string, kind: string) => { h.calls.push(`taskControl:${id}:${kind}`); return true; };
       // As main answers: the newest `limit` entries (500 unless Home asks for more).
-      if (name === "activity") return async (limit?: number) => { h.reads++; if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
+      if (name === "activity") return async (limit?: number) => { h.reads++; h.limits.push(limit ?? 500); if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
   }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null });
@@ -258,6 +262,29 @@ describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-
     expect(await page.locator("#activity-note").innerText()).toBe("600 today");
     await page.close();
   });
+
+  it("reads only the newest page every few seconds after Show earlier, and keeps the earlier lines (safety-privacy-r3)", async () => {
+    if (new Date().getHours() === 0) return;
+    const page = await open("home", { activity: seeded(600) });
+    await page.locator("#activity-fold > summary").click();
+    for (let i = 0; i < 7; i++) await page.getByRole("button", { name: "Show earlier" }).click();
+    await expect.poll(() => lineCount(page)).toBe(603);
+    // Show earlier read 1,000; the refresh after it asks for the newest 500 only.
+    expect(await page.evaluate(() => Math.max(...window.__pane.limits))).toBe(1000);
+    const before = await page.evaluate(() => window.__pane.limits.length);
+    // Something new happens: it comes in at the top, and nothing read further back is lost.
+    await page.evaluate(() => {
+      const h = window.__pane;
+      if (h.activity !== "fail") h.activity.unshift({ t: new Date().toISOString(), event: "action", kind: "click", app: "gedit", ok: true, element: { role: "push button", name: "Bold" } });
+    });
+    await expect.poll(() => page.locator("#activity-note").innerText(), { timeout: 8000 }).toBe("601 today");
+    expect(await lineCount(page)).toBe(604);
+    expect(await page.locator("#activity").innerText()).toContain("Click “Send” in Thunderbird");
+    expect(await page.evaluate(n => window.__pane.limits.slice(n), before)).toEqual(expect.arrayContaining([500]));
+    expect(await page.evaluate(n => window.__pane.limits.slice(n).every(l => l === 500), before)).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  }, 30_000);
 
   it("keeps what it showed when a read of the record fails, says so, and clears that on the next good read (home-10)", async () => {
     if (new Date().getHours() === 0) return;
@@ -442,7 +469,9 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     await fold.locator("summary").click();
     const shown = await page.locator("#privacy-terms").evaluate(e => e.textContent);
     const consent = await page.locator("#w-full ul.terms").evaluate(e => e.textContent);
-    expect(shown).toBe(consent);
+    // Word for word, but for where the never-look list is: below, in this pane (safety-privacy-r4).
+    expect(consent).toContain("The list is in settings");
+    expect(shown).toBe(consent?.replace("The list is in settings", "The list is below, under Never look at"));
     expect(shown).toContain("It sends no usage statistics.");
     expect(shown).toContain("~/.config/ember");
     // The copy keeps no ids: each still names one element.
@@ -459,6 +488,40 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     await expect.poll(() => fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
     expect(await page.evaluate(() => document.activeElement?.closest("details")?.id)).toBe("privacy-terms-fold");
     await evidence(page, "privacy-terms");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+});
+
+describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and the organisation's leave it (safety-privacy-r4)", () => {
+  it("says screenshots are off once the person turned them off, and changes as the setting does", async () => {
+    const page = await open("privacy", { settings: { screenImages: false } });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const shown = () => page.locator("#privacy-terms").innerText();
+    expect(await shown()).toContain("through the desktop's accessibility service. Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
+    expect(await shown()).not.toContain("it may take a screenshot");
+    // First run's own words are untouched.
+    expect(await page.locator("#w-full ul.terms").evaluate(e => e.textContent)).toContain("and for tasks it may take a screenshot of it.");
+    // Turned back on (main tells Home the settings changed): the fold says so at once, still open.
+    const on = { ...structuredClone(DEFAULT_SETTINGS), onboarded: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" }, screenImages: true };
+    await page.evaluate(s => window.__pane.emit("onSettingsChanged", s), on);
+    await expect.poll(shown).toContain("and for tasks it may take a screenshot of it.");
+    expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("says nothing heard is sent anywhere while the organisation's policy has Ember locked down", async () => {
+    const page = await open("privacy", { admin: { source: "/etc/ember/policy.json", error: "Unrecognized key", retentionDays: null, features: { voice: false, screenImages: false }, managed: ["screenImages"] }, settings: { screenImages: false } });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const mic = await page.locator("#privacy-terms li[data-icon='mic']").innerText();
+    expect(mic).toContain("for one request. Nothing it hears is sent anywhere until your organisation fixes its policy. Listen once processes audio");
+    expect(mic).not.toMatch(/no model service|goes to/);
+    // First run's text says the same, as its send line already does.
+    expect(await page.locator("#w-full li[data-icon='mic']").evaluate(e => e.textContent)).toContain("Nothing it hears is sent anywhere until your organisation fixes its policy.");
+    await evidence(page, "privacy-terms-lockdown");
     expect(page.errors).toEqual([]);
     await page.close();
   });
@@ -506,6 +569,43 @@ describe.skipIf(gate)("Home's Projects and Memory panes, as laid out (2026-11-07
     await evidence(page, "memory-layout");
     await page.close();
   });
+});
+
+describe.skipIf(gate)("the Computers pane's status line", () => {
+  it("wraps a long hyphenated host name instead of scrolling the pane sideways, at 304 px and Larger text (commands-remote-r3, WCAG 1.4.10)", async () => {
+    const page = await open("home", { viewport: { width: 304, height: 700 } });
+    await page.evaluate(() => { document.getElementById("jump-computers")!.hidden = false; document.getElementById("computers")!.hidden = false; });
+    await page.locator('.jump a[href="#computers-h"]').first().click();
+    const over: string[] = [];
+    for (const host of ["jenkins-agent-prod-eu-west-1a.build-farm.internal.example-corp.com", "ip-10-0-12-34.eu-west-1.compute.internal"]) {
+      const runs = unbrokenRuns(`Ember can't find ${host}. Check the name, or add it to your SSH config. It wasn't added to Computers.`);
+      for (const size of ["", "larger"]) {
+        for (const width of [304, 400, 760]) {
+          await page.setViewportSize({ width, height: 700 });
+          const d = await page.evaluate(({ runs, size }) => {
+            if (size) document.documentElement.dataset.textSize = size; else delete document.documentElement.dataset.textSize;
+            // The line as Home's say() draws it: each run whole in its own span.
+            const line = document.getElementById("computers-msg")!;
+            line.textContent = "";
+            for (const r of runs) {
+              if (!r.whole) { line.append(document.createTextNode(r.text)); continue; }
+              const s = document.createElement("span");
+              s.className = "whole";
+              s.textContent = r.text;
+              line.append(s);
+            }
+            return document.documentElement.scrollWidth - document.documentElement.clientWidth;
+          }, { runs, size });
+          if (d > 0) over.push(`${host} at ${width} px ${size || "default"}: +${d}`);
+        }
+      }
+    }
+    expect(over).toEqual([]);
+    await page.setViewportSize({ width: 304, height: 700 });
+    await page.locator("#computers-msg").scrollIntoViewIfNeeded();
+    await evidence(page, "computers-long-host-304-larger");
+    await page.close();
+  }, 60_000);
 });
 
 describe.skipIf(gate)("Home at 200% zoom and more (2026-11-07 product audit)", () => {

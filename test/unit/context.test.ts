@@ -11,6 +11,8 @@ const node = (id: number, role: string, name: string, extra: Partial<AxNode> = {
 function perception(nodes: AxNode[], app = "gedit", title = "notes.txt", neverLook: string[] = []) {
   const sidecar = {
     readWindow: async () => ({ window: { app, pid: 42, name: title, role: "frame", active: true, bounds: null }, nodes, ms: 3 }),
+    // No GNOME Shell: an empty, complete answer.
+    shellOverlays: async () => ({ overlays: [] }),
   } as unknown as AtspiSidecar;
   return new Perception({ sidecar, x11: null, neverLook: () => neverLook, screenBounds: () => ({ x: 0, y: 0, width: 1, height: 1 }), log: quiet });
 }
@@ -66,6 +68,7 @@ describe("describe", () => {
       readWindow: async () => opts.window === false
         ? { window: null, nodes: [], ms: 1 }
         : { window: { app: opts.app ?? "gedit", pid: 42, name: opts.title ?? "notes.txt", role: "frame", active: true, bounds: null }, nodes: opts.nodes ?? [], ms: 3 },
+      shellOverlays: async () => ({ overlays: [] }),
     } as unknown as AtspiSidecar;
     const x11 = opts.x11Title === undefined ? null : {
       activeWindow: () => ({ id: 1, pid: 42, title: opts.x11Title!, wmClass: "app", x: 0, y: 0, width: 10, height: 10 }),
@@ -131,12 +134,12 @@ describe("the user's selection (live retest: 'I can't see which text you mean' w
 
 describe("while GNOME Shell's own password prompt is open (safety-privacy-3)", () => {
   const POLKIT = { role: "dialog", name: "Authentication Required", text: "Authentication is required to change system settings Password", bounds: { x: 300, y: 200, width: 400, height: 300 } };
-  /** Thunderbird in front, the shell's overlays as given, and every read counted. */
-  function behind(overlays: unknown[], complete = true) {
+  /** Thunderbird in front, the shell's overlays as given ("fails": the check itself errors), and every read counted. */
+  function behind(overlays: unknown[] | "fails", complete = true) {
     let reads = 0;
     const sidecar = {
       readWindow: async () => { reads++; return { window: { app: "thunderbird", pid: 42, name: "Inbox - Priya's mail", role: "frame", active: true, bounds: null }, nodes: [node(1, "text", "Message", { states: ["focused"], text: "Quarterly figures attached" })], ms: 3 }; },
-      shellOverlays: async () => ({ overlays, complete }),
+      shellOverlays: async () => { if (overlays === "fails") throw new Error("request timed out"); return { overlays, complete }; },
       listWindows: async () => ({ windows: [] }),
     } as unknown as AtspiSidecar;
     const p = new Perception({ sidecar, x11: null, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 1280, height: 1024 }), log: quiet });
@@ -161,9 +164,27 @@ describe("while GNOME Shell's own password prompt is open (safety-privacy-3)", (
   });
 
   it("counts a shell too busy to look through as one (fail closed), but not a notification", async () => {
-    expect(await behind([], false).p.promptOpen()).toBe(true);
+    expect(await behind([], false).p.promptOpen()).toBe("unchecked");
     const note = behind([{ role: "notification", name: "Mail", text: "New mail", bounds: { x: 0, y: 0, width: 300, height: 80 } }]);
     expect(await note.p.promptOpen()).toBe(false);
     expect((await note.p.quickContext())?.text).toContain("Inbox - Priya's mail");
+  });
+
+  it("reads and sends nothing, and says it can't tell, when the shell can't be asked at all (fail closed) (safety-privacy-r1)", async () => {
+    // The helper timed out (a slow read of another task's ahead of it) or the registry errored.
+    const { p, reads } = behind("fails");
+    expect(await p.promptOpen()).toBe("unchecked");
+    expect(await p.systemDialogOpen()).toBe(true);
+    const c = await p.quickContext();
+    expect(c?.text).not.toMatch(/Inbox|Priya|Quarterly|thunderbird/i);
+    expect(c?.text).toMatch(/can't tell whether a system dialog \(a password prompt\) is open/);
+    expect(c?.target).toEqual({});
+    const d = await p.describe();
+    expect(d).not.toMatch(/Inbox|Priya|Quarterly|thunderbird/i);
+    expect(d).toMatch(/Ember read nothing: .*can't tell/);
+    const seen = await p.perceive({ image: true, scope: "window" });
+    expect(seen).toMatchObject({ nodes: [], window: null, authPrompt: "unchecked", capture: null });
+    expect(seen.text).not.toMatch(/Inbox|Priya|Quarterly/);
+    expect(reads()).toBeLessThanOrEqual(1);
   });
 });

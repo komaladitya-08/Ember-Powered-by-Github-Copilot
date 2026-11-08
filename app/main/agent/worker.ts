@@ -245,12 +245,19 @@ const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 /**
+ * The helper's own answers that it can't read any app (tasks-approvals-8): its Python bindings missing
+ * (ember_atspi.py), no session bus, or macOS not having given Ember the Accessibility permission (ax-darwin-read.ts).
+ * A step can't work again until the user fixes that, so the model is never told to try again.
+ */
+const HELPER_CANT_READ = /accessibility (helper|bridge)|python3-pyatspi is not installed|^no session bus$|\bAccessibility permission\b/i;
+
+/**
  * A tool's result when its handler threw: the accessibility helper's failures as what the user can do about them (the
  * setup check says what's wrong), anything else quoted as untrusted words (an error may carry screen text).
  */
 function toolFailure(err: unknown): ToolResultObject {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/accessibility (helper|bridge)/i.test(msg)) {
+  if (HELPER_CANT_READ.test(msg)) {
     return fail("Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.");
   }
   return fail(`That step didn't work: ${q(msg, 200)}. Call perceive_window and try again, or finish the task saying what's left.`);
@@ -268,6 +275,15 @@ export function taskPrompt(goal: string, partWay: boolean, where: string): strin
 const NEAR_LIMIT = "You have used most of this task's steps or time: finish the step you're on, then call finish_task saying what's done and what's left.";
 /** A step refused while a password or authentication prompt is open on the user's screen (M8.3, safety-privacy-3). */
 const AUTH_PROMPT_OPEN = "An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.";
+/**
+ * A step refused because the desktop couldn't be asked whether such a prompt is open (fail closed, safety-privacy-r1):
+ * never said to be one, so nobody goes looking for a prompt that isn't there (safety-privacy-c1-2).
+ */
+const PROMPT_UNCHECKED = "Ember can't tell right now whether a password prompt is open on the user's screen (the desktop didn't answer in time), so nothing was read or done. Wait a moment and look again, or finish the task saying what's left.";
+/** What a look that asked for a picture says when the user turned Send screenshots for tasks off during the task. */
+const NO_PICTURES = "(No screenshot: the user turned off sending screenshots for tasks; work from the elements.)";
+/** The audit's reason for each (What Ember did shows it). */
+const PROMPT_REASON = { open: "an authentication prompt is open", unchecked: "Ember couldn't tell whether a password prompt was open" } as const;
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
 const POSES_AS_ANNOUNCEMENT = new RegExp([
   String.raw`without\s+(asking|checking|permission|approval|confirm\w*|a\s+question)`, String.raw`as\s+you\s+(let|allow\w*|permit\w*)`,
@@ -1491,7 +1507,14 @@ export class Worker {
         : this.tool("perceive_window",
           "Read the window you are working in: its elements with ids, roles, names, states and positions." + (this.d.vision ? " Pass image=true to also get a screenshot with numbered marks." : ""),
           z.object({ image: z.boolean().optional().describe("Also return a marked screenshot") }),
-          async ({ image }) => this.perceive(image === true && this.d.vision)),
+          async ({ image }) => {
+            // Home's "Send screenshots for tasks" is asked at every look, not only as the task began: turned off while
+            // it works, the task's next look sends no picture (safety-privacy-c1-1).
+            const wanted = image === true && this.d.vision;
+            const may = wanted && this.picturesAllowed();
+            const r = await this.perceive(may);
+            return wanted && !may && r.resultType === "success" ? { ...r, textResultForLlm: `${r.textResultForLlm}\n${NO_PICTURES}` } : r;
+          }),
       this.tool("list_windows", "List the open windows (app and title).", z.object({}), async () => {
         // No window's title goes anywhere while the shell's own password prompt is open (safety-privacy-3).
         const prompt = await this.promptRefusal("read");
@@ -1784,6 +1807,7 @@ export class Worker {
         id: this.spec.id, title: goal.length > 200 ? `${goal.slice(0, 199)}…` : goal,
         commandWords: () => this.commandWords, agreed: () => this.agreed, tainted: () => this.tainted,
         spokenWords: () => (this.spokenOnly ? this.userWords : ""),
+        ownWords: () => this.ownWordsLine(),
         // Output that reads like instructions: every later step (command or not) is checked with the user (§3.11).
         taint: () => { this.tainted = true; },
         readFrom: () => [...this.read.values()],
@@ -2284,8 +2308,9 @@ export class Worker {
     if (this.isOver) return STOPPED();
     // The shell's own password prompt is open: nothing was read (safety-privacy-3). The task may wait and look again.
     if (p.authPrompt) {
-      this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: "an authentication prompt is open" });
-      return denied(AUTH_PROMPT_OPEN);
+      const unchecked = p.authPrompt === "unchecked";
+      this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: unchecked ? PROMPT_REASON.unchecked : PROMPT_REASON.open });
+      return denied(unchecked ? PROMPT_UNCHECKED : AUTH_PROMPT_OPEN);
     }
     if (p.blocked) {
       this.audit({ event: "decision", task: this.spec.id, kind: "read", app: p.window?.app ?? "", window: p.window?.name ?? p.x11Window?.title ?? "", tier: "never", verdict: "deny", reason: "private window (never-look list or a password prompt)" });
@@ -4072,13 +4097,18 @@ export class Worker {
       this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
       return denied(AUTH_PROMPT_OPEN);
     }
-    // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too.
-    if (await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => false)) {
+    // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too. A check that fails refuses
+    // (fail closed, safety-privacy-r1).
+    const dialog = await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => "unchecked" as const);
+    if (dialog) {
       // Not always a dialog: macOS's secure keyboard entry (Terminal's, a focused password field) is named as itself.
-      const why = await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? "a system dialog is open" });
+      const why = dialog === "unchecked" ? null : await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
+      // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2).
+      const unchecked = dialog === "unchecked" || (!why && await this.promptUnchecked());
+      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? (unchecked ? PROMPT_REASON.unchecked : "a system dialog is open") });
       return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
-        : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+        : unchecked ? PROMPT_UNCHECKED
+          : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
     }
     const check = () => {
       if (this.isOver) throw new BorrowStopped();
@@ -4409,16 +4439,37 @@ export class Worker {
   /**
    * A password prompt the desktop's shell draws itself is open (Perception.promptOpen: GNOME Shell's polkit and keyring
    * dialogs, which no X11 window shows): no step is taken until it's done, by accessibility as with the borrowed mouse
-   * (CLAUDE.md "Never"; safety-privacy-3), and the refusal is audited. A check that fails refuses (fail closed); a screen
-   * whose perception has no such check (another computer's) goes on as before.
+   * (CLAUDE.md "Never"; safety-privacy-3), and the refusal is audited. A check that can't be made, or fails, refuses too
+   * (fail closed, safety-privacy-r1), in words that say Ember can't tell rather than that a prompt is open
+   * (safety-privacy-c1-2); a screen whose perception has no such check (another computer's) goes on as before.
    */
   private async promptRefusal(kind: ActionKind, element?: Focus): Promise<ToolResultObject | null> {
     if (!this.perception.promptOpen) return null;
-    const open = await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => true);
+    const open = await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => "unchecked" as const);
     if (this.isOver) return STOPPED();
     if (!open) return null;
-    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt is open" });
-    return denied(AUTH_PROMPT_OPEN);
+    const unchecked = open === "unchecked";
+    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: unchecked ? PROMPT_REASON.unchecked : PROMPT_REASON.open });
+    return denied(unchecked ? PROMPT_UNCHECKED : AUTH_PROMPT_OPEN);
+  }
+
+  /**
+   * May a look send a picture now? Settings as they are now (the admin's policy applied): Home's "Send screenshots for
+   * tasks" may have been turned off since the task began. Settings that can't be read send none (fail closed).
+   */
+  private picturesAllowed(): boolean {
+    try {
+      return this.d.settings.get().screenImages !== false;
+    } catch (err) {
+      this.d.log.warn("worker.settings_read_failed", { err });
+      return false;
+    }
+  }
+
+  /** Is the system dialog the borrow saw only a shell Ember couldn't ask (promptOpen "unchecked")? Words only: it refuses either way. */
+  private async promptUnchecked(): Promise<boolean> {
+    if (!this.perception.promptOpen) return false;
+    return (await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => "unchecked" as const)) === "unchecked";
   }
 
   /**

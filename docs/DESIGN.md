@@ -43,7 +43,9 @@ They share one emotion rig, so switching never changes behaviour.
     the mouth keeps its syllable flap;
   - awake and Ready with nothing passing, only the breath and the idle float move, under a third of a pixel a
     step: the overlay, the handle and Home's hero draw it about 6 times a second (`restingGap`, `RESTING_FRAME_MS`),
-    waking in time for the next blink or fidget, where they drew 15–24 times a second;
+    waking in time for the next blink or fidget, where they drew 15–24 times a second; while Home sits behind the
+    window you are working in, its still faces aren't drawn at all until it takes the focus, the pointer comes over
+    it or something changes (`homeFrameGap`);
   - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until
     something happens (it drew every 110 ms);
   - while a question is up, the idle float stops and the body's springs settle without wobbling;
@@ -74,8 +76,9 @@ They share one emotion rig, so switching never changes behaviour.
   current step with its reason, and buttons when Ember needs a decision. A finished answer has no
   head at all: it is Ember's bubble, so "Ember" doesn't title it. A question sets its decision (up
   to its "?") in weight 600, what the step does after it, and "Your task: …" under it in the
-  secondary label (the task's goal; under a step the user didn't ask for, or once text on screen
-  tried to steer the task, their own words in curly quotes, never the goal passed off as theirs);
+  secondary label (the task's goal; under a step or command the user didn't ask for, or once text
+  on screen or a command's output tried to steer the task, their own words in curly quotes, never
+  the goal passed off as theirs);
   its title ("May I?") is the quieter lead-in, its keys show as keycaps under the buttons (under a
   note's line when a spoken answer wasn't taken, never replaced by it: `stepParts`; on the
   no-compositor corner card too, above its buttons, each chord kept on one line with its word), four corner
@@ -96,7 +99,8 @@ They share one emotion rig, so switching never changes behaviour.
   offers **Open settings** where settings can fix it, otherwise **Try again** where asking again is
   safe (the conversation's own request, whose turn ran no tool). A request the runtime stopped under
   before it reached the model keeps its Try again while Ember reconnects, and once Copilot is back
-  the bubble says "I'm connected again. Try again?". An answer whose turn started a task
+  the bubble says "I'm connected again. Try again?" (and Home's conversation line for it, "I'm connected again: send
+  it again."). An answer whose turn started a task
   says "Its card in the corner shows how it's going.", so the bubble and the card tell one story. Under a finished
   answer (and only that answer) the bubble may show what you might say next: a caption, "Ember suggests", then up to
   three quiet 24 px capsules (never the accent, never under a question), in its clickable area; the Ask box shows the
@@ -220,7 +224,8 @@ Ember is two places at once, each for one kind of work.
     **Close**. Never after "Not now", a Stop or the mouse taken back: those were the user's own choice.
 
   The words come from `app/shared/activity.ts` (one table of state words: Working, Waiting for you, Waiting its turn,
-  Retrying, Done, Didn't finish, Stopped) and `app/main/agent/activity.ts`, which builds a task's activity from its
+  Retrying, Done, Didn't finish, Stopped, and No answer in time for a task whose question ran out of time, which the
+  user didn't stop) and `app/main/agent/activity.ts`, which builds a task's activity from its
   worker's tool calls and Ember's own signals: never the model's arguments, its reasoning or screen text. A running
   task's symbol is a ring round a lit dot, which never reads as a spinner. A card with a view or a failure stays a
   minute, and the stack widens from 270 to 320px to hold it; both widths grow with the text size. Without a
@@ -338,7 +343,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   44 px with the time after the task began in tabular figures, a state symbol and Ember's words, steps of one kind
   folded behind a chevron, a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged
   **Note** in the secondary label. Then how it ended: the worker's summary in the secondary label and its view, drawn
-  by the cards' catalog code. A finished task folds to its head. Home offers exact-task Stop, retained safe retry, verified Show app and
+  by the cards' catalog code. A finished task folds to its head. Home offers exact-task Stop, retained safe retry (Try again
+  wherever its card has it: a failure, and a task whose question went unanswered), verified Show app and
   focusable View result. Capability hints never authorise an action: main revalidates the exact task and native window
   identity, while stale/remote/desk/locked/borrowing cases cannot raise another window. While a task waits for an answer, a callout in its
   group says where it is asked (the bubble, with the keys that answer it; the command window; or a consent card's window); Open approval opens the exact live question in a focusable card or its existing panel; Home never answers from

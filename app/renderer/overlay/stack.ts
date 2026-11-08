@@ -38,7 +38,7 @@ export function cardLines(t: TaskCard, stopPressed = false): CardLines {
   if (!a) return { live: null, detail: stopPressed ? TASK_STOPPING : t.detail, tele: null, summary: null };
   const ended = !underWay(t);
   const { step, extra } = telemetryItems(a, t.plan, ended);
-  const word = !ended ? null : t.status === "done" ? STATUS_WORDS.done : t.status === "failed" ? STATUS_WORDS.failed : STATUS_WORDS.stopped;
+  const word = !ended ? null : t.status === "done" ? STATUS_WORDS.done : t.status === "failed" ? STATUS_WORDS.failed : t.unanswered ? STATUS_WORDS.unanswered : STATUS_WORDS.stopped;
   // Never the same words twice (audit #2): a result that is only the state's word ("Stopped.") goes, and one that
   // starts with it ("Stopped before it started.") says it for the row.
   const said = ended ? t.detail.trim() : "";

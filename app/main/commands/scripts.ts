@@ -391,7 +391,8 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       for (const f of got.findings) {
         if (readThrough(f, got, shell)) continue;
         const says = unreadFinding(f) ? unreadPart(name, f.says) : `In ${name}: ${f.says}`;
-        if (!extra.some(g => g.rule === f.rule && g.says === says)) extra.push({ ...f, says, widening: [...f.widening, "in-script", scriptTag(name)] });
+        const inFolder = f.inFolder ? { inFolder: { ...f.inFolder, says: `In ${name}: ${f.inFolder.says}` } } : {};
+        if (!extra.some(g => g.rule === f.rule && g.says === says)) extra.push({ ...f, says, widening: [...f.widening, "in-script", scriptTag(name)], ...inFolder });
       }
       downloads.push(...got.downloads);
       const x = got as Partial<ClassificationExtra>;

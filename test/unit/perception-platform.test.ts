@@ -332,9 +332,9 @@ describe("Perception and the window system's system-dialog check (fails closed)"
     const failing = desktop({ systemDialogOpen: () => { throw new Error("gone"); } });
     expect(await failing.perception.systemDialogOpen()).toBe(true);
     expect(failing.warnings).toContain("perception.system_dialog_check_failed");
-    // GNOME Shell's check stays best effort, as before; the window system's answer still counts.
-    expect(await desktop({ shell: new Error("no shell"), systemDialogOpen: () => false }).perception.systemDialogOpen()).toBe(false);
-    expect(await desktop({ shell: new Error("no shell"), systemDialogOpen: () => true }).perception.systemDialogOpen()).toBe(true);
+    // A GNOME Shell check that fails counts as one Ember couldn't make (fail closed, safety-privacy-r1).
+    expect(await desktop({ shell: new Error("request timed out"), systemDialogOpen: () => false }).perception.systemDialogOpen()).toBe(true);
+    expect(await desktop({ shell: new Error("request timed out"), systemDialogOpen: () => true }).perception.systemDialogOpen()).toBe(true);
   });
 });
 
@@ -386,8 +386,9 @@ describe("Perception with the OS's security-window check", () => {
     expect((await desktop(consent).perception.focused()).blocked).toBe(false);
   });
 
+  // describe_screen's list of open windows (the request's context lists none: safety-privacy-r2).
   const quick = async (clients: Win[], check?: PerceptionOptions["isSecurityWindow"]) =>
-    (await desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit gedit"), clients, isSecurityWindow: check }).perception.quickContext())!.text;
+    desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit gedit"), clients, isSecurityWindow: check }).perception.describe();
 
   it("leaves a security window out of the open-window lines, by its program and title", async () => {
     const clients = [win(5, 42, "notes.txt", "gedit gedit"), win(6, 50, "Windows Security", "explorer")];

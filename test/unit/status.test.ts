@@ -295,8 +295,12 @@ describe("retryRequest", () => {
     for (const t of ["try again", "Ember, try again.", "Try that again please", "please try it again", "again", "one more time", "Have another go", "give it another try", "retry", "Hey Ember, do it again"]) expect(retryRequest(t), t).toBe(true);
   });
 
+  it("hears it asked as a question, agreed to or once more (tasks-approvals-c1-3)", () => {
+    for (const t of ["can you try again?", "Could you try that again, please?", "yes, try again", "Sure, try it again", "ok try again", "try once more", "once more"]) expect(retryRequest(t), t).toBe(true);
+  });
+
   it("leaves anything more to the conversation, whose words are its own", () => {
-    for (const t of ["try again and delete the draft", "try again tomorrow at 9", "send it again", "try again with Firefox", "don't try again", ""]) expect(retryRequest(t), t).toBe(false);
+    for (const t of ["try again and delete the draft", "try again tomorrow at 9", "send it again", "try again with Firefox", "don't try again", "can you try again with Firefox?", "no, don't try once more", ""]) expect(retryRequest(t), t).toBe(false);
   });
 });
 
@@ -305,7 +309,11 @@ describe("stopRequest", () => {
     for (const t of ["stop", "Stop!", "stop it", "stop that", "Ember, stop", "stop everything", "Stop all tasks", "stop the task", "please stop", "cancel", "cancel that", "cancel everything", "stop now", "hey Ember, stop everything please"]) expect(stopRequest(t), t).toBe(true);
   });
 
+  it("hears the other short ways people type a stop of what Ember is doing (tasks-approvals-v2)", () => {
+    for (const t of ["stop typing", "Stop doing that!", "stop working", "stop what you're doing", "abort", "halt", "stop stop", "no, stop", "wait stop", "Ember, abort the task"]) expect(stopRequest(t), t).toBe(true);
+  });
+
   it("leaves a stop of something else to the conversation", () => {
-    for (const t of ["stop the music", "stop the timer at 5", "cancel my 3pm meeting", "don't stop", "stop sharing my screen", "how do I stop a task?", ""]) expect(stopRequest(t), t).toBe(false);
+    for (const t of ["stop the music", "stop the timer at 5", "cancel my 3pm meeting", "don't stop", "stop sharing my screen", "how do I stop a task?", "stop typing in caps", "forget that", "abort the merge", ""]) expect(stopRequest(t), t).toBe(false);
   });
 });

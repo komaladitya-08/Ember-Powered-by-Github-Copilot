@@ -2679,14 +2679,18 @@ def is_shell(app, pid):
 def shell_overlays(params):
     """What GNOME Shell shows over the windows right now: its dialogs and notifications, with their
     text (for the password-prompt check), and "overview" while the overview or the window switcher may be
-    up. Empty without GNOME Shell. `complete` is false when the shell couldn't be looked through in time."""
+    up. Empty without GNOME Shell. `complete` is false when the shell couldn't be looked through in time, or the
+    desktop's apps couldn't be listed at all (the shell may be among them: fail closed)."""
     new_request()
     out, complete = [], True
-    desktop = pyatspi.Registry.getDesktop(0)
     try:
+        desktop = pyatspi.Registry.getDesktop(0)
         napps = desktop.childCount
     except Exception:
-        return {"overlays": out, "complete": complete}
+        return {"overlays": out, "complete": False}
+    if napps < 0:
+        # What libatspi answers when the call timed out.
+        return {"overlays": out, "complete": False}
     until = time.monotonic() + SHELL_FIND_S
     for a in range(napps):
         if time.monotonic() > until:

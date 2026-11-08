@@ -1091,6 +1091,9 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     for (const reason of ["sign-in", "no-access", "models", "runtime", "other"] as const) {
       expect(composerRefusal({ phase: "error", reason })).toBe("Ember can't connect to Copilot yet: Models & connections says why. Your message is still here.");
     }
+    // Copilot stopped and Ember is reconnecting by itself: nothing in Models & connections helps (reliability-performance-v2).
+    expect(composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot stopped unexpectedly. Reconnecting…" })).toBe("Ember is reconnecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." })).toBe("Ember can't connect to Copilot yet: Models & connections says why. Your message is still here.");
     // The service in use is named, never Copilot when it isn't the one.
     expect(composerRefusal({ phase: "starting", service: { kind: "user", host: "llm.local" } })).toBe("Ember is still connecting to your model provider. Your message is still here: send it again in a moment.");
     expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "llm.example.com" } })).toBe("Ember can't reach the model service right now. Your message is still here: send it again once you're online.");
@@ -1173,6 +1176,19 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     expect(main).toContain(`void save({ screenImages: (e.target as HTMLInputElement).checked });`);
     expect(main).toContain(`($("screen-images") as HTMLInputElement).checked = s.screenImages;`);
     expect(main).toContain(`["screen-images", "screenImages"]`);
+  });
+
+  it("is what Apps & privacy's copy of the consent says, where first run's words no longer fit there (safety-privacy-r4)", async () => {
+    const { privacyFoldWords } = await import("../../app/renderer/home/copy");
+    const first = "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already.";
+    // The words are first run's own, as the page has them.
+    expect(page.replace(/<[^>]+>/g, "")).toContain(first);
+    expect(privacyFoldWords(first, { screenImages: true })).toBe(
+      "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is below, under Never look at, and common password managers are on it already.");
+    expect(privacyFoldWords(first, { screenImages: false })).toBe(
+      "It reads the window you're working in through the desktop's accessibility service. Send screenshots for tasks is off (below), so it takes no screenshots for tasks. App windows on your never-look list and password prompts are never read. The list is below, under Never look at, and common password managers are on it already.");
+    // Any other text is left as it is.
+    expect(privacyFoldWords("It sends no usage statistics.", { screenImages: false })).toBe("It sends no usage statistics.");
   });
 
   it("is found by searching for screenshots, by its own words, and by \"pictures\"", async () => {

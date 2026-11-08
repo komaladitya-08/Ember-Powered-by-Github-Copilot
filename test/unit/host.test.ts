@@ -108,7 +108,7 @@ import type { ActiveProvider } from "../../app/main/provider";
 import { unavailableLine } from "../../app/renderer/ask/chips";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
-import { Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
+import { LOST_RECONNECTED, Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
@@ -1185,6 +1185,23 @@ describe("a runtime that dies under a request (rp-6)", () => {
     expect(host.takeRetry()).toBe("Hello after the kill");
     const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
   });
+
+  it("says in the conversation that Ember is connected again, not that it is still reconnecting (reliability-performance-c1-1)", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    sim.onSend = () => undefined;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(host.getStatus().phase).toBe("ready");
+    // Home's conversation showed "I'm reconnecting; ask me again in a moment." for good, under its own "Connected."
+    const problems = host.getTranscript().filter(e => e.who === "problem");
+    expect(problems).toHaveLength(1);
+    expect(problems[0].text).toBe(LOST_RECONNECTED);
+    expect(LOST_RECONNECTED).toBe("Copilot stopped unexpectedly. I'm connected again: send it again.");
+    const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
+  });
 });
 
 describe("a runtime that dies or hangs", () => {
@@ -1260,6 +1277,20 @@ describe("a runtime that dies or hangs", () => {
     expect(pings).toBe(1);
     await vi.advanceTimersByTimeAsync(20_000);
     expect(pings).toBe(2);
+    await host.stop();
+  });
+
+  it("keeps checking a runtime at rest after the clock is set back an hour (reliability-performance-c1-2)", async () => {
+    vi.useFakeTimers();
+    const { host, statuses } = makeHost();
+    await host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(1000);
+    // Resumed with a clock that was ahead, a VM snapshot restored, a manual change: the wall clock steps back.
+    vi.setSystemTime(Date.now() - 3_600_000);
+    sim.ping = async () => { throw new Error("Connection is disposed."); };
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(statuses.map(s => s.detail)).toContain("Copilot stopped unexpectedly. Reconnecting…");
+    sim.ping = async () => ({});
     await host.stop();
   });
 
@@ -2692,7 +2723,7 @@ describe("review round 6: a request sent while the conversation is busy waits fo
       await tool("start_task")({ goal: "Send the report to Ana" });
       await vi.waitFor(() => expect(specs).toHaveLength(2));
       // The user's words, never the goal the model wrote.
-      expect(specs[1].userWords).toBe("send the report to Ana\nEmber, try again");
+      expect(specs[1].userWords).toBe("send the report to Ana.\nEmber, try again");
       expect(send(specs[1].userWords).aligned).toBeUndefined();
       expect(send(specs[1].userWords).prompt).not.toMatch(/didn't ask/);
       // That one ended on the user's "Not now": asking again doesn't make the step theirs (it asks, saying so).
@@ -2723,6 +2754,126 @@ describe("review round 6: a request sent while the conversation is busy waits fo
       await tool("start_task")({ goal: "Send the report to Ana and delete the draft" });
       await vi.waitFor(() => expect(specs).toHaveLength(3));
       expect(specs[2].userWords).toBe("try again and delete the draft");
+      await host.stop();
+    });
+
+    /** As `retrying`, but the first worker typed (or only read) before it ended as `first`. */
+    async function retryingAfter(first: { success: boolean; summary: string; limit?: boolean }, typed: boolean) {
+      const made = await withTasks();
+      const d = (made.host.tasks as any).d;
+      const make = d.makeWorker;
+      let n = 0;
+      d.makeWorker = (spec: { goal: string }, _progress: unknown, _update: unknown, activity?: (e: unknown) => void) => {
+        const w = make(spec);
+        if (n++ > 0) return w;
+        return { ...w, run: async () => {
+          for (const [id, tool] of [["1", "perceive_window"], ...(typed ? [["2", "type_text"]] : [])]) { activity?.({ type: "tool-start", id, tool }); activity?.({ type: "tool-end", id, ok: true }); }
+          return first;
+        } };
+      };
+      const ended = async (k: number) => vi.waitFor(() => expect(made.host.getTranscript().filter(e => e.who === "task")).toHaveLength(k));
+      return { ...made, ended };
+    }
+
+    it("takes the place of the card's Try again: the old card goes, and a try that did part of it says so (tasks-approvals-r2)", async () => {
+      const LIMIT = { success: false, summary: "I stopped after 150 steps without finishing, to be safe.", limit: true };
+      const { host, specs, tool, ended } = await retryingAfter(LIMIT, true);
+      await host.ask("add these rows to the sheet", mail);
+      await tool("start_task")({ goal: "Add the rows to the sheet" });
+      await ended(1);
+      const old = host.tasks!.list()[0];
+      expect(host.tasks!.canRetry(old.id)).toBe(true);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Add the rows to the sheet" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1]).toMatchObject({ userWords: "add these rows to the sheet.\ntry again", partWay: true });
+      // Its card's Try again can't start a second attempt beside this one.
+      expect(host.tasks!.get(old.id)).toBeUndefined();
+      expect(host.tasks!.list().map(t => t.status)).toEqual(["running"]);
+      await host.stop();
+      // A try that only looked did none of it: the new one isn't told otherwise.
+      const looked = await retryingAfter({ success: false, summary: "I couldn't find the sheet." }, false);
+      await looked.host.ask("add these rows to the sheet", mail);
+      await looked.tool("start_task")({ goal: "Add the rows to the sheet" });
+      await looked.ended(1);
+      await looked.host.ask("try again", mail);
+      await looked.tool("start_task")({ goal: "Add the rows to the sheet" });
+      await vi.waitFor(() => expect(looked.specs).toHaveLength(2));
+      expect((looked.specs[1] as { partWay?: boolean }).partWay).toBeUndefined();
+      expect(looked.host.tasks!.list().map(t => t.status)).toEqual(["running"]);
+      await looked.host.stop();
+    });
+
+    it("hears “yes” to the task's own “Want me to try again?”, “can you try again?” and a retry after asking why (tasks-approvals-c1-3)", async () => {
+      const FAILED = { success: false, summary: "I couldn't find the Send button. Want me to try again?" };
+      const { host, specs, tool, say, ended } = await retrying([FAILED, FAILED, FAILED, FAILED]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      await host.ask("yes please", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("Trying again.");
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].userWords).toBe("send the report to Ana.\nyes please");
+      expect(send(specs[1].userWords).aligned).toBeUndefined();
+      await ended(2);
+      await host.ask("why didn't it work?", mail);
+      say("The Send button was greyed out while the draft saved.");
+      await host.ask("ok try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      expect(specs[2].userWords).toMatch(/^send the report to Ana\.\n/);
+      expect(send(specs[2].userWords).aligned).toBeUndefined();
+      await ended(3);
+      await host.ask("can you try again?", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(4));
+      expect(specs[3].userWords).toMatch(/^send the report to Ana\.\n/);
+      expect(send(specs[3].userWords).aligned).toBeUndefined();
+      await host.stop();
+    });
+
+    it("carries what the user agreed to for the task, as its card's Try again does (tasks-approvals-c1-3)", async () => {
+      const { host, specs, tool, say, ended } = await retrying([{ success: false, summary: "I couldn't find the Send button." }]);
+      await host.ask("the report for Ana is ready", mail);
+      say("Shall I send the report to Ana?");
+      await host.ask("Sure, go ahead.", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      expect(specs[0].agreed).toEqual([{ asked: "Shall I send the report to Ana?", answer: "Sure, go ahead." }]);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].agreed).toEqual(specs[0].agreed);
+      await host.stop();
+    });
+
+    it("never after a request of the user's own in between, or a “yes” to a question that offers no retry (tasks-approvals-c1-3)", async () => {
+      const { host, specs, tool, say, ended } = await retrying([
+        { success: false, summary: "I couldn't find the Send button. Want me to open Thunderbird first?" },
+        { success: false, summary: "I couldn't find the Send button." },
+      ]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      await host.ask("yes please", mail);
+      await tool("start_task")({ goal: "Open Thunderbird" });
+      say("On it.");
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].userWords).toBe("yes please");
+      await ended(2);
+      await host.ask("open the calendar", mail);
+      say("Which calendar?");
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      // (It answers Ember's "Which calendar?", so those words go with it; the failed Send's don't.)
+      expect(specs[2].userWords).toBe("open the calendar.\ntry again");
+      expect(send(specs[2].userWords).aligned).toBe(false);
       await host.stop();
     });
   });

@@ -110,6 +110,11 @@ describe("the status lines keep a command or a host name in one piece (commands-
     expect(cc.unbrokenRuns("Ember didn't connect to build-01.")).toEqual([{ text: "Ember didn't connect to ", whole: false }, { text: "build-01.", whole: true }]);
     expect(cc.unbrokenRuns("Commands stay off on this computer.")).toEqual([{ text: "Commands stay off on this computer.", whole: false }]);
     expect(cc.unbrokenRuns("")).toEqual([]);
+    // A long name wraps at its hyphens, so the pane never scrolls sideways (commands-remote-r3).
+    const host = "jenkins-agent-prod-eu-west-1a.build-farm.internal.example-corp.com";
+    expect(cc.unbrokenRuns(`Ember can't find ${host}. Check the name.`)).toEqual([{ text: `Ember can't find ${host}. Check the name.`, whole: false }]);
+    expect(cc.unbrokenRuns("ip-10-0-12-34.eu-west-1.compute.internal is off.")).toEqual([{ text: "ip-10-0-12-34.eu-west-1.compute.internal is off.", whole: false }]);
+    expect(cc.unbrokenRuns("Install python3-devel-headers-x,")).toEqual([{ text: "Install ", whole: false }, { text: "python3-devel-headers-x,", whole: true }]);
     const page = readFileSync(new URL("../../app/renderer/home/computers.ts", import.meta.url), "utf8");
     expect(page).toMatch(/for \(const r of unbrokenRuns\(text\)\)/);
     const css = readFileSync(new URL("../../app/renderer/home/styles.css", import.meta.url), "utf8");

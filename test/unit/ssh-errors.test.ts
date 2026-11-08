@@ -33,6 +33,15 @@ describe("ssh's failures in Ember's words (§5.1.8, §8.7)", () => {
     expect(at("ssh: Could not resolve hostname build-01: Name or service not known")).toMatchObject({ kind: "dns", message: "Ember can't find build-01. Check the name, or add it to your SSH config." });
   });
 
+  it("takes a name that can't be looked up just now (no network, Wi-Fi gone) for the network, not a wrong name, so a new computer is kept (commands-remote-6)", () => {
+    for (const line of [
+      "ssh: Could not resolve hostname build-01: Temporary failure in name resolution",
+      "ssh: Could not resolve hostname build-01: This is usually a temporary error during hostname resolution and means that the local server did not receive a response from an authoritative server.",
+    ]) {
+      expect(at(line), line).toMatchObject({ kind: "network", message: "Ember can't reach build-01 (its name couldn't be looked up just now). Check you're on the right network or VPN.", retry: true });
+    }
+  });
+
   it("names a network failure in a few words", () => {
     for (const [line, words] of [
       ["ssh: connect to host build-01 port 22: Connection refused", "the connection was refused"],

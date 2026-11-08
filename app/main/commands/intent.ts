@@ -10,7 +10,7 @@
  */
 
 import type { Classification, ClassifyContext, CommandObject, Finding, GitFacts } from "./types";
-import { ALWAYS_ASK } from "./types";
+import { ALWAYS_ASK, PKG_REMOVES } from "./types";
 import { hasVerb, hasWord, joinList, nameNamed, userTokens, userWordList } from "./words";
 import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, resolveTargetPath, type PathEnv } from "./paths";
 
@@ -86,6 +86,9 @@ const ROW_OF: Readonly<Record<string, string>> = {
   "upload.curl": "upload.host",
   "kill.process": "kill.process",
 };
+
+/** The verbs of pkg.install that take packages away: only they cover a removal, and only the others an install. */
+const REMOVE_WORDS: readonly string[] = ["remove", "uninstall"];
 
 /** Each row's verbs (§3.7's "The user's words must contain" column), also used to tell whether the user named it. */
 const ROW_VERBS: Readonly<Record<string, readonly string[]>> = {
@@ -408,6 +411,9 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     const said = (asks(w, ["reset"]) && hasWord(w.list, ["hard"])) || (asks(w, ["discard", "throw away"]) && hasWord(w.list, ["changes"]));
     if (!said) return null;
     for (const f of fs) for (const o of f.objects) if (o.text !== "HEAD" && !nameNamed(o.text, w.raw) && !w.tokens.includes(o.text.toLowerCase())) return null;
+    // To another commit the branch moves too (commands-remote-r1).
+    const to = [...new Set(fs.flatMap(f => f.objects.map(o => o.text)).filter(t => t !== "HEAD" && t !== "@"))];
+    if (to.length) return { intent: "git.reset.hard", announce: `Moving the branch to ${joinList(to)} and throwing away uncommitted changes, as you asked.` };
     return { intent: "git.reset.hard", announce: "Throwing away uncommitted changes, as you asked." };
   },
   "git.discard": (fs, w, ctx) => {
@@ -529,7 +535,10 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     return { intent: "docker.push", announce: `Pushing the image ${joinList(images)}, as you asked.` };
   },
   "pkg.install": (fs, w, ctx) => {
-    if (!asks(w, ROW_VERBS["pkg.install"])) return null;
+    // Words that install never cover a removal, nor words that remove an install (commands-remote-r1).
+    const removes = fs.every(f => f.says === PKG_REMOVES);
+    if (!removes && fs.some(f => f.says === PKG_REMOVES)) return null;
+    if (!asks(w, removes ? REMOVE_WORDS : ROW_VERBS["pkg.install"].filter(v => !REMOVE_WORDS.includes(v)))) return null;
     const pkgs: string[] = [];
     for (const f of fs) {
       if (f.widening.includes("--global") && !hasWord(w.list, ["global", "globally"])) return null;
@@ -541,6 +550,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
         pkgs.push(o.text);
       }
     }
+    if (removes) return { intent: "pkg.install", announce: `Removing ${pkgs.length ? joinList(pkgs) : "the packages"}, as you asked.` };
     return { intent: "pkg.install", announce: `Installing ${pkgs.length ? joinList(pkgs) : "the project's dependencies"}, as you asked.` };
   },
   "service.restart": (fs, w) => {
@@ -652,7 +662,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
  */
 export function mentioned(findings: readonly Finding[], userWords: string): boolean {
   if (!userWords || userWords.trim() === "") return false;
-  const w = wordsOf(userWords);
+  const w = wordsOf(affirmed(userWords));
   // What Ember can't follow in a script, when the user's words name the script ("run the build script", "run build.sh"):
   // they asked for it (review #27). Only when that is all the card says: what a script does that is dangerous is asked
   // for only when the words name that, as for the command's own findings.
@@ -667,6 +677,18 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
     const program = f.program.split(" ").pop() ?? "";
     return (program !== "" && (w.list.includes(program.toLowerCase()) || nameNamed(program, w.raw))) || (f.objects.length > 0 && objectNamed);
   });
+}
+
+/** Where a request's clauses part: sentence and list punctuation, and "but". */
+const CLAUSE_BREAK = /[.;:!?,\n]+|\s+but\s+/iu;
+
+/**
+ * The user's words without the clauses that say not to do something ("don't git push yet", "never force push",
+ * "whatever you do, do not push"): a step they ruled out is never one they asked for, so its card keeps "You didn't ask
+ * for this." and never says they asked by voice (commands-remote-c1-2). Only the card's words follow from it.
+ */
+function affirmed(userWords: string): string {
+  return userWords.normalize("NFKC").split(CLAUSE_BREAK).filter(c => !NEGATION.test(c)).join(". ");
 }
 
 /** Whether the words name a finding's program with its subcommand, in full and in order ("npm ci", "git push"). */
@@ -702,8 +724,9 @@ const KIND_VERBS: Readonly<Record<string, readonly string[]>> = {
   "upload.host": ["upload", "sync", "transfer"],
   "kill.process": ["kill"],
 };
-/** Kind verbs by a finding's own rule: a copy or a move that replaces a file, and find's deleting. */
+/** Kind verbs by a finding's own rule: a copy or a move that replaces a file, find's deleting, removing scheduled jobs. */
 const RULE_KIND_VERBS: Readonly<Record<string, readonly string[]>> = {
+  "system.unschedule": ["remove", "delete", "clear", "cancel"],
   "posix.cp": ["copy"],
   "ps.Copy-Item": ["copy"],
   "posix.mv": ["move", "rename"],
@@ -717,7 +740,7 @@ const RULE_KIND_VERBS: Readonly<Record<string, readonly string[]>> = {
  */
 export function namedKind(findings: readonly Finding[], userWords: string): boolean {
   if (!userWords || userWords.trim() === "") return false;
-  const w = wordsOf(userWords);
+  const w = wordsOf(affirmed(userWords));
   return findings.some(f => {
     const row = rowOf(f, findings);
     return hasVerb(w.list, [...(row ? KIND_VERBS[row] ?? [] : []), ...(RULE_KIND_VERBS[f.rule] ?? [])]);

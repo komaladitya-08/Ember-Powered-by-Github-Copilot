@@ -75,7 +75,11 @@ function makeWorker(o: {
   /** The task's goal (the conductor's words, default "make it bold") and the user's own words for it (TaskSpec.userWords). */
   goal?: string; userWords?: string;
   /** A password prompt the desktop's shell draws (GNOME Shell's polkit dialog) is open now (Perception.promptOpen). */
-  promptOpen?: () => boolean;
+  promptOpen?: () => boolean | "unchecked";
+  /** Is a system dialog open, as the borrow asks before it takes the keyboard (default: none). */
+  systemDialogOpen?: () => boolean;
+  /** Home's "Send screenshots for tasks" as settings say it now (default: on). */
+  screenImages?: () => boolean;
 } = {}) {
   let closed = false;
   const asWin = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) =>
@@ -137,6 +141,7 @@ function makeWorker(o: {
         if (o.listFails?.()) throw new Error("the accessibility helper didn't answer");
         return o.wins ? [...open] : closed ? [] : [window];
       },
+      systemDialogOpen: async () => o.systemDialogOpen?.() ?? false,
       ...(o.promptOpen ? { promptOpen: async () => o.promptOpen!() } : {}),
     } as never,
     sidecar: {
@@ -173,7 +178,7 @@ function makeWorker(o: {
     policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" }, ...(o.rateLimit ? { rateLimit: o.rateLimit } : {}) }),
     confirmer: { ask: async (q: { prompt: string; risky?: boolean }) => { asked.push(q.prompt); questions.push(q); o.onAsk?.(); return o.answer ?? "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
-    settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
+    settings: { get: () => ({ grants: {}, ...(o.screenImages ? { screenImages: o.screenImages() } : {}) }), update: () => undefined } as never,
     presenter,
     lease: o.lease ?? (async () => { o.onLease?.(); return () => undefined; }), flyTo: (b: unknown) => { flown.push(b); }, onProgress: () => undefined,
     onActivity: (e: Record<string, unknown>) => { activity.push(e); },
@@ -209,6 +214,21 @@ describe("a screenshot a task sends (safety-privacy-6)", () => {
     // A read of the text alone sends no picture, and records none.
     await h.call("perceive_window", {});
     expect(h.audit.filter(e => e.event === "read")).toHaveLength(1);
+  });
+
+  it("sends no more pictures once Send screenshots for tasks is turned off, though the task began with it on (safety-privacy-c1-1)", async () => {
+    let on = true;
+    const h = makeWorker({ capture: jpeg, screenImages: () => on });
+    expect(((await h.call("perceive_window", { image: true })) as { binaryResultsForLlm?: unknown[] }).binaryResultsForLlm).toHaveLength(1);
+    on = false;
+    const r = await h.call("perceive_window", { image: true }) as { binaryResultsForLlm?: unknown[]; textResultForLlm: string; resultType: string };
+    expect(r.resultType).toBe("success");
+    expect(r.binaryResultsForLlm).toBeUndefined();
+    expect(r.textResultForLlm).toContain("(No screenshot: the user turned off sending screenshots for tasks; work from the elements.)");
+    expect(h.audit.filter(e => e.event === "read")).toHaveLength(1);
+    // Turned back on, the next look may have one again.
+    on = true;
+    expect(((await h.call("perceive_window", { image: true })) as { binaryResultsForLlm?: unknown[] }).binaryResultsForLlm).toHaveLength(1);
   });
 
   it("sends no picture it couldn't record", async () => {
@@ -1844,6 +1864,45 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     expect(r).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/authentication prompt is open/) });
     expect(audit.some(e => e.event === "action")).toBe(false);
   });
+
+  it("refuses a step when it can't tell, and says it can't tell rather than that a prompt is open (safety-privacy-c1-2)", async () => {
+    const acted: string[] = [];
+    let prompt: false | "unchecked" = false;
+    const { call, audit } = makeWorker({ promptOpen: () => prompt, onAction: () => { acted.push("click"); return { ok: true, after: null }; } });
+    await call("perceive_window", {});
+    prompt = "unchecked";
+    const r = await call("click", { id: 1 });
+    expect(r.resultType).toBe("denied");
+    expect(r.textResultForLlm).toMatch(/^Ember can't tell right now whether a password prompt is open/);
+    expect(r.textResultForLlm).not.toMatch(/authentication prompt is open/);
+    expect(acted).toEqual([]);
+    expect(audit).toContainEqual(expect.objectContaining({ event: "decision", kind: "click", verdict: "deny", reason: "Ember couldn't tell whether a password prompt was open" }));
+    expect(audit.some(e => e.event === "action")).toBe(false);
+  });
+
+  it("refuses a step when the check itself fails (fail closed) (safety-privacy-r1)", async () => {
+    const acted: string[] = [];
+    let fails = false;
+    const { call, audit } = makeWorker({ promptOpen: () => { if (fails) throw new Error("request timed out"); return false; }, onAction: () => { acted.push("click"); return { ok: true, after: null }; } });
+    await call("perceive_window", {});
+    fails = true;
+    const r = await call("click", { id: 1 });
+    expect(r.resultType).toBe("denied");
+    expect(r.textResultForLlm).toMatch(/^Ember can't tell right now whether a password prompt is open/);
+    expect(acted).toEqual([]);
+    expect(audit.some(e => e.event === "action")).toBe(false);
+  });
+
+  it("borrows nothing when the desktop can't be asked whether a system dialog is open (fail closed) (safety-privacy-r1)", async () => {
+    const input: string[] = [];
+    const { call, audit } = makeWorker({ systemDialogOpen: () => { throw new Error("request timed out"); }, states: () => ["enabled", "focused"], onInput: k => { input.push(k); } });
+    await call("perceive_window", {});
+    const r = await call("press_keys", { keys: "ctrl+b" });
+    expect(r.resultType).toBe("denied");
+    expect(input).toEqual([]);
+    expect(audit).toContainEqual(expect.objectContaining({ event: "decision", kind: "keys", verdict: "deny" }));
+    expect(audit.some(e => e.event === "action" && e.ok)).toBe(false);
+  });
 });
 
 describe("a tool that throws (tasks-approvals-8)", () => {
@@ -1863,6 +1922,17 @@ describe("a tool that throws (tasks-approvals-8)", () => {
     expect(r.resultType).toBe("failure");
     expect(r.textResultForLlm).toBe("Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.");
     expect(logs).toContainEqual(["worker.tool_failed", expect.objectContaining({ task: "t1", tool: "perceive_window" })]);
+  });
+
+  it.each([
+    "python3-pyatspi is not installed",
+    "no session bus",
+    "Ember needs the Accessibility permission (System Settings › Privacy & Security › Accessibility).",
+  ])("points to the setup check, never “try again”, when the helper answers that it can't read apps at all: %s (tasks-approvals-8)", async message => {
+    const { call } = throwing(new Error(message));
+    const r = await call("perceive_window", {});
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toBe("Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.");
   });
 
   it("quotes any other error as untrusted words, and goes on", async () => {

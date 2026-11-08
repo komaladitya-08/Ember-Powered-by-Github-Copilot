@@ -285,14 +285,20 @@ export function actResult(r: unknown, done: string): string {
   return ok ? done : actMessage(r) ?? ACT_FAILED;
 }
 
+/** The longest hyphenated word kept whole: a longer one (an enterprise host's name) wraps rather than overflow. */
+const UNBROKEN_MAX = 24;
+
 /**
- * A status line in runs to draw, each hyphenated word (with the punctuation after it) whole, so a line never breaks
- * inside a command or a host's name ("openssh-" then "clients", commands-remote-8). The text is unchanged.
+ * A status line in runs to draw, each hyphenated word (with the punctuation after it) of at most UNBROKEN_MAX
+ * characters whole, so a line never breaks inside a command or a short host name ("openssh-" then "clients",
+ * commands-remote-8), while a longer name may wrap at its hyphens and the pane never scrolls sideways at Larger text
+ * (commands-remote-r3, WCAG 1.4.10). The text is unchanged.
  */
 export function unbrokenRuns(text: string): { text: string; whole: boolean }[] {
   const out: { text: string; whole: boolean }[] = [];
   let at = 0;
   for (const m of text.matchAll(/[^\s-]+(?:-[^\s-]+)+/g)) {
+    if (m[0].length > UNBROKEN_MAX) continue;
     if (m.index > at) out.push({ text: text.slice(at, m.index), whole: false });
     out.push({ text: m[0], whole: true });
     at = m.index + m[0].length;

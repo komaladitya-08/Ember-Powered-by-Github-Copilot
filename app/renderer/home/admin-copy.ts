@@ -33,6 +33,19 @@ export function lockdownSendLine(a: Lockdown): string | null {
   return a.error === null ? null : `, nothing is sent to a model service ${until(a)}, so Ember can't answer or act.`;
 }
 
+/**
+ * The data list's microphone line while Ember is locked down (safety-privacy-r4): the text around its recipient
+ * (`before` and `after` the "goes to …" span) with the sentence on what a conversation sends said as nothing sent
+ * anywhere, instead of "goes to no model service (…) as text". Null when not locked down, or for words it doesn't know.
+ */
+export function lockdownMicWords(a: Lockdown, before: string, after: string): [string, string] | null {
+  if (a.error === null) return null;
+  const start = before.lastIndexOf("Once you call Ember");
+  const end = after.indexOf("seconds.");
+  if (start < 0 || end < 0) return null;
+  return [`${before.slice(0, start)}Nothing it hears is sent anywhere ${until(a)}.`, after.slice(end + "seconds.".length)];
+}
+
 /** How long the record of every action is kept, as the data list says it ("kept 30 days"). */
 export function keptWords(a: Lockdown): string {
   return a.retentionDays === null ? `none deleted ${until(a)}` : `kept ${a.retentionDays} days`;

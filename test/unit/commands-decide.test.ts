@@ -13,7 +13,7 @@ import { bindingOf, contextOf, factsOf, type ContextName } from "../fixtures/com
 interface O {
   where?: ContextName; shell?: ShellId; words?: string; mode?: CommandMode; askEvery?: boolean; tainted?: boolean;
   carried?: { from: string[] } | null; privileged?: boolean; exists?: Record<string, boolean | null>; git?: GitFacts | null;
-  binding?: Partial<TargetBinding>;
+  binding?: Partial<TargetBinding>; dirs?: string[];
 }
 
 function decide(cmd: string, o: O = {}) {
@@ -21,7 +21,7 @@ function decide(cmd: string, o: O = {}) {
   const ctx = contextOf(where);
   const cls = classifyCommand(cmd, o.shell ?? (where === "win32" ? "powershell" : "bash"), ctx);
   const paths = new Map<string, PathFact>();
-  for (const p of cls.probe) paths.set(p, { exists: o.exists && p in o.exists ? o.exists[p] : true, real: p });
+  for (const p of cls.probe) paths.set(p, { exists: o.exists && p in o.exists ? o.exists[p] : true, real: p, ...(o.dirs?.includes(p) ? { dir: true } : {}) });
   const input: DecideInput = {
     cls, paths, git: o.git ?? null, binding: { ...bindingOf(where), ...o.binding }, facts: factsOf(where, { privileged: o.privileged }),
     mode: o.mode ?? "on", userAskEvery: o.askEvery ?? false, userWords: o.words ?? "", agreed: [], tainted: o.tainted ?? false, carried: o.carried ?? null,
@@ -51,6 +51,21 @@ describe("decideCommand: the rules in order", () => {
     expect(decide("echo hi > new.txt").verdict).toBe("ask");
     // Only the overwrite is dropped: what else the command does still counts.
     expect(decide("echo hi > new.txt; rm old.txt", { exists: { "/home/ana/proj/new.txt": false } }).rules).toEqual(["posix.rm"]);
+  });
+
+  it("3: a copy or a move into a folder that is there asks only about the file of the same name in it (commands-remote-r1)", () => {
+    const docs = "/home/ana/Documents";
+    for (const cmd of ["mv report.pdf ~/Documents", "cp report.pdf ~/Documents", "install -m 644 report.pdf ~/Documents"]) {
+      expect(decide(cmd, { dirs: [docs], exists: { [`${docs}/report.pdf`]: false } }).verdict, cmd).toBe("run");
+      const clash = decide(cmd, { dirs: [docs] });
+      expect(clash.verdict, cmd).toBe("ask");
+      expect(clash.says, cmd).toContain(`Replaces ${docs}/report.pdf if it exists.`);
+      expect(clash.says, cmd).not.toContain(`Replaces ${docs} if it exists.`);
+    }
+    // A file there is replaced, and a target that can't say whether it is a folder (WSL) asks as before.
+    expect(decide("mv report.pdf notes.pdf").says).toContain("Replaces notes.pdf if it exists.");
+    expect(decide("mv report.pdf ~/Documents").says).toContain(`Replaces ${docs} if it exists.`);
+    expect(decide("mv report.pdf ~/Documents", { exists: { [docs]: false } }).verdict).toBe("run");
   });
 
   it("4: root or an elevated token asks for everything, its line first, as a system change", () => {
@@ -143,9 +158,33 @@ describe("decideCommand: the rules in order", () => {
     for (const [cmd, words] of [["git push origin main", "fix the readme"], ["rm notes.txt", "summarise notes.txt"], ["git push --force origin main", "tidy the git config"]]) {
       expect(decide(cmd, { words }).says, `${cmd} / ${words}`).toContain(LINES.unasked);
     }
+    // Removing scheduled jobs is that kind of step for words that remove them (commands-remote-r1).
+    expect(decide("crontab -r", { words: "remove my cron jobs" }).says).toEqual(["Deletes your scheduled jobs.", LINES.inexact]);
     // The line sits where "You didn't ask for this." would, before the Windows line.
     const wsl = decide("rm /mnt/c/Users/ana/x.txt", { where: "wsl", words: "delete the old export" });
     expect(wsl.says.slice(-2)).toEqual([LINES.inexact, LINES.windows]);
+  });
+
+  it("still says \"You didn't ask for this.\" when the user's words said not to do it (commands-remote-c1-2)", () => {
+    for (const [cmd, words] of [
+      ["git push origin main", "don't git push yet"],
+      ["git push origin main", "whatever you do, do not push"],
+      ["rm build/out.o", "don't delete anything"],
+      ["rm -r build", "never delete build/"],
+      ["npm publish", "don't publish it"],
+      ["docker push app:1", "don't docker push"],
+      ["git push --force origin main", "never force push"],
+      ["npm ci", "fix the tests without reinstalling the dependencies"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain(LINES.unasked);
+      expect(d.says, `${cmd} / ${words}`).not.toContain(LINES.inexact);
+      expect(d.unasked, `${cmd} / ${words}`).toBe(true);
+    }
+    // A clause that says not to do something else leaves the rest of what they asked for as it was.
+    expect(decide("git push origin main", { words: "push my changes, but don't force it" }).says).toContain(LINES.inexact);
+    expect(decide("npm ci", { words: "don't touch the docs. run npm ci" }).says).not.toContain(LINES.unasked);
   });
 });
 

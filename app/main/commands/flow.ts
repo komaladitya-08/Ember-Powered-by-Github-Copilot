@@ -42,7 +42,7 @@ import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
   type CommandService, type DecideInput, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
-  type RunSpec, type ShellId,
+  type RunSpec, type ShellId, standingFindings,
 } from "./types";
 
 /** What run_command needs from its worker. */
@@ -57,6 +57,12 @@ export interface CommandFlowContext {
      * never count for an announcement, but the card says the user asked by voice rather than "You didn't ask for this."
      */
     spokenWords?: () => string;
+    /**
+     * The user's own words for this task, quoted on one line (Worker.ownWordsLine), or "" for none: the "Your task:" line
+     * of a question about a command they didn't ask for, or of any in a task that was steered (Question.taskLine;
+     * tasks-approvals-c1-1). Absent, such a question has no task line, never the goal.
+     */
+    ownWords?: () => string;
     agreed: () => Agreement[];
     tainted: () => boolean;
     /** Marks the task tainted (command output that reads like instructions, §3.11 step 7); audited. */
@@ -102,6 +108,15 @@ export interface CommandFlowContext {
 
 export type { SecretTracker, ShapeOptions };
 export { scriptLanguage, type ScriptLanguage } from "./scripts";
+
+/**
+ * A command question's task line (Question.taskLine; tasks-approvals-c1-1): the user's own words, never the goal, under a
+ * command they didn't ask for or in a task that screen text or a command's output tried to steer, read as it is asked.
+ */
+function ownTaskLine(ctx: CommandFlowContext, unasked: boolean): { taskLine?: string } {
+  if (!unasked && !ctx.task.tainted() && !ctx.state.outputTainted) return {};
+  return { taskLine: ctx.task.ownWords?.() ?? "" };
+}
 
 /** CL's pure functions the flow calls (§3.11's export block: exactly CL's signatures). */
 export interface CommandJudge {
@@ -567,7 +582,7 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
   if (r.tainted) { lines.push(CARD_LINES.tainted); policyOnly = false; }
   if (r.carried) { lines.push(CARD_LINES.carried(r.carried.from)); policyOnly = false; }
   // The findings that stand once the target said which overwritten paths don't exist (§3.8.2 rule 3).
-  const left = (r.cls?.findings ?? []).filter(f => !(f.ifExists !== undefined && r.paths?.get(f.ifExists)?.exists === false));
+  const left = standingFindings(r.cls?.findings ?? [], r.paths);
   const missed = (ordinary && left.length > 0)
     || (d.verdict === "announce" && [...d.classes, ...left.map(f => f.cls)].some(c => ALWAYS_ASK.has(c)))
     || (d.verdict !== "run" && d.verdict !== "announce");
@@ -681,7 +696,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     const consent = (svc as CommandService & Partial<CommandConsentSource>).consentPanel?.() ?? null;
     if (!consent) return denied(`Commands aren't turned on for ${place} yet: the user can turn them on in Ember's settings, under Commands. Finish the task saying so.`);
     const q: PanelQuestion = {
-      title: `Turn on commands on ${place}?`, context: ctx.task.title, prompt: "Ember needs your OK first. Read what it means in the window that opened.",
+      title: `Turn on commands on ${place}?`, context: ctx.task.title, ...ownTaskLine(ctx, false), prompt: "Ember needs your OK first. Read what it means in the window that opened.",
       options: [{ id: "once", label: "Turn on", primary: true }, { id: "deny", label: "Not now" }],
       task, ...(where ? { where } : {}), panel: { kind: "consent", consent }, clickOnly: true,
     };
@@ -844,7 +859,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   /** Asks with the command card; "once", "no" (Not now), "expired" (no answer in time: a timeout, not a refusal) or "stopped". */
   const askCard = async (says: string[], q: string, prompt = `On ${place}: ${firstLine(says)}`): Promise<"once" | "no" | "expired" | "stopped"> => {
     const question: PanelQuestion = {
-      title: "May I run a command?", context: ctx.task.title, prompt,
+      title: "May I run a command?", context: ctx.task.title, ...ownTaskLine(ctx, d.unasked), prompt,
       options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
       task, ...(where ? { where } : {}), armMs: d.armMs, panel: { kind: "command", card: card("ask", [...says, why]) },
       // A dangerous command (deleting, publishing, secrets, system changes…: the classifier's classes) looks risky.

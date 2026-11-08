@@ -9,6 +9,7 @@
 
 import type { ClassificationExtra } from "./classify";
 import type { CommandDecision, DangerClass, DecideInput, Finding } from "./types";
+import { standingFindings } from "./types";
 import { matchIntent, mentioned, namedKind } from "./intent";
 import { joinList } from "./words";
 
@@ -87,8 +88,8 @@ export function decideCommand(i: DecideInput): CommandDecision {
     const says = `Your organisation has turned off commands ${offWords(i.binding.kind)}.`;
     return { verdict: "refuse", reason: says, classes: [], rules: ["admin.off"], says: [says], unasked: false, armMs: 0 };
   }
-  // 3. Overwrites of paths the target says don't exist are dropped.
-  const F = cls.findings.filter(f => !(f.ifExists !== undefined && i.paths.get(f.ifExists)?.exists === false));
+  // 3. Overwrites of paths the target says don't exist are dropped; one into a folder is about the file inside it.
+  const F = standingFindings(cls.findings, i.paths);
   const windowsLine = i.binding.kind === "wsl" && reachesWindows(i) ? [LINES.windows] : [];
   const classes = CLASS_ORDER.filter(c => F.some(f => f.cls === c));
   const findingRules = uniq(F.map(f => f.rule));

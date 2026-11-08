@@ -41,39 +41,49 @@ export interface LinuxEnvironmentDeps {
   now?: () => number;
 }
 
+/** The setup check's accessibility read, and Check again's look for pyatspi (accessibilityProbe). */
+export interface AccessibilityProbe {
+  (fresh?: boolean): { enabled: boolean | null; pyatspi: boolean };
+  /**
+   * Check again (first-run-6): a missing pyatspi is looked for now, in the background, not only every 30 s; resolves
+   * once the look under way has its answer (at once when pyatspi is there or there is no background look), so the
+   * caller waits off the main thread (reliability-performance-r2: the import, waited for in the read, froze Ember).
+   */
+  again(): Promise<void>;
+}
+
 /**
  * Is the GNOME accessibility switch on, and can the sidecar's Python import pyatspi? (One instance remembers pyatspi.)
  * With `run`, pyatspi is looked for in the background (rp-1): once as the probe is made (Ember starting, so the first
- * read usually has the answer), and again every 30 s while it is missing, a read returning what is known meanwhile.
- * Only a first read that comes before that answer imports it itself, as before, so the setup check (and `ember
- * doctor`) never shows a guess. `fresh`: the user asked to check again, so a missing pyatspi is looked for now, and
- * waited for, not only every 30 s.
+ * read usually has the answer), and again every 30 s while it is missing, or at once on `again()`, a read returning
+ * what is known meanwhile. Only a first read that comes before that answer imports it itself, as before, so the setup
+ * check (and `ember doctor`) never shows a guess. `fresh`: the user asked to check again; without `run` a missing
+ * pyatspi is then looked for now, and waited for (with `run`, `again()` looks and is waited for instead).
  */
-export function accessibilityProbe(d: { env: NodeJS.ProcessEnv; exec?: ExecSync; run?: ExecAsync; now?: () => number }): (fresh?: boolean) => { enabled: boolean | null; pyatspi: boolean } {
+export function accessibilityProbe(d: { env: NodeJS.ProcessEnv; exec?: ExecSync; run?: ExecAsync; now?: () => number }): AccessibilityProbe {
   const exec = d.exec ?? execSync;
   const now = d.now ?? Date.now;
   let pyatspiPresent: boolean | null = null;
   let pyatspiProbed = 0;
-  let looking = false;
+  let looking: Promise<void> | null = null;
   const lookLater = (run: ExecAsync) => {
-    looking = true;
     pyatspiProbed = now();
-    void run(pickPython(d.env), ["-c", "import pyatspi"], { timeout: 5000 }).then(() => true, () => false).then(found => {
-      looking = false;
+    const look = looking = run(pickPython(d.env), ["-c", "import pyatspi"], { timeout: 5000 }).then(() => true, () => false).then(found => {
+      if (looking === look) looking = null;
       // A first read's own import may have found it meanwhile: a background look that timed out doesn't undo that.
       if (found || pyatspiPresent !== true) pyatspiPresent = found;
     });
   };
   if (d.run) lookLater(d.run);
-  return (fresh = false) => {
+  const read = (fresh = false) => {
     let enabled: boolean | null = null;
     try {
       const out = exec("gsettings", ["get", "org.gnome.desktop.interface", "toolkit-accessibility"], { encoding: "utf8", timeout: 2000 });
       enabled = out.trim() === "true";
     } catch { /* no gsettings (not GNOME) */ }
     // Asked again (at most every 30 s) while it is missing: the user may have just installed it.
-    if (d.run && pyatspiPresent === false && !fresh && !looking && now() - pyatspiProbed > 30_000) lookLater(d.run);
-    else if (pyatspiPresent === null || (!pyatspiPresent && (fresh || (!d.run && now() - pyatspiProbed > 30_000)))) {
+    if (d.run && pyatspiPresent === false && !looking && now() - pyatspiProbed > 30_000) lookLater(d.run);
+    else if (pyatspiPresent === null || (!pyatspiPresent && !d.run && (fresh || now() - pyatspiProbed > 30_000))) {
       pyatspiProbed = now();
       try {
         exec(pickPython(d.env), ["-c", "import pyatspi"], { stdio: "ignore", timeout: 5000 });
@@ -84,15 +94,24 @@ export function accessibilityProbe(d: { env: NodeJS.ProcessEnv; exec?: ExecSync;
     }
     return { enabled, pyatspi: pyatspiPresent };
   };
+  return Object.assign(read, {
+    again(): Promise<void> {
+      if (d.run && pyatspiPresent !== true && !looking) lookLater(d.run);
+      return looking ?? Promise.resolve();
+    },
+  });
 }
 
-/** SystemPlatform.environment on Linux: today's readEnvironment inputs, with the X display's state from `ctx.windows`. */
-export function linuxEnvironment(d: LinuxEnvironmentDeps): (ctx: EnvContext) => EnvInputs {
+/**
+ * SystemPlatform.environment on Linux: today's readEnvironment inputs, with the X display's state from `ctx.windows`;
+ * `again` is SystemPlatform.lookAgain (Check again's background look).
+ */
+export function linuxEnvironment(d: LinuxEnvironmentDeps): ((ctx: EnvContext) => EnvInputs) & { again(): Promise<void> } {
   const platform = d.platform ?? process.platform;
   const probeAccessibility = accessibilityProbe(d);
   const readFile = d.readFile ?? (f => fs.readFileSync(f, "utf8"));
   const report = d.report ?? (() => process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined);
-  return ctx => {
+  const read = (ctx: EnvContext): EnvInputs => {
     let osRelease: string | null = null;
     try { osRelease = readFile("/etc/os-release"); } catch { /* not Linux */ }
     const header = report()?.header;
@@ -109,4 +128,5 @@ export function linuxEnvironment(d: LinuxEnvironmentDeps): (ctx: EnvContext) => 
       shortcutsTaken: ctx.shortcutsTaken,
     };
   };
+  return Object.assign(read, { again: () => (platform === "linux" ? probeAccessibility.again() : Promise.resolve()) });
 }

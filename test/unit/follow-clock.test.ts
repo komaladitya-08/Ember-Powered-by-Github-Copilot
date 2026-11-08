@@ -36,10 +36,12 @@ describe("Ember's motion when the clock steps back (review #88)", () => {
     expect(Number.isFinite(f.step({ x: 900, y: 600 }, 0.016).x)).toBe(true);
   });
 
-  it("the overlay measures a frame's time on a monotonic clock, not the wall clock", () => {
+  it("the overlay measures a frame's time, and how long since anything moved, on a monotonic clock, not the wall clock (reliability-performance-c1-2)", () => {
     const src = fs.readFileSync(path.resolve("app/main/overlay.ts"), "utf8");
     const tick = /private tick\(\): void \{([\s\S]*?)\n {2}\}/.exec(src)![1];
-    expect(tick).toMatch(/const dt = \(mono - this\.last\) \/ 1000;/);
-    expect(tick).toMatch(/const mono = performance\.now\(\);/);
+    expect(tick).toMatch(/const dt = \(now - this\.last\) \/ 1000;/);
+    expect(tick).toMatch(/const now = performance\.now\(\);/);
+    expect(tick).not.toMatch(/Date\.now\(\)/);
+    expect(src).toContain("this.gap = tickGap(performance.now() - this.movedAt);");
   });
 });

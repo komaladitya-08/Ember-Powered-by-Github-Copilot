@@ -65,7 +65,7 @@ export class OverlayManager {
   /** The loop runs (start() to stop()), at the gap it waits now; `movedAt`: when something last moved (tickGap). */
   private running = false;
   private gap = FAST_TICK_MS;
-  private movedAt = Date.now();
+  private movedAt = performance.now();
   private topTimer: NodeJS.Timeout | null = null;
   private last = performance.now();
   private hidden = false;
@@ -232,7 +232,7 @@ export class OverlayManager {
     for (const o of this.overlays.values()) this.applyHits(o);
   }
 
-  private lastHandleCheck = 0;
+  private lastHandleCheck = -Infinity;
   private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; on: number; at: number } | null = null;
 
   getState(): EmberState {
@@ -314,7 +314,7 @@ export class OverlayManager {
   /** Called by IPC when a renderer reports where its clickable parts are. */
   pointerHeld(sender: Electron.WebContents, held: boolean): void {
     for (const o of this.overlays.values()) if (o.win.webContents === sender) {
-      o.pointerUntil = held && !this.hidden && !this.borrowing ? Date.now() + 30_000 : 0;
+      o.pointerUntil = held && !this.hidden && !this.borrowing ? performance.now() + 30_000 : 0;
       if (o.pointerUntil && !o.shaped) { o.clickThrough = false; o.win.setIgnoreMouseEvents(false); }
     }
   }
@@ -457,7 +457,7 @@ export class OverlayManager {
       this.tick();
     } finally {
       if (this.running) {
-        this.gap = tickGap(Date.now() - this.movedAt);
+        this.gap = tickGap(performance.now() - this.movedAt);
         this.timer = setTimeout(this.loop, this.gap);
       }
     }
@@ -465,7 +465,7 @@ export class OverlayManager {
 
   /** Something changed (the state, the window Ember steps aside for, a park): back to 60 Hz now, not at the next slow tick. */
   private wake(): void {
-    this.movedAt = Date.now();
+    this.movedAt = performance.now();
     if (!this.running || this.gap === FAST_TICK_MS || !this.timer) return;
     clearTimeout(this.timer);
     this.gap = FAST_TICK_MS;
@@ -481,11 +481,12 @@ export class OverlayManager {
   }
 
   private tick(): void {
-    const now = Date.now();
-    // A frame's time on a monotonic clock: the wall clock steps after a resume or an NTP sync (review #88).
-    const mono = performance.now();
-    const dt = (mono - this.last) / 1000;
-    this.last = mono;
+    // A frame's times on a monotonic clock: the wall clock steps after a resume or an NTP sync (review #88), and a
+    // step back held the loop at 60 Hz, and its heartbeat and handle check off, for as long as the step
+    // (reliability-performance-c1-2).
+    const now = performance.now();
+    const dt = (now - this.last) / 1000;
+    this.last = now;
     if (now - this.lastHandleCheck > 1000) { this.lastHandleCheck = now; this.checkHandle(); }
     const cursor = this.cursor();
     const display = screen.getDisplayNearestPoint(cursor);

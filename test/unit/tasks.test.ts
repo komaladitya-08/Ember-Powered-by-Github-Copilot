@@ -626,6 +626,41 @@ describe("a task whose question went unanswered while the user was away (tasks-a
     } finally { vi.useRealTimers(); }
   });
 
+  it("goes at once with Stop everything, as a failure's card does, and leaves a stopped or finished one (tasks-approvals-r1)", async () => {
+    vi.useFakeTimers();
+    try {
+      const results: WorkerResult[] = [EXPIRED, { success: false, summary: "It broke." }, { success: false, stopped: true, declined: true, summary: "You said not now, so I left it." }];
+      let n = 0;
+      const { tm } = manager(() => { const r = results[n++]; return fakeWorker(async () => r); });
+      const expired = tm.start("a", { userWords: "a" }), failed = tm.start("b", { userWords: "b" });
+      await vi.advanceTimersByTimeAsync(10);
+      const declined = tm.start("c", { userWords: "c" });
+      await vi.advanceTimersByTimeAsync(10);
+      tm.dismissFailures();
+      expect([expired, failed, declined].map(t => !!tm.get(t.id))).toEqual([false, false, true]);
+      // Gone, so nothing is left to try again from its card.
+      expect(tm.canRetry(expired.id)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("says no answer came in time, on its card, in Home and in its last row, never that it was stopped (tasks-approvals-r1, tasks-approvals-c1-2)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { tm, cards } = manager(() => fakeWorker(async () => EXPIRED));
+      tm.start("Send the Q3 report to Priya", { userWords: "send the Q3 report to Priya" });
+      await vi.advanceTimersByTimeAsync(10);
+      const { STATUS_WORDS } = await import("../../app/shared/activity");
+      const { cardLines } = await import("../../app/renderer/overlay/stack");
+      const card = cards.at(-1)![0];
+      expect(card).toMatchObject({ status: "stopped", unanswered: true });
+      expect(cardLines(card).tele?.state).toBe(STATUS_WORDS.unanswered);
+      const entry = tm.activities()[0];
+      expect(entry).toMatchObject({ status: "stopped", unanswered: true, controls: { retry: true } });
+      expect(entry.activity.items.at(-1)).toMatchObject({ kind: "result", state: "stopped", words: STATUS_WORDS.unanswered });
+      expect(STATUS_WORDS.unanswered).toBe("No answer in time");
+    } finally { vi.useRealTimers(); }
+  });
+
   it("is notified while the user is away, as a task that couldn't finish is, but a task they stopped isn't (tasks-approvals-4)", async () => {
     const { taskNotice } = await import("../../app/main/agent/tasks");
     expect(taskNotice({ title: "Send the report", status: "cancelled", endedBy: "expired", summary: EXPIRED.summary }))

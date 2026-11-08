@@ -177,7 +177,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - the desk bar is 30px;
   - the handle pill is 200×56, and the hidden-Ember tab 56×56;
   - the no-compositor corner card is 360 wide, 120–360 tall to fit its content, and up to 640 (inside the work area, less 12 above and below) while a question or anything else that needs you shows, so its sentence shows whole at every text size (`cardMax()` in handle.ts);
-  - the command window is 760×480, and the prompt window `PROMPT_SIZE` (app/main/remote/prompt-window.ts).
+  - the command window is 760×480, and the prompt window `PROMPT_SIZE` (app/main/remote/prompt-window.ts): an SSH question longer than the small card shows (a two-factor menu) is 18px taller a quoted line, up to the consent card's height (`promptSizeOf`).
 
   All but the corner card grow with the text size (`scaledSize` and `forText` in main, kept inside the work area); the card grows with what it holds instead.
 

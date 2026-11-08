@@ -518,8 +518,18 @@ export interface AppLifecycle {
   readonly appMenu: boolean;
   /** darwin: reopening Ember.app (Dock, Finder) emits "activate", not "second-instance": main shows settings then. */
   readonly reopenShowsSettings: boolean;
-  /** How the OS ends the session without will-quit (G10): win32 "session-end" on Ember's windows; darwin powerMonitor "shutdown"; linux null. */
-  readonly sessionEnd: "window-session-end" | "power-monitor-shutdown" | null;
+  /**
+   * How the OS ends the session without will-quit (G10): win32 "session-end" on Ember's windows; darwin powerMonitor
+   * "shutdown"; linux "display-gone": a GNOME on Xorg logout ends the X server, Chromium ends its run loop by itself
+   * and Electron says "quit" with no will-quit before it (reliability-performance-r1).
+   */
+  readonly sessionEnd: "window-session-end" | "power-monitor-shutdown" | "display-gone" | null;
+  /**
+   * linux: tells `ended` once, synchronously, when the X connection breaks before Electron can quit (Xlib's IO error
+   * handler: x11.ts watchDisplayGone); `ended` must not touch the display. Returns what stops the watch (as Ember
+   * quits), or null when it can't be set up. Absent elsewhere.
+   */
+  watchDisplay?(ended: () => void): (() => void) | null;
   /**
    * Before one of Ember's own normal windows takes the keyboard (settings, bringToFront) and before a dialog with no
    * parent window (G15): darwin app.focus({ steal: true }) (a hotkey doesn't activate Ember otherwise); linux/win32:
@@ -573,6 +583,11 @@ export interface SystemPlatform {
   readonly chromiumSwitches: readonly string[];
   /** Inputs for inspectEnvironment. Cheap: getStatus calls it on every settings-window status request. */
   environment(ctx: EnvContext): EnvInputs;
+  /**
+   * Check again (first-run-6): a probe that waits between tries looks now, off the main thread, and this resolves once
+   * it has its answer (reliability-performance-r2). linux: pyatspi's import, in the background; absent elsewhere.
+   */
+  lookAgain?(): Promise<void>;
   readonly fixes: { readonly ids: readonly FixId[]; apply(fix: FixId): Promise<void>; label(fix: FixId): string };
   doctorProbes(): Promise<PlatformDoctorProbes>;
   readonly a11y: A11yProbes;

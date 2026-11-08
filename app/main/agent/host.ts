@@ -15,7 +15,7 @@ import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { BubbleOwner, LOST_RECONNECTING, Presenter, noAnswer, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
+import { BubbleOwner, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, noAnswer, plainText, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
 import { providerDown, type ActiveProvider, type TestResult } from "../provider";
 import { keyNeeded } from "../../shared/provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
@@ -24,7 +24,7 @@ import type { Logger } from "../logger";
 import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
-import { TaskManager, taskOutcome, titleOf, type StopCause, type Task, type WorkerLike } from "./tasks";
+import { TaskManager, taskOutcome, titleOf, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
 import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
@@ -838,6 +838,10 @@ const asks = (s: string) => /[?？](?=\s|$)/.test(s);
 const questionOf = (s: string) => s.split(/\n\s*\n/).filter(asks).join("\n\n").trim();
 /** Words that say no, or not that ("not now", "something else", "later", "no thanks"): such a reply agrees to nothing. */
 const NOT_AGREEING = /^(no|nope|nah|not|neither|nor|none|nothing|never|don['’]t|dont|cancel|stop|wait|later|else|other|instead|skip|hold|thanks|thank)$/i;
+/** A task's result offering to try again ("Want me to try again?"): a yes to it asks for that task again (tasks-approvals-c1-3). */
+const OFFERS_RETRY = /\b(?:try (?:it |that )?(?:again|once more)|another (?:go|try)|retry)\b/i;
+/** A short question of the user's about what just happened ("why didn't it work?", "what went wrong"). */
+const ASKS_WHAT_HAPPENED = /^(?:(?:hey|ok|okay|so|and|but)[,\s]+)?(?:ember[,\s]+)?(?:why|what|how|where|did|didn['’]t|was|wasn['’]t|is|isn['’]t)\b/i;
 /**
  * Does the user's reply agree to Ember's question `asked`, or answer it ("yes", "sure, go ahead", "the forecast", "the
  * second", "April")? A few words, none saying no, each an answer word, a number or a word of the question; or a name
@@ -996,7 +1000,7 @@ export class AgentHost {
    * A line of a task that may be tried again (it failed, or its question went unanswered): the user's own words it was
    * asked with (TaskManager.askedWith), which a "try again" right after it carries (tasks-approvals-1).
    */
-  private readonly retryWords = new WeakMap<TranscriptEntry, { userWords: string; commandWords?: string; typedOnly?: boolean }>();
+  private readonly retryWords = new WeakMap<TranscriptEntry, RetriedWords & { task: string }>();
   /** The conversation's presenter (kept across restarts, so a restart can tidy its bubble). */
   private readonly presenter: Presenter;
   /** Bubbles of Ember's own that are no turn's or task's (the targets runtime's), written through the shared bubble. */
@@ -1474,7 +1478,7 @@ export class AgentHost {
    * `typedOnly`: commandWords leaves out only a routine's steps, nothing heard by voice (the command card doesn't say
    * the user asked by voice).
    */
-  private userWordsOf(r: UserRequest | null, o: { routine?: boolean } = {}): { words?: string; agreed?: Agreement[]; commandWords?: string; typedOnly?: boolean } {
+  private userWordsOf(r: UserRequest | null, o: { routine?: boolean } = {}): { words?: string; agreed?: Agreement[]; commandWords?: string; typedOnly?: boolean; retried?: { task: string; partWay?: boolean } } {
     if (!r) return {};
     const said = [r.words];
     const typed = r.voiceUnchecked || r.suggested ? [] : [r.words];
@@ -1488,8 +1492,13 @@ export class AgentHost {
     // "Try again" right after a task that didn't finish: that task's own words go with it (tasks-approvals-1).
     const again = this.retriedWords(r, at);
     if (again) {
-      said.unshift(again.userWords);
-      if (typed.length) typed.unshift(again.commandWords ?? again.userWords);
+      // Ended as a sentence, so a retry asked as a question ("can you try again?") doesn't make the request it carries
+      // one too (policy reads sentences, not lines), as the turns before a reply are.
+      const ended = (w: string) => (/[.!?…]\s*$/.test(w) || !w.trim() ? w.trim() : `${w.trim()}.`);
+      said.unshift(ended(again.userWords));
+      if (typed.length) typed.unshift(ended(again.commandWords ?? again.userWords));
+      // What they agreed to for it goes too, as its card's Try again carries it (tasks-approvals-c1-3).
+      if (again.agreed) agreed.push(...again.agreed);
       at = 0;
     }
     for (let n = 0; at > 0 && n < 3; n++) {
@@ -1523,24 +1532,43 @@ export class AgentHost {
       words: said.join("\n"), ...(agreed.length ? { agreed } : {}),
       ...(left || steps ? { commandWords: typed.join("\n") } : {}),
       ...((steps || left) && !voiced ? { typedOnly: true } : {}),
+      ...(again ? { retried: { task: again.task, ...(again.partWay ? { partWay: true } : {}) } } : {}),
     };
   }
 
   /**
-   * The words of the task a bare "try again" (retryRequest) asks for again, or null (tasks-approvals-1): the line before
-   * request `r` (at `at` in the transcript; Ember's lines aside) is of a task that may be tried again (it failed, or its
-   * question went unanswered: never one the user said "Not now" to or stopped), at most ten minutes before, and the
-   * request is the user's own (not heard where Ember can't tell them from its speakers, not a suggestion). Those are
-   * the words that task was asked with, as its card's Try again carries them: never its goal, which the model wrote.
+   * The words of the task a "try again" asks for again, or null (tasks-approvals-1, -c1-3): request `r` (at `at` in the
+   * transcript) only asks to try again (retryRequest: "try again", "can you try again?", "yes, try again"), and the
+   * nearest line before it, Ember's lines aside and at most two short questions of the user's own about what happened
+   * ("why didn't it work?", naming nothing risky), is of a task that may be tried again (it failed, or its question went
+   * unanswered: never one the user said "Not now" to or stopped); or `r` agrees ("yes please") to that task's own offer
+   * to try again ("Want me to try again?") with nothing asked since. All within ten minutes, and the request is the user's own
+   * (not heard where Ember can't tell them from its speakers, not a suggestion). Those are the words that task was asked
+   * with, and what they agreed to, as its card's Try again carries them: never its goal, which the model wrote. A
+   * request of the user's own in between ends the search.
    */
-  private retriedWords(r: UserRequest, at: number): { userWords: string; commandWords?: string; typedOnly?: boolean } | null {
+  private retriedWords(r: UserRequest, at: number): (RetriedWords & { task: string }) | null {
     const log = this.transcript;
-    if (at <= 0 || r.voiceUnchecked || r.suggested || !retryRequest(r.words)) return null;
+    if (at <= 0 || r.voiceUnchecked || r.suggested) return null;
+    const retry = retryRequest(r.words);
+    const now = Date.parse(log[at].t);
     let k = at - 1;
-    while (k >= 0 && log[k].who === "ember") k--;
+    for (let asked = 0; k >= 0; k--) {
+      const e = log[k];
+      if (this.restored.has(e) || now - Date.parse(e.t) > 10 * 60_000) return null;
+      if (e.who === "ember") continue;
+      const t = e.text.trim();
+      const why = e.who === "you" && t.length <= 80 && (ASKS_WHAT_HAPPENED.test(t) || retryRequest(t)) && !isRiskyLabel(t, this.sys.os);
+      if (retry && why && asked++ < 2) continue;
+      break;
+    }
     const line = log[k];
-    if (!line || line.who !== "task" || this.restored.has(line) || Date.parse(log[at].t) - Date.parse(line.t) > 10 * 60_000) return null;
-    return this.retryWords.get(line) ?? null;
+    const words = line?.who === "task" ? this.retryWords.get(line) : undefined;
+    if (!words) return null;
+    if (retry) return words;
+    // Its offer is the last question before the yes: only Ember's lines that ask nothing lie between.
+    const offer = log.slice(k + 1, at).every(e => e.who === "ember" && !asks(e.text)) ? questionOf(this.results.get(line) ?? "") : "";
+    return offer && OFFERS_RETRY.test(offer) && agrees(r.words, offer) && !isRiskyLabel(r.words, this.sys.os) ? words : null;
   }
 
   /** A word of the answer (of the chat `chat`: a retired chat's late words are dropped). */
@@ -1609,8 +1637,28 @@ export class AgentHost {
     // Connected again: a notice saying why Ember couldn't answer no longer holds (one still up goes).
     if (this.status.phase === "ready" && this.unreachable !== null) { this.presenter.withdraw(this.unreachable); this.unreachable = null; }
     // Connected again after the runtime stopped: a bubble still saying it is reconnecting says it is back (rp-6).
-    if (this.status.phase === "ready" && this.reconnectingShown) { this.reconnectingShown = false; this.presenter.reconnected(LOST_RECONNECTING); }
+    if (this.status.phase === "ready" && this.reconnectingShown) {
+      this.reconnectingShown = false;
+      this.presenter.reconnected(LOST_RECONNECTING);
+      this.problemReconnected();
+    }
     this.o.onStatus(this.status);
+  }
+
+  /**
+   * Connected again after the runtime stopped: the conversation's line that said Ember was reconnecting says it is back
+   * (reliability-performance-c1-1: Home kept "ask me again in a moment" for good, under its own "Connected.").
+   */
+  private problemReconnected(): void {
+    const said = retainedConversationText(LOST_RECONNECTING).text;
+    const at = this.transcript.findLastIndex(e => e.who === "problem" && e.text === said);
+    if (at < 0) return;
+    const was = this.transcript[at];
+    const now = { ...was, ...retainedConversationText(LOST_RECONNECTED) };
+    this.transcript[at] = now;
+    if (this.unsaved.has(was)) this.unsaved.add(now);
+    this.o.onTranscript?.(this.getTranscript());
+    this.saveHistory();
   }
 
   /**
@@ -1863,7 +1911,7 @@ export class AgentHost {
           const said = this.underGen(hg, () => this.remember("task", view ? `${text}\n${view}` : text));
           if (summary) this.results.set(said, summary);
           const asked = tasks?.askedWith(task.id);
-          if (asked && !why) this.retryWords.set(said, asked);
+          if (asked && !why) this.retryWords.set(said, { ...asked, task: task.id });
           // Memory learns from what a finished task found (source `task`: context, never the user's word).
           if (this.memoryOn && task.status === "done" && summary && !why) this.o.memory?.taskDone?.(task.title, view ? `${summary}\n${view}` : summary);
           // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).
@@ -2061,7 +2109,11 @@ export class AgentHost {
             target: this.contextFor(r, binding), userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined,
             ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}), ...(said.typedOnly ? { typedOnly: true } : {}),
             ...(binding ? { targetId: binding.id } : {}), ...(where ? { where } : {}),
+            // A "try again" of a task that did part of the work: the new worker is told so, as its card's Try again does.
+            ...(said.retried?.partWay ? { partWay: true } : {}),
           });
+          // That task's card goes, as its Try again's does: a press of it can't start a second attempt (tasks-approvals-r2).
+          if (said.retried) tasks.dismiss(said.retried.task);
           if (binding) this.taskBindings.set(t.id, binding);
           // Asked for in the owner's verified voice: its own questions may take a short spoken yes (owner decision of
           // 2026-11-03; voice-answer.ts TaskVoiceTrust).
@@ -2281,12 +2333,13 @@ export class AgentHost {
     if (this.health) clearInterval(this.health);
     const every = this.o.healthMs ?? 20_000;
     let checking = false;
-    let last = Date.now();
+    // A monotonic clock: a wall clock set back an hour stopped checks at rest for that hour (reliability-performance-c1-2).
+    let last = performance.now();
     // Ticks at the busy cadence; at rest a tick pings only once `every` has passed since the last ping.
     this.health = setInterval(() => {
       if (gen !== this.gen || checking) return;
-      if (!this.underWay() && Date.now() - last < every) return;
-      last = Date.now();
+      if (!this.underWay() && performance.now() - last < every) return;
+      last = performance.now();
       checking = true;
       void within(client.ping("ember"), Math.min(10_000, Math.max(2000, every)))
         .then(r => { if (r === "timeout") this.lost(gen, "health check timed out"); }, () => this.lost(gen, "health check"))

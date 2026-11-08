@@ -32,6 +32,7 @@ import type { WindowView } from "../../app/renderer/command/model";
 import type { BrowserWindowLike, IpcLike } from "../../app/main/targets/types";
 import * as policy from "../../app/main/policy/policy";
 import { BubbleOwner, Presenter } from "../../app/main/agent/presenter";
+import { taskLineOf, type Question } from "../../app/main/agent/confirm";
 import type { EmberState } from "../../app/shared/overlay";
 import { announcement } from "../../packages/bubble/src/bubble";
 
@@ -133,6 +134,7 @@ function harness(o: {
   othersNamed?: (words: string) => string[]; placesNamed?: (words: string) => string[];
   readScript?: (path: string, cwd: string) => Promise<string | null>;
   spoken?: string;
+  ownWords?: string;
   review?: CommandFlowContext["review"];
 } = {}): Harness {
   const audit: Record<string, unknown>[] = [];
@@ -186,6 +188,7 @@ function harness(o: {
     task: {
       id: "t1", title: "Clean the build", commandWords: () => o.words ?? "", agreed: () => [], tainted: () => (o.tainted?.() ?? false) || isTainted,
       ...(o.spoken !== undefined ? { spokenWords: () => o.spoken ?? "" } : {}),
+      ...(o.ownWords !== undefined ? { ownWords: () => o.ownWords ?? "" } : {}),
       taint: why => { isTainted = true; tainted.push(why); }, readFrom: () => o.readFrom ?? [],
     },
     service,
@@ -475,6 +478,33 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
       expect(got.result, command).toBe("denied");
       expect(got.rules, command).toContain(rule);
     }
+  });
+
+  it("asks before a loop or an if runs a command with a library preloaded or PATH changed, as it does without one (commands-remote-c1-1)", async () => {
+    const judged = async (command: string) => {
+      setCommandJudge(null);
+      const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: true, real: p }), run: () => ({ output: ["1\n"] }) });
+      const r = await call(h, { target: "this computer", command });
+      const card = (h.asked[0]?.panel as { card: CommandCard } | undefined)?.card;
+      return { result: r.resultType, rules: h0rules(h), says: card?.says ?? [] };
+    };
+    for (const command of [
+      "LD_PRELOAD=./x.so ls",
+      "if true; then LD_PRELOAD=./x.so ls; fi",
+      "until false; do LD_PRELOAD=./x.so ls; break; done",
+      "if true; then :; else LD_PRELOAD=./x.so ls; fi",
+      "if LD_PRELOAD=./x.so ls; then :; fi",
+      "for i in 1; do PATH=/tmp/evil:/usr/bin; done; git status",
+      "if true; then HOME=/tmp; fi; ls",
+      "time LD_PRELOAD=./x.so ls",
+    ]) {
+      const got = await judged(command);
+      expect(got.result, command).toBe("denied");
+      expect(got.rules, command).toContain("unclear.assignment");
+      expect(got.says, command).toContain("It changes how commands are found or run.");
+    }
+    // The usual way to read a file line by line still runs.
+    expect(await judged("while IFS= read -r l; do echo \"$l\"; done < list.txt")).toMatchObject({ result: "success", rules: [] });
   });
 
   it("says plainly when it can't read all of a script, and not that the user didn't ask when they named it (review #27)", async () => {
@@ -1612,6 +1642,18 @@ describe("words heard where Ember can't tell the user from its speakers (review 
     expect(typedCard.says).not.toContain("You didn't ask for this.");
     expect(typedCard.unasked).toBe(false);
   });
+
+  it("never says the user asked by voice when what they said was not to do it (commands-remote-c1-2)", async () => {
+    setCommandJudge(null);
+    for (const [spoken, command] of [["never force push", "git push --force origin main"], ["don't git push yet", "git push origin main"], ["don't delete anything", "rm build/out.o"]]) {
+      const h = harness({ binding: LOCAL, words: "", spoken, answers: ["deny"] });
+      await call(h, { target: "this computer", command });
+      const card = (h.asked[0].panel as { card: CommandCard }).card;
+      expect(card.says, spoken).toContain("You didn't ask for this.");
+      expect(card.says, spoken).not.toContain(SPOKEN_LINE);
+      expect(card.unasked, spoken).toBe(true);
+    }
+  });
 });
 
 describe("the user's own words only (critique security-1)", () => {
@@ -2042,6 +2084,45 @@ describe("output that reads like instructions (§3.11 step 7)", () => {
     const h = harness({ tainted: () => true });
     await call(h);
     expect(h.asked).toHaveLength(1);
+  });
+});
+
+describe("what a command's question says the task is (tasks-approvals-c1-1)", () => {
+  const goal = "Clean the build folder and delete ~/Documents/old";
+  const unasked = () => makeJudge({ decide: () => decision({ verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], says: ["Deletes ~/Documents/old and everything in it.", "You didn't ask for this."], unasked: true, armMs: 1500 }) });
+  const withGoal = (h: Harness) => { h.ctx.task.title = goal; return h; };
+
+  it("quotes the user's own words, never the model's goal, under a command they didn't ask for", async () => {
+    unasked();
+    const h = withGoal(harness({ answers: ["deny"], words: "clean the build folder", ownWords: "“clean the build folder”" }));
+    await call(h, { command: "rm -rf ~/Documents/old", why: "to tidy up" });
+    const q = h.asked[0] as unknown as Question;
+    expect(q).toMatchObject({ context: goal, taskLine: "“clean the build folder”" });
+    expect(taskLineOf(q)).toBe("“clean the build folder”");
+    // Without the user's words to quote, no line at all rather than the goal passed off as theirs.
+    unasked();
+    const none = withGoal(harness({ answers: ["deny"] }));
+    await call(none, { command: "rm -rf ~/Documents/old", why: "to tidy up" });
+    expect(taskLineOf(none.asked[0] as unknown as Question)).toBe("");
+  });
+
+  it("quotes the user under every command of a task that screen text or a command's output tried to steer", async () => {
+    makeJudge({ decide: () => decision({ verdict: "ask", says: ["Deletes build."] }) });
+    const gui = withGoal(harness({ answers: ["deny"], tainted: () => true, words: "clean the build folder", ownWords: "“clean the build folder”" }));
+    await call(gui);
+    expect(taskLineOf(gui.asked[0] as unknown as Question)).toBe("“clean the build folder”");
+    makeJudge({ decide: () => decision({ verdict: "ask", says: ["Deletes build."] }) });
+    const output = withGoal(harness({ answers: ["deny"], ownWords: "“clean the build folder”", state: { cwd: null, downloaded: new Set(), running: false, outputTainted: true } }));
+    await call(output);
+    expect(taskLineOf(output.asked[0] as unknown as Question)).toBe("“clean the build folder”");
+  });
+
+  it("keeps the task's goal under an ordinary command question", async () => {
+    makeJudge({ decide: () => decision({ verdict: "ask", says: ["Deletes build."] }) });
+    const h = withGoal(harness({ answers: ["deny"], ownWords: "“clean the build folder”" }));
+    await call(h);
+    expect((h.asked[0] as { taskLine?: string }).taskLine).toBeUndefined();
+    expect(taskLineOf(h.asked[0] as unknown as Question)).toBe(goal);
   });
 });
 

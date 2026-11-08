@@ -9,7 +9,7 @@
  * (remote-capture.ts). Every position is the remote's own: the PC never flies to it. Plain Node (sharp loads lazily, PC only).
  */
 
-import { describeText, openWindowLines, openWindowsBlock, perceivedText, quickContextText, type OpenWindow, type Perceived, type QuickContext, type Seen, type WindowTarget } from "../perception";
+import { describeText, openWindowsBlock, perceivedText, quickContextText, type OpenWindow, type Perceived, type QuickContext, type Seen, type WindowTarget } from "../perception";
 import { insideSecrets, isNeverLook, secretIds, withheldIds } from "../perception/elements";
 import { isSecurityWindow } from "../policy/policy";
 import { PLATFORM_WORDS } from "../../shared/words";
@@ -191,8 +191,8 @@ export function createRemotePerception(link: RemoteLink, o: RemotePerceptionOpti
       } catch {
         return null;
       }
-      const title = seen.window?.name || seen.x11Window?.title || "";
-      const ctx = quickContextText(seen, seen.blocked || !title ? [] : openWindowLines(await openLines()));
+      // Only the window the user is in, as this screen's (safety-privacy-r2): describe_screen lists the others.
+      const ctx = quickContextText(seen, []);
       return ctx && { ...ctx, targetId: o.targetId };
     },
 

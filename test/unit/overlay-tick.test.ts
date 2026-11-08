@@ -67,6 +67,17 @@ describe("the main process's frame loop", () => {
     stop();
   });
 
+  it("stays at about 10 a second at rest when the clock is set back an hour, not 60 until the pointer moves (reliability-performance-c1-2)", async () => {
+    const { over, move, stop } = await manager();
+    move(400, 300);
+    await over(15_000);
+    // Everything is still; then the wall clock steps back (a resume with a clock that was ahead, a VM snapshot restored).
+    vi.setSystemTime(Date.now() - 3_600_000);
+    await over(2500);
+    expect(await over(1000)).toBeLessThanOrEqual(11);
+    stop();
+  });
+
   it("goes back to 60 a second at once when the state changes, so a question's Ember stops where it is (rp-7)", async () => {
     const { m, over, stop } = await manager();
     await over(15_000);

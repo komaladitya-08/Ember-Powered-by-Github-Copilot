@@ -193,8 +193,11 @@ export function catchUpReply(tasks: readonly Task[], now: number): string {
   return `${head} ${lines.join(" ")}${more ? ` And ${more} more.` : ""}${still}`;
 }
 
-/** "Try again", "one more time", "have another go", with "please" or the name about them: nothing more. */
-const RETRY_RE = new RegExp(String.raw`^${LEAD}(?:please[,\s]+)?(?:(?:try|do) (?:it |that )?again|retry(?: it| that)?|again|one more time|(?:have|give it) another (?:go|try))(?:[,\s]+please)?${TAIL}$`, "i");
+/**
+ * "Try again", "one more time", "have another go", with "please" or the name about them, asked ("can you try again?")
+ * or agreed to ("yes, try again"; tasks-approvals-c1-3): nothing more.
+ */
+const RETRY_RE = new RegExp(String.raw`^${LEAD}(?:(?:yes|yeah|yep|sure|alright|all right)[,\s]+)?(?:please[,\s]+)?(?:(?:can|could|would|will) you[,\s]+(?:please[,\s]+)?)?(?:(?:try|do) (?:it |that )?(?:again|once more)|retry(?: it| that)?|again|once more|one more time|(?:have|give it) another (?:go|try))(?:[,\s]+please)?${TAIL}$`, "i");
 
 /**
  * Whether `text` only asks Ember to try again (tasks-approvals-1): after a task that didn't finish, the user means that
@@ -205,8 +208,11 @@ export function retryRequest(text: string): boolean {
   return !!t && t.length <= 40 && RETRY_RE.test(t);
 }
 
-/** "Stop", "stop everything", "cancel that", with "please" or the name about them: a stop of everything, nothing more. */
-const STOP_RE = new RegExp(String.raw`^${LEAD}(?:please[,\s]+)?(?:stop|cancel)(?: (?:it|that|this|everything|all(?: (?:the )?tasks)?|(?:the |my )?tasks?))?(?:[,\s]+please)?${TAIL}$`, "i");
+/**
+ * "Stop", "stop everything", "cancel that", "stop typing", "abort", "no, stop", with "please" or the name about them: a
+ * stop of everything, nothing more (never "stop the music", "abort the merge" or "forget that", a memory request).
+ */
+const STOP_RE = new RegExp(String.raw`^${LEAD}(?:(?:no|wait|oh)[,\s]+)?(?:please[,\s]+)?(?:stop|cancel|abort|halt)(?:[,\s]+(?:stop|cancel))?(?: (?:it|that|this|everything|all(?: (?:the )?tasks)?|(?:the |my )?tasks?|typing|working|clicking|doing (?:it|that|this)|what you(?:'re| are) doing))?(?:[,\s]+please)?${TAIL}$`, "i");
 
 /**
  * Whether typed `text` asks Ember to stop everything (tasks-approvals-v2): while a task is at work the host stops it at

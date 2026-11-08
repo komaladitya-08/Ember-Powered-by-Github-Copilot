@@ -35,15 +35,15 @@ import {
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
-import { modelDestination, recipientWords } from "./copy";
-import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText } from "./copy";
+import { modelDestination, privacyFoldWords, recipientWords } from "./copy";
+import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
 import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
 import { checkState, fixCommand, recheckMessage } from "./welcome-copy";
 import { holdsBack } from "../../shared/setup-attention";
 import { mountNaturalVoice } from "./natural-voice";
-import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
+import { keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { startTasks } from "./tasks";
@@ -57,6 +57,7 @@ import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
 import { mountMemoryCorrection } from "./memory-correction";
 import { MEMORY_PAGE_SIZE, MEMORY_SOURCES, memoryPage } from "./memory-view";
+import { homeFrameGap } from "./frame-gap";
 import type { TaskEntry } from "../../shared/activity";
 
 declare global {
@@ -540,6 +541,8 @@ let confirmEvery = false;
 let adminNeverLook = new Set<string>();
 /** The data list's "When you ask something" line as the page writes it, put back once Ember isn't locked down. */
 let sendAsWritten: Node[] | null = null;
+/** The data list's microphone line as the page wrote it (its conversation sentence changes while locked down). */
+let micAsWritten: Node[] | null = null;
 let lastAdmin: Status["admin"] | null = null;
 /**
  * Names where requests actually go (copy.ts modelDestination) in the data list's "When you ask something" line and in
@@ -594,6 +597,16 @@ function renderAdmin(a: Status["admin"]): void {
     sendAsWritten ??= [...send.childNodes].map(n => n.cloneNode(true));
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
+  // And what a conversation sends is said as nothing sent, not as going to "no model service (…)" (safety-privacy-r4).
+  const mic = document.querySelector<HTMLElement>("#w-full li[data-icon='mic']");
+  if (mic) {
+    micAsWritten ??= [...mic.childNodes].map(n => n.cloneNode(true));
+    mic.replaceChildren(...micAsWritten.map(n => n.cloneNode(true)));
+    const to = mic.querySelector(".model-recipient");
+    const [before, after] = [to?.previousSibling, to?.nextSibling];
+    const words = to && before?.nodeType === Node.TEXT_NODE && after?.nodeType === Node.TEXT_NODE ? lockdownMicWords(a, before.textContent ?? "", after.textContent ?? "") : null;
+    if (to && before && after && words) { before.textContent = words[0]; after.textContent = words[1]; to.remove(); }
+  }
   lastAdmin = a;
   if (agent) renderAgent(agent);
   renderRecipient();
@@ -623,10 +636,13 @@ let activityWanted = ACTIVITY_ENTRIES;
 let linesShown = ACTIVITY_LINES;
 /** A read that failed (home-10): what was shown stays, with a line that says so. */
 let activityFailed = false;
-async function refreshActivity(): Promise<void> {
+/** `deep`: read all that is wanted (Show earlier); else only the newest page, with what was read before kept behind it. */
+async function refreshActivity(deep = false): Promise<void> {
   let entries: ActivityEntry[];
   try {
-    entries = await window.ember.activity(activityWanted);
+    const fresh = await window.ember.activity(deep ? activityWanted : ACTIVITY_ENTRIES);
+    entries = deep || activityWanted <= ACTIVITY_ENTRIES ? fresh
+      : withEarlier(fresh, activityRead, ACTIVITY_ENTRIES, activityWanted) ?? await window.ember.activity(activityWanted);
   } catch {
     // Never an empty list for a failed read: "Nothing yet" would say Ember did nothing, and Today would reset.
     if (!activityFailed) { activityFailed = true; drawActivity(); }
@@ -699,7 +715,7 @@ async function showEarlier(): Promise<void> {
   if (activityLines(activityRead, entryWords(platform)).length < linesShown && activityMore()) {
     activityWanted = Math.min(activityWanted + ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES);
     shownActivity = "";
-    await refreshActivity();
+    await refreshActivity(true);
   } else drawActivity();
   const row = $("activity").querySelector<HTMLElement>(`li[data-line="${first}"]`);
   if (row) { row.tabIndex = -1; row.focus(); }
@@ -733,6 +749,7 @@ function drawSoon(gap = 0): void {
 }
 window.addEventListener("pointermove", e => { pointer = { x: e.clientX, y: e.clientY }; looking = true; drawSoon(); });
 document.addEventListener("visibilitychange", () => drawSoon());
+window.addEventListener("focus", () => drawSoon());
 window.ember.onVisibility(shown => {
   windowShown = shown;
   if (shown) { void refreshActivity(); drawSoon(); }
@@ -780,8 +797,10 @@ function frame(now: number): void {
   for (const c of cards) if (onScreen.has(c.canvas)) { paint(c.canvas, c.rig, c.character, dt, 175); drawn.push(c.rig); }
   const motion = looking || drawn.some(r => r.motion === "brisk") ? 0 : drawn.some(r => r.motion === "gentle") ? 1 : 2;
   looking = false;
-  // In a window the user isn't working in (behind another, or minimised: X11 doesn't always say hidden), less often.
-  const gap = (document.hasFocus() ? [0, 33, 66] : [33, 66, 110])[motion];
+  // In a window the user isn't working in (behind another, or minimised: X11 doesn't always say hidden), less often,
+  // and a still face not until something changes: the focus coming back (below), the pointer, the window showing (rp-4).
+  const gap = homeFrameGap(motion, document.hasFocus());
+  if (gap === null) return;
   // Every face shown awake at rest, Ready: about 6 frames a second, waking for the next blink (rp-4).
   const rest = motion === 2 && drawn.length ? Math.min(...drawn.map(r => restingGap(r, gap))) : gap;
   if (rest > gap) planned = rest;
@@ -1891,6 +1910,12 @@ function syncPrivacyTerms(): void {
   if (!source) return;
   const copy = source.cloneNode(true) as HTMLElement;
   for (const el of [copy, ...copy.querySelectorAll("[id]")]) el.removeAttribute("id");
+  // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4).
+  const walk = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);
+  for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+    const words = privacyFoldWords(t.textContent ?? "", { screenImages: settings?.screenImages !== false });
+    if (words !== t.textContent) t.textContent = words;
+  }
   copy.setAttribute("aria-label", "What Ember reads, sends and keeps");
   $("privacy-terms").replaceChildren(copy);
 }
@@ -2114,6 +2139,8 @@ $("screen-images").addEventListener("change", e => { void save({ screenImages: (
 function renderPrivacy(s: Settings): void {
   renderTrust(s);
   ($("screen-images") as HTMLInputElement).checked = s.screenImages;
+  // The copy of the consent says whether screenshots are off (safety-privacy-r4).
+  if (($("privacy-terms-fold") as HTMLDetailsElement).open) syncPrivacyTerms();
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).
   const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), confirmEvery, [...adminNeverLook]]);
   if (key === privacyKey) return;
