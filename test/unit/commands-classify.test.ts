@@ -543,6 +543,16 @@ describe("the card's words from the classifier (review #214)", () => {
     // Where it is still the folder the card starts in, or the one above it, it says so.
     expect(says("cd sub && find .. -name '*.log' -delete")).toEqual(["Deletes what it finds under the current folder."]);
     expect(says("cd ~ && git checkout .")).toEqual(["Throws away changes to the folder above the current one."]);
+    // rm * and an unpack after a cd work in the folder it changed to, which is named too (commands-remote-v1).
+    expect(says("cd ~/Documents && rm -rf *")).toEqual(["Deletes everything in /home/ana/Documents."]);
+    expect(says("cd ~/Documents && rm *")).toEqual(["Deletes the files in /home/ana/Documents."]);
+    expect(says("pushd build && rm -rf ./*")).toEqual(["Deletes everything in /home/ana/proj/build."]);
+    expect(says("cd build && rm -rf ../*")).toEqual(["Deletes everything in the current folder."]);
+    expect(says("cd sub && rm -rf ../../*")).toContain("Deletes everything in the folder above the current one.");
+    expect(says("cd ~/Documents && tar xf /tmp/a.tar")).toEqual(["Unpacks /tmp/a.tar over files in /home/ana/Documents."]);
+    expect(says("cd ~/Documents && unzip /tmp/a.zip")).toEqual(["Unpacks /tmp/a.zip over files in /home/ana/Documents."]);
+    expect(says("cd ~/Documents && cd ~/proj && rm -rf *")).toEqual(["Deletes everything in the current folder."]);
+    expect(says("cd \"$X\" && rm -rf *")).toContain("Deletes everything in a folder Ember can't name.");
   });
 
   it("says what removing packages, crontab -r, a reset to another commit and rm * really do (commands-remote-r1)", () => {

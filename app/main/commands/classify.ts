@@ -1893,12 +1893,7 @@ function cardWords(says: string, objects: readonly Obj[], wrappers: readonly str
     // After a cd in the same command (`cd ~ && git checkout .`), a dot folder isn't the one the card says the command
     // starts in: it is named (commands-remote-v1).
     const abs = objects.find(o => o.text === text)?.abs ?? null;
-    if (abs !== null && start !== null && /^\.\.?[\\/]*$/.test(text)) {
-      const P = os === "win32" ? win32 : posix;
-      const trim = (p: string) => (p.length > 1 ? p.replace(/[\\/]+$/, "") : p);
-      const here = trim(start);
-      shown = trim(abs) === here ? "the current folder" : trim(abs) === P.dirname(here) ? "the folder above the current one" : trim(abs);
-    }
+    if (abs !== null && start !== null && /^\.\.?[\\/]*$/.test(text)) shown = folderWords(abs, start, os);
     const esc = text.replace(/[.\\/]/g, c => `\\${c}`);
     out = out.replace(new RegExp(`(^|[\\s(])${esc}(?=[\\s,;:)]|\\.?$)`, "g"), (_m, pre: string) => `${pre}${shown}`);
   }
@@ -1908,17 +1903,42 @@ function cardWords(says: string, objects: readonly Obj[], wrappers: readonly str
   return out;
 }
 
+/**
+ * A folder as the card says it (commands-remote-v1): the one the card's header names (the start folder) as `here`,
+ * the one above it as such, any other by its path. After a cd in the same command, the folder a command works in
+ * isn't the one the header names, so "the current folder" would name the wrong one.
+ */
+function folderWords(abs: string, start: string, os: OS, here = "the current folder"): string {
+  const P = os === "win32" ? win32 : posix;
+  const trim = (p: string) => (p.length > 1 ? p.replace(/[\\/]+$/, "") : p);
+  const at = trim(start);
+  return trim(abs) === at ? here : trim(abs) === P.dirname(at) ? "the folder above the current one" : trim(abs);
+}
+/** The folder a command works in when it names none (`tar x`, `unzip`): "this folder" while it is the start folder. */
+const thisFolder = (h: H, into: Obj): string => (into.abs === null || !h.e.ctx.cwd ? "this folder" : folderWords(into.abs, h.e.ctx.cwd, h.sc.os, "this folder"));
+
 const listOf = (objs: Obj[], fallback = "files Ember can't name"): string => (objs.length ? joinList(objs.map(o => o.text || fallback)) : fallback);
 /** A bare `*` (`./*`, `build/*`): everything in a folder. */
 const STAR = /^(?:(.*?)[\\/]+)?\*$/;
 /**
  * `rm -rf *` said as what it deletes: "Deletes everything in the current folder." (without -r, the files in it), not
- * "Deletes * and everything in it." (commands-remote-r1). Null when an operand is anything else.
+ * "Deletes * and everything in it." (commands-remote-r1); after a cd, the folder it changed to by its path
+ * (commands-remote-v1). Null when an operand is anything else.
  */
-function starDeletes(objs: readonly Obj[], rec: boolean): string | null {
-  const dirs = objs.map(o => STAR.exec(o.text)?.[1]);
+function starDeletes(h: H, objs: readonly Obj[], rec: boolean): string | null {
   if (!objs.length || objs.some(o => !STAR.test(o.text))) return null;
-  const where = joinList([...new Set(dirs.map(d => shownPath(d === undefined || d === "" ? "." : d)))]);
+  const start = h.e.ctx.cwd || null;
+  const where = joinList([...new Set(objs.map(o => {
+    const d = STAR.exec(o.text)?.[1];
+    // `/*` is the top folder, never the current one.
+    if (d === "" && /^[\\/]/.test(o.text)) return o.text.slice(0, 1);
+    const dot = d === undefined || d === "" || /^\.\.?([\\/]+\.\.?)*$/.test(d);
+    if (!dot) return d;
+    const P = h.sc.os === "win32" ? win32 : posix;
+    // After `cd $X` the folder isn't known: the card's next line says so.
+    if (o.abs === null && h.sc.cwd === null) return "a folder Ember can't name";
+    return o.abs !== null && start !== null ? folderWords(P.dirname(o.abs), start, h.sc.os) : shownPath(d === undefined || d === "" ? "." : d);
+  }))]);
   return rec ? `Deletes everything in ${where}.` : `Deletes the files in ${where}.`;
 }
 const lower = (a: Arg | undefined): string | null => (a && a.v !== null ? a.v.toLowerCase() : null);
@@ -2522,7 +2542,7 @@ reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir"], h => {
   if (has(p, "no-preserve-root")) widening.push("--no-preserve-root");
   if (h.key === "rmdir" && has(p, "p", "parents")) widening.push("--parents");
   const list = listOf(objs);
-  h.e.add("destroy", `posix.${h.key}`, starDeletes(objs, rec) ?? (rec ? `Deletes ${list} and everything in ${objs.length > 1 ? "them" : "it"}.` : `Deletes ${list}.`), { objects: objs, widening });
+  h.e.add("destroy", `posix.${h.key}`, starDeletes(h, objs, rec) ?? (rec ? `Deletes ${list} and everything in ${objs.length > 1 ? "them" : "it"}.` : `Deletes ${list}.`), { objects: objs, widening });
   if (objs.some(o => o.abs !== null && /\/\.local\/share\/Trash(\/|$)/.test(o.abs))) h.e.add("destroy", "trash.empty", "Empties the trash.");
 });
 
@@ -2849,7 +2869,7 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
     const into = dir ? h.e.usePath(lit(dir), "write", h.sc) : h.e.usePath(lit("."), "write", h.sc);
     const risky = has(p, "P", "absolute-names", "overwrite", "unlink-first", "U", "recursive-unlink");
     if (risky || into.abs === null || !inWorkTree(into.abs, h.sc.path)) {
-      h.e.add("destroy", "archive.unpack", `Unpacks ${archive ?? "an archive"} over files in ${into.text === "." ? "this folder" : into.text}.`, { objects: [into] });
+      h.e.add("destroy", "archive.unpack", `Unpacks ${archive ?? "an archive"} over files in ${into.text === "." ? thisFolder(h, into) : into.text}.`, { objects: [into] });
     }
     if ((archive && h.e.isDownloaded(lit(archive), h.sc)) || (archive === "-" || !archive) && h.s.fetchBefore) if (into.abs) h.e.downloads.push(into.abs);
     objsOf(h, p.operands, "write");
@@ -2880,7 +2900,7 @@ reg(NATIVE, ["7z", "7za", "7zz", "7zr"], h => {
     if (ops[0]) h.e.usePath(ops[0], "read", h.sc);
     const into = h.e.usePath(lit(outDir || "."), "write", h.sc);
     if (sw.some(s => s === "-aoa" || s === "-y") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) {
-      h.e.add("destroy", "archive.unpack", `Unpacks ${ops[0]?.v ?? "an archive"} over files in ${outDir || "this folder"}.`, { objects: [into] });
+      h.e.add("destroy", "archive.unpack", `Unpacks ${ops[0]?.v ?? "an archive"} over files in ${outDir || thisFolder(h, into)}.`, { objects: [into] });
     }
     return;
   }
@@ -2921,7 +2941,7 @@ reg(NATIVE, ["unzip"], h => {
   if (p.operands[0]) h.e.usePath(p.operands[0], "read", h.sc);
   const into = h.e.usePath(lit(dir ?? "."), "write", h.sc);
   if (has(p, "o") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) {
-    h.e.add("destroy", "archive.unpack", `Unpacks ${p.operands[0]?.v ?? "an archive"} over files in ${dir ?? "this folder"}.`, { objects: [into] });
+    h.e.add("destroy", "archive.unpack", `Unpacks ${p.operands[0]?.v ?? "an archive"} over files in ${dir ?? thisFolder(h, into)}.`, { objects: [into] });
   }
   if (p.operands[0] && h.e.isDownloaded(p.operands[0], h.sc) && into.abs) h.e.downloads.push(into.abs);
 });
@@ -2933,7 +2953,7 @@ reg(NATIVE, ["cpio"], h => {
     // -D/--directory: the folder it unpacks into (review #169).
     const dir = values(p, "D", "directory")[0];
     const into = dir === null ? { kind: "other" as const, text: "a folder Ember can't name", abs: null } : h.e.usePath(lit(dir ?? "."), "write", h.sc);
-    if (has(p, "u", "unconditional") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) h.e.add("destroy", "archive.unpack", `Unpacks an archive over files in ${dir === undefined ? "this folder" : into.text}.`, { objects: [into] });
+    if (has(p, "u", "unconditional") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) h.e.add("destroy", "archive.unpack", `Unpacks an archive over files in ${dir === undefined ? thisFolder(h, into) : into.text}.`, { objects: [into] });
   }
   if (has(p, "p", "pass-through")) {
     const dest = p.operands[0];
