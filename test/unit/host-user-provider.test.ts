@@ -72,7 +72,8 @@ describe("AgentHost with the user's own model provider", () => {
     expect(sim.clients[0].opts.gitHubToken).toBeUndefined();
     expect(sim.sessions[0].provider).toEqual(OWN.config);
     expect(sim.sessions[0].model).toBe("gpt-4.1");
-    expect(host.getStatus()).toMatchObject({ phase: "ready", detail: "Connected to models.example.com.", service: { kind: "user", host: "models.example.com" }, conductorModel: "gpt-4.1", workerModel: "gpt-4.1" });
+    // A host elsewhere isn't asked at the start (integrations-1): "Using", never "Connected", until a request reaches it (integrations-r3).
+    expect(host.getStatus()).toMatchObject({ phase: "ready", detail: "Using models.example.com.", service: { kind: "user", host: "models.example.com" }, conductorModel: "gpt-4.1", workerModel: "gpt-4.1" });
     expect(host.getStatus().login).toBeUndefined();
   });
 
@@ -88,6 +89,13 @@ describe("AgentHost with the user's own model provider", () => {
     await host.start(TOKEN, "stored");
     expect(statuses.join("\n")).not.toContain(KEY);
     expect(JSON.stringify(host.getStatus())).not.toContain(KEY);
+  });
+
+  it("says a host elsewhere with no API key saved is in use without one, never that it is connected (integrations-r3)", async () => {
+    sim.clients = []; sim.sessions = [];
+    const { host } = makeHost(() => ({ ...OWN, config: { type: "openai", baseUrl: "https://api.openai.com/v1" } }));
+    expect(await host.start(null)).toBe("ready");
+    expect(host.getStatus().detail).toBe("Using api.openai.com, with no API key saved. If it needs one, save it under Model provider.");
   });
 
   it("says to enter a model when none is named", async () => {

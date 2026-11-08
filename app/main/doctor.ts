@@ -14,6 +14,7 @@ import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";
 import { holdsBack } from "../shared/setup-attention";
 import { LISTENING_MODELS, VOICE_MODELS, modelsBytes, type ModelId } from "../voice/models";
 import { cliSteps, type SignInWith } from "./agent/github-app";
+import { onThisComputer } from "../shared/provider";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -200,7 +201,10 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     : p.auth?.kind === "provider"
       ? { id: "copilot", status: "ok", label: "Model service", detail: `Your organisation's model service (${p.auth.host}).` }
       : p.auth?.kind === "own-provider"
-        ? { id: "copilot", status: "ok", label: "Model service", detail: `Your own model provider (${p.auth.host}), ${p.auth.key ? "with its API key saved" : "with no API key saved"}.` }
+        // A service elsewhere with no key saved may refuse every request: a warning, not "ok" (integrations-r3).
+        ? !p.auth.key && !onThisComputer(p.auth.host)
+          ? { id: "copilot", status: "warn", label: "Model service", detail: `Your own model provider (${p.auth.host}), with no API key saved.`, fix: "If it needs a key, save it in Ember's settings, under Models & connections › Model provider." }
+          : { id: "copilot", status: "ok", label: "Model service", detail: `Your own model provider (${p.auth.host}), ${p.auth.key ? "with its API key saved" : "with no API key saved"}.` }
       : p.auth?.kind === "github"
         ? { id: "copilot", status: "ok", label: "Copilot", detail: `Signed in (${p.auth.source === "stored" ? "Ember's saved sign-in" : p.auth.source === "github-cli" ? "GitHub CLI sign-in" : "token from the environment"}).` }
         : { id: "copilot", status: "warn", label: "Copilot", detail: "Not signed in to GitHub yet.", fix: p.signIn?.with === "github-cli"

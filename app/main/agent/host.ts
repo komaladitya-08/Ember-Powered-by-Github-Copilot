@@ -2059,7 +2059,11 @@ export class AgentHost {
       })(system, prompt, signal);
       this.projectService = kindOf(provider);
       const where = provider?.kind === "user" ? serviceHost(provider.config.baseUrl) : null;
-      const signedIn = login ? `Signed in as ${login}.` : where ? `Connected to ${where}.` : "Connected.";
+      // A model server on this computer answered the start's probe: connected. A host elsewhere isn't asked until a
+      // request reaches it, so it is only in use, and one with no key saved may refuse requests (integrations-r3).
+      const remote = provider?.kind === "user" && keyNeeded(provider.config.baseUrl);
+      const using = remote ? `Using ${where}${provider.config.apiKey ? "." : ", with no API key saved. If it needs one, save it under Model provider."}` : `Connected to ${where}.`;
+      const signedIn = login ? `Signed in as ${login}.` : where ? using : "Connected.";
       this.setStatus({
         phase: "ready",
         detail: runtimeDefault ? `${signedIn} Using Copilot's default model: this account doesn't list models to choose from.` : signedIn,

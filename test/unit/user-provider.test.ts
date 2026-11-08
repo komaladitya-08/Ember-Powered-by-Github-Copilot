@@ -370,6 +370,19 @@ describe("ember doctor with the user's own provider", () => {
     const row = checks.find(c => c.id === "copilot")!;
     expect(row).toMatchObject({ status: "ok", label: "Model service", detail: "Your own model provider (models.example.com), with its API key saved." });
   });
+
+  it("warns when a provider elsewhere has no API key saved, and not for a model server on this computer (integrations-r3)", () => {
+    const row = (host: string) => doctorChecks({
+      os: "linux", env: { checks: [] } as never, compositor: true, xtest: true, speechDispatcher: true, microphones: null, voiceModels: "bundled", runtime: true,
+      auth: { kind: "own-provider", host, key: false }, admin: NONE,
+    } as never).find(c => c.id === "copilot")!;
+    expect(row("api.openai.com")).toMatchObject({
+      status: "warn", label: "Model service", detail: "Your own model provider (api.openai.com), with no API key saved.",
+      fix: "If it needs a key, save it in Ember's settings, under Models & connections › Model provider.",
+    });
+    expect(row("127.0.0.1:11434")).toMatchObject({ status: "ok", detail: "Your own model provider (127.0.0.1:11434), with no API key saved." });
+    expect(row("127.0.0.1:11434").fix).toBeUndefined();
+  });
 });
 
 describe("the WSL, commands and SSH cards while the user's own provider is in force", () => {

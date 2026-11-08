@@ -960,6 +960,9 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   says why at once instead of waiting about 24 s. It tries again as an offline start does (15 s, 30 s, then every
   minute, and at once on the next request), each try only that GET. A remote host isn't asked at a start: Electron's
   fetch follows the system's proxy settings, which can differ from the runtime's, so its test may not veto a connect.
+  So a server on this computer that answered reads "Connected to <host>.", and a remote host only "Using <host>.",
+  or "Using <host>, with no API key saved. If it needs one, save it under Model provider." when no key is saved for
+  it (a keyless gateway still works); the setup check's model row then warns rather than says OK (integrations-r3).
   An answer that refuses the key or has no model list never counts as down: the request says that itself.
 - **Consent.** Turning it on with an address shows a card naming the endpoint's host and everything that goes there
   instead of to Copilot, screenshots for tasks included. Nothing goes there until the user agrees, and the yes holds
