@@ -320,6 +320,8 @@ let shownChecks = "";
 let checksNow: Status["environment"]["checks"] = [];
 /** Whether the organisation manages "Work without asking" (applyAutonomySettings): its hint is redrawn with the checks. */
 let autonomyManaged = false;
+/** The status as read, with the setup check main has sent since: what a policy change is drawn again from. */
+let statusNow: Status | null = null;
 /**
  * The setup check's live line. What Check again found is shown above its button too, so a sighted user sees it looked
  * again (first-run-r2); a fix's failure is only read out, as its row shows it. Rows drawn anew take a shown result away.
@@ -331,6 +333,7 @@ function checksMsg(text: string, shown = false): void {
 }
 function renderChecks(environment: Status["environment"]): void {
   shownChecks = JSON.stringify(environment.checks);
+  if (statusNow) statusNow = { ...statusNow, environment };
   if ($("checks-msg").className !== "sr") checksMsg("");
   checksNow = environment.checks;
   // The switch's hint says when Ember runs elevated (every command asks then).
@@ -447,6 +450,9 @@ function renderSetupBadge(needing: number, fails: number, held: number): void {
 }
 
 function render(status: Status): void {
+  // A policy main sent since this status was read is the newer: the held lockdown lasts until a restart.
+  if (pushedAdmin) status = { ...status, admin: pushedAdmin };
+  statusNow = status;
   renderPlatform(status.platform);
   renderChecks(status.environment);
   renderAdmin(status.admin);
@@ -551,6 +557,8 @@ let sendAsWritten: Node[] | null = null;
 /** The data list's microphone line as the page wrote it (its conversation sentence changes while locked down). */
 let micAsWritten: Node[] | null = null;
 let lastAdmin: Status["admin"] | null = null;
+/** What main sent when the policy changed while Ember ran (the held lockdown), or null. */
+let pushedAdmin: Status["admin"] | null = null;
 /**
  * Names where requests actually go (copy.ts modelDestination) in the data list's "When you ask something" line and in
  * the microphone note and its list item, so none says Copilot while another service answers. Runs whenever the policy
@@ -649,6 +657,18 @@ function renderAdmin(a: Status["admin"]): void {
   if (settings) applyRoutineSettings(settings);
   if (settings) applyAutonomySettings(settings);
 }
+// The policy changed while Ember ran: everything drawn from it is drawn again at once, as a window opened now would
+// draw it (the notice, What Ember reads, sends and keeps, the switches it manages, first run, computers, extensions),
+// not only once this window is opened again (safety-privacy-w5-1).
+window.ember.onAdminChanged(a => {
+  pushedAdmin = a;
+  renderAdmin(a);
+  if (!statusNow) return;
+  statusNow = { ...statusNow, admin: a, ...(settings ? { settings } : {}), ...(platform ? { platform } : {}) };
+  welcome.status(statusNow);
+  targetsStatus(statusNow);
+  extensionsStatus(statusNow);
+});
 
 // ───── What Ember did ─────
 const time = (t: string) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });

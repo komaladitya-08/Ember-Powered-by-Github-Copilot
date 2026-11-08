@@ -8,7 +8,7 @@ import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { AdminPolicySchema, auditRetentionDays, commandMode, heldUntilRestart, managedKeys } from "../../app/main/admin";
+import { AdminPolicySchema, auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, managedKeys } from "../../app/main/admin";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
@@ -656,6 +656,42 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
       expect(await page.locator(id).isChecked()).toBe(false);
       expect(await page.locator(id).isDisabled()).toBe(true);
     }
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("says what the held lockdown leaves as soon as the policy changes while it is open, without opening again (safety-privacy-w5-1)", async () => {
+    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const ordinary = { policy: AdminPolicySchema.parse({ commands: { local: "on" } }), source: "/etc/ember/policy.json" };
+    const page = await open("privacy", {
+      settings: {
+        commands: { local: { on: true, askEvery: false, consent: agreed } },
+        autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } },
+        grants: { gedit: "act" },
+      },
+      admin: homeAdmin(ordinary),
+    });
+    const fold = page.locator("#privacy-terms-fold");
+    await fold.locator("summary").click();
+    const line = (icon: string) => page.locator(`#privacy-terms li[data-icon='${icon}']`).innerText();
+    const notice = () => page.locator("#managed").evaluate(e => e.textContent);
+    expect(await line("hand")).toContain("Work without asking is on (below)");
+    expect(await line("send")).toContain("go to GitHub Copilot to work out the answer.");
+    expect(await notice()).toMatch(/^Some settings are managed by your organisation \(\/etc\/ember\/policy\.json\)\./);
+    // The policy file changes while Ember runs: main sends the held lockdown, as a status read would carry it.
+    await page.evaluate(a => window.__pane.emit("onAdminChanged", a), homeAdmin(heldUntilRestart(ordinary)));
+    await expect.poll(() => line("hand")).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never types passwords\./);
+    expect(await line("send")).toContain("nothing is sent to a model service until you restart Ember, so Ember can't answer or act.");
+    expect(await line("send")).not.toContain("GitHub Copilot");
+    expect(await line("eye")).toContain("Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
+    expect(await line("plug")).toBe("Other computers and commands are turned off by your organisation.");
+    expect(await notice()).toBe("Your organisation changed Ember's policy. Restart Ember to use it.");
+    for (const id of ["#screen-images", "#autonomy-on"]) {
+      expect(await page.locator(id).isChecked()).toBe(false);
+      expect(await page.locator(id).isDisabled()).toBe(true);
+    }
+    // Still open where the person was reading.
+    expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
     expect(page.errors).toEqual([]);
     await page.close();
   });

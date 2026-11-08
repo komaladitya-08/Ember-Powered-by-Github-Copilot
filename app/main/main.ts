@@ -20,7 +20,7 @@ import { watchCrashes } from "./crash-log";
 import { endRun, previousRun, startRun } from "./run-marker";
 import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
-import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
+import { auditRetentionDays, autonomyAllowed, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
 import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
@@ -607,10 +607,7 @@ function start(): void {
     logFile: log.file,
     settingsNotice,
     unexpectedExit: lastRun ? { startedAt: lastRun.startedAt, version: lastRun.version } : null,
-    admin: { source: admin.source, error: admin.error ?? null, ...(admin.held ? { held: true } : {}), managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
-      confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: auditRetentionDays(admin),
-      neverLook: policy.neverLook, commands: { local: commandMode(admin, "local"), wsl: commandMode(admin, "wsl"), ssh: commandMode(admin, "ssh") },
-      sshHostsLimited: policy.ssh?.allowedHosts !== undefined },
+    admin: homeAdmin(admin),
     platform: platformStatus(),
   })));
   // Every entry the log keeps: the window shows the newest 80 it has lines for (a command writes several entries).
@@ -3740,6 +3737,8 @@ function start(): void {
         log.warn("admin_policy.changed", { file: next.source, error: next.error ?? null, note: "held locked down until Ember restarts" });
         admin = heldUntilRestart(next);
         policy = admin.policy;
+        // An open settings window says so at once, as a fresh one would (safety-privacy-w5-1).
+        sendToHome(IPC.adminChanged, homeAdmin(admin));
         wanted = false;
         void voice?.setWanted(false);
         // The connection goes too: the host's refuseConnect now says why, so nothing reconnects until the restart.

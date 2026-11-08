@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type VoiceStatus, type VoiceWord } from "../shared/ipc";
+import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type Status, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { ConversationTurnChange, HistoryProblemKind } from "../shared/conversation";
 import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
@@ -101,6 +101,7 @@ const api: EmberHomeApi = {
   setPresence: p => ipcRenderer.invoke(IPC.setPresence, p),
   onPresence: fn => listen<Presence>(IPC.presenceChanged, fn),
   onSettingsNotice: fn => listen<string | null>(IPC.settingsNotice, fn),
+  onAdminChanged: fn => listen<Status["admin"]>(IPC.adminChanged, fn),
   onVisibility: fn => listen<boolean>(IPC.homeVisibility, v => fn(v !== false)),
   quit: () => ipcRenderer.invoke(IPC.quit),
   openAsk: () => ipcRenderer.invoke(IPC.openAsk),

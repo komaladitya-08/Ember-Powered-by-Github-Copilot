@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import { z } from "zod";
 import type { Settings } from "./settings";
+import type { Status } from "../shared/ipc";
 import type { TargetKind } from "../shared/targets";
 import type { CommandMode } from "./commands/types";
 import { readTextFile, stripBom } from "./text-file";
@@ -298,6 +299,18 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.provider) keys.push("provider");
   if (!userProviderAllowed(admin)) keys.push("userProvider");
   return keys;
+}
+
+/**
+ * What the settings window is told of the policy in force (`Status["admin"]`): with each status it reads, and pushed to
+ * it when the policy changes while Ember runs, so an open window says what a fresh one would (safety-privacy-w5-1).
+ */
+export function homeAdmin(loaded: LoadedAdminPolicy): Status["admin"] {
+  const policy = loaded.policy;
+  return { source: loaded.source, error: loaded.error ?? null, ...(loaded.held ? { held: true } : {}), managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
+    confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: auditRetentionDays(loaded),
+    neverLook: policy.neverLook, commands: { local: commandMode(loaded, "local"), wsl: commandMode(loaded, "wsl"), ssh: commandMode(loaded, "ssh") },
+    sshHostsLimited: policy.ssh?.allowedHosts !== undefined };
 }
 
 /** The API key for an admin-configured provider, read from its key file (or EMBER_PROVIDER_API_KEY). */

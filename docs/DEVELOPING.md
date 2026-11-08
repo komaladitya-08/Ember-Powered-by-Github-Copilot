@@ -410,8 +410,8 @@ first run's "Before Ember starts" again, word for word as it reads now (Search f
 without asking is on (ordinary steps are said instead of asked) or apps were let in without asking (each as the policy
 in force allows it: while Ember holds itself locked down after a policy change, it says screenshots are off and Ember
 asks before acting in an app, and both switches below show off), and which of other
-computers, WSL and commands you turned on or your organisation turned off; while open it follows where requests go and
-those settings, and isn't drawn again for an unrelated change.
+computers, WSL and commands you turned on or your organisation turned off; while open it follows where requests go, the
+policy and those settings, and isn't drawn again for an unrelated change.
 **What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80
 more for each **Show earlier**, back through all the audit keeps (its note counts all of today's), including each
 screenshot of a window a task sent to the model, by its app ("Sent a picture of the window in Firefox to the model");
@@ -1143,7 +1143,8 @@ no actions, commands or listening, nothing sent to any model service (neither
 GitHub Copilot nor the organisation's own endpoint), and nothing deleted from the audit log. Ember reads the policy
 again every 10 seconds. Once it changes (tightened, repaired, added or removed, and the next read says so too), Ember
 stops everything and stays locked down until the user restarts it (the bubble offers **Restart Ember**, and the
-settings window says so), and the restart reads the new policy whole. Every key is optional:
+settings window says so at once, already open or not: its notice, what it says Ember reads and sends, and the switches
+the lockdown turns off), and the restart reads the new policy whole. Every key is optional:
 
 ```json
 {
