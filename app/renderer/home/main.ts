@@ -644,7 +644,7 @@ function renderAdmin(a: Status["admin"]): void {
   if (agent) renderAgent(agent);
   renderRecipient();
   renderTagline();
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"], ["screen-images", "screenImages"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["clear-on", "clearHearing"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"], ["screen-images", "screenImages"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -654,7 +654,9 @@ function renderAdmin(a: Status["admin"]): void {
   privacyKey = "";
   renderTaskReasoning();
   if (settings) renderPrivacy(settings);
+  // The voice choice too, as in force, before the voice status has come (safety-privacy-v6-1).
   if (voice) renderVoice(voice);
+  else renderNatural();
   if (settings) applyMemorySettings(settings);
   if (settings) applyRoutineSettings(settings);
   if (settings) applyAutonomySettings(settings);
@@ -2683,11 +2685,13 @@ $("match-teach").addEventListener("click", startEnrol);
 $("match-cancel").addEventListener("click", () => { matchCancelled = true; void window.ember.cancelEnrolVoice(); });
 $("match-forget").addEventListener("click", () => { void window.ember.forgetVoice(); focusFirst(["match-teach", "match-on", "wake"]); });
 /**
- * Listening for the name and speaking, as in force: a switch the organisation turned off shows off, also while Ember
- * holds itself locked down after a policy change and the settings still hold it on (safety-privacy-w5-2).
+ * Listening for the name, hearing more clearly and speaking, as in force: a switch the organisation turned off shows
+ * off, also while Ember holds itself locked down after a policy change and the settings still hold it on
+ * (safety-privacy-w5-2, v6-1).
  */
 function drawVoiceSwitches(s: Status["settings"]): void {
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent && !managed.has("wakeWord");
+  ($("clear-on") as HTMLInputElement).checked = s.voice.clearHearing && !managed.has("clearHearing");
   ($("speak") as HTMLSelectElement).value = managed.has("speak") ? "never" : speakChoice(s);
   ($("speak-results") as HTMLInputElement).checked = s.speakResults && !managed.has("speak");
 }
