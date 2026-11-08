@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { TaskManager } from "../../app/main/agent/tasks";
-import { STATE_WORD, busyLine, idleLine, slides, stackOrder, stopPending, underWay } from "../../app/renderer/overlay/stack";
+import { STATE_WORD, busyLine, idleLine, slides, stackOrder, stateWord, stopPending, underWay } from "../../app/renderer/overlay/stack";
 import { cardTask } from "../../app/renderer/handle/card";
 import type { Worker, WorkerResult } from "../../app/main/agent/worker";
 import { TASK_STOPPING, type TaskCard } from "../../app/shared/overlay";
@@ -46,6 +46,19 @@ describe("a task waiting its turn", () => {
   it("is read out as waiting its turn; only a task that asks is read as waiting for the user", () => {
     expect(STATE_WORD.queued).toBe("Waiting its turn: ");
     expect(STATE_WORD.waiting).toBe("Waiting for you: ");
+  });
+
+  it("is read out as having had no answer in time when its question went unanswered, as its row says, on the card and the corner card (companion-r2-5)", async () => {
+    const card = (status: TaskCard["status"], unanswered?: true): TaskCard => ({ id: "t", title: "Tidy up", status, detail: "", actions: [], ...(unanswered ? { unanswered } : {}) });
+    expect(stateWord(card("stopped", true))).toBe("No answer in time: ");
+    expect(stateWord(card("stopped"))).toBe("Stopped: ");
+    // Still waiting, or ended another way, it says its own state.
+    expect(stateWord(card("waiting", true))).toBe("Waiting for you: ");
+    expect(stateWord(card("failed", true))).toBe(STATE_WORD.failed);
+    // Both surfaces take it from the card, not from its status alone.
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("app/renderer/overlay/main.ts", "utf8")).toContain("const said = stateWord(t);");
+    expect(readFileSync("app/renderer/handle/main.ts", "utf8")).toContain('$("task-state").textContent = stateWord(task);');
   });
 
   it("counts as under way: its card sits with the running ones, nearest the handle, and the corner card shows it", () => {

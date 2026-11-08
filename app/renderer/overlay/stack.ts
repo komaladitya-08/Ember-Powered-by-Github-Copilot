@@ -15,6 +15,13 @@ export const STATE_WORD: Record<TaskCard["status"], string> = {
   done: `${STATUS_WORDS.done}: `, failed: `${STATUS_WORDS.failed}: `, stopped: `${STATUS_WORDS.stopped}: `,
 };
 
+/**
+ * Card `t`'s state in words for screen readers: STATE_WORD by its status, but "No answer in time: " for a task stopped
+ * because its question went unanswered, as its row says (companion-r2-5: it was read as "Stopped: ").
+ */
+export const stateWord = (t: Pick<TaskCard, "status" | "unanswered">): string =>
+  t.unanswered && t.status === "stopped" ? `${STATUS_WORDS.unanswered}: ` : STATE_WORD[t.status];
+
 /** What a card's lines say (app/shared/activity.ts has the words); null hides a line. */
 export interface CardLines {
   /** What it is doing now, in Ember's words (while it is under way). */
