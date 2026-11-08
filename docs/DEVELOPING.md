@@ -1064,7 +1064,9 @@ the address in force and its saved key are kept and come back with the switch (i
   then ask me again." (main's `providerWaiting`, `providerWaitingHost`), Home's tagline says "Agree to use <host> in
   Models & connections to start asking.", the status panel's button is "Check my provider…", and the hint under the
   group "Ember can't answer until you agree to use <host>." (with a GitHub sign-in it says Ember uses GitHub Copilot
-  until then, as it does).
+  until then, as it does). Ember's hello at start and at login says "I need your OK for <host> first. Open settings
+  (<settings key>) and agree to use it in Models & connections, or turn off “Use my own model provider”." with Open
+  settings (hello.ts `providerWaiting`, integrations-v4-3).
 - **The key** is sealed with the OS keyring (`safeStorage`) in `provider-key.bin` in Ember's data folder (0600), apart
   from `settings.json`, together with the host it was entered for (also in `provider-key.host`, which isn't secret, so
   no keyring is asked to know it). It goes only to that host: moving the endpoint to another host deletes it, and the

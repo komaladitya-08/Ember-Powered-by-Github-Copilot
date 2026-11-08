@@ -276,6 +276,31 @@ describe("Ember's hello once it starts", () => {
     });
   });
 
+  it("points to my own provider's note, never to Copilot, while it waits with no GitHub sign-in (integrations-v4-3)", () => {
+    const host = "127.0.0.1:19110";
+    const ask = `I need your OK for ${host} first.`;
+    expect(hello(at({ phase: "signed-out", providerWaiting: host, rows: MAC_FIRST }))).toEqual({
+      thought: `${ask} Open settings (Ctrl+Alt+E) and agree to use it in Models & connections, or turn off “Use my own model provider”.`,
+      mood: "attention", actions: settingsButton, holdMs: 15000,
+    });
+    expect(hello(at({ phase: "signed-out", providerWaiting: host, settingsKey: null })).thought).toBe(`${ask} Open settings and agree to use it in Models & connections, or turn off “Use my own model provider”.`);
+    expect(hello(at({ phase: "signed-out", providerWaiting: host, settingsOpen: true }))).toEqual({
+      thought: `${ask} Agree to use it in Models & connections in the settings window, or turn off “Use my own model provider”.`,
+      mood: "attention", actions: [], holdMs: 15000,
+    });
+    for (const more of [{}, { settingsOpen: true }, { settingsKey: null }]) {
+      expect(hello(at({ phase: "signed-out", providerWaiting: host, ...more })).thought, JSON.stringify(more)).not.toMatch(/GitHub|Copilot|\bconnect\b/);
+    }
+    // Only signed out: with a GitHub sign-in Copilot answers until the note is agreed, as ever.
+    expect(hello(at({ phase: "error", providerWaiting: host }))).toEqual(hello(at({ phase: "error" })));
+    expect(hello(at({ providerWaiting: host }))).toEqual(hello(at({})));
+    expect(hello(at({ phase: "signed-out", providerWaiting: null }))).toEqual(hello(at({ phase: "signed-out" })));
+    // main gives the hello the host the note waits for, as it gives the host's answers (providerWaiting), signed out only.
+    const greet = MAIN.slice(MAIN.indexOf("  const greet = () => {"), MAIN.indexOf("  const busyTasks = "));
+    expect(greet).toContain("const providerWaiting = phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null;");
+    expect(greet).toMatch(/hello\(\{[^}]*\bproviderWaiting, service, cannotWork \}\)/);
+  });
+
   it("waits for the network without a button when offline at start", () => {
     expect(hello(at({ phase: "error", waiting: true, rows: MAC_FIRST }))).toEqual({
       thought: "I can't reach GitHub yet: I'll connect as soon as the network is back.", mood: "error", actions: [], holdMs: 15000,

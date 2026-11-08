@@ -53,6 +53,11 @@ export interface HelloInputs {
    * and never GitHub, Copilot or the network (first-run-r1).
    */
   service?: { kind: string; host: string };
+  /**
+   * Signed out, the host whose card the user's own provider waits for (main's providerWaitingHost): agreeing to it is
+   * the way on, not a GitHub sign-in, so the hello names it and never Copilot (integrations-v4-3). null or absent: none.
+   */
+  providerWaiting?: string | null;
 }
 
 /** A model service that isn't Copilot, as the hello names it. */
@@ -62,6 +67,12 @@ function serviceName(s: { kind: string; host: string }): string {
 
 /** Not connected yet: what the hello says, for Copilot or the service in use. */
 function notConnected(i: HelloInputs): string {
+  if (i.phase === "signed-out" && i.providerWaiting) {
+    // Signed out with the card waiting: agreeing is the way on, not a GitHub sign-in (integrations-v4-3).
+    const ask = `I need your OK for ${i.providerWaiting} first.`;
+    return i.settingsOpen ? `${ask} Agree to use it in Models & connections in the settings window, or turn off “Use my own model provider”.`
+      : `${ask} Open settings${i.settingsKey ? ` (${i.settingsKey})` : ""} and agree to use it in Models & connections, or turn off “Use my own model provider”.`;
+  }
   if (i.service) {
     const it = serviceName(i.service);
     return i.settingsOpen ? `I can't connect to ${it} yet: Models & connections in the settings window says why.` : `I can't connect to ${it} yet. Open settings${i.settingsKey ? ` (${i.settingsKey})` : ""} to see why.`;

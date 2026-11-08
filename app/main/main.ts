@@ -763,7 +763,9 @@ function start(): void {
     const cannotWork = modelServiceRefusal(admin) ?? sessionGreeting(readEnvironment());
     // The user's own provider or the organisation's service is named, never GitHub or Copilot (first-run-r1).
     const service = agent?.getStatus().service;
-    const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: keyName("settings"), settingsOpen, rows: connected ? setupRows() : [], service, cannotWork });
+    // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-v4-3).
+    const providerWaiting = phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null;
+    const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: keyName("settings"), settingsOpen, rows: connected ? setupRows() : [], providerWaiting, service, cannotWork });
     const bubble = { ...IDLE_BUBBLE, visible: true, mood: h.mood, title: "Hi, I'm Ember!", thought: h.thought, actions: h.actions };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
