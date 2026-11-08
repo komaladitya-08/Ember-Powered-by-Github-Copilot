@@ -288,6 +288,13 @@ const NO_PICTURES = "(No screenshot: the user turned off sending screenshots for
 const PROMPT_REASON = { open: "an authentication prompt is open", unchecked: "Ember couldn't tell whether a password prompt was open", helper: "Ember's accessibility helper isn't working" } as const;
 /** The refusal for a step while promptOpen says one is open, may be, or can't be asked (the helper can't work here). */
 const PROMPT_REFUSAL = { open: AUTH_PROMPT_OPEN, unchecked: PROMPT_UNCHECKED, helper: HELPER_DOWN } as const;
+/**
+ * The cause in the window system's reason for its check, "<cause>, so <what Ember won't do and what the user can>"
+ * (macOS's secure keyboard entry, a Wayland session: systemDialogReason), as the task's card says it: "secure keyboard
+ * entry is on in Terminal (…)", "this is a Wayland session" (tasks-approvals-v5-3). The whole reason when it has no such
+ * clause.
+ */
+const causeOf = (why: string): string => why.split(", so ")[0]!.trim() || why;
 /** promptOpen's answer as PROMPT_REASON's and PROMPT_REFUSAL's key (true is a prompt that is open). */
 const promptKey = (open: true | "unchecked" | "helper"): keyof typeof PROMPT_REASON => (open === true ? "open" : open);
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
@@ -4165,7 +4172,9 @@ export class Worker {
       const unchecked = dialog === "unchecked" ? "unchecked" : !why && await this.promptUnchecked();
       const reason = why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open");
       this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason });
-      this.activity({ type: "refused", reason });
+      // The card's row keeps a line of a reason: the window system's says its cause there, whole, and the audit and the
+      // model get all of it (tasks-approvals-v5-3).
+      this.activity({ type: "refused", reason: why ? causeOf(why) : reason });
       return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
         : unchecked ? PROMPT_REFUSAL[unchecked]
           : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");

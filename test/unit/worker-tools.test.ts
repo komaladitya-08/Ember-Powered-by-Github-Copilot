@@ -14,6 +14,8 @@ import { Perception } from "../../app/main/perception";
 import type { Logger } from "../../app/main/logger";
 import { ActivityLog } from "../../app/main/agent/activity";
 import { timelineRows } from "../../app/renderer/home/tasks-copy";
+import { WAYLAND_REASON } from "../../app/main/environment";
+import { secureInputCause } from "../../app/main/platform/darwin/desktop";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -81,6 +83,8 @@ function makeWorker(o: {
   promptOpen?: () => boolean | "unchecked" | "helper";
   /** Is a system dialog open, as the borrow asks before it takes the keyboard (default: none). */
   systemDialogOpen?: () => boolean;
+  /** Why the window system's check is on when it isn't a dialog (macOS's secure keyboard entry, a Wayland session). */
+  systemDialogReason?: () => string | null;
   /** Home's "Send screenshots for tasks" as settings say it now (default: on). */
   screenImages?: () => boolean;
 } = {}) {
@@ -145,6 +149,7 @@ function makeWorker(o: {
         return o.wins ? [...open] : closed ? [] : [window];
       },
       systemDialogOpen: async () => o.systemDialogOpen?.() ?? false,
+      ...(o.systemDialogReason ? { systemDialogReason: async () => o.systemDialogReason!() } : {}),
       ...(o.promptOpen ? { promptOpen: async () => o.promptOpen!() } : {}),
     } as never,
     sidecar: {
@@ -2005,6 +2010,24 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
     expect((await borrow.call("press_keys", { keys: "ctrl+b" })).resultType).toBe("denied");
     expect(borrow.activity.slice(from).map(e => e.type)).toEqual(["question", "answer", "refused", "denied"]);
     expect(rowsOf(borrow.activity, from, "press_keys").card).toEqual(["Asked you: you allowed it", "Not allowed: a system dialog is open"]);
+  });
+
+  it("says on the card why the window system refused a borrow in a sentence of its own, never one cut short, and gives the audit and the model all of it (tasks-approvals-v5-3)", async () => {
+    const secure = `${secureInputCause("Terminal")}, so Ember won't look at the screen or use the mouse or keyboard until it's off`;
+    for (const [why, row] of [[secure, `Not allowed: ${secureInputCause("Terminal")}`], [WAYLAND_REASON, "Not allowed: this is a Wayland session"]] as const) {
+      const made = makeWorker({ systemDialogOpen: () => true, systemDialogReason: () => why, states: () => ["enabled", "focused"] });
+      await made.call("perceive_window", {});
+      const from = made.activity.length;
+      const r = await made.call("press_keys", { keys: "ctrl+b" });
+      expect(r.resultType).toBe("denied");
+      expect(r.textResultForLlm).toContain(why.slice(1));
+      expect(made.audit.filter(e => e.event === "decision").at(-1)).toMatchObject({ verdict: "deny", reason: why });
+      // (A borrow asks every time: its question, then the refusal.)
+      const { card, home } = rowsOf(made.activity, from, "press_keys");
+      expect(card).toEqual(["Asked you: you allowed it", row]);
+      expect(home).toEqual(card);
+      expect(card.at(-1)!.endsWith("…")).toBe(false);
+    }
   });
 
   it("lists no window's title, and reads none, until it's done", async () => {
