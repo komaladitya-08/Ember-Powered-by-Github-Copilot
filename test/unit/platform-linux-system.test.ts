@@ -423,8 +423,9 @@ describe("voice, privacy, clipboard and lifecycle", () => {
     }
     expect(s.clipboardFormats).toBe(CLIPBOARD_FORMATS.linux);
     const l = s.lifecycle;
-    expect({ ...l, ensureShortcut: undefined, focusOwnApp: undefined }).toEqual({ appUserModelId: null, appMenu: false, reopenShowsSettings: false, sessionEnd: null,
-      activateOwnWithInput: true, activateForAsk: true, ensureShortcut: undefined, focusOwnApp: undefined });
+    expect({ ...l, ensureShortcut: undefined, focusOwnApp: undefined, watchDisplay: undefined }).toEqual({ appUserModelId: null, appMenu: false, reopenShowsSettings: false,
+      sessionEnd: "display-gone", activateOwnWithInput: true, activateForAsk: true, ensureShortcut: undefined, focusOwnApp: undefined, watchDisplay: undefined });
+    expect(l.watchDisplay).toBeTypeOf("function");
     expect(l.askMicrophone).toBeUndefined();
     expect(() => { l.ensureShortcut(); l.focusOwnApp(); }).not.toThrow();
   });

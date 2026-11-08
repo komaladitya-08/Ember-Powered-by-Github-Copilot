@@ -208,8 +208,11 @@ process.on("unhandledRejection", reason => log.error("unhandled rejection", { re
 // GPU, utility and page crashes reach the log too (review #91).
 watchCrashes(app, log);
 
+/** Set once Ember couldn't start: its exit isn't the session ending (the run marker stays). */
+let startFailed = false;
 /** Ember could not start: say so plainly and exit, so the single-instance lock isn't held by a hidden Ember. */
 function startupFailed(err: unknown): void {
+  startFailed = true;
   log.error("app.start_failed", { err });
   const message = err instanceof Error ? err.message : String(err);
   void app.whenReady().then(() => {
@@ -2731,8 +2734,8 @@ function start(): void {
   });
 
   /**
-   * The session ends (log-off, shut down) without will-quit on Windows and macOS (G10): settings are saved and
-   * whatever Ember holds is let go of at once, as quitting would.
+   * The session ends (log-off, shut down) without will-quit on Windows and macOS (G10), and on Linux as the X server
+   * goes: settings are saved and whatever Ember holds is let go of at once, as quitting would.
    */
   let sessionEnding = false;
   const endSession = (source: string) => {
@@ -2741,8 +2744,11 @@ function start(): void {
     log.info("app.session_end", { source });
     endThisRun("session-end");
     try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); }
-    borrowRef?.stop();
-    inputRef?.releaseAll();
+    // With the display gone there is no pointer or key to let go of, and asking X would end Ember mid-way.
+    if (source !== "display-gone") {
+      borrowRef?.stop();
+      inputRef?.releaseAll();
+    }
     sidecarRef?.stop();
     voice?.stop();
   };
@@ -2774,6 +2780,19 @@ function start(): void {
       : Promise.resolve();
     void Promise.all([brain, clip]).finally(() => app.exit(0));
   });
+  // The display went away under Ember (a GNOME on Xorg logout ends the X server): the session is ending, not Ember
+  // crashing, so this run's marker goes and the next login says nothing (reliability-performance-r1). Either Chromium
+  // notices first, ends its run loop by itself and Electron says quit with no will-quit before it, or one of Ember's
+  // own X calls does, and Xlib's IO error handler is the last word before the process ends. A failed start isn't this.
+  if (sys.lifecycle.sessionEnd === "display-gone") {
+    // After ready: GTK has set its own handler by then, which this one hands on to.
+    let unwatchDisplay: (() => void) | null = null;
+    void app.whenReady().then(() => { unwatchDisplay = sys.lifecycle.watchDisplay?.(() => endSession("display-gone")) ?? null; });
+    app.on("quit", () => {
+      if (!quitting && !startFailed) endSession("display-gone");
+      unwatchDisplay?.();
+    });
+  }
 
   void app.whenReady().then(() => {
     whenReady();

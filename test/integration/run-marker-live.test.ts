@@ -1,9 +1,10 @@
 /**
  * A crash of Ember's main process is noticed at the next start (rp-5), in the built app (dist/app; `npm run build`
  * first) on a real X server (Xvfb): main crashes (process.crash), and the next start logs app.previous_run_ended and
- * Home says Ember closed unexpectedly; a normal quit leaves no marker, and the start after it says nothing. Skipped
- * without Xvfb, off Linux, or without a build, except with EMBER_ATSPI_TEST=1 (RHEL 8 CI, which builds first): there a
- * missing one fails.
+ * Home says Ember closed unexpectedly; a normal quit leaves no marker, and the start after it says nothing. The X server
+ * going away under Ember (what a GNOME on Xorg logout does) is the session ending, not a crash: the next login says
+ * nothing (reliability-performance-r1). Skipped without Xvfb, off Linux, or without a build, except with
+ * EMBER_ATSPI_TEST=1 (RHEL 8 CI, which builds first): there a missing one fails.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -39,12 +40,22 @@ describe.skipIf(!required && (!xvfb || !built))("a crash of Ember's main process
   const log = () => { try { return fs.readFileSync(path.join(userData, "logs", "ember.log"), "utf8"); } catch { return ""; } };
   const marker = () => path.join(userData, RUN_FILE);
 
-  async function launch(): Promise<Page> {
+  /** An X server of its own, on a display it picked. */
+  async function startX(): Promise<{ server: ChildProcess; display: string }> {
+    const x = spawn("Xvfb", ["-displayfd", "3", "-screen", "0", "1280x800x24", "-nolisten", "tcp"], { stdio: ["ignore", "ignore", "ignore", "pipe"] });
+    const name = ":" + await new Promise<string>((resolve, reject) => {
+      x.stdio[3]!.on("data", (d: Buffer) => resolve(d.toString().trim()));
+      x.on("exit", () => reject(new Error("Xvfb didn't start")));
+    });
+    return { server: x, display: name };
+  }
+
+  async function launch(on = display): Promise<Page> {
     const { _electron } = requireCjs("playwright-core") as { _electron: { launch(o: object): Promise<ElectronApp> } };
     app = await _electron.launch({
       executablePath: requireCjs("electron") as unknown as string,
       args: [root, "--show-settings", ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
-      env: { ...process.env, DISPLAY: display, EMBER_USER_DATA: userData },
+      env: { ...process.env, DISPLAY: on, EMBER_USER_DATA: userData },
       timeout: 60_000,
     });
     let home: Page | undefined;
@@ -62,11 +73,7 @@ describe.skipIf(!required && (!xvfb || !built))("a crash of Ember's main process
 
   beforeAll(async () => {
     if (!xvfb || !built) throw new Error(`can't be checked here: ${!xvfb ? "no Xvfb" : "no build (npm run build first)"}`);
-    server = spawn("Xvfb", ["-displayfd", "3", "-screen", "0", "1280x800x24", "-nolisten", "tcp"], { stdio: ["ignore", "ignore", "ignore", "pipe"] });
-    display = ":" + await new Promise<string>((resolve, reject) => {
-      server.stdio[3]!.on("data", (d: Buffer) => resolve(d.toString().trim()));
-      server.on("exit", () => reject(new Error("Xvfb didn't start")));
-    });
+    ({ server, display } = await startX());
     userData = fs.mkdtempSync(path.join(os.tmpdir(), "ember-run-marker-"));
     fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, consent: { version: CONSENT_VERSION, at: new Date().toISOString() }, wakeWord: false }));
   }, 30_000);
@@ -103,6 +110,29 @@ describe.skipIf(!required && (!xvfb || !built))("a crash of Ember's main process
     // And the start after it says nothing.
     const before = log().split("app.previous_run_ended").length;
     home = await launch();
+    expect(await home.locator("#run-notice").isVisible()).toBe(false);
+    expect(log().split("app.previous_run_ended").length).toBe(before);
+  }, 180_000);
+
+  it("says nothing at the next login after the X server went away under Ember, as a logout does (reliability-performance-r1)", async () => {
+    await app?.close().catch(() => { /* already gone */ });
+    const session = await startX();
+    try {
+      await launch(session.display);
+      expect(fs.existsSync(marker())).toBe(true);
+      // The X server goes, as GNOME on Xorg's logout ends it: Ember goes with it.
+      const gone = exited();
+      session.server.kill("SIGTERM");
+      await gone;
+      expect(fs.existsSync(marker())).toBe(false);
+      expect(log()).toMatch(/"source":"display-gone"[^\n]*app\.session_end|app\.session_end[^\n]*"source":"display-gone"/);
+    } finally {
+      session.server.kill();
+    }
+
+    // The next login (another display) finds no marker: Home says nothing, and the log has no warning.
+    const before = log().split("app.previous_run_ended").length;
+    const home = await launch();
     expect(await home.locator("#run-notice").isVisible()).toBe(false);
     expect(log().split("app.previous_run_ended").length).toBe(before);
   }, 180_000);

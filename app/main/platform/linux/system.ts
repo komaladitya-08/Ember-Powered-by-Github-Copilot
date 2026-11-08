@@ -19,6 +19,7 @@ import { CLIPBOARD_FORMATS } from "../../agent/clipboard-formats";
 import { NEVER_LOOK_DEFAULTS } from "../../../shared/never-look";
 import { KEYS, SHORTCUTS } from "../../../shared/shortcuts";
 import { PLATFORM_WORDS } from "../../../shared/words";
+import { watchDisplayGone } from "../../x11";
 
 /** The machine's state as the adapters read it; tests pass fakes, Ember the real thing. */
 export interface LinuxSystemIO {
@@ -129,7 +130,9 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
       ensureShortcut() { /* only Windows' toasts need a Start Menu shortcut */ },
       appMenu: false,
       reopenShowsSettings: false,
-      sessionEnd: null,
+      // Logging out of GNOME on Xorg ends the X server under Ember: Electron quits by itself (no will-quit).
+      sessionEnd: "display-gone",
+      watchDisplay: ended => watchDisplayGone(ended),
       focusOwnApp() { /* GNOME lets Ember's own windows take focus */ },
       activateOwnWithInput: true,
       activateForAsk: true,
