@@ -4810,8 +4810,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
         { handle: (_c: string, h: () => Promise<void>) => { run = h; } }, { signOut: "s", memoryForgetAll: "m" }, (fn: unknown) => fn, ...names.map(n => deps[n]));
       return run;
     };
+    /** What Sign out told Projects to forget (integrations-c2-1: from the handler, never from the status after it). */
+    let projectForgot: string[] = [];
     const signOutHandler = (agent: AgentHost) => handlerOf(slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,"), {
       agent, tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} }, resetAnswerSpeech() {},
+      forgetProject: (what: string) => { projectForgot.push(what); },
     });
 
     it("Sign out deletes conversation.json although the switch is off by then", async () => {
@@ -4823,7 +4826,9 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await k.store.flush();
       expect(fs.existsSync(k.file)).toBe(true);
       k.flag.on = false; // the setting turned off, the listener not yet run
+      projectForgot = [];
       await signOutHandler(k.host)();
+      expect(projectForgot).toEqual(["all"]);
       expect(fs.existsSync(k.file)).toBe(false);
       await k.store.flush();
       expect(fs.existsSync(k.file)).toBe(false);

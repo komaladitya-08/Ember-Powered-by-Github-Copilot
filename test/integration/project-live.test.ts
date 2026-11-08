@@ -254,6 +254,89 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps the chosen files, the t
   }
 }, 120_000);
 
+it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps Projects' work while my own provider's new address waits for its card with no GitHub sign-in, and forgets it only at Sign out (integrations-c2-1)", async () => {
+  const requireCjs = createRequire(import.meta.url);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-provider-edit-"));
+  const userData = path.join(dir, "profile");
+  fs.mkdirSync(userData);
+  const ghConfig = path.join(dir, "gh");
+  fs.mkdirSync(ghConfig);
+  const source = path.join(dir, "greeting.ts");
+  fs.writeFileSync(source, "export const greeting = 'hi';\n");
+  const diff = "--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-export const greeting = 'hi';\n+export const greeting = 'hello';";
+  const respond = () => ({ text: ["```diff", diff, "```"].join("\n") });
+  const mock = await startMockLlm({ delayMs: 5, respond });
+  const other = await startMockLlm({ delayMs: 5, respond });
+  const at = new Date().toISOString();
+  const host = new URL(mock.baseUrl).host;
+  const otherHost = new URL(other.baseUrl).host;
+  fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
+    version: 1, onboarded: true, wakeWord: false, consent: { version: CONSENT_VERSION, at },
+    provider: { on: true, type: "openai", baseUrl: mock.baseUrl, conductor: "mock-model", consent: { version: FEATURE_CONSENT_VERSION.provider, at, host } },
+  }));
+  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
+  try {
+    // Never signed in to GitHub: no saved sign-in, none in the environment and no GitHub CLI sign-in.
+    const env: Record<string, string> = { ...process.env as Record<string, string>, EMBER_USER_DATA: userData, GH_CONFIG_DIR: ghConfig };
+    for (const name of ["EMBER_TEST_PROVIDER_URL", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) delete env[name];
+    app = await _electron.launch({
+      executablePath: requireCjs("electron") as string,
+      args: [process.cwd(), "--show-settings", ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
+      env,
+    });
+    await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, source);
+    const page = () => app?.windows().find(win => win.url().includes("/renderer/home/index.html"));
+    await expect.poll(() => !!page(), { timeout: 20_000 }).toBe(true);
+    const home = page()!;
+    await home.locator('a[href="#project-h"]').click({ timeout: 15_000 });
+    await expect.poll(() => home.locator("#project-pick").isEnabled(), { timeout: 30_000 }).toBe(true);
+    await home.locator("#project-pick").click();
+    await home.locator("#project-files").waitFor({ state: "visible" });
+    await home.locator("#project-mode").selectOption("patch");
+    await home.locator("#project-question").fill("Make the greeting say hello.");
+    await home.locator("#project-send").click();
+    await expect.poll(() => home.locator("#project-status").innerText(), { timeout: 30_000 }).toBe("Patch ready to review.");
+    await home.locator("#project-question").fill("A follow-up I was typing.");
+    // The provider's address changes (another port, LM Studio instead of Ollama): the new host waits for its card, and
+    // with no GitHub sign-in nothing is connected meanwhile, though nobody signed out.
+    await home.locator('a[href="#copilot-h"]').click();
+    await home.locator("#byok-url").fill(other.baseUrl);
+    await home.locator("#byok-url").press("Tab");
+    await home.locator("#byok-consent").waitFor({ state: "visible", timeout: 15_000 });
+    await expect.poll(() => home.evaluate(() => window.ember.agentStatus().then(s => s?.phase)), { timeout: 15_000 }).toBe("signed-out");
+    await home.locator('a[href="#project-h"]').click();
+    expect(await home.locator("#project-files").innerText()).toContain("greeting.ts");
+    expect(await home.locator("#project-question").inputValue()).toBe("A follow-up I was typing.");
+    expect(await home.locator("#project-answer").innerText()).toContain(diff);
+    expect(await home.locator("#project-status").innerText()).toBe("Ember isn't connected right now. Your work here stays, and you can send once it connects.");
+    expect(await home.locator("#project-send").isEnabled()).toBe(false);
+    expect(await home.locator("#project-apply").isEnabled()).toBe(false);
+    // Agreed: the new host connects, and the work is still there; the previous answer, from the other host, goes
+    // with no request to this one.
+    await home.locator('a[href="#copilot-h"]').click();
+    await home.waitForTimeout(AGREE_ARM_MS);
+    await home.locator("#byok-yes").click();
+    await home.locator('a[href="#project-h"]').click();
+    await expect.poll(() => home.locator("#project-provider").innerText(), { timeout: 30_000 }).toBe(`Next send uses ${otherHost} · mock-model.`);
+    expect(await home.locator("#project-files").innerText()).toContain("greeting.ts");
+    expect(await home.locator("#project-question").inputValue()).toBe("A follow-up I was typing.");
+    expect(await home.locator("#project-answer").innerText()).toContain(diff);
+    await expect.poll(() => home.locator("#project-apply").isEnabled()).toBe(true);
+    expect(await home.locator("#project-previous-control").isVisible()).toBe(false);
+    // Sign out forgets it all, here and in main.
+    await home.evaluate(() => window.ember.signOut());
+    await expect.poll(() => home.locator("#project-files").innerText()).toBe("");
+    expect(await home.locator("#project-question").inputValue()).toBe("");
+    expect(await home.locator("#project-answer").isVisible()).toBe(false);
+    expect(await home.evaluate(() => window.ember.projectExport("answer"))).toEqual({ message: "Choose an available project answer or diff to export." });
+  } finally {
+    await app?.close();
+    await mock.close();
+    await other.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}, 120_000);
+
 it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("reviews, declines, and runs project commands in the selected folder", async () => {
   const requireCjs = createRequire(import.meta.url);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-command-"));

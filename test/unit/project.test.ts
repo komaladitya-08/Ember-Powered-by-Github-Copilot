@@ -180,10 +180,15 @@ describe("Projects' work as Ember's connection changes", () => {
       expect(projectAfterStatus(s, null, null), JSON.stringify(s)).toBe("keep");
     }
   });
-  it("clears it all at sign-out and when the organisation's policy locks Ember down (integrations-r1)", () => {
-    expect(projectAfterStatus({ phase: "signed-out" }, answered, null)).toBe("all");
-    expect(projectAfterStatus({ phase: "signed-out" }, null, null)).toBe("all");
+  it("clears it all when the organisation's policy locks Ember down (integrations-r1)", () => {
     expect(projectAfterStatus({ phase: "error", reason: "policy" }, answered, null)).toBe("all");
+    expect(projectAfterStatus({ phase: "error", reason: "policy" }, null, null)).toBe("all");
+  });
+  it("keeps it all when my own provider is turned off or waits for its card with no GitHub sign-in: only Sign out forgets it (integrations-c2-1)", () => {
+    // No GitHub sign-in and no provider in force reads "signed-out" too, though nobody signed out: main forgets the
+    // work from the Sign out handler and an account change instead, never from this status.
+    expect(projectAfterStatus({ phase: "signed-out" }, answered, null)).toBe("keep");
+    expect(projectAfterStatus({ phase: "signed-out" }, null, null)).toBe("keep");
   });
   it("never sends an answer from one model service or account to another: only its use as context goes (integrations-r1)", () => {
     // The user's own provider turned on, its address or key changed, another GitHub account, or an owner not verified.

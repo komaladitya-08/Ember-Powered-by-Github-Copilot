@@ -24,14 +24,16 @@ export const PROJECT_MODEL_FAILED = "The model didn't finish the project request
 
 /**
  * What a change of Ember's connection does to the Projects pane's work (integrations-r1): `keep` it, drop only the
- * `previous` request and answer as context for the next send, or forget `all` of it. Sign-out and the organisation's
- * lockdown forget it all (an account change is reported apart, onAccountChanged). A reconnect, a model service out of
- * reach for now, Copilot not answering or a refused sign-in keep the chosen files, the request, the answer and its
- * diff: only sending waits. Once ready with another owner than the answer's (projectWorkspaceScope: another model
+ * `previous` request and answer as context for the next send, or forget `all` of it. The organisation's lockdown
+ * forgets it all; Sign out and an account change do too, but from where they happen (main's sign-out handler,
+ * onAccountChanged), never from a "signed-out" status, which with no GitHub sign-in also means only that the user's
+ * own provider is off or waits for its card for a new address (integrations-c2-1). That, a reconnect, a model service
+ * out of reach for now, Copilot not answering or a refused sign-in keep the chosen files, the request, the answer and
+ * its diff: only sending waits. Once ready with another owner than the answer's (projectWorkspaceScope: another model
  * service, address, key or GitHub account, or one not verified), the answer stays in view but is never sent there.
  */
 export function projectAfterStatus(s: { phase: string; reason?: string }, exchange: { scope: string | null } | null, scopeNow: string | null): "keep" | "previous" | "all" {
-  if (s.phase === "signed-out" || (s.phase === "error" && s.reason === "policy")) return "all";
+  if (s.phase === "error" && s.reason === "policy") return "all";
   if (exchange && s.phase === "ready" && exchange.scope !== scopeNow) return "previous";
   return "keep";
 }

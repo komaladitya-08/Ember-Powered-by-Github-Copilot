@@ -2095,6 +2095,9 @@ function start(): void {
     accountErasures++;
     resetAnswerSpeech();
     signInAbort?.abort();
+    // Projects' work goes here, at once: the "signed-out" status that follows also means a provider waiting for its
+    // card, which keeps it (integrations-c2-1).
+    forgetProject("all");
     // While still connected: delete this account's conversation so the next sign-in starts fresh.
     try {
       await agent?.forgetConversation();
@@ -3392,8 +3395,8 @@ function start(): void {
       },
       onStatus: status => {
         // Projects' work goes only where it must (integrations-r1): a reconnect stops a request under way, but keeps the
-        // files, the request, the answer and its diff; sign-out and the lockdown forget it all; another service or
-        // account, only the previous answer as context.
+        // files, the request, the answer and its diff; the lockdown forgets it all (Sign out and an account change do
+        // where they happen: integrations-c2-1); another service or account, only the previous answer as context.
         if (status.phase !== "ready") projectJob?.abort();
         const forget = projectAfterStatus(status, projectExchange ? { scope: projectExchangeScope } : null, status.phase === "ready" ? agent?.projectWorkspaceScope() ?? null : null);
         if (forget !== "keep") forgetProject(forget);
