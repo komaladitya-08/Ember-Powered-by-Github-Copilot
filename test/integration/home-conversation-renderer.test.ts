@@ -696,6 +696,33 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  it("says where to look on a Problem line that settings can help with, and goes there (home-7)", async () => {
+    const seed: TranscriptEntry[] = [
+      { t: at(0), who: "you", text: "What's the weather?" },
+      { t: at(1), who: "problem", text: "The model service reported a problem. Try again; if it keeps happening, check the model service in Ember's settings (Ctrl+Alt+E)." },
+      { t: at(2), who: "you", text: "And now?" },
+      { t: at(3), who: "problem", text: "Copilot had a problem on its side. Try again in a moment." },
+    ];
+    const { page, errors } = await home(seed);
+    try {
+      const rows = page.locator("#conversation > li.problem");
+      await expect.poll(() => rows.count()).toBe(2);
+      expect(await rows.nth(0).locator("p").innerText()).toBe("The model service reported a problem. Try again; if it keeps happening, check the model service in Models & connections.");
+      // Only where settings can help.
+      expect(await rows.nth(1).locator("button").count()).toBe(0);
+      // Found by the words it shows.
+      await page.locator("#conversation-search").fill("Models & connections");
+      expect(await page.locator("#conversation-search-status").innerText()).toBe("1 matching message in this conversation.");
+      await page.locator("#conversation-search").fill("");
+      const go = rows.nth(0).getByRole("button", { name: /^Models & connections…/ });
+      expect(await go.innerText()).toBe("Models & connections…");
+      await go.click();
+      await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("copilot-h");
+      expect(await page.locator("#copilot-h").isVisible()).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("says under Stop response that Ember is still waiting for a request from the Ask box or by voice, not an older message's outcome (home-r2-3)", async () => {
     const { page, errors } = await home([]);
     try {

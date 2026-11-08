@@ -52,7 +52,7 @@ import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, tod
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { problemInHome, PROBLEM_SETTINGS, composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -1156,7 +1156,9 @@ function conversationRow(e: Entry): HTMLLIElement {
   // A line kept from before a restart may be days old: its day is said too (home-8).
   const when = e.restored ? conversationWhen(e.t, time(e.t)) : time(e.t);
   const t = Object.assign(document.createElement("time"), { textContent: when, dateTime: e.t });
-  const text = Object.assign(document.createElement("p"), { textContent: e.text });
+  // A Problem line names the section that helps, here in Ember's settings (home-7).
+  const problem = e.who === "problem" ? problemInHome(e.text) : null;
+  const text = Object.assign(document.createElement("p"), { textContent: problem?.text ?? e.text });
   // A request Ember heard: "That's not what I said" finds its row by this (personal.ts markHeard).
   if (e.heardId) li.dataset.heardId = String(e.heardId);
   li.append(who, t, text);
@@ -1190,6 +1192,13 @@ function conversationRow(e: Entry): HTMLLIElement {
       conversationMessage.focus();
     });
     actions.append(edit);
+  }
+  // A live problem that settings can help with: the way there (not a line kept from before a restart, now long past).
+  if (problem?.settings && !e.restored) {
+    const go = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: PROBLEM_SETTINGS });
+    go.setAttribute("aria-label", `${PROBLEM_SETTINGS} for the problem from ${when}`);
+    go.addEventListener("click", () => showSection("copilot"));
+    actions.append(go);
   }
   if (actions.childElementCount) li.append(actions);
   if (e.stopped) li.append(Object.assign(document.createElement("small"), { className: "conversation-limit", textContent: STOPPED_NOTE }));
@@ -1277,7 +1286,8 @@ function renderConversation(raw: Entry[]): void {
   shownConversation = shown;
   let matches = 0;
   for (let i = 0; i < shown.length; i++) {
-    const match = !searching || conversationMatchesText(shown[i].text, conversationSearch.value);
+    // (A Problem line is found by the words it shows: home-7.)
+    const match = !searching || conversationMatchesText(shown[i].who === "problem" ? problemInHome(shown[i].text).text : shown[i].text, conversationSearch.value);
     redrawLearned(list.children[i] as HTMLElement, shown[i]).hidden = !match;
     if (match) matches++;
   }

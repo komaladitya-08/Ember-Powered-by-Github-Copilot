@@ -87,6 +87,17 @@ export const COMPOSER_SAYS = {
   replyStopped: "The reply was stopped before it finished.",
   stoppedAll: "Stopped everything, running tasks included.",
 } as const;
+/**
+ * A Problem line as Home shows it (home-7): Home is Ember's settings, so where the line sends the user to "Ember's
+ * settings (Ctrl+Alt+E)" it names the section that helps, Models & connections, and `settings` says the row offers a
+ * way there (PROBLEM_SETTINGS). Its words are Ember's own (friendlyError, the connection's notices), never a model's.
+ */
+export function problemInHome(text: string): { text: string; settings: boolean } {
+  const settings = /\bsettings\b/i.test(text);
+  return { text: text.replace(/\bOpen settings\b/g, "Open Models & connections").replace(/\bin (?:Ember's )?settings(?: \([^)]*\))?/g, "in Models & connections"), settings };
+}
+/** A Problem line's way to Models & connections, in Home (as the status panel's own button says it). */
+export const PROBLEM_SETTINGS = "Models & connections…";
 /** Stop response, pressed: what it stopped, or that nothing was under way (home-3: never a stop that didn't happen). */
 export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";
 export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything right now, so there was nothing to stop.";

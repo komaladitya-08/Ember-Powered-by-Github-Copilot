@@ -1121,6 +1121,18 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(main).not.toContain("if (status?.phase !== \"ready\") throw new Error(composerRefusal(");
   });
 
+  it("names Models & connections in a Problem line Home shows, where it said Ember's settings, and offers it only where settings can help (home-7)", () => {
+    expect(conv.problemInHome("The model service reported a problem. Try again; if it keeps happening, check the model service in Ember's settings (Ctrl+Alt+E).")).toEqual({
+      text: "The model service reported a problem. Try again; if it keeps happening, check the model service in Models & connections.", settings: true,
+    });
+    expect(conv.problemInHome("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).").text).toBe("The model I'm set to use isn't available. Pick another one in Models & connections.");
+    expect(conv.problemInHome("Copilot didn't accept the sign-in. Open settings to sign in again.").text).toBe("Copilot didn't accept the sign-in. Open Models & connections to sign in again.");
+    expect(conv.problemInHome("Not connected: Connect your GitHub account in settings, then ask me again.").text).toBe("Not connected: Connect your GitHub account in Models & connections, then ask me again.");
+    // Nothing in settings helps: the line as it was, and no button.
+    expect(conv.problemInHome("Copilot had a problem on its side. Try again in a moment.")).toEqual({ text: "Copilot had a problem on its side. Try again in a moment.", settings: false });
+    expect(conv.PROBLEM_SETTINGS).toBe("Models & connections…");
+  });
+
   it("asks before New conversation clears the messages, and names the saved copy when there is one (home-9)", () => {
     expect(conv.conversationNewQuestion(1, false)).toBe("Start a new conversation? This clears the message here.");
     expect(conv.conversationNewQuestion(12, false)).toBe("Start a new conversation? This clears the 12 messages here.");
