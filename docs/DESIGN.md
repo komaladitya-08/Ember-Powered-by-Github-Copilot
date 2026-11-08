@@ -404,7 +404,13 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   a lone button (Refresh list, Choose command folder…) keeps its own size in a row of actions, and an empty status line
   takes no row: every status line in Home stays on the page while it says nothing, as a box of nothing out of the flow,
   never hidden, so a screen reader announces it when it speaks (an alert may hide: it is announced as it shows). The
-  command and prompt windows' status lines (a refused press's line, the hints, "Starting Ubuntu…") do the same.
+  command and prompt windows' status lines (a refused press's line, the hints, "Starting Ubuntu…") do the same. Home and
+  Ask announce nothing as the microphone opens for a request, or while it is open, since a screen reader says it
+  through the speakers into what Ember hears: the voice line is said once it has held for a second and never while a
+  window is open, and Listen once's line is said through a status line of its own, which never says "Ember is already
+  listening.", nor "Answer Ember's question first." while a conversation waits for that answer (shown under the button,
+  as its description). While they say nothing new, both of those status lines are emptied, so reading the page never
+  finds a line beside the one shown that no longer holds.
 - **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
   from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
 

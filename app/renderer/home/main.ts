@@ -2394,11 +2394,23 @@ const showListenOnce = mountListenOnce(
   $("voice-listen-once-detail"),
   on => window.ember.listenOnce(on),
   LISTEN_ONCE_READY,
+  undefined,
+  $("voice-listen-once-live"),
 );
 /** No voice spoke Ember's replies (main found it): said under the Speak switch, with a row in the setup check. */
 let speechMissing = false;
 /** Screen readers hear the voice line when it changes, and a download only every 25 %. */
-const voiceLive = (text: string) => { if ($("voice-live").textContent !== text) $("voice-live").textContent = text; };
+const voiceLive = (text: string) => { const live = $("voice-live"); if ((live.textContent || voiceTold) !== text) live.textContent = text; };
+/** What `#voice-live` said before a window emptied it (below): the line it comes back to isn't said again. */
+let voiceTold = "";
+/**
+ * The voice line is said once it has held this long (ms), and never while the microphone is open for a request (a wake's
+ * window, a conversation's, Listen once's): a screen reader says it through the speakers, and "Hearing you…" was heard
+ * in the request, or "Listening for “Ember”" said and taken back as a conversation opened was heard as one. The line it
+ * comes back to as the window closes is the one said before it, so nothing is said then (voice-listening-c3-1).
+ */
+const VOICE_LINE_SETTLE_MS = 1000;
+let voiceLineSoon: ReturnType<typeof setTimeout> | undefined;
 /** The microphone's fix beside a voice error (Windows' privacy switch, macOS's permission), when the setup check has it. */
 function renderVoiceFix(): void {
   const fix = voiceFix(voice?.state ?? "off", checksNow);
@@ -2431,7 +2443,12 @@ function renderVoice(v: VoiceStatus): void {
   // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
   const said = renderMatch();
   if (said) voiceLive(said);
-  else if (v.state !== "downloading" && text !== voiceLine) voiceLive(text);
+  if (said || v.state === "active") clearTimeout(voiceLineSoon);
+  else if (v.state !== "downloading" && text !== voiceLine) { clearTimeout(voiceLineSoon); voiceLineSoon = setTimeout(() => voiceLive(text), VOICE_LINE_SETTLE_MS); }
+  // Emptied, unsaid, while a window is open: browse mode read "Listening for “Ember”" there beside "Hearing you…"
+  // (voice-listening-v4-2). An emptied status line says nothing.
+  const live = $("voice-live");
+  if (!said && v.state === "active" && live.textContent) { voiceTold = live.textContent; live.textContent = ""; }
   voiceLine = text;
   $("voice-dot").dataset.phase = v.state === "waiting" || v.state === "active" ? "ready" : v.state === "error" ? "error" : v.state === "off" || v.state === "muted" ? "" : "starting";
   const dl = $("voice-download") as HTMLButtonElement;

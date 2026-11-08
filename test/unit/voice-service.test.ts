@@ -43,12 +43,12 @@ const electron = vi.hoisted(() => {
 vi.mock("electron", () => electron);
 
 import { VoiceGate } from "../../app/voice/match";
-import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_ANNOUNCED, VoiceService, cutByQuestion, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
+import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_ANNOUNCED, VoiceService, cutByQuestion, heldByQuestion, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import { micBadge } from "../../app/shared/mic";
 import crypto from "node:crypto";
 import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
-import type { VoiceEvent } from "../../app/voice/engine";
+import { withoutAnnounced, type VoiceEvent } from "../../app/voice/engine";
 import type { Logger } from "../../app/main/logger";
 
 const log: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => log, file: "" };
@@ -305,7 +305,16 @@ describe("VoiceService", () => {
     expect(main).not.toMatch(/Wait for Ember['’]s answer to finish\./);
     expect(main).toContain(`const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;`);
     expect(main).toMatch(/listenOnceStatus\(source\)\.phase === "ready"\) \{\s*\/\/[^\n]*\n\s*if \(agent\?\.answerOpen\) agent\.interruptAnswer\(\);/);
-    expect(main).toContain(`if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return blocked("Answer Ember's question first.");`);
+    expect(main).toContain(`if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return heldByQuestion(voice?.micState);`);
+  });
+
+  it("doesn't tell screen readers to answer the question first while a conversation waits for that answer (voice-listening-v4-1)", () => {
+    // A conversation stays open while a question waits, so it can be answered by voice: "Answer Ember's question
+    // first." said then went through the speakers into it, as a request or as another voice, after which Voice Match
+    // took no spoken answer to the question.
+    expect(heldByQuestion("active")).toEqual({ phase: "blocked", detail: "Answer Ember's question first.", reason: "listening" });
+    // Outside a window it is said as before: the microphone is listening for the name, or off.
+    for (const mic of ["waiting", "off", "muted", "starting", "error", undefined] as const) expect(heldByQuestion(mic), String(mic)).toEqual({ phase: "blocked", detail: "Answer Ember's question first." });
   });
 
   it("keeps Cancel listening for a Listen once under way when a task asks a question, and holds back a new one (companion-r1)", async () => {
@@ -320,8 +329,9 @@ describe("VoiceService", () => {
     // Main asks the voice only for the control whose listen it is, before the question holds it back.
     const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
     const at = (t: string) => main.indexOf(t);
-    expect(at(`if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");`)).toBeGreaterThan(0);
-    expect(at(`if (manualCall && source !== manualCall.source) return blocked("Ember is already listening.");`)).toBeLessThan(at("if (questionHoldsListen("));
+    const other = `if (manualCall && source !== manualCall.source) return { ...blocked("Ember is already listening."), reason: "listening" };`;
+    expect(at(other)).toBeGreaterThan(0);
+    expect(at(other)).toBeLessThan(at("if (questionHoldsListen("));
   });
 
   it("says a question ended the request it was hearing, on that control only, while the question is up (companion-r2-2)", () => {
@@ -451,6 +461,85 @@ describe("VoiceService", () => {
     expect(micBadge("active")!.label).toBe("Listening");
   });
 
+  it.each(["heard", "checked", "timeout", "cancel"] as const)("never says it listens for “Ember” as a Listen once with wake listening off opens or ends (%s; voice-listening-r3-1)", async end => {
+    // "Listening for “Ember” through …" was up for a moment as the window opened and as it closed, though Ember wasn't
+    // listening for its name, and a screen reader said it over the microphone as the request began.
+    const { v, states } = service();
+    expect(v.listenOnce()).toBe(true);
+    await flush();
+    const proc = electron.procs.at(-1)!;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    const generation = (posted(proc, "listen-once")[0] as { generation?: number }).generation;
+    const request = { generation, type: "utterance", window: "manual", text: "One request.", ms: 0 };
+    proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
+    if (end === "heard") proc.emit("message", request);
+    if (end === "checked") {
+      // Voice Match checks it after the window: the microphone is closed meanwhile, and it is still this request's.
+      proc.emit("message", { generation, type: "listening", on: false, reason: "done", window: "manual" });
+      expect(states.at(-1)).toEqual({ s: "active", detail: "Listening…" });
+      proc.emit("message", request);
+    }
+    if (end === "timeout") proc.emit("message", { generation, type: "listening", on: false, reason: "timeout", window: "manual" });
+    if (end === "cancel") v.cancelListenOnce();
+    expect(states.map(s => s.s)).toEqual(["starting", "active", "off"]);
+    expect(v.listenOnceStatus.phase).toBe("ready");
+  });
+
+  it("goes straight from a wake's window into its conversation, and says Listen once is blocked by it as a line screen readers aren't told (voice-listening-c3-1)", async () => {
+    // Both lines went "Listening for “Ember”" (and "Stops Ember's answer…") and back in the same millisecond as the
+    // conversation opened, and a screen reader saying "Ember is already listening." was heard as the next request.
+    const lines: string[] = [];
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    const generation = (posted(proc, "init")[0] as { generation?: number }).generation;
+    const send = (e: VoiceEvent) => { proc.emit("message", { ...e, generation }); lines.push(v.listenOnceStatus.detail); };
+    states.length = 0;
+    send({ type: "wake", keyword: "hey_ember" });
+    send({ type: "listening", on: true, reason: "wake", window: "wake" });
+    expect(v.listenOnceStatus).toEqual({ phase: "blocked", detail: "Ember is already listening.", reason: "listening" });
+    send({ type: "utterance", text: "Turn on night light.", ms: 0, window: "wake" });
+    send({ type: "listening", on: false, reason: "done", window: "wake", next: "conversation" });
+    send({ type: "listening", on: true, reason: "conversation", window: "conversation" });
+    expect(states.map(s => s.s)).not.toContain("waiting");
+    expect(new Set(lines.slice(1))).toEqual(new Set(["Ember is already listening."]));
+    // The conversation over: listening for “Ember” again, and Listen once can be used.
+    send({ type: "listening", on: false, reason: "timeout", window: "conversation" });
+    expect(states.at(-1)!.s).toBe("waiting");
+    expect(v.listenOnceStatus.phase).toBe("ready");
+    // A window that opens no conversation (conversations off) ends as before.
+    send({ type: "wake", keyword: "hey_ember" });
+    send({ type: "listening", on: true, reason: "wake", window: "wake" });
+    send({ type: "listening", on: false, reason: "done", window: "wake" });
+    expect(states.at(-1)!.s).toBe("waiting");
+    // Main marks the other control's Listen once under way the same way.
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`if (manualCall && source !== manualCall.source) return { ...blocked("Ember is already listening."), reason: "listening" };`);
+  });
+
+  it("says a follow-up's or a conversation's window is listening, and “Hearing you” only after a wake, where the user has just spoken (voice-listening-r3-2)", async () => {
+    // "Hearing you…" was up for up to 30 s after every answer though nobody spoke, while the handle's badge said "Listening".
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    const generation = (posted(proc, "init")[0] as { generation?: number }).generation;
+    for (const window of ["follow-up", "conversation"] as const) {
+      proc.emit("message", { generation, type: "listening", on: true, reason: window, window });
+      expect(states.at(-1), window).toEqual({ s: "active", detail: "Listening…" });
+      proc.emit("message", { generation, type: "listening", on: false, reason: "timeout", window });
+      expect(states.at(-1), window).toEqual({ s: "waiting", detail: undefined });
+    }
+    proc.emit("message", { generation, type: "listening", on: true, reason: "wake", window: "wake" });
+    expect(states.at(-1)).toEqual({ s: "active", detail: undefined });
+    expect(readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8")).toContain('active: "Hearing you…"');
+    expect(micBadge("active")!.label).toBe("Listening");
+  });
+
   it("tells the voice process what a screen reader will say as Listen once opens, only while one runs (voice-listening-c2-1)", async () => {
     for (const reader of [true, false]) {
       const { v } = service(true, { screenReaderOn: () => reader });
@@ -463,7 +552,13 @@ describe("VoiceService", () => {
       const posted0 = posted(proc, "listen-once")[0] as { announced?: string[]; generation?: number };
       proc.emit("message", { generation: posted0.generation, type: "listening", on: true, reason: "manual", window: "manual" });
       if (!reader) { expect(posted0.announced).toBeUndefined(); continue; }
-      expect(posted0.announced).toEqual(LISTEN_ONCE_ANNOUNCED);
+      // (With what the voice line said while Ember listened for its name, with the microphone's name: voice-listening-r3-1.)
+      expect(posted0.announced).toEqual([...LISTEN_ONCE_ANNOUNCED, "Listening for “Ember” through Test microphone"]);
+      // As the recognizer wrote a screen reader saying them before the request, on the real models.
+      expect(withoutAnnounced("Listening for ember. Listening for one request. Listening. And turn on Do Not Disturb 2.", posted0.announced!)).toBe("And turn on Do Not Disturb 2.");
+      expect(withoutAnnounced("Listening for ember, listening for one request, listening, and turn on do not disturb to.", posted0.announced!)).toBe("And turn on do not disturb to.");
+      expect(withoutAnnounced("Listening for Amber through test microphone. Listening for one request. What's on my calendar?", posted0.announced!)).toBe("What's on my calendar?");
+      expect(withoutAnnounced("Listening for ember. Listening for one request. Listening.", posted0.announced!)).toBe("");
       // Each is what a window says then: the status line, the voice line, and the button's new name.
       expect(starting).not.toBe("Listening for one request…");
       expect(LISTEN_ONCE_ANNOUNCED).toContain(v.listenOnceStatus.detail);
@@ -474,6 +569,9 @@ describe("VoiceService", () => {
       expect(button).toContain('pending.on ? "Checking the microphone…" : "Cancelling…"');
       expect(LISTEN_ONCE_ANNOUNCED).toContain("Checking the microphone…");
       expect(readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8")).toContain('starting: "Starting…"');
+      expect(LISTEN_ONCE_ANNOUNCED).toContain("Listening for “Ember”");
+      expect(readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8")).toContain('waiting: "Listening for “Ember”"');
+      expect(readFileSync(path.resolve("app/renderer/home/copy.ts"), "utf8")).toContain("? `${text} through ${micLabel}` : text;");
       v.stop();
     }
   });
@@ -494,6 +592,33 @@ describe("VoiceService", () => {
       // Only that window says so: listening for “Ember” carries on as it was.
       expect(v.micState).toBe("waiting");
     }
+  });
+
+  it("says it heard talking it couldn't tell was a request, not that it heard none, when Listen once ends on such talk (voice-listening-r2-1, voice-listening-1)", async () => {
+    // A request begun at once and still being said 12 s after the press was thrown away with "No request heard. Try
+    // again.", though the user had been speaking the whole time.
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    captured();
+    for (const doubt of [true, false]) {
+      v.listenOnce();
+      const generation = (posted(proc, "listen-once").at(-1) as { generation?: number }).generation;
+      proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
+      proc.emit("message", { generation, type: "listening", on: false, reason: "timeout", window: "manual", ...(doubt ? { doubt: true } : {}) });
+      expect(v.listenOnceStatus.detail).toBe(doubt ? "I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak." : "No request heard. Try again.");
+    }
+  });
+
+  it("words that doubt for Settings in the third person, never begun with the name, and keeps the first person in Ask (voice-listening-v4-3)", () => {
+    // Home calls it Ember; its neighbouring lines say "Checking what Ember heard…". Said as the window ends, into the
+    // wake word's microphone, a line that began with the name would be heard as a request.
+    const ask = { phase: "ready", detail: "I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak." } as const;
+    const home = listenOnceInSettings(ask);
+    expect(home).toEqual({ phase: "ready", detail: "There was talking, but Ember couldn't tell it was a request. Wait a moment after pressing Listen once, then speak." });
+    expect(home.detail).not.toMatch(/^Ember\b|\bI\b/);
+    expect(listenOnceInSettings({ phase: "ready", detail: "No request heard. Try again." }).detail).toBe("No request heard. Try again.");
   });
 
   it.each(["cancel", "stop", "mute", "lock", "device", "expiry"])("revokes manual verification on %s", async why => {

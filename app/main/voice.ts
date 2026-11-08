@@ -70,19 +70,37 @@ const ALIVE_MS = 15_000;
 const LISTEN_ONCE_MS = 8000;
 const LISTEN_ONCE_CHECK_MS = 3000;
 /**
- * What the voice line says while Listen once is open: "Hearing you…" was up from its first frame, though nobody had
- * spoken, and then turned into "No request heard." (voice-listening-c2-2). It stays as the user starts: a screen
- * reader announcing a change then would say it over their words (voice-listening-c2-1).
+ * What the voice line says while Listen once is open, or a follow-up's or a conversation's window: "Hearing you…" was
+ * up from its first frame, though nobody had spoken, and then turned into "No request heard." (voice-listening-c2-2,
+ * voice-listening-r3-2). It stays as the user starts: a screen reader announcing a change then would say it over their
+ * words (voice-listening-c2-1).
  */
 const LISTEN_ONCE_LISTENING = "Listening…";
+/**
+ * Settings' voice line while Ember listens for its name (Home's VOICE_TEXT.waiting), with " through <microphone>" after
+ * it while the microphone has a name (copy.ts heardThrough).
+ */
+const WAITING_TEXT = "Listening for “Ember”";
 /**
  * What Ember's windows announce as Listen once opens, which a screen reader says through the speakers, outside the echo
  * canceller, as the microphone opens: its status line in Home and Ask (listenOnceStatus, and the button's own
  * "Checking the microphone…" as it is pressed), the button's new name (renderer/shared/listen-once.ts) and Settings'
- * voice line. The voice process takes them off the start of what it
- * hears (engine.ts withoutAnnounced): they were sent as the request, or before it (voice-listening-c2-1).
+ * voice line (and, said a moment before, what it said while Ember listened for its name: armListenOnce adds the
+ * microphone's name). The voice process takes them off the start of what it
+ * hears (engine.ts withoutAnnounced): they were sent as the request, or before it (voice-listening-c2-1, voice-listening-r3-1).
  */
-export const LISTEN_ONCE_ANNOUNCED = ["Checking the microphone…", "Starting to listen…", "Listening for one request…", "Cancel listening", "Starting…", LISTEN_ONCE_LISTENING];
+export const LISTEN_ONCE_ANNOUNCED = ["Checking the microphone…", "Starting to listen…", "Listening for one request…", "Cancel listening", "Starting…", LISTEN_ONCE_LISTENING, WAITING_TEXT];
+/**
+ * Listen once ended on talk it couldn't tell from the room's: begun as it opened and still going 12 s after the press
+ * (engine.ts MANUAL_DOUBT_MS). It may have been the user's long request, so "No request heard." was untrue; begun a
+ * moment after the window opens, a request is heard to its end (voice-listening-r2-1).
+ */
+const LISTEN_ONCE_DOUBT = "I heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.";
+/**
+ * The same in Settings, where Home calls it Ember (voice-listening-v4-3). Not begun with the name: a screen reader says
+ * it as the window ends, into the wake word's microphone, and a line that starts with the name is heard as a request.
+ */
+const LISTEN_ONCE_DOUBT_SETTINGS = "There was talking, but Ember couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.";
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /**
@@ -444,7 +462,9 @@ export class VoiceService {
     if (!this.wanted) return { phase: "ready", detail: hushFirst || this.manualDetail || "Opens the microphone for one request." };
     if (this.state === "error") return { ...blocked("Check the microphone and voice status in Settings."), reason: "voice-error" };
     if (!this.capturing || !this.readyAt || !this.proc) return blocked("The microphone or speech recogniser is getting ready.");
-    if (this.state === "active") return blocked("Ember is already listening.");
+    // (Not a line screen readers are told: it changes as a wake's window opens, and a screen reader saying it then was
+    // heard in the request, or as one in the conversation: voice-listening-c3-1.)
+    if (this.state === "active") return { ...blocked("Ember is already listening."), reason: "listening" };
     return { phase: "ready", detail: hushFirst || this.manualDetail };
   }
 
@@ -486,7 +506,8 @@ export class VoiceService {
     // The voice process ends the window itself, by MANUAL_MAX_MS at the latest: this catches one that never says so.
     manual.timer = setTimeout(() => this.cancelListenOnce("Listening timed out. Try again."), MANUAL_MAX_MS + LISTEN_ONCE_CHECK_MS);
     manual.timer.unref();
-    this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS, ...(this.o.screenReaderOn?.() ? { announced: LISTEN_ONCE_ANNOUNCED } : {}) });
+    const announced = this.micLabel ? [...LISTEN_ONCE_ANNOUNCED, `${WAITING_TEXT} through ${this.micLabel}`] : LISTEN_ONCE_ANNOUNCED;
+    this.proc.postMessage({ type: "listen-once", generation: ++this.listeningGeneration, from: Date.now(), ms: LISTEN_ONCE_MS, ...(this.o.screenReaderOn?.() ? { announced } : {}) });
   }
 
   cancelListenOnce(detail = "Listening cancelled."): void {
@@ -860,7 +881,7 @@ export class VoiceService {
     this.cancelEnrol("stopped");
     this.proc?.postMessage({ type: "cancel", generation: this.listeningGeneration });
     if (!this.manual) return;
-    if (this.state === "active") this.setState("waiting");
+    if (this.state === "active" && !this.manual.temporary) this.setState("waiting");
     this.finishListenOnce(detail);
   }
 
@@ -1442,7 +1463,9 @@ export class VoiceService {
           this.setClear({ state: b?.clear ? "on" : this.rootOf("clear") === null ? "starting" : "wont-load" });
           if (!b?.clear && this.rootOf("clear") === null) this.checkClear();
         }
-        this.readyAt = Date.now(); this.watchAlive(proc); this.setState("waiting");
+        // (A Listen once with wake listening off stays "Starting…" until its window opens: "Listening for “Ember”" was up
+        // a moment, untrue, and a screen reader said it over the microphone as the request began: voice-listening-r3-1.)
+        this.readyAt = Date.now(); this.watchAlive(proc); if (!temporary) this.setState("waiting");
         connectTemporaryMic?.();
         connectTemporaryMic = undefined;
         this.armListenOnce();
@@ -1518,7 +1541,8 @@ export class VoiceService {
         if (!manual) return;
         if (m.type === "utterance") {
           this.o.onEvent(event, { utterance: this.utterances });
-          if (this.state === "active") this.setState("waiting");
+          // (Its microphone off once it is done: straight to "off", never "Listening for “Ember”".)
+          if (this.state === "active" && !temporary) this.setState("waiting");
           this.finishListenOnce("Request heard.", true);
           return;
         }
@@ -1531,13 +1555,18 @@ export class VoiceService {
           manual.timer.unref();
           if (temporary) { this.capturing = false; this.closeMic(); }
         }
-        this.setState(m.on ? "active" : "waiting", m.on ? LISTEN_ONCE_LISTENING : undefined);
+        // (Checked by Voice Match after it is done, a temporary one's window stays as it was until its end says "off".)
+        if (m.on || !temporary) this.setState(m.on ? "active" : "waiting", m.on ? LISTEN_ONCE_LISTENING : undefined);
         this.o.onEvent(event);
-        if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? (this.manualSilent ? SILENT_TEXT : "No request heard. Try again.") : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
+        if (!m.on && m.reason !== "done") this.finishListenOnce(m.reason === "timeout" ? (this.manualSilent ? SILENT_TEXT : m.doubt ? LISTEN_ONCE_DOUBT : "No request heard. Try again.") : m.reason === "rejected" ? "Voice Match didn't recognise you." : "Listening cancelled.");
         else this.o.onListenOnce?.();
         return;
       }
-      if (m.type === "listening") this.setState(m.on ? "active" : "waiting");
+      // A window whose request opens a conversation goes straight on into it: "Listening for “Ember”" for a moment between
+      // them (Listen once's line with it) was said by a screen reader into the conversation, as a request (voice-listening-c3-1).
+      // Only a wake's window hears the user from its start: a follow-up's or a conversation's waits for them, as Listen
+      // once does ("Hearing you…" was up for 30 s after each answer, the badge saying "Listening": voice-listening-r3-2).
+      if (m.type === "listening" && (m.on || m.next !== "conversation")) this.setState(m.on ? "active" : "waiting", m.on && m.window !== "wake" ? LISTEN_ONCE_LISTENING : undefined);
       if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason, ...(m.score !== undefined ? { score: m.score } : {}) });
       this.o.log.debug("voice.event", { type: m.type });
       this.o.onEvent(event, m.type === "utterance" ? { utterance: this.utterances } : undefined);
@@ -1724,11 +1753,13 @@ function hiddenWindow(title: string): BrowserWindow {
 
 /**
  * Listen once as Settings (Home) shows it: there, "in Settings" sent people where they already were, right above the
- * Download button (accessibility-visual-9, voice-listening-8). Ask keeps the words as they are.
+ * Download button (accessibility-visual-9, voice-listening-8), and Ember isn't "I" (voice-listening-v4-3). Ask keeps the
+ * words as they are.
  */
 export function listenOnceInSettings(s: ListenOnceStatus): ListenOnceStatus {
   if (s.reason === "needs-models") return { ...s, detail: "Download the speech models below first." };
   if (s.reason === "voice-error") return { ...s, detail: "Check the microphone and the voice status above." };
+  if (s.detail === LISTEN_ONCE_DOUBT) return { ...s, detail: LISTEN_ONCE_DOUBT_SETTINGS };
   return s;
 }
 
@@ -1740,6 +1771,17 @@ export function listenOnceInSettings(s: ListenOnceStatus): ListenOnceStatus {
  */
 export function questionHoldsListen(question: boolean, own: ListenOnceStatus | undefined): boolean {
   return question && !(own?.phase === "starting" || own?.phase === "listening" || own?.phase === "checking");
+}
+
+/**
+ * Listen once's line while a question holds it back (questionHoldsListen), given the microphone's state. While it is
+ * open for a request (`active`: a conversation stays open while a question waits, so it can be answered by voice), the
+ * line isn't said to screen readers (reason `listening`): said then, through the speakers, it was heard in the
+ * conversation as a request or, with Voice Match on, as another voice, after which no spoken answer to that question was
+ * taken (voice-listening-v4-1).
+ */
+export function heldByQuestion(mic: MicState | undefined): ListenOnceStatus {
+  return { phase: "blocked", detail: "Answer Ember's question first.", ...(mic === "active" ? { reason: "listening" as const } : {}) };
 }
 
 /** Listen once's line on the control whose request a question ended, while that question is up (companion-r2-2). */
