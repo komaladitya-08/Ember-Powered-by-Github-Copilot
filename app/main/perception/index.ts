@@ -760,7 +760,8 @@ export class Perception {
   /**
    * Is a password prompt the desktop's shell draws itself on screen, or may one be (GNOME Shell's polkit and keyring
    * dialogs, which no X11 window shows; Windows' and macOS's credential and consent prompts, as the accessibility host
-   * lists them)? True when one is; "unchecked" when the shell couldn't be looked through or asked (fail closed: it counts
+   * lists them; on Linux, a prompt program's own window, focused or not: promptWindowOpen)? True when one is;
+   * "unchecked" when the shell couldn't be looked through or asked, or the window stack read (fail closed: it counts
    * as open, but nobody is told a prompt is there, safety-privacy-c1-2); "helper" when it couldn't be asked because the
    * accessibility helper can't work here at all (counted as open too, said as the helper and the setup check:
    * reliability-performance-r2-1); false otherwise. A notification doesn't count. While one is, or may be, Ember reads
