@@ -217,7 +217,7 @@ function requestStarts(raw: string): string[][] {
       }
       if (cur.length) clauses.push(cur);
     }
-    const polite = { first: false };
+    const polite: SentenceState = { first: false };
     clauses.forEach((c, n) => out.push(...clauseStarts(c, n, question, polite)));
   }
   return out;
@@ -226,11 +226,16 @@ function requestStarts(raw: string): string[][] {
 /** The sentences of the user's words (at line breaks and after ".", "!", "?" or ";"). */
 const sentencesOf = (raw: string): string[] => raw.split(/\r?\n+|(?<=[.!?;])\s+/).filter(s => s.trim() !== "");
 
+/** What a sentence's earlier clauses say about the later ones: a way of asking first, a how-to (HOW_TO) before them. */
+interface SentenceState { first: boolean; howTo?: boolean }
+
 /** Where a request's verb can stand in clause `n` of a sentence (requestStarts), as the words from there on. */
-function clauseStarts(c: readonly string[], n: number, question: boolean, polite: { first: boolean }): string[][] {
+function clauseStarts(c: readonly string[], n: number, question: boolean, polite: SentenceState): string[][] {
   const out: string[][] = [];
   const [k, isPolite] = skipLead(c, 0);
   if (n === 0) polite.first = isPolite;
+  // After a how-to, the rest of the sentence is what it asks how to do (commands-remote-c4-4).
+  if (polite.howTo || HOW_TO.test(c.join(" "))) { polite.howTo = true; return out; }
   // A question asks for something only when it is a way of asking ("can you delete build/?").
   if (question && !polite.first) return out;
   if (c.some(x => HYPOTHETICAL.has(x))) return out;
@@ -313,7 +318,7 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
       }
       if (cur.length) clauses.push([cur, list]);
     }
-    const polite = { first: false };
+    const polite: SentenceState = { first: false };
     let chain: string[] | null = null;
     // How many of the chain's last entries only list more things after the verb's own clause.
     let more = 0;
@@ -480,6 +485,48 @@ const KEEPS = /(^|[^\p{L}\p{N}])((everything|anything|all)\s+but|other\s+than|ap
 
 /** Words that turn a request around ("don't delete build", "never push to main"): nothing announces then. */
 const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
+
+/** A condition the step waits on ("if the build fails", "only after I confirm", "once the tests pass", "when I tell you"). */
+const CONDITION = /(^|[^\p{L}\p{N}])(if|when|whenever|once|after|until|till|as\s+soon\s+as|as\s+long\s+as|so\s+long\s+as|provided|providing|assuming|depending\s+on)(?=$|[^\p{L}\p{N}])/giu;
+/** Words before a condition that make it what to report, not when to act ("tell me if it worked", "let me know when"). */
+const REPORTS = /(^|[^\p{L}\p{N}])((tell|show|warn|notify|ping|let)\s+(me|us)(\s+know)?|check|see|find\s+out|say|report)\s+$/iu;
+/** A condition that is only a way of asking ("if you can", "if possible", "if that's okay"). */
+const POLITE_IF = /^\s+(you\s+(can|could|would|will|please|like|want)|possible|(that|it)['’]?s\s+(ok|okay|alright|all\s+right|fine))(?=$|[^\p{L}\p{N}])/iu;
+/** A later time ("tomorrow", "next week", "in 5 minutes", "at 5pm", "on Friday", "later"). */
+const LATER = /(^|[^\p{L}\p{N}])(tomorrow|tonight|later|soon|eventually|someday|sometime|overnight|next\s+(week|month|year|time|sprint|release|morning|afternoon|evening|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this\s+(evening|afternoon|weekend)|(on|by|until|till)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|the\s+weekend)|in\s+(\d+|a|an|one|two|three|four|five|ten|fifteen|twenty|thirty|(a\s+)?few|a\s+couple\s+of|several)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|seconds?|secs?|moments?|bit|while)|(at|by)\s+(noon|midnight|\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)|\d{1,2}:\d{2}|\d{1,2}\s*o['’]?clock)|(end|close)\s+of\s+(the\s+)?(day|week|month))(?=$|[^\p{L}\p{N}])/iu;
+/** Asking to be asked first ("ask me first", "check with me", "wait for my ok", "let me check first", "a dry run"). */
+const ASK_FIRST = /(^|[^\p{L}\p{N}])(ask\s+(me|us|first|before)|(check|confirm|clear\s+it)\s+with\s+(me|us)|confirm\s+(first|before)|(tell|show|warn|ping)\s+(me|us)\s+(first|before|beforehand)|let\s+(me|us)\s+(know\s+(first|before|beforehand)|check|look|review|decide|confirm|approve|think|see\s+(it\s+|that\s+|this\s+|them\s+)?first)|wait|waits|waiting|my\s+(go[-\s]?ahead|approval|ok|okay|permission|say[-\s]?so|signal|confirmation|green\s+light|nod)|dry[-\s]?run)(?=$|[^\p{L}\p{N}])/iu;
+
+/**
+ * Whether the words hold the step back (commands-remote-c4-4): a condition, a later time or asking to be asked first,
+ * anywhere in them. An announcement runs the step now, as asked, so these always ask; "tell me if it worked", "let me
+ * know when it's done", "if you can", "at once" and "after that," hold nothing back.
+ */
+function holdsBack(userWords: string): boolean {
+  const text = userWords.normalize("NFKC");
+  if (LATER.test(text) || ASK_FIRST.test(text)) return true;
+  for (const m of text.matchAll(CONDITION)) {
+    const at = m.index + m[1].length;
+    const word = m[2].toLowerCase();
+    const before = text.slice(0, at);
+    const after = text.slice(at + m[2].length);
+    if (REPORTS.test(before)) continue;
+    if (word === "if" && POLITE_IF.test(after)) continue;
+    if (word === "once" && (/(^|[^\p{L}\p{N}])at\s+$/iu.test(before) || /^\s+(more|again|and\s+for\s+all)(?=$|[^\p{L}\p{N}])/iu.test(after))) continue;
+    if (word === "after" && /^\s+(all(?=$|[^\p{L}\p{N}])|(that|this)\s*([,;:.!]|$))/iu.test(after)) continue;
+    // "the file you provided" names a file, not a condition.
+    if (word === "provided" && /(^|[^\p{L}\p{N}])(i|you|we|they|he|she|was|were|is|are|been|be)\s+$/iu.test(before)) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Words in a clause that ask how to do something ("explain how to delete build/", "the command to delete src/"): the
+ * rest of that sentence asks for nothing, even a verb said again after them ("explain how to delete build/ and delete
+ * src/": commands-remote-c4-4). Read on the clause's plain words.
+ */
+const HOW_TO = /(^|\s)(how\s+(to|do|does|did|would|could|can|should|might|i|you|we|one)|explain|explains|explaining|teach|teaching|instructions?|tutorial|walk\s+(me|us)\s+through|guide\s+(me|us)|(show|tell|give|list|write|print|send)\s+((me|us)\s+)?(the|a|some)\s+(command|commands|syntax|steps?)|(what|which)\s+(command|commands))(?=\s|$)/;
 
 /**
  * Widening any row refuses: a differing real path, a variable set in the text, options before the program's verb, and
@@ -832,6 +879,8 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
   if (F.some(f => ALWAYS_ASK.has(f.cls))) return null;
   if (F.some(f => f.widening.some(x => ALWAYS_BROADER.has(x)))) return null;
   if (NEGATION.test(userWords.normalize("NFKC")) || KEEPS.test(userWords.normalize("NFKC"))) return null;
+  // Words that hold the step back: an announcement would run it now (commands-remote-c4-4).
+  if (holdsBack(userWords)) return null;
   const groups = new Map<string, Finding[]>();
   for (const f of F) {
     const row = rowOf(f, F);

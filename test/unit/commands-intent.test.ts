@@ -323,7 +323,7 @@ describe("matchIntent: only a request counts (review #28)", () => {
     ["rm -r build", "go ahead and delete build/", "Deleting build, as you asked."],
     ["rm -r build", "fix line 12 in main.ts and delete build/", "Deleting build, as you asked."],
     ["rm -r build", "list the files, then delete build/", "Deleting build, as you asked."],
-    ["rm -r build", "how big is build/? delete build/ if it is over 1 GB", "Deleting build, as you asked."],
+    ["rm -r build", "how big is build/? delete build/", "Deleting build, as you asked."],
     ["rm -r build", "on the desktop delete build/", "Deleting build, as you asked."],
     [PUSH, "push my branch to GitHub", "Pushing feature-x to origin, as you asked."],
     [PUSH, "commit and push my branch to GitHub", "Pushing feature-x to origin, as you asked."],
@@ -342,8 +342,10 @@ describe("matchIntent: the folder the words put a path in (review #31)", () => {
     ["rm -rf packages/app/build", "delete the build folder in packages/app", "Deleting packages/app/build, as you asked."],
     ["rm -r step2/cache", "clean up the cache folder in step2", "Deleting step2/cache, as you asked."],
     ["rm -r cache", "clean up the cache folder in step2", null],
-    ["rm -r build", "delete build/ in 5 minutes", "Deleting build, as you asked."],
-    ["rm -r build", "delete build/ in a moment", "Deleting build, as you asked."],
+    // A time ("in 5 minutes", "in a moment") names no folder, and holds the step back (commands-remote-c4-4).
+    ["rm -r build", "delete build/ in 5 minutes", null],
+    ["rm -r build", "delete build/ in one go", "Deleting build, as you asked."],
+    ["rm -r build", "delete build/ in bulk", "Deleting build, as you asked."],
     ["echo x > notes.txt", "overwrite notes.txt in place", "Overwriting notes.txt, as you asked."],
     ["rm -r build", "delete the build folder in this repo", "Deleting build, as you asked."],
     // The home folder is a folder too: build/ there is not the task's build/ (commands-remote-c3-1).
@@ -478,6 +480,61 @@ describe("matchIntent: the verb said again, or a list after a colon (commands-re
     ["gh pr merge 45", "check pr 45, then merge the other pr"],
   ])("asks for `%s` after %j", (cmd, words) => {
     expect(announce(cmd, words)).toBeNull();
+  });
+});
+
+describe("matchIntent: words that hold the step back (commands-remote-c4-4)", () => {
+  it.each([
+    // [command, words]: a condition, a later time, asking to be asked, or a how-to the verb said again escapes.
+    ["rm -rf src", "delete src/ only after I confirm"],
+    ["rm -rf src", "delete src/ only if I say so"],
+    ["rm -rf src", "delete src/ when I tell you"],
+    ["rm -rf src", "delete src/ once the tests pass"],
+    ["rm -rf src", "if the build fails, delete src/"],
+    ["rm -rf src", "delete src/. Only if the tests pass, though."],
+    ["rm -rf src", "delete src/ as soon as the build is done"],
+    ["rm -rf src", "wait until the build finishes, then delete src/"],
+    ["kill 1234", "kill 1234 if it hangs again"],
+    ["kill 1234", "kill 5678; whatever you do, kill 1234 only if I say so"],
+    ["rm -rf build", "delete build/ if it is over 1 GB"],
+    ["rm -rf src", "delete src/ tomorrow"],
+    ["rm -rf src", "next week, delete src/"],
+    ["rm -rf src", "delete build/; delete src/ tomorrow"],
+    ["rm -rf src", "delete src/ tonight"],
+    ["rm -rf src", "delete src/ in 5 minutes"],
+    ["rm -rf src", "delete src/ in a moment"],
+    ["rm -rf src", "delete src/ at 5pm"],
+    ["rm -rf src", "delete src/ on Friday"],
+    ["rm -rf src", "delete src/ but ask me first"],
+    ["rm -rf src", "delete src/, check with me before you do"],
+    ["rm -rf src", "delete src/ when you have my go-ahead"],
+    ["rm -rf src", "delete src/ after I've had a look"],
+    ["rm -rf src", "delete src/ and let me check first"],
+    ["rm -rf src", "delete src/, wait for my ok"],
+    ["rm -rf src", "explain how to delete build/ and delete src/"],
+    ["rm -rf src", "tell me how to delete build/, then delete src/"],
+    ["git push origin feature-x", "explain how to push, and push feature-x to origin"],
+    ["rm -rf dist", "delete build/ after dist/ finishes"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBeNull();
+  });
+
+  it.each([
+    // Asking for the step now, with words that only ask for something else or say why, still announces.
+    ["rm -rf src", "delete src/", "Deleting src, as you asked."],
+    ["rm -rf src", "can you delete src/?", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ and tell me if anything goes wrong", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ and let me know when it's done", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ if you can", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ at once", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ now", "Deleting src, as you asked."],
+    ["rm -rf src", "list the files; after that, delete src/", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ and explain why it was so big", "Deleting src, as you asked."],
+    ["rm -rf src", "Explain how rm works. Then delete src/.", "Deleting src, as you asked."],
+    ["rm -r build", "how big is build/? delete build/", "Deleting build, as you asked."],
+    ["rm -r build dist", "delete build/ and dist/ in one go", "Deleting build and dist, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe(said);
   });
 });
 
