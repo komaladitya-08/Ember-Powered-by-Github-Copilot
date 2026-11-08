@@ -56,8 +56,13 @@ const notepad = (r: Partial<ActionRequest>): ActionRequest => ({ taskId: "t1", k
  * by paste), an "OK" in a dialog, and (`extra`) whatever else the screen shows. The confirmer answers `answer`
  * ("deny" for questions matching `denyIf`) and records every question.
  */
-function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; answer?: string; denyIf?: RegExp; goal?: string; read?: { truncated?: "nodes" | null; busy?: boolean }; noAreaFocus?: boolean; prompt?: () => boolean | "unchecked" | "helper" } = {}) {
-  const st = { asked: [] as string[], audit: [] as Record<string, unknown>[], activity: [] as Record<string, unknown>[], keys: [] as string[], borrows: 0 };
+function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; answer?: string; denyIf?: RegExp; goal?: string; read?: { truncated?: "nodes" | null; busy?: boolean }; noAreaFocus?: boolean; prompt?: () => boolean | "unchecked" | "helper";
+  /** An authentication prompt (an X11 pinentry) has the keyboard, as the borrow's window check sees it. */
+  authWindow?: () => boolean;
+  /** The user's clipboard can't be saved, so nothing is pasted. */
+  clipboardFails?: boolean; } = {}) {
+  // `walks`: each look through the shell (promptOpen, systemDialogOpen), in order.
+  const st = { asked: [] as string[], audit: [] as Record<string, unknown>[], activity: [] as Record<string, unknown>[], keys: [] as string[], borrows: 0, walks: [] as string[] };
   const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "list.txt - Notepad", states: [], bounds: FRAME };
   const area: AxNode = { id: 2, parent: 1, depth: 1, role: "text", name: "Text editor", text: "", states: ["enabled", "sensitive", "editable", "focusable", ...(o.noAreaFocus ? [] : ["focused"]), "multi line"], bounds: { x: 10, y: 60, width: 700, height: 400 } };
   const nodes = (): AxNode[] => [frame, area, ...(o.extra ?? [])];
@@ -75,8 +80,9 @@ function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; an
   const scopes = o.scopes === undefined ? ALL() : o.scopes;
   const w = new Worker({
     client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
-    perception: { perceive: async () => ({ ...seen(), text: "<screen>", capture: null }), read: async () => seen(), windows: async () => [window], systemDialogOpen: async () => !!o.prompt?.(),
-      ...(o.prompt ? { promptOpen: async () => o.prompt!() } : {}) } as never,
+    perception: { perceive: async () => ({ ...seen(), text: "<screen>", capture: null }), read: async () => seen(), windows: async () => [window],
+      systemDialogOpen: async () => { st.walks.push("systemDialogOpen"); return !!o.prompt?.(); },
+      ...(o.prompt ? { promptOpen: async () => { st.walks.push("promptOpen"); return o.prompt!(); } } : {}) } as never,
     sidecar: {
       readElement: async (id: number) => { const n = nodes().find(x => x.id === id); return n ? { role: n.role, name: n.name, states: n.states, bounds: n.bounds, ...(n.text !== undefined ? { text: n.text } : {}) } : null; },
       setText: async () => { throw new Error("background_unavailable: this app takes no text this way"); },
@@ -92,10 +98,10 @@ function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; an
     onActivity: (e: Record<string, unknown>) => { st.activity.push(e); },
     cursor: {
       borrow: { borrow: async (fn: (h: Hand) => Promise<void>, b: { onStart?: () => void }) => { st.borrows++; b.onStart?.(); await fn(hand); } } as never,
-      findWindow: () => 1, setBorrowing: () => undefined,
+      findWindow: () => 1, setBorrowing: () => undefined, ...(o.authWindow ? { activeWindow: () => ({ app: "pinentry", title: "Passphrase" }) } : {}),
     },
-    clipboard: { save: async () => ({ items: [{ "text/plain": "the user's" }], look: "x" }), unchanged: async () => true, writeText: async (t: string) => { written.push(t); }, restore: async () => undefined },
-    system: WIN32,
+    clipboard: { save: async () => { if (o.clipboardFails) throw new Error("no owner"); return { items: [{ "text/plain": "the user's" }], look: "x" }; }, unchanged: async () => true, writeText: async (t: string) => { written.push(t); }, restore: async () => undefined },
+    system: o.authWindow ? { ...WIN32, privacy: { isSecurityWindow: () => o.authWindow!() } } : WIN32,
   } as unknown as WorkerDeps, { id: "t1", goal: o.goal ?? "write my shopping list in Notepad", target: { title: "list.txt - Notepad" } });
   const call = (name: string, args: Record<string, unknown>) => w.tools().find(t => t.name === name)!.handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
   const authorizeCells = (cells: { cell: string; text: string }[]) => (w as unknown as { authorizeCells(jobs: unknown[]): Promise<unknown> })
@@ -103,6 +109,13 @@ function notepadWorker(o: { scopes?: AutonomyScopes | null; extra?: AxNode[]; an
   const decisions = (kind: string) => st.audit.filter(e => e.event === "decision" && e.kind === kind);
   return { st, call, authorizeCells, decisions, worker: w };
 }
+
+/** Two spreadsheet cells beside Notepad's text, so fill_cells is called as the model calls it (safety-privacy-v4-4). */
+const CELLS: AxNode[] = [
+  { id: 5, parent: 1, depth: 1, role: "table cell", name: "B5", text: "", states: ["enabled", "focusable", "editable"], bounds: { x: 10, y: 470, width: 80, height: 20 } },
+  { id: 6, parent: 1, depth: 1, role: "table cell", name: "B6", text: "", states: ["enabled", "focusable", "editable"], bounds: { x: 10, y: 490, width: 80, height: 20 } },
+];
+const FILL = { cells: [{ cell: "B5", text: "4" }, { cell: "B6", text: "5" }] };
 
 describe("an ordinary borrow on Windows with all four scopes on (the owner's report)", () => {
   it("types a shopping list with line breaks into Notepad with the borrowed keyboard without a question, and says so (owner decision 2026-11-02)", async () => {
@@ -157,9 +170,10 @@ describe("an ordinary borrow on Windows with all four scopes on (the owner's rep
   });
 
   it("fills spreadsheet cells without a question, one announcement for the batch, recorded as autonomy", async () => {
-    const h = notepadWorker();
+    const h = notepadWorker({ extra: CELLS });
     await h.call("perceive_window", {});
-    expect(await h.authorizeCells([{ cell: "B5", text: "4" }, { cell: "B6", text: "5" }])).toBeNull();
+    await h.call("fill_cells", FILL);
+    expect(h.st.borrows).toBe(1);
     expect(h.st.asked).toEqual([]);
     expect(h.decisions("cursor_text").map(e => e.autonomy)).toEqual([true, true]);
     expect(h.st.activity.filter(e => e.type === "announce")).toEqual([{ type: "announce", text: `Using your keyboard to fill 2 cells in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.` }]);
@@ -827,11 +841,11 @@ describe("the worker's reads of a dialog from a read that was cut short or busy 
 describe("working without asking while the desktop's own password prompt is open (safety-privacy-3)", () => {
   it.each([[true], ["unchecked"], ["helper"]] as const)("announces nothing it would then refuse, and records only the refusal (promptOpen %j)", async now => {
     let prompt: boolean | "unchecked" | "helper" = false;
-    const h = notepadWorker({ prompt: () => prompt });
+    const h = notepadWorker({ prompt: () => prompt, extra: CELLS });
     await h.call("perceive_window", {});
     prompt = now;
     expect((await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" })).resultType).toBe("denied");
-    expect(await h.authorizeCells([{ cell: "B5", text: "4" }, { cell: "B6", text: "5" }])).toMatchObject({ resultType: "denied" });
+    expect((await h.call("fill_cells", FILL)).resultType).toBe("denied");
     expect(h.st.asked).toEqual([]);
     expect(h.st.borrows).toBe(0);
     expect(h.st.activity.some(e => e.type === "announce")).toBe(false);
@@ -841,11 +855,78 @@ describe("working without asking while the desktop's own password prompt is open
     // Once it has gone, the same steps go ahead and are announced, as before.
     prompt = false;
     expect((await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" })).resultType).toBe("success");
-    expect(await h.authorizeCells([{ cell: "B5", text: "4" }, { cell: "B6", text: "5" }])).toBeNull();
+    await h.call("fill_cells", FILL);
     expect(h.st.asked).toEqual([]);
+    expect(h.st.borrows).toBe(2);
     const said = h.st.activity.filter(e => e.type === "announce").map(e => e.text);
     expect(said).toContain(`Using your keyboard to type 9 characters in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
     expect(said.at(-1)).toBe(`Using your keyboard to fill 2 cells in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`);
+    expect(h.decisions("cursor_text").slice(-2).map(e => e.autonomy)).toEqual([true, true]);
+  });
+
+  it("looks through the shell once before each way of acting, as without the mode, not again to announce (safety-privacy-v4-2)", async () => {
+    const h = notepadWorker({ prompt: () => false, extra: CELLS });
+    await h.call("perceive_window", {});
+    h.st.walks.length = 0;
+    // A typed list: the look before typing by accessibility, then the borrow's own.
+    expect((await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" })).resultType).toBe("success");
+    expect(h.st.walks).toEqual(["promptOpen", "systemDialogOpen"]);
+    // A batch of cells: the borrow's look alone.
+    h.st.walks.length = 0;
+    await h.call("fill_cells", FILL);
+    expect(h.st.walks).toEqual(["systemDialogOpen"]);
+    // Each step is still said and recorded as going ahead without asking, once its look has passed: by accessibility,
+    // with the borrowed keyboard, and the batch.
+    const said = h.st.activity.filter(e => e.type === "announce").map(e => e.text);
+    expect(said).toEqual([
+      `Typing 9 characters in ${NOTEPAD}, without asking as you let me.`,
+      `Using your keyboard to type 9 characters in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`,
+      `Using your keyboard to fill 2 cells in ${NOTEPAD}, without asking as you let me. Move the mouse or press a key to take it back.`,
+    ]);
+    expect(h.decisions("text").map(e => e.autonomy)).toEqual([true]);
+    expect(h.decisions("cursor_text").map(e => e.autonomy)).toEqual([true, true, true]);
+    // The decision is recorded before what it let through.
+    const at = (f: (e: Record<string, unknown>) => boolean) => h.st.audit.findIndex(f);
+    expect(at(e => e.event === "decision" && e.kind === "cursor_text")).toBeLessThan(at(e => e.event === "action" && e.kind === "cursor_text"));
+  });
+
+  it("records a borrow it let through as decided before it failed to save the clipboard, and never says it went ahead (safety-privacy-v4-2)", async () => {
+    const h = notepadWorker({ prompt: () => false, clipboardFails: true });
+    await h.call("perceive_window", {});
+    expect((await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" })).resultType).toBe("failure");
+    expect(h.st.borrows).toBe(0);
+    const borrow = h.st.audit.filter(e => e.kind === "cursor_text").map(e => [e.event, e.verdict ?? e.ok, e.autonomy ?? null]);
+    expect(borrow).toEqual([["decision", "allow", true], ["action", false, null]]);
+    expect(h.st.activity.filter(e => e.type === "announce").map(e => e.text)).toEqual([`Typing 9 characters in ${NOTEPAD}, without asking as you let me.`]);
+  });
+});
+
+describe("working without asking while an authentication prompt has the keyboard (safety-privacy-v4-3)", () => {
+  it("never says it borrows the keyboard, nor records it as going ahead, and refuses before anything is borrowed", async () => {
+    const h = notepadWorker({ authWindow: () => true, extra: CELLS });
+    await h.call("perceive_window", {});
+    expect((await h.call("type_text", { id: 2, text: "milk\neggs", mode: "append" })).resultType).toBe("denied");
+    expect((await h.call("fill_cells", FILL)).resultType).toBe("denied");
+    expect(h.st.borrows).toBe(0);
+    expect(h.st.keys).toEqual([]);
+    expect(h.st.activity.filter(e => e.type === "announce").map(e => e.text)).not.toContainEqual(expect.stringMatching(/^Using your keyboard/));
+    expect(h.decisions("cursor_text").map(e => [e.verdict, e.autonomy ?? null, e.reason])).toEqual([
+      ["deny", null, "an authentication prompt has the keyboard"], ["deny", null, "an authentication prompt has the keyboard"],
+    ]);
+  });
+
+  it("asks nothing about borrowing the keyboard with the mode off, and once the prompt has gone asks as before", async () => {
+    let auth = true;
+    const h = notepadWorker({ scopes: null, authWindow: () => auth, extra: CELLS });
+    await h.call("perceive_window", {});
+    expect((await h.call("type_text", { id: 2, text: "milk", mode: "append" })).resultType).toBe("denied");
+    expect((await h.call("fill_cells", FILL)).resultType).toBe("denied");
+    expect(h.st.asked.filter(p => /^Borrow your/.test(p))).toEqual([]);
+    expect(h.st.audit.some(e => e.event === "confirm" && e.kind === "cursor_text")).toBe(false);
+    expect(h.st.borrows).toBe(0);
+    auth = false;
+    await h.call("fill_cells", FILL);
+    expect(h.st.asked.filter(p => /^Borrow your/.test(p))).toEqual([`Borrow your keyboard to fill 2 cells in ${NOTEPAD}: B5 “4”, B6 “5”?`]);
   });
 });
 
