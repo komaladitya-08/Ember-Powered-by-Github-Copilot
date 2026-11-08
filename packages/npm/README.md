@@ -48,7 +48,8 @@ and downloads nothing. `ember --help` lists what Ember takes, and the launcher's
 | macOS Intel | `Ember-<v>-mac-x64.zip` | `~/Library/Caches/ember-npm/<v>` |
 | Linux x64 | `Ember-<v>-x86_64.AppImage` (made executable) | `$XDG_CACHE_HOME/ember-npm/<v>` (default `~/.cache`) |
 
-If the download doesn't match `SHA256SUMS`, nothing is installed. On macOS Ember is started with `open`, so macOS asks
+If the download doesn't match `SHA256SUMS`, or `SHA256SUMS` has no line for it, nothing is installed, and the
+launcher says what to do next (run `ember` again, or download the file in your browser). On macOS Ember is started with `open`, so macOS asks
 for Accessibility and Screen Recording permissions for Ember itself. Its setup check warns that Ember isn't in the
 Applications folder, as the cache isn't: its **Move to Applications** takes Ember out of the cache (the next `ember`
 downloads it again), so for permissions that last across updates install the dmg from the Releases page instead. On Linux the AppImage needs `fusermount` (on RHEL 8
@@ -94,6 +95,13 @@ A reinstall keeps the previous copy until the checked replacement is published. 
 restores the previous copy so a normal launch can still work offline. If restoration also fails, the error gives the
 paths to the saved previous copy and checked replacement; neither is deleted. Close Ember before manually restoring
 one of those folders to the path printed by `ember --npm-where`, and do not overwrite another completed install.
+
+If the cache folder, or a folder above it, belongs to another user (running the launcher once with `sudo` can leave it
+so) or is read-only, the launcher says it can't write there: set `EMBER_NPM_CACHE` to a folder of your own, or make
+that one yours again. If what comes for `SHA256SUMS` is a web page, such as a hotel Wi-Fi's or a proxy's sign-in page,
+it says so without showing it: open the Releases page in your browser, sign in if it asks, and run `ember` again. A
+`--npm-reinstall` that fails for want of room, or of a folder it can write in, keeps the copy you had, which `ember`
+starts.
 
 Only one installer per version runs at a time. A second one says "Another 'ember' is already downloading Ember
 <version>" and starts nothing; run `ember` again once the first has finished. A normal launch can still use a complete

@@ -110,6 +110,32 @@ export function notReleased(version, env = {}) {
   return `Ember ${version} isn't on ${releaseSource(env)} yet, so there is nothing to start. Install a published version from https://github.com/${REPO}/releases instead.`;
 }
 
+/**
+ * What the launcher says when the release file can't be checked against the release's SHA256SUMS, so nothing is
+ * installed: what came for SHA256SUMS is a web page (a Wi-Fi's or a proxy's sign-in, which it never repeats) or isn't
+ * a list of hashes, it has no line for the file, or the file doesn't match its line; each with what to do next
+ * (install-docs-c4-1).
+ * @param {{ problem: "page" | "garbled" | "missing" | "mismatch"; version: string; asset: string; name: string; env?: Record<string, string | undefined>; host?: string; want?: string; got?: string }} o
+ *   host: the host that sent SHA256SUMS (after any redirect); want, got: the hashes that differ
+ */
+export function notChecked(o) {
+  const env = o.env ?? {};
+  const mirror = !!env.EMBER_NPM_DOWNLOAD_BASE;
+  const tag = `https://github.com/${REPO}/releases/tag/v${o.version}`;
+  const sums = `What ${o.host} sent for the v${o.version} release's SHA256SUMS`;
+  if (o.problem === "page") {
+    return `${sums} is a web page, perhaps a Wi-Fi or proxy sign-in, not its list of hashes, so nothing was installed. Open https://github.com/${REPO}/releases in your browser and sign in if it asks${mirror ? ", or check EMBER_NPM_DOWNLOAD_BASE" : ""}, then run '${o.name}' again.`;
+  }
+  if (o.problem === "garbled") {
+    return `${sums} isn't its list of hashes, so nothing was installed. Run '${o.name}' again${mirror ? ", check EMBER_NPM_DOWNLOAD_BASE" : ""}, or download ${o.asset} from ${tag} in your browser.`;
+  }
+  if (o.problem === "missing") {
+    const next = mirror ? `Ask whoever runs the mirror to copy the v${o.version} release again, or download ${o.asset} from ${tag} in your browser.` : `Download ${o.asset} from ${tag} in your browser instead.`;
+    return `The v${o.version} release's SHA256SUMS on ${releaseSource(env)} has no line for ${o.asset}, so nothing was installed. ${next}`;
+  }
+  return `${o.asset} doesn't match SHA256SUMS (expected ${o.want}, got ${o.got}), so nothing was installed: it was damaged or changed on the way. Run '${o.name}' again, or download it from ${tag} in your browser.`;
+}
+
 /** The version of this package, which is the version of Ember it starts. */
 export function packageVersion() {
   const pkg = JSON.parse(fs.readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"));
@@ -402,7 +428,8 @@ function cantReach(err, o) {
  * (and the status) on any answer but 2xx, and with cantReach's sentence when the network fails.
  * @param {string} url
  * @param {Net} o
- * @returns {Promise<{ status: number; length: number; body: http.IncomingMessage; text(): Promise<string> }>}
+ * @returns {Promise<{ status: number; length: number; host: string; body: http.IncomingMessage; text(): Promise<string> }>}
+ *   host: the host that answered (after any redirect)
  */
 async function get(url, o) {
   const npmrc = npmrcProxy(o.env);
@@ -436,7 +463,7 @@ async function get(url, o) {
     }
     const body = res;
     return {
-      status, body, length: Number(res.headers["content-length"]) || 0,
+      status, body, length: Number(res.headers["content-length"]) || 0, host: new URL(at).host,
       async text() {
         let s = "";
         body.setEncoding("utf8");
@@ -546,20 +573,25 @@ export async function ensureInstalled(o) {
   }
 
   const parent = p.dirname(dir);
+  // The copy a reinstall started from, which is there until a new one is published.
+  const haveCopy = () => fs.existsSync(p.join(dir, MARKER)) && fs.existsSync(at(target.exe));
   // A full disk or quota, wherever it strikes (a disk already full strikes here or at the lock, before the download's
-  // size is known), said as this computer's, not as Node's bare "ENOSPC" (install-docs-v4-1).
-  const roomy = (/** @type {any} */ err) => ROOM.has(err?.code) ? new Error(noRoom(err, { folder: parent, version: o.version, name }), { cause: err }) : err;
+  // size is known), said as this computer's, not as Node's bare "ENOSPC" (install-docs-v4-1); and, where the cache
+  // folder, the lock and the work folder are made (`making`), a folder this user can't write in, not Node's "EACCES:
+  // permission denied, mkdir …". Only there: a rename that fails with EPERM later is a file in use on Windows. Either
+  // way a reinstall's copy, still there, is said to be kept (install-docs-c4-1).
+  const roomy = (/** @type {any} */ err, making = false) => onDisk(err, { folder: parent, version: o.version, name, kept: haveCopy(), making });
   try {
     fs.mkdirSync(parent, { recursive: true });
   } catch (err) {
-    throw roomy(err);
+    throw roomy(err, true);
   }
   // Caught from before the lock is taken until it is given back, so no stop leaves it behind: the download is ended,
   // and the finally below removes the work folder and the lock. A second Ctrl+C stops the launcher at once.
   const stop = new AbortController();
   const onSignal = (/** @type {string} */ sig) => {
     // A reinstall stopped before it publishes leaves the copy that was there, which a plain run starts.
-    const kept = fs.existsSync(p.join(dir, MARKER)) && fs.existsSync(at(target.exe));
+    const kept = haveCopy();
     stop.abort(Object.assign(
       new Error(kept
         ? `Stopped before Ember ${o.version} was downloaded again, and the copy you had is kept. Run '${name}' to start it, or '${name} --npm-reinstall' to download it again.`
@@ -576,7 +608,7 @@ export async function ensureInstalled(o) {
     takeLock({ lock, parent, version: o.version, name, p });
   } catch (err) {
     unhook();
-    throw roomy(err);
+    throw roomy(err, true);
   }
   let work;
   let preserveWork = false;
@@ -586,18 +618,30 @@ export async function ensureInstalled(o) {
     if (!o.force && fs.existsSync(p.join(dir, MARKER)) && fs.existsSync(at(target.exe))) {
       return { dir, exe: at(target.exe), app: at(target.app), fresh: false };
     }
-    work = fs.mkdtempSync(p.join(parent, `.${o.version}-`));
+    try {
+      work = fs.mkdtempSync(p.join(parent, `.${o.version}-`));
+    } catch (err) {
+      throw roomy(err, true);
+    }
     say(`getting Ember ${o.version} for ${platform}-${o.arch ?? process.arch} (${target.asset}) from ${releaseSource(env)}`);
     const how = { env, signal: stop.signal, version: o.version, asset: target.asset, name };
     const sums = await get(downloadUrl(o.version, "SHA256SUMS", env), how).catch(err => {
       throw err?.status === 404 ? new Error(notReleased(o.version, env), { cause: err }) : err;
     });
     const sumsText = await sums.text();
-    const want = parseSha256Sums(sumsText).get(target.asset);
-    if (!want) throw new Error(`the v${o.version} release's SHA256SUMS has no line for ${target.asset}`);
+    const unchecked = { version: o.version, asset: target.asset, name, env, host: sums.host };
+    let listed;
+    try {
+      listed = parseSha256Sums(sumsText);
+    } catch (err) {
+      // A web page in its place (a Wi-Fi's or a proxy's sign-in, a mirror's index), never repeated (install-docs-c4-1).
+      throw new Error(notChecked({ ...unchecked, problem: /^\s*</.test(sumsText) ? "page" : "garbled" }), { cause: err });
+    }
+    const want = listed.get(target.asset);
+    if (!want) throw new Error(notChecked({ ...unchecked, problem: "missing" }));
     const file = p.join(work, target.asset);
     const got = await download(downloadUrl(o.version, target.asset, env), file, how);
-    if (got !== want) throw new Error(`${target.asset} doesn't match SHA256SUMS (expected ${want}, got ${got}); nothing was installed`);
+    if (got !== want) throw new Error(notChecked({ ...unchecked, problem: "mismatch", want, got }));
     say(`checked ${target.asset} against SHA256SUMS (sha256 ${got})`);
 
     const stage = p.join(work, "app");
@@ -702,14 +746,45 @@ function roomSaid(said) {
 /**
  * What the launcher says when the cache's disk has no room for Ember, in place of Node's "ENOSPC": where, how big the
  * download is (when known), and what to do, which is this computer's to fix: running again or another download
- * wouldn't help.
+ * wouldn't help. After a reinstall, that the copy it started from is kept, and how to start it (install-docs-c4-1).
  * @param {any} err a ROOM error, with `bytes` when the download's size is known
- * @param {{ folder: string; version: string; name: string }} o
+ * @param {{ folder: string; version: string; name: string; kept?: boolean }} o kept: a reinstall's copy is still there
  */
 function noRoom(err, o) {
   const why = err.code === "EDQUOT" ? "your disk quota is used up" : "the disk is full";
   const size = err.bytes ? ` (${Math.max(1, Math.round(err.bytes / 1048576))} MB)` : "";
+  if (o.kept) return `There isn't room in ${o.folder} for Ember ${o.version}${size}: ${why} (${err.code}), and the copy you had is kept. Run '${o.name}' to start it, or free some space, then run '${o.name} --npm-reinstall' again.`;
   return `There isn't room in ${o.folder} for Ember ${o.version}${size}: ${why} (${err.code}). Free some space, or set EMBER_NPM_CACHE to a folder with room, then run '${o.name}' again.`;
+}
+
+/** Node's codes for a folder this user can't write in: another user's, or on a read-only disk. */
+const LOCKED = new Set(["EACCES", "EPERM", "EROFS"]);
+
+/**
+ * What the launcher says when it can't write in the cache folder, in place of Node's "EACCES: permission denied,
+ * mkdir …": where, why, and what to do (a run with sudo can leave the folder another user's). After a reinstall, that
+ * the copy it started from is kept, and how to start it (install-docs-c4-1).
+ * @param {any} err a LOCKED error
+ * @param {{ folder: string; version: string; name: string; kept?: boolean }} o
+ */
+function cantWrite(err, o) {
+  const readOnly = err.code === "EROFS";
+  const why = readOnly ? "its disk is read-only" : "it, or a folder above it, belongs to another user or is read-only";
+  const own = `EMBER_NPM_CACHE to a folder of your own${readOnly ? "" : ", or make this one yours again"}`;
+  if (o.kept) return `Ember can't write to ${o.folder}: ${why} (${err.code}), and the copy you had is kept. Run '${o.name}' to start it, or set ${own}, then run '${o.name} --npm-reinstall' again.`;
+  return `Ember can't write to ${o.folder}: ${why} (${err.code}). Set ${own}, then run '${o.name}' again.`;
+}
+
+/**
+ * A full disk or quota (noRoom), or, where the cache folder or a file in it is made (`making`), a folder this user
+ * can't write in (cantWrite), as one sentence that names the cache folder; any other error as it is.
+ * @param {any} err
+ * @param {{ folder: string; version: string; name: string; kept?: boolean; making?: boolean }} o
+ */
+function onDisk(err, o) {
+  if (ROOM.has(err?.code)) return new Error(noRoom(err, o), { cause: err });
+  if (o.making && LOCKED.has(err?.code)) return new Error(cantWrite(err, o), { cause: err });
+  return err;
 }
 
 /**
@@ -1044,8 +1119,9 @@ export async function main(argv, o = {}) {
   const log = p.join(p.dirname(installed.dir), `.${version}-start.log`);
   if (mode.attached && platform === "darwin") return await doctorMac(installed, mode.args, log);
   const { code, stayed } = await startWatched(launchCommand(platform, installed, mode.args), { attached: mode.attached, log, earlyMs: o.earlyMs }).catch(err => {
-    // A disk too full to make the start log in the cache folder, said as this computer's (install-docs-r4-2).
-    throw ROOM.has(err?.code) ? new Error(noRoom(err, { folder: p.dirname(installed.dir), version, name }), { cause: err }) : err;
+    // A disk too full to make the start log in the cache folder (install-docs-r4-2), or a folder this user can't write
+    // in (install-docs-c4-1), said as this computer's.
+    throw onDisk(err, { folder: p.dirname(installed.dir), version, name, making: true });
   });
   if (!mode.attached && code === 0) {
     // Is this version what runs now? Still running after the watch, or its folder in a running command line (a Mac's

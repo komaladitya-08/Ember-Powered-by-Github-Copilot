@@ -6,6 +6,7 @@ export declare function cacheDir(o: { platform: string; env: Record<string, stri
 export declare function downloadUrl(version: string, file: string, env?: Record<string, string | undefined>): string;
 export declare function releaseSource(env?: Record<string, string | undefined>): string;
 export declare function notReleased(version: string, env?: Record<string, string | undefined>): string;
+export declare function notChecked(o: { problem: "page" | "garbled" | "missing" | "mismatch"; version: string; asset: string; name: string; env?: Record<string, string | undefined>; host?: string; want?: string; got?: string }): string;
 export declare function packageVersion(): string;
 export declare function npmrcProxy(env?: Record<string, string | undefined>, o?: { home?: string; platform?: string; execPath?: string }): { "https-proxy"?: string; proxy?: string; noproxy?: string };
 export declare function proxyFor(url: string, env?: Record<string, string | undefined>, npmrc?: { "https-proxy"?: string; proxy?: string; noproxy?: string }): { url: URL; setting: string } | null;

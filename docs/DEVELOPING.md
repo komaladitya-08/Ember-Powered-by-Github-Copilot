@@ -2389,7 +2389,11 @@ status (inside a tunnel a status is the host's own, so only a 403 or 451 there, 
 to whoever runs the proxy, and a server's 5xx says to run it again later; a 502 or 504 there names the proxy too, since
 one that inspects HTTPS answers inside the tunnel, and adds asking whoever runs it if it keeps happening); a full disk or quota (`ENOSPC`, `EDQUOT`, or the unpacker's words for them, `roomSaid()`), from making the
 cache folder and the lock to writing the marker, names the cache folder and, once known, the download's size instead
-(`noRoom()`).
+(`noRoom()`); a cache folder this user can't write in (`EACCES`, `EPERM`, `EROFS` as the cache folder, the lock or the
+work folder is made, not later, where Windows' `EPERM` is a file in use) is `cantWrite()`'s sentence; both say when a
+`--npm-reinstall` kept the copy it started from. What came for `SHA256SUMS` that isn't a list of hashes (a web page:
+a Wi-Fi's or a proxy's sign-in, never repeated), no line for the file, and a hash that doesn't match are
+`notChecked()`'s sentences, each with a next step.
 `ember doctor` and `ember --doctor`
 run attached (`runMode()`, `start()`: the report and the exit code reach the terminal; on a Mac through `open -W
 --stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an

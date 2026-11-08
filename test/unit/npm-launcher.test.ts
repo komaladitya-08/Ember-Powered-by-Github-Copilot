@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Writable } from "node:stream";
-import { afterHandover, assetFor, cacheDir, downloadUrl, ensureInstalled, handedOver, invokedAs, launchCommand, main, noDisplay, notReleased, npmrcProxy, packageVersion, parseSha256Sums, proxyFor, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
+import { afterHandover, assetFor, cacheDir, downloadUrl, ensureInstalled, handedOver, invokedAs, launchCommand, main, noDisplay, notChecked, notReleased, npmrcProxy, packageVersion, parseSha256Sums, proxyFor, pruneVersions, releaseSource, REPO, runMode, start, usage } from "../../packages/npm/lib/launcher.mjs";
 import { releaseFiles } from "../../scripts/package/release.mjs";
 
 const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8");
@@ -438,6 +438,121 @@ describe("when the launcher can't reach the download (install-docs-r2-1)", () =>
         expect(fs.existsSync(cache) ? fs.readdirSync(cache) : [], `${code} at the ${at}`).toEqual([]);
       }
     }
+  });
+
+  it("says it can't write to the cache folder, why and what to do, when it or a folder above it is another user's or read-only, instead of Node's \"EACCES\" (install-docs-c4-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const port = await closedPort();
+    const realMkdir = fs.mkdirSync, realWrite = fs.writeFileSync, realTemp = fs.mkdtempSync;
+    const someoneElses = (cache: string, code: string) => `Ember can't write to ${cache}: it, or a folder above it, belongs to another user or is read-only (${code}). Set EMBER_NPM_CACHE to a folder of your own, or make this one yours again, then run 'ember' again.`;
+    const cases: [string, (cache: string) => string][] = [
+      ["EACCES", cache => someoneElses(cache, "EACCES")],
+      ["EPERM", cache => someoneElses(cache, "EPERM")],
+      ["EROFS", cache => `Ember can't write to ${cache}: its disk is read-only (EROFS). Set EMBER_NPM_CACHE to a folder of your own, then run 'ember' again.`],
+    ];
+    for (const [code, want] of cases) {
+      // Where a folder that isn't this user's strikes: making the cache folder, the lock, its owner file or the work folder.
+      for (const at of ["cache folder", "lock", "owner file", "work folder"] as const) {
+        const cache = path.join(tempDir(), "cache");
+        const denied = (p: string) => Object.assign(new Error(`${code}: permission denied, mkdir '${p}'`), { code, syscall: "mkdir", path: p });
+        const mkdir = vi.spyOn(fs, "mkdirSync").mockImplementation(((dir: fs.PathLike, opts?: fs.MakeDirectoryOptions) => {
+          if (at === "cache folder" && String(dir) === cache) throw denied(String(dir));
+          if (at === "lock" && String(dir).endsWith("-install-lock")) throw denied(String(dir));
+          return realMkdir(dir, opts);
+        }) as never);
+        const write = vi.spyOn(fs, "writeFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, data: string, opts?: fs.WriteFileOptions) => {
+          if (at === "owner file" && /-install-lock[\\/]owner$/.test(String(file))) throw denied(String(file));
+          return realWrite(file, data, opts);
+        }) as never);
+        const temp = vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string, opts?: unknown) => {
+          if (at === "work folder") throw denied(prefix);
+          return (realTemp as (...a: unknown[]) => string)(prefix, opts);
+        }) as never);
+        try {
+          const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: `http://127.0.0.1:${port}`, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+          expect(err?.message, `${code} at the ${at}`).toBe(want(cache));
+        } finally {
+          mkdir.mockRestore();
+          write.mockRestore();
+          temp.mockRestore();
+        }
+        expect(fs.existsSync(cache) ? fs.readdirSync(cache) : [], `${code} at the ${at}`).toEqual([]);
+      }
+    }
+  });
+
+  it("says a reinstall that can't finish kept the copy you had, and how to start it, when the disk fills or the folder isn't this user's (install-docs-c4-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const r = release("9.9.9", 3 * 1024 * 1024);
+    const server = await serve(r.files);
+    const cache = tempDir();
+    const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, ...noNpmrc };
+    try {
+      const installed = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env });
+      // The disk fills as the new copy is downloaded.
+      const stream = vi.spyOn(fs, "createWriteStream").mockImplementation((() => new Writable({ write(_c, _e, done) { done(Object.assign(new Error("ENOSPC: write failed"), { code: "ENOSPC", syscall: "write" })); } })) as never);
+      const full = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env, force: true }).then(() => null, (e: Error) => e).finally(() => stream.mockRestore());
+      expect(full?.message).toBe(`There isn't room in ${cache} for Ember 9.9.9 (3 MB): the disk is full (ENOSPC), and the copy you had is kept. Run 'ember' to start it, or free some space, then run 'ember --npm-reinstall' again.`);
+      // The lock can't be made: the cache folder is root's after a run with sudo.
+      const realMkdir = fs.mkdirSync;
+      const mkdir = vi.spyOn(fs, "mkdirSync").mockImplementation(((dir: fs.PathLike, opts?: fs.MakeDirectoryOptions) => {
+        if (String(dir).endsWith("-install-lock")) throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES", syscall: "mkdir", path: String(dir) });
+        return realMkdir(dir, opts);
+      }) as never);
+      const denied = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env, force: true }).then(() => null, (e: Error) => e).finally(() => mkdir.mockRestore());
+      expect(denied?.message).toBe(`Ember can't write to ${cache}: it, or a folder above it, belongs to another user or is read-only (EACCES), and the copy you had is kept. Run 'ember' to start it, or set EMBER_NPM_CACHE to a folder of your own, or make this one yours again, then run 'ember --npm-reinstall' again.`);
+      expect(fs.readFileSync(installed.exe).equals(r.body)).toBe(true);
+      expect(fs.readdirSync(cache)).toEqual(["9.9.9"]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("says what came instead of SHA256SUMS without repeating it, and what to do, when it isn't the release's list of hashes (install-docs-c4-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const r = release("9.9.9");
+    const portal = "<!doctype html><html><head><title>Sign in to Hotel Wi-Fi</title></head><body>Please accept the terms</body></html>\n";
+    for (const [what, sums, want] of [
+      ["a sign-in page", portal, (host: string) => `What ${host} sent for the v9.9.9 release's SHA256SUMS is a web page, perhaps a Wi-Fi or proxy sign-in, not its list of hashes, so nothing was installed. Open https://github.com/${REPO}/releases in your browser and sign in if it asks, or check EMBER_NPM_DOWNLOAD_BASE, then run 'ember' again.`],
+      ["something else", "Moved to the new mirror\n", (host: string) => `What ${host} sent for the v9.9.9 release's SHA256SUMS isn't its list of hashes, so nothing was installed. Run 'ember' again, check EMBER_NPM_DOWNLOAD_BASE, or download ${r.asset} from https://github.com/${REPO}/releases/tag/v9.9.9 in your browser.`],
+    ] as const) {
+      const server = await serve({ ...r.files, "/v9.9.9/SHA256SUMS": sums });
+      const cache = tempDir();
+      try {
+        const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+        expect(err?.message, what).toBe(want(new URL(server.base).host));
+        expect(err?.message, what).not.toMatch(/Hotel|Moved|line 1/);
+        expect(fs.readdirSync(cache), what).toEqual([]);
+      } finally {
+        await server.close();
+      }
+    }
+    // Where it comes from GitHub, there is no mirror setting to check.
+    expect(notChecked({ problem: "page", host: "release-assets.githubusercontent.com", version: "0.1.1", asset: "Ember-0.1.1-x86_64.AppImage", name: "npx ember-copilot" }))
+      .toBe(`What release-assets.githubusercontent.com sent for the v0.1.1 release's SHA256SUMS is a web page, perhaps a Wi-Fi or proxy sign-in, not its list of hashes, so nothing was installed. Open https://github.com/${REPO}/releases in your browser and sign in if it asks, then run 'npx ember-copilot' again.`);
+  });
+
+  it("says what to do next when the download doesn't match SHA256SUMS or SHA256SUMS has no line for it (install-docs-c4-1)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const r = release("9.9.9");
+    const tag = `https://github.com/${REPO}/releases/tag/v9.9.9`;
+    const got = createHash("sha256").update(r.body).digest("hex");
+    for (const [what, sums, want] of [
+      ["a damaged download", `${"0".repeat(64)}  ${r.asset}\n`, () => `${r.asset} doesn't match SHA256SUMS (expected ${"0".repeat(64)}, got ${got}), so nothing was installed: it was damaged or changed on the way. Run 'ember' again, or download it from ${tag} in your browser.`],
+      ["no line for it", `${got}  Other.zip\n`, (base: string) => `The v9.9.9 release's SHA256SUMS on the mirror at ${base} has no line for ${r.asset}, so nothing was installed. Ask whoever runs the mirror to copy the v9.9.9 release again, or download ${r.asset} from ${tag} in your browser.`],
+    ] as const) {
+      const server = await serve({ ...r.files, "/v9.9.9/SHA256SUMS": sums });
+      const cache = tempDir();
+      try {
+        const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env: { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache, ...noNpmrc } }).then(() => null, (e: Error) => e);
+        expect(err?.message, what).toBe(want(server.base));
+        expect(fs.readdirSync(cache), what).toEqual([]);
+      } finally {
+        await server.close();
+      }
+    }
+    expect(notChecked({ problem: "missing", version: "0.1.1", asset: "Ember-0.1.1-win-x64.zip", name: "ember" }))
+      .toBe(`The v0.1.1 release's SHA256SUMS on GitHub Releases has no line for Ember-0.1.1-win-x64.zip, so nothing was installed. Download Ember-0.1.1-win-x64.zip from https://github.com/${REPO}/releases/tag/v0.1.1 in your browser instead.`);
   });
 
   // The Windows and macOS zips unpack to about 2.5 times their size, so a disk often fills as they unpack. Here the
