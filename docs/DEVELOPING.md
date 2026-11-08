@@ -951,7 +951,7 @@ offered as suggestions in both model fields, set as option values only. It is di
 until the card below is agreed for the endpoint's host: nothing at all goes to a host the user hasn't agreed to, with
 or without a key. A line under it says why it waits (its `aria-describedby`), and when the card comes up for an
 address just entered, the status line says "Read the note above: Ember sends nothing to <host> until you agree."
-(focus has moved on to the next field by then). It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
+(focus has moved on to the next field by then), and once agreed "Agreed. Ember now sends your requests to <host>.". It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
 headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever address the service named.
 
 - **Is it there?** Nothing else contacts the endpoint before the first request, so the same GET (`probeProvider`,

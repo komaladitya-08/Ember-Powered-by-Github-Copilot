@@ -11,7 +11,7 @@ import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { noteProviderChoice } from "./provider-choice";
-import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerCardShown, providerConsentText, providerHint, providerTestText, providerTestWaits } from "./copy";
+import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedText, providerCardShown, providerConsentText, providerHint, providerTestText, providerTestWaits } from "./copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
 
@@ -185,6 +185,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     noteProviderChoice();
     void a.agree(next.agree).then(r => {
       if (!r.ok) { say(r.why, true); return; }
+      say(providerAgreedText(next.agree));
       $("byok-consent").hidden = true;
       input("byok-url").focus();
     });

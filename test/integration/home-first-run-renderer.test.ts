@@ -427,6 +427,12 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
       fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
       await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "byok-card-announced.png"), fullPage: true });
     }
+    // Agreed: the line no longer says nothing goes there until then (integrations-r4).
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    await p.locator("#byok-yes").click();
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(false);
+    expect(await calls(p)).toContain("agree:127.0.0.1:18108");
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18108.");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 

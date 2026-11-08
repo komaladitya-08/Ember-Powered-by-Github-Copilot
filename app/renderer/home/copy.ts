@@ -442,6 +442,8 @@ export const PROVIDER_WORDS = {
 
 /** Said when the card appears for an address just entered: focus has moved on, so it is announced (integrations-7, WCAG 4.1.3). */
 export const providerCardShown = (host: string) => `Read the note above: Ember sends nothing to ${host} until you agree.`;
+/** Said once the card is agreed to, in place of the line above (integrations-r4). */
+export const providerAgreedText = (host: string) => `Agreed. Ember now sends your requests to ${host}.`;
 
 /** Why Test connection waits, beside it (its aria-describedby), or null when it can be pressed or the organisation set it. */
 export function providerTestWaits(o: { host: string | null; agreed: boolean; managed: boolean }): string | null {
