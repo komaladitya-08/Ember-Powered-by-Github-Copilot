@@ -941,7 +941,8 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     // A number said in another clause ("check pr 45, then merge the pr") counts only when the merge numbers none of its
     // own, only refers back, and it is the one number in all the words (commands-remote-v4-6).
     const said = numbered(whole.list);
-    const back = numbered(w.list).length === 0 && !hasWord(w.list, BACK_NOT) && said.length === nums.length && nums.every(n => said.includes(n));
+    // "the other pr" anywhere in the words, also in a phrase the part leaves out ("merge the pr for the other branch").
+    const back = numbered(w.list).length === 0 && !hasWord(w.list, BACK_NOT) && !hasWord(whole.list, BACK_NOT) && said.length === nums.length && nums.every(n => said.includes(n));
     if (nums.some(n => !w.list.includes(n)) && !back) return null;
     // `gh pr merge` alone merges the current branch's pull request, which may not be the one the user numbered, in
     // any of their words ("look at pull request 45. merge the pr": commands-remote-v4-2).

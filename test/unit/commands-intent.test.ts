@@ -547,6 +547,9 @@ describe("matchIntent: the verb said again, or a list after a colon (commands-re
     ["gh pr merge 45", "check pr 45 and pr 46, then merge the pr"],
     ["gh pr merge 45", "pr 45 is broken. merge pr 46"],
     ["gh pr merge 45", "check pr 45, then merge the other pr"],
+    // A phrase the matcher leaves out still says which pull request (found fixing commands-remote-c3-1).
+    ["gh pr merge 45", "check pr 45, then merge the pr for the other branch"],
+    ["gh pr merge 45", "check pr 45, then merge the pr with the other fixes"],
   ])("asks for `%s` after %j", (cmd, words) => {
     expect(announce(cmd, words)).toBeNull();
   });
