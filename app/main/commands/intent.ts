@@ -347,7 +347,7 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
       place = !leads && onlyPlace(tokens0) ? tokens0 : [];
       const prior = stuck;
       stuck = leads ? null : stuckThing(tokens0, names);
-      const tokens = leads ? [...before, ...referBack(tokens0, prior, names)] : tokens0;
+      const tokens = leads ? [...before, ...referBack(tokens0, prior, names, starts, verbs)] : tokens0;
       // "stop apache. nginx too.": a sentence that only adds a thing goes on with the one before it.
       let listed = listed0;
       if (n === 0 && after !== null && !leads && !question && tooFragment(tokens) && tokens.some(t => thing(t))) {
@@ -422,9 +422,21 @@ function stuckThing(tokens: readonly string[], names: (t: string) => boolean): s
   return named[0].replace(/^[("'`“‘[{<]+|[)"'`”’\]}>.,;:!?]+$/gu, "").replace(/['’]s$/u, "");
 }
 
-/** The verb's clause with "it" for the hung thing the clause before named, when it names no thing of its own. */
-function referBack(tokens: readonly string[], thing: string | null, names: (t: string) => boolean): readonly string[] {
+/** Words that may follow "it" when it is all the verb acts on ("kill it now", "restart it again, please", "kill it for me"). */
+const AFTER_IT = new Set(["now", "please", "pls", "for", "me", "us", "too", "again", "also", "right", "away", "quickly", "asap", "immediately", "thanks"]);
+
+/**
+ * The verb's clause with "it" for the hung thing the clause before named, when it names no thing of its own and "it" is
+ * what the verb acts on, right after it ("1234 is hung, kill it now"); never "it" inside a description ("1234 is
+ * stuck, kill whatever is blocking it", "the parent that owns it", "the branches off it": commands-remote-v5-1).
+ */
+function referBack(tokens: readonly string[], thing: string | null, names: (t: string) => boolean, starts: readonly string[][], verbs: readonly string[]): readonly string[] {
   if (thing === null || tokens.some(t => names(t))) return tokens;
+  const object = starts.some(s => verbs.some(v => {
+    const parts = v.split(" ");
+    return parts.every((p, j) => s[j] === p) && s[parts.length] === "it" && s.slice(parts.length + 1).every(x => AFTER_IT.has(x));
+  }));
+  if (!object) return tokens;
   return tokens.map(t => (userWordList(t).join(" ") === "it" ? thing : t));
 }
 

@@ -640,6 +640,27 @@ describe("matchIntent: plain chains and a hung thing referred back to (commands-
   ])("asks for `%s` after %j", (cmd, words) => {
     expect(announce(cmd, words)).toBeNull();
   });
+
+  it.each([
+    // "it" inside a description of something else is never the hung thing itself (commands-remote-v5-1).
+    ["kill 1234", "1234 is stuck, kill whatever is blocking it"],
+    ["kill 1234", "1234 is stuck, kill the parent that owns it"],
+    ["systemctl stop nginx", "nginx is broken, stop what's using it"],
+    ["git branch -D main", "main is broken, delete the branches off it"],
+    ["rm -rf build", "build/ is broken, delete what's using it"],
+    ["Stop-Process -Id 1234", "1234 is stuck, kill whatever is blocking it", "win32"],
+    ["taskkill /PID 1234", "1234 is stuck, kill whatever is blocking it", "win32", "cmd"],
+  ] as [string, string, ContextName?, ShellId?][])("asks for `%s` after %j, where \"it\" isn't what the verb acts on (commands-remote-v5-1)", (cmd, words, where, shell) => {
+    expect(announce(cmd, words, { where, shell })).toBeNull();
+  });
+
+  it.each([
+    ["kill 1234", "1234 is hung, kill it now please", "Stopping 1234, as you asked."],
+    ["kill 1234", "1234's stuck, just kill it", "Stopping 1234, as you asked."],
+    ["systemctl restart nginx", "nginx is stuck, restart it again", "Restarting nginx, as you asked."],
+  ])("still announces `%s` after %j, where \"it\" is all the verb acts on (commands-remote-v5-1)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
 });
 
 describe("matchIntent: a path in the home folder, said as the card says it (commands-remote-r4-7)", () => {
