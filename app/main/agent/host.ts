@@ -61,7 +61,7 @@ import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autono
 import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
-import { CONVERSATION_LIMIT, retainedConversationText } from "../../shared/conversation";
+import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
@@ -272,6 +272,8 @@ export interface HostOptions {
   onAnswerInterrupted?: () => void;
   /** The answer being written, for Home's conversation (see AnswerStream). */
   onAnswerStream?: (e: AnswerStream) => void;
+  /** Whether the conversation is answering a request now changed (AgentHost.conversationTurn), for Home (home-c1-1). */
+  onConversationTurn?: (turn: ConversationTurn) => void;
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
   onTaskFinished?: (task: { title: string; status: string; endedBy?: StopCause; summary: string; text: string }) => void;
   /** Main's kill switch (KillSwitch.pull with source "typed"): a typed "stop" while a task is at work (stopsNow). */
@@ -636,6 +638,8 @@ export function startErrorReason(err: unknown, ctx: { online?: boolean; runtime?
 }
 
 /** The bubble's title when Ember can't take a request, by why (the status' detail says the rest). */
+/** What the kill switch's bubble says, and the conversation after a typed "stop" stopped everything (home-c1-1). */
+export const STOPPED_EVERYTHING = "Okay, I've stopped everything.";
 /** What the conversation says after another GitHub account signed in and Ember erased the previous one's memory (memory-11). */
 export const ACCOUNT_CHANGED_FORGOT = "You're signed in to another GitHub account now, so I've forgotten the previous account's memory, reminders and routines.";
 
@@ -885,6 +889,10 @@ export class AgentHost {
   private startedProvider = "";
   /** Requests asked after the model service changed while a turn or a task was under way: sent to the new one later. */
   private held: { text: string; context: Parameters<AgentHost["ask"]>[1]; epoch: number; how: Parameters<AgentHost["ask"]>[3] }[] = [];
+  /** Requests asked that wait for a connection, or for a silent turn to end, before they are sent (conversationTurn). */
+  private waitingAsks = 0;
+  /** What Home was last told of the conversation's turn (turnChanged). */
+  private turnTold: ConversationTurn = "idle";
   /** A release of the held requests is under way. */
   private releasing = false;
   /** Counts releases and the Stops that end them: a release that finds it moved on does nothing more. */
@@ -1057,7 +1065,8 @@ export class AgentHost {
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
-    this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text, undefined, undefined, this.stream?.id, this.stream?.unsaved), () => this.serviceKind(),
+    // Every change of the conversation's bubble may change what Home says of its turn (its stall: home-c1-1).
+    this.presenter = new Presenter(patch => { o.setState(patch); this.turnChanged(); }, undefined, () => "Ember", this.owner, text => this.remember("ember", text, undefined, undefined, this.stream?.id, this.stream?.unsaved), () => this.serviceKind(),
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
     this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
     this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
@@ -1936,7 +1945,9 @@ export class AgentHost {
           if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
           this.o.onTurnEnd?.(aborted);
           this.releaseHeldSoon();
+          this.turnChanged();
         },
+        onTurnOpen: () => this.turnChanged(),
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
         turnSilentMs: this.o.turnSilentMs,
@@ -1946,7 +1957,7 @@ export class AgentHost {
         // A turn under way that went silent (a model request that never answers) is ended, and Ember says Copilot
         // didn't answer; the requests waiting behind it go with it. Only the conversation's request is given up on:
         // the tasks go on (each one's own watch decides its fate).
-        onSilentTurn: () => { this.queued = []; },
+        onSilentTurn: () => { this.queued = []; this.turnChanged(); },
         // The runtime took a request and never began its turn, or a silent turn didn't end when it was aborted,
         // though it answers its health check: it is reconnected as a hung one is. The requests sent on it never run
         // there (a reconnect resumes the conversation). Out of inotify instances, the runtime can't begin a turn (a
@@ -1957,6 +1968,7 @@ export class AgentHost {
           // A request of the user's on this connection stalled (not a turn nobody asked for, which could repeat on its own).
           const asked = this.queued.length > 0 || this.turn !== null;
           this.queued = [];
+          this.turnChanged();
           const full = why === "not-started" && (this.o.inotifyUsedUp ?? inotifyUsedUp)();
           const reason = why === "silent" ? "turn went silent and didn't end" : full ? "turn didn't start: inotify instances used up" : "turn didn't start";
           // Named for the service in use, never Copilot when it isn't (integrations-v1).
@@ -2469,6 +2481,7 @@ export class AgentHost {
     this.releasing = false;
     if (this.heldTimer) { clearTimeout(this.heldTimer); this.heldTimer = null; }
     if (had) this.noticeBoard.clear();
+    this.turnChanged();
   }
 
   /**
@@ -2495,8 +2508,10 @@ export class AgentHost {
         const h = this.held.shift()!;
         if (!this.held.length) this.noticeBoard.clear();
         this.o.log.info("agent.held_released", { left: this.held.length });
-        // `released`: this one goes through; any other asked while it is sent queues behind.
-        await this.ask(h.text, h.context, h.epoch, { ...h.how, released: true });
+        // `released`: this one goes through; any other asked while it is sent queues behind. (Still answering meanwhile,
+        // for Home, until it is sent or dropped.)
+        this.waitingAsks++;
+        try { await this.ask(h.text, h.context, h.epoch, { ...h.how, released: true }); } finally { this.waitingAsks--; this.turnChanged(); }
       }
     } finally {
       if (gen === this.releaseGen) {
@@ -2590,6 +2605,25 @@ export class AgentHost {
     return !!this.queued.length || (this.conductor?.turnOpen ?? false);
   }
 
+  /**
+   * Whether the conversation is answering a request, from every way one is asked (Home, the Ask box, voice): "thinking"
+   * from its asking until its turn ends, it is stopped or dropped (sent and owed its turn, its turn under way, held for a
+   * new model service, or waiting for a connection), "slow" while the bubble says Ember is still waiting for the model
+   * service. Home's composer and status panel say this rather than guess it from the conversation's lines (home-c1-1).
+   */
+  get conversationTurn(): ConversationTurn {
+    if (!this.answerOpen && !this.held.length && !this.waitingAsks) return "idle";
+    return this.presenter.stalledNow ? "slow" : "thinking";
+  }
+
+  /** Tells Home when conversationTurn changed (called wherever what it reads may have). */
+  private turnChanged(): void {
+    const now = this.conversationTurn;
+    if (now === this.turnTold) return;
+    this.turnTold = now;
+    this.o.onConversationTurn?.(now);
+  }
+
   /** Tasks running or waiting to run. */
   private tasksAtWork(): boolean {
     return this.tasks?.list().some(t => t.status === "running" || t.status === "queued") ?? false;
@@ -2661,7 +2695,7 @@ export class AgentHost {
    */
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
-    if (this.stopsNow(text)) return true;
+    if (this.stopsNow(text, how)) return true;
     // Said over a reply still on its way (a conversation): that reply goes, and this one is answered knowing why.
     const cutIn = how.replaces === true && (this.conductor?.turnOpen ?? false);
     if (cutIn) {
@@ -2737,8 +2771,9 @@ export class AgentHost {
     // conversation goes on, or Copilot is being reconnected (then it waits for that below).
     const ending = this.conductor?.ending;
     if (ending) {
+      this.waitingAsks++;
       this.presenter.userPrompt(text);
-      await ending;
+      try { await ending; } finally { this.waitingAsks--; this.turnChanged(); }
       if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
     // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
@@ -2760,6 +2795,7 @@ export class AgentHost {
       // turn still streaming) is left as it is.
       this.o.log.info("agent.request_held", { kind: this.providerNow()?.kind ?? "copilot", waiting: this.held.length });
       this.held.push({ text, context, epoch, how });
+      this.turnChanged();
       // It stays for as long as anything is held (no timer): it goes when they are sent or dropped.
       this.noticeBoard.post({ title: PROVIDER_SWITCH_TITLE, thought: PROVIDER_SWITCH_WAIT, actions: [], mood: "attention" });
       this.releaseHeldSoon();
@@ -2780,8 +2816,9 @@ export class AgentHost {
     }
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
     if (this.starting > 0 || this.status.phase === "starting") {
+      this.waitingAsks++;
       this.presenter.userPrompt(text);
-      await Promise.race([this.settled(), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]);
+      try { await Promise.race([this.settled(), sleep(this.o.connectWaitMs ?? CONNECT_WAIT_MS)]); } finally { this.waitingAsks--; this.turnChanged(); }
       // Stop was pressed while it waited: the request is dropped, not sent once connected.
       if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
@@ -2824,6 +2861,7 @@ export class AgentHost {
     if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\b(?:run|execute|type)\s+(?:(?:a|an|the|this|that|these|those|some)\s+)?commands?\b/i.test(text)) this.hintOwed = true;
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
+    this.turnChanged();
     try {
       if (first) how.onSent?.();
       await this.conductor.ask(text, context?.text, [this.trustedLine(), ...(how.replaces ? [CONVERSATION_LINE] : []), ...(cutIn ? [CUT_IN_LINE] : [])].filter(Boolean).join(" "), !how.voiceUnchecked, prompt => { request.prompt = prompt; });
@@ -2831,6 +2869,7 @@ export class AgentHost {
       // Never sent: no turn of its own will come (nor its hint).
       this.hintOwed = false;
       this.queued = this.queued.filter(r => r !== request);
+      this.turnChanged();
       // A request of a chat that was started over meanwhile: its failure is the old chat's, not the connection's.
       if (err instanceof ConnectionLost) { if (chat === this.conversationEpoch) this.lost(gen, "send failed"); return false; }
       throw err;
@@ -2894,13 +2933,24 @@ export class AgentHost {
    * A typed "stop" or "stop everything" (stopRequest) while a task is running or waiting: the kill switch at once, as
    * "Ember, stop" is, never a Copilot turn that may take seconds to call cancel_task, or a notice while it connects
    * (tasks-approvals-v2). Stopping is safe, so it needs no Voice Match. True when it stopped; false leaves the request
-   * to the conversation (nothing at work, or a stop of something else).
+   * to the conversation (nothing at work, or a stop of something else). The conversation keeps what was asked, as it
+   * was asked (`how`: heard unchecked, a suggestion, the request heard), and that everything stopped (home-c1-1: the
+   * "stop" vanished from Home, which went on waiting for a reply that never comes).
    */
-  stopsNow(text: string): boolean {
-    if (!this.o.stopEverything || !stopRequest(text) || !this.tasksAtWork()) return false;
+  stopsNow(text: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number } = {}): boolean {
+    if (!this.stopsWith(text) || !this.o.stopEverything) return false;
     this.o.log.info("agent.stop_local");
+    const asked = this.remember("you", text, how.heardId);
+    if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
+    if (how.suggested) this.suggested.add(asked);
     this.o.stopEverything();
+    this.remember("ember", STOPPED_EVERYTHING);
     return true;
+  }
+
+  /** Whether `text` asked now would stop everything at once (stopsNow), without stopping anything. */
+  stopsWith(text: string): boolean {
+    return !!this.o.stopEverything && stopRequest(text) && this.tasksAtWork();
   }
 
   /**
@@ -2917,7 +2967,10 @@ export class AgentHost {
     this.dropHeld();
     if (underWay) this.presenter.stopped();
     this.o.log.info("agent.answer_stopped", { underWay });
-    await this.conductor?.abort();
+    // (Its turn is over from Ember's side at once, whether or not the runtime confirms it: Home says so now.)
+    const aborting = this.conductor?.abort();
+    this.turnChanged();
+    await aborting;
     return underWay;
   }
 
@@ -2955,7 +3008,9 @@ export class AgentHost {
     for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedByAll.add(t.id);
     this.tasks?.cancelAll();
     this.confirmer?.cancelAll();
-    await this.conductor?.abort();
+    const aborting = this.conductor?.abort();
+    this.turnChanged();
+    await aborting;
   }
 
   /**
@@ -3208,6 +3263,7 @@ export class AgentHost {
     this.presenter.reset();
     await this.conductor?.stop();
     this.conductor = null;
+    this.turnChanged();
     const client = this.client;
     this.client = null;
     if (client) await this.stopClient(client);

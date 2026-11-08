@@ -30,7 +30,10 @@ export interface StatusFacts {
   /** The organisation's policy locks Ember down (Status.admin.error), `held` until a restart reads a changed one. */
   locked?: boolean;
   held?: boolean;
-  /** Ember is answering a message sent from Home's composer (until the reply, a problem or Stop: home-7). */
+  /**
+   * Ember is answering a request: one sent from Home's composer (until the reply, a problem or Stop: home-7), or any
+   * the conversation answers, as main says (from the Ask box and by voice too: home-c1-1).
+   */
   answering?: boolean;
 }
 

@@ -9,7 +9,7 @@
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RetryResult, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
-import { CONVERSATION_REQUEST_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
+import { CONVERSATION_REQUEST_LIMIT, conversationTurnOf, type ConversationTurn, type HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
 import {
@@ -51,7 +51,7 @@ import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, tod
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, COMPOSER_WAIT_MS, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { composerCount, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -267,7 +267,7 @@ function renderStatus(): void {
   const { running, asking: askingTasks } = taskCounts(tasksNow);
   const asking = Math.max(askingTasks, presence?.approval ? 1 : 0);
   const locked = !!lastAdmin && lastAdmin.error !== null;
-  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking, locked, held: !!lastAdmin?.held, service: agent?.service?.kind, answering: conversationAwaitingReply });
+  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking, locked, held: !!lastAdmin?.held, service: agent?.service?.kind, answering: conversationAwaitingReply || conversationTurnNow !== "idle" });
   setText("state-word", s.word);
   $("ring").dataset.ring = s.ring;
   $("state-word").dataset.ring = s.ring;
@@ -1038,24 +1038,60 @@ const conversationMessage = $("conversation-message") as HTMLTextAreaElement;
 const conversationSearch = $("conversation-search") as HTMLInputElement;
 const conversationComposeStatus = $("conversation-compose-status");
 let conversationAwaitingReply = false;
-/** Until when the composer's request has heard nothing (home-7): "Still waiting for …" after COMPOSER_WAIT_MS. */
-let conversationWait: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Whether the conversation answers a request now, as main says (home-c1-1): from the composer, the Ask box or voice.
+ * The status panel says "Thinking…" while it does, and the composer's wait ends when it stops.
+ */
+let conversationTurnNow: ConversationTurn = "idle";
+/** The composer's request was taken by main (its send resolved), and main has said it is answering since it was sent. */
+let conversationSendTaken = false;
+let conversationTurnSeen = false;
 /**
  * A message sent from the composer is (or is no longer) being answered: the status panel says "Thinking…", and the
- * composer's line says Ember is still waiting once nothing was written for as long as the bubble waits (home-7).
+ * composer's line follows main's word of the turn (home-7, home-c1-1).
  */
-function awaitingReply(on: boolean, watch = false): void {
+function awaitingReply(on: boolean): void {
   conversationAwaitingReply = on;
-  if (conversationWait) { clearTimeout(conversationWait); conversationWait = null; }
-  if (on && watch) {
-    const generation = conversationGeneration;
-    conversationWait = setTimeout(() => {
-      conversationWait = null;
-      if (conversationAwaitingReply && generation === conversationGeneration && !answerStream.row) conversationComposeStatus.textContent = composerStillWaiting(agent?.service?.kind);
-    }, COMPOSER_WAIT_MS);
-  }
   renderStatus();
 }
+/**
+ * The composer's request had its turn and the turn is over (home-c1-1): what it left is said, though it wrote nothing (it
+ * only started a task, ran a step, or was stopped). A reply or a problem says so as it comes (renderConversation).
+ */
+function endComposerWait(): void {
+  if (!conversationAwaitingReply || !conversationSendTaken || !conversationTurnSeen || conversationTurnNow !== "idle") return;
+  awaitingReply(false);
+  // What came after the last message there was as it was sent (rows are matched by what they are).
+  const was = conversationLastAtSend;
+  let at = -1;
+  if (was) for (let i = conversationAll.length - 1; i >= 0 && at < 0; i--) if (conversationAll[i].t === was.t && conversationAll[i].who === was.who && conversationAll[i].text === was.text) at = i;
+  const said = conversationAll.slice(at + 1).filter(e => e.who === "ember" || e.who === "problem").at(-1);
+  const words = said?.who === "problem" ? COMPOSER_SAYS.replyFailed : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
+  keepingComposer(() => { conversationComposeStatus.textContent = words; });
+}
+/** Main's word of the conversation's turn: the status panel, and the composer's line while its request waits. */
+function conversationTurn(value: unknown): void {
+  const turn = conversationTurnOf(value);
+  if (!turn) return;
+  conversationTurnNow = turn;
+  if (conversationAwaitingReply && turn !== "idle") conversationTurnSeen = true;
+  if (conversationAwaitingReply && conversationSendTaken) {
+    // Still waiting as the bubble says it (nothing written yet), and back to thinking once it is heard from.
+    const waiting = composerStillWaiting(agent?.service?.kind);
+    if (turn === "slow" && !answerStream.row) keepingComposer(() => { conversationComposeStatus.textContent = waiting; });
+    else if (turn === "thinking" && conversationComposeStatus.textContent === waiting) conversationComposeStatus.textContent = COMPOSER_THINKING;
+  }
+  endComposerWait();
+  renderStatus();
+}
+window.ember.onConversationTurn(conversationTurn);
+void window.ember.conversationTurn().then(conversationTurn, () => undefined);
+// Stop everything (its shortcut, "Ember, stop", the handle's menu, a typed "stop"): the composer's request went with it.
+window.ember.onStopped(() => {
+  if (!conversationAwaitingReply) return;
+  awaitingReply(false);
+  conversationComposeStatus.textContent = COMPOSER_SAYS.stoppedAll;
+});
 let conversationLastAtSend: Entry | undefined;
 let conversationDraftBeforeEdit: string | null = null;
 let conversationGeneration = 0;
@@ -1229,7 +1265,9 @@ function keepingComposer(change: () => void): void {
   change();
   if (!focused || !showed) return;
   const actions = form.querySelector(".conversation-compose-actions");
-  if (actions && (!inWindow(focused, true) || !inWindow(actions, true))) actions.scrollIntoView({ block: "nearest", behavior: "auto" });
+  // With the line under them that says how the request is going, while it says something (home-7).
+  const status = conversationComposeStatus.textContent ? conversationComposeStatus : null;
+  if (actions && (!inWindow(focused, true) || !inWindow(actions, true) || (status && !inWindow(status, true)))) (status ?? actions).scrollIntoView({ block: "nearest", behavior: "auto" });
 }
 $("conversation-earlier").addEventListener("click", () => {
   // Every message from the first, from now on; focus goes to the heading above them (the button goes).
@@ -1261,6 +1299,7 @@ const resetConversationView = () => {
   send.disabled = false;
   send.textContent = "Send";
   ($("conversation-stop") as HTMLButtonElement).disabled = false;
+  conversationSendTaken = conversationTurnSeen = false;
   renderConversation([]);
 };
 window.ember.onConversationForgotten(resetConversationView);
@@ -1270,7 +1309,6 @@ window.ember.onConversationStream(e => {
   answerStream = streamEvent(answerStream, ev as StreamEvent, conversationAll, new Date().toISOString());
   keepingComposer(() => syncStreamRow($("conversation")));
   // Written to at last: no longer a wait (the reply, or what stopped it, says the rest).
-  if (answerStream.row && conversationWait) { clearTimeout(conversationWait); conversationWait = null; }
   if (answerStream.row && conversationComposeStatus.textContent === composerStillWaiting(agent?.service?.kind)) conversationComposeStatus.textContent = COMPOSER_THINKING;
 });
 /** New conversation asks first while there are messages to clear (home-9): Keep, or Escape, leaves them be. */
@@ -1318,18 +1356,32 @@ $("conversation-compose").addEventListener("submit", event => {
   if (conversationSearch.value) { conversationSearch.value = ""; renderConversation(conversationAll); }
   send.disabled = true;
   send.textContent = "Sending…";
+  // Only main's word of this request's turn ends the wait: not a turn under way before it (home-c1-1).
+  conversationSendTaken = false;
+  conversationTurnSeen = false;
   awaitingReply(true);
   conversationLastAtSend = conversationAll.at(-1);
   const generation = conversationGeneration;
   conversationComposeStatus.textContent = COMPOSER_SAYS.sending;
-  void window.ember.conversationSend(text).then(() => {
+  void window.ember.conversationSend(text).then(sent => {
     if (generation !== conversationGeneration) return;
     // Preserve any edits made while the acknowledgement was pending.
     if (conversationMessage.value === text) conversationMessage.value = "";
     syncComposerCount();
     conversationDraftBeforeEdit = null;
     $("conversation-cancel-edit").hidden = true;
-    if (conversationAwaitingReply) { conversationComposeStatus.textContent = COMPOSER_THINKING; awaitingReply(true, true); }
+    // A typed "stop" stopped everything at once: no turn comes, so nothing is awaited (home-c1-1).
+    if (sent === "stopped") {
+      awaitingReply(false);
+      conversationComposeStatus.textContent = COMPOSER_SAYS.stoppedAll;
+      return;
+    }
+    if (!conversationAwaitingReply) return;
+    conversationSendTaken = true;
+    // Main answers already (this request, or one before it that it waits behind): its end is this one's too.
+    if (conversationTurnNow !== "idle") conversationTurnSeen = true;
+    conversationComposeStatus.textContent = conversationTurnNow === "slow" && !answerStream.row ? composerStillWaiting(agent?.service?.kind) : COMPOSER_THINKING;
+    endComposerWait();
   }, error => {
     if (generation !== conversationGeneration) return;
     awaitingReply(false);

@@ -67,6 +67,8 @@ export interface ConductorDeps {
   onAnswerEnd?: (text: string) => void;
   /** A turn finished (for the voice follow-up window). */
   onTurnEnd?: (aborted: boolean) => void;
+  /** Whether a turn is under way or owed (turnOpen) may have changed: the host tells Home (home-c1-1). */
+  onTurnOpen?: () => void;
   /** Main drops buffered speech and acknowledgement timers when this answer is interrupted. */
   onAnswerInterrupted?: () => void;
   /**
@@ -515,6 +517,8 @@ export interface TurnWatchOptions {
   silentMs?: number;
   /** The turn under way has been quiet for slowMs (true), or is heard from again (false). */
   onSlow?: (slow: boolean) => void;
+  /** Something it watches may have changed (open, slow): Home is told whether the conversation answers (home-c1-1). */
+  onChange?: () => void;
 }
 
 /**
@@ -574,18 +578,18 @@ export class TurnWatch {
   get open(): boolean { return !this.over && (this.owed > 0 || this.taken || this.working || this.inTurn); }
   get isCompacting(): boolean { return this.compacting; }
   /** A request is about to be sent (its message may come before session.send returns). */
-  sending(): void { this.owed++; }
+  sending(): void { this.owed++; this.opts.onChange?.(); }
   /** session.send returned: the turn begins now, or when the one under way ends. */
   sent(): void { this.check(); }
   /** session.send failed: no turn comes for it. */
-  unsent(): void { this.owed = Math.max(0, this.owed - 1); this.check(); }
+  unsent(): void { this.owed = Math.max(0, this.owed - 1); this.check(); this.opts.onChange?.(); }
   /**
    * Stop: the runtime ends the turn under way and drops the requests waiting. From Ember's side the turn is over at once,
    * whether or not the runtime confirms it (a request held for a new model service mustn't wait for that for ever).
    */
-  clear(): void { this.owed = 0; this.taken = false; this.inTurn = false; this.working = false; this.tools.clear(); this.check(); }
+  clear(): void { this.owed = 0; this.taken = false; this.inTurn = false; this.working = false; this.tools.clear(); this.check(); this.opts.onChange?.(); }
   /** The session is let go: nothing fires any more. */
-  dispose(): void { this.over = true; this.disarm(); }
+  dispose(): void { this.over = true; this.disarm(); this.opts.onChange?.(); }
   /** The turn it gave up on has ended and the session goes on: it watches again (from what the events since say). */
   resume(): void { if (this.over) return; this.fired = false; this.check(); }
 
@@ -621,6 +625,7 @@ export class TurnWatch {
     // Heard from again after a quiet spell.
     if (this.slow) { this.slow = false; this.opts.onSlow?.(false); }
     this.check();
+    this.opts.onChange?.();
   }
 
   private check(): void {
@@ -636,7 +641,7 @@ export class TurnWatch {
     this.timer = setTimeout(() => { this.timer = null; this.fired = true; this.slow = false; this.disarm(); this.onStuck(watching); }, ms);
     this.timer.unref?.();
     if (watching === "silent" && this.slowMs < ms) {
-      this.slowTimer = setTimeout(() => { this.slowTimer = null; this.slow = true; this.opts.onSlow?.(true); }, this.slowMs);
+      this.slowTimer = setTimeout(() => { this.slowTimer = null; this.slow = true; this.opts.onSlow?.(true); this.opts.onChange?.(); }, this.slowMs);
       this.slowTimer.unref?.();
     }
   }
@@ -902,6 +907,7 @@ export class Conductor {
     const watch = new TurnWatch(ms, why => this.stuckTurn(why, why === "silent" ? silentMs : ms), {
       slowMs: d.turnSlowMs, silentMs,
       onSlow: slow => { if (!this.stuck) d.presenter.stalled(slow); },
+      onChange: () => d.onTurnOpen?.(),
     });
     this.watch = watch;
     const session = this.session;

@@ -185,6 +185,19 @@ describe("connecting and signing in", () => {
     expect(host.getTranscript()).toEqual([]);
     await host.stop();
   });
+  it("tells Home when the bubble says Ember is still waiting for the model service, and when it is heard from again (home-c1-1)", async () => {
+    const turns: string[] = [];
+    const { host } = makeHost({ onConversationTurn: t => { turns.push(t); }, turnSlowMs: 30 });
+    await host.start(TOKEN, "stored");
+    await host.ask("What's the weather?");
+    await vi.waitFor(() => expect(host.conversationTurn).toBe("slow"));
+    conductorSession().emit("assistant.message_delta", { deltaContent: "Rain" });
+    expect(host.conversationTurn).toBe("thinking");
+    conductorSession().emit("assistant.message", { content: "Rain later." });
+    conductorSession().emit("session.idle");
+    expect(turns).toEqual(["thinking", "slow", "thinking", "idle"]);
+    await host.stop();
+  });
   it("keeps a manually opened spoken request with its own queued turn", async () => {
     const started: { text: string; spoken: boolean; manual?: true }[] = [];
     const { host } = makeHost({ onTurnStart: turn => started.push(turn) });
@@ -2568,6 +2581,46 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await host.ask("stop the music", mail);
     expect(stops).toBe(1);
     expect(session.sent.length).toBe(sent + 1);
+    await host.stop();
+  });
+
+  it("tells Home the conversation answers from a request until its turn ends, also a turn that only starts a task (home-c1-1)", async () => {
+    const turns: string[] = [];
+    const { host, session, tool } = await withTasks({ onConversationTurn: t => { turns.push(t); }, stopEverything: () => undefined });
+    expect(host.conversationTurn).toBe("idle");
+    await host.ask("tidy my desktop", mail);
+    expect(host.conversationTurn).toBe("thinking");
+    await tool("start_task")({ goal: "tidy my desktop" });
+    expect(host.conversationTurn).toBe("thinking");
+    // The turn said nothing (start_task alone): its end is the end of the wait all the same.
+    session.emit("session.idle");
+    expect(host.conversationTurn).toBe("idle");
+    expect(turns).toEqual(["thinking", "idle"]);
+    // A spoken request is answering too (Home's status panel says so for the Ask box and voice), and Stop ends it at once.
+    await host.ask("what's on my calendar?", null, undefined, { spoken: true });
+    expect(host.conversationTurn).toBe("thinking");
+    const stopping = host.stopAnswer();
+    expect(host.conversationTurn).toBe("idle");
+    await stopping;
+    expect(turns).toEqual(["thinking", "idle", "thinking", "idle"]);
+    await host.stop();
+  });
+
+  it("keeps a typed “stop” that stopped everything in the conversation, and that everything stopped, with no turn (home-c1-1)", async () => {
+    const turns: string[] = [];
+    let stops = 0;
+    const { host, session, tool } = await withTasks({ onConversationTurn: t => { turns.push(t); }, stopEverything: () => { stops++; } });
+    await host.ask("tidy my desktop", mail);
+    await tool("start_task")({ goal: "tidy my desktop" });
+    session.emit("session.idle");
+    expect(host.stopsWith("stop")).toBe(true);
+    expect(host.stopsWith("stop the music")).toBe(false);
+    turns.length = 0;
+    expect(await host.ask("stop", mail, undefined, { heardId: 7, voiceUnchecked: true })).toBe(true);
+    expect(stops).toBe(1);
+    expect(host.getTranscript().slice(-2).map(e => [e.who, e.text, e.heardId])).toEqual([["you", "stop", 7], ["ember", "Okay, I've stopped everything.", undefined]]);
+    expect(turns).toEqual([]);
+    expect(host.conversationTurn).toBe("idle");
     await host.stop();
   });
 

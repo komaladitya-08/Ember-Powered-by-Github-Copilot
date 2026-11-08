@@ -339,6 +339,8 @@ progress[hidden] { display: none; }
 .conversation-compose label { font-weight: 600; }
 .conversation-compose textarea { width: 100%; min-width: 0; box-sizing: border-box; resize: vertical; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 8px; }
 .conversation-compose .hint { margin: 0; }
+/* The line under the buttons that says how a request is going (home-7) takes no gap while it says nothing. */
+.conversation-compose > p.hint:empty[role] { position: absolute; }
 .conversation-compose-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .conversation-message-actions { order: 3; flex-basis: 100%; display: flex; gap: 4px; padding: 2px 6px; }
 .conversation li.you .conversation-message-actions { justify-content: flex-end; }

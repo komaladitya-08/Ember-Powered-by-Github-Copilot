@@ -53,11 +53,10 @@ export function composerCount(n: number, limit = CONVERSATION_REQUEST_LIMIT): st
   return `${num(n)} of ${num(limit)} characters${over > 0 ? `, ${num(over)} too many` : ""}.`;
 }
 /**
- * The composer's line while Ember answers what was sent from it (home-7): thinking at first, then, after the bubble's
- * own wait (THINK_SLOW_MS) with nothing written yet, still waiting for the service in use, and how to stop it.
+ * The composer's line while Ember answers what was sent from it (home-7): thinking at first, then, while the bubble
+ * says it (main's "slow" turn: home-c1-1), still waiting for the service in use, and how to stop it.
  */
 export const COMPOSER_THINKING = "Thinking… Ember's reply will appear above.";
-export const COMPOSER_WAIT_MS = 10_000;
 export function composerStillWaiting(service?: string): string {
   return `Still waiting for ${service === "user" ? "your model provider" : service ? "the model service" : "Copilot"}… Stop response ends this reply.`;
 }
@@ -83,6 +82,10 @@ export const COMPOSER_SAYS = {
   editCancelled: "Edit cancelled. Your previous draft is restored.",
   stopFailed: "Couldn't stop this response. Try again, or use Stop everything.",
   empty: "Enter a request of up to 2,000 characters.",
+  // The request's turn ended with no reply to read (home-c1-1), or a "stop" stopped everything (no turn came).
+  noReply: "Ember didn't write a reply. Task activity shows any task it started.",
+  replyStopped: "The reply was stopped before it finished.",
+  stoppedAll: "Stopped everything, running tasks included.",
 } as const;
 /** Stop response, pressed: what it stopped, or that nothing was under way (home-3: never a stop that didn't happen). */
 export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";

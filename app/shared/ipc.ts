@@ -42,7 +42,7 @@ export interface MemoryForgotten { text: string; derived: number; undo: string; 
  * what is saved (only memory verified as this account's in this run: memory-11). Both absent from an older main.
  */
 export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number; reason?: MemoryOwnerReason | null; erasesOnSignOut?: boolean }
-import type { HistoryProblemKind } from "./conversation";
+import type { ConversationSent, ConversationTurn, HistoryProblemKind } from "./conversation";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
@@ -111,6 +111,9 @@ export const IPC = {
   conversationSend: "agent:conversation-send",
   conversationStop: "agent:conversation-stop",
   conversationNew: "agent:conversation-new",
+  /** Whether the conversation is answering a request (ConversationTurn): asked by Home, and pushed to it as it changes. */
+  conversationTurn: "agent:conversation-turn",
+  conversationTurnChanged: "agent:conversation-turn-changed",
   projectPick: "project:pick",
   projectRemove: "project:remove",
   projectExport: "project:export",
@@ -528,8 +531,11 @@ export interface EmberHomeApi {
   onHistoryProblem(fn: (problem: HistoryProblemKind | null) => void): () => void;
   /** This session's conversation (kept in memory only). */
   conversation(): Promise<TranscriptEntry[]>;
-  /** Explicit typed request from Home, without capturing its foreground window. */
-  conversationSend(text: string): Promise<void>;
+  /** Explicit typed request from Home, without capturing its foreground window; "stopped" when it stopped everything. */
+  conversationSend(text: string): Promise<ConversationSent>;
+  /** Whether the conversation is answering a request now, from every way one is asked, and changes to it (home-c1-1). */
+  conversationTurn(): Promise<ConversationTurn>;
+  onConversationTurn(fn: (turn: ConversationTurn) => void): () => void;
   /** Ends the current response and queued requests; independently running tasks continue. */
   /** Stop response: whether anything was under way to stop (a reply, a queued message, the answer being spoken). */
   conversationStop(): Promise<boolean>;

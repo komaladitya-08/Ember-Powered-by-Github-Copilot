@@ -9,8 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { connectLabel, memoryWhatsOn, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage, shownText, type ShownNode } from "../../app/renderer/home/search-copy";
-import { checksNote, COMPOSER_THINKING, COMPOSER_WAIT_MS, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
-import { THINK_SLOW_MS } from "../../app/main/agent/presenter";
+import { checksNote, COMPOSER_THINKING, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import { formatDoctor } from "../../app/main/doctor";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
 import { IPC, TASKS_PUSH_MS } from "../../app/shared/ipc";
@@ -41,8 +40,7 @@ describe("Home's status panel", () => {
     expect(statusWord({ ...base, answering: true, running: 1 }).word).toBe("Working on 1 task");
     expect(statusWord({ ...base, answering: true, asking: 1 }).word).toBe("A task needs you");
     expect(statusWord({ ...base, answering: true, phase: "starting" }).word).toBe("Connecting…");
-    // The composer's own line: thinking, then (after the bubble's own wait) still waiting for the service in use, and how to stop.
-    expect(COMPOSER_WAIT_MS).toBe(THINK_SLOW_MS);
+    // The composer's own line: thinking, then (while the bubble says it: main's "slow") still waiting for the service in use, and how to stop.
     expect(COMPOSER_THINKING).toBe("Thinking… Ember's reply will appear above.");
     expect(composerStillWaiting()).toBe("Still waiting for Copilot… Stop response ends this reply.");
     expect(composerStillWaiting("user")).toBe("Still waiting for your model provider… Stop response ends this reply.");

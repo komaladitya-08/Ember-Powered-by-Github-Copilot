@@ -809,6 +809,11 @@ export class Presenter {
     return this.state.bubble.streaming || this.state.emotion === "thinking" || this.state.emotion === "focused";
   }
 
+  /** The conversation's bubble says Ember is still waiting for the model service (Home's composer says so too: home-c1-1). */
+  get stalledNow(): boolean {
+    return this.work === "reply" && !this.silent && this.busy && isStillWaiting(this.state.bubble.title);
+  }
+
   /**
    * Its turn or task is under way, or it waits for the user's click: busy, a guide step, or a notice that stays until
    * it is answered (what covers it for a while doesn't end it).

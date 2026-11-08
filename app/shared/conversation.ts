@@ -20,3 +20,21 @@ export function conversationRequest(input: unknown): string | null {
   if (typeof input !== "string" || input.length > CONVERSATION_REQUEST_LIMIT) return null;
   return input.trim() || null;
 }
+
+/**
+ * Whether the conversation is answering a request, as main knows it (home-c1-1): "thinking" from the moment a request
+ * is asked until its turn ends (or it is stopped, dropped or answered), "slow" while the bubble says Ember is still
+ * waiting for the model service, else "idle". Home's composer and status panel say this, never a guess of their own.
+ */
+export type ConversationTurn = "idle" | "thinking" | "slow";
+
+/** A turn state as main pushes it, or null for anything else. */
+export function conversationTurnOf(value: unknown): ConversationTurn | null {
+  return value === "idle" || value === "thinking" || value === "slow" ? value : null;
+}
+
+/**
+ * What became of a request Home's composer sent: "stopped" for a typed "stop" that stopped everything at once (a task
+ * was at work: no turn comes for it), else "sent".
+ */
+export type ConversationSent = "sent" | "stopped";

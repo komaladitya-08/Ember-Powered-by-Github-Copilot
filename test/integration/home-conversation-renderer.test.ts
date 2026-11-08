@@ -19,7 +19,7 @@ declare global {
       resolveInitial(): void;
     };
     /** The journeys' preload (home() below): what Home asked main for, and main's events. */
-    __home: { sent: string[]; stops: number; news: number; copied: string[]; stopResult: boolean; emit(name: string, value: unknown): void };
+    __home: { sent: string[]; stops: number; news: number; copied: string[]; stopResult: boolean; sendResult: string | undefined; emit(name: string, value: unknown): void };
   }
 }
 
@@ -246,11 +246,11 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     await page.addInitScript(entries => {
       const listeners: Record<string, Set<(value: unknown) => void>> = {};
       const emit = (name: string, value: unknown) => { for (const listener of listeners[name] ?? []) listener(value); };
-      const h = window.__home = { sent: [] as string[], stops: 0, news: 0, copied: [] as string[], stopResult: true, emit };
+      const h = window.__home = { sent: [] as string[], stops: 0, news: 0, copied: [] as string[], stopResult: true, sendResult: undefined as string | undefined, emit };
       window.ember = new Proxy({}, { get: (_target, name: string) => {
         if (name.startsWith("on")) return (fn: (value: unknown) => void) => { (listeners[name] ??= new Set()).add(fn); return () => { listeners[name]?.delete(fn); }; };
         if (name === "conversation") return async () => entries;
-        if (name === "conversationSend") return async (text: string) => { h.sent.push(text); };
+        if (name === "conversationSend") return async (text: string) => { h.sent.push(text); return h.sendResult; };
         if (name === "conversationStop") return async () => { h.stops++; return h.stopResult; };
         if (name === "conversationNew") return async () => { h.news++; emit("onConversation", []); };
         if (name === "copyText") return async (text: string) => { h.copied.push(text); };
@@ -436,31 +436,147 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
-  it("says in the window that Ember is thinking, then still waiting with how to stop, until the reply comes (home-7)", async () => {
+  /** Main's word of the conversation's turn (AgentHost.conversationTurn), as it pushes it to Home. */
+  const turn = (page: Page, state: "idle" | "thinking" | "slow") => page.evaluate(t => window.__home.emit("onConversationTurn", t), state);
+  const READY = { phase: "ready", detail: "", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 } };
+
+  it("says in the window that Ember is thinking, then still waiting with how to stop while the bubble says so, until the reply comes (home-7, home-c1-1)", async () => {
     const { page, errors } = await home([]);
     try {
       await page.clock.install();
-      await page.evaluate(() => window.__home.emit("onAgentStatus", { phase: "ready", detail: "", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 } }));
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
       await expect.poll(() => page.locator("#state-word").innerText()).toBe("Ready");
       await page.locator("#conversation-message").fill("What's the weather?");
       await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
       await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
       expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
-      await page.clock.runFor(9_000);
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
-      await page.clock.runFor(1_500);
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Still waiting for Copilot… Stop response ends this reply.");
-      // Words come, then the reply: the wait is over.
-      await reply(page, [], "What's the weather?", 2);
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
-      expect(await page.locator("#state-word").innerText()).toBe("Ready");
-      // A reply that starts writing in time is never called a wait.
-      await page.locator("#conversation-message").fill("And tomorrow?");
-      await page.locator("#conversation-send").click();
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
-      await page.evaluate(() => window.__home.emit("onConversationStream", { id: 3, text: "Rain", state: "streaming" }));
+      // No guess of its own: only main's word that the bubble says it is still waiting.
       await page.clock.runFor(20_000);
       expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await turn(page, "slow");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Still waiting for Copilot… Stop response ends this reply.");
+      await turn(page, "thinking");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      // Words come, then the reply: the wait is over.
+      await reply(page, [], "What's the weather?", 2);
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      expect(await page.locator("#state-word").innerText()).toBe("Ready");
+      // A reply that starts writing is never called a wait.
+      await page.locator("#conversation-message").fill("And tomorrow?");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await page.evaluate(() => window.__home.emit("onConversationStream", { id: 3, text: "Rain", state: "streaming" }));
+      await turn(page, "slow");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("ends the wait when a turn that wrote nothing ends, and says so, never \"Still waiting\" after it (home-c1-1)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Tidy my desktop" }, { t: at(1), who: "ember", text: "On it." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.clock.install();
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await page.locator("#conversation-message").fill("Then empty the trash");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...seed, { t: at(2), who: "you", text: "Then empty the trash" }]);
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      // The turn only started a task: no line of Ember's, and the turn ends.
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember didn't write a reply. Task activity shows any task it started.");
+      expect(await page.locator("#state-word").innerText()).toBe("Ready");
+      await page.clock.runFor(30_000);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember didn't write a reply. Task activity shows any task it started.");
+      // A turn under way before the send (asked in the Ask box) isn't this request's end: its end comes with the last one.
+      await turn(page, "thinking");
+      await page.locator("#conversation-message").fill("And close Files");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Ember didn't write a reply. Task activity shows any task it started.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("says a typed \"stop\" stopped everything, and waits for no reply after it (home-c1-1)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      await page.clock.install();
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await page.evaluate(() => { window.__home.sendResult = "stopped"; });
+      await page.locator("#conversation-message").fill("stop");
+      await page.locator("#conversation-message").press("Control+Enter");
+      // Main stops everything at once (the kill switch tells Home), and answers the send: "stopped".
+      await page.evaluate(() => window.__home.emit("onStopped", "typed"));
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Stopped everything, running tasks included.");
+      expect(await page.locator("#conversation-message").inputValue()).toBe("");
+      expect(await page.locator("#state-word").innerText()).toBe("Ready");
+      await page.clock.runFor(30_000);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Stopped everything, running tasks included.");
+      expect(await page.locator("#state-word").innerText()).toBe("Ready");
+      // Stop everything from elsewhere (its shortcut, "Ember, stop") during a wait ends it the same way.
+      await page.evaluate(() => { window.__home.sendResult = undefined; });
+      await page.locator("#conversation-message").fill("Summarise my mail");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await page.evaluate(() => window.__home.emit("onStopped", "hotkey"));
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Stopped everything, running tasks included.");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("says Ember is thinking in the status panel while it answers the Ask box or a spoken request (home-c1-1)", async () => {
+    const { page, errors } = await home([]);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await expect.poll(() => page.locator("#state-word").innerText()).toBe("Ready");
+      await turn(page, "thinking");
+      expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
+      // The composer's line is about what was sent from it: nothing was.
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("");
+      await turn(page, "slow");
+      expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
+      await turn(page, "idle");
+      expect(await page.locator("#state-word").innerText()).toBe("Ready");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps the line saying how the request is going in view under the buttons after a reply, at 760×640 (home-7)", async () => {
+    const seed = exchange(12);
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await page.locator("#conversation-message").focus();
+      await page.keyboard.type("What should I do next?");
+      await page.keyboard.press("Control+Enter");
+      await turn(page, "thinking");
+      const after = await reply(page, seed, "What should I do next?", 7);
+      await turn(page, "idle");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reply received.");
+      const status = await rect(page, "#conversation-compose-status");
+      expect(status.top).toBeGreaterThanOrEqual(0);
+      expect(status.bottom).toBeLessThanOrEqual(status.height);
+      // Right under the buttons, before their footnotes.
+      const send = await rect(page, "#conversation-send");
+      expect(status.top - send.bottom).toBeLessThan(24);
+      // The next request's wait, and its still-waiting line, show too.
+      await page.keyboard.type("And after that?");
+      await page.keyboard.press("Control+Enter");
+      await turn(page, "thinking");
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...after, { t: at(after.length), who: "you", text: "And after that?" }]);
+      await turn(page, "slow");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Still waiting for Copilot… Stop response ends this reply.");
+      const waiting = await rect(page, "#conversation-compose-status");
+      expect(waiting.top).toBeGreaterThanOrEqual(0);
+      expect(waiting.bottom).toBeLessThanOrEqual(waiting.height);
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);

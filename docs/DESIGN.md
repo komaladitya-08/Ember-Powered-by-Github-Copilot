@@ -302,15 +302,19 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   checks step too; a fix's failure is only read out, as its row shows it (first-run-r2).
 - **The conversation** is part of the page, not a box that scrolls inside it: its latest 6 messages (so the composer
   and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries (a search left typed in is cleared when you send, so your message and
-  its reply show; the composer's line says "Thinking…" until the reply, and "Still waiting for Copilot… Stop response
-  ends this reply." after the bubble's own 10 s with nothing written), shows explicit per-answer truncation beyond
+  its reply show; the composer's line, right under its buttons, says "Thinking…" until the reply, "Still waiting for
+  Copilot… Stop response ends this reply." while the bubble says so, and, when main says the turn ended with nothing
+  written (it only started a task, ran a step, or was stopped), "Ember didn't write a reply. Task activity shows any
+  task it started."; a typed "stop" that stopped everything says so, and is kept in the conversation with Ember's
+  "Okay, I've stopped everything."; the status panel says "Thinking…" while Ember answers any request, from the Ask
+  box and by voice too: main's `conversationTurn`, never a guess, home-c1-1), shows explicit per-answer truncation beyond
   131,072 characters, and offers Copy and Edit. A long paste is kept whole: from 1,800 characters the composer counts
   them, and over 2,000 it says how many too many and Send refuses until it fits. Its hint names the send key as the OS
   does (Ctrl+Enter; Command+Enter on a Mac), and a message's Copy says Copied on itself for 2 s. Messages kept from before a restart
   (**Keep my recent conversation**) show their day beside their time, and a quiet line under the last of them says
   they are for reading and Ember starts afresh below. Edit only fills the composer; a fresh Send is required. Home sends
-  no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer and its
-  buttons in view; nothing scrolls for someone reading elsewhere, or who scrolled away from it. **Read the last
+  no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer, its
+  buttons and the line under them in view; nothing scrolls for someone reading elsewhere, or who scrolled away from it. **Read the last
   answer** and a long answer's **Open conversation** open it at the newest answer, focused, from its top (once the
   messages have come, when Home opens for it). Stop response cancels
   the current answer (or says there was nothing to stop, and the bubble keeps what it showed); Stop everything also

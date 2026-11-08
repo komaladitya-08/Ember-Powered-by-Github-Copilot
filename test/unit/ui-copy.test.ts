@@ -1070,6 +1070,9 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
       editCancelled: "Edit cancelled. Your previous draft is restored.",
       stopFailed: "Couldn't stop this response. Try again, or use Stop everything.",
       empty: "Enter a request of up to 2,000 characters.",
+      noReply: "Ember didn't write a reply. Task activity shows any task it started.",
+      replyStopped: "The reply was stopped before it finished.",
+      stoppedAll: "Stopped everything, running tasks included.",
     });
     expect(conv.CONVERSATION_STOPPED).toBe("Response stopped. Running tasks continue.");
     expect(conv.CONVERSATION_NOTHING_TO_STOP).toBe("Ember isn't answering anything right now, so there was nothing to stop.");

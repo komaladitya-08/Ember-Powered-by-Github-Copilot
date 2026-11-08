@@ -64,7 +64,7 @@ import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type Sh
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { createTaskWindowControl, taskControl } from "./agent/task-controls";
-import { AgentHost, explainSignInError, gitHubReachable, idleWord, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
+import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
 import { projectAfterStatus, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
@@ -1277,7 +1277,7 @@ function start(): void {
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
     // A typed "stop" while a task is at work stops everything at once, before any screen read (tasks-approvals-v2).
-    if (agent?.stopsNow(text)) return;
+    if (agent?.stopsNow(text, { voiceUnchecked: how.voiceUnchecked, suggested: how.suggested, heardId: how.heardId })) return;
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
     if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); syncHandle(); }
     // A Stop while the screen is read (or the brain connects) drops the request.
@@ -1378,7 +1378,7 @@ function start(): void {
     // keeps the result) and its Close needs a click: Stop everything clears it at once too (the keyboard's way, and the
     // screen reader's).
     for (const t of agent?.tasks?.list() ?? []) if (t.status === "failed") agent?.tasks?.dismiss(t.id);
-    const bubble = { visible: true, mood: "idle" as const, title: "Stopped", thought: "Okay, I've stopped everything.", step: null, streaming: false, actions: [] };
+    const bubble = { visible: true, mood: "idle" as const, title: "Stopped", thought: STOPPED_EVERYTHING, step: null, streaming: false, actions: [] };
     statusBy.listen = statusBy.mic = null;
     setState({ emotion: "neutral", talking: false, status: statusBy.borrow, bubble, suggest: null });
     hideIfStill(bubble, 3000);
@@ -2020,9 +2020,15 @@ function start(): void {
     // Still starting, offline or reconnecting is said as such: Models & connections can't help with those.
     const status = agent?.getStatus();
     if (status?.phase !== "ready") throw new Error(composerRefusal(status ?? { phase: "signed-out" }));
+    // A typed "stop" while a task is at work stops everything at once (askEmber): no turn comes for it, and Home's
+    // composer says so instead of waiting for a reply (home-c1-1).
+    const stops = agent?.stopsWith(text) === true;
     // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
     void askEmber(text, {}, Promise.resolve(null));
+    return stops ? "stopped" : "sent";
   }));
+  // Whether the conversation is answering a request (from Home, the Ask box or voice): Home says it, never a guess.
+  ipcMain.handle(IPC.conversationTurn, guard(() => agent?.conversationTurn ?? "idle"));
   ipcMain.handle(IPC.conversationStop, guard(async () => {
     // Whether anything was stopped: a turn, a request waiting, or the answer still being spoken (home-3).
     const speaking = voice?.selfSpokeSince(Date.now()) ?? false;
@@ -3331,6 +3337,8 @@ function start(): void {
       },
       // Home's conversation shows the answer as it develops (the same words as the bubble's).
       onAnswerStream: e => broadcast(IPC.conversationStream, e),
+      // And whether the conversation is answering (home-c1-1): its composer's wait ends when the turn does.
+      onConversationTurn: turn => sendToHome(IPC.conversationTurnChanged, turn),
       onTranscript: (entries, why) => {
         // Forgotten (sign-out, another account): the "Ember learned" lines go with it. A New conversation clears them
         // too, but isn't announced as a forgetting: Home that asked for it resets itself when the request is answered.
