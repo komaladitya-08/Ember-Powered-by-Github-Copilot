@@ -197,6 +197,11 @@ export function forBubble(text: string): string {
 const ACK_MS = ANSWER_MS;
 /** A task whose work is in the bubble keeps it while it writes; this long without a word, another task's work may show. */
 const QUIET_MS = 15_000;
+/**
+ * Once the Ask box closes, a bubble it held (BubbleOwner.holdForAsk) stays at least this long (times More time to read
+ * and answer), or what was left of its own time if that is longer: a glance back at what was being replied to.
+ */
+export const ASK_AFTER_MS = 4000;
 
 /**
  * How a write claims the shared bubble.
@@ -242,6 +247,10 @@ export class BubbleOwner {
   private covered: Presenter | null = null;
   /** A guide step waits behind an answer that has finished: it shows when this fires. */
   private stepTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The Ask box is open (holdForAsk): no presenter's bubble goes meanwhile. */
+  private askOpen = false;
+  /** Presenters whose bubble would have gone while the box was open: they go once it closes. */
+  private askHeld = new Set<Presenter>();
 
   constructor(
     /** A question with buttons is up (main shows nothing else meanwhile); `answered` resolves once none is. */
@@ -271,6 +280,32 @@ export class BubbleOwner {
     if (!c || keep(c)) return c;
     c.drop();
     return null;
+  }
+
+  /**
+   * The Ask box opened (`open`) or closed (companion-c2-1: the answer being replied to went at its usual time while the
+   * reply was typed beside it). While it is open no presenter's bubble goes on its timer: the one on screen and any that
+   * comes meanwhile stay. Once it closes, each goes after what was left of its time, and never sooner than ASK_AFTER_MS.
+   * A new request, a question or a stop still replaces a bubble as always: only the timers wait.
+   */
+  holdForAsk(open: boolean): void {
+    if (open === this.askOpen) return;
+    this.askOpen = open;
+    if (open) {
+      for (const p of this.showing) p.holdForAsk();
+      if (this.current instanceof Presenter) this.current.holdForAsk();
+      return;
+    }
+    const held = [...this.askHeld];
+    this.askHeld.clear();
+    for (const p of held) p.afterAsk();
+  }
+
+  /** `p`'s bubble would go now: while the Ask box is open it waits (true), and goes once the box closes. */
+  heldForAsk(p: Presenter): boolean {
+    if (!this.askOpen) return false;
+    this.askHeld.add(p);
+    return true;
   }
 
   /** May `p` write the bubble now? */
@@ -640,6 +675,10 @@ export class Presenter {
   private hideMs = 0;
   /** A hide asked for while the bubble wasn't on screen: its time starts once it shows. */
   private pendingHide: number | null = null;
+  /** When the armed hide was armed (now()): what is left of it when the Ask box holds it. */
+  private armedAt = 0;
+  /** The time its bubble had left when the Ask box held it (BubbleOwner.holdForAsk), or null: not held. */
+  private askLeft: number | null = null;
   /** The latest bubble hasn't reached the screen (someone else held it, or a question was up). */
   private unseen = false;
   /** Stopped by the kill switch: nothing more is shown until the next request. */
@@ -815,6 +854,22 @@ export class Presenter {
   private cancelHide(): void {
     if (this.hideTimer) { this.timers.clear(this.hideTimer); this.hideTimer = null; }
     this.pendingHide = null;
+    this.askLeft = null;
+  }
+
+  /** The Ask box opened (BubbleOwner.holdForAsk): a bubble on screen with its time running keeps what is left of it. */
+  holdForAsk(): void {
+    if (!this.hideTimer) return;
+    const left = Math.max(0, this.hideMs - (this.now() - this.armedAt));
+    this.armHide(left);
+  }
+
+  /** The Ask box closed: a bubble it held goes after what was left of its time, never sooner than ASK_AFTER_MS. */
+  afterAsk(): void {
+    const left = this.askLeft;
+    this.askLeft = null;
+    if (left === null || !this.visible) return;
+    this.armHide(Math.max(left, ASK_AFTER_MS * this.readScale()));
   }
 
   /** Thinking, streaming or working: a turn is under way. */
@@ -873,7 +928,7 @@ export class Presenter {
 
   /** Someone else (main's own bubble) has the bubble now: no timer of this presenter hides it. */
   letGo(): void {
-    const ms = this.hideTimer ? this.hideMs : this.pendingHide;
+    const ms = this.hideTimer ? this.hideMs : this.askLeft ?? this.pendingHide;
     this.cancelHide();
     // Its time starts over if it shows again (reshow).
     this.pendingHide = ms;
@@ -928,9 +983,12 @@ export class Presenter {
   /** This presenter's bubble goes `base` ms after it reaches the screen, times the user's "More time to read and answer". */
   private hideLater(base: number): void {
     // As long as the user needs to read it (their setting), never shorter than usual.
-    let scale = 1;
-    try { scale = Math.max(1, Math.min(10, Number(this.readTime()) || 1)); } catch { /* the usual time */ }
-    this.armHide(base * scale);
+    this.armHide(base * this.readScale());
+  }
+
+  /** How many times its usual time a bubble stays (the user's More time to read and answer: 1 to 10, 1 if unreadable). */
+  private readScale(): number {
+    try { return Math.max(1, Math.min(10, Number(this.readTime()) || 1)); } catch { return 1; }
   }
 
   /**
@@ -941,7 +999,10 @@ export class Presenter {
     this.cancelHide();
     // Not on screen yet: its time starts when it shows.
     if (this.unseen) { this.pendingHide = ms; return; }
+    // The Ask box is open beside it: it stays until the box closes (companion-c2-1).
+    if (this.owner.heldForAsk(this)) { this.askLeft = ms; return; }
     this.hideMs = ms;
+    this.armedAt = this.now();
     this.hideTimer = this.timers.set(() => { this.hideTimer = null; this.hide(); }, ms);
   }
 

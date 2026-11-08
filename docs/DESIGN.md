@@ -146,7 +146,10 @@ They share one emotion rig, so switching never changes behaviour.
   bubble, or over or under it where it fits beside neither (larger text, a 1024-wide screen), never
   on it nor on Ember (the bubble never moves for it). A bubble that comes up while the box is open
   keeps off it where it can (never hiding for it); a question or "Listening…" that finds no room
-  moves the box aside once, and a question already shown never moves for the box. Without a
+  moves the box aside once, and a question already shown never moves for the box. While the box is
+  open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
+  closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
+  More time to read). Without a
   compositor the box moves off the corner card as it grows for a question. On Linux it takes clicks only on what it
   shows (an X input shape the page reports), so a click in its clear margins reaches the app
   beneath and closes it. The line under its field is as wide as the field while the quick look

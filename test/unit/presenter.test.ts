@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { keysLanding, taskStoppedWords, BubbleOwner, LONG_ANSWER, LOST_RECONNECTING, NO_REPLY, Presenter, RECONNECTED, RECONNECTED_RETRY, STILL_WAITING, noAnswer, notAnswering, stillWaiting, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
+import { keysLanding, taskStoppedWords, ASK_AFTER_MS, BubbleOwner, LONG_ANSWER, LOST_RECONNECTING, NO_REPLY, Presenter, RECONNECTED, RECONNECTED_RETRY, STILL_WAITING, noAnswer, notAnswering, stillWaiting, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 
@@ -1490,5 +1490,81 @@ describe("the end of a conversation turn that said nothing (the owner's report o
     p.event({ type: "assistant.message", data: { content: "I'll close Microsoft Edge." } });
     p.event({ type: "session.idle", data: {} });
     expect(last().bubble).toMatchObject({ visible: true, mood: "idle", thought: "I'll close Microsoft Edge." });
+  });
+});
+
+describe("Presenter: the answer stays while the Ask box beside it is open (companion-c2-1)", () => {
+  function opened(readTime = 1) {
+    vi.useFakeTimers();
+    const owner = new BubbleOwner();
+    const states: { who: string; s: Partial<EmberState> }[] = [];
+    const talk = new Presenter(s => states.push({ who: "ember", s }), undefined, () => "Ember", owner, undefined, false, { readTime: () => readTime });
+    const task = new Presenter(s => states.push({ who: "task", s }), undefined, () => "Tidy up", owner, undefined, false, { task: true, readTime: () => readTime });
+    const shown = () => { const b = states.filter(x => x.s.bubble).at(-1); return b?.s.bubble?.visible ? `${b.who}:${b.s.bubble.thought}` : "(hidden)"; };
+    const answer = (text: string) => {
+      talk.userPrompt("what time is it in Tokyo");
+      talk.event({ type: "assistant.message_delta", data: { deltaContent: text } });
+      talk.event({ type: "assistant.message", data: { content: text } });
+      talk.event({ type: "session.idle", data: {} });
+    };
+    return { owner, talk, task, states, shown, answer };
+  }
+  const TOKYO = "Tokyo is 9 hours ahead. Want me to add a world clock?";
+
+  it("holds the answer being replied to while the box is open, and keeps it a moment once the box closes", () => {
+    const { owner, shown, answer } = opened();
+    answer(TOKYO);
+    // Its time is 6 s and 50 ms a character: the box opens 3 s in, and the reply takes a minute to type.
+    vi.advanceTimersByTime(3000);
+    owner.holdForAsk(true);
+    vi.advanceTimersByTime(60_000);
+    expect(shown()).toBe(`ember:${TOKYO}`);
+    // Closed without sending: what was left of its time, and never less than ASK_AFTER_MS to look back at it.
+    owner.holdForAsk(false);
+    vi.advanceTimersByTime(6000 + TOKYO.length * 50 - 3000 - 100);
+    expect(shown()).toBe(`ember:${TOKYO}`);
+    vi.advanceTimersByTime(200);
+    expect(shown()).toBe("(hidden)");
+  });
+
+  it("gives an answer whose time had nearly run out ASK_AFTER_MS (times More time to read) after the box closes", () => {
+    for (const readTime of [1, 10]) {
+      const { owner, shown, answer } = opened(readTime);
+      answer(TOKYO);
+      vi.advanceTimersByTime((6000 + TOKYO.length * 50) * readTime - 500);
+      owner.holdForAsk(true);
+      vi.advanceTimersByTime(20_000);
+      owner.holdForAsk(false);
+      vi.advanceTimersByTime(ASK_AFTER_MS * readTime - 100);
+      expect(shown(), String(readTime)).toBe(`ember:${TOKYO}`);
+      vi.advanceTimersByTime(200);
+      expect(shown(), String(readTime)).toBe("(hidden)");
+    }
+  });
+
+  it("holds what comes while the box is open too (a task's result), and lets go of nothing after a stop", () => {
+    const { owner, talk, task, states, shown, answer } = opened();
+    owner.holdForAsk(true);
+    task.taskStarted();
+    task.outcome({ title: "Done", text: "Tidied the desktop.", emotion: "happy", gesture: "thumbsUp", mood: "done" });
+    vi.advanceTimersByTime(60_000);
+    expect(shown()).toBe("task:Tidied the desktop.");
+    owner.holdForAsk(false);
+    vi.advanceTimersByTime(ASK_AFTER_MS + 6000 + 19 * 50);
+    expect(shown()).toBe("(hidden)");
+    // The kill switch's quiet: nothing held comes back when the box closes.
+    answer(TOKYO);
+    owner.holdForAsk(true);
+    talk.quiet();
+    const pushed = states.length;
+    owner.holdForAsk(false);
+    vi.advanceTimersByTime(60_000);
+    expect(states.length).toBe(pushed);
+  });
+
+  it("is held by main for as long as the box is on screen", () => {
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toMatch(/onBounds: askBox => \{[^\n]*agent\?\.holdForAsk\(askBox !== null\);/);
+    expect(readFileSync("app/main/agent/host.ts", "utf8")).toMatch(/holdForAsk\(open: boolean\): void \{\n\s+this\.owner\.holdForAsk\(open\);/);
   });
 });

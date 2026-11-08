@@ -366,7 +366,7 @@ describe("the open Ask box, for a bubble that comes up while it is open (compani
     expect(overlayPage).toContain("bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff)");
     expect(overlayPage).toMatch(/askHeld = askKeepOff\(state\?\.askBox \?\? null, questionOf\(state\), askHeld\);\n\s+if \(askHeld\.box\) list\.push\(/);
     const main = readFileSync("app/main/main.ts", "utf8");
-    expect(main).toMatch(/onBounds: askBox => \{ if \(JSON\.stringify\(lastState\.askBox \?\? null\) !== JSON\.stringify\(askBox\)\) showState\(\{ askBox \}\); \},/);
+    expect(main).toMatch(/onBounds: askBox => \{ if \(JSON\.stringify\(lastState\.askBox \?\? null\) !== JSON\.stringify\(askBox\)\) showState\(\{ askBox \}\); agent\?\.holdForAsk\(askBox !== null\); \},/);
     expect(main).toMatch(/overlay\.setBubble\(event\.sender, rect\);\n\s+\/\/[^\n]*\n\s+askWindow\.bubbleChanged\(stepsAsideFor\(lastState\.bubble\)\);/);
     // Without a compositor, the corner card grows for a question: the open box moves off it.
     expect(main).toMatch(/handle\.fit\(height\); deskViewRef\?\.handleMoved\(\); askWindow\.keepClear\(\);/);

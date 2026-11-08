@@ -1195,7 +1195,8 @@ function start(): void {
     // The answer or question Ember shows: the box opens beside it, not on it (companion-1).
     bubble: () => overlay?.bubbleRect() ?? null,
     // Where the box is while it is open: a bubble that comes up meanwhile keeps off it (companion-c1-1).
-    onBounds: askBox => { if (JSON.stringify(lastState.askBox ?? null) !== JSON.stringify(askBox)) showState({ askBox }); },
+    // While it is open, the answer being replied to stays beside it (companion-c2-1).
+    onBounds: askBox => { if (JSON.stringify(lastState.askBox ?? null) !== JSON.stringify(askBox)) showState({ askBox }); agent?.holdForAsk(askBox !== null); },
     // Clicks only on what it shows, where the window system can say so (Linux's input shape: companion-4).
     shape: (w, rects) => platform.overlay.setInputRegion(w, rects, screen.getDisplayMatching(w.getBounds()).scaleFactor || 1),
     windowId: w => ownId(w),
