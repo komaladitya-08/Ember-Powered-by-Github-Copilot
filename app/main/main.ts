@@ -2147,6 +2147,7 @@ function start(): void {
     // looked for or named (integrations-c1-1).
     return checkAgain(providerSummary(providerNow()), {
       reconnect: () => agent?.start(currentToken, agent.getStatus().source) ?? Promise.resolve(undefined),
+      reason: () => agent?.getStatus().reason,
       github: async () => {
         // Sign-ins refused before are passed over; with nothing else, the one refused is tried again (it may work now).
         const since = signOuts;

@@ -408,6 +408,18 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(ad) Check again under an own provider with no model named says it still can't use it, never that it can't connect (integrations-c2-2)", async () => {
+    const service = { kind: "user", host: "127.0.0.1:18408" };
+    const noModel = { ...SIGNED_OUT, phase: "error", reason: "models", detail: "Enter the model your provider should use in Ember's settings, under Models & connections.", service };
+    const p = await open({ home: true, provider: { on: true, baseUrl: "http://127.0.0.1:18408/v1" }, agent: noModel });
+    await expect.poll(() => p.locator("#retry").isVisible()).toBe(true);
+    await p.locator("#retry").click();
+    await settle(p, "retry", { found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason: "models" } });
+    await expect.poll(() => p.locator("#sign-in-msg").innerText()).toBe("Checked again: Ember still can't use 127.0.0.1:18408. The line above says why.");
+    expect(await p.locator("#agent-text").innerText()).toBe(noModel.detail);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(v) Home says the provider's note came up when the endpoint is entered, and why Test connection waits (integrations-7, WCAG 4.1.3)", async () => {
     const p = await open({ home: true, provider: { on: true, baseUrl: "" } });
     const test = p.locator("#byok-test");

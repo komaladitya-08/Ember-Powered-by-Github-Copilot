@@ -51,6 +51,14 @@ describe("settings window words", () => {
     // A model provider in force: what was checked is that provider, never a GitHub sign-in (integrations-c1-1).
     expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false } })).toBe("Checked again: Ember still can't connect to 127.0.0.1:18408.");
     expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: true } })).toBe("");
+    expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason: "network" } })).toBe("Checked again: Ember still can't connect to 127.0.0.1:18408.");
+  });
+
+  it("says Check again still can't connect only when the provider couldn't be reached, never when only a model or key is missing (integrations-c2-2)", () => {
+    for (const reason of ["models", "sign-in", "no-access", "runtime", "not-answering", "other"]) {
+      expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason } }), reason)
+        .toBe("Checked again: Ember still can't use 127.0.0.1:18408. The line above says why.");
+    }
     expect(retryMessage({ found: true, source: "github-cli" })).toBe("Found your GitHub CLI sign-in; connecting…");
     expect(retryMessage({ found: true, source: "environment" }, true)).toBe("Found a GitHub token in the environment; connected.");
     expect(retryMessage({ found: true, source: "stored" })).toBe("Found Ember's saved sign-in; connecting…");

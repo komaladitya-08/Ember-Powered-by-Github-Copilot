@@ -133,12 +133,14 @@ export function activeProvider(o: { fixed: ActiveProvider | null; settings: Sett
 /**
  * Check again (integrations-c1-1): with a model provider in force (`provider`: its host) it connects to that provider
  * again and says whether it is ready, and never looks for or names a GitHub sign-in, which that service doesn't use.
+ * Not ready, it says why (`reason`: the status's, integrations-c2-2), so a missing model isn't told as "can't connect".
  * With GitHub Copilot in force, it looks for a GitHub sign-in (`github`), as it always did.
  */
-export async function checkAgain(provider: { host: string } | null, o: { reconnect(): Promise<string | undefined>; github(): Promise<RetryResult> }): Promise<RetryResult> {
+export async function checkAgain(provider: { host: string } | null, o: { reconnect(): Promise<string | undefined>; reason?(): string | undefined; github(): Promise<RetryResult> }): Promise<RetryResult> {
   if (!provider) return o.github();
-  const phase = await o.reconnect();
-  return { found: false, source: null, provider: { host: provider.host, ready: phase === "ready" } };
+  const ready = await o.reconnect() === "ready";
+  const reason = ready ? undefined : o.reason?.();
+  return { found: false, source: null, provider: { host: provider.host, ready, ...(reason ? { reason } : {}) } };
 }
 
 /** Whose endpoint `p` is and its host, for the setup check and Home (null: GitHub Copilot). */

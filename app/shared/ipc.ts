@@ -23,9 +23,10 @@ export interface ProjectSelection { names: string[]; sizes?: (number | null)[]; 
 export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; canContinue: boolean } | { error: string };
 /**
  * What Check again found: a GitHub sign-in (`found`, its `source`, or a `hint` on how to get one), or, with a model
- * provider in force (the user's own or the organisation's), that it connected to it again or not (integrations-c1-1).
+ * provider in force (the user's own or the organisation's), that it connected to it again or not (integrations-c1-1),
+ * and when not, the status's `reason` (integrations-c2-2: "network" is the only one that means it couldn't be reached).
  */
-export interface RetryResult { found: boolean; source: string | null; hint?: string; provider?: { host: string; ready: boolean } }
+export interface RetryResult { found: boolean; source: string | null; hint?: string; provider?: { host: string; ready: boolean; reason?: string } }
 export type ProjectWorkspaceAction = { action: "list" } | { action: "save" | "open" | "forget"; name: string };
 export interface ProjectWorkspaceReply {
   names?: string[];

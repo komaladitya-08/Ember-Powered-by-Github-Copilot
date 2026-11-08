@@ -301,9 +301,14 @@ describe("Check again", () => {
     expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: true } });
     expect(github).not.toHaveBeenCalled();
     expect(reconnect).toHaveBeenCalledTimes(2);
+    // Not ready: why, from the status, so Home says "can't connect" only when nothing answered (integrations-c2-2).
+    expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github, reason: () => "models" })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason: "models" } });
+    reconnect.mockResolvedValueOnce("ready");
+    expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github, reason: () => undefined })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: true } });
+    reconnect.mockClear();
     // GitHub Copilot in force: a GitHub sign-in is what it looks for.
     expect(await checkAgain(null, { reconnect, github })).toEqual({ found: false, source: null, hint: "No GitHub sign-in found on this computer." });
-    expect(reconnect).toHaveBeenCalledTimes(2);
+    expect(reconnect).not.toHaveBeenCalled();
   });
 });
 

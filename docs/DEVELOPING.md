@@ -1035,8 +1035,9 @@ answers; then the details, the key and the card's yes are saved as usual.
   (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
   title names the provider ("No model set for your provider", "I'm still connecting to your model provider").
   **Check again** connects to the provider (or the organisation's service) again and never looks for or names a GitHub
-  sign-in (`checkAgain`, app/main/provider.ts): connected, the status line says so; not, it says "Checked again: Ember
-  still can't connect to <host>.", which goes once the provider connects.
+  sign-in (`checkAgain`, app/main/provider.ts): connected, the status line says so; out of reach, it says "Checked
+  again: Ember still can't connect to <host>."; reached but still unusable (no model named, a refused key), "Checked
+  again: Ember still can't use <host>. The line above says why."; either goes once the provider connects.
 - **Switching** applies from the next message, without a restart; tasks already running finish on the service they
   started with. A request asked while a turn or a task is still under way on the service before is held, with a bubble
   saying so ("Switching model service", up for as long as anything is held), and sent to the new one once they are
