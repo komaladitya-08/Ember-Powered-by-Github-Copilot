@@ -778,8 +778,9 @@ one,"). Ember doesn't wait for Copilot to finish the whole first sentence (`Spee
 first sentence of more than 48 characters said whole is cut at its first such clause: the voice takes about 18 ms a
 character in WebAssembly. A list can be split after its first item that way ("The bench has a name field, a password
 field…" starts with "The bench has a name field,"). A first sentence of more than 90 characters with no comma is cut
-before its first joining word ("and", "which", "with"…) once it has 4 words, or else at its last space before 90 ("I
-looked through the folder you mentioned | and found…"), streamed or whole. No piece of speech is longer than 120
+before its first joining word ("and", "which", "because"…, never "to", "for", "from" or "with", which follow verbs)
+once it has 4 words, or else at its last space before 90 ("I looked through the folder you mentioned | and found…"),
+streamed or whole, and never inside a code span or a link's words. No piece of speech is longer than 120
 characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of speech ahead of what has played
 (`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
 it. A Markdown list is said item by item: each item, a heading, the line that leads into a list and a paragraph end

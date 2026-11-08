@@ -126,6 +126,14 @@ describe("speechChunks", () => {
     expect(speechChunks("I looked through the folder you mentioned and found nothing there at all.")).toEqual(["I looked through the folder you mentioned and found nothing there at all."]);
   });
 
+  it("never cuts a long first sentence between a verb and its 'to', 'for', 'from' or 'with' (voice-speaking-r2)", () => {
+    const going = "The update you asked about is going to take about twenty minutes because the installer downloads every language pack first.";
+    expect(speechChunks(going)[0]).toBe("The update you asked about is going to take about twenty minutes");
+    const next = "The printer you asked about is on the second floor next to the kitchen area where the coffee machine stands today.";
+    expect(speechChunks(next)[0]).not.toMatch(/\b(?:next|to)$/);
+    expect(speechChunks(next)[0].length).toBeLessThanOrEqual(90);
+  });
+
   it("keeps every piece to 120 characters, so a new answer never waits long behind one being made (voice-speaking-10)", () => {
     const text = `${LONG} The largest one is the October summary, which has the revenue tables and the notes from the planning meeting that you asked me about earlier this week. I can open any of them for you.`;
     const chunks = speechChunks(text);
@@ -203,6 +211,22 @@ describe("SpeechStream", () => {
     expect([...said.map(x => x.piece), ...s.finish(long)].join(" ")).toBe(long);
     // A comma-less first sentence of up to 90 characters still waits for its end.
     expect(new SpeechStream().push("I looked through the folder you mentioned and found nothing there at")).toEqual([]);
+  });
+
+  it("never cuts a long first sentence inside a code span or a link's words, nor says a link's address (voice-speaking-r2)", () => {
+    const pieces = (text: string) => {
+      const s = new SpeechStream();
+      const said: string[] = [];
+      for (let i = 0; i < text.length; i += 4) said.push(...s.push(text.slice(i, i + 4)));
+      return { said, all: [...said, ...s.finish(text)] };
+    };
+    const code = pieces("Run the command `npm install and build for production` to set it up on this computer before the meeting starts tomorrow. Then tell me.");
+    for (const p of code.all) expect(p, p).not.toMatch(/`/);
+    expect(code.all.join(" ")).toContain("Run the command npm install and build for production to set it up");
+    expect(code.said.length).toBeGreaterThan(0);
+    const link = pieces("I opened [the report that you wrote for the board last quarter](https://example.com/reports/q3) in Firefox and left it on the summary page. Anything else?");
+    for (const p of link.all) expect(p, p).not.toMatch(/example|\[|\]/);
+    expect(link.all.join(" ")).toContain("the report that you wrote for the board last quarter");
   });
 
   it("waits for the sentence when the first clause is too short to say alone", () => {

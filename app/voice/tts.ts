@@ -92,22 +92,24 @@ function cutAtClause(chunk: string, min: number, max: number): [string, string] 
 
 /**
  * Words a long sentence with no comma can be cut before: the voice pauses there as a speaker would ("I looked through
- * the folder you mentioned | and found…").
+ * the folder you mentioned | and found…"). Not "to", "for", "from" or "with", which so often follow a verb ("is going
+ * | to take" was said with a full stop's fall: voice-speaking-r2).
  */
-const JOINS = /\s+(?=(?:and|but|or|so|because|which|that|while|when|where|until|after|before|with|from|for|to|together)\s)/gi;
+const JOINS = /\s+(?=(?:and|but|or|so|because|which|that|while|when|where|until|after|before|together)\s)/gi;
 
 /**
  * Where to cut `chunk`: before its first joining word between `min` and `max` characters that leaves FIRST_WORDS words
- * or more before it, else at its last space before `max` (voice-speaking-8); -1 when neither fits.
+ * or more before it, else at its last space before `max` (voice-speaking-8); -1 when neither fits. `ok`: whether a cut
+ * there may be made (a stream's Markdown is closed there: voice-speaking-r2).
  */
-function joinAt(chunk: string, min: number, max: number): number {
+function joinAt(chunk: string, min: number, max: number, ok: (at: number) => boolean = () => true): number {
   for (const m of chunk.matchAll(JOINS)) {
     if (m.index < min) continue;
     if (m.index > max) break;
-    if ((chunk.slice(0, m.index).match(/[\p{L}\p{N}]+/gu) ?? []).length >= FIRST_WORDS) return m.index;
+    if ((chunk.slice(0, m.index).match(/[\p{L}\p{N}]+/gu) ?? []).length >= FIRST_WORDS && ok(m.index)) return m.index;
   }
-  const at = chunk.lastIndexOf(" ", max);
-  return at > min ? at : -1;
+  for (let at = chunk.lastIndexOf(" ", max); at > min; at = chunk.lastIndexOf(" ", at - 1)) if (ok(at)) return at;
+  return -1;
 }
 
 /** `chunk` cut where joinAt says, or null. */
@@ -254,8 +256,9 @@ export class SpeechStream {
     if (this.raw.length <= FIRST_MAX) return 0;
     const head = this.raw.slice(0, FIRST_MAX + 1);
     // Only on the answer's first line, as a sentence: not in a list, a heading, a quote or a table.
-    if (head.includes("\n") || speechMarkupOpen(head) || /^[ \t]*(?:[|#>*+-]|\d+[.)])/.test(head)) return 0;
-    return Math.max(0, joinAt(this.raw, FIRST_MIN, FIRST_MAX));
+    if (head.includes("\n") || /^[ \t]*(?:[|#>*+-]|\d+[.)])/.test(head)) return 0;
+    // Never inside a code span or a link's words: cut there, its backtick or its address would be said (voice-speaking-r2).
+    return Math.max(0, joinAt(this.raw, FIRST_MIN, FIRST_MAX, at => !speechMarkupOpen(this.raw.slice(0, at))));
   }
 
   /** The first clause break of the answer, when it can be said on its own (0: none yet). */
