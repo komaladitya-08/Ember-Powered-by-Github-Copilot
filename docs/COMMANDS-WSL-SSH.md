@@ -295,9 +295,10 @@ build/", "Ember, delete build/", "can you delete build/?" and "I want to delete 
 my branch?"), something already done ("I pushed my branch"), a maybe ("I might delete build/ later") and words about
 something else ("fix the script that deletes build/") don't, so the command asks. Nor do words that hold the step
 back, since the announcement runs it now: a condition ("delete src/ only if I say so", "if the build fails, delete
-src/", "once the tests pass", "when I tell you"), a later time ("tomorrow", "next week", "in 5 minutes", "at 5pm"),
-asking to be asked first ("ask me first", "check with me", "wait for my ok") or asking how ("explain how to delete
-build/ and delete src/"); "tell me if it worked", "let me know when it's done" and "if you can" hold nothing back. So do words that say not to, or
+src/", "once the tests pass", "when I tell you", "in case the tests fail"), a later time ("tomorrow", "next week", "in 5
+minutes", "in 1h", "at 5pm", "at 5.30pm", "at the end of the task"), asking to be asked first ("ask me first", "check
+with me", "wait for my ok", "show me the command first", "run it by me", "on my go", "hold off", "I'll say when") or
+asking how ("explain how to delete build/ and delete src/"); "tell me if it worked", "let me know when it's done" and "if you can" hold nothing back. So do words that say not to, or
 that keep or leave something out ("don't delete build/", "delete everything but build/", "delete dist/ and keep
 build/", "instead of", "other than"), since the step may be on what you meant to keep. Only what the verb you
 asked with acts on counts, in its own part of the sentence: "kill 5678, 1234 is my editor" doesn't cover `kill 1234`,

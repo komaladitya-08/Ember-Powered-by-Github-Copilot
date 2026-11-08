@@ -800,13 +800,24 @@ const KEEPS = /(^|[^\p{L}\p{N}])((everything|anything|all)\s+but|other\s+than|ap
 const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
 
 /** A condition the step waits on ("if the build fails", "only after I confirm", "once the tests pass", "when I tell you"). */
-const CONDITION = /(^|[^\p{L}\p{N}])(if|when|whenever|once|after|until|till|as\s+soon\s+as|as\s+long\s+as|so\s+long\s+as|provided|providing|assuming|depending\s+on)(?=$|[^\p{L}\p{N}])/giu;
+const CONDITION = /(^|[^\p{L}\p{N}])(if|when|whenever|once|after|until|till|as\s+soon\s+as|as\s+long\s+as|so\s+long\s+as|provided|providing|assuming|depending\s+on|in\s+case|supposing|suppose|on\s+condition|in\s+the\s+event)(?=$|[^\p{L}\p{N}])/giu;
 /** Words before a condition that make it what to report, not when to act ("tell me if it worked", "let me know when"). */
-const REPORTS = /(^|[^\p{L}\p{N}])((tell|show|warn|notify|ping|let)\s+(me|us)(\s+know)?|check|see|find\s+out|say|report)\s+$/iu;
+const REPORTS = /(^|[^\p{L}\p{N}])((tell|show|warn|notify|ping|let)\s+(me|us)(\s+know)?|check|see|find\s+out|report)\s+$/iu;
 /** A condition that is only a way of asking ("if you can", "if possible", "if that's okay"). */
 const POLITE_IF = /^\s+(you\s+(can|could|would|will|please|like|want)|possible|(that|it)['’]?s\s+(ok|okay|alright|all\s+right|fine))(?=$|[^\p{L}\p{N}])/iu;
 /** A later time ("tomorrow", "next week", "in 5 minutes", "at 5pm", "on Friday", "later"). */
 const LATER = /(^|[^\p{L}\p{N}])(tomorrow|tonight|later|soon|eventually|someday|sometime|overnight|next\s+(week|month|year|time|sprint|release|morning|afternoon|evening|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this\s+(evening|afternoon|weekend)|(on|by|until|till)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|the\s+weekend)|in\s+(\d+|a|an|one|two|three|four|five|ten|fifteen|twenty|thirty|(a\s+)?few|a\s+couple\s+of|several)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|seconds?|secs?|moments?|bit|while)|(at|by)\s+(noon|midnight|\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)|\d{1,2}:\d{2}|\d{1,2}\s*o['’]?clock)|(end|close)\s+of\s+(the\s+)?(day|week|month))(?=$|[^\p{L}\p{N}])/iu;
+/**
+ * More later times (commands-remote-v5-3): "at the end of the task", "in 1h", "in 5m", "at 5.30pm", "at five", "at 5",
+ * "at some point", "in due course".
+ */
+const LATER_TOO = /(^|[^\p{L}\p{N}])((at|by|towards?|near|until|till)\s+the\s+(very\s+)?end|in\s+\d+\s*(h|hr|hrs|m|min|mins|s|sec|secs|d)|in\s+half\s+an\s+hour|(at|by|around|until|till)\s+(\d{1,2}([.:]\d{2})?\s*(am|pm|a\.m\.|p\.m\.)|\d{1,2}[.:]\d{2}|\d{1,2}(?=\s*([,;!?]|\.(\s|$)|$))|(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?=$|[^\p{L}\p{N}]))|at\s+some\s+(point|stage)|some\s+other\s+time|in\s+due\s+course|in\s+a\s+(little|short)\s+(while|bit)|(on|by|until|till)\s+(the\s+)?\d{1,2}(st|nd|rd|th)|\d{4}-\d{2}-\d{2}|(on|by|in|until|till)\s+(the\s+\d{1,2}(st|nd|rd|th)?\s+(of\s+)?)?(january|february|april|june|july|august|september|october|november|december))(?=$|[^\p{L}\p{N}])/iu;
+/**
+ * More ways of holding the step back until the user says so (commands-remote-v5-3): "but first show me what's in it",
+ * "show me the command first", "run it by me", "on my go", "upon confirmation", "hold off", "hang on", "I'll say when",
+ * "I'll confirm".
+ */
+const HELD_FIRST = /(^|[^\p{L}\p{N}])(but\s+first|first\s+(show|tell|let|ask|check|run|give|send|list|explain|describe|walk)|(show|tell|give|send|list|explain|describe)\s+(me|us)(?=\s)[^.;!?]{0,80}?\s(first|beforehand)|run\s+(it|this|that|them|these|those|the\s+commands?|everything)\s+(by|past)\s+(me|us)|(on|at|upon)\s+my\s+(go|word|signal|mark|command|cue|count|say|call)|on\s+go|get\s+(the|my|an?)\s+(ok|okay|go[-\s]?ahead|approval|green\s+light|nod|sign[-\s]?off)|prompt\s+(me|us)|let\s+(me|us)\s+see|(upon|on|after|pending|awaiting|with|subject\s+to)\s+(the\s+|a\s+|my\s+|your\s+)?(confirmation|approval|review|sign[-\s]?off)|hold\s+(off|on|it|up|fire)|hang\s+(on|tight|fire)|stand\s+by|sit\s+tight|(i|we)(\s*['’]ll|\s+will|\s+shall|\s*['’]d|\s+can)?\s+(confirm|approve|decide|sign\s+off|give\s+(you\s+)?the\s+(word|go|signal|nod|green\s+light)|say\s+(go|when|so|the\s+word)|let\s+you\s+know))(?=$|[^\p{L}\p{N}])/iu;
 /** Asking to be asked first ("ask me first", "check with me", "wait for my ok", "let me check first", "a dry run"). */
 const ASK_FIRST = /(^|[^\p{L}\p{N}])(ask\s+(me|us|first|before)|(check|confirm|clear\s+it)\s+with\s+(me|us)|confirm\s+(first|before)|(tell|show|warn|ping)\s+(me|us)\s+(first|before|beforehand)|let\s+(me|us)\s+(know\s+(first|before|beforehand)|check|look|review|decide|confirm|approve|think|see\s+(it\s+|that\s+|this\s+|them\s+)?first)|wait|waits|waiting|my\s+(go[-\s]?ahead|approval|ok|okay|permission|say[-\s]?so|signal|confirmation|green\s+light|nod)|dry[-\s]?run)(?=$|[^\p{L}\p{N}])/iu;
 
@@ -817,7 +828,7 @@ const ASK_FIRST = /(^|[^\p{L}\p{N}])(ask\s+(me|us|first|before)|(check|confirm|c
  */
 function holdsBack(userWords: string): boolean {
   const text = userWords.normalize("NFKC");
-  if (LATER.test(text) || ASK_FIRST.test(text)) return true;
+  if (LATER.test(text) || LATER_TOO.test(text) || ASK_FIRST.test(text) || HELD_FIRST.test(text)) return true;
   for (const m of text.matchAll(CONDITION)) {
     const at = m.index + m[1].length;
     const word = m[2].toLowerCase();

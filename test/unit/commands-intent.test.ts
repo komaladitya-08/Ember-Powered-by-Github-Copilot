@@ -633,6 +633,36 @@ describe("matchIntent: words that hold the step back (commands-remote-c4-4)", ()
   });
 
   it.each([
+    // Showing first, a go-ahead, holding off, the user's own signal, a later time in figures or words, a condition.
+    "delete src/ but first show me what's in it",
+    "delete src/ but show me the command first",
+    "delete src/ but run it by me",
+    "delete src/ but get the ok from me",
+    "delete src/ but prompt me",
+    "delete src/ on my go",
+    "delete src/ upon confirmation",
+    "delete src/ pending review",
+    "delete src/, I'll say when",
+    "delete src/ and I'll confirm",
+    "delete src/ but hold off for now",
+    "delete src/ but hang on",
+    "delete src/ at the end of the task",
+    "delete src/ in 1h",
+    "delete src/ in 5m",
+    "delete src/ at 5.30pm",
+    "delete src/ at five",
+    "delete src/ at 5",
+    "delete src/ at some point",
+    "delete src/ in a little while",
+    "delete src/ on the 15th",
+    "delete src/ in December",
+    "delete src/ in case the tests fail",
+    "delete src/ supposing the build fails",
+  ])("asks for `rm -rf src` after %j (commands-remote-v5-3)", words => {
+    expect(announce("rm -rf src", words)).toBeNull();
+  });
+
+  it.each([
     // Asking for the step now, with words that only ask for something else or say why, still announces.
     ["rm -rf src", "delete src/", "Deleting src, as you asked."],
     ["rm -rf src", "can you delete src/?", "Deleting src, as you asked."],
@@ -646,6 +676,10 @@ describe("matchIntent: words that hold the step back (commands-remote-c4-4)", ()
     ["rm -rf src", "Explain how rm works. Then delete src/.", "Deleting src, as you asked."],
     ["rm -r build", "how big is build/? delete build/", "Deleting build, as you asked."],
     ["rm -r build dist", "delete build/ and dist/ in one go", "Deleting build and dist, as you asked."],
+    ["rm -rf src", "delete src/ first, then run the tests", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ before you run the tests", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ at once", "Deleting src, as you asked."],
+    ["rm -rf src", "delete src/ and tell me what you deleted", "Deleting src, as you asked."],
   ])("announces `%s` after %j", (cmd, words, said) => {
     expect(announce(cmd, words, { git: FEATURE })).toBe(said);
   });
