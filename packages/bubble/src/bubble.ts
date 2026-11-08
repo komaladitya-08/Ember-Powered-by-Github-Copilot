@@ -213,8 +213,11 @@ function placesFor(anchor: Point, box: Size, bounds: Size, size: number): { plac
   return { places, fallback: { x, y: clampY(below + h > bounds.height - MARGIN ? above : below) }, below, above };
 }
 
-/** The first place that covers nothing in `avoid` (sliding sideways past it below or above Ember), or null. */
-function clearPlace(anchor: Point, box: Size, bounds: Size, size: number, avoid: readonly Rect[]): Point | null {
+/**
+ * The first place that covers nothing in `avoid` (sliding sideways past it below or above Ember), or null. Where none
+ * does, the bubble may go above or below what is in `across` (also in `avoid`), in Ember's column, the nearer first.
+ */
+function clearPlace(anchor: Point, box: Size, bounds: Size, size: number, avoid: readonly Rect[], across: readonly Rect[] = []): Point | null {
   const { width: w, height: h } = box;
   const { places, fallback, below, above } = placesFor(anchor, box, bounds, size);
   const fitsX = (x: number) => x >= MARGIN && x + w <= bounds.width - MARGIN;
@@ -231,7 +234,15 @@ function clearPlace(anchor: Point, box: Size, bounds: Size, size: number, avoid:
   // bubble too big for any clear place (an answer opened in full) goes beside Ember over the cards instead (the usual
   // placement), not over Ember's face.
   const e = size > 0 ? { x: anchor.x - size * 0.75, y: anchor.y - size * 1.5, width: size * 1.5, height: size * 1.7 } : null;
-  if (!e || !(fallback.x < e.x + e.width && fallback.x + w > e.x && fallback.y < e.y + e.height && fallback.y + h > e.y)) tries.push(fallback);
+  const onEmber = (p: Point) => !!e && p.x < e.x + e.width && p.x + w > e.x && p.y < e.y + e.height && p.y + h > e.y;
+  if (!onEmber(fallback)) tries.push(fallback);
+  // Last, past what it may go across (the open Ask box an answer grew into: companion-c3-1, the field covered its last
+  // lines and its Read all where nothing beside Ember was clear of the box): the nearer side first, in Ember's column or
+  // the shortest slide from it (past the handle), never over Ember.
+  const fitsY = (y: number) => y >= MARGIN && y + h <= bounds.height - MARGIN;
+  const acrossAt = across.flatMap(r => [r.y + r.height + GAP, r.y - h - GAP]).filter(fitsY).sort((a, b) => Math.abs(a + h / 2 - anchor.y) - Math.abs(b + h / 2 - anchor.y));
+  const acrossX = [fallback.x, ...avoid.flatMap(r => [r.x - w - GAP, r.x + r.width + GAP]).filter(fitsX).sort((a, b) => Math.abs(a - fallback.x) - Math.abs(b - fallback.x))];
+  for (const y of acrossAt) for (const x of acrossX) if (!onEmber({ x, y })) tries.push({ x, y });
   const clear = (p: Point) => !avoid.some(r => p.x < r.x + r.width + GAP && p.x + w > r.x - GAP && p.y < r.y + r.height + GAP && p.y + h > r.y - GAP);
   return tries.find(clear) ?? null;
 }
@@ -257,18 +268,19 @@ export function bubblePosition(anchor: Point, box: Size, bounds: Size, size = 0,
  * beside what it avoids, e.g. next to a centred settings window. A narrower
  * bubble is chosen when its own width finds no place, or only one much further
  * from Ember (across the window from it). `heightAt` says how tall the bubble is
- * at a given width (its text wraps onto more lines). Null when no place clears them.
+ * at a given width (its text wraps onto more lines). `across` (in `avoid` too) it may also go above or below, in
+ * Ember's column, where nothing beside Ember clears them. Null when no place clears them.
  */
-export function bubbleFit(anchor: Point, box: Size, bounds: Size, size = 0, avoid: readonly Rect[] = [], heightAt?: (width: number) => number): BubbleSpot | null {
+export function bubbleFit(anchor: Point, box: Size, bounds: Size, size = 0, avoid: readonly Rect[] = [], heightAt?: (width: number) => number, across: readonly Rect[] = []): BubbleSpot | null {
   const away = (p: Point, b: Size) => Math.hypot(p.x + b.width / 2 - anchor.x, p.y + b.height / 2 - anchor.y);
-  const own = clearPlace(anchor, box, bounds, size, avoid);
+  const own = clearPlace(anchor, box, bounds, size, avoid, across);
   let best: BubbleSpot | null = own && { ...own, ...box };
   if (!heightAt) return best;
   // A narrower one must be nearer by more than the bubble's width; of the narrower ones, the nearest (the wider of two as near).
   let far = own ? away(own, box) - box.width : Infinity;
   for (const width of narrowerWidths(box.width, bounds, avoid)) {
     const b = { width, height: heightAt(width) };
-    const q = clearPlace(anchor, b, bounds, size, avoid);
+    const q = clearPlace(anchor, b, bounds, size, avoid, across);
     if (!q) continue;
     const d = away(q, b);
     if (d < far - 1) { best = { ...q, ...b }; far = d; }
@@ -1152,14 +1164,15 @@ export class ReasoningBubble {
    * itself to fit beside them if that is what it takes. `hideFrom` (also in
    * `avoid`) are places it would rather hide than cover, such as the settings
    * window the user works in: with no room beside them it hides until there is. `prefer` are places it keeps off
-   * only when it can also keep off `avoid` (the control Ember works on): where it can't, they don't count.
+   * only when it can also keep off `avoid` (the control Ember works on): where it can't, they don't count. `across`
+   * (in `avoid` too) it may go above or below, away from Ember's side, where nothing by Ember is clear (bubbleFit).
    * Returns true when the bubble moved, changed size, or hid or showed for room.
    */
-  place(anchor: Point, bounds: Size, size = 0, avoid: readonly Rect[] = [], hideFrom: readonly Rect[] = [], prefer: readonly Rect[] = []): boolean {
+  place(anchor: Point, bounds: Size, size = 0, avoid: readonly Rect[] = [], hideFrom: readonly Rect[] = [], prefer: readonly Rect[] = [], across: readonly Rect[] = []): boolean {
     if (this.dirty) { this.dirty = false; this.sizes.clear(); }
     const own = this.sized(0);
     const heightAt = (w: number) => this.sized(w).box.height;
-    const fit = (keepOff: readonly Rect[]) => bubbleFit(anchor, own.box, bounds, size, keepOff, heightAt);
+    const fit = (keepOff: readonly Rect[]) => bubbleFit(anchor, own.box, bounds, size, keepOff, heightAt, across);
     // Clear of everything (the preferred places too, if it can be); else (with places to hide from) at least clear of
     // those; else the usual place.
     const spot = avoid.length || prefer.length

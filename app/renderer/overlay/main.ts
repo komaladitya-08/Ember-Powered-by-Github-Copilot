@@ -26,7 +26,7 @@ import { ArmClock, TASK_ARM_MS } from "../handle/arm";
 /** The bubble's Try again and Stop ignore presses for a moment after they come up, as a task card's buttons do. */
 const bubbleArm = new ArmClock();
 import { shortWhere, whereText } from "../handle/badge";
-import { askGrownInto, askGrows, askKeepOff, askKeepOffKey, bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
+import { askGrew, askGrownInto, askKeepOff, askKeepOffKey, bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace, type AskHeld } from "./layout";
 import { handleCorner, type HandleSide } from "../../shared/handle-place";
 import { presenceOf } from "../../shared/presence";
 import { PresenceView } from "./presence";
@@ -106,7 +106,11 @@ let statusClear: ReturnType<typeof setTimeout> | null = null;
 let windows: Rect[] = [];
 let avoidKey = "null";
 /** The Ask box the bubble keeps off, and for which question it was held (askKeepOff). */
-let askHeld: { box: Rect | null; question: string } = { box: null, question: "" };
+let askHeld: AskHeld = { box: null, question: "" };
+/** The open Ask box (in avoid) the bubble may go above or below: one it grew into (askGrownInto's `grew`). */
+let askAcross: Rect[] = [];
+/** The bubble as the last drawing showed it (global DIP, null: not shown), and which it was (askKeepOffKey): askGrew. */
+let askSeen: { key: string; at: Rect | null } = { key: "", at: null };
 
 function applyReducedMotion(): void {
   rig.reducedMotion = reducedMotionQuery.matches || settings?.reduceMotion === true;
@@ -350,7 +354,9 @@ function measureTasks(): void {
   // The open Ask box: kept off where the bubble can, never hidden from (the box is where the user answers it), and a
   // bubble already shown doesn't move for it (companion-c1-1, companion-c2-4).
   askHeld = askKeepOff(state?.askBox ?? null, askKeepOffKey(state?.bubble ?? IDLE_BUBBLE), askHeld);
-  if (askHeld.box) list.push({ x: askHeld.box.x - bounds.x, y: askHeld.box.y - bounds.y, width: askHeld.box.width, height: askHeld.box.height });
+  const askAt = askHeld.box && { x: askHeld.box.x - bounds.x, y: askHeld.box.y - bounds.y, width: askHeld.box.width, height: askHeld.box.height };
+  if (askAt) list.push(askAt);
+  askAcross = askAt && askHeld.grew ? [askAt] : [];
   // The control Ember works on: the bubble keeps off its ring (what Ember is about to click, or is showing you) where
   // it can do that and still keep off the handle, the cards and the windows above.
   const f = state?.focus;
@@ -411,14 +417,19 @@ setInterval(reportReading, TASK_READING_LEASE_MS / 3);
 document.addEventListener("visibilitychange", reportReading);
 window.addEventListener("pagehide", () => { for (const id of readingCards) api.taskReading(id, false); readingCards.clear(); });
 
+/** The bubble where it is now, in global DIP (null: not shown). */
+function bubbleAt(): Rect | null {
+  const r = bubble.rect();
+  return r && { x: r.x + bounds.x, y: r.y + bounds.y, width: r.width, height: r.height };
+}
+
 /**
- * A bubble still growing that has grown into the open Ask box keeps off the box where it is now (askGrownInto,
- * companion-c3-1): what it keeps off is measured again. True when it was.
+ * A bubble growing on its own (askGrew: its words stream in, or it finishes) that has grown into the open Ask box keeps
+ * off the box where it is now (askGrownInto, companion-c3-1): what it keeps off is measured again. True when it was.
  */
 function grewIntoAsk(): boolean {
-  const r = bubble.rect();
-  const at = r && { x: r.x + bounds.x, y: r.y + bounds.y, width: r.width, height: r.height };
-  const next = askGrownInto(askHeld, state?.askBox ?? null, at, askGrows(state?.bubble ?? IDLE_BUBBLE));
+  const b = state?.bubble ?? IDLE_BUBBLE, at = bubbleAt(), key = askKeepOffKey(b);
+  const next = askGrownInto(askHeld, state?.askBox ?? null, at, askGrew(b, askSeen.key === key ? askSeen.at : null, at));
   if (next === askHeld) return false;
   askHeld = next;
   measureTasks();
@@ -884,9 +895,10 @@ function draw(now: number): void {
     // Conversation section has its words); a question stays, wherever it must go.
     // (An answer opened in full is pinned: it stays on screen too.)
     const asks = !!state?.bubble.actions.some(a => !a.id.startsWith("ui:")) || state?.bubble.expanded === true;
-    if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff)) interactiveDirty = true;
-    // Grown into the open Ask box as its words stream in: placed again, clear of the box, before this frame shows.
-    if (showBubble && grewIntoAsk() && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff)) interactiveDirty = true;
+    if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff, askAcross)) interactiveDirty = true;
+    // Grown into the open Ask box as its words stream in or it finishes: placed again, clear of the box, before this
+    // frame shows.
+    if (showBubble && grewIntoAsk() && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff, askAcross)) interactiveDirty = true;
     // Beside a control (a guide's step, a click) or asking, Ember holds still where the user may click, and may hide
     // another control (a form's Submit next to the button it points at): its body then catches clicks, so one on
     // Ember never lands on what it hides. Following the cursor, it lets them through; and sitting on the control
@@ -919,6 +931,8 @@ function draw(now: number): void {
   if (showBubble !== bubbleShown) { bubbleShown = showBubble; interactiveDirty = true; }
   reportInteractive();
   reportBubble(showBubble ? bubble.rect() : null);
+  // The bubble as this drawing shows it: what it grows from on the next (askGrew).
+  askSeen = { key: askKeepOffKey(state?.bubble ?? IDLE_BUBBLE), at: showBubble ? bubbleAt() : null };
 }
 
 /** What main last heard of the bubble's box, the box to tell it next, and the timer that will. */

@@ -282,6 +282,41 @@ describe("bubbleFit: room beside the settings window", () => {
   });
 });
 
+describe("bubbleFit: across the open Ask box an answer grew into (companion-c3-1)", () => {
+  const screen = { width: 1024, height: 768 }, handle = { x: 752, y: 700, width: 260, height: 56 };
+  const answer = { width: 330, height: 277 }, tall = () => 277;
+  const covers = (p: { x: number; y: number; width: number; height: number }, r: { x: number; y: number; width: number; height: number }) =>
+    p.x < r.x + r.width && p.x + p.width > r.x && p.y < r.y + r.height && p.y + p.height > r.y;
+
+  it("goes below the box or above it, the side nearer Ember, where nothing by Ember is clear of it, never over Ember or the handle", () => {
+    // Ember at the top centre at Larger text, the box under it: no room by Ember, so below the box, slid past the handle.
+    const top = { x: 195, y: 245, width: 728, height: 173 };
+    expect(bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, top], tall)).toBeNull();
+    const below = bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, top], tall, [top])!;
+    expect(below).toEqual({ x: 416, y: 424, width: 330, height: 277 });
+    expect(covers(below, handle)).toBe(false);
+    // Ember at the bottom centre, the box over it: above the box, which is nearer Ember than nothing.
+    const bottom = { x: 195, y: 364, width: 728, height: 173 };
+    const ember = { x: 559, y: 704 };
+    const above = bubbleFit({ x: ember.x, y: ember.y + 24 }, answer, screen, 60, [handle, bottom], tall, [bottom])!;
+    expect(above.y + above.height).toBeLessThanOrEqual(bottom.y);
+    expect(covers(above, { x: ember.x - 45, y: ember.y - 66, width: 90, height: 102 })).toBe(false);
+  });
+
+  it("is still beside Ember, and never across the box, wherever there is room by Ember", () => {
+    // A 1280 x 800 screen: beside Ember, above the box, as before.
+    const wide = { width: 1280, height: 800 }, box = { x: 323, y: 297, width: 728, height: 173 };
+    const by = bubbleFit({ x: 640, y: 135 }, answer, wide, 60, [box], tall);
+    expect(by).not.toBeNull();
+    expect(bubbleFit({ x: 640, y: 135 }, answer, wide, 60, [box], tall, [box])).toEqual(by);
+    // Nothing to go across: no room is no room.
+    expect(bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, { x: 195, y: 245, width: 728, height: 173 }], tall, [])).toBeNull();
+    // No room above or below the box either (it fills the screen's height): none.
+    const full = { x: 195, y: 20, width: 728, height: 700 };
+    expect(bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, full], tall, [full])).toBeNull();
+  });
+});
+
 describe("bubble styles", () => {
   it("keeps line breaks, hides the caret unless streaming, and calms down with html.calm", () => {
     expect(BUBBLE_CSS).toMatch(/\.eb-thought \{[^}]*white-space: pre-line/);
