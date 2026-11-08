@@ -801,4 +801,28 @@ describe("a task its step or time limit stopped (tasks-approvals-3)", () => {
     expect(taskPrompt("Add the rows", false, "")).toBe("Task: Add the rows");
     tm.cancelAll();
   });
+
+  it("tries a task that only looked, sending the model a picture of the window, again as a fresh try, never one that stopped part-way (tasks-approvals-c3-1)", async () => {
+    const specs: { partWay?: boolean }[] = [];
+    let n = 0;
+    const tm = new TaskManager({ log: quiet, makeWorker: ((spec: { partWay?: boolean }, _p: unknown, _u: unknown, activity?: (e: import("../../app/main/agent/activity").ActivityEvent) => void) => {
+      specs.push(spec);
+      return n++ === 0 ? fakeWorker(async () => {
+        // One read that sent a picture (Send screenshots for tasks is on by default): it changed nothing.
+        activity?.({ type: "tool-start", id: "1", tool: "perceive_window" });
+        activity?.({ type: "picture" });
+        activity?.({ type: "tool-end", id: "1", ok: true });
+        return { success: false, summary: "I couldn't find the report." };
+      }) : fakeWorker(() => new Promise(() => undefined));
+    }) as never, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0 });
+    const t = tm.start("Find the report", { userWords: "find the report" });
+    await vi.waitFor(() => expect(t.status).toBe("failed"));
+    expect(tm.activities()[0].activity.counts).toEqual({ picture: 1 });
+    // A typed or spoken "try again" carries no part-way note, and neither does its card's Try again.
+    expect(tm.askedWith(t.id)).toEqual({ userWords: "find the report" });
+    expect(tm.retry(t.id)).not.toBeNull();
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs[1].partWay).toBeUndefined();
+    tm.cancelAll();
+  });
 });

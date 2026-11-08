@@ -184,8 +184,11 @@ export interface RetriedWords {
  */
 const retryable = (t: Task) => t.mode === "do" && (t.status === "failed" || (t.status === "cancelled" && t.endedBy === "expired"));
 
-/** Kinds of step that change nothing (a look, a switch of window, a pointer): a try that took only these did no part of it. */
-const LOOKS_ONLY: ReadonlySet<StepGroup> = new Set(["read", "windows", "switch", "scroll", "point", "wait"]);
+/**
+ * Kinds of step that change nothing (a look, a picture of the window sent with it, a switch of window, a pointer): a
+ * try that took only these did no part of it (tasks-approvals-c3-1).
+ */
+const LOOKS_ONLY: ReadonlySet<StepGroup> = new Set(["read", "picture", "windows", "switch", "scroll", "point", "wait"]);
 
 /** A finished task's words on its card: at most 400 characters (finish_task's limit; the fallback, the worker's last answer, has none). */
 const detailOf = (summary: string) => (summary.length > 400 ? summary.slice(0, 399).trimEnd() + "…" : summary);
