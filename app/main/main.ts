@@ -2693,8 +2693,9 @@ function start(): void {
   ipcMain.on(OVERLAY.bubble, (event, rect: unknown) => {
     if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
     overlay.setBubble(event.sender, rect);
-    // A question (or "Listening…") that found no room clear of the open Ask box: the box steps aside, once (companion-c1-1).
-    askWindow.bubbleChanged(stepsAsideFor(lastState.bubble));
+    // A question (or the box's own Listen once's "Listening…", never a wake's: companion-c2-3) that found no room clear
+    // of the open Ask box: the box steps aside, once (companion-c1-1).
+    askWindow.bubbleChanged(stepsAsideFor(lastState.bubble, manualCall?.source === "ask"));
   });
   ipcMain.on(OVERLAY.motion, (event, on: unknown) => {
     if (overlay?.owns(event.sender) && typeof on === "boolean") overlay.reducedMotionChanged(on);

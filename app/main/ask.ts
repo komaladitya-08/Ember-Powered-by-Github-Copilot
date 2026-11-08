@@ -202,15 +202,16 @@ export function openingBounds(near: { x: number; y: number; size?: number } | nu
 
 /**
  * The bubble the open box steps aside for when it comes up under it (companion-c1-1), by what it is: a question (its
- * answers' ids), which must be read and answered there, or Listen once's "Listening…" (the box's own request). Null for
- * the others (an answer, a reminder, a task's result), which keep off the box where they can but never move the field
- * being typed in.
+ * answers' ids), which must be read and answered there, or the box's own Listen once's "Listening…" (`ownListen`: the
+ * box's Listen once is under way). Null for the others (an answer, a reminder, a task's result, a wake's or a
+ * follow-up's "Listening…": companion-c2-3), which keep off the box where they can but never move the field being
+ * typed in.
  */
-export function stepsAsideFor(b: Pick<BubbleState, "visible" | "mood" | "actions">): string | null {
+export function stepsAsideFor(b: Pick<BubbleState, "visible" | "mood" | "actions">, ownListen = false): string | null {
   if (!b.visible) return null;
   const answers = b.actions.filter(a => !a.id.startsWith("ui:")).map(a => a.id);
   if (answers.length) return answers.join(",");
-  return b.mood === "listening" ? "listening" : null;
+  return b.mood === "listening" && ownListen ? "listening" : null;
 }
 
 /** What the field's right-click menu may do now (Electron's context-menu editFlags). */

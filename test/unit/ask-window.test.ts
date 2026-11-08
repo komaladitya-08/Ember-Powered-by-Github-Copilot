@@ -233,7 +233,11 @@ describe("the ask box", () => {
   it("steps aside for a question or Listen once's \"Listening…\", never for an answer it can be typed beside (companion-c1-1)", () => {
     const actions = (...ids: string[]) => ids.map(id => ({ id, label: id }));
     expect(stepsAsideFor({ visible: true, mood: "attention", actions: actions("q4:once", "q4:always", "q4:deny") })).toBe("q4:once,q4:always,q4:deny");
-    expect(stepsAsideFor({ visible: true, mood: "listening", actions: [] })).toBe("listening");
+    expect(stepsAsideFor({ visible: true, mood: "listening", actions: [] }, true)).toBe("listening");
+    // Only for the box's own Listen once: a wake's "Listening…" (someone nearby said "Hey Ember") or speech heard in a
+    // follow-up window never moves the box being typed in (companion-c2-3).
+    expect(stepsAsideFor({ visible: true, mood: "listening", actions: [] })).toBeNull();
+    expect(stepsAsideFor({ visible: true, mood: "listening", actions: [] }, false)).toBeNull();
     // An answer and its own buttons (Stop, Try again), a problem, or nothing up: the bubble keeps off the box itself.
     expect(stepsAsideFor({ visible: true, mood: "done", actions: actions("ui:retry") })).toBeNull();
     expect(stepsAsideFor({ visible: true, mood: "thinking", actions: actions("ui:stop") })).toBeNull();
