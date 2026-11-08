@@ -169,7 +169,8 @@ Ember stops and asks before a command that:
   launchers and desktop extensions (`~/.local/share/applications`, GNOME Shell extensions), even when the file is new;
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
   downloaded in this task (also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
-  `rsync`, `dd`, `cat x.py > y.py` or `tee`, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
+  `rsync`, `dd`, `cat x.py > y.py`, `tee`, `dos2unix -n`, `sort -o`, `split` and `cat` of its pieces, or a `tar` or
+  `zip` of it unpacked again, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
   or a `New-Item` link, also from a pipeline (`Get-Item x.exe | Copy-Item -Destination y.exe`; when Ember can't tell
   which files a pipeline or a variable hands over, the copy counts as a download whenever the task downloaded
   something it could be: running a file from where it went asks, but that folder's own tools, such as `npm test` or

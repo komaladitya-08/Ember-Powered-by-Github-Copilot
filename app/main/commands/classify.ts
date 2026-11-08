@@ -3766,6 +3766,8 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
     if (archive && archive !== "-" && !NULL_SINKS.has(archive.toLowerCase()) && !URL_LIKE.test(archive)) {
       const obj = h.e.usePath(lit(archive), "write", h.sc);
       if (obj.abs && has(p, "c", "create")) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
+      // An archive of a download holds it (commands-remote-c2-2).
+      if (p.operands.some(o => h.e.isDownloaded(o, h.sc) || h.e.holdsDownload(o, h.sc))) h.e.carryDownload(archive, h.sc);
     }
     return;
   }
@@ -3775,7 +3777,8 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
     if (risky || into.abs === null || !inWorkTree(into.abs, h.sc.path)) {
       h.e.add("destroy", "archive.unpack", `Unpacks ${archive ?? "an archive"} over files in ${into.text === "." ? thisFolder(h, into) : into.text}.`, { objects: [into] });
     }
-    if ((archive && h.e.isDownloaded(lit(archive), h.sc)) || (archive === "-" || !archive) && h.s.fetchBefore) if (into.abs) h.e.downloads.push(into.abs);
+    // From a download, or a pipe that fetched one or packs one (`tar cf - x.sh | tar xf - -C tools`: commands-remote-c2-2).
+    if ((archive && h.e.isDownloaded(lit(archive), h.sc)) || (archive === "-" || !archive) && (h.s.fetchBefore || h.e.pipe.carried === true)) if (into.abs) h.e.downloads.push(into.abs);
     objsOf(h, p.operands, "write");
   }
 });
@@ -3791,6 +3794,8 @@ reg(NATIVE, ["zip"], h => {
     void obj;
   }
   const ins = objsOf(h, inputs, has(p, "r", "recurse-paths") ? "readTree" : "read");
+  // An archive of a download holds it, so unpacking it marks where it goes (commands-remote-c2-2).
+  if (arc?.v && inputs.some(i => h.e.isDownloaded(i, h.sc) || h.e.holdsDownload(i, h.sc))) h.e.carryDownload(arc.v, h.sc);
   if (has(p, "m", "move")) h.e.add("destroy", "archive.remove-files", `Deletes ${listOf(ins)} after packing them.`, { objects: ins });
   if (has(p, "P", "password") || h.args.some(a => /^-P./.test(a.v ?? ""))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
 });
@@ -3902,6 +3907,13 @@ reg(NATIVE, ["split", "csplit"], h => {
   const mark = h.e.written.length;
   if (prefix) h.e.usePath(lit(`${prefix}${h.key === "split" ? "aa" : "00"}`), "write", h.sc);
   h.e.written.length = mark;
+  // The pieces of a download, named after the prefix in its folder: files of names Ember doesn't follow there
+  // (`split x.sh p_; cat p_* > y.sh`: commands-remote-c2-2).
+  if ((p.operands[0] && h.e.isDownloaded(p.operands[0], h.sc)) || h.e.pipe.carried === true || h.s.fetchBefore) {
+    const at = prefix ?? (h.key === "split" ? "x" : "xx");
+    const dir = at.includes("/") ? at.slice(0, at.lastIndexOf("/") + 1) || "/" : ".";
+    if (h.sc.cwd) h.e.carryUnnamed(resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd }), true, h.sc);
+  }
   // split --filter hands each piece to a shell command instead of a file.
   for (const f of h.key === "split" ? values(p, "filter") : []) {
     if (f === null) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
@@ -6478,6 +6490,30 @@ reg(NATIVE, ["sort", "gsort"], h => {
   for (const o of values(p, "o", "output")) overwrites(h, o === null ? { v: null, raw: "?", glob: false } : lit(o));
   for (const f of values(p, "files0-from")) if (f) h.e.usePath(lit(f), "read", h.sc);
   h.e.readArgs(p.operands, h.sc, { unresolvedUnclear: true });
+  // What it writes out from a download is the download (`sort x.sh -o y.sh`: commands-remote-c2-2).
+  if (p.operands.some(o => h.e.isDownloaded(o, h.sc)) || h.e.pipe.carried === true) for (const o of values(p, "o", "output")) if (o) h.e.carryDownload(o, h.sc);
+});
+// dos2unix and its kin convert in place, or with -n into the new file after each input (`dos2unix -n x.sh y.sh`, the
+// usual fix for a downloaded script's line endings): that file is the download too (commands-remote-c2-2).
+reg(NATIVE, ["dos2unix", "unix2dos", "mac2unix", "unix2mac"], h => {
+  let newFile = false;
+  const pairs: Arg[] = [];
+  const kept: Arg[] = [];
+  for (let k = 0; k < h.args.length; k++) {
+    const a = h.args[k];
+    if (a.v === "-n" || a.v === "--newfile") { newFile = true; continue; }
+    if (a.v === "-o" || a.v === "--oldfile") { newFile = false; continue; }
+    if (a.v !== null && /^(-c|--convmode|-D|--display-enc)$/.test(a.v)) { k++; continue; }
+    if (a.v !== null && a.v.startsWith("-") && a.v !== "-") continue;
+    (newFile ? pairs : kept).push(a);
+  }
+  h.e.readArgs(kept, h.sc, { unresolvedUnclear: true });
+  for (let k = 0; k + 1 < pairs.length; k += 2) {
+    h.e.readArgs([pairs[k]], h.sc, { unresolvedUnclear: true });
+    overwrites(h, pairs[k + 1]);
+    if (pairs[k + 1].v && h.e.isDownloaded(pairs[k], h.sc)) h.e.carryDownload(pairs[k + 1].v ?? "", h.sc);
+  }
+  if (pairs.length % 2 === 1) h.e.readArgs([pairs[pairs.length - 1]], h.sc, { unresolvedUnclear: true });
 });
 reg(NATIVE, ["uniq", "guniq"], h => {
   // --group and --all-repeated take a method only after = (commands-remote-i5a).
