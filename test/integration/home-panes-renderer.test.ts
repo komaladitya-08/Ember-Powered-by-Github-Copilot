@@ -606,6 +606,37 @@ describe.skipIf(gate)("the Computers pane's status line", () => {
     await evidence(page, "computers-long-host-304-larger");
     await page.close();
   }, 60_000);
+
+  it("wraps a long host name without hyphens, or with user@, in the Computers and Commands lines at 304 px and Larger text (commands-remote-r2-2, WCAG 1.4.10)", async () => {
+    const page = await open("home", { viewport: { width: 304, height: 700 } });
+    await page.evaluate(() => {
+      for (const id of ["jump-computers", "computers", "jump-commands", "commands"]) document.getElementById(id)!.hidden = false;
+    });
+    const over: string[] = [];
+    for (const host of ["buildserver01.engineering.corporate.example.com", "deploy@buildserver01.engineering.corporate.example.com"]) {
+      for (const [id, pane] of [["computers-msg", "computers-h"], ["commands-msg", "commands-h"]]) {
+        await page.locator(`.jump a[href="#${pane}"]`).first().click();
+        for (const size of ["", "larger"]) {
+          for (const width of [304, 400, 760]) {
+            await page.setViewportSize({ width, height: 700 });
+            const d = await page.evaluate(({ id, size, text }) => {
+              if (size) document.documentElement.dataset.textSize = size; else delete document.documentElement.dataset.textSize;
+              document.getElementById(id)!.textContent = text;
+              return document.documentElement.scrollWidth - document.documentElement.clientWidth;
+            }, { id, size, text: `Ember can't find ${host}. Check the name, or add it to your SSH config. It wasn't added to Computers.` });
+            if (d > 0) over.push(`${id} ${host} at ${width} px ${size || "default"}: +${d}`);
+          }
+        }
+      }
+    }
+    expect(over).toEqual([]);
+    await page.setViewportSize({ width: 304, height: 700 });
+    await page.locator('.jump a[href="#computers-h"]').first().click();
+    await page.evaluate(() => { document.getElementById("computers-msg")!.textContent = "Ember can't find deploy@buildserver01.engineering.corporate.example.com. Check the name, or add it to your SSH config. It wasn't added to Computers."; });
+    await page.locator("#computers-msg").scrollIntoViewIfNeeded();
+    await evidence(page, "computers-unhyphenated-host-304-larger");
+    await page.close();
+  }, 60_000);
 });
 
 describe.skipIf(gate)("Home at 200% zoom and more (2026-11-07 product audit)", () => {

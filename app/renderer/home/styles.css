@@ -192,7 +192,7 @@ section > p.hint:empty:is([role], [aria-live]) { position: absolute; }
 .start[hidden] { display: none; }
 
 /* Footnotes: under their group, in the secondary label. */
-.hint { margin: 0 4px; color: var(--muted); font: var(--type-footnote); }
+.hint { margin: 0 4px; min-width: 0; overflow-wrap: anywhere; color: var(--muted); font: var(--type-footnote); }
 .copilot .hint, .group .hint { margin: 0; }
 .terms code, .hint code { font: 12px var(--ember-mono); }
 
