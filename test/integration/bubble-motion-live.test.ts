@@ -113,7 +113,7 @@ function keyHints(): { name: string; over: number; seps: { shown: boolean; sameL
   const out: { name: string; over: number; seps: { shown: boolean; sameLine: boolean }[] }[] = [];
   const html = document.documentElement;
   const steps: [string, string][] = [["linux", "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"], ["windows", "Win+Alt+Y allow · Win+Alt+N not now"],
-    ["mac", "Control+Shift+Command+Y allow · Control+Shift+Command+N not now"], ["mac whole", "Control+Shift+Command+Y next page · Control+Shift+Command+N not now"]];
+    ["mac", "Control+Shift+Command+Y allow · Control+Shift+Command+N not now"], ["mac whole text", "Control+Shift+Command+Y shows the next part · Control+Shift+Command+N not now"]];
   for (const [size, scale] of [["default", "1"], ["larger", "1.3"]]) {
     html.dataset.textSize = size;
     html.style.setProperty("--text-scale", scale);
