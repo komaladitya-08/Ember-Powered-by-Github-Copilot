@@ -1083,6 +1083,21 @@ export function activityLines(entries: readonly ActivityEntry[], words: EntryWor
 }
 
 /**
+ * The entries What Ember did holds after a refresh that read only the newest `page` (`fresh`): those, then what `held`
+ * (an earlier, deeper read: Show earlier's) has behind them, `most` in all. The 3 s refresh then reads one page however
+ * far back the person looked (safety-privacy-r3: it re-read up to 10,000 entries every 3 s). Null when the page can't be
+ * placed against what is held (more came than a page holds, or the record was cleared): read as deep again.
+ */
+export function withEarlier(fresh: readonly ActivityEntry[], held: readonly ActivityEntry[], page: number, most: number): ActivityEntry[] | null {
+  // Nothing older is held, or the page is the whole record.
+  if (held.length <= page || fresh.length < page) return [...fresh];
+  // Where the held list's newest entries begin in the page (its first few, so two alike can't misplace it).
+  const keys = held.slice(0, 3).map(e => JSON.stringify(e));
+  const at = fresh.findIndex((_, k) => keys.every((key, j) => k + j >= fresh.length || JSON.stringify(fresh[k + j]) === key));
+  return at < 0 ? null : [...fresh.slice(0, at), ...held].slice(0, most);
+}
+
+/**
  * The note beside What Ember did's heading: every line of today, drawn or not ("120 today"); "At least" while the
  * oldest line read is still today's and the record may hold more (`more`).
  */

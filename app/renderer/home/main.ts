@@ -36,7 +36,7 @@ import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerSettings, startProvider } from "./provider";
 import { modelDestination, recipientWords } from "./copy";
-import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText } from "./copy";
+import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
 import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
@@ -613,10 +613,13 @@ let activityWanted = ACTIVITY_ENTRIES;
 let linesShown = ACTIVITY_LINES;
 /** A read that failed (home-10): what was shown stays, with a line that says so. */
 let activityFailed = false;
-async function refreshActivity(): Promise<void> {
+/** `deep`: read all that is wanted (Show earlier); else only the newest page, with what was read before kept behind it. */
+async function refreshActivity(deep = false): Promise<void> {
   let entries: ActivityEntry[];
   try {
-    entries = await window.ember.activity(activityWanted);
+    const fresh = await window.ember.activity(deep ? activityWanted : ACTIVITY_ENTRIES);
+    entries = deep || activityWanted <= ACTIVITY_ENTRIES ? fresh
+      : withEarlier(fresh, activityRead, ACTIVITY_ENTRIES, activityWanted) ?? await window.ember.activity(activityWanted);
   } catch {
     // Never an empty list for a failed read: "Nothing yet" would say Ember did nothing, and Today would reset.
     if (!activityFailed) { activityFailed = true; drawActivity(); }
@@ -690,7 +693,7 @@ async function showEarlier(): Promise<void> {
   if (activityLines(activityRead, entryWords(platform)).length < linesShown && activityMore()) {
     activityWanted = Math.min(activityWanted + ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES);
     shownActivity = "";
-    await refreshActivity();
+    await refreshActivity(true);
   } else drawActivity();
   const row = $("activity").querySelector<HTMLElement>(`li[data-line="${first}"]`);
   if (row) { row.tabIndex = -1; row.focus(); }

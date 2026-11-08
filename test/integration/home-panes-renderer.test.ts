@@ -20,6 +20,8 @@ declare global {
       emit(name: string, value: unknown): void;
       activity: ActivityEntry[] | "fail";
       reads: number;
+      /** How many entries each read asked for. */
+      limits: number[];
     };
   }
 }
@@ -66,6 +68,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       emit: (name: string, value: unknown) => { if (name === "onTasks") tasks = value; for (const fn of subs[name] ?? []) fn(value); },
       activity: activity as ActivityEntry[] | "fail",
       reads: 0,
+      limits: [] as number[],
     };
     const status = () => ({ appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
@@ -76,7 +79,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "tasks") return async () => tasks;
       if (name === "taskControl") return async (id: string, kind: string) => { h.calls.push(`taskControl:${id}:${kind}`); return true; };
       // As main answers: the newest `limit` entries (500 unless Home asks for more).
-      if (name === "activity") return async (limit?: number) => { h.reads++; if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
+      if (name === "activity") return async (limit?: number) => { h.reads++; h.limits.push(limit ?? 500); if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
   }, { settings, admin, activity: seed.activity ?? [] });
@@ -244,6 +247,29 @@ describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-
     expect(await page.locator("#activity-note").innerText()).toBe("600 today");
     await page.close();
   });
+
+  it("reads only the newest page every few seconds after Show earlier, and keeps the earlier lines (safety-privacy-r3)", async () => {
+    if (new Date().getHours() === 0) return;
+    const page = await open("home", { activity: seeded(600) });
+    await page.locator("#activity-fold > summary").click();
+    for (let i = 0; i < 7; i++) await page.getByRole("button", { name: "Show earlier" }).click();
+    await expect.poll(() => lineCount(page)).toBe(603);
+    // Show earlier read 1,000; the refresh after it asks for the newest 500 only.
+    expect(await page.evaluate(() => Math.max(...window.__pane.limits))).toBe(1000);
+    const before = await page.evaluate(() => window.__pane.limits.length);
+    // Something new happens: it comes in at the top, and nothing read further back is lost.
+    await page.evaluate(() => {
+      const h = window.__pane;
+      if (h.activity !== "fail") h.activity.unshift({ t: new Date().toISOString(), event: "action", kind: "click", app: "gedit", ok: true, element: { role: "push button", name: "Bold" } });
+    });
+    await expect.poll(() => page.locator("#activity-note").innerText(), { timeout: 8000 }).toBe("601 today");
+    expect(await lineCount(page)).toBe(604);
+    expect(await page.locator("#activity").innerText()).toContain("Click “Send” in Thunderbird");
+    expect(await page.evaluate(n => window.__pane.limits.slice(n), before)).toEqual(expect.arrayContaining([500]));
+    expect(await page.evaluate(n => window.__pane.limits.slice(n).every(l => l === 500), before)).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  }, 30_000);
 
   it("keeps what it showed when a read of the record fails, says so, and clears that on the next good read (home-10)", async () => {
     if (new Date().getHours() === 0) return;

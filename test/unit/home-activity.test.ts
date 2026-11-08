@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { ACTIVITY_LINES, activityLines, activityNote, activityProblemText, describeEntry, userWords, withCommandShells } from "../../app/renderer/home/copy";
+import { ACTIVITY_LINES, activityLines, activityNote, activityProblemText, describeEntry, userWords, withCommandShells, withEarlier } from "../../app/renderer/home/copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES, recentLimit, type ActivityEntry } from "../../app/shared/ipc";
 
 const t = "2026-10-27T10:00:00.000Z";
@@ -132,6 +132,21 @@ describe("What Ember did: the whole record, a page at a time (safety-privacy-5)"
     expect(recentLimit(ACTIVITY_ENTRIES * 3)).toBe(ACTIVITY_ENTRIES * 3);
     for (const bad of [-1, 0, 1.5, "1000", ACTIVITY_MAX_ENTRIES + 1, Number.NaN, {}]) expect(recentLimit(bad), String(bad)).toBe(ACTIVITY_ENTRIES);
     expect(recentLimit(ACTIVITY_MAX_ENTRIES)).toBe(ACTIVITY_MAX_ENTRIES);
+  });
+
+  it("keeps what Show earlier read behind the newest page, so a refresh need read only that page (safety-privacy-r3)", () => {
+    const e = (i: number): ActivityEntry => ({ t: new Date(Date.UTC(2026, 10, 7, 12, 0, 0) - i * 1000).toISOString(), event: "action", kind: "click", ok: true, n: i });
+    const held = Array.from({ length: 1000 }, (_, i) => e(i + 2));
+    // Two new entries since: the newest page now begins with them.
+    const fresh = [e(0), e(1), ...held.slice(0, 498)];
+    expect(withEarlier(fresh, held, 500, 1000)).toEqual([e(0), e(1), ...held.slice(0, 998)]);
+    // Nothing new: what was held, as it was.
+    expect(withEarlier(held.slice(0, 500), held, 500, 1000)).toEqual(held);
+    // Nothing older held (no Show earlier yet), or the whole record fits a page: the page itself.
+    expect(withEarlier(fresh, held.slice(0, 500), 500, 500)).toEqual(fresh);
+    expect(withEarlier(held.slice(0, 20), held, 500, 1000)).toEqual(held.slice(0, 20));
+    // The held list's newest entries aren't in the page (more came than a page holds, or the record was cleared): read again.
+    expect(withEarlier(Array.from({ length: 500 }, (_, i) => e(-600 + i)), held, 500, 1000)).toBeNull();
   });
 });
 
