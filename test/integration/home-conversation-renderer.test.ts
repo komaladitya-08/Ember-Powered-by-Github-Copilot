@@ -820,6 +820,140 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  /** How often the composer's line (a role=status region: each write is read out) was written since the last call. */
+  const lineWrites = (page: Page) => page.evaluate(() => {
+    const w = window as unknown as { __lineWrites?: number };
+    if (w.__lineWrites === undefined) {
+      w.__lineWrites = 0;
+      new MutationObserver(records => { w.__lineWrites = (w.__lineWrites ?? 0) + records.length; }).observe(document.getElementById("conversation-compose-status")!, { childList: true, characterData: true, subtree: true });
+    }
+    const n = w.__lineWrites;
+    w.__lineWrites = 0;
+    return n;
+  });
+  /** Main has answered the composer's send (Send is no longer waiting for it). */
+  const sendAnswered = (page: Page) => expect.poll(() => page.locator("#conversation-send").getAttribute("aria-disabled")).toBeNull();
+
+  it("gives back only the waiting message when a typed \"stop\" stops everything, and keeps saying it wasn't sent (home-r4-2)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Q1" }, { t: at(1), who: "ember", text: "A1" }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      // Held while Ember reconnects (or for a switch of model service): main took it, and no line of it came.
+      await field.fill("Book the meeting room for Friday");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await expect.poll(() => field.inputValue()).toBe("");
+      // Then "stop" while a task is at work: main keeps it and its answer, stops everything (Home is told at once), and
+      // only then answers the send.
+      await page.evaluate(() => { window.__home.hold = true; window.__home.sendResult = "stopped"; });
+      await field.fill("stop");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent.at(-1))).toBe("stop");
+      await lineWrites(page);
+      const said: TranscriptEntry[] = [...seed, { t: at(2), who: "you", text: "stop" }, { t: at(3), who: "ember", text: "Okay, I've stopped everything." }];
+      await page.evaluate(e => {
+        window.__home.emit("onConversation", e.slice(0, 3));
+        window.__home.emit("onStopped", "typed");
+        window.__home.emit("onConversation", e);
+        window.__home.release();
+      }, said);
+      await sendAnswered(page);
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped-everything" }));
+      const back = "Stopped everything, running tasks included. Your message wasn't sent, so it's back here to edit or send again.";
+      // The "stop" went (its line is there): only the held message is back, and the line keeps saying so, once.
+      expect(await field.inputValue()).toBe("Book the meeting room for Friday");
+      expect(await line.innerText()).toBe(back);
+      expect(await lineWrites(page)).toBe(1);
+      // A message on its way to main as Stop everything (its shortcut) comes, which main takes after it: it went, so only
+      // the held one is back.
+      await page.evaluate(() => { window.__home.sendResult = undefined; window.__home.hold = false; });
+      await field.fill("Order lunch");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => field.inputValue()).toBe("");
+      await turn(page, "thinking");
+      await page.evaluate(() => { window.__home.hold = true; });
+      await field.fill("And tell Sam");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent.at(-1))).toBe("And tell Sam");
+      await page.evaluate(() => {
+        window.__home.emit("onStopped", "hotkey");
+        window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped-everything" });
+        window.__home.release();
+      });
+      await sendAnswered(page);
+      expect(await field.inputValue()).toBe("Order lunch");
+      expect(await line.innerText()).toBe(back);
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...said, { t: at(4), who: "you" as const, text: "And tell Sam" }]);
+      // One main refused after a Stop gave words back in its place: back under them, unsent.
+      await field.fill("");
+      await page.evaluate(() => { window.__home.hold = false; });
+      await field.fill("Order lunch");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => field.inputValue()).toBe("");
+      await turn(page, "thinking");
+      const refused = "Ember is reconnecting to Copilot. Your message is still here: send it again in a moment.";
+      await page.evaluate(e => { window.__home.hold = true; window.__home.sendError = e; }, refused);
+      await field.fill("And tell Sam");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent.at(-1))).toBe("And tell Sam");
+      await page.evaluate(() => { window.__home.emit("onStopped", "hotkey"); window.__home.release(); });
+      await expect.poll(() => line.innerText()).toBe(refused);
+      expect(await field.inputValue()).toBe("Order lunch\n\nAnd tell Sam");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("says a Stop once under Send, however main tells it, and says a new Stop again (home-r4-3)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Q1" }, { t: at(1), who: "ember", text: "A1" }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      // The turn's end first, then Stop response's own answer: one write.
+      const stopEndFirst = async () => {
+        await page.evaluate(() => { window.__home.hold = true; });
+        await page.locator("#conversation-stop").click();
+        await page.evaluate(() => { window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }); window.__home.release(); window.__home.hold = false; });
+        await expect.poll(() => page.locator("#conversation-stop").getAttribute("aria-disabled")).toBeNull();
+      };
+      // (a) Its request went to the model (its line came).
+      await field.fill("Q2");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...seed, { t: at(2), who: "you" as const, text: "Q2" }]);
+      await lineWrites(page);
+      await stopEndFirst();
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue.");
+      expect(await lineWrites(page)).toBe(1);
+      // (b) It waited for a reconnect, and its words come back.
+      await field.fill("Book the meeting room for Friday");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await expect.poll(() => field.inputValue()).toBe("");
+      await lineWrites(page);
+      await stopEndFirst();
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here to edit or send again.");
+      expect(await lineWrites(page)).toBe(1);
+      // (c) A new Stop, of a spoken answer, with the same words already there: said again.
+      await field.fill("");
+      await page.locator("#conversation li.ember").first().getByRole("button", { name: /^Copy/ }).click();
+      await expect.poll(() => line.innerText()).toBe("Copied message.");
+      await turn(page, "thinking");
+      await stopEndFirst();
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue.");
+      await turn(page, "thinking");
+      await lineWrites(page);
+      await stopEndFirst();
+      expect(await line.innerText()).toBe("Response stopped. Running tasks continue.");
+      expect(await lineWrites(page)).toBe(1);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("says Ember is thinking in the status panel while it answers the Ask box or a spoken request (home-c1-1)", async () => {
     const { page, errors } = await home([]);
     try {
