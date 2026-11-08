@@ -153,6 +153,17 @@ describe("gate 2 for commands (§3.16)", () => {
     expect((await gateCommand(input({ spec: again, classify: c, mode: "ask", facts: facts({ privileged: true }) }))).status).toBe("ok");
   });
 
+  it("denies the remote's own files reached through a loop's list or a variable, approved or not (commands-remote-c3-2)", async () => {
+    const own = facts({ ember: { paths: ["/home/deploy/.local/state/ember-remote"], pids: [], names: emberNamesRegExp([]) } });
+    const real = (command: string) => gateCommand(input({ spec: spec({ verdict: "ask", approval: { ageMs: 1 } }, { command }), classify: classifyCommand, facts: own }));
+    for (const command of [
+      "for f in ~/.local/state/ember-remote/*; do rm -f \"$f\"; done",
+      "d=~/.local/state/ember-remote; rm -rf \"$d\"",
+      "for d in ~/.local/state; do rm -rf \"$d\"; done",
+    ]) expect(await real(command), command).toMatchObject({ status: "deny" });
+    expect((await real("for f in *.log; do echo \"$f\"; done")).status).not.toBe("deny");
+  });
+
   it("denies what its own classifier refuses (D4.5 on this computer's paths), approved or not", async () => {
     const c = classifier(() => [], { refuse: { rule: "ember.own", says: "This would change Ember itself." } }).classify;
     expect(await gateCommand(input({ spec: spec({ verdict: "ask", approval: { ageMs: 1 } }), classify: c }))).toEqual({ status: "deny", reason: "This would change Ember itself." });

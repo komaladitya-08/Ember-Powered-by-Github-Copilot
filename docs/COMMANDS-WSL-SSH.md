@@ -345,6 +345,9 @@ log, sign-in, settings or install folder, here or on the other computer), stop o
 keys and click in Ember's windows (`xdotool`, `SendKeys`, `osascript` keystrokes). Ember says: "Ember won't run this:
 it would change Ember's own safety settings, records or programs." ("it would read …" for a command that only reads
 them, such as `cat` or `Get-Content`) or "Ember won't run this: it could press keys or click in Ember's own windows."
+The same goes when a shell loop's list or a variable the command sets names them (`for f in ~/.config/ember/*; do …`,
+`d=~/.config/ember; rm -rf "$d"`), when it names a folder that holds them for a delete or a move (`for f in ~; do rm
+-rf "$f"; done`), and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`).
 
 ### 2.7 What Copilot gets back
 

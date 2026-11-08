@@ -130,6 +130,37 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(says("reg add HKLM\\SOFTWARE\\Policies\\Ember /v x /d 1", "powershell", "win32")).toBe(CHANGE);
   });
 
+  it("refuses Ember's own files reached through a loop's list or a variable the command sets, as when they are named (commands-remote-c3-2)", () => {
+    // As the flow judges a loop: by the commands in it.
+    const refused = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").refuse?.says;
+    for (const cmd of [
+      "for f in ~/.config/ember/*; do rm -f \"$f\"; done",
+      "for f in ~/.config/ember; do rm -rf \"$f\"; done",
+      "for f in ~/.config/ember/audit/*; do : > \"$f\"; done",
+      "for f in ~/.config/ember/settings.json; do cat \"$f\"; done",
+      "for f in ~; do rm -rf \"$f\"; done",
+      "for f in ~/.config; do rm -rf \"$f\"; done",
+      "d=~/.config/ember; rm -rf \"$d\"",
+      "d=~/.config; rm -rf \"$d/ember\"",
+      "export d=~/.config/ember; rm -rf \"$d\"",
+      "for f in *.log; do f=~/.config/ember; rm -rf \"$f\"; done",
+      "for d in ~/.config ~/.cache; do rm -rf \"$d\"/ember; done",
+      // A name Ember can't see, right where one of its folders is or inside one.
+      "rm -rf ~/.config/$x",
+      "rm -rf ~/.config/emb$x",
+      "cat ~/.config/ember/$x",
+    ]) expect(refused(cmd), cmd).toMatch(/^Ember won't run this: it would (change|read) Ember's own/);
+    expect(refused("for f in ~/.config/ember/settings.json; do cat \"$f\"; done")).toBe(READ);
+    expect(refused("for f in ~/.config/ember/*; do rm -f \"$f\"; done")).toBe(CHANGE);
+    expect(refused("for f in ~/.config/ember/audit/*; do : > \"$f\"; done")).toBe(CHANGE);
+    expect(refused("d=~/.config; cat \"$d/ember/settings.json\"")).toBe(READ);
+    // Nothing of Ember's: asked or run as before.
+    for (const cmd of [
+      "for f in *.log; do rm \"$f\"; done", "d=build; rm -rf \"$d\"", "for d in ~/Documents ~/Pictures; do du -sh \"$d\"; done",
+      "ls ~/.config/$x", "rm -rf ~/$x", "for f in a.txt b.txt; do wc -l \"$f\"; done", "x=~/.config; ls \"$x\"",
+    ]) expect(refused(cmd), cmd).toBeUndefined();
+  });
+
   it("keeps the input refusal's words, and lets a read refusal give way to it", () => {
     expect(says("xdotool key y")).toBe(INPUT);
     expect(says("cat ~/.config/ember/settings.json; xdotool key y")).toBe(INPUT);
@@ -560,7 +591,13 @@ describe("the card's words from the classifier (review #214)", () => {
     // As the flow judges a loop: by the commands in it.
     const says = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.map(f => f.says);
     expect(says("for f in *.log; do rm \"$f\"; done")).toEqual(["Deletes each file the loop names."]);
-    expect(says("for f in a b; do rm -r ${f}; done")).toEqual(["Deletes each file the loop names and everything in it."]);
+    expect(says("for f in a b; do rm -r ${f}; done")).toEqual(["Deletes a and b and everything in them."]);
+    // A list of names is said by its names, so a loop over folders never reads as harmless (commands-remote-c2-3).
+    expect(says("for f in ~/Documents ~/Pictures; do rm -rf \"$f\"; done")).toEqual(["Deletes ~/Documents and ~/Pictures and everything in them."]);
+    expect(says("for f in notes.txt; do rm \"$f\"; done")).toEqual(["Deletes notes.txt."]);
+    expect(says("for f in *.log old/*.txt; do rm \"$f\"; done")).toEqual(["Deletes each file the loop names."]);
+    // A variable the loop's body sets again holds what it was set to, not the loop's file (commands-remote-c2-3).
+    expect(says("for f in *.log; do f=~/Documents; rm -rf \"$f\"; done")).toEqual(["Deletes \"$f\" and everything in it."]);
     expect(says("while IFS= read -r l; do rm -rf \"$l\"; done < list.txt")).toEqual(["Deletes each file listed in its input and everything in it."]);
     expect(says("find . -name '*.log' | while read -r f; do rm \"$f\"; done")).toEqual(["Deletes each file listed in its input."]);
     // Anything else stays as written: a variable that isn't the loop's, or more than the variable.
