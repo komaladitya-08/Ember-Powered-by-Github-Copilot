@@ -141,20 +141,20 @@ describe("what the ask box says Ember will see", () => {
     expect(withText).toEqual({ sees: "Thunderbird · Write: Re: Q3", carries: { selection: false, fieldText: true, windows: 2 } });
     expect(seesView(withText)).toEqual({
       text: "Thunderbird · Write: Re: Q3", extra: "+ field text, 2 window titles", brief: "+ text, 2 titles",
-      full: "Ember will see: Thunderbird · Write: Re: Q3, with the start of the focused field's text and the titles of 2 other open windows.",
+      full: "I'll see: Thunderbird · Write: Re: Q3, with the start of the focused field's text and the titles of 2 other open windows.",
     });
     const selected = askSees(quickContextText(seen([field({ text: "Dear Ana", selection: "the numbers" })]), open.slice(0, 2)));
-    expect(seesView(selected)).toMatchObject({ extra: "+ selected text, 1 window title", brief: "+ selection, 1 title", full: "Ember will see: Thunderbird · Write: Re: Q3, with the text you selected and the title of 1 other open window." });
+    expect(seesView(selected)).toMatchObject({ extra: "+ selected text, 1 window title", brief: "+ selection, 1 title", full: "I'll see: Thunderbird · Write: Re: Q3, with the text you selected and the title of 1 other open window." });
     // The X selection added afterwards (an app that doesn't tell it) counts too.
     const primary = askSees(Perception.withSelection(quickContextText(seen([field({})]), []), "copied words"));
-    expect(seesView(primary)).toEqual({ text: "Thunderbird · Write: Re: Q3", extra: "+ selected text", brief: "+ selection", full: "Ember will see: Thunderbird · Write: Re: Q3, with the text you selected." });
-    expect(seesView(askSees(quickContextText(seen([]), [])))).toEqual({ text: "Thunderbird · Write: Re: Q3", extra: "", brief: "", full: "Ember will see: Thunderbird · Write: Re: Q3." });
+    expect(seesView(primary)).toEqual({ text: "Thunderbird · Write: Re: Q3", extra: "+ selected text", brief: "+ selection", full: "I'll see: Thunderbird · Write: Re: Q3, with the text you selected." });
+    expect(seesView(askSees(quickContextText(seen([]), [])))).toEqual({ text: "Thunderbird · Write: Re: Q3", extra: "", brief: "", full: "I'll see: Thunderbird · Write: Re: Q3." });
   });
 
   it("says Ember won't look at a private window, and nothing when it read nothing", () => {
     const priv = askSees(quickContextText(seen([], { blocked: true }), []));
     expect(priv).toEqual({ sees: null, privateWindow: true });
-    expect(seesView(priv)).toEqual({ text: "Ember won't look at this window", extra: "", brief: "", full: "Ember won't look at this window." });
+    expect(seesView(priv)).toEqual({ text: "I won't look at this window", extra: "", brief: "", full: "I won't look at this window." });
     expect(askSees(null)).toEqual({ sees: null });
     expect(seesView({ sees: null })).toBeNull();
     // A remote with nothing to read: no window, so nothing is claimed.
@@ -177,7 +177,7 @@ describe("what the ask box says Ember will see", () => {
 
   it("says what Ember will see to screen readers once, when it arrives after the field has the keyboard", () => {
     const late = { sees: "Firefox · Inbox", carries: { selection: false, fieldText: true, windows: 2 } };
-    const words = "Ember will see: Firefox · Inbox, with the start of the focused field's text and the titles of 2 other open windows.";
+    const words = "I'll see: Firefox · Inbox, with the start of the focused field's text and the titles of 2 other open windows.";
     // An opening clears the region (the next late words are news again), whatever it already knows.
     expect(liveWords(words, { ...late, opened: true })).toBe("");
     expect(liveWords("", { sees: null, opened: true })).toBe("");
@@ -185,10 +185,18 @@ describe("what the ask box says Ember will see", () => {
     expect(liveWords("", late)).toBe(words);
     expect(liveWords(words, late)).toBeNull();
     // Something else after all (the user switched windows meanwhile): said again.
-    expect(liveWords(words, { sees: "Firefox · Bank" })).toBe("Ember will see: Firefox · Bank.");
+    expect(liveWords(words, { sees: "Firefox · Bank" })).toBe("I'll see: Firefox · Bank.");
     // Nothing to say (a remote with no window): left as it is.
     expect(liveWords("", { sees: null })).toBeNull();
-    expect(liveWords("", { sees: null, privateWindow: true })).toBe("Ember won't look at this window.");
+    expect(liveWords("", { sees: null, privateWindow: true })).toBe("I won't look at this window.");
+  });
+
+  it("never says Ember's name where a screen reader saying it into the wake word's microphone wakes Ember (voice-listening-i5)", () => {
+    // Each opening says what the box will see, and "Ember will see: Text Editor · notes.txt, …" woke Ember and sent the
+    // window's title as a request in 20 of 20 real-model placements ("Ember won't look at this window." in 17 of 20).
+    const lines = [seesView({ sees: "Text Editor · notes.txt", carries: { selection: true, fieldText: false, windows: 2 } })!, seesView({ sees: null, privateWindow: true })!]
+      .flatMap(v => [v.full, v.text]);
+    for (const line of lines) expect(line).not.toMatch(/\bEmber\b/);
   });
 
   it("keeps the chip's line its full width from the start and gives the late words a live region", () => {

@@ -117,7 +117,8 @@ describe("the ask box's page (review #78)", () => {
     expect(onContext).toContain("history.context(");
     // Selected as the box opened, the text selected was the letters already typed, and the next letter replaced them.
     expect(onContext).not.toContain(".select()");
-    expect(PAGE).toMatch(/window\.emberAsk\.onHidden\(\(\) => input\.select\(\)\);/);
+    // (What its live region held for the microphone to close goes with it: voice-listening-i5.)
+    expect(PAGE).toMatch(/window\.emberAsk\.onHidden\(\(\) => \{ input\.select\(\); dropNews\(\); \}\);/);
   });
 
   it("hears the box going away through its preload", () => {

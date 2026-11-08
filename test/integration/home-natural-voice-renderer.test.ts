@@ -358,7 +358,7 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
   } finally { await browser.close(); await server.close(); }
 }, 60_000);
 
-it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing of Hear me more clearly while the microphone opens or is open for a request, and its line once it lasts (voice-listening-c4-1)", async () => {
+it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing of Hear me more clearly, or that no voice spoke a reply, while the microphone opens or is open for a request, and each line once it lasts (voice-listening-c4-1, voice-listening-r4-2)", async () => {
   // Its status line was rewritten on every voice push, so a screen reader said "This computer can't run it, so Ember is
   // using its usual speech model." as Listen once opened, over the request after "Hey Ember" and into the conversation,
   // where it was sent with the request or as one (21 of 24, and 24 of 24, on the real models).
@@ -438,6 +438,18 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
     await send({ ...off, clear: { state: "on" }, listenOnce: { phase: "ready", detail: "Request heard." } });
     await expect.poll(said, { timeout: 3000 }).toContain("clear-live: On. The clearer model writes what you say.");
     expect((await said()).filter(s => s.startsWith("clear"))).toEqual(["clear-live: On. The clearer model writes what you say."]);
+    // No voice spoke Ember's answer in the conversation: the note shows at once, and is said once the window ends,
+    // where "Ember couldn't speak: …" was said into the conversation and as a wake into the idle microphone.
+    await send(waiting);
+    await page.waitForTimeout(1300);
+    await page.evaluate(() => { (window as unknown as { __said: string[] }).__said.length = 0; });
+    const noVoice = "Your reply wasn't spoken: no local voice is available for your language. It's still in the bubble, and the setup check says how to add a voice.";
+    await send({ ...waiting, state: "active", detail: "Listening…", listenOnce: already, speechMissing: true });
+    expect(await page.locator("#speak-note").innerText()).toBe(noVoice);
+    await page.waitForTimeout(1300);
+    expect(await said()).toEqual([]);
+    await send({ ...waiting, speechMissing: true });
+    await expect.poll(said, { timeout: 3000 }).toEqual([`speak-live: ${noVoice}`]);
     expect(errors).toEqual([]);
   } finally { await browser.close(); await server.close(); }
 }, 60_000);

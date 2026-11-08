@@ -165,6 +165,47 @@ describe.skipIf(gate)("Home's Task activity, while a task works (2026-11-07 prod
     expect(await page.evaluate(() => document.activeElement?.id)).toBe("tasks-open-approval");
     await page.close();
   });
+
+  it("tells screen readers nothing of a task's state or the connection's unchanged line while a conversation is open, and the task's state once it closes (voice-listening-r4-2)", async () => {
+    // "Hey Ember, turn on night light." opened a conversation, held open while the task worked and asked. A screen
+    // reader said "Turn on night light: Waiting for you." and "…: Done." through the speakers into it, and each was sent
+    // as the next request (48 of 48 on the real models); "Connected." was written again on every request.
+    const page = await open("home");
+    const emit = (name: string, value: unknown) => page.evaluate(([n, v]) => window.__pane.emit(n as string, v), [name, value] as const);
+    const voice = (state: string, listenOnce: unknown) => ({ state, detail: state === "active" ? "Listening…" : null, micLabel: "Built-in Microphone", modelsReady: true, modelsMissing: [], modelsBytes: 0,
+      natural: { state: "on", model: "kitten", voice: "kitten" }, naturalModels: ["kitten"], listenOnce, match: { enrolled: false, on: false, model: true, wanted: false, enrolling: null, learnt: 0 } });
+    const connected = { phase: "ready", detail: "Connected.", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 } };
+    const already = { phase: "blocked", detail: "Ember is already listening.", reason: "listening" };
+    await emit("onAgentStatus", connected);
+    await emit("onVoiceStatus", voice("waiting", { phase: "ready", detail: "" }));
+    const one = [step(1, "Opened Settings")];
+    await emit("onTasks", [task("3-cccc", "Turn on night light", one)]);
+    await page.waitForTimeout(1300);
+    await page.evaluate(() => {
+      const out: string[] = (window as unknown as { __said: string[] }).__said = [];
+      for (const r of document.querySelectorAll("#tasks-live, .agent-line[role='status']")) new MutationObserver(() => { if (r.textContent) out.push(`${r.id || "agent-line"}: ${r.textContent}`); }).observe(r, { subtree: true, childList: true, characterData: true });
+    });
+    const said = () => page.evaluate(() => (window as unknown as { __said: string[] }).__said);
+    await emit("onVoiceStatus", voice("active", already));
+    await emit("onAgentStatus", connected);
+    const ask: ActivityItem = { id: "q1", kind: "question", at: 900, state: "waiting", words: "Asked to change Night Light in Settings", app: "Settings", askedIn: "bubble" };
+    await emit("onTasks", [task("3-cccc", "Turn on night light", [...one, ask], "waiting")]);
+    await emit("onAgentStatus", connected);
+    await emit("onTasks", [task("3-cccc", "Turn on night light", [...one, { ...ask, state: "done" }], "done")]);
+    await page.waitForTimeout(1300);
+    expect(await said()).toEqual([]);
+    expect(await page.locator("#tasks").innerText()).toContain("Turn on night light");
+    // The conversation closes: what lasted is said once.
+    await emit("onVoiceStatus", voice("waiting", { phase: "ready", detail: "" }));
+    await expect.poll(said, { timeout: 3000 }).toEqual(["tasks-live: Turn on night light: Done"]);
+    await page.waitForTimeout(1300);
+    expect(await said()).toEqual(["tasks-live: Turn on night light: Done"]);
+    // Outside a window, a change is said at once, as before.
+    await emit("onTasks", [task("3-cccc", "Turn on night light", one, "failed")]);
+    await expect.poll(said).toEqual(["tasks-live: Turn on night light: Done", "tasks-live: Turn on night light: Didn't finish"]);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  }, 30_000);
 });
 
 const results = (p: Page, q: string) => p.evaluate(async query => {

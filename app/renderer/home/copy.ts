@@ -867,7 +867,11 @@ export function heardThrough(text: string, state: string, detail: string | null,
   return state === "waiting" && !detail && micLabel ? `${text} through ${micLabel}` : text;
 }
 
-export const SPEAK_NO_VOICE = "Ember couldn't speak: no local voice is available for your language. Your reply is still in the bubble. The setup check says how to add a voice.";
+/**
+ * Under the Speak control once Ember found no voice for a reply. Without the name: a screen reader says it into the
+ * wake word's microphone, and "Ember couldn't speak: …" woke Ember and was sent as a request (voice-listening-r4-2).
+ */
+export const SPEAK_NO_VOICE = "Your reply wasn't spoken: no local voice is available for your language. It's still in the bubble, and the setup check says how to add a voice.";
 export const LISTEN_ONCE_READY = "Press Listen once, then say one request without saying “Hey Ember”.";
 
 /** The voice line while the microphone is off; `muteLabel` is the mute shortcut Ember holds as this OS writes it ("": none). */

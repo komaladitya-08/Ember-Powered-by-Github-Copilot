@@ -17,7 +17,12 @@ export interface SeesView {
   full: string;
 }
 
-const PRIVATE = "Ember won't look at this window";
+/**
+ * In the first person, as the box's other lines are, never with Ember's name: a screen reader says them as the box
+ * opens, into the wake word's microphone, and "Ember will see: <window>…" woke Ember and sent the window's title as a
+ * request in 20 of 20 real-model placements ("Ember won't look at this window." in 17 of 20; voice-listening-i5).
+ */
+const PRIVATE = "I won't look at this window";
 const s = (n: number) => (n === 1 ? "" : "s");
 
 /** What the chip says for `c`; null when Ember will see nothing (nothing is shown). */
@@ -38,7 +43,7 @@ export function seesView(c: Pick<AskContext, "sees" | "carries" | "privateWindow
     text: c.sees,
     extra: short.length ? `+ ${short.join(", ")}` : "",
     brief: fewer.length ? `+ ${fewer.join(", ")}` : "",
-    full: `Ember will see: ${c.sees}${joined ? `, with ${joined}` : ""}.`,
+    full: `I'll see: ${c.sees}${joined ? `, with ${joined}` : ""}.`,
   };
 }
 

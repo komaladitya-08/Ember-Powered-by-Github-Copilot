@@ -323,6 +323,49 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("tells screen readers what it will see, and that it can't answer, only once the microphone is no longer open for a request (voice-listening-i5)", async () => {
+    // Opened while a voice conversation was open, a screen reader said "Ember will see: <app — window title>." through
+    // the speakers into it, where it was taken as the person's next request.
+    const page = await pageAt();
+    try {
+      const harness = (fn: string, value: unknown) => page.evaluate(([f, v]) => ((window as unknown as TestWindow).askHarness as unknown as Record<string, (x: unknown) => void>)[f as string](v), [fn, value] as const);
+      const said: string[] = [];
+      await page.exposeFunction("__said", (t: string) => { said.push(t); });
+      await page.evaluate(() => { const r = document.getElementById("sees-live")!; new MutationObserver(() => { if (r.textContent) (window as unknown as { __said(t: string): void }).__said(r.textContent); }).observe(r, { subtree: true, childList: true, characterData: true }); });
+      const already = { phase: "blocked", detail: "Ember is already listening.", reason: "listening" };
+      await harness("context", { opened: true, sees: null, history: [], listenOnce: already });
+      await harness("context", { sees: "Text Editor · Notes.txt", history: [], listenOnce: already });
+      await harness("unavailable", "Offline");
+      await page.waitForTimeout(1300);
+      expect(await page.locator("#sees").isVisible()).toBe(true);
+      expect(await page.locator("#unavailable").textContent()).toBe("Offline: I can't answer yet");
+      expect(said).toEqual([]);
+      // The conversation ends with the box still open: what it would have said is said then, once.
+      await harness("listen", { phase: "ready", detail: "" });
+      const late = "I'll see: Text Editor · Notes.txt. Offline: I can't answer yet";
+      await expect.poll(() => said, { timeout: 3000 }).toEqual([late]);
+      await page.waitForTimeout(1300);
+      expect(said).toEqual([late]);
+      // Ask's own Listen once opening: nothing said while it starts and listens.
+      said.length = 0;
+      await harness("listen", { phase: "starting", detail: "Starting to listen…" });
+      await harness("unavailable", null);
+      await harness("listen", { phase: "listening", detail: "Listening for one request…" });
+      await page.waitForTimeout(1300);
+      expect(said.filter(t => t !== "Starting to listen…")).toEqual([]);
+      await harness("listen", { phase: "ready", detail: "Request heard." });
+      await expect.poll(() => said, { timeout: 3000 }).toContain("I can answer again.");
+      // Put away meanwhile: nothing is said for a box that is gone.
+      said.length = 0;
+      await harness("listen", already);
+      await harness("unavailable", "Offline");
+      await harness("hidden", undefined);
+      await harness("listen", { phase: "ready", detail: "" });
+      await page.waitForTimeout(1300);
+      expect(said).toEqual([]);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("shows every suggestion and comfortable controls at narrow widths, every text size and forced colours", async () => {
     const page = await pageAt();
     try {
