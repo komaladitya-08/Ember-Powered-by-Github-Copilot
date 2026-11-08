@@ -501,6 +501,7 @@ describe("matchIntent: a name that only places, describes or does something else
     ["git branch -D feature old", "delete the feature and old branches", "Deleting the branch feature and old, as you asked."],
     ["pkill node", "kill the node process that's hogging the CPU", "Stopping node, as you asked."],
     ["rm -rf build dist", "delete build/ and dist/ both", "Deleting build and dist, as you asked."],
+    ["rm -rf dist src", "delete the dist folder and all of src/", "Deleting dist and src, as you asked."],
     ["git push origin feature-x", "push feature-x up to origin", "Pushing feature-x to origin, as you asked."],
   ])("announces `%s` after %j", (cmd, words, said) => {
     expect(announce(cmd, words, { git: FEATURE })).toBe(said);

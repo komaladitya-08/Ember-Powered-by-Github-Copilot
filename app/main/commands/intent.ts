@@ -364,7 +364,8 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
         // A list goes on only with a thing, after words that only describe it ("the old dist folder"): "my editor
         // 1234" says what 1234 is (commands-remote-r3-x1).
         const at = tokens.findIndex(t => thing(t));
-        if (at > 0 && tokens.slice(0, at).some(t => !userWordList(t).every(x => LISTS_MORE.has(x) || OF_THING.has(x) || AFTER_OBJECT.has(x) || FILLERS.has(x)))) { end(); return; }
+        const lead = userWordList(tokens.slice(0, Math.max(at, 0)).join(" "));
+        if (at > 0 && lead.some((x, k) => !(LISTS_MORE.has(x) || OF_THING.has(x) || AFTER_OBJECT.has(x) || FILLERS.has(x) || (x === "of" && OF_WHAT.has(lead[k - 1] ?? ""))))) { end(); return; }
       }
       if (!leads && !(chain && listed && first !== undefined && nounish(first))) { end(); return; }
       if (leads) end();
