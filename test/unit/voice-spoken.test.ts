@@ -122,6 +122,12 @@ describe("spokenText", () => {
     ["**Done**\nI closed it.", "Done.\nI closed it."],
     ["**Next steps:**\nOpen the file.", "Next steps:\nOpen the file."],
     ["I looked at the\nfolder and found\nthree errors.", "I looked at the\nfolder and found\nthree errors."],
+    // Longer lines led into by a colon, each starting with a capital, are a list too; one such line, or a line that goes
+    // on in lower case, isn't.
+    ["Here is the plan:\nStep one is to open the file you sent\nStep two is to save it as a copy in Documents\nStep three is to close it", "Here is the plan:\nStep one is to open the file you sent.\nStep two is to save it as a copy in Documents.\nStep three is to close it."],
+    ["Here's what it says:\nThe meeting moved to Friday and the room changed", "Here's what it says:\nThe meeting moved to Friday and the room changed"],
+    ["Here is the plan:\nOpen the file you sent me and\nsave a copy of it in Documents", "Here is the plan:\nOpen the file you sent me and\nsave a copy of it in Documents"],
+    ["I opened the report you sent and\nFound the totals at the bottom of it\nAll of them add up", "I opened the report you sent and\nFound the totals at the bottom of it\nAll of them add up"],
   ])("ends the lines of %j so they are said apart (voice-speaking-3)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
 
   // Stars and underscores that aren't emphasis are said as they are shown: a marker with a space on its inner side is

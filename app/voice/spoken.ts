@@ -194,10 +194,18 @@ function endLines(text: string): string {
   const run: number[] = [...bare];
   for (let i = 1; i < run.length; i++) if (bare[i] && bare[i - 1]) run[i] = run[i - 1] + 1;
   for (let i = run.length - 2; i >= 0; i--) if (bare[i] && bare[i + 1]) run[i] = run[i + 1];
+  // Lines of any length that a line ending with a colon leads into, each starting with a capital: two or more are a list
+  // without its markers too ("Here is the plan:\nStep one is to open it\nStep two is…").
+  const led = lines.map(() => false);
+  for (let i = 1; i < lines.length; i++) {
+    const l = lines[i];
+    led[i] = !!l.trim() && !ITEM.test(l) && !HEADING.test(l) && /^[ \t]*[\p{Lu}\p{N}]/u.test(l) && (led[i - 1] || /:[ \t]*$/.test(lines[i - 1]));
+  }
   return lines.map((line, i) => {
     const body = line.trimEnd(), next = lines[i + 1];
     if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
-    const alone = ITEM.test(body) || HEADING.test(body) || run[i] >= 3 || (next !== undefined && (!next.trim() || ITEM.test(next)));
+    const listed = led[i] && (led[i - 1] || led[i + 1]);
+    const alone = ITEM.test(body) || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || ITEM.test(next)));
     return alone ? `${body}.` : line;
   }).join("\n");
 }
