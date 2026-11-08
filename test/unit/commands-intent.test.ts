@@ -160,6 +160,10 @@ describe("the other rows", () => {
     ["git branch -D old-ui other", "delete the branch old-ui"],
     ["git branch -D old-ui", "delete old-ui"],
     ["git reset --hard origin/main", "discard my changes"],
+    // Pruning is neither: it always asks (commands-remote-r1).
+    ["npm prune", "install the dependencies"],
+    ["npm prune", "remove the unused packages"],
+    ["npm prune", "prune the packages"],
     // Words that install don't cover a removal, nor the other way round (commands-remote-r1).
     ["npm uninstall lodash", "install lodash"],
     ["npm install lodash", "uninstall lodash"],

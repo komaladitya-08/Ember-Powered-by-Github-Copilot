@@ -11,7 +11,7 @@
 import type {
   Classification, ClassifyContext, CommandObject, DangerClass, Finding, ParsedCommand, ShellFamily, ShellId, WindowsContext,
 } from "./types";
-import { PKG_REMOVES, SHELL_FAMILY } from "./types";
+import { PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY } from "./types";
 import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
@@ -3634,6 +3634,14 @@ reg(NATIVE, ["crontab"], h => {
   if (h.args.some(a => a.v === "-e")) h.e.unclear("unclear.interactive", SAYS.interactive);
   // `crontab -r` (or -ir) deletes every job in the crontab, not schedules one (commands-remote-r1).
   if (h.args.some(a => a.v !== null && /^-[a-z]*r[a-z]*$/.test(a.v))) { h.e.add("system", "system.unschedule", "Deletes your scheduled jobs."); return; }
+  // `crontab jobs.txt` (`-` or no file: what it's given) replaces every job there with the file's (commands-remote-r1).
+  const p = parseOpts(h.args, { shortValue: "u" });
+  const file = p.operands[0];
+  if (!has(p, "e", "l") && (file !== undefined || h.s.stdin !== null)) {
+    const from = file === undefined || file.v === "-" ? "it's given" : `in ${file.v ?? "a file Ember can't name"}`;
+    h.e.add("system", "system.schedule", `Replaces your scheduled jobs with the ones ${from}.`);
+    return;
+  }
   h.e.add("system", "system.schedule", "Schedules something to run later or at login.");
 });
 
@@ -3778,9 +3786,13 @@ git(["reset"], h => {
   // To another commit (`origin/main`, `HEAD~1`), the branch moves too and drops what isn't in it (commands-remote-r1).
   const to = ops[0] && ops[0].v !== "HEAD" && ops[0].v !== "@" ? (ops[0].v ?? ops[0].raw) : null;
   const hard = to === null ? "Throws away changes that aren't committed." : `Moves the branch to ${to}, throwing away changes that aren't committed and any commits not in ${to}.`;
+  // --merge throws away staged changes only, and --keep none (it stops rather than lose one): both still move the
+  // branch to another commit (commands-remote-r1).
+  const merge = to === null ? "Throws away staged changes; changes you haven't staged stay." : `Moves the branch to ${to}, throwing away staged changes and any commits not in ${to}.`;
+  const keep = to === null ? "Unstages changes, keeping them in your files." : `Moves the branch to ${to}, dropping any commits not in ${to}; changes that aren't committed stay.`;
   if (has(p, "hard")) h.e.add("destroy", "git.reset.hard", hard, { objects, program: "git reset" });
-  if (has(p, "merge")) h.e.add("destroy", "git.reset.merge", "Throws away changes that aren't committed.", { objects, program: "git reset" });
-  if (has(p, "keep")) h.e.add("destroy", "git.reset.keep", "Throws away changes that aren't committed.", { objects, program: "git reset" });
+  if (has(p, "merge")) h.e.add("destroy", "git.reset.merge", merge, { objects, program: "git reset" });
+  if (has(p, "keep")) h.e.add("destroy", "git.reset.keep", keep, { objects, program: "git reset" });
 });
 
 git(["checkout"], h => {
@@ -4448,16 +4460,23 @@ const REMOVE_VERBS = new Set(["uninstall", "un", "remove", "rm", "uninject"]);
 /** Words before the verb in a tool's own group of commands (`uv pip uninstall`, `dotnet tool uninstall`). */
 const VERB_GROUPS = new Set(["pip", "tool", "tools", "workload", "global", "pub"]);
 
-/** Whether a language package command only removes packages (commands-remote-r1). */
-function removesPackages(h: H): boolean {
+/** A language package command's verb, after a tool's own group word (`uv pip uninstall`). */
+function packageVerb(h: H): string | null {
   const words = h.args.filter(a => !isOption(a)).map(a => a.v);
   const verb = VERB_GROUPS.has(words[0] ?? "") ? words[1] : words[0];
-  return typeof verb === "string" && (REMOVE_VERBS.has(verb) || (h.key === "npm" && verb === "r"));
+  return typeof verb === "string" ? verb : null;
+}
+
+/** Whether a language package command only removes packages (commands-remote-r1). */
+function removesPackages(h: H): boolean {
+  const verb = packageVerb(h);
+  return verb !== null && (REMOVE_VERBS.has(verb) || (h.key === "npm" && verb === "r"));
 }
 
 function languageInstall(h: H, specs: Arg[], widening: string[] = []): void {
   const objects = packageObjects(h, specs);
-  const says = removesPackages(h) ? PKG_REMOVES : "Installs packages (they can run their own setup code).";
+  // `npm prune` removes what package.json doesn't list (commands-remote-r1).
+  const says = removesPackages(h) ? PKG_REMOVES : packageVerb(h) === "prune" ? PKG_PRUNES : "Installs packages (they can run their own setup code).";
   h.e.add("system", "pkg.language", says, { objects, widening, program: `${h.prog} ${h.args.find(a => !isOption(a))?.v ?? ""}`.trim() });
 }
 

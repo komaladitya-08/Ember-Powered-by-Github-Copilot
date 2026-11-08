@@ -600,7 +600,17 @@ describe("the card's words from the classifier (review #214)", () => {
     expect(says("crontab -ir")).toEqual(["Deletes your scheduled jobs."]);
     expect(says("atrm 3")).toEqual(["Removes a scheduled job."]);
     expect(says("atrm 3 4")).toEqual(["Removes scheduled jobs."]);
-    expect(says("crontab jobs.txt")).toEqual(["Schedules something to run later or at login."]);
+    // A file or what it reads replaces every job there; prune removes packages; --keep and --merge keep some changes
+    // (commands-remote-r1).
+    expect(says("crontab jobs.txt")).toEqual(["Replaces your scheduled jobs with the ones in jobs.txt."]);
+    expect(says("crontab -u ana jobs.txt")).toEqual(["Replaces your scheduled jobs with the ones in jobs.txt."]);
+    expect(says("crontab -")).toEqual(["Replaces your scheduled jobs with the ones it's given."]);
+    expect(says("crontab -e")).toContain("Schedules something to run later or at login.");
+    for (const cmd of ["npm prune", "pnpm prune", "npm prune --production"]) expect(says(cmd), cmd).toEqual(["Removes packages the project doesn't list."]);
+    expect(says("git reset --keep origin/main")).toEqual(["Moves the branch to origin/main, dropping any commits not in origin/main; changes that aren't committed stay."]);
+    expect(says("git reset --keep")).toEqual(["Unstages changes, keeping them in your files."]);
+    expect(says("git reset --merge HEAD~2")).toEqual(["Moves the branch to HEAD~2, throwing away staged changes and any commits not in HEAD~2."]);
+    expect(says("git reset --merge")).toEqual(["Throws away staged changes; changes you haven't staged stay."]);
     expect(says("git reset --hard origin/main")).toEqual(["Moves the branch to origin/main, throwing away changes that aren't committed and any commits not in origin/main."]);
     expect(says("git reset --hard HEAD~1")).toEqual(["Moves the branch to HEAD~1, throwing away changes that aren't committed and any commits not in HEAD~1."]);
     for (const cmd of ["git reset --hard", "git reset --hard HEAD", "git reset --hard @"]) expect(says(cmd), cmd).toEqual(["Throws away changes that aren't committed."]);

@@ -61,6 +61,8 @@ export interface Finding {
 
 /** The card's line for removing packages (`npm uninstall`, `pip uninstall`): the intent row says "Removing" for it. */
 export const PKG_REMOVES = "Removes packages.";
+/** `npm prune`'s line: it removes what the project doesn't list, which no words name exactly, so it always asks. */
+export const PKG_PRUNES = "Removes packages the project doesn't list.";
 
 /** One simple command as parsed (wrappers unwrapped, quotes removed). */
 export interface ParsedCommand {

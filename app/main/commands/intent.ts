@@ -10,7 +10,7 @@
  */
 
 import type { Classification, ClassifyContext, CommandObject, Finding, GitFacts } from "./types";
-import { ALWAYS_ASK, PKG_REMOVES } from "./types";
+import { ALWAYS_ASK, PKG_PRUNES, PKG_REMOVES } from "./types";
 import { hasVerb, hasWord, joinList, nameNamed, userTokens, userWordList } from "./words";
 import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, resolveTargetPath, type PathEnv } from "./paths";
 
@@ -543,7 +543,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
   "pkg.install": (fs, w, ctx) => {
     // Words that install never cover a removal, nor words that remove an install (commands-remote-r1).
     const removes = fs.every(f => f.says === PKG_REMOVES);
-    if (!removes && fs.some(f => f.says === PKG_REMOVES)) return null;
+    if ((!removes && fs.some(f => f.says === PKG_REMOVES)) || fs.some(f => f.says === PKG_PRUNES)) return null;
     if (!asks(w, removes ? REMOVE_WORDS : ROW_VERBS["pkg.install"].filter(v => !REMOVE_WORDS.includes(v)))) return null;
     const pkgs: string[] = [];
     for (const f of fs) {
