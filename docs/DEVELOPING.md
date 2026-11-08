@@ -1249,7 +1249,8 @@ Ember that **Ask Ember** started doesn't open the ask box again when it restarts
 session, **Transparent windows** (the compositor), **Screen reading**, **Mouse and keyboard** (XTest), Copilot sign-in
 or the organisation's endpoint, the admin policy, the microphone, speech models, **Speaking** (Ember's own Kitten
 voice where it runs natively, with speech-dispatcher as its fallback; it warns only when neither can speak), Ember's
-desk, **Window sandbox** and **Copilot's file watchers** (inotify), and says what to do about each problem. On a
+desk, **Window sandbox** and **Copilot's file watchers** (inotify; **Ember's file watchers** while another model
+service is in use: integrations-r3-3), and says what to do about each problem. On a
 Linux other than the RHEL 8 family, the operating system row says Ember is tested on RHEL 8 and may work but isn't
 supported. It exits 1 if Ember can't work. A warning that keeps Ember from reading or using apps (Screen reading
 missing, say) is counted as one to fix and named in its last line ("1 thing to fix so Ember can read and use your apps
