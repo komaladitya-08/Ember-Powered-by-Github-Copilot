@@ -38,10 +38,6 @@ the automated tests don't stand in for them.
   locks down, so update Ember on every computer first.
 - **`features.screenImages: false`** now also shows the new **Send screenshots for tasks** switch off and managed, as
   well as keeping screenshots from the model. Ember 0.1.0 knows this key, so a policy with it doesn't lock 0.1.0 down.
-- **Ember sends less with each request**: only the window the person is working in (its app and title, and the
-  focused control with its selection or the start of its text), not the titles of every open window, which go only
-  when Ember looks over the screen for them. While Ember can't tell whether GNOME Shell's password prompt is open, it
-  reads and sends nothing, as while one is, and in Projects an answer from one model service never goes to another.
 
 ### First run
 
@@ -236,8 +232,7 @@ the automated tests don't stand in for them.
   button and no raw policy error.
 - **A model server on this computer (Ollama, LM Studio) works in first run without an API key,** also where there is
   no keyring.
-- **A failing own provider is explained as the provider's problem,** with **Check my provider's details**, never as a
-  Copilot or GitHub account problem.
+- **A failing own provider is explained as the provider's problem,** never as a Copilot or GitHub account problem.
 - **After an update that changes how Ember works,** first run opens at its consent page and lists what changed since
   you last agreed.
 - **Keyboard focus stays put:** first run's quiet buttons (Skip for now, Cancel, Personalise memory…) keep it when
@@ -340,7 +335,7 @@ the automated tests don't stand in for them.
   to try, instead of asking for phrases that would run as real requests.
 - **Listen once hears a long request to its end.** Speech must start within 8 seconds (a request begun just before
   then counts); what you are still saying then is heard to the end (up to 20 seconds from the press), instead of being
-  thrown away as “No request heard”. When only a TV or someone else in the room is talking, it ends at 8 seconds with
+  thrown away as “No request heard”. When only a TV or someone else is talking as it starts, it ends at 8 seconds with
   “No request heard. Try again.” and sends nothing. On a muted microphone it says “The microphone is sending only
   silence…”, and pressed while Ember talks or answers, it stops that first and listens, as “Hey Ember” does.
 - **Pause to think mid-request.** After a word such as “the” or “and”, Ember waits 0.9 seconds more for the rest:

@@ -860,23 +860,24 @@ approvals). 108 are fixed, 17 partly and 14 skipped; 2 were already fixed by an 
 (install-docs-r1 by dbf0d2a, accessibility-visual-r2 by 530d1f2). Each fix is pinned by unit, renderer or source
 tests, and UI changes were checked in real renders.
 
-**Regressions.** The challengers found regressions that round one had brought in; all are fixed here. Three were P1:
-after Not now, focus on Agree let a second or held Enter agree to the consent (first-run-c1-1); memory-v1's answers in
-code swallowed ordinary requests that began with forget, remember or keep in mind while memory was off (memory-c1-1);
-and the loop read-through took a `NAME=value` word after `then` or `do` for the program, so `if true; then
-LD_PRELOAD=./x.so ls; fi` ran without a question and a download inside an `if` went unrecorded (commands-remote-c1-1).
-Four were P2: Back from the provider step switched off a provider already in use (first-run-c1-2); Listen once's wait
-for the end of speech sent a TV's or a colleague's words after 20 s (voice-listening-c1-1); Stop speaking cut off the
-answer with the voice (voice-speaking-c1-1); and the language check, piece by piece, sent English that named La La
-Land to another voice, or to none and reported speech failing (voice-speaking-r1). Others: Home's wait never ended for
-a turn that wrote nothing (home-c1-1); hidden empty live regions kept screen readers from hearing Home's status lines
-(accessibility-visual-c1-1); the trailing-word hold joined nearby talk (voice-listening-c1-2); the first sentence was
-cut after "is going" or inside a link, and a heading's lookbehind cost seconds on a long answer (voice-speaking-r2,
--r4); negated words counted as asking for a command (commands-remote-c1-2); the preference rule closed unrelated
-preferences (memory-r1); the shell-prompt check failed open on errors and timeouts (safety-privacy-r1); a GNOME logout
-read as a crash at the next login, and Check again's fresh probe held the main process for 5 s on a hung import
-(reliability-performance-r1, -r2); and a local server's retries flipped the status every minute, while a restart
-forgot a newer version already found (integrations-c1-2, -r6).
+**Regressions.** The re-raters and challengers found regressions that round one had brought in; all are fixed here.
+Three were P1: after Not now, focus on Agree let a second or held Enter agree to the consent (first-run-c1-1);
+memory-v1's answers in code swallowed ordinary requests that began with forget, remember or keep in mind while memory
+was off (memory-c1-1); and the loop read-through took a `NAME=value` word after `then` or `do` for the program, so
+`if true; then LD_PRELOAD=./x.so ls; fi` ran without a question and a download inside an `if` went unrecorded
+(commands-remote-c1-1). Four were P2: Back from the provider step switched off a provider already in use
+(first-run-c1-2); Listen once's wait for the end of speech sent a TV's or a colleague's words after 20 s
+(voice-listening-c1-1); Stop speaking cut off the answer with the voice (voice-speaking-c1-1); and the language check,
+piece by piece, sent English that named La La Land to another voice, or to none and reported speech failing
+(voice-speaking-r1). Others: Home's wait never ended for a turn that wrote nothing (home-c1-1); hidden empty live
+regions kept screen readers from hearing Home's status lines (accessibility-visual-c1-1); the trailing-word hold
+joined nearby talk (voice-listening-c1-2); the first sentence was cut after "is going" or inside a link, and a
+heading's lookbehind cost seconds on a long answer (voice-speaking-r2, -r4); negated words counted as asking for a
+command (commands-remote-c1-2); the preference rule closed unrelated preferences (memory-r1); the shell-prompt check
+failed open on errors and timeouts (safety-privacy-r1); a GNOME logout read as a crash at the next login, and Check
+again's fresh probe held the main process for 5 s on a hung import (reliability-performance-r1, -r2); and a local
+server's retries flipped the status every minute, while a restart forgot a newer version already found
+(integrations-c1-2, -r6).
 
 **First run, Home and the companion.** First run names the user's own provider while it connects or fails, a provider
 step that opens with it in use shows it as in use (only "Use GitHub Copilot instead" turns it off), and the hello and
@@ -888,23 +889,23 @@ on `IPC.conversationTurnChanged`) drives the composer's wait and the status pane
 while the turn is slow the settings key lands on Stop response (`keysLanding`). Every polite live region in Home stays
 mounted while empty (one `:is([role="status"], [aria-live]):empty` rule), Send, Stop response and Copy use
 `aria-disabled` while pending, and `idleWord` names the service in use. The Ask box stacks over or under the bubble
-where it fits beside neither (no overlap in 56 live openings across four screen and text sizes, from 11 and 9 in 14);
-main tells the overlay where the open box is (`EmberState.askBox`), so a later bubble keeps off it, a question already
-shown never moves (`askKeepOff`), and one with no room moves the box aside once, inside the Confirmer's 500 ms arming.
-The no-compositor corner card (M1.3) draws keys as keycaps (`stepParts`), Listen once keeps its Cancel listening
-(`questionHoldsListen`), and the Ask field keeps a long paste whole with Home's count.
+where it fits beside neither (it covered the bubble in 11 and 9 of 14 live openings at two screen and text sizes, and
+now in none of 56 across four); main tells the overlay where the open box is (`EmberState.askBox`), so a later bubble
+keeps off it, a question already shown never moves (`askKeepOff`), and one with no room moves the box aside once,
+inside the Confirmer's 500 ms arming. The no-compositor corner card (M1.3) draws keys as keycaps (`stepParts`), Listen
+once keeps its Cancel listening (`questionHoldsListen`), and the Ask field keeps a long paste whole with Home's count.
 
 **Voice.** While Voice Match is taught, `VoiceEngine.stopsOnly` takes a spotted bare name or "Hey Ember" as a stop
 candidate confirmed from the transcript (`saidWakeStop`), so the spoken kill phrase (M5.3, M8.9) works there on the
 real models: 48 of 48 stops while teaching, 0 of 56 on clips that aren't one, on WASM and the C API. Listen once waits
-past 8 s only for speech 10 dB over the window's first second (a TV alone now ends it at 8 s, 6 of 6) and moves the
-deadline back 0.4 s once for the VAD's onset lag; the 0.9 s hold joins only a continuation within 6 dB of the held
+past 8 s only for speech 10 dB over the window's first second (a TV alone now ends it at 8 s, 6 of 6) and puts the
+deadline 0.4 s later, once, for the VAD's onset lag; the 0.9 s hold joins only a continuation within 6 dB of the held
 part (room talk joined 12 of 18 times, now none). Stop speaking silences only the voice (`answerHushed`), so the whole
 reply reaches the bubble, Home and the transcript. An answer's language is decided once from its first 60 letters
 (`AnswerLanguage`, `VoiceService.speak()`'s `lang`), and `speechLanguage` ignores capitalised name runs and needs two
 different stopwords (English kept 57 of 59 times, was 51; foreign found 23 of 25, was 16). The first-sentence cut no
 longer uses to, for, from or with and checks Markdown at each cut, `sentenceEnds` scans only past what was said (6,000
-characters stream in 12 ms; they took over 30 s), Hear Ember answers once its sample is heard
+characters stream in 12 ms; they took about 30 s), Hear Ember answers once its sample is heard
 (`VoiceService.sample()`), Kitten is timed again by itself, once a session, at a request 5 minutes after a too-slow
 timing (`KITTEN_RECHECK_MS`), and `spokenText` says hearts, durations, bare addresses and bare-line lists for the ear.
 
@@ -942,11 +943,12 @@ thing in the same place; learned and forgot lines change in place on Undo and sa
 18 more secret phrasings (none of 1,754 benchmark texts changed verdict); Undo works while memory is off; and Settings
 › Memory says when memory.json can't be read or saved. Reliability: Linux's `AppLifecycle.sessionEnd` is
 `display-gone`, so a quit without will-quit and Xlib's IO error handler (`watchDisplayGone`, handing on to GTK's) end
-the session cleanly (10 of 10 killed X servers left no run marker, against 3 of 6 and 5 of 8 with either path alone; a
-crash still leaves it). `SystemPlatform.lookAgain` joins the background pyatspi look (main's worst stall during Check
-again went from 5,019 ms to 10 ms); the rest-time health watch and the frame loop run on `performance.now()`, so a
-clock set back neither stops the checks nor holds 60 Hz; and Home's still characters aren't drawn while Home is behind
-the focused window (`homeFrameGap`: the whole tree 9.2 % of a core against 11.6–12.9 % with Home open).
+the session cleanly (10 of 10 killed X servers left no run marker, where the quit path alone left one in 3 of 6 and
+the IO handler alone in 5 of 8; a crash still leaves it). `SystemPlatform.lookAgain` joins the background pyatspi look
+(main's worst stall during Check again went from 5,019 ms to 10 ms); the rest-time health watch and the frame loop run
+on `performance.now()`, so a clock set back neither stops the checks nor holds 60 Hz; and Home's still characters
+aren't drawn while Home is behind the focused window (`homeFrameGap`: the whole tree 9.2 % of a core against 11.6–12.9
+% with Home open).
 
 **Install and docs.** A tagged README can no longer say its own version isn't out: §15 step 1 replaces the Download
 line in the commit that is tagged, and `release.mjs` refuses such a README (`readmeProblems()`), first of all in the
@@ -978,23 +980,38 @@ screenshot words and auditing `describe_screen` and the quick context (safety-pr
 wait on a hung pyatspi import (rp-1); the guard phrasings, done by memory-1 (safety-privacy-1); and folding 0.1.1's
 older dated sections into its feature sections (install-docs-4). Found on the way: the Ask chip's count of other
 windows is now always 0 (`ask-sees.ts`, `chips.ts`); the cards' screen-reader prefix still says "Stopped: " for an
-unanswered question; WSL's inspect script reports no folders; the handle says "Copilot problem" while Ember reconnects
-by itself; Listen once judges talk that starts after its first second as the user's; and at 800×600 with Larger text
-the Ask box and a question still overlap. First run's follow-up that Home's Check again names a GitHub sign-in under a
-failing own provider was written before integrations-c1-1 merged beside it; at 4bd78a3 `checkAgain` covers it.
+unanswered question, and Home's timeline end rows read "Stopped: Stopped"; WSL's inspect script reports no folders;
+the handle says "Copilot problem" while Ember reconnects by itself; Listen once judges talk that starts after its
+first second as the user's, and the hold sends the half when the user's own rest is over 6 dB softer; at 800×600 with
+Larger text the Ask box and a question still overlap; closing Home between agreeing to a provider and its test leaves
+it on unverified, and the provider step repeats its no-keyring sentence; a reminder due in a composer turn that wrote
+nothing ends it with "Reply received."; the "Ember learned" line doesn't say what a new fact replaced, the "Remember
+that…" note isn't spoken, and first run's about-you lead still says answers are kept once memory is on; a foreign
+reply's unaccented first word ("Claro.") is still said by Kitten, and Kitten can play over a system voice; the card
+still counts "uninstall lodash" as naming `npm install lodash`, and a VPN-only name with split DNS off is forgotten as
+a typo (commands-remote-6); after a restart that follows a look finding Ember current, Updates says "Ember checks once
+a day…" rather than that it is up to date; the RPM's `ember --help` names Ctrl+Alt+E, which Ember may not hold; the
+activity journeys pass untested during local hour 0; and `scripts/perf/footprint.mjs` has no awake-rest budget. Before
+0.1.1 is tagged, the README's Download line and From npm's note must change in the tagged commit (§15 step 1), or the
+release is refused. First run's follow-up that Home's Check again names a GitHub sign-in under a failing own provider
+was written before integrations-c1-1 merged beside it; at 4bd78a3 `checkAgain` covers it.
 
 **Native validation and owner decisions.** Still to check natively: screen readers on Home's now-mounted status lines,
 the stalled turn and the new Try again and "No answer in time"; on RHEL 8.4 GNOME 3.32, how often `shell_overlays`
 answers incomplete or times out without a GPU (every read now fails closed on it), which path a real logout takes, and
 Mutter with the Ask box's margins and Home's paused characters; the AT-SPI el8 suites, the eval with gedit and
 platform-python 3.6; the Windows and macOS spotters on "Ember, stop" while teaching; the loudness rules with real
-microphones and a real TV; language routing with real foreign system voices; real sshd, WSL and Windows and macOS
-command paths; and `installKind()` and the npm launcher in real packages. For the owner: the route after re-agreeing;
-rewording the provider card (a `FEATURE_CONSENT_VERSION.provider` bump); browsing marketplaces before the extensions
-card; probing a remote provider, and naming the Copilot runtime to someone using their own; giving requests other
-windows' titles back with a `CONSENT_VERSION` bump; X11 authentication prompt windows; memory's predicate names (a
+microphones and a real TV; a question during Listen once on real hardware; language routing with real foreign system
+voices, and the wait of up to 60 letters before an answer that looks foreign is spoken; Check again against a real
+Ollama or LM Studio; real sshd, WSL and Windows and macOS command paths, and the first command's fit in Consolas and
+SF Mono; the Mac's Accessibility-permission message, which `toolFailure` matches by its text; and `installKind()` and
+the npm launcher in real packages. For the owner: the route after re-agreeing; rewording the provider card (a
+`FEATURE_CONSENT_VERSION.provider` bump); browsing marketplaces before the extensions card; probing a remote provider,
+and naming the Copilot runtime to someone using their own; giving requests other windows' titles back with a
+`CONSENT_VERSION` bump; X11 authentication prompt windows; memory's predicate names (a
 `FEATURE_CONSENT_VERSION.memory` bump); a listening earcon (§6); which words only hush, and whether a typed "never
-mind" stops every task; Kitten's voices; "do it again" after a finished task; a `for` loop using its variable as a
-file; the awake resting frame rate (`RESTING_FRAME_MS`); "Set up voice in Settings…" on every Ask opening; Home's
-composer sending on Enter; and the release's prerelease title, signing, npm.yml and a sooner update retry (an
-`UPDATES_CONSENT_TEXT` bump).
+mind" stops every task; Kitten's voices; "do it again" after a finished task, and whether every question, not only an
+unasked or steered one, quotes the user's words; a `for` loop using its variable as a file, and reading through a
+stock venv `activate`; the corner card growing to 640 px for any question; the awake resting frame rate
+(`RESTING_FRAME_MS`); "Set up voice in Settings…" on every Ask opening; Home's composer sending on Enter; and the
+release's prerelease title, signing, npm.yml and a sooner update retry (an `UPDATES_CONSENT_TEXT` bump).
