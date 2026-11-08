@@ -154,8 +154,8 @@ reported in every PR that touches it.
 | End of speech → a sign Ember heard (sound or motion) | after Copilot answers | **≤ 150 ms** |
 | End of speech → first word, without Copilot's time | ≈ 2.0 s | **≤ 600 ms** |
 | Interrupting Ember by speaking → it stops talking | needs "Hey Ember" | **≤ 200 ms, no wake word** |
-| Idle CPU (listening, silence, no window open) | ≈ 15–20 % (estimated without the setup page) | **≤ 3 %** |
-| Idle memory (Ember's processes, PSS) | ≈ 600 MB (estimated without the setup page) | **≤ 400 MB** |
+| Idle CPU (listening, silence, no window open) | ≈ 11–15 % awake with Home open, on either listening backend (CI 10.8 %); about 6 % once dozing | **≤ 3 %** |
+| Idle memory (Ember's processes, PSS) | ≈ 700–790 MB listening on the C API the Linux packages run, ≈ 900–950 MB on WebAssembly (Home open; the listening process ≈ 240 MB against ≈ 400 MB) | **≤ 400 MB** |
 | Words wrong on your names, apps and projects | not measured | **halved** against the phase-0 baseline |
 
 ## 4. Decisions and phases
@@ -166,7 +166,8 @@ reported in every PR that touches it.
   fed in. It prints PSS and CPU per process, and per page through DevTools, as this plan's numbers were taken, then the
   same as JSON. With `--max-cpu` and `--max-pss` (docs/DEVELOPING.md records the figures) it fails only on a large
   regression, never on noise. CI's `el8` job runs it with that budget, after the desktop suites, past the first minute
-  and under a compositor, so the overlay beside the cursor is counted (`--compositor`).
+  and under a compositor, so the overlay beside the cursor is counted (`--compositor`): listening on the C API the
+  Linux packages run (`--native`), then on WebAssembly, each against its own budget. It says which backend it measured.
 - `voice.latency` logs transcription time and the steps from transcript arrival to the first speaking report. `voice.hush_ack`
   logs how long the speaking renderer took to acknowledge cancellation. The logs contain no words (CLAUDE.md privacy).
   See the [timing fields in the development guide](DEVELOPING.md#how-speech-runs-native-synthesis-native-or-webassembly-listening).

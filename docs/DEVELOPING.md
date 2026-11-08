@@ -911,14 +911,22 @@ regression alongside the Electron smoke.
   overlay beside the cursor falls back to the handle card; `--compositor` starts xcompmgr on the display first
   (EPEL's `xcompmgr` on EL8), so the overlay is measured too, and the run fails if the overlay didn't start.
 - It agrees to the consent version the build asks for (it used to agree to an older one, which kept the microphone
-  shut). Awake at rest, listening in silence, with Home open (no sign-in), it measured 758 MB and 11.3 % of one core on
-  4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main threads. Most of the
-  drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open decisions (docs/ASSISTANT.md).
-- `--max-cpu 16 --max-pss 950` is the budget for a change: past either it says so and exits 1. It sits above those
-  figures so that only a large regression fails it, never noise; the target is docs/ASSISTANT.md's. CI's `el8` job
-  runs it with that budget as its last step, past the first minute and with the overlay counted (`--compositor
-  --settle 70 --sample 30`; the same run here, 2026-11-08: 842–853 MB and 12.3–14.6 % with the machine shared, against
-  882 MB and 12.2 % without the overlay).
+  shut). Awake at rest, listening in silence on WebAssembly, with Home open (no sign-in), it measured 758 MB and 11.3 %
+  of one core on 4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main
+  threads. Most of the drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open
+  decisions (docs/ASSISTANT.md).
+- A development build listens on WebAssembly. `--native` listens on sherpa-onnx's C API, as the Linux packages do: it
+  runs `scripts/voice/fetch-capi.mjs` (which checks the libraries by SHA-256, fetching them first when they aren't
+  there) and fails unless Ember used them. Either way the first line and the JSON (`backend`) say which backend Ember
+  ran, from `voice.backend` in its log; a caller's own `EMBER_SHERPA_CAPI` or `EMBER_VOICE_BACKEND` is never passed on.
+  With `--compositor --settle 70 --sample 30` on 4 shared vCPUs (2026-11-08), the listening process took 238–244 MB on
+  the C API against 402–403 MB on WebAssembly: 695–785 MB and 14.2–15.4 % of a core in all, against 942–947 MB and
+  14.3–15.5 % (Ember's other processes vary by about 90 MB from run to run).
+- `--max-cpu 16 --max-pss 850` with `--native`, and `--max-cpu 16 --max-pss 950` without it, are the budget for a
+  change: past either figure it says so and exits 1. Each sits above what CI measures so that only a large regression
+  fails it, never noise; the target is docs/ASSISTANT.md's. CI's `el8` job runs both as its last steps, past the first
+  minute and with the overlay counted (`--compositor --settle 70 --sample 30`; at 73554c2, before `--native`, it
+  measured 899 MB and 10.8 % on WebAssembly, the listening process 390 MB of it).
 
 ### Connecting Copilot
 
