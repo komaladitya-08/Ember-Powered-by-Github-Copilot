@@ -388,24 +388,25 @@ the automated tests don't stand in for them.
   to try, instead of asking for phrases that would run as real requests.
 - **Listen once hears a long request to its end.** Speech must start within 8 seconds (a request begun just before
   then counts); what you are still saying then is heard to the end, up to 20 seconds from the press, instead of being
-  thrown away as “No request heard”. When only a TV or someone else is talking, it sends nothing: talk already going
-  as you press ends it at 8 seconds with “No request heard. Try again.”, and talk that starts in its first second,
-  which it can't tell from a request begun then, at 12 seconds with “I heard talking but couldn't tell it was a
-  request. Wait a moment after pressing Listen once, then speak.” (in Settings, “There was talking, but Ember couldn't
-  tell it was a request…”), so a request begun in that first second must end within 12. While it waits for you,
-  Settings' voice line says “Listening…” and the handle's microphone badge “Listening”, and with “Hey Ember” off the
-  line goes from “Starting…” to “Listening…” to off, never saying Ember is listening for its name. With a screen
-  reader running, what it announces as Listen once opens is left out of your request, and when that is heard, your 8
-  seconds start after it. On a muted microphone it says “The microphone is sending only silence…”, and pressed while
-  Ember talks or answers, it stops that first and listens, as “Hey Ember” does.
-- **What a screen reader says isn't heard as your request.** While Ember's microphone is open for one (after “Hey
-  Ember”, in a conversation or during Listen once), Settings' voice line and Listen once's line in Settings and in Ask
-  still show what changed but don't tell a screen reader, so “Hearing you…” and “Ember is already listening.” aren't
-  read out over what you say, nor is “Answer Ember's question first.” while a conversation stays open for your spoken
-  answer. “Ember is already listening.” stays under Listen once as its description, and browse mode doesn't find an
-  out-of-date line beside the one shown (“Checking the microphone…” beside “Ember is already listening.”). After an
-  answer, while Ember waits for your follow-up or the conversation's next words, the voice line says “Listening…”, as
-  the handle's badge does, instead of “Hearing you…”.
+  thrown away as “No request heard”. When only a TV or someone else is talking as it starts, it sends nothing: talk
+  already going as you press ends it at 8 seconds with “No request heard. Try again.”, and talk that starts in its
+  first second and is still going at 12 seconds, which it can't tell from a request begun then, ends it there with “I
+  heard talking but couldn't tell it was a request. Wait a moment after pressing Listen once, then speak.” (in
+  Settings, “There was talking, but Ember couldn't tell it was a request…”), so a request begun in that first second
+  must end within 12. While it waits for you, Settings' voice line says “Listening…” and the handle's microphone badge
+  “Listening”, and with “Hey Ember” off the line goes from “Starting…” to “Listening…” to off, never saying Ember is
+  listening for its name. With a screen reader running, what it announces as Listen once opens is left out of your
+  request, and when that is heard, your 8 seconds start after it. On a muted microphone it says “The microphone is
+  sending only silence…”, and pressed while Ember talks or answers, it stops that first and listens, as “Hey Ember”
+  does.
+- **What a screen reader says of Ember's listening isn't heard as your request.** While Ember's microphone is open for
+  one (after “Hey Ember”, in a conversation or during Listen once), Settings' voice line and Listen once's line in
+  Settings and in Ask still show what changed but don't tell a screen reader, so “Hearing you…” and “Ember is already
+  listening.” aren't read out over what you say, nor is “Answer Ember's question first.” while a conversation stays
+  open for your spoken answer. “Ember is already listening.” stays under Listen once as its description, and browse
+  mode doesn't find an out-of-date line beside the one shown (“Checking the microphone…” beside “Ember is already
+  listening.”). After an answer, while Ember waits for your follow-up or the conversation's next words, the voice line
+  says “Listening…”, as the handle's badge does, instead of “Hearing you…”.
 - **Pause to think mid-request.** After a word such as “the” or “and”, Ember waits 0.9 seconds more for the rest: “And
   make the text a… bit bigger” is now one request, also when the pause falls as Listen once's 8 seconds run out.
   Quieter talk from someone else that follows isn't joined to it, and when only that talk follows, what you said
@@ -671,9 +672,9 @@ the automated tests don't stand in for them.
   what an app keeps (“Clear everything saved about me in Firefox”). Asked to forget something about you with more
   after it (“Forget my address and open Firefox”), Ember does the rest and then says memory can't change what's saved,
   and its **Open Memory** opens Memory's list, where Forget is. Neither promises what memory can't do.
-- **No request lands on “I agree, remember”.** While memory is off, “Ember, get to know me” and **Open Memory** open
-  Settings › Memory at its note's words, and “I agree, remember”, like **I agree, work without asking**, ignores a
-  press in the first half second after its card appears.
+- **No request lands on “I agree, remember”.** While memory is off, “Ember, get to know me” and the **Open Memory**
+  after a request to remember open Settings › Memory at its note's words, and “I agree, remember”, like **I agree,
+  work without asking**, ignores a press in the first half second after its card appears.
 - **Undo after Forget.** The list says what went and offers Undo for a minute, also while memory is switched off.
   Pressing Enter a second time no longer forgets the next memory or learnt word, Forget all words asks first, and
   forgetting a learnt word in Settings › Voice says which went. Ember forgets a memory in conversation only when you
@@ -715,11 +716,11 @@ the automated tests don't stand in for them.
 - **A crashing accessibility helper no longer spins a processor core.** One that crashed on every request was started
   again about 29 times a second; Ember now waits longer between tries, up to a minute, and still starts one at once
   when you ask for something.
-- **Ember uses less of the processor while it rests beside your cursor.** Between its blinks and fidgets its face is
-  drawn about 6 times a second, not 18 to 24, and it moves 10 times a second instead of 60 once it and the pointer are
-  still. On a computer without a GPU, idle use went from about 11–15 % of a core to 9–10 % (listening for “Ember” adds
-  to that). Home doesn't draw its resting characters while you're working in another window, which saves about 3 % of
-  a core more while it is open.
+- **Ember uses less of the processor while it rests beside your cursor.** Between its blinks, glances and fidgets its
+  face is drawn about 6 times a second, not 18 to 24, and it moves 10 times a second instead of 60 once it and the
+  pointer are still. On a computer without a GPU, idle use went from about 11–15 % of a core to 9–10 % (listening for
+  “Ember” adds to that). Home doesn't draw its resting characters while you're working in another window, which saves
+  about 3 % of a core more while it is open.
 - **Opening Home or the stop shortcut no longer waits 5 seconds each time** when Linux's accessibility bindings hang:
   after its first look, Ember looks for them in the background, and so does **Check again** in the setup check, so
   Ember and its stop shortcut keep working meanwhile. Bindings installed while Ember runs (`sudo dnf install
