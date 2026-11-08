@@ -183,6 +183,23 @@ describe("spokenText", () => {
     ["Tip: press Control S to save it\nI can do that for you if you like", "Tip: press Control S to save it\nI can do that for you if you like"],
   ])("ends the labelled lines of %j so they are said apart (voice-speaking-c3-2)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
 
+  // The line before a heading or a label ends too, as before a list's item: "Keep both copies Option B." was one breath.
+  it.each([
+    ["### Option A\nKeep both copies\n### Option B\nDelete the older one", "Option A.\nKeep both copies.\nOption B.\nDelete the older one"],
+    ["Option A: Keep both copies\nThis is the safest choice\nOption B: Delete the older one", "Option A: Keep both copies\nThis is the safest choice.\nOption B: Delete the older one"],
+    ["**Step 1:** Open Settings\n   Then go to Privacy\n**Step 2:** Turn off Location", "Step 1: Open Settings\n   Then go to Privacy.\nStep 2: Turn off Location"],
+    ["Here's what I'd do\nStep 1: Open Settings\nStep 2: Turn off Location", "Here's what I'd do.\nStep 1: Open Settings.\nStep 2: Turn off Location."],
+    // A label with a spaced dash, two in a row, is a list's items too.
+    ["**Option A** – keep both copies\n**Option B** – delete the older one", "Option A – keep both copies.\nOption B – delete the older one."],
+  ])("ends the line before a heading or a label in %j, so the next one's name is never said at its end (voice-speaking-r4-2)", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+
+  it("ends a labelled step said after another one already said, as the stream says them (voice-speaking-c4-1)", () => {
+    expect(spokenText("Step 3: Turn off Location", { afterLabel: true })).toBe("Step 3: Turn off Location.");
+    expect(spokenText("Step 3: Turn off Location")).toBe("Step 3: Turn off Location");
+    // A line of other words after a label line is still its paragraph.
+    expect(spokenText("They look right to me", { afterLabel: true })).toBe("They look right to me");
+  });
+
   it("ends the lines a colon line leads into when that line was said already, as a stream cuts after it (voice-speaking-3)", () => {
     const steps = "Open the spreadsheet you sent me this morning\nAdd up the totals for each month\nSave it as a new file in Documents";
     expect(spokenText(steps, { ledIn: true })).toBe("Open the spreadsheet you sent me this morning.\nAdd up the totals for each month.\nSave it as a new file in Documents.");

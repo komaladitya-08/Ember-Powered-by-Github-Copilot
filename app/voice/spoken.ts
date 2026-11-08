@@ -213,10 +213,16 @@ const ENDED = /[.!?…:;,]["”’')\]*_]*$/;
  */
 const BARE_ITEM = (body: string) => body.length <= 40 && body.trim().split(/\s+/).length <= 4 && /^[ \t]*[\p{Lu}\p{N}]/u.test(body);
 /**
- * A line that starts with a short label and its colon ("Step 1: Open Settings", "Option A: Keep it"): two or more in a
- * row are a list's items, so a label is never said at the end of the step before it (voice-speaking-c3-2).
+ * A line that starts with a short label and its colon ("Step 1: Open Settings", "Option A: Keep it") or a spaced dash
+ * ("Option A – keep both"): two or more in a row are a list's items, and the line before one ends, so a label is never
+ * said at the end of the step before it (voice-speaking-c3-2, voice-speaking-r4-2).
  */
-const LABEL = /^[ \t]*\p{Lu}[\p{L}\p{N} ]{0,24}:[ \t]+\S/u;
+const LABEL = /^[ \t]*\p{Lu}[\p{L}\p{N} ]{0,24}(?::|[ \t]+[–—-])[ \t]+\S/u;
+
+/** Whether a line of an answer, as Markdown writes it ("**Step 2:** Choose Privacy"), starts with a label (LABEL). */
+export function labelLine(line: string): boolean {
+  return LABEL.test(line.replace(/\*\*|__/g, ""));
+}
 
 /**
  * Each list item, heading, line leading into a list and paragraph ends with a full stop where it has no ending of its
@@ -224,8 +230,10 @@ const LABEL = /^[ \t]*\p{Lu}[\p{L}\p{N} ]{0,24}:[ \t]+\S/u;
  * (voice-speaking-3). A line wrapped inside a paragraph is left as it is, and so is what is only shown in the bubble.
  * `ledIn`: a line ending with a colon, said already, leads into the first line. `lineStart`: the start of the first
  * line, said already, so an arrow starting what is left of it is no bullet, and a label at its start still counts.
+ * `afterLabel`: the line before the first, said already, starts with a label, so a label line first is the next of
+ * their list.
  */
-function endLines(text: string, ledIn = false, lineStart = ""): string {
+function endLines(text: string, ledIn = false, lineStart = "", afterLabel = false): string {
   const lines = text.split("\n");
   const item = lines.map((l, i) => ITEM.test(l) && !(i === 0 && lineStart && ARROW_BULLET.test(l)));
   // How many bare items run together through each line (voice-speaking-3: "Your windows\nFirefox\nFiles").
@@ -245,8 +253,9 @@ function endLines(text: string, ledIn = false, lineStart = ""): string {
   return lines.map((line, i) => {
     const body = line.trimEnd(), next = lines[i + 1];
     if (!body.trim() || RULE.test(body) || ENDED.test(body) || body.endsWith(CODE) || body.endsWith(TABLE)) return line;
-    const listed = (led[i] && (led[i - 1] || led[i + 1])) || (label[i] && (label[i - 1] || label[i + 1]));
-    const alone = item[i] || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || item[i + 1]));
+    const listed = (led[i] && (led[i - 1] || led[i + 1])) || (label[i] && ((i === 0 && afterLabel) || label[i - 1] || label[i + 1]));
+    // Before a heading or a label too, as before a list's item: "Keep both copies Option B." was said in one breath.
+    const alone = item[i] || HEADING.test(body) || run[i] >= 3 || listed || (next !== undefined && (!next.trim() || item[i + 1] || HEADING.test(next) || label[i + 1]));
     return alone ? `${body}.` : line;
   }).join("\n");
 }
@@ -257,9 +266,10 @@ function endLines(text: string, ledIn = false, lineStart = ""): string {
  * line, said already, as a long first sentence is cut inside its line: an arrow starting the rest is no bullet ("
  * → Accessibility" is "to Accessibility": voice-speaking-v4-3), and a label at the line's start still makes it a
  * labelled step ("Step 1: Open Settings," said, then "then go to Privacy\nStep 2: …" ends the step before "Step 2":
- * voice-speaking-v4-4).
+ * voice-speaking-v4-4). `o.afterLabel`: the line before its first, said already, starts with a label ("Step 1: …"
+ * said, then "Step 2: Turn off Location" ends as the step it is: voice-speaking-c4-1).
  */
-export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: string } = {}): string {
+export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: string; afterLabel?: boolean } = {}): string {
   const prose = markdown
     // Fenced code (an unclosed fence runs to the end, as a streamed answer can).
     .replace(FENCED_CODE, `$1${CODE}`)
@@ -291,7 +301,7 @@ export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: s
     // "2**8", "_config.yml" or "__init__.py".
     .replace(/(^|[\s(])(?:\*\*?|_(?=\p{L}+(?:[\s,;:!?)]|$)))(?=\p{L})/gu, "$1")
     .replace(/(?<=[\p{L}\p{N}.,!?;:])(?:\*\*?|_)(?=[\s.,!?;:)]|$)/gu, "");
-  const said = endLines(plain, o.ledIn, o.lineStart)
+  const said = endLines(plain, o.ledIn, o.lineStart, o.afterLabel)
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
     .replace(/^[ \t]*>[ \t]?/gm, "")
     .replace(/^[ \t]*[-*+→][ \t]+/gm, (m: string, at: number) => (at === 0 && o.lineStart && ARROW_BULLET.test(m) ? m : ""))
