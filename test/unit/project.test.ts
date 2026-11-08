@@ -120,6 +120,15 @@ it("sends auth, credentials and model-client code that names a token or a passwo
   await expect(prompt([fallback])).rejects.toThrow("contain a password");
 });
 
+it("refuses a setup script that exports a password and a request that gives one after “its” (memory-v5-1, memory-v5-2)", async () => {
+  const setup = await file("setup.sh", "#!/bin/sh\nexport DB_USER=app\nexport DB_PASSWORD=correcthorsebatterystaple\n./start\n");
+  await expect(projectPrompt([setup], "review", "Why does start fail?", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
+  const db = await file("db.py", "import os\n");
+  await expect(projectPrompt([db], "review", "Connecting fails, the db password: its Tr0ub4dor&3", new AbortController().signal, privateDir)).rejects.toThrow("Remove passwords");
+  const gh = await file("gh-env.sh", "#!/bin/sh\nexport GITHUB_TOKEN=$(gh auth token)\n");
+  expect(await projectPrompt([gh], "review", "Why does the token come back empty?", new AbortController().signal, privateDir)).toContain("$(gh auth token)");
+});
+
 it("offers a reviewed patch whose new line sets max_tokens or reads a key from the environment (memory-r4-2, integrations-c4-1)", async () => {
   const source = await file("client.ts", "export const options = {\n  temperature: 0.2,\n};\n");
   const snapshots: ProjectSource[] = [];

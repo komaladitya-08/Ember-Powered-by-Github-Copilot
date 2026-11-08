@@ -80,7 +80,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   is as often its password, "P@ss-w0rd": safety-privacy-1; the model is told it may be the login's password, never
   that it is one), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
-  value would be ("the password for Netflix is saved in 1Password") aren't a value, and a code counts only for
+  value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
+  "hashed" and "masked" only before more words with no digit or symbol: "password: never logged", but "Wi-Fi password
+  is its BlueSky99" and "Password for Gmail is never Summer2024!" are refused, memory-v5-1), and a code counts only for
   something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors",
   "our office ZIP code is 90210" and, since a house, a home or an office locks only as someone's or "the" one,
   "Post office code: 560001", "Branch office code: 4410" and "our in-house code is 2000 lines long" (memory-v4-3)
@@ -107,7 +109,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   names a secret or the same name ("self.password = password", "creds = creds_v2"), a count ("max_tokens=256"), an
   arrow or a property ("token => …", "token.type === …") and code on the next line ("creds.refresh_token:"); only the
   name is passed over, so a token in the value is still found. A quoted value, a bare word, a value with a digit or a
-  symbol and a PIN's number stay values, and so does code that gives a literal as a default or one shaped like a
+  symbol, a PIN's number and a shell variable's unquoted word ("export DB_PASSWORD=changeme", "readonly
+  ADMIN_PASSWORD=opensesame": "=" with nothing around it, first on its line or after export, readonly, declare,
+  typeset, local or ENV, memory-v5-2) stay values, and so does code that gives a literal as a default or one shaped like a
   password ("os.getenv('PW', 'changeme')", "pw || 'hunter2'", "f(user, 'S3cret!')"). Secrets are refused whole, never
   stored redacted.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.

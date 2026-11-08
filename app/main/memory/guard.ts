@@ -10,6 +10,15 @@
 import { redactSecrets } from "../commands/redact";
 
 /**
+ * Words that say no value follows only with more words after them in the clause, none with a digit or a symbol
+ * ("Password: never logged", "password: hashed with bcrypt", "The pin of a tool: its name, description…"; "its" before
+ * two words at least), since a slip for "it's" or a value after one is written the same way ("Wi-Fi password is its
+ * BlueSky99", "Password for Gmail is never Summer2024!", "password: its fluffy"): memory-v5-1.
+ */
+const CLAUSE_WORD = String.raw`[ \t]+[A-Za-z][A-Za-z'’-]*(?![\w!@#$%^&*])`;
+const CLAUSE_END = String.raw`[^\d!@#$%^&*\n.;]{0,80}(?:[\n.;]|$)`;
+const BEFORE_WORDS = String.raw`its(?=${CLAUSE_WORD}[ \t,]*${CLAUSE_WORD}${CLAUSE_END})|(?:never|typed|entered|hashed|masked)(?=${CLAUSE_WORD}${CLAUSE_END})`;
+/**
  * Words that follow a secret's name without being its value ("the password is required", "PIN: the tab is pinned",
  * "Password: changed yesterday"): a value is anything else ("hunter2", "correct-horse").
  */
@@ -20,8 +29,7 @@ const NOT_A_VALUE = [
   "different", "unchanged", "missing", "incorrect", "invalid", "valid", "too", "very", "also", "still", "fine", "empty", "blank", "none",
   "shown", "visible", "encrypted", "optional", "case-sensitive", "long", "short", "below", "above", "here", "there",
   "done", "due", "expiring", "broken", "working", "ok", "okay", "complete", "temporary", "known", "unknown", "shared", "sent",
-  "printed", "written", "listed", "attached", "included", "strict", "changing", "same", "its", "never", "typed", "entered", "hashed",
-  "masked",
+  "printed", "written", "listed", "attached", "included", "strict", "changing", "same", BEFORE_WORDS,
 ].join("|");
 
 /**
@@ -147,15 +155,21 @@ function codeMember(chain: string): boolean {
 
 /** A line of code by how it starts or ends ("const …", "export declare …", "def …", "… {"): a bare name in it is a variable. */
 const CODE_LINE = /^\s*(?:export|declare|const|let|var|val|final|readonly|private|public|protected|static|abstract|override|async|function|def|fn|func|interface|class|struct|enum|return|yield|await)\s|[{(]\s*$/;
+/**
+ * What may stand before a shell's variable on its line: nothing, export, readonly, declare or typeset and their flags,
+ * local, a Dockerfile's ENV, and other variables set before it ("DB_USER=app DB_PASSWORD=x ./start"): memory-v5-2.
+ */
+const SHELL_BEFORE = /^\s*(?:(?:export|readonly|declare|typeset|local)(?:\s+-[A-Za-z]+)*\s+|ENV\s+)?(?:[A-Za-z_]\w*=\S*\s+)*$/;
 /** A TypeScript type ("type CommentOrToken = Comment | Token;"), which never holds a value. */
 const TYPE_ALIAS = /^\s*(?:export\s+)?(?:declare\s+)?type\s+[A-Za-z_$][\w$]*(?:<[^=\n]*>)?\s*=/;
 
 /**
  * What a key is: the name that says a secret, whether a number after it is a count or a PIN, whether it is compared
  * through a property or is a ternary's quoted branch ("token.value === …", '? "password" : …'), so a literal after it is
- * code unless shaped like a password, and whether typeof reads it ("typeof token === …").
+ * code unless shaped like a password, whether typeof reads it ("typeof token === …"), and whether it is a shell's
+ * variable, whose unquoted value is a literal ("export DB_PASSWORD=changeme"), never a name (memory-v5-2).
  */
-interface CodeKey { name: string; count: boolean; pin: boolean; compared: boolean; typeOf: boolean }
+interface CodeKey { name: string; count: boolean; pin: boolean; compared: boolean; typeOf: boolean; shell: boolean }
 
 /** Whether `v`, what follows a secret-named key's ":" or "=" on `line`, reads as code rather than a value. */
 function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
@@ -182,11 +196,13 @@ function readsAsCode(key: CodeKey, v: string, line: string, op = "="): boolean {
   const word = /^[^\s,;)\]}"'`]+/.exec(v)?.[0] ?? "";
   // A setting's own name and a value that isn't shaped like a password ("AWS_PROFILE=dev2").
   const setting = /^[A-Z][A-Z0-9]*_[A-Z0-9_]*=([^\s,;]*)/.exec(v);
-  if (PLACEHOLDER.test(word) || CODE_TYPE.test(v) || CODE_WORD.test(v) || (setting && !secretShaped(setting[1]!))) return true;
+  if (PLACEHOLDER.test(word) || (!key.shell && (CODE_TYPE.test(v) || CODE_WORD.test(v))) || (setting && !secretShaped(setting[1]!))) return true;
   // A negated member ("!!n.secret", "!opts.token").
-  if (/^!!?[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+/.test(v)) return true;
+  if (!key.shell && /^!!?[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+/.test(v)) return true;
   const num = /^-?(?:0x[0-9a-f]+|\d[\d_]*(?:\.\d+)?(?:e[-+]?\d+)?)(?![\w$@.!#%&*:/-])/i.exec(v)?.[0];
   if (num) return key.count || (!key.pin && /^-?(?:\d{1,2}|0x[0-9a-f]{1,4}|\d*\.\d+(?:e[-+]?\d+)?)$/i.test(num));
+  // A shell's unquoted word is its value, whatever it looks like (memory-v5-2).
+  if (key.shell) return false;
   // A call, an index or a generic, written as code does with nothing between ("loadCreds(argv[2])", "tokens[0]",
   // "Optional[str]", "Record<string, …>"), never "hunter (the usual)".
   if (/^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*!?[([]|^[A-Za-z_$][\w$.]*<[A-Za-z_$]/.test(v)) return true;
@@ -241,9 +257,12 @@ function withoutCodeKeys(text: string): string {
     const property = s < segs.length - 1;
     const count = own.some(w => COUNT_PARTS.test(w));
     const before = text.slice(Math.max(0, start - 8), start);
+    const lineStart = text.lastIndexOf("\n", start) + 1;
     const key: CodeKey = {
       name: segs[s]!, count, pin: !count && own.some(w => PIN_PARTS.test(w)),
       compared: (property && op.startsWith("==")) || /\?\s*["'`]$/.test(before), typeOf: op.startsWith("==") && /\btypeof\s+$/.test(before),
+      shell: op === "=" && text[start + name.length] === "=" && /^[A-Za-z_]\w*$/.test(name) && /^[^\s,)]\S*(?<![,)])(?!\S)/.test(text.slice(i, i + 400))
+        && SHELL_BEFORE.test(text.slice(lineStart, start)),
     };
     let code: boolean;
     // An arrow's parameter, a path, or a property about the secret ("token.type").
@@ -251,7 +270,6 @@ function withoutCodeKeys(text: string): string {
     else {
       // Each look is bounded (a value's first 400 characters, its line's first and last 200), so a long line of
       // keys stays linear.
-      const lineStart = text.lastIndexOf("\n", start) + 1;
       const lineEnd = text.indexOf("\n", i);
       const end = lineEnd < 0 ? text.length : lineEnd;
       const rest = text.slice(i, Math.min(end, i + 400)).replace(/^[ \t]+/, "");

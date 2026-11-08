@@ -341,6 +341,37 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
 
+  // "its" for "it's" and a password that starts with "never" were kept once those words counted as no value
+  // (memory-v5-1); they say no value only before more words with no digit or symbol.
+  it.each([
+    ["Wi-Fi password is its BlueSky99"], ["My bank PIN: its 4821"], ["The admin password: its hunter2"], ["The password for the HR portal: its Tr0ub4dor&3"],
+    ["The API token: its abcdef123456"], ["Password for Gmail is never Summer2024!"], ["password: its fluffy"], ["The router password is its default, admin123"],
+  ])("refuses %j and saves nothing, a password after “its” or “never” (memory-v5-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["password: never logged"], ["password: hashed with bcrypt"], ["The pin of a tool: its name, description, schema and hints."],
+    ["The API key is typed into a password field and sent to main once;"], ["The API key is never here: it is kept apart."],
+  ])("keeps %j, where no value follows (memory-v5-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // A shell's unquoted word is its value, never a variable's name: these were passed over as code (memory-v5-2).
+  it.each([
+    ["export DB_PASSWORD=changeme"], ["export PASSWORD=letmein"], ["readonly ADMIN_PASSWORD=opensesame"], ["declare -x PASSWORD=letmein"],
+    ["export API_TOKEN=abcdefghijklmnopqrstuv"], ["export DB_PASSWORD=correcthorsebatterystaple"], ["PASSWORD=password"], ["DB_USER=app DB_PASSWORD=letmein ./start"],
+    ["local password=letmein"], ["export TOKEN=token"],
+  ])("refuses %j, a shell variable set to a password (memory-v5-2)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  it.each([
+    ["export GITHUB_TOKEN=$(gh auth token)"], ["export TOKEN=$OTHER_TOKEN"], ["export API_KEY=your-key"], ["export TOKEN_TTL=3600"],
+    ["client = Client(\n    token=token,\n    password=password,\n)"], ["login(user, password=pw)"],
+  ])("keeps %j, a shell reference or a keyword argument (memory-v5-2)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   // A Wi-Fi password under the names Windows and routers give it, which Ember's screen reading already treats as secret
   // (safety-privacy-c4-2), and a security question's answer in the model's own style (memory-1).
   it.each([
