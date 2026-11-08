@@ -271,7 +271,8 @@ const RELATIVE = new Set(["that", "which", "who"]);
 /**
  * The parts of the user's words a row's verb acts on (commands-remote-c3-1): each clause that asks for one of `verbs`
  * (as requestStarts reads it), with the clauses after it that only list more things for it ("delete build/, dist/ and
- * the cache folder"), up to the next verb, a new sentence, a colon, a dash, "then", "but" or "so". What the words say
+ * the cache folder", "kill these processes: 1234 and 5678"), up to the next verb, a new sentence, a dash, "then",
+ * "but" or "so". What the words say
  * of a thing (its subject before "is", "stays", "must", "has to" and the like: "kill 5678, 1234 is my editor") is cut
  * out, so it never counts as named. Each part is returned as words of its own for the row to read. Conservative: a
  * clause that begins with any other word ends the list, and only makes the step ask.
@@ -295,7 +296,8 @@ function actedOn(raw: string, verbs: readonly string[], names: (token: string) =
     const pieces = sentence.split(/([,:;]\s+|\s+[-–—]\s+)/);
     let list = false;
     for (let p = 0; p < pieces.length; p++) {
-      if (p % 2 === 1) { list = /^,/.test(pieces[p]); continue; }
+      // A colon after the verb's clause lists what it acts on ("delete these folders: build/ and dist/").
+      if (p % 2 === 1) { list = /^[,:]/.test(pieces[p]); continue; }
       let cur: string[] = [];
       for (const t of pieces[p].split(/\s+/).filter(x => x !== "")) {
         const ws = userWordList(t);
@@ -626,14 +628,21 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     return { intent: "gh.pr.create", announce: "Opening a pull request, as you asked." };
   },
   "gh.pr.merge": (fs, w, _ctx, _all, whole) => {
-    if (!asks(w, ["merge"]) || !hasWord(w.list, ["pull request", "pr"])) return null;
+    // "merge it" refers back to a pull request the words name elsewhere ("pr 45 looks good. merge it").
+    if (!asks(w, ["merge"]) || !(hasWord(w.list, ["pull request", "pr"]) || (hasWord(w.list, ["it"]) && hasWord(whole.list, ["pull request", "pr"])))) return null;
     if (fs.some(f => f.widening.some(x => /^(--admin|-R|--repo)$/.test(x)))) return null;
     // Deleting the branch is a request of its own ("merge pr 12 and delete the branch"), so it is read in all the words.
     if (fs.some(f => f.rule === "gh.pr.merge.delete-branch") && !actedOn(whole.raw, ["delete"], () => false).some(p => hasWord(wordsOf(p).list, ["branch"]))) return null;
-    const nums = [...new Set(fs.flatMap(f => f.objects.filter(o => o.kind === "other").map(o => o.text.replace(/^#/, ""))))];
-    if (nums.some(n => !w.list.includes(n.toLowerCase()))) return null;
-    // `gh pr merge` alone merges the current branch's pull request, which may not be the one the user numbered.
-    if (nums.length === 0 && w.list.some(x => /^\d+$/.test(x))) return null;
+    const nums = [...new Set(fs.flatMap(f => f.objects.filter(o => o.kind === "other").map(o => o.text.replace(/^#/, "").toLowerCase())))];
+    const numbered = (l: readonly string[]) => [...new Set(l.filter(x => /^\d+$/.test(x)))];
+    // A number said in another clause ("check pr 45, then merge the pr") counts only when the merge numbers none of its
+    // own, only refers back, and it is the one number in all the words (commands-remote-v4-6).
+    const said = numbered(whole.list);
+    const back = numbered(w.list).length === 0 && !hasWord(w.list, BACK_NOT) && said.length === nums.length && nums.every(n => said.includes(n));
+    if (nums.some(n => !w.list.includes(n)) && !back) return null;
+    // `gh pr merge` alone merges the current branch's pull request, which may not be the one the user numbered, in
+    // any of their words ("look at pull request 45. merge the pr": commands-remote-v4-2).
+    if (nums.length === 0 && said.length > 0) return null;
     return { intent: "gh.pr.merge", announce: `Merging pull request ${nums.length ? joinList(nums) : ""}, as you asked.`.replace("request ,", "request,") };
   },
   "pkg.publish": (fs, w) => {
@@ -729,6 +738,9 @@ const ROWS: Readonly<Record<string, RowFn>> = {
   },
 };
 
+/** Words that point a merge at some pull request other than the one the words number ("merge the other pr"). */
+const BACK_NOT: readonly string[] = ["other", "another", "next", "previous", "first", "second", "last", "both", "all", "each", "every", "prs", "pull requests", "them"];
+
 /** Whether a token of the user's words names this object (its text, its last segment or its name without a suffix). */
 function namesObject(o: CommandObject, token: string): boolean {
   const t = token.replace(/^[("'`“‘[{<]+|[)"'`”’\]}>.,;:!?]+$/g, "");
@@ -791,7 +803,16 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     const names = (t: string) => fs.some(f => f.objects.some(o => namesObject(o, t)));
     const verbs = row.startsWith("git.push") ? ["push", "force push"] : ROW_VERBS[row] ?? [];
     let m: IntentMatch | null = null;
-    for (const part of actedOn(w.raw, verbs, names)) if ((m = fn(fs, wordsOf(part), ctx, F, w))) break;
+    const acted = actedOn(w.raw, verbs, names);
+    for (const part of acted) if ((m = fn(fs, wordsOf(part), ctx, F, w))) break;
+    // The verb said again ("delete build/ and delete dist/", "kill 1234. Kill 5678 too."): the parts that ask for that
+    // same verb are read together, so each thing is still named where the verb asks for it (commands-remote-v4-6), and
+    // never parts with another verb ("stop apache and restart nginx" never covers `systemctl restart apache`).
+    for (const v of verbs) {
+      if (m) break;
+      const same = acted.filter(p => asks(wordsOf(p), [v]));
+      if (same.length > 1) m = fn(fs, wordsOf(same.join("\n")), ctx, F, w);
+    }
     if (!m) return null;
     parts.push(m);
   }

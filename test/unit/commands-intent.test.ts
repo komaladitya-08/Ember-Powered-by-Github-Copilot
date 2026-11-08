@@ -435,3 +435,48 @@ describe("matchIntent: only what the asked-for verb acts on (commands-remote-c3-
     expect(announce(cmd, words, { git: FEATURE })).toBe(said);
   });
 });
+
+describe("matchIntent: a pull request numbered anywhere in the words (commands-remote-v4-2)", () => {
+  it.each([
+    "look at pull request 45. merge the pr",
+    "check pull request 45, then merge the pr",
+    "review pr 45 and merge the pr",
+    "pr 45 looks good. merge it",
+  ])("asks for `gh pr merge` (the current branch's pull request) after %j", words => {
+    expect(announce("gh pr merge", words)).toBeNull();
+  });
+
+  it("still announces a bare merge when the words number no pull request", () => {
+    expect(announce("gh pr merge", "merge the pr")).toBe("Merging pull request, as you asked.");
+  });
+});
+
+describe("matchIntent: the verb said again, or a list after a colon (commands-remote-v4-6)", () => {
+  it.each([
+    ["rm -rf build dist", "delete build/ and delete dist/", "Deleting build and dist, as you asked."],
+    ["rm -rf build dist", "delete build/, then delete dist/", "Deleting build and dist, as you asked."],
+    ["rm -rf build dist", "delete build/. Delete dist/ too.", "Deleting build and dist, as you asked."],
+    ["rm -rf build dist", "delete these folders: build/ and dist/", "Deleting build and dist, as you asked."],
+    ["kill 1234 5678", "kill 1234 and kill 5678", "Stopping 1234 and 5678, as you asked."],
+    ["kill 1234 5678", "kill these processes: 1234 and 5678", "Stopping 1234 and 5678, as you asked."],
+    ["npm install lodash react", "install lodash and install react", "Installing lodash and react, as you asked."],
+    ["gh pr merge 45", "pr 45 looks good. merge it", "Merging pull request 45, as you asked."],
+    ["gh pr merge 45", "check pr 45, then merge the pr", "Merging pull request 45, as you asked."],
+    ["gh pr merge", "the pr looks good, merge it", "Merging pull request, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // Each thing is still named where that very verb asks for it, and never by another verb or another pull request.
+    ["systemctl restart apache", "stop apache and restart nginx"],
+    ["npm install react lodash", "remove react and install lodash"],
+    ["rm -rf build dist", "delete build/: dist/ stays"],
+    ["kill 1234", "kill these processes: 1234 is my editor"],
+    ["gh pr merge 45", "check pr 45 and pr 46, then merge the pr"],
+    ["gh pr merge 45", "pr 45 is broken. merge pr 46"],
+    ["gh pr merge 45", "check pr 45, then merge the other pr"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+});
