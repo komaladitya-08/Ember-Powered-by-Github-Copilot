@@ -126,7 +126,7 @@ Ember stops and asks before a command that:
   `git reset --hard`, discarding changes (`git checkout -- <file>`, `git restore`), `git branch -D`,
   `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`; a `cp`
   or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it
-  exists.", where the computer says which names are folders: this computer and an SSH computer, not yet WSL; but
+  exists.", on this computer, in WSL and on an SSH computer, which each say which names are folders; but
   `cp --parents`, and a Mac's `cp -R build/ ~/Documents`, which copies what is in build straight into the folder,
   ask whenever the folder is there: "Replaces files in ~/Documents if they exist."),
   `truncate`, formatting or partitioning a disk, emptying the trash, giving a container a folder outside your project
