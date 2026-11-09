@@ -1090,13 +1090,19 @@ up for the new host, the status line says "Read the note above: Ember still uses
 quiet button reads "Keep using <host in force>" (it puts the details in force back, saving nothing), and a key typed for
 the new host waits in its field. "I agree" checks the held details with the same GET ("Checking <new host>…"); one that
 fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
-names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
-main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
+names. One that answers is adopted through `provider:adopt`: main stages its optional key with the OS keyring,
+then publishes the sealed key and the agreed settings together (integrations-r7-1). A keyring, file or settings-write
+failure retains the old endpoint and key; the new key stays in its field to retry. Editing or abandoning a pending
+draft sends `provider:cancel-adoption`, and policy, consent or settings changes invalidate it too. No key returns
+through either channel. Same-host key replacement uses the same staged storage transaction (integrations-v7-1).
 A host that has no model list at that address (404, 405 or 501 on GET /models) leaves the working provider in place
 (integrations-c5-1): that response could be a chat-only gateway or simply the wrong address, so it is not evidence
 that the replacement can answer. The typed details remain available to correct. One that can't be reached, times
 out, has a certificate Ember can't verify, refuses the key or answers with another error also changes nothing.
 This uses only the card's existing GET; no chat request or additional network probe is added.
+Private transaction files hold sealed bytes or host metadata only, at mode0600. A failed rollback retains its encrypted
+original for recovery against the endpoint still in settings; successful matching key loads clean interrupted remnants.
+Remove and sign-out erase owned transaction remnants as well as the primary key, including after a restart.
 An edit back to the host in force, or of the same host, is saved at once as before. The held card's text has no
 sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
 provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so

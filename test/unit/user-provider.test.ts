@@ -244,6 +244,8 @@ describe("Home's provider channels", () => {
     const logs: unknown[] = [];
     const calls: string[] = [];
     const full: ProviderApi = {
+      adopt: async () => { calls.push("adopt"); return { ok: true }; },
+      cancelAdoption: () => { calls.push("cancel-adoption"); },
       state: () => ({ allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false }),
       agree: () => { calls.push("agree"); return { ok: true }; },
       saveKey: async () => { calls.push("save"); return { ok: true }; },
@@ -296,6 +298,23 @@ describe("Home's provider channels", () => {
     expect(await call(PROVIDER_IPC.agree, HOME, "b.example", move)).toEqual({ ok: true });
     expect(await call(PROVIDER_IPC.agree, HOME, "b.example", { type: "azure", baseUrl: "https://b.example/v1" })).toEqual({ ok: true });
     expect(seen).toEqual([["b.example", undefined], ["b.example", move], ["b.example", { type: "azure", baseUrl: "https://b.example/v1" }]]);
+  });
+
+  it("validates bound adoption and cancellation payloads without returning or logging the key (integrations-r7-1)", async () => {
+    const seen: unknown[] = [];
+    const { call, logs } = wire({ adopt: async r => { seen.push(r); return { ok: true }; }, cancelAdoption: id => { seen.push(id); } });
+    const request = { id: "draft-1", from: "a.example", host: "b.example", move: { type: "openai", baseUrl: "https://b.example/v1" }, key: KEY };
+    for (const bad of [{ ...request, id: "" }, { ...request, from: "BAD HOST" }, { ...request, key: "x".repeat(9000) }, { ...request, extra: true },
+      { ...request, move: { ...request.move, consent: { host: "b.example" } } }]) {
+      expect(await call(PROVIDER_IPC.adopt, HOME, bad)).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    }
+    expect(seen).toEqual([]);
+    const result = await call(PROVIDER_IPC.adopt, HOME, request);
+    expect(result).toEqual({ ok: true });
+    expect(JSON.stringify([result, logs])).not.toContain(KEY);
+    expect(await call(PROVIDER_IPC.cancelAdoption, HOME, "")).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    await call(PROVIDER_IPC.cancelAdoption, HOME, "draft-1");
+    expect(seen).toEqual([request, "draft-1"]);
   });
 
   it("passes a draft of typed details to the check, and none when there is none (first-run-r2-1)", async () => {

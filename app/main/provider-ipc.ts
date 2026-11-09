@@ -9,11 +9,13 @@
  */
 
 import { z } from "zod";
-import { PROVIDER_IPC, type ProviderDone, type ProviderDraft, type ProviderMove, type ProviderState, type ProviderTest } from "../shared/ipc";
+import { PROVIDER_IPC, type ProviderAdoption, type ProviderDone, type ProviderDraft, type ProviderMove, type ProviderState, type ProviderTest } from "../shared/ipc";
 import { AZURE_API_VERSION, MAX_API_KEY, MAX_ENDPOINT, MODEL_ID, PROVIDER_TYPES, WIRE_APIS } from "../shared/provider";
 
 /** What main does for the channels (main.ts builds it over ProviderKeyStore, the settings and the host). */
 export interface ProviderApi {
+  adopt(request: ProviderAdoption): Promise<ProviderDone>;
+  cancelAdoption(id: string): void;
   state(): ProviderState | Promise<ProviderState>;
   saveKey(key: string): Promise<ProviderDone>;
   removeKey(): ProviderDone;
@@ -42,14 +44,16 @@ const HostArg = z.string().min(1).max(260).regex(/^[a-z0-9.\-[\]:]+$/);
  * its kind and address, and the models, wire API and Azure version as the settings keep them. Never the switch, a key
  * or a card's record.
  */
-export const AgreeArgs = z.union([
-  z.tuple([HostArg]),
-  z.tuple([HostArg, z.object({
-    type: z.enum(PROVIDER_TYPES), baseUrl: z.string().min(1).max(MAX_ENDPOINT),
-    conductor: z.string().regex(MODEL_ID).nullable().optional(), worker: z.string().regex(MODEL_ID).nullable().optional(),
-    wireApi: z.enum(WIRE_APIS).nullable().optional(), azureApiVersion: z.string().regex(AZURE_API_VERSION).nullable().optional(),
-  }).strict()]),
-]);
+const MoveArg = z.object({
+  type: z.enum(PROVIDER_TYPES), baseUrl: z.string().min(1).max(MAX_ENDPOINT),
+  conductor: z.string().regex(MODEL_ID).nullable().optional(), worker: z.string().regex(MODEL_ID).nullable().optional(),
+  wireApi: z.enum(WIRE_APIS).nullable().optional(), azureApiVersion: z.string().regex(AZURE_API_VERSION).nullable().optional(),
+}).strict();
+export const AgreeArgs = z.union([z.tuple([HostArg]), z.tuple([HostArg, MoveArg])]);
+/** The same checked move plus its bound source, draft identity and optional one-way key. */
+export const AdoptArgs = z.tuple([z.object({ id: z.string().min(1).max(80), from: HostArg, host: HostArg,
+  move: MoveArg, key: z.string().min(1).max(MAX_API_KEY).optional() }).strict()]);
+const CancelAdoptionArgs = z.tuple([z.string().min(1).max(80)]);
 /** The other channels take nothing. */
 export const NoArgs = z.tuple([]);
 /**
@@ -92,6 +96,8 @@ export function registerProviderIpc(
     });
   };
   handle(PROVIDER_IPC.state, NoArgs, () => api.state(), () => null);
+  handle(PROVIDER_IPC.adopt, AdoptArgs, request => api.adopt(request), () => fail(PROVIDER_BAD_REQUEST));
+  handle(PROVIDER_IPC.cancelAdoption, CancelAdoptionArgs, id => api.cancelAdoption(id), () => fail(PROVIDER_BAD_REQUEST));
   handle(PROVIDER_IPC.saveKey, SaveKeyArgs, key => api.saveKey(key), () => fail(PROVIDER_BAD_REQUEST));
   handle(PROVIDER_IPC.removeKey, NoArgs, () => api.removeKey(), () => fail(PROVIDER_BAD_REQUEST));
   handle(PROVIDER_IPC.agree, AgreeArgs, (...args) => api.agree(args[0], args[1]), () => fail(PROVIDER_BAD_REQUEST));

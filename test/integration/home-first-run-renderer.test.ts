@@ -33,7 +33,7 @@ const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], 
  * does (in force while on and agreed for the address's host; a saved key kept only for its own host), and the card's
  * yes is saved and broadcast.
  */
-interface Seed { consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
+interface Seed { failAdoption?: boolean; slowAdoption?: boolean; consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -66,7 +66,7 @@ async function open(seed: Seed = {}): Promise<Page> {
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
-  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState }) => {
+  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState, failAdoption, slowAdoption }) => {
     window.__frFailOff = failOff;
     window.__frCalls = []; window.__frPend = {};
     window.__frState = { settings, agent };
@@ -102,6 +102,7 @@ async function open(seed: Seed = {}): Promise<Page> {
       return () => new Promise(() => undefined);
     } }) as never;
     if (!noBridge) {
+      const cancelled = new Set<string>();
       window.emberProvider = {
         state: async () => {
           const p = window.__frState.settings.provider as { on: boolean; baseUrl: string; consent?: { host?: string } };
@@ -113,6 +114,22 @@ async function open(seed: Seed = {}): Promise<Page> {
         onChanged: () => () => undefined,
         saveKey: () => { window.__frCalls.push("saveKey"); keyHost = hostOf(window.__frState.settings.provider.baseUrl); return Promise.resolve({ ok: true }); },
         removeKey: async () => ({ ok: true }),
+        cancelAdoption: async (id: string) => { cancelled.add(id); window.__frCalls.push(`cancel-adoption:${id}`); },
+        adopt: async (request: { id: string; host: string; move: object; key?: string }) => {
+          window.__frCalls.push(`adopt:${request.host}`);
+          if (failAdoption) return { ok: false, why: "The API key couldn't be saved. Check the keyring, then try again." };
+          if (slowAdoption) {
+            const result = await defer("adopt") as { ok: boolean; why?: string };
+            if (cancelled.has(request.id)) return { ok: false, why: "The address changed: check it, then agree again." };
+            if (!result.ok) return result as never;
+          }
+          window.__frCalls.push(`move:${JSON.stringify(request.move)}`);
+          window.__frState.settings.provider = { ...window.__frState.settings.provider, ...request.move, on: true,
+            consent: { version: 1, at: "2026-11-09T00:00:00Z", host: request.host } };
+          keyHost = request.key ? request.host : null;
+          window.__frEmit("onSettingsChanged", copy(window.__frState.settings));
+          return { ok: true };
+        },
         agree: (host: string, move?: object) => {
           window.__frCalls.push(`agree:${host}`);
           // Home's held edit of the provider in use comes with its details, saved with the yes (integrations-c3-1).
@@ -127,7 +144,7 @@ async function open(seed: Seed = {}): Promise<Page> {
         test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState, failAdoption: !!seed.failAdoption, slowAdoption: !!seed.slowAdoption });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
@@ -579,7 +596,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(async () => (await calls(p)).filter(c => c === "test-draft:127.0.0.1:18309").length).toBe(2);
     await settle(p, "test", { ok: true, host: "127.0.0.1:18309", models: 1, ids: ["other-model"] }, 1);
     await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18309.");
-    expect(await calls(p)).toContain("agree:127.0.0.1:18309");
+    expect(await calls(p)).toContain("adopt:127.0.0.1:18309");
     expect(await calls(p)).toContain(`move:${JSON.stringify({ type: "openai", baseUrl: "http://127.0.0.1:18309/v1", conductor: "other-model", worker: null, wireApi: null, azureApiVersion: null })}`);
     expect(await saves()).toEqual([]);
     expect(await provider()).toMatchObject({ baseUrl: "http://127.0.0.1:18309/v1", conductor: "other-model", consent: { host: "127.0.0.1:18309" } });
@@ -1031,6 +1048,44 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await provider()).toMatchObject({ baseUrl: `http://${using}/v1`, consent: { host: using } });
     await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it("keeps the provider, its saved key and the typed replacement key after atomic adoption fails (integrations-r7-1)", async () => {
+    const using = "a.example";
+    const p = await open({ home: true, liveState: true, failAdoption: true, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: using } }),
+      provider: { on: true, baseUrl: `https://${using}/v1`, consent: { version: 1, at: "2026-11-09T00:00:00Z", host: using } } });
+    try {
+      await p.locator("#byok-url").fill("https://b.example/v1"); await p.keyboard.press("Tab");
+      await p.locator("#byok-key").fill("replacement-fixture-key");
+      await p.waitForTimeout(AGREE_ARM_MS + 100); await p.locator("#byok-yes").click();
+      await expect.poll(() => calls(p)).toContain("test-draft:b.example+key");
+      await settle(p, "test", { ok: true, host: "b.example", models: 1 });
+      await expect.poll(() => p.locator("#byok-msg").innerText()).toContain("Nothing has changed: Ember still uses a.example.");
+      expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+      expect(await p.locator("#byok-key").inputValue()).toBe("replacement-fixture-key");
+      expect(await p.locator("#byok-consent").isVisible()).toBe(true);
+      expect((await calls(p)).filter(c => c === "saveKey" || c.startsWith("agree:"))).toEqual([]);
+    } finally { await p.close(); }
+  }, 20_000);
+
+  it("cancels an overtaken adoption and keeps the newer draft when the old keyring result arrives (integrations-r7-1)", async () => {
+    const p = await open({ home: true, liveState: true, slowAdoption: true, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    try {
+      await p.locator("#byok-url").fill("https://b.example/v1"); await p.keyboard.press("Tab");
+      await p.waitForTimeout(AGREE_ARM_MS + 100); await p.locator("#byok-yes").click();
+      await settle(p, "test", { ok: true, host: "b.example", models: 1 });
+      await expect.poll(() => calls(p)).toContain("adopt:b.example");
+      await p.locator("#byok-url").fill("https://c.example/v1"); await p.keyboard.press("Tab");
+      await expect.poll(async () => (await calls(p)).some(c => c.startsWith("cancel-adoption:"))).toBe(true);
+      await settle(p, "adopt", { ok: true });
+      expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+      expect(await p.locator("#byok-url").inputValue()).toBe("https://c.example/v1");
+      expect(await p.locator("#byok-consent-text").innerText()).toContain("c.example");
+      expect(await p.locator("#byok-yes").getAttribute("aria-disabled")).toBeNull();
+    } finally { await p.close(); }
   }, 20_000);
 
   it("(ai) “Use GitHub Copilot instead” while I'm busy says I'll switch once I've finished, keeps Continue, and offers Copilot's sign-in once the switch is made (first-run-v4-1)", async () => {
