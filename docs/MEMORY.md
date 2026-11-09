@@ -98,7 +98,7 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   are ordinary words, as are a login's address, protocol or time ("my work login is priya@example.com", "the login is
   OAuth2", "last login was 10:30", "the credentials are AES-256 encrypted"), a user at a computer named by its address
   or as localhost, a handle with no digit, a host with its port and an environment variable in code ("my SSH login is
-  pi@192.168.1.20", "the admin login is admin@localhost", "my GitHub login is @octocat", "login is localhost:8080",
+  pi@192.168.1.20", "the admin login is admin@localhost", "my GitHub login is @octocat", "login is localhost:8080", "login is localhost:3000/login",
   "credentials: process.env.AWS_CREDS_V2", safety-privacy-v4-1), a version, an issue, a setting or a user at a
   computer by a word or with its port said as a login ("the login is v2.0", "login was #142", "Credentials:
   AWS_PROFILE=dev2", "my work login is jsmith@corp", "the login is user@host:2222": safety-privacy-c4-3; a setting only

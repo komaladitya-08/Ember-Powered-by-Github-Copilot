@@ -354,13 +354,15 @@ describe("what memory never keeps", () => {
   // login and admin rules refused them (safety-privacy-c4-3, memory-c4-2).
   it.each([
     ["Credentials: AWS_PROFILE=dev2"], ["The login is v2.0"], ["Login was v1.4.2 and is now v2."], ["Login was #142 in the issue tracker."],
+    ["Login is localhost:3000/login"], ["The login is app.example.com:8443/sign-in"],
     ["My work login is jsmith@corp"], ["The login is user@host:2222"], ["The login is admin@nas1:22"],
     ["Root: 45G / 100G (45%)"], ["Disk usage: root: 45GB / 100GB"], ["root - 12GB / 50GB used"], ["const root = -b / (2*a);"], ["root = width / 2000"],
-  ])("keeps %j, which names no password (safety-privacy-c4-3, memory-c4-2)", text => {
+  ])("keeps %j, which names no password (safety-privacy-c4-3, memory-c4-2, safety-privacy-v4-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
   it.each([
     ["The login is admin@nas1"], ["The login is P@ssword"], ["The login is p@ss.word1"], ["Jenkins admin: admin / j3nkins!"], ["Admin: admin / P@ssw0rd"],
+    ["The login is localhost:3000/hunter2!"],
   ])("still refuses %j as a login or an admin's password (safety-privacy-c4-3, memory-c4-2)", text => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
