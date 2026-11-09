@@ -218,6 +218,15 @@ while Send was waiting. An earlier acknowledgement cannot close a newer edit. No
     settings shortcut, the handle's **Settings…** and `ember --show-settings` open settings.
 - Long answers have **Read all** (counted at the text size you picked): the **Conversation** on the settings window's **Home**
   keeps this session's questions, answers and task results (in memory only by default; quitting or signing out forgets them).
+  **Read it out**, typed, spoken or chosen as a suggestion, reads the retained answer through the current speaking
+  settings and policy. It never turns on **Read finished tasks out loud**; when speaking is off, Ember says where to
+  change it and leaves it off. An explicit request to read future task results still changes that separate preference.
+  While an approval is up, the conversation says to answer it first and ask again; no answer is spoken over it.
+  A request while the answer is still being written says to wait without sending a new model request or dropping
+  the unfinished reply. These reading-limit notices never replace the retained answer, including after a restart
+  with **Keep my recent conversation** on; their display-only notice marker is saved with the existing words.
+  **Hear Ember** reports each sample's failure, including a second attempt with no installed voice, without waiting
+  for the sample's 12-second outer deadline merely because the previous attempt failed too.
   - **Keep my recent conversation after Ember closes** (`keepConversation`, off by default; Home › Conversation): saves the
     latest 60 messages (at most 2 MiB) in `conversation.json` in the data folder (mode 0600, folder 0700; written
     atomically through a temp file, fsync and rename, last state wins), and shows them again after a restart once the

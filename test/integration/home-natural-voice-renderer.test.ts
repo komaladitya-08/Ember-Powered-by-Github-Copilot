@@ -10,6 +10,7 @@ import type { SettingsPatch } from "../../app/main/settings";
 
 declare global {
   interface Window {
+    __micSampleTest: { failures: boolean[]; say(): void; stop(): void; ready: boolean };
     __fullNaturalTest: { patches: SettingsPatch[]; retries: number; downloads: number; hears: number; status(value: VoiceStatus): void; heard(result: unknown): void };
     __naturalTest: {
       patches: SettingsPatch[]; fail: boolean; retries: number; managed: boolean;
@@ -21,6 +22,40 @@ declare global {
 }
 
 const browserOptions = () => ({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
+
+it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("reports a second failed voice sample instead of waiting for main's timeout (voice-speaking-r6-2)", async () => {
+  const root = path.resolve("dist/app/renderer");
+  const server = http.createServer((req, res) => {
+    const file = path.resolve(root, `.${req.url ?? "/"}`);
+    if (!file.startsWith(root + path.sep) || !fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
+    res.setHeader("content-type", file.endsWith(".js") ? "text/javascript" : "text/html");
+    res.end(fs.readFileSync(file));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Voice sample fixture didn't start.");
+  const browser = await chromium.launch(browserOptions());
+  try {
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      const handlers: Record<string, (...args: unknown[]) => void> = {};
+      window.__micSampleTest = { failures: [], ready: false, say: () => handlers.onSpeak({ text: "This is how I sound." }), stop: () => handlers.onHush(1) };
+      Object.defineProperty(window, "speechSynthesis", { value: { getVoices: () => [], addEventListener() {}, cancel() {} } });
+      Object.defineProperty(window, "emberMic", { value: new Proxy({}, { get: (_target, key: string) => key.startsWith("on")
+        ? (fn: (...args: unknown[]) => void) => { handlers[key] = fn; if (key === "onHush") window.__micSampleTest.ready = true; }
+        : key === "speech" ? (ok: boolean) => window.__micSampleTest.failures.push(ok) : () => undefined }) });
+    });
+    await page.goto(`http://127.0.0.1:${address.port}/mic/index.html`);
+    await page.waitForFunction(() => window.__micSampleTest.ready);
+    await page.evaluate(() => window.__micSampleTest.say());
+    await expect.poll(() => page.evaluate(() => window.__micSampleTest.failures), { timeout: 5000 }).toEqual([false]);
+    await page.evaluate(() => { window.__micSampleTest.stop(); window.__micSampleTest.say(); });
+    await expect.poll(() => page.evaluate(() => window.__micSampleTest.failures), { timeout: 5000 }).toEqual([false, false]);
+  } finally {
+    await browser.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+}, 30_000);
 const serve = async (root: string, fixture?: string) => {
   const server = http.createServer((req, res) => {
     const url = decodeURIComponent((req.url ?? "/").split("?")[0]);

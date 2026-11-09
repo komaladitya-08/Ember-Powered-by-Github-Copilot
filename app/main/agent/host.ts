@@ -61,7 +61,7 @@ import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
 import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, readAnswerRequest, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
 
@@ -184,6 +184,8 @@ export interface TranscriptEntry {
   derived?: number; back?: string[]; again?: true;
   /** Brought back from before Ember restarted (keepConversation): for reading only, which Home marks (home-8). Never saved. */
   restored?: true;
+  /** A local reading-limit notice, kept for display but never selected as the answer it refers to. */
+  readNotice?: true;
 }
 
 /** How long to wait before each further try at a reconnect's account lookup (ms). */
@@ -1042,6 +1044,8 @@ export class AgentHost {
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
+  /** The synchronous local reply is a reading-limit notice, rather than a new answer (voice-speaking-v7-3). */
+  private localReadNotice = false;
   /** Lines restored from the saved copy: shown, but never a question a "yes" agrees to or words a task is checked against. */
   private readonly restored = new WeakSet<TranscriptEntry>();
   /** Lines Forget everything deleted from the saved copy: they stay on screen but are never saved again. */
@@ -1174,7 +1178,7 @@ export class AgentHost {
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
     // Every change of the conversation's bubble may change what Home says of its turn (its stall: home-c1-1).
-    this.presenter = new Presenter(patch => { o.setState(patch); this.turnChanged(); }, undefined, () => "Ember", this.owner, text => this.remember("ember", text, undefined, undefined, this.stream?.id, this.stream?.unsaved), () => this.serviceKind(),
+    this.presenter = new Presenter(patch => { o.setState(patch); this.turnChanged(); }, undefined, () => "Ember", this.owner, text => this.remember("ember", text, undefined, undefined, this.stream?.id, this.stream?.unsaved, this.localReadNotice), () => this.serviceKind(),
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
     this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
     this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
@@ -1553,7 +1557,7 @@ export class AgentHost {
 
   /** The last retained answer. Home discloses if the explicit per-message memory bound was reached. */
   lastAnswer(): string | null {
-    return [...this.transcript].reverse().find(e => e.who === "ember" && !e.stopped)?.text ?? null;
+    return [...this.transcript].reverse().find(e => e.who === "ember" && !e.stopped && !e.readNotice)?.text ?? null;
   }
 
   /**
@@ -1692,8 +1696,8 @@ export class AgentHost {
     this.o.onAnswerStream?.({ id: s.id, text, state });
   }
 
-  private remember(who: TranscriptEntry["who"], text: string, heardId?: number, stopped?: true, answerId?: number, fenced = false): TranscriptEntry {
-    const entry: TranscriptEntry = { t: new Date().toISOString(), who, ...retainedConversationText(text), ...(heardId ? { heardId } : {}), ...(stopped ? { stopped } : {}), ...(answerId ? { answerId } : {}) };
+  private remember(who: TranscriptEntry["who"], text: string, heardId?: number, stopped?: true, answerId?: number, fenced = false, readNotice = false): TranscriptEntry {
+    const entry: TranscriptEntry = { t: new Date().toISOString(), who, ...retainedConversationText(text), ...(heardId ? { heardId } : {}), ...(stopped ? { stopped } : {}), ...(answerId ? { answerId } : {}), ...(readNotice ? { readNotice: true as const } : {}) };
     // Said by a connection that began before the saved copy was last invalidated (or by a stream Forget everything covered).
     if (fenced || this.staleSource()) this.unsaved.add(entry);
     this.transcript.push(entry);
@@ -2946,7 +2950,7 @@ export class AgentHost {
    * Answers `text` with Ember's own `reply`, without a Copilot turn: kept in the conversation, shown and spoken as an
    * answer, and (asked by voice) followed by the usual follow-up window.
    */
-  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number; spoken?: boolean; manual?: true }): void {
+  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number; spoken?: boolean; manual?: true }, readNotice = false): void {
     // The request is kept as it was asked: heard unchecked, a chosen suggestion and a heard one keep what they were (a later
     // "yes please" that reads back over this line must not take Ember's suggested words, or words heard from the speakers,
     // for the user's own: review of #145).
@@ -2955,7 +2959,9 @@ export class AgentHost {
     if (how.suggested) this.suggested.add(asked);
     this.interruptAnswer();
     this.o.onTurnStart?.({ text, spoken: !!how.spoken, ...(how.manual ? { manual: true } : {}) });
-    this.presenter.say(reply);
+    const before = this.localReadNotice;
+    this.localReadNotice = readNotice;
+    try { this.presenter.say(reply); } finally { this.localReadNotice = before; }
     this.o.onAnswer?.(reply);
     this.o.onTurnEnd?.(false);
   }
@@ -3013,6 +3019,14 @@ export class AgentHost {
   private async asking(text: string, context: Parameters<AgentHost["ask"]>[1], epoch: number, how: NonNullable<Parameters<AgentHost["ask"]>[3]>, waiting: { counted: boolean }): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
     if (this.stopsNow(text, how)) return true;
+    // Reading is never a new model request or a cut-in that discards an unfinished answer (voice-speaking-v7-2).
+    if (readAnswerRequest(text) && !this.betweenTurns()) {
+      const asked = this.remember("you", text, how.heardId);
+      if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
+      if (how.suggested) this.suggested.add(asked);
+      this.remember("ember", "I'm still answering. Ask me to read it out after this reply finishes.", undefined, undefined, undefined, false, true);
+      return true;
+    }
     // Said over a reply still on its way (a conversation): that reply goes, and this one is answered knowing why.
     const cutIn = how.replaces === true && (this.conductor?.turnOpen ?? false);
     if (cutIn) {
@@ -3050,6 +3064,15 @@ export class AgentHost {
     }
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
     // works offline and costs no request). Only between turns: a request waiting for its turn is the conductor's.
+    // A retained answer is read through the usual speaking gate, never by switching a preference on (voice-speaking-r6-1).
+    if (readAnswerRequest(text) && this.betweenTurns()) {
+      const answer = this.lastAnswer();
+      const question = this.o.hands?.confirmer.waiting || this.o.taskBase?.confirmer.waiting;
+      const reply = question ? "Answer my question first, then ask me to read it out." : !answer ? "There isn't an answer to read yet." : !this.o.health?.().speaks
+        ? "I'm not speaking replies right now. Speaking is under Voice in settings." : answer;
+      this.answerLocally(text, reply, how, reply !== answer);
+      return true;
+    }
     // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).
     const results = resultsRequest(text);
     if (results && this.betweenTurns()) {

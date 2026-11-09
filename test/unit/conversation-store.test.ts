@@ -113,6 +113,11 @@ describe("the saved conversation", () => {
     expect(boundedEntries([{ ...msg(1), stopped: true }, { ...msg(3), stopped: "yes" }])).toEqual([{ ...msg(1), stopped: true }, msg(3)]);
   });
 
+  it("keeps only a true reading-notice marker on a companion line (voice-speaking-v7-3)", () => {
+    expect(boundedEntries([{ ...msg(1), who: "ember", readNotice: true }, { ...msg(2), readNotice: "yes" }, { ...msg(3), who: "you", readNotice: true }]))
+      .toEqual([{ ...msg(1), who: "ember", readNotice: true }, msg(2), { ...msg(3), who: "you" }]);
+  });
+
   it("never shows one account's conversation to another, and deletes it", async () => {
     const dir = tmp();
     const s = store(dir);

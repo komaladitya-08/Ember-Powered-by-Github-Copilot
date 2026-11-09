@@ -209,6 +209,8 @@ api.onSpeak(({ text, append, lang, rate }) => {
   localSpeech.enqueue(text, typeof lang === "string" ? lang : undefined);
 });
 function hush(): void {
+  // Each new sample/reply must report its own outcome, even when the preceding attempt also failed (voice-speaking-r6-2).
+  speechOk = null;
   localSpeech.cancel();
   watching?.watch.cancelled();
   watching = null;
