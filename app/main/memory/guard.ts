@@ -673,29 +673,55 @@ function withoutCodeKeys(text: string, found?: { held: boolean }): string {
 const LABEL = /\b(?:pass(?:word|phrase|code)?|passwd|pwd|pin|passcode|token|secret|api[ _-]?key)s?[ \t]*:[ \t]*(?=["'`<])/gi;
 /** An HTML element's tag where a label's text ends, never a word in angle brackets ("<hunter>", "<your password>"). */
 const HTML_TAG = /^<\/?(?:label|input|td|th|tr|span|div|p|b|strong|i|em|u|small|dt|dd|li|a|button|select|option|br|code|font|legend|fieldset|form|h[1-6])(?:\s[^<>]*)?\/?>/i;
+/** A field's own value attribute, or "". */
+const valueOf = (tag: string) => {
+  const v = /\svalue\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
+  return (v?.[1] ?? v?.[2] ?? v?.[3] ?? "").trim();
+};
+/** Whether a field's value or an option's is one: set, never empty, a reference or an expression. */
+const heldValue = (value: string) => value !== "" && !REFERENCE.test(value) && !PLACEHOLDER.test(value) && !/^\{[^"'`]*\}$/.test(value);
 /**
  * Whether a label's value follows it at `from` (memory-x6-1): the first text past blank and markup-only lines, as
  * pretty-printed HTML puts it ("<p>Your PIN:</p>\n\n<p>4821</p>"), unless it is another label ("Username:"), or a
  * field's own value ('<input type="password" value="Summer2024!">'), never an empty one, a reference or an expression
- * ('value=""', 'value="{{ form.password }}"', "value={password}"). A field with no value is the label's, so nothing
- * after it is read. At most 400 characters are read, and markup that runs past them is taken to hold a value (fail closed).
+ * ('value=""', 'value="{{ form.password }}"', "value={password}"); a select's is its options' text or value. Past a
+ * field with no value the rest of its line is read, a table's next cells on it too, and a word there shaped like a
+ * password, or a PIN's digits after a PIN's label, is the label's ('<input type="password"> <small>(demo: Demo1234!)</small>'),
+ * never the form's own words ("Sign in", "Remember me"): memory-y6-4. At most 400 characters are read, and markup
+ * before the field that runs past them is taken to hold a value (fail closed).
  */
-function valueAfterLabel(text: string, from: number): boolean {
+function valueAfterLabel(text: string, from: number, pin: boolean): boolean {
   const end = Math.min(text.length, from + 400);
+  let beside = false;
   for (const m of text.slice(from, end).matchAll(/<[^<>]*>|<[^<>]*$|[^<]+|</g)) {
     const s = m[0];
     // A tag cut off or never closed, or a "<" in the text.
-    if (s.startsWith("<") && !s.endsWith(">")) return true;
+    if (s.startsWith("<") && !s.endsWith(">")) return !beside;
     if (s.startsWith("<")) {
-      if (!/^<(?:input|select)\b/i.test(s)) continue;
-      const v = /\svalue\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(s);
-      const value = (v?.[1] ?? v?.[2] ?? v?.[3] ?? "").trim();
-      return value !== "" && !REFERENCE.test(value) && !PLACEHOLDER.test(value) && !/^\{[^"'`]*\}$/.test(value);
+      if (beside || !/^<(?:input|select)\b/i.test(s)) continue;
+      if (heldValue(valueOf(s))) return true;
+      if (/^<select\b/i.test(s)) {
+        // Its options, up to the select's end (at most 2 KiB on, or it holds one).
+        const at = from + m.index + s.length;
+        const close = text.slice(at, at + 2048).search(/<\/select\b/i);
+        if (close < 0) return true;
+        for (const o of text.slice(at, at + close).matchAll(/<option\b[^<>]*>([^<]*)/gi)) if (heldValue(valueOf(o[0])) || heldValue(o[1]!.trim())) return true;
+      }
+      beside = true;
+      continue;
+    }
+    if (beside) {
+      const nl = s.indexOf("\n");
+      const words = (nl < 0 ? s : s.slice(0, nl)).replace(/&(?:[a-z]+|#\d+|#x[0-9a-f]+);/gi, " ").split(/\s+/)
+        .map(w => w.replace(/^[("'“[<]+|[)"'”\],.;:>]+$/g, ""));
+      if (words.some(w => secretShaped(w) || (pin && /^\d{4,12}$/.test(w)))) return true;
+      if (nl >= 0) return false;
+      continue;
     }
     const t = s.trim();
     if (t) return !/^[\p{L} ]{1,40}:$/u.test(t);
   }
-  return end < text.length;
+  return !beside && end < text.length;
 }
 /**
  * Whether code after a prompt's string holds a word shaped like a password, or a comment after it does ('("Password:",
@@ -723,7 +749,7 @@ function withoutLabels(text: string): string {
       ? (text.slice(lineStart, at).split(q).length - 1) % 2 === 1 && !/["'`][^"'`\n]*\w[^"'`\n]*["'`]/.test(after)
         && (/^\s*(?:$|[),;+\]}]|\.\w|\/\/|#)/.test(after) || (/^\s*read\b/.test(line) && /^\s+[A-Za-z_]\w*\s*(?:;|$)/.test(after)))
         && !valueAfterPrompt(after)
-      : HTML_TAG.test(rest) && !valueAfterLabel(text, at + m.length);
+      : HTML_TAG.test(rest) && !valueAfterLabel(text, at + m.length, /^(?:pin|passcode)/i.test(m));
     return prompt ? m.replace(/^[^:\s]+/, w => "_".repeat(w.length)) : m;
   });
 }

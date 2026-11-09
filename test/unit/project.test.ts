@@ -251,6 +251,13 @@ it("holds back a pretty-printed welcome page and a prompt whose comment gives th
   expect(await prompt([form])).toContain("Sign in");
 });
 
+it("holds back a demo login form that gives the password beside its field, and sends one that doesn't (memory-y6-4)", async () => {
+  const demo = await file("demo-login.html", '<table>\n  <tr><td>Password:</td><td><input type="password" name="pw"></td><td><small>(demo: Demo1234!)</small></td></tr>\n</table>\n');
+  await expect(prompt([demo])).rejects.toThrow(new Error("demo-login.html appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+  const login = await file("login.html", '<form><label>Password:</label><input type="password" name="pw"><button>Sign in</button></form>\n');
+  expect(await prompt([login])).toContain("Sign in");
+});
+
 it("takes a request to point the API key at an environment read or another stage, beside one that gives a key (memory-x6-5)", async () => {
   const app = await file("app.py", "print(1)\n");
   for (const q of ["Set the API key to process.env.API_KEY", "Change the API key to staging", "Switch the API key to read-only"]) {

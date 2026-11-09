@@ -370,6 +370,25 @@ describe("what memory never keeps", () => {
   ])("keeps %j, a label for a field or a prompt with code after it (memory-x6-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A password beside a field with no value on its line, or in a select's option, which round six stopped reading at
+  // the field (memory-y6-4).
+  it.each([
+    ['<tr><td>Password:</td><td><input type="password" name="pw"></td><td><small>(demo: Demo1234!)</small></td></tr>'],
+    ['<label>Password:</label><input type="password"> <small>(demo: Demo1234!)</small>'], ['<p>Wi-Fi password: <input type="text" readonly> BlueSky99!</p>'],
+    ['<label>PIN:</label><input type="password" maxlength="4"> 4821'], ['<b>Password:</b><input type="password"><p>Summer2024!</p>'],
+    ['<label>Password:</label><select><option>Summer2024!</option></select>'], ['<label>Password:</label>\n<select name="pw">\n  <option value="Summer2024!">Old one</option>\n</select>'],
+  ])("refuses %j and saves nothing, a value beside a field or in its option (memory-y6-4)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ['<label>Password:</label><input type="password"><button>Sign in</button>'], ['<label>Password:</label><input type="password"> <label>Remember me</label>'],
+    ['<tr><td>Password:</td><td><input type="password" name="pw"></td><td><a href="/forgot">Forgot your password?</a></td></tr>'],
+    ['<label>Password:</label><input type="password"> <small>At least 12 characters</small>'], ['<label>Password:</label><select><option value=""></option></select>'],
+    ['<label for="password">Password:</label>\n<input type="password" id="password">\n<small>(demo: see the wiki)</small>'],
+  ])("keeps %j, a field with no value and words of the form's own beside it (memory-y6-4)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
   // A passphrase that happens to hold a secret's word, and a word before a colon, read as UI text under a key named
   // for a secret (memory-x6-3).
   it.each([
