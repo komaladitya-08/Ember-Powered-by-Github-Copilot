@@ -416,7 +416,8 @@ wrapper's option (`xargs -a "$p/settings.json"`, `xargs --arg-file="$p/settings.
 `echo "$p" > list.txt; xargs rm -rf < list.txt`, a loop or group whose output goes on, and in PowerShell `$p |
 Remove-Item -Recurse` or `Write-Output $p | Remove-Item`) or through `${p:?}`, `${p:-…}` or `${p%/}`. What echo or
 printf prints into the next command is that command's input, as a here-string's text is (`echo ~/.config/ember | xargs
-rm -rf` is refused too). Handed to a program that
+rm -rf` is refused too); printf's escapes other than a line break, a tab and `\0` (`\056`, `\x2e`, `.`) are text
+Ember can't see, so the command after it asks (`printf '\056\056\057\056netrc' | xargs cat`). Handed to a program that
 may change what it names (an export, the input of a program Ember can't follow), Ember says it would change its files. A value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
 does.
 

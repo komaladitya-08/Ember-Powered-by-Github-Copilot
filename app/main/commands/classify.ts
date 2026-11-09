@@ -299,14 +299,21 @@ function printedBy(words: readonly Arg[]): Printed | null {
     // `printf -v d …` prints nothing: it sets d (setVar).
     if (rest.length === 0 || rest[0].v === "-v") return null;
     const format = rest[0].v;
+    // Only `\n`, `\t` and a lone `\0`: any other escape printf reads (`\056`, `\0056`, `\x2e`, `.`, `\e`, `\\`) is
+    // text Ember doesn't see, never its backslash text (commands-remote-x6-2).
     const unescape = (s: string): string => s.replace(/\\([nt0])/g, (_m, c: string) => (c === "n" ? "\n" : c === "t" ? "\t" : "\0"));
-    if (format !== null && /^([^%\\]|\\[nt0])*$/.test(format) && rest.length === 1) return { text: unescape(format) };
-    const each = format !== null && /^(%s|\\[nt0]|[ \t])+$/.test(format) && (format.match(/%s/g) ?? []).length === 1 && rest.length > 1;
+    if (format !== null && /^([^%\\]|\\([nt]|0(?![0-7])))*$/.test(format) && rest.length === 1) {
+      // Printed text with a NUL in it is no name Ember can judge or show in a card's line: text it doesn't see.
+      const text = unescape(format);
+      return { text: text.includes("\0") ? null : text };
+    }
+    const each = format !== null && /^(%s|\\([nt]|0(?![0-7]))|[ \t])+$/.test(format) && (format.match(/%s/g) ?? []).length === 1 && rest.length > 1;
     shown = each ? rest.slice(1) : rest;
     render = each && format !== null ? vs => vs.map(v => unescape(format).replace("%s", () => v)).join("") : null;
   }
   const names = [...new Set(shown.flatMap(varNames))];
-  if (render && shown.every(a => a.v !== null && !a.glob && !a.v.includes("\\"))) return { text: render(shown.map(a => a.v ?? "")) };
+  const text = render && shown.every(a => a.v !== null && !a.glob && !a.v.includes("\\")) ? render(shown.map(a => a.v ?? "")) : null;
+  if (text !== null && !text.includes("\0")) return { text };
   return names.length ? { text: null, vars: { names, word: render && shown.length === 1 ? shown[0] : null } } : { text: null };
 }
 

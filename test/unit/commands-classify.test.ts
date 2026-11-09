@@ -340,6 +340,27 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     for (const cmd of ["$d = \"$env:LOCALAPPDATA\\ember\"; Write-Output $d", "'build' | Remove-Item -Recurse", "$d = 'build'; $d | Remove-Item -Recurse"]) expect(ps(cmd), cmd).toBeUndefined();
   });
 
+  it("asks before what printf prints through an octal, hex or other escape reaches the next command, never judging it as backslash text (commands-remote-x6-2)", () => {
+    const decided = (cmd: string) => runCase({ cmd, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" });
+    // `cat ../.netrc`, `cat ~/.ssh/id_rsa` and Ember's settings, spelt in printf's escapes: as the plain names, never run.
+    for (const cmd of [
+      "printf '\\056\\056\\057\\056netrc' | xargs cat", "printf '\\057home\\057ana\\057\\056ssh\\057id_rsa' | xargs cat", "printf '\\x2e\\x2e/.netrc' | xargs cat",
+      "printf '\\057home\\057ana\\057\\056config\\057ember\\057settings.json' | xargs cat", "printf '\\u002e\\u002e/.netrc' | xargs cat", "printf '\\e[0m../.netrc' | xargs cat",
+      "printf '\\0056\\0056/.netrc' | xargs cat", "printf '..\\\\/.netrc' | xargs cat",
+    ]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    // A NUL is no name: never in a line of the card, and Ember's folder spelt with one is never shown mangled.
+    for (const cmd of ["printf '\\057home/ana/.config/ember' | xargs rm -rf", "printf 'build\\0' | xargs rm -rf", "printf '\\0' | xargs rm -rf"]) {
+      const { cls, decision } = decided(cmd);
+      expect(decision.verdict === "ask" || cls.refuse !== null, cmd).toBe(true);
+      const lines = [...decision.says, ...cls.findings.map(f => f.says), cls.refuse?.says ?? ""].join(" ");
+      expect(lines.includes("\0") || /\\0|57home/.test(lines), `${cmd}: ${lines}`).toBe(false);
+    }
+    // The escapes it reads still render: a line break or a tab between names, as before.
+    expect(decided("printf 'build\\ndist\\n' | xargs rm -rf").cls.findings.map(f => f.says)).toEqual(["Deletes build and dist and everything in them."]);
+    expect(decided("printf 'build\\tdist' | xargs rm -rf").cls.findings.map(f => f.says)).toEqual(["Deletes build and dist and everything in them."]);
+    expect(decided("d=~/.config/ember; printf \"%s\\0\" \"$d\" | xargs -0 rm -rf").cls.refuse?.rule).toBe("ember.path");
+  });
+
   it("keeps a download a download through a cut or a default, and refuses Ember's folder that one could name (commands-remote-w5-1)", () => {
     // Each step of a task in turn, the downloads carried from one to the next as the flow carries them.
     const steps = (ctx: ContextName, ...cmds: string[]): string[] => {
@@ -1543,6 +1564,13 @@ describe("database clients that run what their input gives them (commands-remote
     expect(rules("mongosh app <<< 'db.users.find()'")).toContain("unclear.stdin-code");
     // Reads, a command on its line, and -x's value from its input are as before.
     for (const cmd of ["redis-cli <<< PING", "echo 'GET k' | redis-cli", "redis-cli GET k", "echo v | redis-cli -x GET k"]) expect(rules(cmd), cmd).toEqual([]);
+  });
+
+  it("asks before redis-cli runs commands printf spells in an octal or hex escape, as it does for a line break (commands-remote-x6-2)", () => {
+    for (const cmd of ["printf 'GET x\\012FLUSHALL\\012' | redis-cli", "printf 'PING\\012DEL users' | redis-cli -h db", "printf 'GET x\\x0aFLUSHALL' | redis-cli"]) {
+      expect(rules(cmd), cmd).toContain("unclear.stdin-code");
+    }
+    expect(rules("printf 'GET x\\nFLUSHALL\\n' | redis-cli")).toContain("db.change");
   });
 
   it("judges an SQL or command file a client reads from its input by its name, as -f is, and asks for one this task downloaded", () => {
