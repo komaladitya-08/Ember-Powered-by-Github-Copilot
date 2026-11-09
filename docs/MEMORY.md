@@ -164,8 +164,11 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   its `<input>`; never `<td>Password:</td><td>hunter2</td>`, `<p>Your PIN:</p>\n\n<p>4821</p>`, an `<input>` with a
   `value` or `print("Password:", "hunter2")`: memory-x6-1; nor a word shaped like a password, or a PIN's digits, on
   the line after a field with no value, `<input type="password"> <small>(demo: Demo1234!)</small>`, nor a `<select>`'s
-  option: memory-y6-4; a ticket, a to-do or a version in a prompt's comment, "# see PROJ-1234", "TODO(bob2)",
-  "Python3.8+", and a check box's or a button's value are none either: memory-y6-5), and `$PWD`. Nor is a quoted label
+  option: memory-y6-4, nor on the next line with text past markup-only lines, up to the row's or the form's end, as a
+  pretty-printed table or form puts it: memory-z6-3; a ticket, a to-do or a version in a prompt's comment, "# see
+  PROJ-1234", "TODO(bob2)", "Python3.8+", and a check box's or a button's value are none either: memory-y6-5, though
+  only a ticket after "see", "fixes" or "refs", a version alone or a language's or a tool's and a plain owner, never
+  "# P4SS-2024", "# Winter2024.1" or "TODO(Summer2024!)": memory-z6-4), and `$PWD`. Nor is a quoted label
   with a secret's or a field's name in a common language ("Password:", "Пароль:", "Lösenord:", "Código:", "New:",
   "Confirm password:", never "hunter:": memory-y6-5), a sentence about a secret, its word used as UI text uses it and no word
   shaped like a password or four digits in it ("Forgot your password?", "Passwords don't match"; never "sign of four

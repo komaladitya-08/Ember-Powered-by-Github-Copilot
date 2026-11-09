@@ -389,6 +389,41 @@ describe("what memory never keeps", () => {
   ])("keeps %j, a field with no value and words of the form's own beside it (memory-y6-4)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A password in the next cell or on the next line after a field with no value, as a pretty-printed form or table
+  // puts it (memory-z6-3).
+  it.each([
+    ['<table>\n  <tr>\n    <td>Password:</td>\n    <td><input type="password" name="pw"></td>\n    <td><small>(demo: Demo1234!)</small></td>\n  </tr>\n</table>'],
+    ['<td>Password:</td><td><input type="password"></td>\n<td>Demo1234!</td>'], ['<label>PIN:</label> <input type="text" readonly>\n<p>4821</p>'],
+    ['<form>\n  <label for="pw">Password:</label>\n  <input type="password" id="pw" name="pw">\n  <span class="hint">Demo1234!</span>\n</form>'],
+    ['<div class="row">\n  <label>PIN:</label>\n  <input type="text" readonly>\n\n  <span>4821</span>\n</div>'],
+  ])("refuses %j and saves nothing, a value on the line after a field (memory-z6-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ['<label>Password:</label>\n<input type="password">\n<button>Sign in</button>\n<p>Build 2024-rc1!</p>'],
+    ['<label>Password:</label>\n<input type="password">\n<label>Confirm:</label>\n<input type="password">\n<small>Admin2024!</small>'],
+    ['<tr>\n  <td>Password:</td>\n  <td><input type="password"></td>\n</tr>\n<tr><td>Build v2024rc1!</td></tr>'],
+    ['<form>\n  <label>PIN:</label>\n  <input type="password" maxlength="4">\n</form>\n<p>Call 4821 for help</p>'],
+    ['<label>Password:</label>\n<input type="password">\n<small>(demo: see the wiki)</small>'],
+  ])("keeps %j, the form's own words or what follows its row (memory-z6-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A password in a prompt's comment shaped like a ticket, a version or a to-do, which only a ticket after "see", a
+  // version of a language or a tool and a plain owner are not (memory-z6-4).
+  it.each([
+    ['pw = getpass("Password: ")  # Winter2024.1'], ['pw = getpass("Password: ")  # P4SS-2024'], ['pw = getpass("Password: ")  # use QWERTY-123 for the demo'],
+    ['pw = getpass("Password: ")  // Admin1.0'], ['pw = getpass("Password: ")  # test with Spring-2024.05'], ['pw = getpass("Password: ")  # TODO(Summer2024!)'],
+    ['pin = input("PIN: ")  # PIN-4821'],
+  ])("refuses %j, a password shaped like a ticket, a version or a to-do (memory-z6-4)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  it.each([
+    ['pw = getpass("Password: ")  # fixes PROJ-1234'], ['pw = getpass("Password: ")  # refs JIRA-4521'], ['pw = getpass("Password: ")  # needs python3.8+'],
+    ['pw = getpass("Password: ")  # since v2.4.1'], ['pw = getpass("Password: ")  # TODO(jsmith-2): mask it'],
+  ])("keeps %j, a ticket, a version or a to-do's owner (memory-z6-4)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
   // A passphrase that happens to hold a secret's word, and a word before a colon, read as UI text under a key named
   // for a secret (memory-x6-3).
   it.each([

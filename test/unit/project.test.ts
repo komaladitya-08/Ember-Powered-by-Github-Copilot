@@ -276,6 +276,15 @@ it("holds back a demo login form that gives the password beside its field, and s
   expect(await prompt([login])).toContain("Sign in");
 });
 
+it("holds back a pretty-printed demo login table and a prompt whose comment's password looks like a ticket, and sends the form without them (memory-z6-3, memory-z6-4)", async () => {
+  const demo = await file("demo-login.html", '<table>\n  <tr>\n    <td>Password:</td>\n    <td><input type="password" name="pw"></td>\n    <td><small>(demo: Demo1234!)</small></td>\n  </tr>\n</table>\n');
+  await expect(prompt([demo])).rejects.toThrow(new Error("demo-login.html appears to contain a password, token or key on line 5. Remove that file or the value, then send again."));
+  const cli = await file("cli.py", 'import getpass\n\npw = getpass.getpass("Password: ")  # P4SS-2024\n');
+  await expect(prompt([cli])).rejects.toThrow(new Error("cli.py appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const login = await file("login.html", '<table>\n  <tr>\n    <td>Password:</td>\n    <td><input type="password" name="pw"></td>\n    <td><button>Sign in</button></td>\n  </tr>\n</table>\n');
+  expect(await prompt([login])).toContain("Sign in");
+});
+
 it("sends locale files, a prompt with a ticket in its comment and a form with a Remember password checkbox (memory-y6-5)", async () => {
   const en = await file("en.yml", 'en:\n  login:\n    username: "Username:"\n    password: "Password:"\n');
   const ru = await file("ru.json", '{\n  "password": "Пароль:",\n  "pin": "PIN:"\n}\n');
