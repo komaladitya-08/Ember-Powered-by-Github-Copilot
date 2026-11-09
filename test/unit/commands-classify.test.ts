@@ -340,6 +340,52 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     for (const cmd of ["$d = \"$env:LOCALAPPDATA\\ember\"; Write-Output $d", "'build' | Remove-Item -Recurse", "$d = 'build'; $d | Remove-Item -Recurse"]) expect(ps(cmd), cmd).toBeUndefined();
   });
 
+  it("asks before what printf prints through an octal, hex or other escape reaches the next command, never judging it as backslash text (commands-remote-x6-2)", () => {
+    const decided = (cmd: string) => runCase({ cmd, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" });
+    // `cat ../.netrc`, `cat ~/.ssh/id_rsa` and Ember's settings, spelt in printf's escapes: as the plain names, never run.
+    for (const cmd of [
+      "printf '\\056\\056\\057\\056netrc' | xargs cat", "printf '\\057home\\057ana\\057\\056ssh\\057id_rsa' | xargs cat", "printf '\\x2e\\x2e/.netrc' | xargs cat",
+      "printf '\\057home\\057ana\\057\\056config\\057ember\\057settings.json' | xargs cat", "printf '\\u002e\\u002e/.netrc' | xargs cat", "printf '\\e[0m../.netrc' | xargs cat",
+      "printf '\\0056\\0056/.netrc' | xargs cat", "printf '..\\\\/.netrc' | xargs cat",
+    ]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    // A NUL is no name: never in a line of the card, and Ember's folder spelt with one is never shown mangled.
+    for (const cmd of ["printf '\\057home/ana/.config/ember' | xargs rm -rf", "printf 'build\\0' | xargs rm -rf", "printf '\\0' | xargs rm -rf"]) {
+      const { cls, decision } = decided(cmd);
+      expect(decision.verdict === "ask" || cls.refuse !== null, cmd).toBe(true);
+      const lines = [...decision.says, ...cls.findings.map(f => f.says), cls.refuse?.says ?? ""].join(" ");
+      expect(lines.includes("\0") || /\\0|57home/.test(lines), `${cmd}: ${lines}`).toBe(false);
+    }
+    // The escapes it reads still render: a line break or a tab between names, as before.
+    expect(decided("printf 'build\\ndist\\n' | xargs rm -rf").cls.findings.map(f => f.says)).toEqual(["Deletes build and dist and everything in them."]);
+    expect(decided("printf 'build\\tdist' | xargs rm -rf").cls.findings.map(f => f.says)).toEqual(["Deletes build and dist and everything in them."]);
+    expect(decided("d=~/.config/ember; printf \"%s\\0\" \"$d\" | xargs -0 rm -rf").cls.refuse?.rule).toBe("ember.path");
+  });
+
+  it("refuses a NUL-separated read loop over Ember's folder or settings as the line-separated one is, never asking it (commands-y6-1)", () => {
+    const decided = (cmd: string) => runCase({ cmd, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" });
+    for (const [cmd, refusal] of [
+      ["printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
+      ["printf '/home/ana/.config/ember\\0' | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
+      ["printf '%s\\0' ~/.config/ember build | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
+      ["printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do cat \"$f\"; done", READ],
+      ["printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do : > \"$f\"; done", CHANGE],
+      ["printf '%s\\n' ~/.config/ember | while read -r d; do rm -rf \"$d\"; done", CHANGE],
+      // The shell's own `read` drops a NUL, so what it reads is the two halves together.
+      ["printf '/home/ana/.config/em\\0ber\\n' | while read -r d; do rm -rf \"$d\"; done", CHANGE],
+    ] as const) {
+      const { cls } = decided(cmd);
+      expect(cls.refuse?.rule, cmd).toBe("ember.path");
+      expect(cls.refuse?.says, cmd).toBe(refusal);
+    }
+    // In the project it asks as before, and no line of its card holds a NUL.
+    for (const cmd of ["printf '%s\\0' build dist | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", "printf 'build\\0dist\\0' | xargs rm -rf", "printf '%s\\0' build | xargs -0 rm -rf"]) {
+      const { cls, decision } = decided(cmd);
+      expect(cls.refuse, cmd).toBeNull();
+      expect(decision.verdict, cmd).toBe("ask");
+      expect(decision.says.join(" ").includes("\0"), cmd).toBe(false);
+    }
+  });
+
   it("keeps a download a download through a cut or a default, and refuses Ember's folder that one could name (commands-remote-w5-1)", () => {
     // Each step of a task in turn, the downloads carried from one to the next as the flow carries them.
     const steps = (ctx: ContextName, ...cmds: string[]): string[] => {
@@ -1438,6 +1484,64 @@ describe("the option tables: a flag that takes no value never takes the word aft
     expect(decided("make -j $(sysctl -n hw.logicalcpu)", "darwin").decision.verdict).toBe("run");
   });
 
+  it("builds what an unquoted job count's variable holds after the count, attached or apart, as the shell splits it (commands-remote-x6-1)", () => {
+    for (const [cmd, plain] of [
+      ["T='4 deploy'; make -j$T", "make -j4 deploy"], ["T='4 deploy'; make -j $T", "make -j 4 deploy"], ["J='8 deploy'; make -sj$J", "make -sj8 deploy"],
+      ["T='4 install'; make --jobs=$T", "make --jobs=4 install"], ["T='4 deploy'; make -j${T}", "make -j4 deploy"], ["J='4 CC=evil'; make -j$J", "make -j4 CC=evil"],
+      ["T='2 publish'; ./gradlew --max-workers=$T", "./gradlew --max-workers=2 publish"], ["T='2 publish'; ./gradlew --max-workers $T", "./gradlew --max-workers 2 publish"],
+      ["T='4 publish'; gradle --max-workers=$T", "gradle --max-workers=4 publish"], ["T='4 publish'; rake --jobs=$T", "rake --jobs=4 publish"],
+      ["T='4 publish'; rake --jobs $T", "rake --jobs 4 publish"],
+    ] as const) {
+      expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
+    }
+    expect(decided("T='4 deploy'; make -j$T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    expect(decided("T='2 publish'; ./gradlew --max-workers $T").decision.says).toContain("Runs gradlew publish, whose name says it publishes.");
+    // An option split out of it asks, as one there does (commands-remote-w5-2), and a make variable that could run a command.
+    for (const cmd of ["T='4 -f evil.mk'; make -j$T", "T='4 -f evil.mk'; make -j $T", "J='4 SHELL=/tmp/x'; make -j$J", "T='2 -b evil.gradle'; ./gradlew --max-workers=$T"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    // Quoted, it is one word: attached, only the count (make takes no other there); a number, a value Ember can't see or a
+    // processor count is the count, as before.
+    for (const cmd of [
+      "T='4 deploy'; make -j\"$T\"", "T=deploy; make -j\"$T\"", "J=4; make -j$J", "J=8; make -sj$J", "J=8; make --jobs=$J", "make -j$T", "make -j$(nproc)",
+      "make -j\"$(nproc)\"", "T=$(nproc); make -j$T", "W=4; ./gradlew --max-workers=$W build", "./gradlew --max-workers $W", "./gradlew --max-workers=$(nproc)", "make -j $JOBS",
+    ]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+  });
+
+  it("builds what a job count's variable holds when it starts with a space or has a part Ember can't see, and Maven's and ninja's counts too (commands-y6-2)", () => {
+    // A value that starts with a space, a tab or a line break leaves the option on its own, as the shell splits it.
+    for (const [cmd, plain] of [
+      ["T=' deploy'; make -j$T", "make -j deploy"], ["T=$'\\tdeploy'; make -j$T", "make -j deploy"], ["T=$'\\ndeploy'; make -j$T", "make -j deploy"],
+      ["T=' deploy'; make -sj$T", "make -sj deploy"], ["T=' deploy'; make -l$T", "make -l deploy"], ["T=' deploy'; make --jobs=$T", "make deploy"],
+      ["T=' publish'; rake --jobs=$T", "rake publish"], ["T=' publish'; ./gradlew --max-workers=$T", "./gradlew publish"], ["T=' 4 deploy'; make -j$T", "make -j 4 deploy"],
+      ["for T in 4 ' deploy'; do make -j$T; done", "make -j deploy"],
+      // A part Ember can't see is one word of it: the first the count, as before, and the words after it built.
+      ["T=\"$(nproc) deploy\"; make -j$T", "make -j4 deploy"], ["T=\"$(nproc) deploy\"; make -j $T", "make -j 4 deploy"], ["T=\"$JOBS deploy\"; make -j$T", "make -j4 deploy"],
+      ["T=\"4 $X\"; make -j$T", "make -j4 $X"],
+      // Maven's -T and ninja's -j take the word after them whatever it is, so the next one is a goal or a target.
+      ["T='2 deploy'; mvn -T $T", "mvn -T 2 deploy"], ["T='2 deploy'; mvn --threads $T", "mvn --threads 2 deploy"], ["T='2 deploy'; ./mvnw -T $T", "./mvnw -T 2 deploy"],
+      ["T='2 deploy'; ninja -j $T", "ninja -j 2 deploy"], ["T='2 publish'; ninja -l $T", "ninja -l 2 publish"],
+    ] as const) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+      expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
+    }
+    expect(decided("T=' deploy'; make -j$T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    expect(decided("T='2 deploy'; mvn -T $T").decision.rules).toContain("mvn.deploy");
+    // An option or a make variable split out of it asks.
+    for (const cmd of ["T=' -f evil.mk'; make -j$T", "T=' SHELL=/bin/echo'; make -sj$T", "T=\"$X -f evil.mk\"; make -j$T", "T='2 deploy'; mvn -T$T"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    // A count alone, with a space before it or not, a value Ember can't see and the processor counts run as before.
+    for (const cmd of [
+      "T=' 4'; make -j$T", "J=' 8'; make -sj$J", "T=\" $(nproc)\"; make -j$T", "make -j$X", "ninja -j $X", "T=4; mvn -T $T test", "T=2C; mvn -T $T package",
+      "T=4; ninja -j $T", "mvn -T $X package",
+    ]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+  });
+
   it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {
     for (const cmd of ["cp notes.txt", "mv notes.txt", "install x.sh", "docker run --rm", "podman run -P"]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     for (const cmd of ["cp --help", "mv --version", "rsync -a src", "rsync src/"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
@@ -1517,6 +1621,43 @@ describe("database clients that run what their input gives them (commands-remote
     expect(rules("mongosh app <<< 'db.users.find()'")).toContain("unclear.stdin-code");
     // Reads, a command on its line, and -x's value from its input are as before.
     for (const cmd of ["redis-cli <<< PING", "echo 'GET k' | redis-cli", "redis-cli GET k", "echo v | redis-cli -x GET k"]) expect(rules(cmd), cmd).toEqual([]);
+  });
+
+  it("asks before redis-cli runs commands printf spells in an octal or hex escape, as it does for a line break (commands-remote-x6-2)", () => {
+    for (const cmd of ["printf 'GET x\\012FLUSHALL\\012' | redis-cli", "printf 'PING\\012DEL users' | redis-cli -h db", "printf 'GET x\\x0aFLUSHALL' | redis-cli"]) {
+      expect(rules(cmd), cmd).toContain("unclear.stdin-code");
+    }
+    expect(rules("printf 'GET x\\nFLUSHALL\\n' | redis-cli")).toContain("db.change");
+  });
+
+  it("asks before redis-cli runs a command on its line that Ember can't see, and judges one the text gives a variable (commands-remote-x6-5)", () => {
+    for (const cmd of ["redis-cli \"$CMD\"", "redis-cli $(printf FLUSHALL)", "redis-cli -h db \"$CMD\" x", "redis-cli CONFIG \"$x\" maxmemory 1"]) {
+      expect(rules(cmd), cmd).toContain("unclear.sql");
+    }
+    for (const cmd of ["c=FLUSHALL; redis-cli $c", "c=FLUSHALL; redis-cli \"$c\"", "c='DEL users'; redis-cli -n 0 $c"]) expect(rules(cmd), cmd).toContain("db.change");
+    expect(classifyCommand("redis-cli \"$CMD\"", "bash", contextOf("linux")).findings.map(f => f.says)).toContain("It runs database commands Ember can't see.");
+    // A read, as written or through a variable, and a key Ember can't see after a command it can, run as before.
+    for (const cmd of ["c=PING; redis-cli \"$c\"", "c='GET x'; redis-cli $c", "redis-cli GET \"$k\"", "redis-cli -h \"$HOST\" PING"]) expect(rules(cmd), cmd).toEqual([]);
+  });
+
+  it("reads redis-cli's options a variable holds as the options they are, never as a command that changes data (commands-y6-3)", () => {
+    const plain = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux")).findings.map(f => `${f.rule}: ${f.says}`);
+    // A read with its options in a variable runs, as it does with them written out.
+    for (const cmd of [
+      "REDIS_OPTS='-h db -p 6380'; redis-cli $REDIS_OPTS INFO", "O='-h db'; redis-cli $O PING", "O='-n 2'; redis-cli $O GET k", "O='--no-auth-warning'; redis-cli $O PING",
+      "O='-h db -p 6380 INFO'; redis-cli $O", "redis-cli -h db -p 6380 INFO",
+    ]) expect(rules(cmd), cmd).toEqual([]);
+    // A change, after them or in them, or given on its input, asks as written out; a password among them is on its line.
+    for (const [cmd, as] of [
+      ["O='-h db'; redis-cli $O FLUSHALL", "redis-cli -h db FLUSHALL"], ["O='-h db FLUSHALL'; redis-cli $O", "redis-cli -h db FLUSHALL"],
+      ["O='-n 2'; redis-cli $O DEL users", "redis-cli -n 2 DEL users"], ["O='-h db'; echo FLUSHALL | redis-cli $O", "echo FLUSHALL | redis-cli -h db"],
+      ["O='-a hunter2'; redis-cli $O PING", "redis-cli -a hunter2 PING"], ["O='--eval x.lua'; redis-cli $O", "redis-cli --eval x.lua"],
+    ] as const) {
+      expect(plain(as), as).not.toEqual([]);
+      expect(plain(cmd), cmd).toEqual(plain(as));
+    }
+    // Options Ember can't see still ask.
+    expect(rules("redis-cli $REDIS_OPTS INFO")).toContain("unclear.sql");
   });
 
   it("judges an SQL or command file a client reads from its input by its name, as -f is, and asks for one this task downloaded", () => {

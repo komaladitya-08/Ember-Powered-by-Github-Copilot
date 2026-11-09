@@ -252,6 +252,8 @@ interface Simple {
    * here-string's word, so Ember's own refusal follows a variable into the program's input (commands-remote-v5-2).
    */
   stdinVars?: HereVars;
+  /** What echo or printf piped in, as the shell's `read` takes it, when that differs from stdinText (Printed.joined). */
+  stdinJoined?: string;
   /** An earlier command in its pipeline fetches from the network or decodes hidden text. */
   fetchBefore: boolean;
   background: boolean;
@@ -270,8 +272,18 @@ interface HereVars { names: string[]; word: Arg | null }
 /**
  * What echo or printf prints into the next command of its pipeline, as that command's input (commands-remote-c5-1):
  * the text when Ember sees all of it, else null with the variables its words use (and the word, when it prints one).
+ * A NUL in it stands as a line break, and `joined` is the text without them, as the shell's `read` takes it (withNuls).
  */
-interface Printed { text: string | null; vars?: HereVars }
+interface Printed { text: string | null; vars?: HereVars; joined?: string }
+
+/**
+ * Printed text with a NUL in it (commands-y6-1): `read -d ''`, `xargs -0` and `mapfile -d ''` end a name there, so
+ * it stands as a line break, never as a NUL in a card's line or the mark of a part Ember can't see (UNSEEN); and the
+ * shell's `read` drops a NUL, so what that reads is the text without them.
+ */
+function withNuls(text: string): Printed {
+  return text.includes("\0") ? { text: text.replace(/\0/g, "\n"), joined: text.replace(/\0/g, "") } : { text };
+}
 
 /** The variables a word uses (Arg.parts), by name. */
 const varNames = (a: Arg): string[] => (a.parts ?? []).flatMap(p => (typeof p !== "string" && p.name !== null ? [p.name] : []));
@@ -299,14 +311,17 @@ function printedBy(words: readonly Arg[]): Printed | null {
     // `printf -v d …` prints nothing: it sets d (setVar).
     if (rest.length === 0 || rest[0].v === "-v") return null;
     const format = rest[0].v;
+    // Only `\n`, `\t` and a lone `\0`: any other escape printf reads (`\056`, `\0056`, `\x2e`, `\u002e`, `\e`, `\\`) is
+    // text Ember doesn't see, never its backslash text (commands-remote-x6-2).
     const unescape = (s: string): string => s.replace(/\\([nt0])/g, (_m, c: string) => (c === "n" ? "\n" : c === "t" ? "\t" : "\0"));
-    if (format !== null && /^([^%\\]|\\[nt0])*$/.test(format) && rest.length === 1) return { text: unescape(format) };
-    const each = format !== null && /^(%s|\\[nt0]|[ \t])+$/.test(format) && (format.match(/%s/g) ?? []).length === 1 && rest.length > 1;
+    if (format !== null && /^([^%\\]|\\([nt]|0(?![0-7])))*$/.test(format) && rest.length === 1) return withNuls(unescape(format));
+    const each = format !== null && /^(%s|\\([nt]|0(?![0-7]))|[ \t])+$/.test(format) && (format.match(/%s/g) ?? []).length === 1 && rest.length > 1;
     shown = each ? rest.slice(1) : rest;
     render = each && format !== null ? vs => vs.map(v => unescape(format).replace("%s", () => v)).join("") : null;
   }
   const names = [...new Set(shown.flatMap(varNames))];
-  if (render && shown.every(a => a.v !== null && !a.glob && !a.v.includes("\\"))) return { text: render(shown.map(a => a.v ?? "")) };
+  const text = render && shown.every(a => a.v !== null && !a.glob && !a.v.includes("\\")) ? render(shown.map(a => a.v ?? "")) : null;
+  if (text !== null) return withNuls(text);
   return names.length ? { text: null, vars: { names, word: render && shown.length === 1 ? shown[0] : null } } : { text: null };
 }
 
@@ -751,13 +766,14 @@ class Classifier {
   }
 
   /**
-   * The values the text gives a word (formsOf): null for one with a part Ember can't see, a resolved word its own value
-   * (`T=deploy; make -j "$T"`: commands-remote-w5-2).
+   * The values the text gives a word (formsOf): null for one with a part Ember can't see (with `unseen`, the form with
+   * UNSEEN where that part stands: commands-y6-2), a resolved word its own value (`T=deploy; make -j "$T"`:
+   * commands-remote-w5-2).
    */
-  knownForms(a: Arg): (string | null)[] {
+  knownForms(a: Arg, unseen = false): (string | null)[] {
     if (a.v !== null) return [a.v];
-    if (!a.parts) return [null];
-    return this.formsOf(a.parts).map(f => (f.includes(UNSEEN) ? null : f.replace(PATTERN, "")));
+    if (!a.parts) return [unseen ? UNSEEN : null];
+    return this.formsOf(a.parts).map(f => (f.includes(UNSEEN) && !unseen ? null : f.replace(PATTERN, "")));
   }
 
   /** The forms a word may take with the values the text gave its variables (UNSEEN for any other part). */
@@ -1226,6 +1242,12 @@ interface H {
   args: Arg[];
   /** The program word's lookup facts (its extension, whether it is reached through WSL interop). */
   pn: ReturnType<typeof programName>;
+  /**
+   * The scope the shell opens the command's redirections in, when `sc` is a folder the program or a wrapper moves into
+   * (`git -C sub`, `patch -d src`, `env -C src`): `< x.patch` is the shell's file there (commands-remote-x6-4,
+   * commands-y6-4).
+   */
+  shellSc?: Scope;
 }
 type Handler = (h: H) => void;
 
@@ -1853,7 +1875,7 @@ class Engine extends Classifier {
     }
     // What it prints reaches the next command only without a redirection of its output.
     const carried = o.pipedOn === true && o.carriedOn === true && !redirs.some(r => r.kind !== "none" && r.kind !== "read" && !r.op.startsWith("2"));
-    this.simple({ words, redirs, stdin, stdinText, stdinVars, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried }, sc, () => {
+    this.simple({ words, redirs, stdin, stdinText, stdinVars, stdinJoined: piped?.joined, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried }, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
     return carried ? printedBy(words) : null;
@@ -2495,7 +2517,9 @@ class Engine extends Classifier {
         this.unclear("unclear.interop-args", "Windows would get different arguments than this shows.");
       }
     }
-    const inner: H = { e: this, sc, s: { ...h.s, ps: undefined }, key, prog, nameArg, args: words.slice(1), pn };
+    // The shell's scope stays the one the command's redirections are opened in, whatever folder the wrapper moves
+    // into (`env -C src patch -p1 < x.patch`, `sudo -D src …`: commands-y6-4).
+    const inner: H = { e: this, sc, s: { ...h.s, ps: undefined }, key, prog, nameArg, args: words.slice(1), pn, shellSc: h.shellSc ?? h.sc };
     // Native rows only: a wrapper runs a program, never a cmdlet or a cmd built-in.
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
@@ -3284,8 +3308,12 @@ function stdinFile(h: H): void {
 
 /** redis-cli's commands that only read or watch (anything else changes the database). */
 const REDIS_READS = /^(get|mget|exists|keys|scan|sscan|hscan|zscan|type|ttl|pttl|strlen|hget|hgetall|hkeys|hvals|hlen|hexists|lrange|llen|lindex|smembers|scard|sismember|zrange|zrangebyscore|zcard|zscore|info|ping|dbsize|time|echo|memory|object|client|slowlog|latency|monitor|subscribe|psubscribe|pubsub|xrange|xlen|xread|bitcount|getrange|getbit|role|lastsave|command|config)$/;
-/** One redis-cli command (its words): a change to the data, or to how the server works. */
-function redisCommand(h: H, words: readonly string[]): void {
+/**
+ * One redis-cli command (its words, null for one Ember can't see): a change to the data, or to how the server works.
+ * A command, or CONFIG's word after it, that Ember can't see asks, as psql -c's does (commands-remote-x6-5).
+ */
+function redisCommand(h: H, words: readonly (string | null)[]): void {
+  if (words[0] === null || (/^config$/i.test(words[0] ?? "") && words[1] === null)) { h.e.unclear("unclear.sql", "It runs database commands Ember can't see."); return; }
   const cmd = (words[0] ?? "").toLowerCase();
   if (cmd && !REDIS_READS.test(cmd)) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(words[1] ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
@@ -3347,13 +3375,22 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     for (const a of h.args) if (a.v !== null && !isOption(a) && /\.(c|m)?js$/i.test(a.v)) runScript(h, a);
   } else if (k === "redis-cli") {
     // -c (cluster mode), -x, -e and --tls take no value (commands-remote-c4-3).
-    const p = opts(h, { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] });
-    if (values(p, "eval").length || has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
-    if (has(p, "a", "pass") || values(p, "a").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-    redisCommand(h, p.operands.map(a => a.v ?? ""));
+    const spec: OptSpec = { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] };
+    const p = opts(h, spec);
+    // A command word Ember can't see all of (`redis-cli "$c"`): each value the text gives it, split as the shell may,
+    // and read again with the words after it, so options split out of it are redis-cli's own (`O='-h db'; redis-cli $O
+    // INFO` reads: commands-y6-3).
+    const [word, ...rest] = p.operands;
+    const lines = word?.v === null ? h.e.knownForms(word).map(f => (f === null ? null : parseOpts([...f.split(/\s+/).filter(w => w !== "").map(w => lit(w)), ...rest], spec))) : [p];
+    for (const q of [p, ...lines]) {
+      if (q === null) continue;
+      if (values(q, "eval").length || has(q, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
+      if (has(q, "a", "pass") || values(q, "a").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
+    }
+    for (const q of lines) redisCommand(h, q === null ? [null] : q.operands.map(a => a.v));
     // With no command on its line it runs the commands its input gives, one a line (`redis-cli <<< FLUSHALL`, `echo
     // DEL x | redis-cli`); with -x its input is the last argument's value (commands-remote-c5-3).
-    if (p.operands.length === 0 && !has(p, "x")) {
+    if (lines.some(q => q !== null && q.operands.length === 0 && !has(p, "x") && !has(q, "x"))) {
       if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => { for (const l of t.split("\n")) redisCommand(h, l.trim().split(/\s+/)); });
       else if (h.s.stdin === "file") stdinFile(h);
     }
@@ -4263,8 +4300,10 @@ reg(NATIVE, ["read", "mapfile", "readarray"], h => {
   if (h.s.stdin === null && h.key === "read") h.e.unclear("unclear.interactive", SAYS.interactive);
   // The names it sets from each line it reads (`read -r l`; -a, -d, -n, -N, -p, -t, -u, -i take a value).
   if (h.key === "read") {
-    // Text it is given itself (`read d <<< ~/.config/ember`): its lines and words (commands-remote-v4-4).
-    const given = typeof h.s.stdinText === "string" ? textValues(h.s.stdinText) : h.s.stdinVars?.word ? [h.s.stdinVars.word] : null;
+    // Text it is given itself (`read d <<< ~/.config/ember`): its lines and words (commands-remote-v4-4), with a NUL
+    // ending a name (`-d ''`) or dropped (commands-y6-1).
+    const text = typeof h.s.stdinText === "string" && h.s.stdinJoined !== undefined ? `${h.s.stdinText}\n${h.s.stdinJoined}` : h.s.stdinText;
+    const given = typeof text === "string" ? textValues(text) : h.s.stdinVars?.word ? [h.s.stdinVars.word] : null;
     const names: string[] = [];
     for (let k = 0; k < h.args.length; k++) {
       const v = h.args[k].v;
@@ -4607,7 +4646,7 @@ reg(NATIVE, ["git"], h => {
   // An `ext::` remote runs the command it names.
   if (h.args.some(a => /^ext::/i.test(a.v ?? ""))) h.e.unclear("unclear.git-ext", "It runs a program named in a git address.");
   const rest = h.args.slice(g.verbAt + 1);
-  const gh: H = { ...h, sc, args: rest };
+  const gh: H = { ...h, sc, args: rest, shellSc: h.shellSc ?? h.sc };
   const fn = GIT[verb];
   if (fn) { fn(gh, widen); return; }
   if (!GIT_READ.has(verb)) { h.e.unclear("unclear.git-verb", "Ember can't tell which git command this runs (an alias or an add-on)."); return; }
@@ -5759,16 +5798,31 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
   // make takes the word after -j or -l only when it is all digits, so a value the text gives a variable there that isn't
   // one is a target or a variable, as written there (`T=deploy; make -j "$T"`), and an option-like one asks
-  // (commands-remote-w5-2).
+  // (commands-remote-w5-2). Unquoted, the shell splits that value into words, each after the count an argument of its
+  // own, attached or apart and for any task runner's job count (`T='4 deploy'; make -j$T`, `./gradlew --max-workers $T`:
+  // commands-remote-x6-1), Maven's and ninja's included (commands-y6-2).
   const counts: Arg[] = [];
-  if (/make$/.test(h.key)) {
-    for (const o of p.opts) {
-      // A count attached (`-j$(nproc)`, `-j"$JOBS"`) is never a target: make takes only a number there.
-      if (o.value !== null || o.parts !== undefined || !/^(-[jl]|--(jobs|load-average))$/.test(o.name)) continue;
-      for (const f of h.e.knownForms(args[o.at + 1])) {
-        if (f === null || /^\d+(\.\d+)?$/.test(f)) continue;
-        if (f.startsWith("-")) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
-        else counts.push(lit(f));
+  for (const o of p.opts) {
+    // Maven's -T and ninja's -j and -l take the word after them whatever it is.
+    const anyCount = (mvn && /^(-T|--threads)$/.test(o.name)) || (h.key === "ninja" && /^-[jl]$/.test(o.name));
+    if (!anyCount && !(/make$/.test(h.key) && /^-[jl]$/.test(o.name)) && !/^--(jobs|load-average|max-workers)$/.test(o.name)) continue;
+    const attached = o.parts !== undefined;
+    const word: Arg | undefined = attached ? { v: null, raw: args[o.at].raw, glob: false, parts: o.parts } : o.value === null ? args[o.at + 1] : undefined;
+    // A count attached and quoted (`-j"$JOBS"`) is never a target: make takes only a number there.
+    const quoted = word !== undefined && /"$/.test(word.raw);
+    if (!word || (attached && quoted)) continue;
+    for (const f of h.e.knownForms(word, true)) {
+      if (f === null) continue;
+      // A value that starts with a space, a tab or a line break leaves the option on its own (`T=' deploy'; make -j$T`
+      // builds deploy), and a part Ember can't see is one word of it (`T="$(nproc) deploy"`): commands-y6-2.
+      const apart = !attached || /^[ \t\n]/.test(f);
+      for (const [k, w] of (quoted ? [f] : f.split(/[ \t\n]+/).filter(x => x !== "")).entries()) {
+        // Attached, or for an option that takes any word, the first word is the count whatever it is; apart, only a
+        // number or one Ember can't see is.
+        if (k === 0 && (anyCount || !apart || /^\d+(\.\d+)?$/.test(w) || w.includes(UNSEEN))) continue;
+        if (w.includes(UNSEEN)) counts.push({ v: null, raw: word.raw, glob: false });
+        else if (w.startsWith("-")) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
+        else counts.push(lit(w));
       }
     }
   }
@@ -6109,19 +6163,21 @@ reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
   for (const f of values(p, "i", "input-file")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // Where it saves (review #169): aria2c's -d folder (-o names a file in it), fetch's and axel's -o (a file or a
   // folder), lwp-download's second operand (the same); otherwise the name the address ends in.
+  // A folder or a name Ember can't see all of (`-d "$d"`, `-o "$f"`) is a download as curl's and wget's are: the names
+  // the text gives it, else unnamed, so running what it saved asks (commands-remote-x6-3).
   const dir = h.key === "aria2c" ? values(p, "d", "dir")[0] : undefined;
-  if (dir === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+  if (dir === null) h.e.downloadUnnamed(null, h.sc);
   else if (dir !== undefined) writeInto(h, dir);
   const at = (name: string): string => (dir ? `${dir}/${name}` : name);
   const named = (u: Arg): string | null => (u.v ? u.v.replace(/[?#].*$/, "").split("/").pop() || "index.html" : null);
-  const outs = values(p, "o", "out", "output");
-  for (const o of outs) {
-    if (o === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
-    else if (o !== "-") saveAs(h, at(o));
+  const outs = optionWords(h.args, p, "o", "out", "output");
+  for (const w of outs) {
+    if (w.v === null) h.e.downloadTo(dir ? { ...w, parts: [`${dir}/`, ...(w.parts ?? [{ name: null }])] } : w, h.sc);
+    else if (w.v !== "-") saveAs(h, at(w.v));
   }
   if (h.key === "lwp-download" && p.operands.length >= 2) {
     const [url, to] = p.operands;
-    if (to.v === null) { h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name."); return; }
+    if (to.v === null) { h.e.downloadTo(to, h.sc); return; }
     saveAs(h, to.v);
     // A folder gets the file by the address's name.
     const name = named(url);
@@ -6541,7 +6597,7 @@ reg(NATIVE, ["patch", "gpatch"], h => {
   let sc = h.sc;
   const dir = values(p, "d", "directory")[0];
   if (dir !== undefined) sc = child(h.sc, { cwd: dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) });
-  const ph: H = { ...h, sc };
+  const ph: H = { ...h, sc, shellSc: h.shellSc ?? h.sc };
   for (const f of values(p, "i", "input")) if (f) h.e.usePath(lit(f), "read", sc);
   for (const f of values(p, "o", "output", "r", "reject-file")) overwrites(ph, f === null ? { v: null, raw: "?", glob: false } : lit(f));
   const [file, patchFile] = p.operands;
@@ -6562,7 +6618,8 @@ reg(NATIVE, ["patch", "gpatch"], h => {
 function appliesDownload(h: H, patches: readonly Arg[]): boolean {
   if (patches.some(f => h.e.isDownloaded(f, h.sc))) return true;
   if ((h.s.stdin === "pipe" || h.s.stdin === "heredoc") && patches.length === 0 && (h.s.fetchBefore || h.e.pipe.carried === true)) return true;
-  return h.s.redirs.some(r => r.kind === "read" && r.target !== null && h.e.isDownloaded(r.target, h.sc));
+  // A redirection is the shell's, opened in its folder, not the one `-d` or `-C` moves into (commands-remote-x6-4).
+  return h.s.redirs.some(r => r.kind === "read" && r.target !== null && h.e.isDownloaded(r.target, h.shellSc ?? h.sc));
 }
 reg(NATIVE, ["certutil"], h => {
   // NSS's certutil (Linux, macOS): a capital letter names its command; adding, changing or deleting a certificate or

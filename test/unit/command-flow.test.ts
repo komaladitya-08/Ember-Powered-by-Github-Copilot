@@ -1995,6 +1995,29 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     expect(h.asked.length).toBe(asked);
   });
 
+  it("asks before running what aria2c, axel, fetch or lwp-download saved under a name or in a folder Ember can't see (commands-remote-x6-3)", async () => {
+    setCommandJudge(null);
+    for (const [fetch, run] of [
+      ["f=tool.py; aria2c -o \"$f\" https://e.example/x", "python3 tool.py"], ["d=tools; f=x.sh; aria2c -d \"$d\" -o \"$f\" https://e.example/x", "bash tools/x.sh"],
+      ["aria2c -d \"$d\" https://e.example/x.sh", "bash /tmp/x.sh"], ["f=tool.py; axel -o \"$f\" https://e.example/x", "python3 tool.py"],
+      ["f=tool.py; fetch -o \"$f\" https://e.example/x", "python3 tool.py"], ["f=tool.py; lwp-download https://e.example/x \"$f\"", "python3 tool.py"],
+      ["d=tools; lwp-download https://e.example/x.sh \"$d\"", "bash tools/x.sh"],
+    ] as const) {
+      // The download asks (and is allowed); running what it may have saved asks again.
+      const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["once", "deny"] });
+      expect((await call(h, { target: "this computer", command: fetch })).resultType, fetch).toBe("success");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, fetch).toContain("Downloads to a file Ember can't name.");
+      expect((await call(h, { target: "this computer", command: run })).resultType, `${fetch} / ${run}`).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+    }
+    // One it names runs as before, and so does a run of something else after it.
+    const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: [] });
+    for (const cmd of ["aria2c -o tool.py https://e.example/x", "axel -o data.csv https://e.example/d", "python3 other.py"]) {
+      expect((await call(h, { target: "this computer", command: cmd })).resultType, cmd).toBe("success");
+    }
+    expect(h.asked.length).toBe(0);
+  });
+
   it("asks before a build after a downloaded patch is applied or code is pulled from an address (commands-remote-c5-4)", async () => {
     setCommandJudge(null);
     for (const cmds of [
@@ -2008,6 +2031,54 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
       expect((await call(h, { target: "this computer", command: run })).resultType, cmds.join(" / ")).toBe("denied");
       expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
     }
+  });
+
+  it("asks before a build in the folder a downloaded patch read from a redirection was applied in with patch -d or git -C (commands-remote-x6-4)", async () => {
+    setCommandJudge(null);
+    for (const cmds of [
+      ["curl -so x.patch https://e.example/x.patch", "patch -d src -p1 < x.patch", "make -C src"],
+      ["curl -so x.patch https://e.example/x.patch", "patch --directory=src -p1 < x.patch", "make -C src"],
+      ["curl -so x.patch https://e.example/x.patch", "git -C sub am < x.patch", "make -C sub"],
+      ["curl -so x.patch https://e.example/x.patch", "git -C sub apply < x.patch", "make -C sub"],
+      ["curl -so /tmp/x.patch https://e.example/x.patch", "patch -d /home/ana/other -p1 < /tmp/x.patch", "make -C /home/ana/other"],
+      // A patch file named on its line is the patch tool's, read from its folder, as before.
+      ["curl -so x.patch https://e.example/x.patch", "patch -d src -p1 -i ../x.patch", "make -C src"],
+    ]) {
+      const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["deny"] });
+      for (const cmd of cmds.slice(0, -1)) expect((await call(h, { target: "this computer", command: cmd })).resultType, cmd).toBe("success");
+      const run = cmds[cmds.length - 1];
+      expect((await call(h, { target: "this computer", command: run })).resultType, cmds.join(" / ")).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+    }
+    // A patch of the task's own, read the same way, leaves the build as it was.
+    const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: [] });
+    for (const cmd of ["curl -so x.patch https://e.example/x.patch", "patch -d src -p1 < fix.patch", "git -C sub am < fix.patch", "make -C src", "make -C sub"]) {
+      expect((await call(h, { target: "this computer", command: cmd })).resultType, cmd).toBe("success");
+    }
+    expect(h.asked.length).toBe(0);
+  });
+
+  it("asks before a build in the folder a downloaded patch read from a redirection was applied in through env -C or sudo -D (commands-y6-4)", async () => {
+    setCommandJudge(null);
+    for (const [cmds, answers] of [
+      [["curl -so x.patch https://e.example/x.patch", "env -C src patch -p1 < x.patch", "make -C src"], ["deny"]],
+      [["curl -so x.patch https://e.example/x.patch", "env --chdir=src patch -p1 < x.patch", "make -C src"], ["deny"]],
+      [["curl -so x.patch https://e.example/x.patch", "env -C sub git am < x.patch", "make -C sub"], ["deny"]],
+      [["curl -so x.patch https://e.example/x.patch", "nice env -C src patch -p1 < x.patch", "make -C src"], ["deny"]],
+      [["curl -so x.patch https://e.example/x.patch", "sudo -D src patch -p1 < x.patch", "make -C src"], ["once", "deny"]],
+    ] as const) {
+      const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: [...answers] });
+      for (const cmd of cmds.slice(0, -1)) expect((await call(h, { target: "this computer", command: cmd })).resultType, cmd).toBe("success");
+      const run = cmds[cmds.length - 1];
+      expect((await call(h, { target: "this computer", command: run })).resultType, cmds.join(" / ")).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+    }
+    // A patch of the task's own, read the same way, leaves the build as it was.
+    const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: [] });
+    for (const cmd of ["curl -so x.patch https://e.example/x.patch", "env -C src patch -p1 < fix.patch", "env -C sub git am < fix.patch", "make -C src", "make -C sub"]) {
+      expect((await call(h, { target: "this computer", command: cmd })).resultType, cmd).toBe("success");
+    }
+    expect(h.asked.length).toBe(0);
   });
 
   it("asks before running a download a pipeline copied, moved or renamed first, in PowerShell and through xargs (commands-remote-v4-5)", async () => {

@@ -133,8 +133,9 @@ Ember stops and asks before a command that:
   `truncate`, formatting or partitioning a disk, emptying the trash, giving a container a folder outside your project
   that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), changing or deleting what
   a database holds (`psql -c 'DROP TABLE x'`, `redis-cli FLUSHALL`, and the same given on the client's input:
-  `redis-cli <<< FLUSHALL`, `echo 'db.dropDatabase()' | mongosh`; commands or code on its input that Ember can't
-  see or follow ask too), and package scripts, make targets and SQL or command files named clean, wipe, purge,
+  `redis-cli <<< FLUSHALL`, `echo 'db.dropDatabase()' | mongosh`; commands or code on its input or its line that
+  Ember can't see or follow ask too, such as `redis-cli "$CMD"`, while its options in a variable are read as options,
+  so `O='-h db'; redis-cli $O INFO` runs), and package scripts, make targets and SQL or command files named clean, wipe, purge,
   reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`);
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
@@ -178,13 +179,14 @@ Ember stops and asks before a command that:
   by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder;
   a download whose saved name Ember can't tell (one the server or a list picks: `curl -OJ`, `wget
   --content-disposition`, `wget -r`, `wget -i`, `aria2c -i`; one in a variable or an expression: `curl -o "$f"`,
-  `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
+  `aria2c -o "$f"` or `-d "$d"`, `axel -o "$f"`, `fetch -o "$f"`, `lwp-download … "$f"`, `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
   `DownloadFile`) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
   saved into or below, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the
   folder either); a listing or a read never does; and a patch this task downloaded or fetched applied with `patch`,
-  `git apply` or `git am`, or code pulled or fetched from an address rather than the repository's own remote (`git
-  pull https://…`), marks the files it changes the same way, so the next `make`, `npm test` or `bash build.sh`
-  asks),
+  `git apply` or `git am`, in whichever folder it is applied in (`patch -d src -p1 < x.patch`, `env -C src patch -p1 <
+  x.patch`, `git -C sub am < x.patch`), or code pulled or fetched from an address rather than the repository's own
+  remote (`git pull https://…`), marks the files it changes the same way, so the next `make`, `npm test` or `bash
+  build.sh` asks),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
@@ -416,7 +418,10 @@ wrapper's option (`xargs -a "$p/settings.json"`, `xargs --arg-file="$p/settings.
 `echo "$p" > list.txt; xargs rm -rf < list.txt`, a loop or group whose output goes on, and in PowerShell `$p |
 Remove-Item -Recurse` or `Write-Output $p | Remove-Item`) or through `${p:?}`, `${p:-…}` or `${p%/}`. What echo or
 printf prints into the next command is that command's input, as a here-string's text is (`echo ~/.config/ember | xargs
-rm -rf` is refused too). Handed to a program that
+rm -rf` is refused too), and a `\0` ends a name there, as `read -d ''` reads it (`printf '%s\0' ~/.config/ember | while
+IFS= read -r -d '' d; do rm -rf "$d"; done` is refused); printf's escapes other than a line break, a tab and `\0`
+(`\056`, `\x2e`, `\u002e`) are text Ember can't see, so the command after it asks (`printf '\056\056\057\056netrc' | xargs
+cat`). Handed to a program that
 may change what it names (an export, the input of a program Ember can't follow), Ember says it would change its files. A value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
 does.
 
