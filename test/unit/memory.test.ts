@@ -770,6 +770,22 @@ describe("what memory never keeps", () => {
   ])("keeps %j, settings, a length or an algorithm with no secret after them (memory-y6-3)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A MySQL client's password after a prompt, a comment mark, markup, curly quotes, a Makefile variable or a setting,
+  // or from a quoted Windows folder, which memory can't keep hidden (memory-z6-1).
+  it.each([
+    ["C:\\xampp\\mysql\\bin>mysql -u root -pWint3r!Sh0p"], ["C:\\Users\\me>mysqldump -u root -pWint3r!Sh0p shop"],
+    ['"C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe" -u root -pWint3r!Sh0p'], ["#mysqldump -u root -pWint3r!Sh0p shop > backup.sql"],
+    ["<code>mysql -u root -pWint3r!Sh0p</code>"], ["Run \u201cmysql -u root -pWint3r!Sh0p\u201d to log in"], ["\t$(Q)mysql -u root -pWint3r!Sh0p shop"],
+    ["  - DB_CMD=mysql -u root -pWint3r!Sh0p"], ["remember C:\\xampp\\mysql\\bin>mysql -u root -pWint3r!Sh0p"],
+  ])("refuses %j and saves nothing, a client's password however its name is wrapped (memory-z6-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["The reporting tool builds with gcc -I./include/mysql -pthread"], ["CFLAGS += $(MYSQL_CFLAGS) -pthread"], ["C:\\xampp\\mysql\\bin>mysql -u root -p"],
+  ])("keeps %j, a build line or a client that prompts for its password (memory-z6-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
 
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],

@@ -214,6 +214,17 @@ it("holds back a Makefile recipe, a unit file and an upgrade script that give a 
   await expect(prompt([upgrade])).rejects.toThrow(new Error("upgrade.sh appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
 });
 
+it("holds back a XAMPP guide whose prompt line and a backup script whose comment give MySQL its password, and sends one that prompts for it (memory-z6-1)", async () => {
+  const setup = await file("SETUP.md", "# Setup\n\nOpen the XAMPP shell and run:\n\n    C:\\xampp\\mysql\\bin>mysql -u root -pWint3r!Sh0p shop < schema.sql\n");
+  await expect(prompt([setup])).rejects.toThrow(new Error("SETUP.md appears to contain a password, token or key on line 5. Remove that file or the value, then send again."));
+  const backup = await file("backup.sh", "#!/bin/sh\n#mysqldump -u root -pWint3r!Sh0p shop > /backup/shop.sql\n");
+  await expect(prompt([backup])).rejects.toThrow(new Error("backup.sh appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+  const windows = await file("WINDOWS.md", '# Windows\n\n    "C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe" -u root -pWint3r!Sh0p\n');
+  await expect(prompt([windows])).rejects.toThrow(new Error("WINDOWS.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const prompts = await file("LOGIN.md", "# Log in\n\n    C:\\xampp\\mysql\\bin>mysql -u root -p shop\n");
+  expect(await prompt([prompts])).toContain("bin>mysql -u root -p shop");
+});
+
 it("holds back a Wi-Fi note with the key after its state's full stop, and sends one with only the state (memory-y6-2)", async () => {
   const wifi = await file("wifi.md", "# Wi-Fi\n\nPSK: rotated. It's BlueSky99! this month.\n");
   await expect(prompt([wifi])).rejects.toThrow(new Error("wifi.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));

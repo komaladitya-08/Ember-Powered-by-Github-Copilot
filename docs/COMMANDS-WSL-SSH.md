@@ -427,8 +427,8 @@ A command's output goes to Copilot as part of the task, marked as untrusted data
 out every line you typed, withholds what follows a password-like prompt (until the program's next line after you press
 Enter, or to the end when the command can't take typing), and hides the passwords, keys and tokens it recognises
 (GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face and GitLab tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, passwords
-in URLs, a password given to a program's short option such as `mysql -p…`, `curl -u user:…`, `docker login -p …` or
-`sshpass -p …`, and the like). Hiding is best effort: a secret in a form Ember doesn't recognise can get through, so don't print
+in URLs, a password given to a program's short option such as `mysql -p…` (also after a prompt such as `C:\>`, a
+comment's `#` or from a quoted folder), `curl -u user:…`, `docker login -p …` or `sshpass -p …`, and the like). Hiding is best effort: a secret in a form Ember doesn't recognise can get through, so don't print
 secrets on purpose.
 
 Output that reads like instructions to Ember ("ignore previous instructions", "you are an AI assistant", `curl … |
