@@ -32,7 +32,9 @@ interface Plain { height: number; layout: Layout; keys: { caps: string[]; text: 
  * the column's width: how far right each one's words reach, on how many lines, and the tops of its keycaps.
  */
 interface Hints { stepRight: number; winWidth: number; hints: { text: string; right: number; lines: number; capTops: number[] }[] }
-interface Report { size: string; height: number; layout: Layout; before: string[]; scrolled: string[]; squeezed: Layout; squeezedSent: string[]; fits: string[]; plain: Plain; wholeKeys: Hints; shiftKeys: Hints }
+/** What main heard the card say of answers opened in full (OVERLAY.handleAnswerEnd), after each step: "long", "short". */
+interface Opened { before: string[]; scrolled: string[]; notOpened: string[]; short: string[] }
+interface Report { size: string; height: number; layout: Layout; before: string[]; scrolled: string[]; squeezed: Layout; squeezedSent: string[]; fits: string[]; plain: Plain; wholeKeys: Hints; shiftKeys: Hints; opened: Opened }
 
 /** Ember's own HandleWindow and page prefs, in Electron: the card for one text size, the question, what the page sent. */
 const CHILD = `
@@ -146,7 +148,32 @@ app.whenReady().then(async () => {
   card.sendState(shiftState);
   await sleep(1200);
   const shiftKeys = await measureKeys();
-  process.stdout.write("RESULT " + JSON.stringify({ size, height, layout, before, scrolled, squeezed, squeezedSent, fits, plain, wholeKeys, shiftKeys }) + "\\n");
+  // An answer opened in full ("Read all") on the card: main hears its words once its last line has been in view, not
+  // before (companion-repairs-x6-3), a short one at once, and never one that isn't opened in full.
+  const LONG_ANSWER = "Tokyo is nine hours ahead of London, so it is evening there. ".repeat(30) + "Want me to add a world clock?";
+  const SHORT_ANSWER = "Tokyo is nine hours ahead of London. Want me to add a world clock?";
+  const ended: string[] = [];
+  ipcMain.on(OVERLAY.handleAnswerEnd, (_e, words: unknown) => { ended.push(words === LONG_ANSWER ? "long" : words === SHORT_ANSWER ? "short" : "other"); });
+  const answer = (thought: string, expanded: boolean): EmberState => ({
+    emotion: "neutral", talking: false, status: null, tasks: [],
+    bubble: {
+      visible: true, mood: "idle", title: "Ember", thought, step: null, streaming: false, ...(expanded ? { expanded: true } : {}),
+      actions: expanded ? [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] : [{ id: "ui:more", label: "Read all" }],
+    },
+  });
+  card.sendState(answer(LONG_ANSWER, true));
+  await sleep(1200);
+  const answerBefore = [...ended];
+  await wc.executeJavaScript('(() => { const t = document.getElementById("thought"); t.scrollTop = t.scrollHeight; })()');
+  await sleep(400);
+  const answerScrolled = [...ended];
+  card.sendState(answer(SHORT_ANSWER, false));
+  await sleep(1000);
+  const notOpened = [...ended];
+  card.sendState(answer(SHORT_ANSWER, true));
+  await sleep(1200);
+  const opened = { before: answerBefore, scrolled: answerScrolled, notOpened, short: [...ended] };
+  process.stdout.write("RESULT " + JSON.stringify({ size, height, layout, before, scrolled, squeezed, squeezedSent, fits, plain, wholeKeys, shiftKeys, opened }) + "\\n");
   app.exit(0);
 });
 `;
@@ -254,6 +281,18 @@ describe.skipIf(!required && (!xvfb || !built))("the corner card with a question
       const [first, second] = plain.keys.hints;
       expect(second.top, "the second chord starts on a line of its own").toBeGreaterThanOrEqual(first.bottom - 0.5);
       for (const h of plain.keys.hints) expect(h.right, `${h.text} fits the card's column`).toBeLessThanOrEqual(plain.keys.stepRight + 0.5);
+    }, 90_000);
+
+    it(`tells main once an answer opened in full has shown its last line on the card, so the Ask box offers what answers it (companion-repairs-x6-3, ${size} text)`, async () => {
+      const { opened } = await report(size);
+      // Opened in full and running on past the card: nothing until its text is scrolled to its end (the box offered
+      // nothing after Read all, however long the user read).
+      expect(opened.before).toEqual([]);
+      expect(opened.scrolled).toEqual(["long"]);
+      // Not opened in full (Read all still offered): nothing.
+      expect(opened.notOpened).toEqual(["long"]);
+      // A short one opened in full, all of it in view: at once.
+      expect(opened.short).toEqual(["long", "short"]);
     }, 90_000);
 
     it(`keeps a whole text's key hint inside the card, its words wrapping under their keycaps, with the Shift chords too (accessibility-visual-c3-1, ${size} text)`, async () => {

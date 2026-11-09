@@ -121,7 +121,8 @@ They share one emotion rig, so switching never changes behaviour.
   is up, and the box shows the ones that follow the answer ("Close it", "Read it out") only while that answer shows,
   and the ones that answer its last words, usually an offer ("Yes, please", "No, thanks"), only while those show too:
   not while the bubble cuts it short under **Read all**, and opened in full only once its last line has been in view,
-  all of it at once or scrolled to (the overlay says so: `endShown`), as one cut short to the room or longer than
+  all of it at once or scrolled to (the overlay says so: `endShown`; without a compositor the corner card does, for
+  the words it shows), as one cut short to the room or longer than
   its sixteen lines isn't at first (`askSuggestions`; a change while a reply is typed waits until the field is
   cleared). While
   the box is open its row keeps the room it opened with, rows and all: none to offer puts the row out of sight, fewer
