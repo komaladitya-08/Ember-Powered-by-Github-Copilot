@@ -49,7 +49,7 @@ function generatedCases() {
     ["cat ", ""], ["printf %s ", ""], ["head -n", " notes.txt"], ["grep -m", " text notes.txt"], ["sleep ", ""], ["xargs -n", " echo"], ["nice -n", " echo"],
     ["make -j", ""], ["make -l", ""], ["make --jobs=", ""], ["make --load-average=", ""], ["make -I", ""], ["make -C", ""], ["make -f", ""],
     ["ninja -j", ""], ["ninja -l", ""], ["mvn -T", " package"], ["mvn --threads=", " package"], ["rake -j", ""], ["rake --jobs=", ""],
-    ["./gradlew --max-workers=", " build"], ["ctest -j", ""], ["pytest -n", ""], ["cmake --build build -j", ""], ["sort --parallel=", " notes.txt"], ["xargs -P", " echo"], ["parallel -j", " echo"],
+    ["./gradlew --max-workers=", " build"], ["ctest -j", ""], ["pytest -n", ""], ["cmake --build build -j", ""], ["sort --parallel=", " notes.txt"], ["sort --parallel=", " file"], ["xargs -P", " echo"], ["parallel -j", " echo"],
   ];
   for (const [prefix, suffix] of countOperands) for (const count of countVariants) add(`${prefix}${count}${suffix}`);
   for (const [prefix, suffix] of countOperands) for (const value of ["4", "$(nproc)", "deploy"]) add(`J='${value}'; ${prefix}$J${suffix}`);

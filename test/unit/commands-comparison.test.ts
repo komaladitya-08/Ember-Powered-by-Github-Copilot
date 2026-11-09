@@ -84,6 +84,17 @@ describe("the audit command comparison", () => {
     expect(compareResults([{ cmd, sequence: [cmd] }], [before], [after]).errors.length).toBeGreaterThan(0);
   });
 
+  it("recognises the other reviewed literal sort operand without accepting another path (commands-comparison-r7-3)", async () => {
+    const { isAllowedJobCount, compareResults } = await api();
+    const cmd = "sort --parallel=$(nproc) file";
+    expect(isAllowedJobCount(cmd)).toBe(true);
+    const report = compareResults([{ cmd }], [result("ask", ["ASKED"], ["unclear.unresolved-arg"], [cmd])], [result("run", ["RAN"], [], [cmd])]);
+    expect(report.errors).toEqual([]);
+    expect(report.changes).toHaveLength(2);
+    expect(report.changes.every(c => c.allowed)).toBe(true);
+    for (const other of ["private.txt", "file extra", "./file", "file; echo done"]) expect(isAllowedJobCount(`sort --parallel=$(nproc) ${other}`), other).toBe(false);
+  });
+
   it("rejects matching truncated probe sequences instead of treating the unreported step as safe (compare-v7-2)", async () => {
     const { compareResults } = await api();
     const before = result("ask"), after = result("run", ["RAN"]);

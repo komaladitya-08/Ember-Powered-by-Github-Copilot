@@ -32,7 +32,7 @@ export function isAllowedJobCount(command) {
   if (/[\r\n]/.test(command)) return false;
   const match = /^(?:(?:make|gmake|ctest|ninja) -j[ \t]*|(?:make|rake) --jobs=|cmake --build build -j[ \t]*|pytest -n[ \t]*|sort --parallel=|\.\/gradlew --max-workers=)(.+)$/.exec(command);
   const inert = [
-    /^sort --parallel=(.+) notes\.txt$/,
+    /^sort --parallel=(.+) (?:notes\.txt|file)$/,
     /^(?:xargs -P|parallel -j)[ \t]*(.+) echo$/,
     /^(?:mvn -T[ \t]*|mvn --threads=)(.+) package$/,
     /^\.\/gradlew --max-workers=(.+) build$/,
