@@ -28,9 +28,10 @@ export interface Arg {
    * A POSIX word with v null: its text as written pieces and the variables in it (`{ name }`; null for an expansion
    * that isn't a plain variable), so Ember's own refusal can be judged against values the text gives those variables.
    * `cut`: a cut or a default (`${d%x}`, `${d:-x}`) that may be other text than the values; `value`: the value the
-   * scope knows (HOME, PWD) in place of the text's (commands-remote-w5-1, w5-3).
+   * scope knows (HOME, PWD) in place of the text's (commands-remote-w5-1, w5-3); `alt`: a default's text, resolved
+   * (`${XDG_CONFIG_HOME:-$HOME/.config}`: commands-remote-v4-4).
    */
-  parts?: readonly (string | { name: string | null; cut?: true; value?: string })[];
+  parts?: readonly (string | { name: string | null; cut?: true; value?: string; alt?: string })[];
 }
 
 /** A literal argument (tests, wrappers that build words). */
@@ -99,6 +100,46 @@ const CPU_COUNT = String.raw`\s*(nproc(\s+--(all|ignore=\d+))*|getconf\s+_?NPROC
  * (commands-remote-w5-2).
  */
 const COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|\$\(\([^()]*\)\)|` + "`" + CPU_COUNT + "`" + String.raw`|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"?$`);
+/**
+ * A word that is only a processor count's substitution, quoted or not (`$(nproc)`, `` `getconf _NPROCESSORS_ONLN` ``):
+ * a plain number, whatever option it is given to or stands alone, so no file or command hides in it
+ * (commands-remote-r5-3).
+ */
+export const CPU_COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|` + "`" + CPU_COUNT + "`" + String.raw`)"?$`);
+
+/**
+ * The option a word Ember can't see stands for when a count is attached to it (`-j$(nproc)`, `-j"$JOBS"`,
+ * `--parallel=$(nproc)`, `--max-workers=$(nproc)`): a numeric option takes any count word, as when it is apart; an option
+ * that takes a value only a processor count. Its value is unseen, its pieces kept (commands-remote-r5-3).
+ */
+function attachedCount(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
+  const long = /^--([A-Za-z][A-Za-z0-9-]*)=(.+)$/s.exec(a.raw);
+  const parts = (a.parts ?? []).slice();
+  const cut = (n: number): Arg["parts"] => {
+    const first = typeof parts[0] === "string" ? parts[0].slice(n) : "";
+    return [...(first ? [first] : []), ...parts.slice(typeof parts[0] === "string" ? 1 : 0)];
+  };
+  if (long) {
+    const numeric = (spec.longNumeric ?? []).includes(long[1]);
+    if (!(numeric ? COUNT_WORD : CPU_COUNT_WORD).test(long[2]) || !(numeric || (spec.longValue ?? []).includes(long[1]))) return null;
+    return [{ name: `--${long[1]}`, value: null, parts: cut(long[1].length + 3) }];
+  }
+  const short = /^-([A-Za-z0-9]+)(.+)$/s.exec(a.raw);
+  if (!short || a.raw.startsWith("--")) return null;
+  const out: Omit<Opt, "at">[] = [];
+  for (let j = 0; j < short[1].length; j++) {
+    const c = short[1][j];
+    const numeric = (spec.shortNumeric ?? "").includes(c);
+    if (numeric || (spec.shortValue ?? "").includes(c)) {
+      // The count must be all that follows the letter.
+      const rest = short[1].slice(j + 1) + short[2];
+      return (numeric ? COUNT_WORD : CPU_COUNT_WORD).test(rest) ? [...out, { name: `-${c}`, value: null, parts: cut(j + 2) }] : null;
+    }
+    if ((spec.shortOptional ?? "").includes(c)) return null;
+    out.push({ name: `-${c}` });
+  }
+  return null;
+}
 
 /**
  * Parses options GNU-style (clusters, attached values, `--` ends options, options after operands unless
@@ -130,6 +171,8 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
     // the value judged by its pieces (commands-remote-w5-6).
     const attached = v === null && spec.stopAtOperand && !a.param ? attachedOption(a, spec) : null;
     if (attached) { opts.push(...attached.map(o => ({ ...o, at: k }))); continue; }
+    const counted = v === null && !a.param ? attachedCount(a, spec) : null;
+    if (counted) { opts.push(...counted.map(o => ({ ...o, at: k }))); continue; }
     if (v === null || !v.startsWith("-") || v === "-") {
       if (spec.stopAtOperand) {
         restAt = k;

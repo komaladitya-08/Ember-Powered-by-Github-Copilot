@@ -131,8 +131,11 @@ Ember stops and asks before a command that:
   under the folder, and a Mac's `cp -R build/ ~/Documents`, which copies what is in build straight into the folder,
   ask whenever the folder is there: "Replaces files in ~/Documents if they exist."),
   `truncate`, formatting or partitioning a disk, emptying the trash, giving a container a folder outside your project
-  that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), and package scripts or
-  make targets named clean, wipe, purge, reset and the like;
+  that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), changing or deleting what
+  a database holds (`psql -c 'DROP TABLE x'`, `redis-cli FLUSHALL`, and the same given on the client's input:
+  `redis-cli <<< FLUSHALL`, `echo 'db.dropDatabase()' | mongosh`; commands or code on its input that Ember can't
+  see or follow ask too), and package scripts, make targets and SQL or command files named clean, wipe, purge,
+  reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`);
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,
@@ -166,12 +169,22 @@ Ember stops and asks before a command that:
   launchers and desktop extensions (`~/.local/share/applications`, GNOME Shell extensions), even when the file is new;
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
   downloaded in this task (also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
-  `rsync`, `dd`, `cat x.py > y.py` or `tee`, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
+  `rsync`, `dd`, `cat x.py > y.py`, `tee`, `dos2unix -n`, `sort -o`, `split` and `cat` of its pieces, or a `tar` or
+  `zip` of it unpacked again, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
   or a `New-Item` link, also from a pipeline (`Get-Item x.exe | Copy-Item -Destination y.exe`; when Ember can't tell
   which files a pipeline or a variable hands over, the copy counts as a download whenever the task downloaded
   something it could be: running a file from where it went asks, but that folder's own tools, such as `npm test` or
   `make`, ask only when the download could be one of their files), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy` (a folder's copy keeps each download under its own name, so the folder's other files and tools are as before), run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
-  by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder),
+  by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder;
+  a download whose saved name Ember can't tell (one the server or a list picks: `curl -OJ`, `wget
+  --content-disposition`, `wget -r`, `wget -i`, `aria2c -i`; one in a variable or an expression: `curl -o "$f"`,
+  `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
+  `DownloadFile`) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
+  saved into or below, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the
+  folder either); a listing or a read never does; and a patch this task downloaded or fetched applied with `patch`,
+  `git apply` or `git am`, or code pulled or fetched from an address rather than the repository's own remote (`git
+  pull https://…`), marks the files it changes the same way, so the next `make`, `npm test` or `bash build.sh`
+  asks),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
@@ -391,12 +404,19 @@ Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`, or a cut or a default
 of a variable, `~/.config/"${x%y}"`, which may be other text than its value) or a pattern before it could match one
-(`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is. A variable is judged where a command uses it, so one that only names Ember's
-folder to test or print it (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
-input while nothing takes what it prints (`grep -q ember <<< "$p"`, `wc -c <<< "$p"`), runs, unless it is exported to a
+(`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is, and a default's text counts as a value
+(`"${XDG_CONFIG_HOME:-$HOME/.config}/ember"` is Ember's folder). A variable is judged where a command uses it, so one that only names Ember's
+folder to test or print it on the terminal (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
+input while nothing takes what it prints (`grep -q ember <<< "$p"`, `echo "$p" | wc -c`; never an awk or sed program
+that runs or writes what it reads, such as `awk '{system(…)}'` or `sed '…/e'`, which is refused given Ember's folder,
+named or not), runs, unless it is exported to a
 program (`export p`, `set -a`) or a program gets it some other way: as its own name (`"$p/bin/ember"`), through a
 wrapper's option (`xargs -a "$p/settings.json"`, `xargs --arg-file="$p/settings.json"`), on its input (`xargs rm -rf <<< "$p"`, `read -r f <<< "$p"; rm -rf
-"$f"`, `mapfile -t a <<< "$p"; rm -rf "${a[@]}"`) or through `${p:?}`, `${p:-…}` or `${p%/}`. Handed to a program that
+"$f"`, `mapfile -t a <<< "$p"; rm -rf "${a[@]}"`), printed into another program or a file (`echo "$p" | xargs rm -rf`,
+`echo "$p" > list.txt; xargs rm -rf < list.txt`, a loop or group whose output goes on, and in PowerShell `$p |
+Remove-Item -Recurse` or `Write-Output $p | Remove-Item`) or through `${p:?}`, `${p:-…}` or `${p%/}`. What echo or
+printf prints into the next command is that command's input, as a here-string's text is (`echo ~/.config/ember | xargs
+rm -rf` is refused too). Handed to a program that
 may change what it names (an export, the input of a program Ember can't follow), Ember says it would change its files. A value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
 does.
 
