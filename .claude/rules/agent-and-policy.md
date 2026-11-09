@@ -60,6 +60,7 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 - **Wiring.**
   - Decide whether guide mode gets the tool (the `guide` set in `tools()`).
   - Give it bubble words in `TOOL_STEPS` (presenter.ts) and a kind of step in `STEP_GROUP` (app/shared/activity.ts: its card's words), and describe it in the persona rules. Its card hears of it through the worker's `onActivity` (app/main/agent/activity.ts): tool calls, questions, refusals and notes, never arguments or screen text.
+  - Keep the SDK invocation's `toolCallId` through serial `runTool` execution. Refused, denied and picture events carry that active id: several SDK tool-start events can arrive before the first handler finishes. ActivityLog never guesses between running calls, and a stale id never changes another step (tasks-approvals-c5-1).
   - Keep eval/tasks/*.json calling it with arguments it accepts (eval-harness.test.ts checks this).
 - **Tests.** Test it in worker-tools.test.ts and policy.test.ts (worker-commands.test.ts for command tools).
 

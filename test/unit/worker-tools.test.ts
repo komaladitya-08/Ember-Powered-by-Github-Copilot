@@ -203,11 +203,20 @@ function makeWorker(o: {
     pointer: o.pointer, activationKey: o.activationKey,
   } as unknown as WorkerDeps, { id: o.taskId ?? "t1", goal: o.goal ?? "make it bold", target: { title: o.wins?.[0]?.name ?? "notes.txt" }, mode: o.mode, ...(o.specScreen ? { screen: o.specScreen } : {}), ...(o.userWords !== undefined ? { userWords: o.userWords } : {}) });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
-  const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
+  const call = (name: string, args: Record<string, unknown>, toolCallId?: string) => tool(name).handler!(args, { toolCallId } as never) as Promise<{ textResultForLlm: string; resultType: string }>;
   /** A window the user opens meanwhile (with `wins`). */
   const openWindow = (x: { name: string; role?: string; app?: string; pid?: number; path?: string }) => { open.push(asWin(x)); };
   return { w, audit, events, asked, questions, call, flown, guided, activity, openWindow, closeWindow };
 }
+
+describe("the serial tool's SDK identity", () => {
+  it("keeps each refusal and denial with the call that ran (tasks-approvals-c5-1)", async () => {
+    const h = makeWorker({ promptOpen: () => true });
+    await h.call("perceive_window", {});
+    await Promise.all([h.call("click", { id: 1 }, "one"), h.call("click", { id: 1 }, "two")]);
+    expect(h.activity.filter(e => e.type === "refused" || e.type === "denied").map(e => e.id)).toEqual(["one", "one", "two", "two"]);
+  });
+});
 
 describe("a screenshot a task sends (safety-privacy-6)", () => {
   const jpeg = { mimeType: "image/jpeg", data: Buffer.alloc(2048, 1) };

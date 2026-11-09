@@ -6,7 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ActivityLog } from "../../app/main/agent/activity";
+import { ActivityLog, type ActivityEvent } from "../../app/main/agent/activity";
 import {
   cardApp, CARD_APP_MAX, ACTIVITY_LIMIT, STATUS_WORDS, activityRows, clockText, doingWords, elapsedText, pacedWords, planStepText, retryWords, stepsWords,
   summarizeActivity, telemetryItems, type ActivityItem,
@@ -17,6 +17,27 @@ import { timelineRows } from "../../app/renderer/home/tasks-copy";
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 
 const T0 = 1_000_000;
+
+describe("overlapping SDK tool starts", () => {
+  it.each(["refused", "denied", "picture"] as const)("attributes %s to its invocation, never the last queued call (tasks-approvals-c5-1)", type => {
+    const l = new ActivityLog(T0);
+    l.add({ type: "tool-start", id: "one", tool: "perceive_window", step: "Reading" }, T0);
+    l.add({ type: "tool-start", id: "two", tool: "click", step: "Clicking" }, T0 + 1);
+    l.add({ type, id: "one", ...(type === "refused" ? { reason: "a password prompt is open" } : {}) } as ActivityEvent, T0 + 2);
+    const first = l.get().items.find(i => i.id === "one");
+    const second = l.get().items.find(i => i.id === "two");
+    expect(second).toMatchObject({ id: "two", kind: "step", state: "running", group: "click" });
+    expect(first).toMatchObject(type === "picture" ? { group: "picture" } : { state: "stopped" });
+  });
+
+  it.each([undefined, "gone"])("does not guess another step for an absent or stale id %s (tasks-approvals-c5-1)", id => {
+    const l = new ActivityLog(T0);
+    l.add({ type: "tool-start", id: "one", tool: "click", step: "Clicking" }, T0);
+    l.add({ type: "tool-start", id: "two", tool: "open_app", step: "Opening" }, T0 + 1);
+    l.add({ type: "denied", ...(id ? { id } : {}) } as ActivityEvent, T0 + 2);
+    expect(l.get().items.every(i => i.state === "running")).toBe(true);
+  });
+});
 
 /** A log that started at T0, with a step helper: a tool call from start to end at `at` ms. */
 function log() {
