@@ -2520,3 +2520,5 @@ An empty or unknown first Redis argument retains a question so shell word remova
 A relative shell script with an unknown working folder is uncertain, including a script fed to `env -C … sh` on stdin.
 
 Unresolved tar extraction directories go through optionFiles and retain both the question and download provenance.
+
+The xargs process-slot-var gate is unconditional: arbitrary child environment names are not assumed harmless.

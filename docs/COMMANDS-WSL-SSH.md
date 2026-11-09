@@ -1013,3 +1013,6 @@ before a relative script can run. An unknown starting folder never means that th
 
 An extraction directory given by a variable or substitution asks instead of being mistaken for the current folder.
 For an archive this task downloaded, an unknown extraction directory keeps download provenance anywhere it may land.
+
+GNU xargs' `--process-slot-var` always asks: it changes each child's environment, which can select a shell startup
+file or a different executable even when the command text looks ordinary.

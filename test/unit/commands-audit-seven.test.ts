@@ -74,3 +74,15 @@ describe("an archive destination held in a variable", () => {
     expect(decide('d=~/.config/ember; tar -C "$d" -xf /tmp/x.tar').verdict).toBe("refuse");
   });
 });
+
+describe("xargs child environments", () => {
+  it("asks before process-slot-var can select a startup file or executable (commands-remote-c7-3, i6a)", () => {
+    for (const name of ["BASH_ENV", "PATH", "LD_PRELOAD", "SLOT"]) {
+      for (const option of [`--process-slot-var=${name}`, `--process-slot-var ${name}`]) {
+        expect(decide(`xargs -P4 ${option} bash -c 'echo okay' < urls.txt`).verdict, option).toBe("ask");
+      }
+    }
+    expect(decide("xargs -P4 --process-slot-var=$NAME echo < urls.txt").verdict).toBe("ask");
+    expect(decide("xargs -n1 echo < words.txt").verdict).toBe("run");
+  });
+});

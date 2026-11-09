@@ -3673,6 +3673,8 @@ reg(NATIVE, ["xargs"], h => {
     shortValue: "adEILnPsJRS", shortOptional: "lie", longValue: ["arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"],
     longOptional: ["eof", "replace", "max-lines"], stopAtOperand: true, jobCounts: ["P", "max-procs"],
   });
+  // A child may treat any assigned name as code or an executable location (commands-remote-c7-3).
+  if (has(p, "process-slot-var")) h.e.unclear("unclear.assignment", "It changes the environment of the commands it runs.");
   // The file it reads its input from, a variable in it judged for Ember's own refusal (commands-remote-v5-2).
   optionFiles(h, h.args, p, { read: ["a", "arg-file"] }, false);
   // A bare -i or --replace replaces {}.
