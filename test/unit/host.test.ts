@@ -142,6 +142,28 @@ function makeHost(extra: Partial<HostOptions> = {}) {
 }
 
 describe("reading the retained answer", () => {
+  it("explains that an approval must be answered first instead of silently claiming to read (voice-speaking-v7-1)", async () => {
+    let waiting = false;
+    const waiters: (() => void)[] = [];
+    const voiced: string[] = [];
+    const { host, settings } = makeHost({ hands: { ...hands(), confirmer: { get waiting() { return waiting; }, settled: () => waiting ? new Promise<void>(resolve => waiters.push(resolve)) : Promise.resolve(), cancelAll() {} } as never },
+      onAnswer: text => { if (!waiting) voiced.push(text); }, health: () => ({ mic: "off", speaks: true }) });
+    await host.start(TOKEN, "stored");
+    await host.ask("Explain the tides");
+    const answer = "The Moon's gravity pulls on the oceans.";
+    conductorSession().emit("assistant.message", { content: answer });
+    conductorSession().emit("session.idle");
+    settings.update({ speakResults: false });
+    waiting = true;
+    await host.ask("Read it out");
+    expect(host.getTranscript().at(-1)?.text).toBe("Answer my question first, then ask me to read it out.");
+    expect(voiced).toEqual([answer]);
+    expect(settings.get().speakResults).toBe(false);
+    waiting = false;
+    for (const resolve of waiters) resolve();
+    await host.stop();
+  });
+
   it.each([{}, { suggested: true }, { spoken: true }])("reads the answer for %j without changing future speech settings (voice-speaking-r6-1)", async how => {
     const answers: string[] = [];
     const { host, settings } = makeHost({ onAnswer: text => answers.push(text), health: () => ({ mic: "off", speaks: true }) });

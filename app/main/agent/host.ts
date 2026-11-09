@@ -3053,7 +3053,8 @@ export class AgentHost {
     // A retained answer is read through the usual speaking gate, never by switching a preference on (voice-speaking-r6-1).
     if (readAnswerRequest(text) && this.betweenTurns()) {
       const answer = this.lastAnswer();
-      const reply = !answer ? "There isn't an answer to read yet." : !this.o.health?.().speaks
+      const question = this.o.hands?.confirmer.waiting || this.o.taskBase?.confirmer.waiting;
+      const reply = question ? "Answer my question first, then ask me to read it out." : !answer ? "There isn't an answer to read yet." : !this.o.health?.().speaks
         ? "I'm not speaking replies right now. Speaking is under Voice in settings." : answer;
       this.answerLocally(text, reply, how);
       return true;
