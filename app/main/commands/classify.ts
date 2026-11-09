@@ -311,7 +311,7 @@ function printedBy(words: readonly Arg[]): Printed | null {
     // `printf -v d …` prints nothing: it sets d (setVar).
     if (rest.length === 0 || rest[0].v === "-v") return null;
     const format = rest[0].v;
-    // Only `\n`, `\t` and a lone `\0`: any other escape printf reads (`\056`, `\0056`, `\x2e`, `.`, `\e`, `\\`) is
+    // Only `\n`, `\t` and a lone `\0`: any other escape printf reads (`\056`, `\0056`, `\x2e`, `\u002e`, `\e`, `\\`) is
     // text Ember doesn't see, never its backslash text (commands-remote-x6-2).
     const unescape = (s: string): string => s.replace(/\\([nt0])/g, (_m, c: string) => (c === "n" ? "\n" : c === "t" ? "\t" : "\0"));
     if (format !== null && /^([^%\\]|\\([nt]|0(?![0-7])))*$/.test(format) && rest.length === 1) return withNuls(unescape(format));

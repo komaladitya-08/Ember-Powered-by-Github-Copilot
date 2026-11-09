@@ -357,6 +357,13 @@ describe("what the docs say about consent versions and memory, against the code 
 describe("docs/COMMANDS-WSL-SSH.md", () => {
   const doc = read("docs/COMMANDS-WSL-SSH.md");
 
+  it("lists printf's escapes that Ember can't see as escapes, never a plain full stop (commands-y6-5)", () => {
+    const listed = /other than a line break, a tab and `\\0`\s*\(([^)]*)\)/.exec(flat(doc))?.[1] ?? "";
+    expect([...listed.matchAll(/`([^`]*)`/g)].map(m => m[1])).toEqual(["\\056", "\\x2e", "\\u002e"]);
+    // The classifier's own note lists them the same way.
+    expect(read("app/main/commands/classify.ts")).toContain("(`\\056`, `\\0056`, `\\x2e`, `\\u002e`, `\\e`, `\\\\`)");
+  });
+
   it("says a Wayland remote is commands only while packaged builds never use its desktop", () => {
     // app/remote/main.ts: a packaged agent never reads a Wayland desktop (only a development run with the test switch).
     const packagedNever = /waylandText: !o\.packaged/.test(read("app/remote/main.ts"));
