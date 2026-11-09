@@ -718,6 +718,19 @@ describe("VoiceService", () => {
     }
   });
 
+  it("is described in the design docs with the one Listen once line said with “Ember's” in it (voice-listening-z6-2)", () => {
+    // DESIGN.md said every Listen once line a screen reader is told leaves out even "Ember's", while heldByQuestion's
+    // line, said whenever a question holds Listen once back outside a conversation, keeps it.
+    const said = heldByQuestion("waiting");
+    expect(said.reason).toBeUndefined();
+    expect(said.detail).toMatch(/\bEmber's\b/);
+    const flat = (f: string) => readFileSync(path.resolve(f), "utf8").replace(/\s+/g, " ");
+    const design = flat("docs/DESIGN.md");
+    expect(design).toContain(`are worded the same way, without even “Ember's”, but for “${said.detail}”, said while a question holds Listen once back outside a conversation`);
+    const rule = flat(".claude/rules/design-system.md");
+    expect(rule).toContain(`\`heldByQuestion\`'s "${said.detail}", said while a question holds Listen once back outside a conversation, keeps the name`);
+  });
+
   it("says Listen once stops speaking first while Hear Ember's sample plays, not that an answer is spoken (voice-listening-y6-2)", async () => {
     // Settings › Voice: the Listen once line just above Hear Ember said "Stops the spoken answer, …" for the sample's
     // whole length, though nothing was answering. Only main's line for an answer on its way names the answer.

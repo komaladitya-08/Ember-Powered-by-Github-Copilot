@@ -475,8 +475,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   also leaves out the “Ember, stop” the shown line quotes: said into the microphone, it stops Ember. Listen once's lines
   (“Stops speaking first, then listens for one request.”, “Stops the answer on its way, …”, “Checking what was said…”)
   and where the update check stands (“Version 0.10.0 is out.”, “Couldn't check for updates. The next check is
-  tomorrow.”) are worded the same way, without even “Ember's”: “Stops Ember's answer, …” was heard as “Stop Timbers'
-  answer, …” and woke Ember. Ask speaks in the first person (“I'll see: …”).
+  tomorrow.”) are worded the same way, without even “Ember's”, but for “Answer Ember's question first.”, said while a
+  question holds Listen once back outside a conversation (read into the wake word's microphone, it woke Ember in none
+  of 120 placements): “Stops Ember's answer, …” was heard as “Stop Timbers' answer, …” and woke Ember. Ask speaks
+  in the first person (“I'll see: …”).
 - **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
   from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
 
