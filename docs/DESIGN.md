@@ -118,8 +118,12 @@ They share one emotion rig, so switching never changes behaviour.
   three quiet 24 px capsules (never the accent, never under a question), in its clickable area; the Ask box shows the
   same as a row of 20 px capsules under its hint line while the field is empty (docs/ASSISTANT.md §7); a typed letter
   puts them out of sight but keeps their room, so the box and its field don't move. Neither shows any while a question
-  is up, and the box shows the ones that answer or follow the answer ("Yes, please", "Close it", "Read it out") only
-  while that answer shows (`askSuggestions`; a change while a reply is typed waits until the field is cleared). While
+  is up, and the box shows the ones that follow the answer ("Close it", "Read it out") only while that answer shows,
+  and the ones that answer its last words, usually an offer ("Yes, please", "No, thanks"), only while those show too:
+  not while the bubble cuts it short under **Read all**, and opened in full only once its last line has been in view,
+  all of it at once or scrolled to (the overlay says so: `endShown`), as one cut short to the room or longer than
+  its sixteen lines isn't at first (`askSuggestions`; a change while a reply is typed waits until the field is
+  cleared). While
   the box is open its row keeps the room it opened with, rows and all: none to offer puts the row out of sight, fewer
   keep its height, ones that would need more rows than it opened with wait for its next opening (those it shows that are
   still offered stay), and ones that come into a box that opened with none wait too, so a question coming or going never
@@ -175,12 +179,21 @@ They share one emotion rig, so switching never changes behaviour.
   and Ember's suggestions come only then), keeps off it from there, going above or below the box
   where nothing by Ember is clear of it, so the field never covers its last lines or its Read all;
   so does one that started while the box was open (Ask opened during "Thinking…"), and anything
-  else still coming in that asks nothing (a step, "Listening…") and finds no room by Ember.
+  else still coming in that asks nothing (a step, "Listening…") and finds no room by Ember, and an
+  answer opened in full with **Read all** while the box is open. An answer opened in full that fits
+  nowhere clear whole (a 1024 x 768 screen at Larger text) is cut short a line at a time to the
+  tallest place clear of the box, the handle, the cards and the settings window, never under three
+  lines, and its text scrolls inside it; with no such place it goes where it always went. Once
+  the box closes, one cut short for it keeps off the box's place no more and shows whole where it
+  can (it may move to do so); one that showed whole stays where it is.
   While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
   More time to read). Without a
-  compositor the box moves off the corner card as it grows for a question. On Linux it takes clicks only on what it
+  compositor the box moves off the corner card as it grows for a question. What the box shows keeps off the task cards
+  too, as it opens, grows, shows a new row and as a card comes up or grows under it: by the least sideways move (else
+  up) that keeps it clear of the answer or question, the handle and Ember, which come first (on a 1024-wide screen at
+  Larger text there may be none). On Linux it takes clicks only on what it
   shows (an X input shape the page reports), so a click in its clear margins reaches the app
   beneath and closes it. The line under its field is as wide as the field while the quick look
   runs; when it finds nothing to show, it narrows to its keys at the trailing edge. A long paste is kept

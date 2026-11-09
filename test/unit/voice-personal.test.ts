@@ -385,6 +385,14 @@ describe("what the user might say next (predict.ts)", () => {
     expect(follows({ lastRequest: "Turn on night light", lastReply: "Night light is on." })).toMatchObject({ "Turn night light off": false });
   });
 
+  it("marks only the plain answers to the reply's own question as answering its last words, so the rest stay for an answer cut short (companion-v6-1)", () => {
+    const answers = (p: Partial<PredictInput>) => Object.fromEntries(predictNext({ ...base, ...p }, risky).map(s => [s.text, s.answers === true]));
+    expect(answers({ lastRequest: "Shall I?", lastReply: "Want me to add a world clock?" })).toEqual({ "Yes, please": true, "No, thanks": true });
+    expect(answers({ lastRequest: "Open my notes", lastReply: "Opened Notes." })).toMatchObject({ "Close it": false });
+    expect(answers({ lastRequest: "Summarise this email", lastReply: "x".repeat(80), spoken: false })).toMatchObject({ "Read it out": false });
+    expect(answers({ lastRequest: "Tidy up", task: { status: "failed" } })).toMatchObject({ "What went wrong?": false });
+  });
+
   it("never suggests a risky step unless the user's own last words were about it", () => {
     const people = ["Priya"];
     expect(predictNext({ ...base, lastRequest: "Draft a reply to Sam", people }, risky).some(s => risky(s.text))).toBe(false);

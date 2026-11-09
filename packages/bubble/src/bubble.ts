@@ -237,8 +237,8 @@ function clearPlace(anchor: Point, box: Size, bounds: Size, size: number, avoid:
     for (const sx of slides) tries.push({ x: sx, y: p.y });
   }
   // The fallback ignores Ember (it is clamped to the screen only): never taken over Ember's body and its emote, so a
-  // bubble too big for any clear place (an answer opened in full) goes beside Ember over the cards instead (the usual
-  // placement), not over Ember's face.
+  // bubble too big for any clear place (an answer opened in full, even cut short: bubbleCut) goes beside Ember over the
+  // cards instead (the usual placement), not over Ember's face.
   const e = size > 0 ? { x: anchor.x - size * 0.75, y: anchor.y - size * 1.5, width: size * 1.5, height: size * 1.7 } : null;
   const onEmber = (p: Point) => !!e && p.x < e.x + e.width && p.x + w > e.x && p.y < e.y + e.height && p.y + h > e.y;
   if (!onEmber(fallback)) tries.push(fallback);
@@ -309,6 +309,25 @@ export function bubbleFit(anchor: Point, box: Size, bounds: Size, size = 0, avoi
   }
   return best;
 }
+
+/**
+ * Where an answer opened in full goes when no place clears `avoid` with all of it (bubbleFit is null): cut short a line
+ * of its text at a time (`line` px), the tallest that has a place clear of them (`across` as in bubbleFit), its text
+ * scrolling inside, down to `shortest` px tall; null when none does (companion-c5-1: Read all pressed with the Ask box
+ * open at Larger text laid the whole answer, 410 × 489, under the field, which nothing moved it off). At its own width:
+ * narrower is taller.
+ */
+export function bubbleCut(anchor: Point, box: Size, bounds: Size, size: number, avoid: readonly Rect[], across: readonly Rect[], line: number, shortest: number): BubbleSpot | null {
+  if (!(line > 0) || !avoid.length) return null;
+  for (let height = box.height - line; height >= shortest; height -= line) {
+    const p = clearPlace(anchor, { width: box.width, height }, bounds, size, avoid, across);
+    if (p) return { ...p, width: box.width, height };
+  }
+  return null;
+}
+
+/** The fewest lines of an answer's text a cut leaves in view (bubbleCut). */
+export const CUT_MIN_LINES = 3;
 
 /** The room beside each thing to avoid (left of it, right of it), widest first, where a bubble narrower than `width` would fit. */
 function narrowerWidths(width: number, bounds: Size, avoid: readonly Rect[]): number[] {
@@ -761,7 +780,8 @@ export interface BubbleAction {
 }
 
 /** The bubble at one width: its size, where its clickable parts are, and whether its text overflows. */
-interface Measured { box: Size; hot: Rect[]; over: boolean }
+/** `text`: the thought's own height and `line` its line height (px), for a cut (bubbleCut). */
+interface Measured { box: Size; hot: Rect[]; over: boolean; text: number; line: number }
 
 export class ReasoningBubble {
   readonly root: HTMLDivElement;
@@ -798,6 +818,13 @@ export class ReasoningBubble {
    * each new state that doesn't yet say main knows (the page sends wholeSeenAction).
    */
   onWholeSeen: ((n: number) => void) | null = null;
+  /**
+   * Told when an answer opened in full first shows its last line (endShown): its overlay tells main, whose Ask box then
+   * offers what answers those words (companion-v6-2).
+   */
+  onEndShown: (() => void) | null = null;
+  /** An answer opened in full has shown its last line (all of it, or its text scrolled to its end) since it changed. */
+  private endSeen = false;
   private mood: BubbleMood = "idle";
   /** The thought as given (a question's is drawn in parts: questionParts), and the step's words as given (keycaps drawn). */
   private thoughtRaw = "";
@@ -813,10 +840,12 @@ export class ReasoningBubble {
   private announceQueued = false;
   /** Content changed since the bubble last measured itself. */
   private dirty = true;
-  /** What the bubble measured at each width tried since its content changed (0: its own width). */
-  private sizes = new Map<number, Measured>();
+  /** What the bubble measured at each width and cut tried since its content changed ("width:cut", 0: its own). */
+  private sizes = new Map<string, Measured>();
   /** The width set on the bubble now (0: its own width). */
   private width = 0;
+  /** The height its text is cut to now (px, bubbleCut; 0: not cut). */
+  private cut = 0;
   private box: Size = { width: 0, height: 0 };
   private pos: Point | null = null;
   /** Clickable or scrollable parts, relative to the bubble's border box. */
@@ -869,6 +898,8 @@ export class ReasoningBubble {
     this.wholeHint = this.root.querySelector(".eb-whole-hint")!;
     // Scrolled (by the wheel, or a page on by the approve key): judged again.
     this.wholeBox.addEventListener("scroll", () => this.wholeMeasured(), { passive: true });
+    // An answer opened in full, scrolled: has its last line come into view?
+    this.thoughtBox.addEventListener("scroll", () => this.judgeEnd(), { passive: true });
     this.live = document.createElement("div");
     this.live.className = "eb-live";
     this.live.setAttribute("role", "status");
@@ -940,12 +971,14 @@ export class ReasoningBubble {
   setThought(text: string): void {
     if (this.thoughtRaw === text) return;
     this.thoughtRaw = text;
+    this.endSeen = false;
     this.drawThought();
   }
 
   /** Append streamed reasoning text (e.g. from assistant.reasoning_delta). */
   appendThought(delta: string): void {
     this.thoughtRaw += delta;
+    this.endSeen = false;
     this.drawThought();
   }
 
@@ -1013,6 +1046,7 @@ export class ReasoningBubble {
   setExpanded(on: boolean): void {
     if (on === this.expanded) return;
     this.expanded = on;
+    this.endSeen = false;
     this.root.dataset.expanded = String(on);
     this.changed();
   }
@@ -1195,19 +1229,27 @@ export class ReasoningBubble {
     const own = this.sized(0);
     const heightAt = (w: number) => this.sized(w).box.height;
     const fit = (keepOff: readonly Rect[]) => bubbleFit(anchor, own.box, bounds, size, keepOff, heightAt, across);
-    // Clear of everything (the preferred places too, if it can be); else (with places to hide from) at least clear of
-    // those; else the usual place.
+    // An answer opened in full that no place clears whole: cut short to the tallest place clear of them, with at least
+    // CUT_MIN_LINES of its text in view and the rest scrolling inside it (companion-c5-1).
+    const cutFit = (keepOff: readonly Rect[]) => this.expanded && !this.streaming && own.line > 0
+      ? bubbleCut(anchor, own.box, bounds, size, keepOff, across, own.line, own.box.height - own.text + CUT_MIN_LINES * own.line)
+      : null;
+    // Clear of everything (the preferred places too, if it can be, whole); else clear of `avoid`, whole or cut; else
+    // (with places to hide from) at least clear of those; else the usual place.
     const spot = avoid.length || prefer.length
-      ? (prefer.length ? fit([...avoid, ...prefer]) : null) ?? (avoid.length ? fit(avoid) : null) ?? (hideFrom.length ? fit(hideFrom) : undefined)
+      ? (prefer.length ? fit([...avoid, ...prefer]) : null) ?? (avoid.length ? fit(avoid) ?? cutFit(avoid) : null) ?? (hideFrom.length ? fit(hideFrom) : undefined)
       : undefined;
     if (spot === null) {
       this.useWidth(0);
+      this.useCut(0);
       return this.setCrowded(true);
     }
     const width = spot && spot.width < own.box.width ? spot.width : 0;
+    const cut = spot && !width && spot.height < own.box.height ? own.text - (own.box.height - spot.height) : 0;
     const p = spot ?? bubblePosition(anchor, own.box, bounds, size, avoid);
-    const m = this.sized(width);
+    const m = this.sized(width, cut);
     this.useWidth(width);
+    this.useCut(cut);
     if ((this.thoughtBox.dataset.overflow === "true") !== m.over) this.thoughtBox.dataset.overflow = String(m.over);
     // On the device's pixels (not only whole CSS px, half a device pixel apart at 150 %), so its text stays crisp.
     const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
@@ -1223,11 +1265,31 @@ export class ReasoningBubble {
     const shown = this.setCrowded(false);
     this.box = m.box;
     this.hot = m.hot;
-    if (!resized && !shown && this.pos?.x === x && this.pos.y === y) { this.wholeMeasured(); return false; }
+    if (!resized && !shown && this.pos?.x === x && this.pos.y === y) { this.wholeMeasured(); this.judgeEnd(); return false; }
     this.pos = { x, y };
     this.mount.style.transform = `translate(${x}px, ${y}px)`;
     this.wholeMeasured();
+    this.judgeEnd();
     return true;
+  }
+
+  /**
+   * An answer opened in full whose last line is in view on screen now (a layout read, only until it first is): from then
+   * on endShown() says so, and onEndShown is told. Cut short to the room (bubbleCut) or longer than its sixteen lines,
+   * that is once its text has been scrolled to its end.
+   */
+  private judgeEnd(): void {
+    if (!this.expanded || this.endSeen || this.streaming || !this.visible || this.crowded || !this.pos || !this.thoughtRaw) return;
+    if (typeof document.fonts !== "undefined" && document.fonts.status !== "loaded") return;
+    const t = this.thoughtBox, r = t.getBoundingClientRect();
+    if (t.scrollTop + t.clientHeight < t.scrollHeight - 1 || r.top < 0 || r.bottom > window.innerHeight) return;
+    this.endSeen = true;
+    this.onEndShown?.();
+  }
+
+  /** An answer opened in full ("Read all") has shown its last line since its text last changed (judgeEnd). */
+  endShown(): boolean {
+    return this.expanded && this.endSeen;
   }
 
   /** Where the bubble is and its size, in host coordinates, or null while it isn't shown. */
@@ -1235,6 +1297,11 @@ export class ReasoningBubble {
     const pos = this.pos;
     if (!this.visible || this.crowded || !pos || !this.box.width || !this.box.height) return null;
     return { x: pos.x, y: pos.y, width: this.box.width, height: this.box.height };
+  }
+
+  /** Its text is cut short to the room where it was last placed (an answer opened in full, in part: bubbleCut). */
+  isCut(): boolean {
+    return this.cut > 0;
   }
 
   /** The parts that take the pointer (buttons; a long question's scroll area), in host coordinates. */
@@ -1251,15 +1318,23 @@ export class ReasoningBubble {
     return true;
   }
 
-  /** The bubble's size at `width` (0: its own), measured once per content change. */
-  private sized(width: number): Measured {
-    let m = this.sizes.get(width);
+  /** The bubble's size at `width` (0: its own) with its text cut to `cut` px (0: not cut), measured once per content change. */
+  private sized(width: number, cut = 0): Measured {
+    const key = `${width}:${cut}`;
+    let m = this.sizes.get(key);
     if (!m) {
       this.useWidth(width);
+      this.useCut(cut);
       m = this.measure();
-      this.sizes.set(width, m);
+      this.sizes.set(key, m);
     }
     return m;
+  }
+
+  private useCut(cut: number): void {
+    if (cut === this.cut) return;
+    this.cut = cut;
+    this.thoughtBox.style.maxHeight = cut ? `${cut}px` : "";
   }
 
   private useWidth(width: number): void {
@@ -1307,7 +1382,9 @@ export class ReasoningBubble {
     // The whole text's block scrolls under the wheel, whether or not it runs on (it takes the pointer as a question's does).
     if (!this.wholeBox.hidden) hot.push(rel(this.wholeBox));
     if (over && thoughtScrolls({ mood: this.mood, expanded: this.expanded, streaming: this.streaming })) hot.push(rel(t));
-    return { box, hot, over };
+    // Only an answer opened in full is ever cut (place), so only its line is read.
+    const line = this.expanded && t.style.display !== "none" ? parseFloat(getComputedStyle(t).lineHeight) || 0 : 0;
+    return { box, hot, over, text: t.offsetHeight, line };
   }
 
   private queueAnnounce(): void {

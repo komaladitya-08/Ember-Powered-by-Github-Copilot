@@ -27,7 +27,9 @@ const required = process.env.EMBER_ATSPI_TEST === "1" && process.platform === "l
  */
 const PAGE = `
 import { ReasoningBubble } from "./packages/bubble/src/bubble";
+import { askKeepOff, askKeepOffKey } from "./app/renderer/overlay/layout";
 type Sample = { scale: string; translate: string; opacity: number };
+type Ended = { endShown: boolean; told: number };
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const look = (b: ReasoningBubble): Sample => { const cs = getComputedStyle(b.root); return { scale: cs.scale, translate: cs.translate, opacity: Number(cs.opacity) }; };
 /** Its look every 20 ms of its first ms after the style that starts its transitions, on their own clock. */
@@ -187,6 +189,104 @@ function answerHeights(): { name: string; scale: number; height: number }[] {
   return out;
 }
 /**
+ * An answer opened in full ("Read all") at Larger text, as the overlay places it with the Ask box open across a
+ * 1024 x 768 screen above Ember (the box may be gone across: companion-c5-1), then again with nothing to keep off: where
+ * it went and how tall, its text's height and how far it scrolls, its line, whether its text and its buttons take the
+ * pointer (interactiveRects), and its buttons' place.
+ */
+function openedInFull(): { spot: { x: number; y: number; w: number; h: number } | null; text: number; scroll: number; line: number; textHot: boolean; buttons: { x: number; y: number; w: number; h: number }; buttonsHot: boolean; whole: number; wholeText: number }[] {
+  const html = document.documentElement;
+  html.dataset.textSize = "larger";
+  html.style.setProperty("--text-scale", "1.3");
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;inset:0";
+  document.body.append(host);
+  const b = new ReasoningBubble(host);
+  b.setThought("Tokyo is nine hours ahead of London, so it is evening there. ".repeat(20).trim());
+  b.setExpanded(true);
+  b.setActions([{ key: "ui:close", label: "Close", onClick: () => undefined }, { key: "ui:conversation", label: "Open conversation", onClick: () => undefined }]);
+  b.setVisible(true);
+  const screen = { width: 1024, height: 768 }, handle = { x: 752, y: 700, width: 260, height: 56 };
+  const out = [];
+  for (const [box, anchor] of [[{ x: 195, y: 242, width: 728, height: 173 }, { x: 559, y: 461 }], [{ x: 195, y: 284, width: 728, height: 173 }, { x: 559, y: 695 }]] as const) {
+    b.place(anchor, screen, 60, [handle, box], [], [], [box]);
+    const r = b.rect();
+    const t = b.root.querySelector<HTMLElement>(".eb-thought")!, a = b.root.querySelector<HTMLElement>(".eb-actions")!;
+    const pos = (e: HTMLElement) => { const q = e.getBoundingClientRect(), o = b.root.getBoundingClientRect(); return { x: (r?.x ?? 0) + q.x - o.x, y: (r?.y ?? 0) + q.y - o.y, w: q.width, h: q.height }; };
+    const hot = b.interactiveRects(0);
+    const covers = (q: { x: number; y: number; w: number; h: number }) => hot.some(h => h.x <= q.x + 1 && h.y <= q.y + 1 && h.x + h.width >= q.x + q.w - 1 && h.y + h.height >= q.y + q.h - 1);
+    const text = pos(t), buttons = pos(a);
+    const kept = { spot: r && { x: r.x, y: r.y, w: r.width, h: r.height }, text: t.clientHeight, scroll: t.scrollHeight, line: parseFloat(getComputedStyle(t).lineHeight), textHot: covers(text), buttons, buttonsHot: covers(buttons) };
+    // Nothing to keep off: whole again.
+    b.place(anchor, screen, 60);
+    out.push({ ...kept, whole: b.root.offsetHeight, wholeText: t.clientHeight });
+  }
+  host.remove();
+  delete html.dataset.textSize;
+  html.style.removeProperty("--text-scale");
+  return out;
+}
+/**
+ * An answer opened in full with the Ask box open at Larger text, Ember mid-screen on a 1024 x 768 screen (nine lines,
+ * its offer last), as the overlay places it while the box is open and after the box closes (askKeepOff, as
+ * measureTasks calls it): whether it was cut, its text's cap, height and scroll height each time, whether its end has
+ * shown (endShown, and how often onEndShown was told), and where it went. Then the same answer cut again, scrolled to
+ * its end.
+ */
+function closedAfterCut(): { open: Ended & { cut: boolean; cap: string; text: number; scroll: number }; closed: Ended & { cut: boolean; cap: string; text: number; scroll: number; spot: { x: number; y: number; w: number; h: number } | null }; scrolled: { cut: boolean; before: Ended; after: Ended } } {
+  const html = document.documentElement;
+  html.dataset.textSize = "larger";
+  html.style.setProperty("--text-scale", "1.3");
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;inset:0";
+  document.body.append(host);
+  const words = ["Tokyo", "is", "nine", "hours", "ahead", "of", "London,", "so", "it", "is", "evening", "there."];
+  let told = 0;
+  const opened = () => {
+    const o = new ReasoningBubble(host);
+    o.onEndShown = () => { told++; };
+    o.setThought(Array.from({ length: 70 }, (_, i) => words[i % 12]).join(" ") + " Want me to add a world clock?");
+    o.setExpanded(true);
+    o.setActions([{ key: "ui:close", label: "Close", onClick: () => undefined }, { key: "ui:conversation", label: "Open conversation", onClick: () => undefined }]);
+    o.setVisible(true);
+    return o;
+  };
+  const b = opened();
+  const screen = { width: 1024, height: 768 }, handle = { x: 752, y: 700, width: 260, height: 56 };
+  const box = { x: 195, y: 242, width: 728, height: 173 }, anchor = { x: 559, y: 461 };
+  const cutState = { visible: true, mood: "idle" as const, title: "Ember", actions: [{ id: "ui:more", label: "Read all" }] };
+  const full = { ...cutState, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+  const t = b.root.querySelector<HTMLElement>(".eb-thought")!;
+  const read = () => ({ cut: b.isCut(), cap: t.style.maxHeight, text: t.clientHeight, scroll: t.scrollHeight, endShown: b.endShown(), told });
+  const placeFor = (held: { box: typeof box | null; grew?: true }) => b.place(anchor, screen, 60, held.box ? [handle, held.box] : [handle], [], [], held.box && held.grew ? [held.box] : []);
+  let held = askKeepOff(box, askKeepOffKey(cutState), { box: null, question: "" });
+  held = askKeepOff(box, askKeepOffKey(full), held, true, b.isCut());
+  placeFor(held);
+  const open = read();
+  // The box closes (Esc): state.askBox goes null.
+  held = askKeepOff(null, askKeepOffKey(full), held, true, b.isCut());
+  placeFor(held);
+  const r = b.rect();
+  const closed = { ...read(), spot: r && { x: r.x, y: r.y, w: r.width, h: r.height } };
+  b.root.remove();
+  // The same answer cut short again with the box open, then its text scrolled to its end (the wheel, or a screen reader),
+  // on a screen the size of this page's window (its last line must be on screen to count).
+  told = 0;
+  const c = opened();
+  const page = { width: window.innerWidth, height: window.innerHeight };
+  const pageBox = { x: 150, y: 120, width: 700, height: 250 };
+  c.place({ x: 500, y: 420 }, page, 60, [{ x: page.width - 272, y: page.height - 68, width: 260, height: 56 }, pageBox], [], [], [pageBox]);
+  const ct = c.root.querySelector<HTMLElement>(".eb-thought")!;
+  const cutBefore = c.isCut(), before = { endShown: c.endShown(), told };
+  ct.scrollTop = ct.scrollHeight;
+  ct.dispatchEvent(new Event("scroll"));
+  const scrolled = { cut: cutBefore, before, after: { endShown: c.endShown(), told } };
+  host.remove();
+  delete html.dataset.textSize;
+  html.style.removeProperty("--text-scale");
+  return { open, closed, scrolled };
+}
+/**
  * Question hints left in the page for main to read from its accessibility tree: Linux's at the bubble's own width (the
  * two chords on one line) and a Mac's narrowed to 220 px (each chord on a line of its own). Their hosts' ids.
  */
@@ -219,6 +319,8 @@ function axHints(): string[] {
     chips: chips(),
     keyHints: keyHints(),
     answerHeights: answerHeights(),
+    openedInFull: openedInFull(),
+    closedAfterCut: closedAfterCut(),
     axHints: axHints(),
     // Ember's own font, loaded: the key hints are measured in it, not in a fallback a runner happens to have.
     emberSans: [...document.fonts].some(f => f.family.replace(/"/g, "") === "Ember Sans" && f.status === "loaded"),
@@ -274,11 +376,17 @@ app.whenReady().then(async () => {
 `;
 
 type Sample = { scale: string; translate: string; opacity: number };
+/** Whether an answer opened in full has shown its end (endShown), and how many times onEndShown was told. */
+type Ended = { endShown: boolean; told: number };
 type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext" | "answer", Sample[]> & {
   chips: { row: { x: number; y: number; w: number; h: number } | null; covered: boolean; buttons: number; labelledBy: string };
   keyHints: { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[];
   /** A finished answer's height in its tallest forms at each text size (answerHeights). */
   answerHeights: { name: string; scale: number; height: number }[];
+  /** An answer opened in full beside the open Ask box, Ember mid-screen and low (openedInFull). */
+  openedInFull: { spot: { x: number; y: number; w: number; h: number } | null; text: number; scroll: number; line: number; textHot: boolean; buttons: { x: number; y: number; w: number; h: number }; buttonsHot: boolean; whole: number; wholeText: number }[];
+  /** An answer opened in full, cut for the open Ask box, then the box closed; and cut, then scrolled (closedAfterCut). */
+  closedAfterCut: { open: Ended & { cut: boolean; cap: string; text: number; scroll: number }; closed: Ended & { cut: boolean; cap: string; text: number; scroll: number; spot: { x: number; y: number; w: number; h: number } | null }; scrolled: { cut: boolean; before: Ended; after: Ended } };
   /** What a screen reader reads of each hint left in the page (by its host's id). */
   axHints: Record<string, string | null>;
   /** Whether the bundled "Ember Sans" (Inter) had loaded when the hints were measured. */
@@ -392,6 +500,61 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
       const tallest = Math.max(...result.answerHeights.filter(a => a.scale === scale).map(a => a.height));
       expect(tallest, String(scale)).toBeGreaterThan(ANSWER_MAX_HEIGHT * scale * 0.92);
     }
+  });
+
+  it("cuts an answer opened in full beside the open Ask box short to the room clear of the box, whole lines of it, its text scrolling and its buttons in view; whole again with room (companion-c5-1)", () => {
+    const boxes = [{ x: 195, y: 242, width: 728, height: 173 }, { x: 195, y: 284, width: 728, height: 173 }];
+    const handle = { x: 752, y: 700, width: 260, height: 56 };
+    expect(result.openedInFull.length).toBe(2);
+    result.openedInFull.forEach((o, i) => {
+      const name = i ? "Ember low" : "Ember mid-screen";
+      // 410 x 489 whole, laid under the field (46,359 and 57,528 px² of it): now clear of the box and the handle, on screen.
+      expect(o.spot, name).not.toBeNull();
+      const s = o.spot!, clear = (b: typeof handle) => s.x >= b.x + b.width || s.x + s.w <= b.x || s.y >= b.y + b.height || s.y + s.h <= b.y;
+      expect(clear(boxes[i]), name).toBe(true);
+      expect(clear(handle), name).toBe(true);
+      expect(s.y + s.h, name).toBeLessThanOrEqual(768 - 8);
+      expect(s.h, name).toBeLessThan(o.whole);
+      // Whole lines of its text, at least three, and the rest scrolls inside it under the wheel.
+      expect(o.text % o.line, name).toBe(0);
+      expect(o.text, name).toBeGreaterThanOrEqual(3 * o.line);
+      expect(o.scroll, name).toBeGreaterThan(o.text);
+      expect(o.textHot, name).toBe(true);
+      // Its buttons inside it, taking clicks.
+      expect(o.buttons.y + o.buttons.h, name).toBeLessThanOrEqual(s.y + s.h);
+      expect(o.buttonsHot, name).toBe(true);
+      // With room again it shows as much as it always did: sixteen lines.
+      expect(o.wholeText, name).toBe(16 * o.line);
+    });
+  });
+
+  it("shows an answer cut short for the open Ask box whole once the box closes, where all of it fits: its cap goes (companion-v6-3)", () => {
+    const { open, closed } = result.closedAfterCut;
+    // Cut while the box was open, its offer scrolled out of view.
+    expect(open.cut).toBe(true);
+    expect(open.cap).not.toBe("");
+    expect(open.scroll).toBeGreaterThan(open.text);
+    // Esc: the cap goes and all of it shows, clear of the handle, on screen.
+    expect(closed.cut).toBe(false);
+    expect(closed.cap).toBe("");
+    expect(closed.scroll).toBeLessThanOrEqual(closed.text);
+    const s = closed.spot!, handle = { x: 752, y: 700, width: 260, height: 56 };
+    expect(s.x >= handle.x + handle.width || s.x + s.w <= handle.x || s.y >= handle.y + handle.height || s.y + s.h <= handle.y).toBe(true);
+    expect(s.y).toBeGreaterThanOrEqual(0);
+    expect(s.y + s.h).toBeLessThanOrEqual(768);
+  });
+
+  it("says an answer opened in full has shown its end only once its last line has been in view: whole, or scrolled to it (companion-v6-2)", () => {
+    const { open, closed, scrolled } = result.closedAfterCut;
+    // Cut short for the open box, its offer out of view: not shown, and the overlay isn't told (the Ask box offered
+    // "Yes, please" to it all the same).
+    expect(open).toMatchObject({ endShown: false, told: 0 });
+    // Whole once the box closed: shown, told once.
+    expect(closed).toMatchObject({ endShown: true, told: 1 });
+    // Cut again and scrolled to its end: shown from then on, told once.
+    expect(scrolled.cut).toBe(true);
+    expect(scrolled.before).toEqual({ endShown: false, told: 0 });
+    expect(scrolled.after).toEqual({ endShown: true, told: 1 });
   });
 
   it("reads a question's key hint to a screen reader with the \" · \" only between its chords, never before the first (companion-v4-3)", () => {

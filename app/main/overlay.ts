@@ -21,7 +21,7 @@ import type { OverlayShaper } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
 import { linuxOverlayShaper } from "./platform/linux/overlay-shaper";
 import { pageUrl } from "./page-url";
-import { OVERLAY, IDLE_BUBBLE, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
+import { OVERLAY, IDLE_BUBBLE, type BubbleBox, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
 import { NO_LEVEL, levelForOverlay, type SoundLevel } from "../shared/level";
 import type { ViewDoc } from "../shared/view";
 import { ViewHub } from "./agent/view-doc";
@@ -54,8 +54,11 @@ interface Overlay {
   shaped: boolean;
   /** The task cards on this display (global DIP). */
   cards: Rect | null;
-  /** Ember's bubble on this display (global DIP), or null: the Ask box opens clear of it (companion-1). */
-  bubble?: Rect | null;
+  /**
+   * Ember's bubble on this display (global DIP), or null: the Ask box opens clear of it (companion-1), and offers what
+   * answers an answer opened in full once its end has shown (`endShown`, companion-v6-2).
+   */
+  bubble?: BubbleBox | null;
 }
 
 export class OverlayManager {
@@ -267,15 +270,21 @@ export class OverlayManager {
   }
 
   /** Called by IPC when a renderer reports where its bubble is (null: none on its display). */
-  setBubble(sender: Electron.WebContents, r: Rect | null): void {
+  setBubble(sender: Electron.WebContents, r: BubbleBox | null): void {
     for (const o of this.overlays.values()) if (o.win.webContents === sender) o.bubble = r;
   }
 
   /** Ember's bubble on screen now (global DIP; only one display shows it), or null: none, or Ember is hidden. */
-  bubbleRect(): Rect | null {
+  bubbleRect(): BubbleBox | null {
     if (this.hidden) return null;
     for (const o of this.overlays.values()) if (o.bubble && !o.win.isDestroyed()) return o.bubble;
     return null;
+  }
+
+  /** The task cards on screen now, each display's (global DIP): the open Ask box keeps off them too (companion-r5-1). */
+  cardsRects(): Rect[] {
+    if (this.hidden) return [];
+    return [...this.overlays.values()].filter(o => !o.win.isDestroyed()).flatMap(o => (o.cards ? [o.cards] : []));
   }
 
   /** Called by IPC when a renderer reports where its task cards are. */
