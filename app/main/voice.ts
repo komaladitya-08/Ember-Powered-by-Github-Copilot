@@ -102,6 +102,15 @@ const LISTEN_ONCE_DOUBT = "I heard talking but couldn't tell it was a request. W
  * tell it was a request…" woke Ember and was sent as a request (6 of 40 real-model placements, voice-listening-r4-3).
  */
 const LISTEN_ONCE_DOUBT_SETTINGS = "There was talking, but it wasn't clear it was a request. Wait a moment after pressing Listen once, then speak.";
+/**
+ * Listen once's line while Ember talks: a press hushes it first, as "Hey Ember" does (voice-listening-7). Main's
+ * `LISTEN_ONCE_STOPS_ANSWER` takes its place while an answer is on its way. Without the name: Home's status line says
+ * it after each Listen once as the short spoken answer plays, into the idle wake microphone, and "Stops Ember talking,
+ * …" woke Ember and was sent as a request in 23 of 40 real-model placements (voice-listening-x6-1).
+ */
+export const LISTEN_ONCE_HUSH = "Stops the spoken answer, then listens for one request.";
+/** Listen once's line while an answer is on its way: a press stops it first, as a wake does (main's requestListenOnce). */
+export const LISTEN_ONCE_STOPS_ANSWER = "Stops Ember's answer, then listens for one request.";
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /**
@@ -450,7 +459,7 @@ export class VoiceService {
   get listenOnceStatus(): ListenOnceStatus {
     if (this.manual) return {
       phase: this.manual.phase,
-      detail: this.manual.phase === "starting" ? "Starting to listen…" : this.manual.phase === "listening" ? "Listening for one request…" : "Checking what Ember heard…",
+      detail: this.manual.phase === "starting" ? "Starting to listen…" : this.manual.phase === "listening" ? "Listening for one request…" : "Checking what was said…",
     };
     const blocked = (detail: string): ListenOnceStatus => ({ phase: "blocked", detail });
     if (this.locked) return blocked("The screen is locked.");
@@ -460,7 +469,7 @@ export class VoiceService {
     if (!this.modelsReady) return this.downloading ? blocked("Speech models are downloading.") : { ...blocked("Download speech models in Settings first."), reason: "needs-models" };
     // Ember talking: Listen once hushes it first, as "Hey Ember" does (it was blocked, and the keyboard had no other way
     // to cut in but Stop response or Stop everything: voice-listening-7).
-    const hushFirst = this.talking ? "Stops Ember talking, then listens for one request." : "";
+    const hushFirst = this.talking ? LISTEN_ONCE_HUSH : "";
     if (!this.wanted) return { phase: "ready", detail: hushFirst || this.manualDetail || "Opens the microphone for one request." };
     if (this.state === "error") return { ...blocked("Check the microphone and voice status in Settings."), reason: "voice-error" };
     if (!this.capturing || !this.readyAt || !this.proc) return blocked("The microphone or speech recogniser is getting ready.");

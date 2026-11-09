@@ -849,7 +849,7 @@ export const ROUTINES_CONSENT_TEXT = "Ember will keep the routines you name and 
 export const UPDATES_CONSENT_TEXT = "Once a day, Ember will ask GitHub whether a newer version is out. GitHub sees your internet address and that someone asked, and nothing else: no sign-in, and nothing about you or what you do. Ember only tells you. It never downloads or installs anything by itself.";
 
 /**
- * How to update this kind of install to `latest`, under "Ember X is out." (install-docs-11): README's steps, shortly,
+ * How to update this kind of install to `latest`, under "Version X is out." (install-docs-11): README's steps, shortly,
  * each command set as code with the file it needs in it (install-docs-r2-2: a bare `sudo dnf upgrade` upgrades the
  * whole system and leaves Ember as it was). Nothing when main can't tell how Ember was installed, or for a version
  * that isn't plain numbers, since it goes into a command the person may copy.
@@ -874,17 +874,21 @@ export function updateHowTo(kind: InstallKind | null, latest: string | null): Se
  */
 export const updateOut = (s: UpdateStatus): boolean => s.latest !== null && (s.phase === "available" || s.phase === "failed" || s.phase === "checking");
 
-/** Where the update check stands, in a sentence; nothing while it is off. */
+/**
+ * Where the update check stands, in a sentence; nothing while it is off. Without Ember's name: a screen reader says it
+ * after Check now, or by itself as the daily check ends, and said into the idle wake microphone "Ember 0.10.0 is out."
+ * woke Ember and was sent as a request in 18 of 40 real-model placements (voice-listening-x6-1).
+ */
 export function updateStatusText(s: UpdateStatus): string {
   switch (s.phase) {
-    case "available": return `Ember ${s.latest} is out.`;
+    case "available": return `Version ${s.latest} is out.`;
     case "current": return "You have the latest version.";
     case "checking": return "Checking…";
     case "failed": return s.latest !== null
-      ? `Ember ${s.latest} is out. Ember couldn't look for anything newer just now, and will try again tomorrow.`
-      : "Couldn't check for updates. Ember will try again tomorrow.";
+      ? `Version ${s.latest} is out. Couldn't look for anything newer just now; the next check is tomorrow.`
+      : "Couldn't check for updates. The next check is tomorrow.";
     // Started again within the day of a look: the next one waits out the day (integrations-v3).
-    case "idle": return s.checkedAt ? "Ember checks once a day. Check now looks at once." : "Ember will check shortly.";
+    case "idle": return s.checkedAt ? "Updates are checked once a day. Check now looks at once." : "Updates will be checked shortly.";
     default: return "";
   }
 }
