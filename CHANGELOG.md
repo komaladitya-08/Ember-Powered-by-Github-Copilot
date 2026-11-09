@@ -794,6 +794,10 @@ the automated tests don't stand in for them.
 
 #### Models and extensions
 
+- **Saved extensions wait for the current “Before Ember starts” agreement.** An older general agreement cannot
+  start an extension server, send its saved headers or expose its tools, even when its feature card is current.
+  Losing agreement stops servers and pending checks; late replies cannot continue a check or restore tools.
+  Agreeing again resumes the normal checks while retaining still-current extension cards.
 - **Your own model server not running? Ember says so.** With Ollama or LM Studio stopped, Models & connections says
   Ember can't reach the model server on this computer instead of Connected, and its status stays still while the
   server is off instead of flipping to “Connecting…” every minute. A request asks whether it is running (“Is it

@@ -534,6 +534,14 @@ The runtime is `app/main/extensions/` (ExtensionsService, the `ExtensionsApi` Ho
 `app/shared/extensions.ts`. A spike on the bundled runtime (Copilot SDK 1.0.21, empty mode, the mock model) decided what
 it builds on:
 
+The current **Before Ember starts** agreement is required before any marketplace request, extension-server probe or
+session exposure, as well as each feature/plugin agreement required for running tools. A saved feature agreement
+cannot bypass an absent or older global agreement. Losing global agreement revokes loaded servers and pending
+probes; late replies cannot publish tools or continue an HTTP handshake. Agreeing globally again permits the
+normal refresh, without erasing still-current feature/plugin agreements. Browsing a marketplace before the
+extensions feature card remains available after global agreement; it does not approve installing or using tools
+(integrations-refresh-c1 / extensions-refresh-consent-1).
+
 - **Only MCP servers load.** Ember reads a plugin's manifest (`plugin.json`, `.github/plugin/plugin.json`,
   `.claude-plugin/plugin.json`) and its MCP servers (`mcpServers`, `mcp.json`, `.mcp.json`), copies the plugin into
   `extensions/plugins/<id>/`, and passes each server to the conductor's session as an explicit `mcpServers` entry. Its

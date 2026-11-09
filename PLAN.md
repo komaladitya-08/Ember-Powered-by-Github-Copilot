@@ -2176,6 +2176,16 @@ key saving carries a required expected host through IPC to main. A late main-sid
 rebinding the key (integrations-v7-4 to -v7-9). Independent service/store/crash and actual-renderer probes accepted
 the final repairs. No additional endpoint request or broader provider consent was introduced.
 
+**Extensions' global agreement (M9).** A fresh challenge confirmed a valid persisted older global agreement with
+current extension/plug-in cards could still refresh a saved server before `hasConsent` was true
+(integrations-refresh-c1 / extensions-refresh-consent-1, P1). This was reproduced with fake HTTP/stdio probers and
+an actual settings/store boundary; no natural historical upgrade sequence is claimed. Global agreement now gates
+marketplace RPCs, probes, direct enable/install/reagreement and session exposure. Revocation stops bound servers
+and pending probes; late replies cannot publish tools or dispatch the next HTTP handshake message. Already-stopped
+stdio probes start no process. Restoring global agreement allows the existing refresh to resume, retaining current
+feature/plugin cards. Browsing before the extension feature card still works after global agreement. No consent
+version, card wording, tool authority or owner choice is weakened.
+
 **Commands (M12).** Restored baseline questions for ordinary command-line `if` and error-checking HOME/PWD
 expansions. Unknown URL names, attached download destinations, URLs supplied through xargs/loops, configured Git
 fetches/pulls and opaque interpreter copies retain download provenance across calls. The known CSV download followed

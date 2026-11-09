@@ -32,6 +32,7 @@ export const EXTENSIONS_OFFLINE = "Ember couldn't reach that address. Check the 
 export const EXTENSIONS_NOT_FOUND = "Ember couldn't find anything there. Check the address, then try again.";
 export const EXTENSIONS_TIMED_OUT = "That took too long. Try again in a moment.";
 export const EXTENSIONS_REFUSED_URL = "GitHub's page didn't come back as a GitHub address, so Ember didn't open it.";
+export const EXTENSIONS_START_AGREEMENT = "Agree to “Before Ember starts” first.";
 
 /** Words that mark text as an error's own (a code, a stack, a type), not a sentence for a person. */
 const RAW = /\b(?:[A-Z][a-z]+Error|Exception|ECONN\w*|ENOTFOUND|ENOENT|EACCES|EAI_AGAIN|ETIMEDOUT|stack|undefined|null|at \S+ \(|HTTP\/\d|status code)\b|[{}<>[\]\\`]|\n/;
