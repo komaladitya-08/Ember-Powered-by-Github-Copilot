@@ -154,8 +154,11 @@ const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/g;
 const KEY_VALUE =
   /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
 
+/** The literal executable names whose arguments the existing short-option rules understand. */
+const ARGV_PROGRAM_NAMES = `${CLIENT}|curl|wget|docker|podman|nerdctl|buildah|helm|mongo(?:sh|dump|restore|export|import)?|sshpass|redis-cli|smbclient|htpasswd|openssl|net|echo|printf`;
+const ARGV_PROGRAM = new RegExp(`^(?:${ARGV_PROGRAM_NAMES})(?:\\.exe)?$`, "i");
 /** Skip ordinary source-code arrays before applying the password-bearing clients' bounded argument patterns. */
-const ARGV_CLIENT = new RegExp(`\\b(?:${CLIENT}|curl|wget|docker|podman|nerdctl|buildah|helm|mongo(?:sh|dump|restore|export|import)?|sshpass|redis-cli|smbclient|htpasswd|openssl|net|echo|printf)\\b`, "i");
+const ARGV_CLIENT = new RegExp(`\\b(?:${ARGV_PROGRAM_NAMES})\\b`, "i");
 
 /**
  * Exec-form arrays and subprocess tuples separate arguments with commas, not shell whitespace (memory-q6-1,
@@ -165,7 +168,9 @@ const ARGV_CLIENT = new RegExp(`\\b(?:${CLIENT}|curl|wget|docker|podman|nerdctl|
 function redactArgvPasswords(text: string): string {
   const tokens = /[[\](){}]|(["'])((?:\\[\s\S]|(?!\1)[^\\])*)\1/g;
   type Word = { text: string; start: number; end: number; quote: string };
-  type Frame = { words: Word[]; after: number };
+  type Frame = { words: Word[]; after: number; mysql: boolean };
+  const mysql = new RegExp(`^${CLIENT}(?:\\.exe)?$`, "i");
+  const value = new RegExp(`^${OPTION_VALUE}`);
   const stack: Frame[] = [];
   const hidden = new Map<number, Word>();
   const inspect = (frame: Frame) => {
@@ -188,7 +193,7 @@ function redactArgvPasswords(text: string): string {
   };
   for (const m of text.matchAll(tokens)) {
     if (!m[1]) {
-      if ("[({".includes(m[0])) stack.push({ words: [], after: m.index + 1 });
+      if ("[({".includes(m[0])) stack.push({ words: [], after: m.index + 1, mysql: false });
       else if (stack.length) inspect(stack.pop()!);
       continue;
     }
@@ -199,7 +204,15 @@ function redactArgvPasswords(text: string): string {
     // Decode literal escapes only; no code, variable or substitution is executed.
     const word = m[2].replace(/\\(?:u[\da-fA-F]{4}|x[\da-fA-F]{2}|[\s\S])/g, s =>
       /^\\[ux]/.test(s) ? String.fromCharCode(parseInt(s.slice(2), 16)) : /^[\\][\\"'/]$/.test(s) ? s.slice(1) : s);
-    frame.words.push({ text: word, start: m.index, end: m.index + m[0].length, quote: m[1] });
+    // Match known executable literals by basename and case, without making password placeholders case-insensitive.
+    // Original source spans are retained: normalising a client's name never rewrites any logged argument (memory-y7-1).
+    const base = word.replace(/\\/g, "/").split("/").at(-1) ?? word;
+    const matching = ARGV_PROGRAM.test(base) ? base.replace(/\.exe$/i, "").toLowerCase() : word;
+    const literal = { text: matching, start: m.index, end: m.index + m[0].length, quote: m[1] };
+    frame.words.push(literal);
+    if (mysql.test(base)) frame.mysql = true;
+    // Retain the first repair's direct MySQL check even beyond the shell patterns' bounded argument window.
+    if (frame.mysql && word.startsWith("-p") && value.test(word.slice(2))) hidden.set(m.index, literal);
     frame.after = m.index + m[0].length;
   }
   for (const frame of stack) inspect(frame);

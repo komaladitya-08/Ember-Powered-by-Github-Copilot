@@ -2287,6 +2287,7 @@ entry, a mapping or a JSON section under the key, a property such as `secrets.db
 an argument array or subprocess tuple is refused too; command output and logs hide the same literal
 (`memory-q6-1`, `memory-v7-1`). These use the shell redactor's existing short-option rules, with unknown expressions
 kept as argument placeholders, preserving non-secret variable references and options such as Docker port mappings.
+Known executable basenames match mixed case and Windows `.exe` forms without changing the password-placeholder rules.
 A chosen file that still
 looks like it holds a password, token or key is named with its line (`secretLine`, `projectSecretFiles`): every such
 file at once, so the person removes only those. An exact patch whose patched file looks like it holds one isn't

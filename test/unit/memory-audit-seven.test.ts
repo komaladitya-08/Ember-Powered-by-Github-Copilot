@@ -56,3 +56,15 @@ it.each([
 ])("keeps non-literal or non-password argv arguments %s (memory-v7-1)", text => {
   expect(redactSecrets(text)).toBe(text);
 });
+
+it.each([
+  `["mYsQl", "-p${PASSWORD}"]`,
+  JSON.stringify(["mysql", ...Array.from({ length: 20 }, (_, i) => `arg-${i}`), `-p${PASSWORD}`]),
+  `["CMD", "mYsQlAdMiN", "ping", "-p${PASSWORD}"]`,
+  `["Redis-Cli", "-a", "${PASSWORD}"]`,
+  `["CURL.EXE", "-u", "ada:${PASSWORD}"]`,
+  JSON.stringify(["C:\\Program Files\\Docker\\DOCKER.EXE", "login", "-p", PASSWORD]),
+])("retains case-insensitive and native executable argv protection in %s (memory-y7-1)", text => {
+  expect(redactSecrets(text)).not.toContain(PASSWORD);
+  expect(memoryRefusal(text)).not.toBeNull();
+});

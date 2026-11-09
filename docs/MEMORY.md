@@ -200,6 +200,8 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   MongoDB and the other recognised password-bearing clients. Intervening expressions occupy unknown arguments;
   they are never executed or silently dropped. Bare prompt options, references, placeholders and Docker's port
   mappings still name no literal password.
+  Recognised executable literals are matched by basename regardless of case or a Windows `.exe` suffix; password
+  references and placeholders keep their original case-sensitive rules (memory-y7-1).
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
