@@ -3,26 +3,32 @@
 // memory (PSS from /proc: shared pages counted fairly, unlike RSS or working set) and CPU, and each page's main-thread
 // CPU through DevTools. Prints a table and the same as JSON, to compare a change against main on the same computer.
 // Linux only (it reads /proc); run it under a display and a session bus, as CI's el8 job runs Ember:
-//   dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs [--settle 35] [--sample 20] [--sound] [--compositor] [--max-cpu 16] [--max-pss 950]
+//   dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs [--settle 35] [--sample 20] [--sound] [--compositor] [--native] [--max-cpu 16] [--max-pss 950]
 // --sound feeds Chromium's fake microphone tone instead of silence (speech detection never rests). --max-cpu (% of one
 // core) and --max-pss (MB) are the budget: past either, it says so and exits 1 (docs/DEVELOPING.md records the figures).
+// Listening runs on WebAssembly in a development build; --native runs it on sherpa-onnx's C API, as the Linux packages
+// do (scripts/voice/fetch-capi.mjs checks it by SHA-256, fetching it first if it isn't there), and fails unless the
+// voice process ran on it, every model included. Either way it says which backend the voice process listened on
+// (voice.ready in Ember's log, not main's choice in voice.backend: listening-backend.mjs), so like is compared with like.
 // The sample is of Ember awake at rest (it dozes after 3 minutes with the pointer still). Needs `npm run build`
 // and the speech models from `node scripts/voice/prepare.mjs`. Not counted: the Copilot runtime (no sign-in) and the
 // speech process for Ember's voice (it starts with the first reply). On Xvfb there is no GPU, so the GPU process
 // composites in software, and no compositor, so the overlay falls back to the handle card: --compositor starts xcompmgr
 // on the display first (EPEL's xcompmgr on EL8), so the overlay that sits beside the cursor on a desktop, the biggest
 // drawer at rest, is measured too, and the run fails if it didn't start. Compare like with like.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { listeningSeen, listeningWords, notNative } from "./listening-backend.mjs";
 
 if (process.platform !== "linux") { console.error("footprint.mjs reads /proc: Linux only."); process.exit(2); }
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const args = process.argv.slice(2);
 const opt = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? Number(args[i + 1]) : dflt; };
 const settle = opt("--settle", 35), sample = opt("--sample", 20), sound = args.includes("--sound"), composited = args.includes("--compositor");
+const native = args.includes("--native");
 const maxCpu = opt("--max-cpu", Infinity), maxPss = opt("--max-pss", Infinity);
 // The consent this build asks for: an older one opens the returning user's card in Home and keeps the microphone shut,
 // which is not Ember at rest (it was 6 after CONSENT_VERSION went to 7, so listening wasn't measured).
@@ -65,7 +71,31 @@ if (compositor) {
   // It owns the display's compositing selection before Ember looks for one at start.
   await wait(500);
 }
-const app = spawn(electron, flags, { env: { ...process.env, EMBER_USER_DATA: userData }, stdio: "ignore" });
+// The C API's folder, as fetch-capi.mjs prints it once every library matches its pin; never one from the caller's own
+// environment, so a run without --native measures WebAssembly.
+let capi = null;
+if (native) {
+  const fetched = spawnSync(process.execPath, [path.join(root, "scripts/voice/fetch-capi.mjs")], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  capi = fetched.status === 0 ? fetched.stdout.trim().split("\n").pop() : null;
+  if (!capi) {
+    console.error("--native needs sherpa-onnx's C API (node scripts/voice/fetch-capi.mjs couldn't fetch or check it).");
+    compositor?.kill("SIGTERM");
+    fs.rmSync(tmp, { recursive: true, force: true });
+    process.exit(2);
+  }
+}
+const env = { ...process.env, EMBER_USER_DATA: userData };
+delete env.EMBER_SHERPA_CAPI;
+delete env.EMBER_VOICE_BACKEND;
+if (capi) env.EMBER_SHERPA_CAPI = capi;
+const app = spawn(electron, flags, { env, stdio: "ignore" });
+
+/** What the voice process listened on, from Ember's log (listening-backend.mjs). */
+function backendSeen() {
+  let text = "";
+  try { text = fs.readFileSync(path.join(userData, "logs", "ember.log"), "utf8"); } catch { /* no log yet: not known */ }
+  return listeningSeen(text);
+}
 
 /** Every process in the app's tree. */
 function tree(pid) {
@@ -132,15 +162,21 @@ try {
     return { pid: p, kind: kind(p), pssMb: Math.round(pssKb(p) / 102.4) / 10, cpu: a === null || b === null ? 0 : Math.round((b - a) / hz / sample * 1000) / 10 };
   }).filter(r => r.pssMb > 0).sort((x, y) => y.pssMb - x.pssMb);
   const total = { pssMb: Math.round(rows.reduce((n, r) => n + r.pssMb, 0)), cpu: Math.round(rows.reduce((n, r) => n + r.cpu, 0) * 10) / 10 };
-  console.log(`Ember at rest (${sound ? "a tone" : "silence"}), over ${sample} s after ${settle} s; CPU in % of one core\n`);
+  const seen = backendSeen(), backend = seen.backend;
+  const listening = listeningWords(seen);
+  console.log(`Ember at rest (${sound ? "a tone" : "silence"}, listening on ${listening}), over ${sample} s after ${settle} s; CPU in % of one core\n`);
   for (const r of rows) console.log(`${String(r.pssMb).padStart(7)} MB ${String(r.cpu).padStart(5)} %  ${r.kind}`);
   console.log(`${String(total.pssMb).padStart(7)} MB ${String(total.cpu).padStart(5)} %  total\n\nPages (main thread):`);
   for (const p of perPage) console.log(`${String(p.cpu).padStart(5)} %  ${p.page} (${p.title})`);
-  console.log("\n" + JSON.stringify({ os: `${os.type()} ${os.release()}`, cpus: os.cpus().length, cpu: os.cpus()[0]?.model, sound, settle, sample, total, rows, pages: perPage }));
+  console.log("\n" + JSON.stringify({ os: `${os.type()} ${os.release()}`, cpus: os.cpus().length, cpu: os.cpus()[0]?.model, sound, backend, backendFrom: seen.from, ...(seen.onWasm.length ? { onWasm: seen.onWasm } : {}), settle, sample, total, rows, pages: perPage }));
   const over = [...(total.cpu > maxCpu ? [`${total.cpu} % of a core, over ${maxCpu} %`] : []), ...(total.pssMb > maxPss ? [`${total.pssMb} MB, over ${maxPss} MB`] : [])];
   if (over.length) { console.error(`\nOver budget: ${over.join("; ")}.`); process.exitCode = 1; }
   // A budget meant to count the overlay never passes without it (an overlay that fell back to the handle card).
   if (compositor && !perPage.some(p => p.page === "overlay")) { console.error("\nThe overlay didn't start, so it wasn't measured: is xcompmgr running on this display?"); process.exitCode = 1; }
+  // Nor one meant to measure what the packages run, on WebAssembly (a C API that didn't load, a processor it can't use,
+  // a model it couldn't make), or on main's choice alone (reliability-performance-v6-1).
+  const short = native ? notNative(seen) : null;
+  if (short) { console.error(`\nThe native backend wasn't measured: ${short}.`); process.exitCode = 1; }
 } finally {
   app.kill("SIGTERM");
   compositor?.kill("SIGTERM");

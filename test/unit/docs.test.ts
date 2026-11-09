@@ -228,7 +228,7 @@ describe("docs/DEVELOPING.md", () => {
     expect(desktop).toContain(`\`${el8} dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- <files>\``);
   });
 
-  it("gives the checks job's launcher pack check and the el8 job's footprint budget in CLAUDE.md, as CI runs them (install-docs-r4-3)", () => {
+  it("gives the checks job's launcher pack check and the el8 job's footprint budget, on the listening the packages run, in CLAUDE.md, as CI runs them (install-docs-r4-3, reliability-performance-c5-1)", () => {
     const ci = read(".github/workflows/ci.yml");
     const claude = read("CLAUDE.md");
     // The checks job packs the npm launcher, after the unit tests and before the sidecar's self-test.
@@ -241,6 +241,13 @@ describe("docs/DEVELOPING.md", () => {
     // el8's last step: the awake-rest budget, with every flag CI gives it.
     const footprint = /node scripts\/perf\/footprint\.mjs [^\n]*--max-cpu \d+ --max-pss \d+/.exec(ci)?.[0] ?? "";
     expect(footprint).toContain("--compositor");
+    // On the listening backend the Linux packages run (sherpa-onnx's C API), and WebAssembly's as a run of its own after it
+    // (reliability-performance-c5-1).
+    expect(footprint).toContain("--native");
+    const runs = [...ci.matchAll(/node scripts\/perf\/footprint\.mjs [^\n]*--max-cpu \d+ --max-pss \d+/g)].map(m => m[0]);
+    expect(runs).toHaveLength(2);
+    expect(runs[1]).toBe(runs[1].replace(" --native", ""));
+    expect(runs[1]).toContain("--compositor");
     const line = claude.split("\n").find(l => l.includes("scripts/perf/footprint.mjs")) ?? "";
     expect(line).toContain(`\`dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" ${footprint}\``);
     expect(line).toContain("xcompmgr");

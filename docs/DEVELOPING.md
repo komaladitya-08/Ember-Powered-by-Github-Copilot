@@ -918,14 +918,26 @@ regression alongside the Electron smoke.
   overlay beside the cursor falls back to the handle card; `--compositor` starts xcompmgr on the display first
   (EPEL's `xcompmgr` on EL8), so the overlay is measured too, and the run fails if the overlay didn't start.
 - It agrees to the consent version the build asks for (it used to agree to an older one, which kept the microphone
-  shut). Awake at rest, listening in silence, with Home open (no sign-in), it measured 758 MB and 11.3 % of one core on
-  4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main threads. Most of the
-  drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open decisions (docs/ASSISTANT.md).
-- `--max-cpu 16 --max-pss 950` is the budget for a change: past either it says so and exits 1. It sits above those
-  figures so that only a large regression fails it, never noise; the target is docs/ASSISTANT.md's. CI's `el8` job
-  runs it with that budget as its last step, past the first minute and with the overlay counted (`--compositor
-  --settle 70 --sample 30`; the same run here, 2026-11-08: 842–853 MB and 12.3–14.6 % with the machine shared, against
-  882 MB and 12.2 % without the overlay).
+  shut). Awake at rest, listening in silence on WebAssembly, with Home open (no sign-in), it measured 758 MB and 11.3 %
+  of one core on 4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main
+  threads. Most of the drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open
+  decisions (docs/ASSISTANT.md).
+- A development build listens on WebAssembly. `--native` listens on sherpa-onnx's C API, as the Linux packages do: it
+  runs `scripts/voice/fetch-capi.mjs` (which checks the libraries by SHA-256, fetching them first when they aren't
+  there) and fails unless the voice process ran on them, every model included. Either way the first line and the JSON
+  (`backend`, and `backendFrom` for the line it came from) say which backend the voice process listened on, from
+  `voice.ready` in Ember's log: main's `voice.backend` is only its choice (the libraries are there), and a library that
+  doesn't load falls back to WebAssembly in the voice process without it stopping. A `voice.model_wasm_fallback` (a
+  model made on WebAssembly) fails `--native` too, and so does a run whose voice process never got ready. A caller's own
+  `EMBER_SHERPA_CAPI` or `EMBER_VOICE_BACKEND` is never passed on.
+  With `--compositor --settle 70 --sample 30` on 4 shared vCPUs (2026-11-08), the listening process took 238–244 MB on
+  the C API against 402–403 MB on WebAssembly: 695–785 MB and 14.2–15.4 % of a core in all, against 942–947 MB and
+  14.3–15.5 % (Ember's other processes vary by about 90 MB from run to run).
+- `--max-cpu 16 --max-pss 850` with `--native`, and `--max-cpu 16 --max-pss 950` without it, are the budget for a
+  change: past either figure it says so and exits 1. Each sits above what CI measures so that only a large regression
+  fails it, never noise; the target is docs/ASSISTANT.md's. CI's `el8` job runs both as its last steps, past the first
+  minute and with the overlay counted (`--compositor --settle 70 --sample 30`; at 73554c2, before `--native`, it
+  measured 899 MB and 10.8 % on WebAssembly, the listening process 390 MB of it).
 
 ### Connecting Copilot
 
@@ -1425,6 +1437,7 @@ On Linux (Windows: §10.9, macOS: §11.8):
 | Sharing a log | **Setup & about › About this build** lists the log file with **Copy** and **Show in Files** (Finder, File Explorer). Attach `ember.log`, and `ember.log.1` too if the problem was a while ago (each is rotated at 5 MB). It says what Ember did and what failed, with app names and error messages; it isn't meant to hold what you typed or said, window titles or keys (tokens are taken out), but read it before you share it |
 | Ember says it can't read the screen, or that its accessibility helper isn't working | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Bindings installed while Ember runs are used within a couple of seconds, without restarting it; apps started before accessibility was turned on must be restarted |
 | "Ember couldn't start: Ember can't write to its data folder" | Make the folder yours again, for example `sudo chown -R $USER ~/.config/ember` (starting Ember with `sudo` can leave it owned by root); when the dialog says the disk is full or can only be read, free some space or start Ember where your home folder can be written to; when it says a path in the folder "isn't a folder" (a file or a broken link where Ember keeps one, such as `audit`), move that away. The dialog never shows the error's own text: `ember.log` has it as `app.start_failed` |
+| "Ember couldn't start: Something went wrong while Ember was starting" | Nothing in the data folder was in the way. Start Ember again; if it keeps happening, a file is missing from a damaged install or it is a bug: reinstall Ember, and if it still happens, report it at the address the dialog gives, with `ember.log` (see "Sharing a log"), whose `app.start_failed` line says what failed |
 
 ## 10. Windows
 
@@ -1560,6 +1573,7 @@ borrowed mouse.
 | `AllSigned` or `Restricted`, or scripts turned off | Says "Your organisation allows only signed PowerShell scripts…". The helper isn't signed (PLAN.md §9), so an administrator has to allow it |
 | `RemoteSigned`, and the helper's files carry the Mark-of-the-Web (a zip downloaded by a browser and extracted by Explorer) | Says "Windows blocked Ember's accessibility helper because it came from the internet" and offers **Unblock it**, which removes the `Zone.Identifier` stream from exactly `ember_uia.ps1` and `ember_uia.cs` (what `Unblock-File` does), only when the user presses it. The host starts the bridge again on its next request |
 | Constrained Language Mode (AppLocker, WDAC, `__PSLockdownPolicy`) | Says "Windows PowerShell is restricted on this computer…". `Add-Type` can't run, and the host doesn't try again until Ember restarts |
+| `powershell.exe` itself blocked (AppLocker or Software Restriction Policies, or its permissions) | Says "Windows didn't let Ember run Windows PowerShell. Ask your administrator to allow it." (Node throws spawn's `EPERM` or `UNKNOWN`), and tries again only on the back-off below, so each request doesn't add an AppLocker block event |
 | Any other failed start | The host tries again after 5 s, 30 s and 2 min, then every 10 min. A bridge that stopped before it was ready once (an antivirus scan, a crash) is said as a stop that may pass; twice in a row, Ember says its helper isn't working and points to the setup check until a start works |
 
 For an endpoint-protection or application-control allow-list, the setup check's **Helper command line** row prints the
@@ -1773,6 +1787,7 @@ shortcuts**.
 
 | Symptom | Fix |
 |---|---|
+| "Ember couldn't start: Ember can't write to its data folder" | Check that you can write to `%LOCALAPPDATA%\ember` and what is in it (the folder's **Properties › Security**), and that security software (an antivirus, or Controlled folder access with that folder protected) isn't keeping Ember out of it; a full disk is said as such. As on Linux, `ember.log` has the error as `app.start_failed` |
 | The first question about an app takes several seconds | The helper compiles once per version (§10.4); later starts take about a second |
 | Task Manager lists a dozen Ember processes | Electron runs each window's page in a renderer of its own, plus the GPU, network and audio services, the voice process ("Ember voice", mostly the speech models) and the accessibility helper. Compare their private bytes (Task Manager's Details tab, **Memory (private working set)**), not the working set, which counts shared pages in every process. Chromium's video capture service runs inside the main process (the mic page's device listing starts it; Ember opens no camera), and the prompt window and the speech-only window close after a minute unused. `EMBER_MEMORY_LOG` (§5) names each renderer in a checkout |
 | A shortcut is taken | PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar Win+Alt+M by default: change theirs, or use Ember's handle |

@@ -357,6 +357,31 @@ describe("the bridge client", () => {
     expect(p.health()).toEqual({ ok: false, detail: START_DETAIL.notFound, cause: expect.stringMatching(/^Windows PowerShell could not be run \(spawn .*ENOENT\)$/) });
   });
 
+  it("says Windows didn't let it run Windows PowerShell when its policy blocks it and spawn throws, and doesn't run it again on every request (reliability-performance-r5-1)", async () => {
+    // Node throws, rather than emitting "error", for spawn's other codes: Windows' EPERM (access denied) and UNKNOWN (a
+    // program AppLocker or Software Restriction Policies block, ERROR_ACCESS_DISABLED_BY_POLICY).
+    for (const code of ["EPERM", "UNKNOWN"]) {
+      let tries = 0;
+      const exe = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+      const spawn = (() => { tries++; throw Object.assign(new Error(`spawn ${exe} ${code}`), { errno: -4048, code, syscall: `spawn ${exe}` }); }) as never;
+      const notes: string[] = [];
+      const p = new UiaProvider({ script: "C:\\e.ps1", spawn, backoffMs: [60_000], note: event => { notes.push(event); } });
+      providers.push(p);
+      const first = await p.start().catch((e: Error) => e);
+      expect(first).toBeInstanceOf(Error);
+      expect((first as Error).message, code).toBe(`the accessibility bridge could not run (spawn ${exe} ${code})`);
+      // The setup check's row and the model's words: the helper can't work here, never "couldn't tell".
+      expect(helperCantRun(first), code).toBe(true);
+      expect(p.health(), code).toEqual({ ok: false, detail: START_DETAIL.notAllowed, cause: `Windows PowerShell could not be run (spawn ${exe} ${code})` });
+      expect(notes, code).toEqual(["uia.start_failed"]);
+      // The back-off holds: the next requests are answered from the failure, with no new CreateProcess.
+      expect(await failure(p.start()), code).toBe(`error: the accessibility bridge could not run (spawn ${exe} ${code})`);
+      expect(await failure(p.start()), code).toMatch(/could not run/);
+      expect(tries, code).toBe(1);
+    }
+    expect(spawnDetail(Object.assign(new Error("spawn powershell.exe UNKNOWN"), { code: "UNKNOWN" }))).toBe(START_DETAIL.notAllowed);
+  });
+
   it("backs off further after each failed start in a row: 5 s, 30 s, 2 min, then every 10 min (W4)", async () => {
     expect(BACKOFF_MS).toEqual([5_000, 30_000, 120_000, 600_000]);
     const { p, spawned } = provider({ FAKE_BRIDGE_EXIT: "3" }, { backoffMs: [300, 2000] });

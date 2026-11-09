@@ -170,8 +170,12 @@ jobs:
       - name: A compositor for the footprint (EPEL's xcompmgr)
         run: dnf -y -q install epel-release && dnf -y -q install xcompmgr
       # The budget docs/DEVELOPING.md records: it fails only on a large regression, never on noise (rp-4). Past the first
-      # minute, when the first minute's livelier fidgets are over, with the overlay counted.
-      - name: What Ember costs awake at rest, the overlay included, against its budget (16 % of one core, 950 MB)
+      # minute, when the first minute's livelier fidgets are over, with the overlay counted, and listening on the C API
+      # the Linux packages run (reliability-performance-c5-1: a development build listens on WebAssembly).
+      - name: What Ember costs awake at rest, the overlay included, listening as the packages do, against its budget (16 % of one core, 850 MB)
+        run: sudo -u ci env "PATH=$PATH" HOME=/home/ci dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs --compositor --native --settle 70 --sample 30 --max-cpu 16 --max-pss 850
+      # WebAssembly listening, where the C API can't run (a processor without what it needs, a development build).
+      - name: The same with WebAssembly listening, against its budget (16 % of one core, 950 MB)
         run: sudo -u ci env "PATH=$PATH" HOME=/home/ci dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs --compositor --settle 70 --sample 30 --max-cpu 16 --max-pss 950
 
   package:
