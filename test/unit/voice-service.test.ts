@@ -43,13 +43,14 @@ const electron = vi.hoisted(() => {
 vi.mock("electron", () => electron);
 
 import { VoiceGate } from "../../app/voice/match";
-import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_ANNOUNCED, VoiceService, cutByQuestion, heldByQuestion, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
+import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_ANNOUNCED, LISTEN_ONCE_HUSH, LISTEN_ONCE_STOPS_ANSWER, VoiceService, cutByQuestion, heldByQuestion, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import { micBadge } from "../../app/shared/mic";
 import crypto from "node:crypto";
 import { CLEAR_SPEECH, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
 import { calledByName, withoutAnnounced, type VoiceEvent } from "../../app/voice/engine";
 import type { Logger } from "../../app/main/logger";
+import type { ListenOnceStatus } from "../../app/shared/ipc";
 
 const log: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => log, file: "" };
 let root: string;
@@ -306,7 +307,7 @@ describe("VoiceService", () => {
     const mic = captured();
     v.speak("Here is a long answer, read out sentence by sentence.");
     speaking(mic, true);
-    expect(v.listenOnceStatus).toEqual({ phase: "ready", detail: "Stops Ember talking, then listens for one request." });
+    expect(v.listenOnceStatus).toEqual({ phase: "ready", detail: LISTEN_ONCE_HUSH });
     const hushes = mic.webContents.send.mock.calls.filter(c => c[0] === VOICE.hush).length;
     expect(v.listenOnce()).toBe(true);
     // Hushed at once; nothing heard until the page says Ember's voice has stopped (its own words aren't the request).
@@ -318,7 +319,7 @@ describe("VoiceService", () => {
     // Main stops an answer on its way first, as a wake does; a question still has to be answered first.
     const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
     expect(main).not.toMatch(/Wait for Ember['’]s answer to finish\./);
-    expect(main).toContain(`const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;`);
+    expect(main).toContain("const answer = agent?.answerOpen && now.phase === \"ready\" ? { ...now, detail: LISTEN_ONCE_STOPS_ANSWER } : now;");
     expect(main).toMatch(/listenOnceStatus\(source\)\.phase === "ready"\) \{\s*\/\/[^\n]*\n\s*if \(agent\?\.answerOpen\) agent\.interruptAnswer\(\);/);
     expect(main).toContain(`if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return heldByQuestion(voice?.micState);`);
   });
@@ -658,6 +659,81 @@ describe("VoiceService", () => {
       const words = line.split(/\s+/);
       for (let i = 0; i < words.length; i++) expect(calledByName(words.slice(i).join(" ")), `${line} (from “${words[i]}”)`).toBe(false);
     }
+  });
+
+  it("tells a screen reader no Listen once line that calls Ember by name, in any state it is said in (voice-listening-x6-1, y6-1)", async () => {
+    // "Stops Ember talking, then listens for one request.", Home's line after each Listen once while Ember's short answer
+    // played, read into the idle wake microphone woke Ember and was sent as a request in 23 of 40 real-model placements.
+    // A line main marks `listening` is never said (listen-once.ts), so it may name Ember.
+    const told: string[] = [];
+    const tell = (s: ListenOnceStatus) => { if (s.reason !== "listening") told.push(s.detail, listenOnceInSettings(s).detail); };
+    const off = service();
+    tell(off.v.listenOnceStatus);
+    off.v.speak("Here is a long answer, read out sentence by sentence.");
+    tell(off.v.listenOnceStatus);
+    const { v } = service();
+    await v.setWanted(true);
+    tell(v.listenOnceStatus);
+    const proc = electron.procs.at(-1)!;
+    proc.emit("message", { type: "ready", loadMs: 20 });
+    const mic = captured();
+    v.speak("Here is a long answer, read out sentence by sentence.");
+    speaking(mic, true);
+    tell(v.listenOnceStatus);
+    v.listenOnce();
+    tell(v.listenOnceStatus);
+    speaking(mic, false);
+    const generation = (posted(proc, "listen-once").at(-1) as { generation?: number }).generation;
+    proc.emit("message", { generation, type: "listening", on: true, reason: "manual", window: "manual" });
+    tell(v.listenOnceStatus);
+    proc.emit("message", { generation, type: "listening", on: false, reason: "done", window: "manual" });
+    expect(v.listenOnceStatus.phase).toBe("checking");
+    tell(v.listenOnceStatus);
+    v.cancelListenOnce();
+    v.setMuted(true);
+    tell(v.listenOnceStatus);
+    v.setMuted(false);
+    v.setLocked(true);
+    tell(v.listenOnceStatus);
+    v.setLocked(false);
+    tell(service(false).v.listenOnceStatus);
+    for (const m of ["waiting", "off", "muted", "starting", "error", undefined] as const) tell(heldByQuestion(m));
+    told.push(LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_STOPS_ANSWER);
+    expect(LISTEN_ONCE_HUSH).toBe("Stops speaking first, then listens for one request.");
+    expect(LISTEN_ONCE_STOPS_ANSWER).toBe("Stops the answer on its way, then listens for one request.");
+    expect(told).toContain(LISTEN_ONCE_HUSH);
+    expect(told).toContain("Checking what was said…");
+    expect(told).toContain("Listening for one request…");
+    expect(told).toContain("Download the speech models below first.");
+    // No name at all: calledByName leaves "Ember's" out, but the recogniser joins the word before it to the name, and
+    // "Stops Ember's answer, …", said after each Listen once while the answer was on its way, was heard as "Stop Timbers'
+    // answer, …" and woke Ember in 20 of 40 real-model placements (voice-listening-y6-1). heldByQuestion's line keeps
+    // its name for now: 0 of 40 woke Ember, and Ask says it too.
+    const questionFirst = heldByQuestion("waiting").detail;
+    expect(told).toContain(questionFirst);
+    for (const line of new Set(told.filter(Boolean))) {
+      if (line !== questionFirst) expect(line, line).not.toMatch(/\bember/i);
+      const words = line.split(/\s+/);
+      for (let i = 0; i < words.length; i++) expect(calledByName(words.slice(i).join(" ")), `${line} (from “${words[i]}”)`).toBe(false);
+    }
+  });
+
+  it("says Listen once stops speaking first while Hear Ember's sample plays, not that an answer is spoken (voice-listening-y6-2)", async () => {
+    // Settings › Voice: the Listen once line just above Hear Ember said "Stops the spoken answer, …" for the sample's
+    // whole length, though nothing was answering. Only main's line for an answer on its way names the answer.
+    for (const wanted of [false, true]) {
+      const { v } = service();
+      if (wanted) {
+        await v.setWanted(true);
+        electron.procs.at(-1)!.emit("message", { type: "ready", loadMs: 20 });
+      }
+      const mic = wanted ? captured() : null;
+      void v.sample("This is how I sound.");
+      if (mic) speaking(mic, true);
+      expect(v.listenOnceStatus, String(wanted)).toEqual({ phase: "ready", detail: "Stops speaking first, then listens for one request." });
+      expect(v.listenOnceStatus.detail).not.toMatch(/answer/i);
+    }
+    expect(LISTEN_ONCE_STOPS_ANSWER).toMatch(/^Stops the answer on its way, /);
   });
 
   it.each(["cancel", "stop", "mute", "lock", "device", "expiry"])("revokes manual verification on %s", async why => {

@@ -36,20 +36,24 @@ export const MATCH_TEXT = {
  * What a screen reader is told as teaching ends or the voice is forgotten (matchAnnouncement): the news of the lines
  * shown, worded without Ember's name and without a phrase it answers. Said into the wake word's microphone, "Ember knows
  * your voice now. …" woke Ember and was sent as a request in 22 of 40 placements and "Ember forgot your voice…" in 24,
- * and the line shown for no voice quotes “Ember, stop”, which stops it (voice-listening-r5-1).
+ * and the line shown for no voice quotes “Ember, stop”, which stops it (voice-listening-r5-1). Nor with an "it" for
+ * Ember: heard alone, "…forgotten. Anyone who talks to it is heard. Teach it your voice…" read as the person's own
+ * voice (voice-listening-x6-4). Nor with more listening than the line shown says: right after Forget my voice,
+ * "Everyone who talks is heard." said all talk near the computer is, where the line shown says only that anyone who
+ * talks to Ember is heard (voice-listening-y6-3). `none` is said only after teaching or forgetting, so "again".
  */
 export const MATCH_SAID = {
-  none: "Anyone who talks to it is heard. Teach it your voice, and you can answer its questions out loud; other voices can't.",
+  none: "Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.",
   on: "On: your voice can answer questions out loud, and other voices can't. Everyone is still heard. Your voiceprint stays on this computer.",
   off: "Off: answer questions by clicking. Your voiceprint is kept until you forget it.",
   noModel: "Voice Match's model is missing or was damaged. Download it above to put that right.",
   learnt: "Your voice is learnt.",
   stopped: "Stopped teaching your voice.",
-  forgot: "Your voice and the words learnt from it are forgotten.",
+  forgot: "Your voiceprint and the words learnt from what you said are forgotten.",
   ended: {
     "gave-up": "Your voice wasn't learnt: too many phrases didn't sound alike. Try again somewhere quiet, with only you speaking.",
     timeout: "Teaching stopped because no phrase was heard for a while. Try again when you're ready.",
-    interrupted: "Teaching stopped because listening stopped. Try again once it's listening again.",
+    interrupted: "Teaching stopped because listening stopped. Try again once listening starts again.",
   },
 } as const;
 

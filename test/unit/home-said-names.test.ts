@@ -7,12 +7,12 @@
 import { describe, expect, it } from "vitest";
 import {
   COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED,
-  HEAR_WAITING, composerStillWaiting, hearEmberLine, presenceLine, tagline,
+  HEAR_WAITING, composerStillWaiting, hearEmberLine, presenceLine, tagline, updateStatusText,
 } from "../../app/renderer/home/copy";
 import { matchAnnouncement } from "../../app/renderer/home/match-copy";
 import { composerRefusal } from "../../app/main/agent/composer-refusal";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
-import type { VoiceMatchStatus } from "../../app/shared/ipc";
+import type { UpdateStatus, VoiceMatchStatus } from "../../app/shared/ipc";
 import { calledByName } from "../../app/voice/engine";
 
 /** The first word from which `line` calls Ember by name, or null. */
@@ -81,6 +81,16 @@ describe("what Home tells a screen reader", () => {
     // Said just after the sample, into the wake word's microphone.
     const lines = [HEAR_WAITING, ...(["kitten", "kokoro", "supertonic", "system"] as const).map(voice => hearEmberLine({ spoke: true, voice })),
       ...(["off", "managed", "locked", "silent", "stopped"] as const).map(why => hearEmberLine({ spoke: false, why }))];
+    expect(named(lines)).toEqual([]);
+  });
+
+  it("never calls Ember by name in where the update check stands, said after Check now or as the daily check ends (voice-listening-x6-1)", () => {
+    // "Ember 0.10.0 is out." woke Ember and was sent as a request in 18 of 40 real-model placements, "Couldn't check
+    // for updates. Ember will try again tomorrow." in 6.
+    const lines: string[] = [];
+    for (const phase of ["off", "idle", "checking", "current", "available", "failed"] as const) for (const latest of [null, "0.10.0"])
+      for (const checkedAt of [null, "2026-11-05T10:01:00.000Z"]) if (phase !== "available" || latest) lines.push(updateStatusText({ phase, latest, checkedAt } satisfies UpdateStatus));
+    expect(new Set(lines.filter(Boolean)).size).toBeGreaterThan(5);
     expect(named(lines)).toEqual([]);
   });
 });

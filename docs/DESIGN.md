@@ -461,8 +461,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   finds a line beside the one shown that no longer holds. Hear me more clearly's line, the voice row's line and the note
   that no voice spoke a reply are said the same way, each through a status line of its own: once it has held, only when
   its words change, and never while the microphone opens or is open for a request. The voice row's says only where
-  the voice stands, never that it is checking or downloading, and the voice loading again after two quiet minutes
-  changes nothing it says. Task activity says a task's new state only once the
+  the voice stands, never that it is checking or downloading, nor a line that the checking overtook before it was
+  said, and the voice loading again after two quiet minutes changes nothing it says; Try again's outcome is said even
+  when it ends as it did before. Task activity says a task's new state only once the
   microphone has closed (each task's state as it is by then, once), the connection line is written only when its words
   change, and Ask says what it will see, or that it can't answer, once the microphone has closed, while it is still
   open. These lines, and Listen once's, are worded without Ember's name: said into the wake word's microphone,
@@ -471,8 +472,11 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   ask anything.”, “… Reconnecting to Copilot…”), Hide's (“Hidden. It shows itself again…”), the composer's outcome
   and refusal (“This request got no answer. …”, “Reconnecting to Copilot. …”), what Hear Ember found (“Spoken in
   Kitten Nano.”), and how Voice Match's teaching ended or the voice was forgotten (“Your voice is learnt. …”), which
-  also leaves out the “Ember, stop” the shown line quotes: said into the microphone, it stops Ember. Ask speaks in the
-  first person (“I'll see: …”).
+  also leaves out the “Ember, stop” the shown line quotes: said into the microphone, it stops Ember. Listen once's lines
+  (“Stops speaking first, then listens for one request.”, “Stops the answer on its way, …”, “Checking what was said…”)
+  and where the update check stands (“Version 0.10.0 is out.”, “Couldn't check for updates. The next check is
+  tomorrow.”) are worded the same way, without even “Ember's”: “Stops Ember's answer, …” was heard as “Stop Timbers'
+  answer, …” and woke Ember. Ask speaks in the first person (“I'll see: …”).
 - **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
   from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
 

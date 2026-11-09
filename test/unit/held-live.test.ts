@@ -79,4 +79,59 @@ describe("a held status line", () => {
     vi.advanceTimersByTime(LIVE_SETTLE_MS * 2);
     expect(said).toEqual([]);
   });
+
+  it("never says a line that something with nothing to say overtook before it was said, even once a hold ends (voice-listening-x6-3)", () => {
+    // "Kitten Nano will be checked the next time a reply is spoken.", held while Listen once listened, was said as the
+    // window closed while the row showed "Checking Kitten Nano on this computer…".
+    vi.useFakeTimers();
+    const { said, live } = statusLine();
+    const line = heldLive(live);
+    line.say("Kitten Nano will be checked the next time a reply is spoken.");
+    line.hold(true);
+    line.drop();
+    line.hold(false);
+    vi.advanceTimersByTime(LIVE_SETTLE_MS * 3);
+    expect(said).toEqual([]);
+    // What comes next is said, once it has held; dropped again before it has, it isn't.
+    line.say("Replies are spoken in Kitten Nano.");
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    expect(said).toEqual(["Replies are spoken in Kitten Nano."]);
+    line.say("Kitten Nano couldn't load.");
+    vi.advanceTimersByTime(LIVE_SETTLE_MS / 2);
+    line.drop();
+    vi.advanceTimersByTime(LIVE_SETTLE_MS * 2);
+    expect(said).toEqual(["Replies are spoken in Kitten Nano."]);
+  });
+
+  it("says the line a press asked for even when its words are what it said last, once, and not while the microphone is open (voice-listening-x6-2)", () => {
+    vi.useFakeTimers();
+    const { said, live } = statusLine();
+    const line = heldLive(live);
+    const slow = "Kitten Nano was too slow just now.";
+    line.say(slow);
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    // Unasked, the same words say nothing.
+    line.drop();
+    line.say(slow);
+    vi.advanceTimersByTime(LIVE_SETTLE_MS * 2);
+    expect(said).toEqual([slow]);
+    // Try again: checking (nothing to say, nor the old line as a hold ends), then the same outcome, said once it holds.
+    line.again();
+    line.drop();
+    line.hold(true);
+    line.hold(false);
+    vi.advanceTimersByTime(LIVE_SETTLE_MS * 2);
+    expect(said).toEqual([slow]);
+    line.hold(true);
+    line.say(slow);
+    vi.advanceTimersByTime(LIVE_SETTLE_MS * 2);
+    expect(said).toEqual([slow]);
+    line.hold(false);
+    vi.advanceTimersByTime(LIVE_SETTLE_MS);
+    expect(said).toEqual([slow, slow]);
+    line.drop();
+    line.say(slow);
+    vi.advanceTimersByTime(LIVE_SETTLE_MS * 2);
+    expect(said).toEqual([slow, slow]);
+  });
 });

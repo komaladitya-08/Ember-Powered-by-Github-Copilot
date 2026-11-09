@@ -164,7 +164,7 @@ describe("the update checker", () => {
     expect(updateOut(c.status)).toBe(true);
     await c.check();
     expect(c.status).toMatchObject({ phase: "failed", latest: "0.1.2" });
-    expect(updateStatusText(c.status)).toBe("Ember 0.1.2 is out. Ember couldn't look for anything newer just now, and will try again tomorrow.");
+    expect(updateStatusText(c.status)).toBe("Version 0.1.2 is out. Couldn't look for anything newer just now; the next check is tomorrow.");
     // Home keeps See what's new… and the how-to while a newer version is known, whatever the last look did.
     expect(updateOut(c.status)).toBe(true);
     expect(updateOut({ phase: "checking", latest: "0.1.2", checkedAt: null })).toBe(true);
@@ -262,11 +262,11 @@ describe("Home's words", () => {
     expect(UPDATES_CONSENT_TEXT).toMatch(/never downloads or installs/);
   });
   it("says each state in a sentence", () => {
-    expect(updateStatusText({ phase: "available", latest: "0.2.0", checkedAt: null })).toBe("Ember 0.2.0 is out.");
-    expect(updateStatusText({ phase: "failed", latest: null, checkedAt: null })).toBe("Couldn't check for updates. Ember will try again tomorrow.");
+    expect(updateStatusText({ phase: "available", latest: "0.2.0", checkedAt: null })).toBe("Version 0.2.0 is out.");
+    expect(updateStatusText({ phase: "failed", latest: null, checkedAt: null })).toBe("Couldn't check for updates. The next check is tomorrow.");
     // Started again within a day of a look: no "shortly" (integrations-v3).
-    expect(updateStatusText({ phase: "idle", latest: null, checkedAt: null })).toBe("Ember will check shortly.");
-    expect(updateStatusText({ phase: "idle", latest: null, checkedAt: "2026-11-05T10:01:00.000Z" })).toBe("Ember checks once a day. Check now looks at once.");
+    expect(updateStatusText({ phase: "idle", latest: null, checkedAt: null })).toBe("Updates will be checked shortly.");
+    expect(updateStatusText({ phase: "idle", latest: null, checkedAt: "2026-11-05T10:01:00.000Z" })).toBe("Updates are checked once a day. Check now looks at once.");
     expect(updateStatusText({ phase: "checking", latest: null, checkedAt: null })).toBe("Checking…");
     expect(updateStatusText({ phase: "off", latest: null, checkedAt: null })).toBe("");
     expect(updateStatusText({ phase: "current", latest: null, checkedAt: null })).toBe("You have the latest version.");
@@ -299,7 +299,7 @@ describe("how to install a new version, for this kind of install (install-docs-1
   /** A line as it reads (its commands are in <code>: below). */
   const text = (s: Segment[]) => s.map(x => (typeof x === "string" ? x : "code" in x ? x.code : x.kbd)).join("");
 
-  it("says how to update under “Ember X is out.”, in Home's words, while a newer version is out (install-docs-11)", () => {
+  it("says how to update under “Version X is out.”, in Home's words, while a newer version is out (install-docs-11)", () => {
     expect(text(updateHowTo("rpm", "0.1.2"))).toBe("To update, quit Ember, download the new RPM from See what's new…, then run sudo dnf upgrade ./ember-0.1.2-1.el8.x86_64.rpm in the folder you saved it to.");
     expect(text(updateHowTo("appimage", "0.1.2"))).toBe("To update, quit Ember, save Ember-0.1.2-x86_64.AppImage from See what's new… where this one is, then run chmod +x Ember-0.1.2-x86_64.AppImage there and start it.");
     expect(text(updateHowTo("zip", "0.1.2"))).toBe("To update, quit Ember, download Ember-0.1.2-win-x64.zip from See what's new… and replace this Ember folder with the one in it.");

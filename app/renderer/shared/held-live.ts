@@ -17,25 +17,42 @@ export interface HeldLive {
    * what was said before.
    */
   hold(on: boolean): void;
+  /**
+   * Nothing new to say: a line not said yet is dropped, so one a later change overtook before it was said is never said
+   * (the voice row's line from before Ember's voice began loading, voice-listening-x6-3).
+   */
+  drop(): void;
+  /**
+   * The next line it settles on is said even when its words are what it said last: a press asked where things stand
+   * (the voice row's Try again, ending as it ended before, voice-listening-x6-2).
+   */
+  again(): void;
 }
 
 /** A held status line on `live` (an `.sr` element with `role="status"`). */
 export function heldLive(live: { textContent: string | null }, settleMs = LIVE_SETTLE_MS): HeldLive {
-  /** What the line last said (kept while it is emptied), what it should say now, and what the timer will say. */
+  /**
+   * What the line last said (kept while it is emptied), what it should say now (null: nothing new, `drop`), and what
+   * the timer will say.
+   */
   let told = live.textContent ?? "";
-  let want = told;
+  let want: string | null = told;
   let soon: { text: string; timer: ReturnType<typeof setTimeout> } | null = null;
   let held = false;
+  /** A press asked for the next line (`again`), said even when it is what was said last. */
+  let asked = false;
   const settle = () => {
     if (soon?.text === want) return;
     if (soon) clearTimeout(soon.timer);
     soon = null;
-    if (held || want === told) return;
+    if (held || want === null || want === told && !asked) return;
     const text = want;
-    soon = { text, timer: setTimeout(() => { soon = null; if (held) return; live.textContent = text; told = text; }, settleMs) };
+    soon = { text, timer: setTimeout(() => { soon = null; if (held) return; asked = false; live.textContent = text; told = text; }, settleMs) };
   };
   return {
     say(text) { want = text; settle(); },
+    drop() { want = null; settle(); },
+    again() { asked = true; },
     hold(on) {
       if (on === held) return;
       held = on;

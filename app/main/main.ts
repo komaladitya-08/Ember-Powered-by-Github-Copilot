@@ -45,7 +45,7 @@ import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip, stepsAsideFo
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
-import { LISTEN_CUT_BY_QUESTION, VoiceService, cutByQuestion, electronDownloader, heldByQuestion, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
+import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_STOPS_ANSWER, VoiceService, cutByQuestion, electronDownloader, heldByQuestion, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { capiChoice, type BackendChoice } from "../voice/runtime";
@@ -1532,7 +1532,7 @@ function start(): void {
     if (questionHoldsListen(!!confirmer?.waiting, manualCall?.source === source ? voice?.listenOnceStatus : undefined)) return heldByQuestion(voice?.micState);
     const now = voice?.listenOnceStatus ?? blocked("The speech recogniser is getting ready.");
     // An answer on its way: Listen once stops it first, as a wake does (requestListenOnce; voice-listening-7).
-    const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: "Stops Ember's answer, then listens for one request." } : now;
+    const answer = agent?.answerOpen && now.phase === "ready" ? { ...now, detail: LISTEN_ONCE_STOPS_ANSWER } : now;
     // Without the speech models only Settings' Download helps: Ask offers the way there (companion-3).
     const heard: ListenOnceStatus = answer.phase === "blocked" && voice && !voice.modelsReady && !voice.isDownloading ? { ...answer, fix: "settings" } : answer;
     return source === "home" ? listenOnceInSettings(heard) : heard;
