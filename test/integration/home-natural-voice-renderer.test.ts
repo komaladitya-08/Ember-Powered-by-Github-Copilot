@@ -393,7 +393,7 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
   } finally { await browser.close(); await server.close(); }
 }, 60_000);
 
-it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing of Hear me more clearly, or that no voice spoke a reply, while the microphone opens or is open for a request, and each line once it lasts (voice-listening-c4-1, voice-listening-r4-2)", async () => {
+it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing of Hear me more clearly, or that no voice spoke a reply, while the microphone opens or is open for a request, and each line once it lasts (voice-listening-c4-1, voice-listening-r4-2, voice-listening-refresh-2)", async () => {
   // Its status line was rewritten on every voice push, so a screen reader said "This computer can't run it, so Ember is
   // using its usual speech model." as Listen once opened, over the request after "Hey Ember" and into the conversation,
   // where it was sent with the request or as one (21 of 24, and 24 of 24, on the real models).
@@ -465,6 +465,9 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
     await page.waitForTimeout(1300);
     await page.evaluate(() => { (window as unknown as { __said: string[] }).__said.length = 0; });
     await send({ ...off, state: "starting", listenOnce: { phase: "starting", detail: "Starting to listen…" } });
+    // A temporary recogniser can take longer than the voice line's one-second timer to become ready.
+    await page.waitForTimeout(1400);
+    expect((await said()).filter(s => !s.startsWith("voice-listen-once-live:"))).toEqual([]);
     await send({ ...off, state: "starting", clear: { state: "on" }, listenOnce: { phase: "starting", detail: "Starting to listen…" } });
     expect(await clearLine.innerText()).toBe("On. The clearer model writes what you say.");
     await send({ ...off, state: "active", detail: "Listening…", clear: { state: "on" }, listenOnce: { phase: "listening", detail: "Listening for one request…" } });

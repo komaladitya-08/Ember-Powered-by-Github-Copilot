@@ -490,7 +490,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   command and prompt windows' status lines (a refused press's line, the hints, "Starting Ubuntu…") do the same. Home and
   Ask announce nothing as the microphone opens for a request, or while it is open, since a screen reader says it
   through the speakers into what Ember hears: the voice line is said once it has held for a second and never while a
-  window is open, and Listen once's line is said through a status line of its own, which never says "Ember is already
+  window is open or its microphone is starting, even when startup lasts longer than that second. Listen once's line
+  is said through a status line of its own, which never says "Ember is already
   listening.", nor "Answer Ember's question first." while a conversation waits for that answer (shown under the button,
   as its description). While they say nothing new, both of those status lines are emptied, so reading the page never
   finds a line beside the one shown that no longer holds. Hear me more clearly's line, the voice row's line and the note

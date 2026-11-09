@@ -455,6 +455,9 @@ the automated tests don't stand in for them.
 - **Each failed Hear Ember sample reports its own failure**, including a second attempt with no working voice.
 - **The composer's automatic progress line avoids the wake name:** “Thinking… The reply will appear above.” Voice
   Match's focused setup controls and failure prefixes do too; intentional teaching phrases keep their existing guards.
+- **Home's voice-status announcement waits while the microphone starts**, including a Listen once startup lasting
+  more than a second. The visible status stays; settled changes keep their normal delay after recording, without
+  repeating the line from before it opened.
 - **“Ember, stop” and “Hey Ember, stop” stop everything while you teach Ember your voice.** Stop everything ends the
   teaching too, and so do 45 seconds with no phrase heard, 3 minutes in all, and closing Settings; the handle and
   Settings' voice line say “Learning your voice” meanwhile, also when you start teaching during a conversation.

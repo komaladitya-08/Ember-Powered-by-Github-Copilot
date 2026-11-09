@@ -138,6 +138,9 @@ while the visible heading still says Ember. Native reader announcement order and
 checks. The self-window privacy fallback recognises this unique title and every
 legacy title when the process id is unknown; an unrelated Files window called Home remains usable.
 Home's automatic thinking line also avoids the wake name, including possessives, while keeping its reply-location hint.
+Its automatic voice-status announcement is held while the microphone starts as well as while it listens, including
+a Listen once startup lasting more than a second. The visible status and deliberate teaching prompts remain; once
+the microphone closes, settled changes retain their usual delay without repeating the line from before it opened.
 
 During setup, an unsaved provider key stays tied to the host where it was entered. A different valid host or port
 clears it, including when reopening the form restores a saved address. Path-only edits and an unfinished address
