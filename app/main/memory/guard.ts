@@ -859,9 +859,12 @@ function withoutKeyStates(text: string): string {
  * every 90 days" stay facts.
  */
 const NOT_A_CHANGE = String.raw`(?:${NOT_A_VALUE}|something|anything|nothing|one|whatever|mine|yours|default|expire|a\s+new)`;
-const LENGTH_SAID = String.raw`\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b`;
+const LENGTH_SAID = String.raw`\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b(?:[ \t]+long\b)?`;
 const LENGTH = String.raw`(?!${LENGTH_SAID})`;
-/** A length said before what it will be, which is read past ("The door PIN will be 4-digit 4821"): memory-y6-3. */
+/**
+ * A length said before what it will be, which is read past ("The door PIN will be 4-digit 4821"): memory-y6-3, also
+ * when it says "long" ("12 characters long: Summer2024!"): memory-z6-5.
+ */
 const LENGTH_FIRST = String.raw`(?:${LENGTH_SAID}[ \t]*[,;:]?[ \t]*(?:(?:it|that)(?:['’]s|\s+is)\s+)?)?`;
 const CHANGE_VALUE = String.raw`["'“]?(?!${NOT_A_CHANGE}(?:[\s.,;!?"'”]|$))${LENGTH}(?:(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}|[^\s"'”.,;!?]{3,}(?=["'”]?\s*(?:$|[.,;!?])))`;
 const LATER_VALUE = String.raw`["'“]?(?!${NOT_A_VALUE}(?:[\s.,;!?"'”]|$))${LENGTH}(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}`;
@@ -1050,14 +1053,17 @@ const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[
  * SHA-256", "Password: hashed, argon2id": memory-x6-5), so "Passwords are hashed. Tokens are rotated." and "Password:
  * masked, PIN: entered" stay. A length or an algorithm is read past to what follows it ("The PIN is required, 4-digit,
  * 4821", "Password: hashed, SHA-256, but it's Summer2024!"), and an algorithm's or an encoding's name ends a word
- * ("SHA-256,", "base64-encoded"), so "Rs2024!" is a value: memory-y6-3.
+ * ("SHA-256,", "base64-encoded"), so "Rs2024!" is a value: memory-y6-3. Up to three are read past, an algorithm's
+ * participle may follow a space ("SHA-256 salted"), a length may say "long" or "min" and end in a full stop, and the
+ * value may be said as one ("Password: hashed, SHA-256, 12 characters, Summer2024!", "value Summer2024!", "The PIN is
+ * required. 4 digits. 4821"): memory-z6-5.
  */
-const STATE_LENGTH = String.raw`\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b`;
-const STATE_ALGORITHM = String.raw`(?:(?:sha|aes|rsa|des|md|hs|rs|es|ps|blake|crc)-?\d+|argon2(?:id|i|d)?|bcrypt\w*|pbkdf2\w*|base(?:16|32|58|64)(?:url)?|utf-?(?:8|16))`
-  + String.raw`(?:-(?:hashed|encoded|encrypted|signed|salted|based))?(?![^\s"'”,.;:)])`;
+const STATE_LENGTH = String.raw`(?:(?:min(?:imum)?|max(?:imum)?|at\s+least|up\s+to)\s+)?\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b(?:[ \t]+long\b)?`;
+const STATE_ALGORITHM = String.raw`(?:(?:sha|aes|rsa|des|md|hs|rs|es|ps|blake|crc)-?\d+|argon2(?:id|i|d)?|bcrypt\w*|scrypt|pbkdf2\w*|base(?:16|32|58|64)(?:url)?|utf-?(?:8|16))`
+  + String.raw`(?:[- ](?:hashed|encoded|encrypted|signed|salted|based))?(?![^\s"'”,.;:)])`;
 const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}${NOW}[A-Za-z][A-Za-z'’-]*[ \t]*[,;.][ \t]*`
-  + String.raw`(?:(?:${STATE_LENGTH}|${STATE_ALGORITHM})[ \t]*[,;:]?[ \t]*)?(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
-  + String.raw`(?:(?:it|that)(?:['’]s|\s+is|\s+was)\s+|(?:the\s+)?(?:password|pin|code|value|real\s+one)\s+is\s+)?["'“]?`
+  + String.raw`(?:(?:${STATE_LENGTH}|${STATE_ALGORITHM})[ \t]*[,;:.]?[ \t]*){0,3}(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
+  + String.raw`(?:(?:it|that)(?:['’]s|\s+is|\s+was)\s+|(?:the\s+)?(?:password|pin|code|value|real\s+one)\s+is\s+|(?:value|password|pin|code)(?:[ \t]*[:=][ \t]*|[ \t]+))?["'“]?`
   + String.raw`(?!${STATE_LENGTH})(?!${STATE_ALGORITHM})(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
 /**
  * A network and its key said together ("Guest Wi-Fi: BlueSky / BlueSky99", "Home network: BlueSky, key BlueSky99"),
@@ -1065,12 +1071,15 @@ const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}
  * ("Home network: HomeNet / 192.168.1.1", "Wi-Fi: HomeNet, 802.11ac", "Wi-Fi: HomeNet / WPA2-PSK"), which may come before
  * the key ("Wi-Fi: HomeNet / WPA2-PSK, key BlueSky99"): memory-x6-5. Up to six of them may ("Wi-Fi: HomeNet / WPA2-PSK /
  * 5GHz / BlueSky99!"), and after the router's address its user ("Home network: HomeNet / 192.168.1.1 / admin /
- * Summer2024!"): memory-y6-3.
+ * Summer2024!"): memory-y6-3. Any other field before the key, up to its "/" or "," ("channel 36 / BlueSky99!",
+ * "band: 5GHz / …"; a ":" only after its first word, so a field never runs into the next line's network), a
+ * label with ":", "=" or a dash ("key: BlueSky99!", "pass - BlueSky99!"), and a user before a space ("192.168.1.1 /
+ * admin admin123"): memory-z6-2.
  */
 const NETWORK_SETTING = String.raw`(?:\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?|802\.11[a-z]*|(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*|\d+(?:\.\d+)?\s?(?:ghz|mhz|[kmg]bps))`;
-const NETWORK_PAIR = new RegExp(String.raw`\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:${NETWORK_SETTING}\s*[,/]?\s*){0,6}`
-  + String.raw`(?:(?<=\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\s*[,/]?\s*)[A-Za-z][\w.-]{0,31}\s*[,/]\s*)?`
-  + String.raw`(?:(?:key|password|pass|pw|passphrase|psk)\s+)?["'“]?(?!${NETWORK_SETTING}(?:[\s.,;!?)"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}`, "i");
+const NETWORK_PAIR = new RegExp(String.raw`\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:${NETWORK_SETTING}\s*[,/]?\s*|(?:[A-Za-z]{1,12}:\s*)?[^\s,/:](?:[^,/:\n]{0,40}?[^\s,/:])?\s*[,/]\s*){0,6}`
+  + String.raw`(?:(?<=\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\s*[,/]?\s*)[A-Za-z][\w.-]{0,31}(?:\s*[,/]\s*|\s+))?`
+  + String.raw`(?:(?:key|password|pass|pw|passphrase|psk)(?:\s*[:=–—-]\s*|\s+))?["'“]?(?!${NETWORK_SETTING}(?:[\s.,;!?)"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}`, "i");
 /**
  * A service a person signs in to and a value shaped like a password straight after its name ("Netflix: hunter2", "The
  * user's Gmail: Tr0ub4dor&3", "The user's Netflix account: hunter2", "Netflix login hunter2"): safety-privacy-1. Never a

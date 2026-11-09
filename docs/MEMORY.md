@@ -87,7 +87,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   Portal2" is refused too), a router's label names and a network with its key ("WLAN key: …", "Guest Wi-Fi: BlueSky /
   BlueSky99": safety-privacy-c4-2; never its address, standard, mode or band, "Home network: HomeNet / 192.168.1.1",
   "Wi-Fi: HomeNet / WPA2-PSK", memory-x6-5, though a key or the router's login after them is refused, "Wi-Fi: HomeNet /
-  WPA2-PSK / 5GHz / BlueSky99!", "Home network: HomeNet / 192.168.1.1 / admin / Summer2024!", memory-y6-3), a capitals setting for a password ("DB_PASS=Tr0ub4dor&3", never a
+  WPA2-PSK / 5GHz / BlueSky99!", "Home network: HomeNet / 192.168.1.1 / admin / Summer2024!", memory-y6-3, also labelled
+  or past any other field, "Wi-Fi: HomeNet / WPA2-PSK / key: BlueSky99!", "… / channel 36 / BlueSky99!", "… /
+  192.168.1.1 / admin admin123", memory-z6-2), a capitals setting for a password ("DB_PASS=Tr0ub4dor&3", never a
   filter's "LOW_PASS=8000"), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
@@ -97,7 +99,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   in brackets, "PIN: entered (4821)", memory-w5-3, nor before one after a comma or a full stop, "PIN: entered, 4821",
   "Password: hidden, it's hunter2", memory-r5-3, though how it is hashed or how long it is may follow, "Passwords are
   hashed, SHA-256", "The PIN is required, 4-digit", memory-x6-5, but not before a value, "The PIN is required, 4-digit,
-  4821", "Password: hashed, SHA-256, but it's Summer2024!", "The door PIN will be 4-digit 4821", memory-y6-3; after a Wi-Fi key's router name, its state, where to look and its
+  4821", "Password: hashed, SHA-256, but it's Summer2024!", "The door PIN will be 4-digit 4821", memory-y6-3, even
+  after several of them, "Password: hashed, SHA-256, 12 characters, Summer2024!", "SHA-256 salted, Summer2024!", "The
+  PIN is required, 4 digits long, 4821", memory-z6-5; after a Wi-Fi key's router name, its state, where to look and its
   mode aren't a value either when nothing shaped like one follows in the sentence, "PSK is enabled on the router",
   "Network key: see sticker", "The network key is WPA2", memory-r5-2, but never after a password's or a PIN's name,
   "The admin password is rotated monthly, currently Summer2024!", "PIN: active 4821", nor before a value, "The VPN

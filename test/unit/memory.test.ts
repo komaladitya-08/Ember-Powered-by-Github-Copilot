@@ -770,6 +770,40 @@ describe("what memory never keeps", () => {
   ])("keeps %j, settings, a length or an algorithm with no secret after them (memory-y6-3)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A Wi-Fi key labelled "key:", "pass:" or "key -" after the network's settings or straight after its name, past a
+  // field that is no value ("channel 36"), and a router's user and password with only a space between (memory-z6-2).
+  it.each([
+    ["Wi-Fi: HomeNet / WPA2-PSK / key: BlueSky99!"], ["Wi-Fi: HomeNet / WPA2-PSK / Key: BlueSky99!"], ["Wi-Fi: HomeNet / WPA2-PSK / pass: BlueSky99!"],
+    ["Wi-Fi: HomeNet / WPA2-PSK / key - BlueSky99!"], ["Wi-Fi: HomeNet / key: BlueSky99!"], ["Wi-Fi: HomeNet, WPA2, key: BlueSky99!"],
+    ["Guest Wi-Fi: Guest / WPA2 / key: Welcome2024"], ["Wi-Fi: HomeNet / WPA2-PSK / 5GHz / channel 36 / BlueSky99!"],
+    ["Home network: HomeNet / 192.168.1.1 / admin admin123"], ["Home network: HomeNet / 192.168.1.1 admin Summer2024!"],
+  ])("refuses %j and saves nothing, a network's key after its label or its settings (memory-z6-2)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["Wi-Fi: HomeNet / WPA2-PSK / key: see sticker"], ["Wi-Fi: HomeNet / WPA2-PSK / channel 36"], ["Wi-Fi: HomeNet / WPA2-PSK / channel 36 / 2.4GHz"],
+    ["Wi-Fi: HomeNet / key: on the router's sticker"], ["Home network: HomeNet / 192.168.1.1 / gateway 10.0.0.1"], ["Wi-Fi: HomeNet / band: 5GHz"],
+  ])("keeps %j, a network's settings and where its key is (memory-z6-2)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A password after more than one length or algorithm, an algorithm with its participle after a space, a length that
+  // says "long" and a value said as one (memory-z6-5).
+  it.each([
+    ["Password: hashed, SHA-256, 12 characters, Summer2024!"], ["Password: hashed, SHA-256 salted, Summer2024!"], ["Password: hashed, SHA-256, value Summer2024!"],
+    ["The PIN is required, 4 digits long, 4821"], ["Password: hashed, scrypt, Summer2024!"], ["Password: stored, AES-256 encrypted, base64, Summer2024!"],
+    ["The password will be 12 characters long: Summer2024!"], ["Password: required, min 12 characters, Summer2024!"], ["The PIN is required. 4 digits. 4821"],
+  ])("refuses %j and saves nothing, a password after how it is stored (memory-z6-5)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["Password: hashed, SHA-256 salted"], ["The PIN is required, 4 digits long"], ["Password: hashed, SHA-256, 12 characters, salted"],
+    ["Password: hashed, SHA-256, value hidden"], ["Passwords are hashed, scrypt, then stored."], ["The password will be 12 characters long"],
+    ["Password: required, min 12 characters"], ["The PIN is required. 4 digits. Ask the office for it."],
+  ])("keeps %j, how a password is stored with no value after it (memory-z6-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
   // A MySQL client's password after a prompt, a comment mark, markup, curly quotes, a Makefile variable or a setting,
   // or from a quoted Windows folder, which memory can't keep hidden (memory-z6-1).
   it.each([
