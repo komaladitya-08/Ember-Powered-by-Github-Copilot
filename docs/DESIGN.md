@@ -354,6 +354,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   available), Extensions, Setup & about. The current pane's link carries `aria-current`, a fill that glides between
   rows on a click (`--spring-smooth-0`), and in a contrast theme an outline. The window reopens on the last pane. Below
   640 px the links are one row of capsules, the search field first.
+- **Closing Home** hides its page for this running session, preserving unsent drafts and waiting-message recovery;
+  it still ends Home's Listen once, teaching and Project work. Hidden Home draws no characters. Privacy erasure on
+  sign-out or account change reaches the hidden page too; a policy lockdown clears the draft, and actual quit destroys
+  the page (home-r7-1).
 - **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
   character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
   state in a few words ("Ready", "Working on 2 tasks", "Thinking…" while it answers what you sent from Home, "A task

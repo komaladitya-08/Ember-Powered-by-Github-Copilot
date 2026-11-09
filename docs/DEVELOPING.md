@@ -126,6 +126,11 @@ runtime. It does not change the app's consent or speaking settings.
 
 ### Using Ember
 
+Closing Home keeps its unsent conversation draft and waiting-message recovery in memory for this run; reopening
+Home brings them back. It still ends Home's Listen once, Voice Match teaching and Project work. No draft is written
+to disk or sent automatically. Signing out or changing account clears the conversation and draft; a policy lockdown
+clears the draft too, including while Home is hidden. Quitting Ember destroys the page and discards unsent drafts.
+
 Home's Features line describes what is in force: commands and other computers need their current agreements and
 policy permission. Listening shows on only while the speech models and microphone are ready. Saved preferences
 remain available after a policy restriction is lifted or missing models are downloaded.

@@ -660,6 +660,7 @@ function renderAdmin(a: Status["admin"]): void {
 // draw it (the notice, What Ember reads, sends and keeps, the switches it manages, first run, computers, extensions),
 // not only once this window is opened again (safety-privacy-w5-1).
 window.ember.onAdminChanged(a => {
+  if (a.error !== null) resetComposerDraft();
   pushedAdmin = a;
   renderAdmin(a);
   if (!statusNow) return;
@@ -1498,8 +1499,8 @@ void window.ember.conversation().then(entries => {
   if (!conversationReceived && conversationOpened === conversationGeneration) renderConversation(entries);
 }, () => { if (!conversationReceived && conversationOpened === conversationGeneration) conversationComposeStatus.textContent = COMPOSER_SAYS.loadFailed; });
 window.ember.onConversation(entries => { conversationReceived = true; keepingComposer(() => renderConversation(entries)); });
-const resetConversationView = () => {
-  // Only explicit session erasure clears an unsent draft; forgetting the last learned fact can also empty this list.
+const resetComposerDraft = () => {
+  // Explicit account/privacy erasure or a lockdown clears volatile drafts, even while Home is hidden (home-r7-1).
   conversationMessage.value = "";
   syncComposerCount();
   conversationSearch.value = "";
@@ -1521,8 +1522,8 @@ const resetConversationView = () => {
   send.textContent = "Send";
   $("conversation-stop").removeAttribute("aria-disabled");
   conversationSendTaken = conversationTurnSeen = false;
-  renderConversation([]);
 };
+const resetConversationView = () => { resetComposerDraft(); renderConversation([]); };
 window.ember.onConversationForgotten(resetConversationView);
 window.ember.onConversationStream(e => {
   const ev = e as Partial<StreamEvent> | null;
