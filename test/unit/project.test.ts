@@ -221,6 +221,15 @@ it("holds back a Wi-Fi note with the key after its state's full stop, and sends 
   expect(await prompt([state])).toContain("PSK is enabled on the router");
 });
 
+it("holds back a network note with the key and the router's login after its settings, and sends the settings alone (memory-y6-3)", async () => {
+  const network = await file("network.md", "# Network\n\nWi-Fi: HomeNet / WPA2-PSK / 5GHz / BlueSky99!\nHome network: HomeNet / 192.168.1.1 / admin / Summer2024!\n");
+  await expect(prompt([network])).rejects.toThrow(new Error("network.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const router = await file("router.md", "# Network\n\nHome network: HomeNet / 192.168.1.1 / admin / Summer2024!\n");
+  await expect(prompt([router])).rejects.toThrow(new Error("router.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const settings = await file("settings.md", "# Network\n\nWi-Fi: HomeNet / WPA2-PSK / 5GHz\nHome network: HomeNet / 192.168.1.1 / admin\n");
+  expect(await prompt([settings])).toContain("HomeNet / WPA2-PSK / 5GHz");
+});
+
 it("sends a login form, a getpass CLI and an OAuth client, and takes a request that names a type, which hold no password (memory-r4-2, integrations-r4-1)", async () => {
   const form = await file("login.html", '<form method="post" action="/login">\n  <label for="username">Username:</label>\n  <input type="text" id="username" name="username">\n  <label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n</form>\n');
   const cli = await file("cli.py", 'import getpass\n\ndef main():\n    user = input("Username: ")\n    password = getpass.getpass("Password: ")\n    return user, password\n');

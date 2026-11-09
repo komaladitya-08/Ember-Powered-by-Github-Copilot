@@ -710,6 +710,26 @@ describe("what memory never keeps", () => {
   ])("still refuses %j, a secret beside them (memory-x6-5)", text => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
+  // A key, a router's login or a PIN after more than one setting, a length or an algorithm, which round six's
+  // exclusions read no further than, and a password shaped like an algorithm's name (memory-y6-3).
+  it.each([
+    ["Wi-Fi: HomeNet / WPA2-PSK / 5GHz / BlueSky99!"], ["Home network: HomeNet / 192.168.1.1 / admin / Summer2024!"], ["Wi-Fi: HomeNet / 802.11ac / WPA2 / BlueSky99"],
+    ["Wi-Fi: HomeNet / 5GHz / WPA2-PSK, key BlueSky99"], ["Home network: HomeNet, 192.168.1.1, admin, Summer2024!"], ["The PIN is required, 4-digit, 4821"],
+    ["The PIN is set, 4-digit, it's 4821"], ["The door PIN will be 4-digit 4821"], ["Password: hashed, SHA-256, but it's Summer2024!"], ["Password: typed, Rs2024!"],
+    ["Password: typed, Des2024!"], ["Password: entered, es2024!"], ["The PIN is required, 4 digits, 4821"], ["The password will be 12 characters: Summer2024!"],
+  ])("refuses %j and saves nothing, a secret after a setting, a length or an algorithm (memory-y6-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["Wi-Fi: HomeNet / WPA2-PSK / 5GHz"], ["Wi-Fi: HomeNet / 802.11ac / WPA2"], ["Home network: HomeNet / 192.168.1.1 / admin"],
+    ["Home network: HomeNet / 192.168.1.1 / admin / Netgear"], ["Password: hashed, SHA-256, salted"], ["The PIN is required, 4-digit, numbers only"],
+    ["Passwords are hashed, SHA-256, then stored."], ["The password is hashed, SHA-256."], ["Password: hashed, RS256"], ["Password: hashed, HS256, with a salt"],
+    ["The PIN will be 6 digits long"], ["The password must be 12+ characters"], ["Passwords: hashed, SHA-512, base64-encoded"], ["Password: hashed, SHA-256-hashed"],
+    ["Home network: HomeNet / 192.168.1.1 / gateway / 10.0.0.1"],
+  ])("keeps %j, settings, a length or an algorithm with no secret after them (memory-y6-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
 
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],

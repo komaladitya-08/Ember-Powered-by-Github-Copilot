@@ -820,12 +820,15 @@ function withoutKeyStates(text: string): string {
  * every 90 days" stay facts.
  */
 const NOT_A_CHANGE = String.raw`(?:${NOT_A_VALUE}|something|anything|nothing|one|whatever|mine|yours|default|expire|a\s+new)`;
-const LENGTH = String.raw`(?!\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b)`;
+const LENGTH_SAID = String.raw`\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b`;
+const LENGTH = String.raw`(?!${LENGTH_SAID})`;
+/** A length said before what it will be, which is read past ("The door PIN will be 4-digit 4821"): memory-y6-3. */
+const LENGTH_FIRST = String.raw`(?:${LENGTH_SAID}[ \t]*[,;:]?[ \t]*(?:(?:it|that)(?:['’]s|\s+is)\s+)?)?`;
 const CHANGE_VALUE = String.raw`["'“]?(?!${NOT_A_CHANGE}(?:[\s.,;!?"'”]|$))${LENGTH}(?:(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}|[^\s"'”.,;!?]{3,}(?=["'”]?\s*(?:$|[.,;!?])))`;
 const LATER_VALUE = String.raw`["'“]?(?!${NOT_A_VALUE}(?:[\s.,;!?"'”]|$))${LENGTH}(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}`;
 const CHANGE_TO = String.raw`\s*[:,–—-]?\s*(?:(?:has|have|had)\s+been\s+|(?:was|were|is|are|got|gets|been)\s+)?(?:just\s+|now\s+|recently\s+)?(?:changed|set|reset|updated|switched)(?:\s+(?:it|them))?\s+(?:back\s+)?to\s+`;
 const LATER_BE = String.raw`\s+(?:(?:will|would|should|shall|must|might|could)(?:\s+now)?\s+be|is\s+going\s+to\s+be|used\s+to\s+be|became|becomes)\s+`;
-const TOLD_CHANGE = new RegExp(String.raw`\b(${SECRET_NAMES})s?\b${FOR_WHAT}(?:${CHANGE_TO}(${CHANGE_VALUE})|${LATER_BE}(${LATER_VALUE}))`, "gi");
+const TOLD_CHANGE = new RegExp(String.raw`\b(${SECRET_NAMES})s?\b${FOR_WHAT}(?:${CHANGE_TO}(${CHANGE_VALUE})|${LATER_BE}${LENGTH_FIRST}(${LATER_VALUE}))`, "gi");
 const CHANGED_MY = new RegExp(String.raw`\b(?:changed|change|set|reset|updated|update|switched|switch)\s+(?:(?:my|our|the|their|his|her|your|[a-z]+['’]s)\s+)?(?:[\w-]+\s+){0,3}?`
   + String.raw`(?:\b(${SECRET_NAMES})s?|(?:${PLACE_NAMES})\s+(?:code|combination|combo)s?)\s+(?:back\s+)?to\s+(${CHANGE_VALUE})`, "gi");
 /** An API key's or a secret key's name, whose value is a token, never a word or code. */
@@ -1006,20 +1009,28 @@ const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[
  * what follows it may be: memory-r5-3. Only a value with a digit or a symbol, never a length or a count ("The password
  * is required, 12 characters", "The PIN is required, 4-digit") or how it is hashed or encrypted ("Passwords are hashed,
  * SHA-256", "Password: hashed, argon2id": memory-x6-5), so "Passwords are hashed. Tokens are rotated." and "Password:
- * masked, PIN: entered" stay.
+ * masked, PIN: entered" stay. A length or an algorithm is read past to what follows it ("The PIN is required, 4-digit,
+ * 4821", "Password: hashed, SHA-256, but it's Summer2024!"), and an algorithm's or an encoding's name ends a word
+ * ("SHA-256,", "base64-encoded"), so "Rs2024!" is a value: memory-y6-3.
  */
-const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}${NOW}[A-Za-z][A-Za-z'’-]*[ \t]*[,;.][ \t]*(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
+const STATE_LENGTH = String.raw`\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b`;
+const STATE_ALGORITHM = String.raw`(?:(?:sha|aes|rsa|des|md|hs|rs|es|ps|blake|crc)-?\d+|argon2(?:id|i|d)?|bcrypt\w*|pbkdf2\w*|base(?:16|32|58|64)(?:url)?|utf-?(?:8|16))`
+  + String.raw`(?:-(?:hashed|encoded|encrypted|signed|salted|based))?(?![^\s"'”,.;:)])`;
+const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}${NOW}[A-Za-z][A-Za-z'’-]*[ \t]*[,;.][ \t]*`
+  + String.raw`(?:(?:${STATE_LENGTH}|${STATE_ALGORITHM})[ \t]*[,;:]?[ \t]*)?(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
   + String.raw`(?:(?:it|that)(?:['’]s|\s+is|\s+was)\s+|(?:the\s+)?(?:password|pin|code|value|real\s+one)\s+is\s+)?["'“]?`
-  + String.raw`(?!\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b)`
-  + String.raw`(?!(?:sha|aes|rsa|des|md|hs|rs|es|ps|blake|crc)-?\d+\b|argon2(?:id|i|d)?\b|bcrypt\w*\b|pbkdf2\w*\b)(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
+  + String.raw`(?!${STATE_LENGTH})(?!${STATE_ALGORITHM})(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
 /**
  * A network and its key said together ("Guest Wi-Fi: BlueSky / BlueSky99", "Home network: BlueSky, key BlueSky99"),
  * the key with a digit or a symbol: safety-privacy-c4-2. Never its router's address, its standard, its mode or its band
  * ("Home network: HomeNet / 192.168.1.1", "Wi-Fi: HomeNet, 802.11ac", "Wi-Fi: HomeNet / WPA2-PSK"), which may come before
- * the key ("Wi-Fi: HomeNet / WPA2-PSK, key BlueSky99"): memory-x6-5.
+ * the key ("Wi-Fi: HomeNet / WPA2-PSK, key BlueSky99"): memory-x6-5. Up to six of them may ("Wi-Fi: HomeNet / WPA2-PSK /
+ * 5GHz / BlueSky99!"), and after the router's address its user ("Home network: HomeNet / 192.168.1.1 / admin /
+ * Summer2024!"): memory-y6-3.
  */
 const NETWORK_SETTING = String.raw`(?:\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?|802\.11[a-z]*|(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*|\d+(?:\.\d+)?\s?(?:ghz|mhz|[kmg]bps))`;
-const NETWORK_PAIR = new RegExp(String.raw`\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:${NETWORK_SETTING}\s*[,/]?\s*)?`
+const NETWORK_PAIR = new RegExp(String.raw`\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:${NETWORK_SETTING}\s*[,/]?\s*){0,6}`
+  + String.raw`(?:(?<=\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\s*[,/]?\s*)[A-Za-z][\w.-]{0,31}\s*[,/]\s*)?`
   + String.raw`(?:(?:key|password|pass|pw|passphrase|psk)\s+)?["'“]?(?!${NETWORK_SETTING}(?:[\s.,;!?)"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}`, "i");
 /**
  * A service a person signs in to and a value shaped like a password straight after its name ("Netflix: hunter2", "The
