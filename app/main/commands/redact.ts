@@ -155,12 +155,42 @@ const KEY_VALUE =
   /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
 
 /**
+ * Exec-form arrays and subprocess tuples separate arguments with commas, not shell whitespace (memory-q6-1).
+ * Track literal clients inside each bracket pair without evaluating expressions between their arguments. This only
+ * adds redaction: the shell patterns still judge every ordinary command and every other secret shape afterwards.
+ */
+function redactArgvPasswords(text: string): string {
+  const tokens = /[[\](){}]|(["'])((?:\\[\s\S]|(?!\1)[^\\])*)\1/g;
+  const clients = new RegExp(`^${CLIENT}(?:\\.exe)?$`, "i");
+  const value = new RegExp(`^${OPTION_VALUE}`);
+  const stack: boolean[] = [];
+  let out = "", at = 0;
+  for (const m of text.matchAll(tokens)) {
+    if (!m[1]) {
+      if ("[({".includes(m[0])) stack.push(false);
+      else stack.pop();
+      continue;
+    }
+    if (!stack.length) continue;
+    // Decode literal escapes only; no code, variable or substitution is executed.
+    const word = m[2].replace(/\\(?:u[\da-fA-F]{4}|x[\da-fA-F]{2}|[\s\S])/g, s =>
+      /^\\[ux]/.test(s) ? String.fromCharCode(parseInt(s.slice(2), 16)) : /^[\\][\\"'/]$/.test(s) ? s.slice(1) : s);
+    if (clients.test(word.replace(/\\/g, "/").split("/").at(-1) ?? "")) stack[stack.length - 1] = true;
+    if (!stack[stack.length - 1] || !word.startsWith("-p") || !value.test(word.slice(2))) continue;
+    out += text.slice(at, m.index) + m[1] + "-p" + SECRET_HIDDEN + m[1];
+    at = m.index + m[0].length;
+  }
+  return at ? out + text.slice(at) : text;
+}
+
+/**
  * Replaces what looks like a secret in `text` with "[secret hidden]" (§3.11 step 4): GitHub, AWS, Slack, Google, npm,
  * OpenAI, Anthropic, Stripe, Hugging Face and GitLab tokens and keys, private key blocks, JWTs, Azure account keys and SAS signatures, Authorization headers, credentials in
  * URLs, a password given to a program's short option (OPTION_PASSWORDS), and the values of keys named like passwords, tokens or
  * keys. Best effort: it can miss secrets.
  */
 export function redactSecrets(text: string): string {
+  text = redactArgvPasswords(text);
   let out = text;
   for (const re of TOKEN_PATTERNS) out = re === PRIVATE_KEY ? hidePrivateKeys(out) : out.replace(re, SECRET_HIDDEN);
   for (const re of VALUE_PATTERNS) out = out.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN);
