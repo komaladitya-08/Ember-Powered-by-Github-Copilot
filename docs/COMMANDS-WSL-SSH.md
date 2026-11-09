@@ -198,11 +198,12 @@ Ember stops and asks before a command that:
   held in a variable, whatever the command set the variable to (`make -j$N`, `N=4; make -j$N`, `./gradlew
   --max-workers=$N`, `mvn --threads $N`, `xargs -P"$N" echo`: only a number, `$(nproc)` and the like, or arithmetic of
   numbers such as `$((2*4))`, quoted or not, is a count, so `make -j4`, `make -j$(nproc)` and `cmake --build build -j
-  $(nproc)` run; a variable apart after make's `-j`, Maven's `-T` or ninja's `-j` is taken as before, so `make -j
-  $JOBS` runs, unless the command set it from a command's output, `X=$(cat jobs.txt); make -j $X`), and a value
-  Ember can't see written straight after an option of a program that runs another one, quoted or not (`nice -n"$X"
-  cmd`, `xargs -n$X cmd`, `env -C"$d" cmd`), which may hold the command it runs; only `xargs -P` and `parallel -j`
-  take a count there (`xargs -P$(nproc) cmd`).
+  $(nproc)` run; a variable apart after make's `-j` or `--jobs`, Maven's `-T` or ninja's `-j` is taken as before, so
+  `make -j $JOBS` runs, unless the command set it from a command's output, `X=$(cat jobs.txt); make -j $X`, or to
+  words after the count that are targets, `T='4 deploy'; make -j $T`), and a value Ember can't see written straight
+  after an option of a program that runs another one, quoted or not (`nice -n"$X" cmd`, `xargs -n$X cmd`, `env
+  -C"$d" cmd`), which may hold the command it runs; only `xargs -P` and `parallel -j` take a count there (`xargs
+  -P$(nproc) cmd`).
 
 **Loops and `if` on a command line** are read as they are in a script (below): in bash or sh, `if`, `for`, `while`
 and `until` and a plain `[[ … ]]` test don't ask by themselves, because Ember judges every command inside them, as
