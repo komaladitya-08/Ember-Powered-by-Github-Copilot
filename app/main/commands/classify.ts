@@ -3761,6 +3761,15 @@ reg(NATIVE, ["diskutil"], h => {
   else if (/^(mount|unmount|umount|mountdisk|unmountdisk|eject|apfs|cs|ar|enablejournal|disablejournal|rename|repair)/.test(verb)) h.e.add("system", "system.kernel", "Changes how the system works.");
 });
 
+/** A link must not make a protected parent reachable before a later statement's realpath probe (commands-remote-c7-1). */
+function linkTarget(h: H, target: Arg): void {
+  const obj = h.e.usePath(target, "read", h.sc);
+  // Reuse ancestor refusal for known variable values, on POSIX and Windows alike; this does not record a write.
+  h.e.judgeUnseen(target, "deleteTree", h.sc);
+  if (obj.abs !== null && holdsEmberPath(obj.abs, h.sc.path)) h.e.refuseWith("ember.path", "read");
+  if (target.v === null || target.glob) h.e.unclear("unclear.link-target", "Ember can't tell which folder the link makes reachable.");
+}
+
 // cp, mv, install, ln, rsync (local): the destination may exist (§3.5.1).
 function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   const p = opts(h, {
@@ -3780,6 +3789,7 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   if (target !== undefined) dest = target === null ? { v: null, raw: "?", glob: false } : lit(target);
   else if (sources.length >= 2) { dest = sources[sources.length - 1]; sources = sources.slice(0, -1); }
   else if (kind === "ln" && sources.length === 1) { dest = lit("."); }
+  if (kind === "ln") for (const source of sources) linkTarget(h, source);
   objsOf(h, sources, srcUse);
   if (!dest) {
     // With no destination it can't run as it is; it is asked about rather than judged as nothing (commands-remote-i5a).
@@ -7776,7 +7786,7 @@ reg(CMDLETS, ["new-item"], h => {
   const objs = objsOf(h, files, "write");
   if (/symboliclink|junction|hardlink/.test(type)) {
     const targets = b.named.get("Value") ?? [];
-    for (const t of targets) h.e.usePath(t, "read", h.sc);
+    for (const t of targets) linkTarget(h, t);
     // A link to a download runs the download (commands-remote-c2-2).
     for (const o of objs) h.e.carryCopies(targets, o, h.sc, true);
   }
@@ -8076,7 +8086,7 @@ reg(CMD_BUILTINS, ["type", "dir", "tree", "more", "find", "findstr", "fc", "comp
   if (h.key === "md" || h.key === "mkdir") { objsOf(h, ops, "write"); return; }
   if (h.key === "mklink") {
     const link = ops[0] ? h.e.usePath(ops[0], "write", h.sc) : null;
-    if (ops[1]) h.e.usePath(ops[1], "read", h.sc);
+    if (ops[1]) linkTarget(h, ops[1]);
     // A link to a download runs the download (commands-remote-c2-2).
     if (link && ops[1]) h.e.carryCopies([ops[1]], link, h.sc, true);
     return;

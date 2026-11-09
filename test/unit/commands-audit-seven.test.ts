@@ -86,3 +86,17 @@ describe("xargs child environments", () => {
     expect(decide("xargs -n1 echo < words.txt").verdict).toBe("run");
   });
 });
+
+describe("links to folders containing Ember", () => {
+  it("refuses a parent-folder link before later commands can reach its settings through it (commands-remote-c7-1, i6a)", () => {
+    for (const command of [
+      "ln -s ~/.config config-link; cat config-link/ember/settings.json",
+      "ln -s ~ home-link; sed -i s/a/b/ home-link/.config/ember/settings.json",
+      'base=~/.config; ln -s "$base" config-link; cat config-link/ember/settings.json',
+    ]) expect(decide(command).verdict, command).toBe("refuse");
+    expect(decide("ln -s build build-link").verdict).toBe("run");
+    for (const command of ['New-Item -ItemType Junction -Path link -Value $env:LOCALAPPDATA; Get-Content link\\ember\\settings.json', '$d = $env:LOCALAPPDATA; New-Item -ItemType Junction -Path link -Value $d; Get-Content link\\ember\\settings.json']) {
+      expect(runCase({ cmd: command, verdict: "run", context: "win32", shell: "powershell" }, { context: "win32", shell: "powershell" }).decision.verdict, command).toBe("refuse");
+    }
+  });
+});

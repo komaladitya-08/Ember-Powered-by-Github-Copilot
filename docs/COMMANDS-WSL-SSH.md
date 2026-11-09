@@ -1016,3 +1016,6 @@ For an archive this task downloaded, an unknown extraction directory keeps downl
 
 GNU xargs' `--process-slot-var` always asks: it changes each child's environment, which can select a shell startup
 file or a different executable even when the command text looks ordinary.
+
+A link to a folder containing Ember's settings or records is refused too: creating a link first cannot let a later
+statement reach those files under another name. This applies to ln, Windows mklink and PowerShell links or junctions.

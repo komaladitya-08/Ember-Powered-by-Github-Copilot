@@ -2522,3 +2522,5 @@ A relative shell script with an unknown working folder is uncertain, including a
 Unresolved tar extraction directories go through optionFiles and retain both the question and download provenance.
 
 The xargs process-slot-var gate is unconditional: arbitrary child environment names are not assumed harmless.
+
+Link targets include protected ancestor folders in the own-file refusal, including known POSIX and PowerShell variables.
