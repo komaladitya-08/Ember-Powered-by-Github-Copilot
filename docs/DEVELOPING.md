@@ -126,6 +126,12 @@ runtime. It does not change the app's consent or speaking settings.
 
 ### Using Ember
 
+Voice Match's automatically focused controls keep their name and state description free of the wake name; its full
+visible help still explains what requests and spoken approvals mean. A failed teaching attempt replaces the focused
+description with its first-person failure reason and next step. Ask uses “Companion request” as its page and
+window title and “Ask or tell me” for the field. The self-window privacy fallback recognises this title as well as
+older titles, so a missing process id still cannot expose that window to the agent.
+
 Home's automatic thinking line avoids the wake name, including possessives, while keeping its reply-location hint.
 
 First run's Agree waits until Ember knows where requests will go. If the recipient or the shown agreement changes,

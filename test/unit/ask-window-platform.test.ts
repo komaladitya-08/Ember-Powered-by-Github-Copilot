@@ -114,9 +114,9 @@ describe("the ask box's window", () => {
     expect(made[0]!.calls.filter(c => c[0] === "setVisibleOnAllWorkspaces")).toEqual([]);
   });
 
-  it("on macOS is a focusable panel (it takes the keyboard without activating Ember), with no setVisibleOnAllWorkspaces call", () => {
+  it("on macOS is a focusable panel with a name-free activation title (voice-listening-r6-2)", () => {
     shownBox({ floating: hoverShaper("darwin").floating("ask") });
-    expect(made[0]!.options).toMatchObject({ type: "panel", acceptFirstMouse: true, hiddenInMissionControl: true, title: "Ask Ember" });
+    expect(made[0]!.options).toMatchObject({ type: "panel", acceptFirstMouse: true, hiddenInMissionControl: true, title: "Companion request" });
     expect(made[0]!.options.focusable).toBeUndefined();
     expect(made[0]!.calls.filter(c => c[0] === "setVisibleOnAllWorkspaces")).toEqual([]);
   });

@@ -22,8 +22,8 @@ const ASK_HTML = readFileSync(new URL("../../app/renderer/ask/index.html", impor
 describe("the ask box's placeholder", () => {
   it("keeps its prompt concise beside Send and retains the full accessible label", () => {
     const placeholder = /placeholder="([^"]*)"/.exec(ASK_HTML)?.[1] ?? "";
-    expect(placeholder).toBe("Ask Ember…");
-    expect(ASK_HTML).toContain('<label for="q" class="sr">Ask or tell Ember</label>');
+    expect(placeholder).toBe("Ask or tell me…");
+    expect(ASK_HTML).toContain('<label for="q" class="sr">Ask or tell me</label>');
   });
 });
 

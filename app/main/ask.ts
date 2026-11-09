@@ -403,7 +403,7 @@ export class AskWindow {
     const win = this.win = new BrowserWindow({
       ...bounds,
       transparent: !opaque, frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
-      fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, title: "Ask Ember",
+      fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, title: "Companion request",
       backgroundColor: opaque ? "#242022" : "#00000000",
       ...(this.o.floating?.options ?? {}),
       webPreferences: {

@@ -11,18 +11,18 @@ export const MATCH_TEXT = {
   on: "On: your voice can answer Ember's questions out loud, and other voices can't. Ember still hears everyone. Your voiceprint stays on this computer.",
   off: "Off: answer Ember's questions by clicking. It keeps your voiceprint until you forget it.",
   /** enrolVoice() said no: Ember isn't listening just now (muted, starting, or not working), so it can't hear the phrases. */
-  notListening: "Ember isn't listening just now, so it can't learn your voice. Try again once it's listening for “Ember”.",
+  notListening: "I'm not listening just now, so I can't learn your voice. Try again once listening is on.",
   say: "Say:",
-  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" },
-  teach: "Teach Ember my voice",
-  teachAgain: "Teach Ember my voice again",
+  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "I couldn't hear that clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" },
+  teach: "Set up Voice Match",
+  teachAgain: "Set up Voice Match again",
   cancel: "Cancel",
   forget: "Forget my voice",
   learnt: "Ember knows your voice now.",
   stopped: "Stopped teaching Ember your voice.",
   /** Forget my voice deletes the words learnt from what the user said too (personal/service.ts forgetVoice): said so. */
   forgot: "Ember forgot your voice and the words it learnt.",
-  forgetHint: "Also forgets the words Ember learnt from what you said.",
+  forgetHint: "Also forgets the words learnt from what you said.",
   progressLabel: "Phrases Ember has heard",
   /** Teaching ended before Ember learnt the voice, and not by the user's Cancel (VoiceMatchStatus.ended). */
   ended: {
@@ -72,6 +72,8 @@ export interface MatchView {
   checked: boolean;
   disabled: boolean;
   text: string;
+  /** Name-free state description for controls focused while the wake microphone is open. */
+  description: string;
   /** The phrase to say ("" when not enrolling). */
   prompt: string;
   progress: { value: number; max: number; text: string } | null;
@@ -122,6 +124,7 @@ export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boole
     checked: !!m && (m.on || busy),
     disabled: busy || blocked,
     text: m ? matchText(m, o.speakerBytes ?? null) : "",
+    description: e ? "Learning your voice. Wait for the spoken prompt to finish, then say the shown phrase." : m ? matchSaid(m) : "",
     prompt: e ? matchPrompt(e) : "",
     progress: e ? { value: e.got, max: e.of, text: `${e.got} of ${e.of} heard` } : null,
     teach: { hidden: busy || blocked, label: m?.enrolled ? MATCH_TEXT.teachAgain : MATCH_TEXT.teach },

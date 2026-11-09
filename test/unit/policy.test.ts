@@ -666,6 +666,11 @@ describe("policy: review round 5", () => {
     expect(e().decide({ taskId: "p", kind: "click", app: "Firefox", window: "Deactivate account - Mozilla Firefox", element: { role: "push button", name: "Continue" }, goal: "tidy up" }).verdict).toBe("confirm");
   });
 
+  it("recognises the name-free Ask window when its process id is unknown (voice-listening-r6-2)", () => {
+    expect(isEmberWindow({ app: "electron", name: "Companion request" }, 4242)).toBe(true);
+    expect(e({}, { ownPid: 4242 }).decide({ taskId: "o", kind: "click", app: "electron", window: "Companion request", element: { role: "push button", name: "Send" } })).toMatchObject({ verdict: "deny", tier: "never" });
+  });
+
   it("Ember's own windows are never acted in, by process or by name, and no grant is offered for them", () => {
     const own = e({ ember: "act", firefox: "act" }, { ownPid: 4242 });
     for (const r of [{ app: "Firefox", window: "Ember", windowId: { pid: 4242 } }, { app: "Ember", window: "Ember overlay" }, { app: "electron", window: "Ask Ember" },
