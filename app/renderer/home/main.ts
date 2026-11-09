@@ -2605,12 +2605,12 @@ function renderVoice(v: VoiceStatus): void {
   // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
   const said = renderMatch();
   if (said) voiceLive(said);
-  if (said || v.state === "active") clearTimeout(voiceLineSoon);
+  if (said || micHeld(v)) clearTimeout(voiceLineSoon);
   else if (v.state !== "downloading" && text !== voiceLine) { clearTimeout(voiceLineSoon); voiceLineSoon = setTimeout(() => voiceLive(text), VOICE_LINE_SETTLE_MS); }
   // Emptied, unsaid, while a window is open: browse mode read "Listening for “Ember”" there beside "Hearing you…"
   // (voice-listening-v4-2). An emptied status line says nothing.
   const live = $("voice-live");
-  if (!said && v.state === "active" && live.textContent) { voiceTold = live.textContent; live.textContent = ""; }
+  if (!said && micHeld(v) && live.textContent) { voiceTold = live.textContent; live.textContent = ""; }
   voiceLine = text;
   $("voice-dot").dataset.phase = v.state === "waiting" || v.state === "active" ? "ready" : v.state === "error" ? "error" : v.state === "off" || v.state === "muted" ? "" : "starting";
   const dl = $("voice-download") as HTMLButtonElement;

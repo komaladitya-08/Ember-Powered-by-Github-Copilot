@@ -2140,6 +2140,13 @@ These close the shared companion and accessibility wake-ingress findings. Produc
 with both prepared speech fixtures produced no wake/request events for the replacement phrases. That is synthetic
 verification, not native screen-reader or real-device acceptance.
 
+The later full renderer gate exposed “Starting…” in Home's automatic voice status during a slow Listen once start
+(voice-listening-refresh-2). All five affected journeys passed unchanged in quiet candidate/main controls, but a
+1.4-second held-start probe reproduced that actual announcement on both trees. The named regression failed first;
+the voice line now shares the existing microphone-held guard for startup, recording and teaching. Visible state,
+deliberate prompts, post-microphone delay and exact-once behaviour remain. The isolated controls are not a passing
+full renderer stage; its aggregate failures remain recorded for the final gate.
+
 **Speaking and activity (M8.8, M9).** Suggested, typed and spoken “Read it out” requests read the retained answer
 through the existing speech-policy path, without an SDK turn or a future task-result speech change
 (voice-speaking-r6-1). A held approval explains why speech waits. Review caught a refusal becoming the next answer,
