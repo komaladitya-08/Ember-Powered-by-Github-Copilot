@@ -373,7 +373,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   policy locks Ember down)
   beside a quiet **Stop everything** and the stop chord. Under them two quiet links, **Write to Ember** (the
   composer, focused) and **Task activity**, keep both a step away however long the conversation grows.
-  Home's Features line reports capabilities permitted by the current policy and each first-use agreement. Listening
+  Home's Features line uses the targets runtime's current capabilities, including remote policy and agreements;
+  saved or restricted SSH hosts are never counted as working connections. Listening
   shows on only with ready speech models and a waiting or active microphone; a missing or failed microphone shows off.
   A held lockdown immediately removes commands and other computers from that line (home-r6-1).
 - **Home's setup check** says each row's state in first run's words beside its tint ("Ready", "Worth a look",

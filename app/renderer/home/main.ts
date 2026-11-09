@@ -8,6 +8,7 @@
 
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RetryResult, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
+import type { TargetSummary } from "../../shared/targets";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, conversationTurnChangeOf, type ConversationTurn, type ConversationTurnEnd, type HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
@@ -271,6 +272,8 @@ function renderTagline(): void {
 // ───── Home's status panel: the still ring, Ember's state, what is on, today, and its actions ─────
 /** The tasks as Task activity last heard them; today's counts from the audit's recent entries. */
 let tasksNow: TaskEntry[] = [];
+/** Read-only capabilities from the existing targets runtime subscription, never guessed from saved switches. */
+let statusTargets: readonly TargetSummary[] = [];
 let today = { tasks: 0, approvals: 0 };
 const setText = (id: string, text: string) => { if ($(id).textContent !== text) $(id).textContent = text; };
 function renderStatus(): void {
@@ -282,7 +285,7 @@ function renderStatus(): void {
   $("ring").dataset.ring = s.ring;
   $("state-word").dataset.ring = s.ring;
   setText("whats-on", whatsOnText({
-    ...availableStatus(settings, lastAdmin, voice, platform?.os ?? "linux"),
+    ...availableStatus(settings, lastAdmin, voice, statusTargets),
     memory: memoryWhatsOn(!locked && lastAdmin?.features.memory !== false && !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner, memoryTrouble),
   }));
   setText("today", todaySummary(tasksNow, today));
@@ -1084,7 +1087,7 @@ void window.ember.getStatus().then(render);
 window.ember.onSettingsChanged(applySettings);
 // Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
 window.ember.onSettingsChanged(targetsSettings);
-startTargets();
+startTargets(list => { statusTargets = list; renderStatus(); });
 // Extensions, plugins and connectors: what main says is added, and the catalogs (only the user adds, here).
 startExtensions();
 // The user's own model provider (Copilot › Model provider): its key goes to main once and never comes back.

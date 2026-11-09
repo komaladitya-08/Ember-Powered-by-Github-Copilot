@@ -25,26 +25,23 @@ const task = (status: TaskEntry["status"], o: Partial<TaskActivity> = {}): TaskE
 const NOW = new Date(2026, 10, 2, 15, 0);
 
 describe("Home's status panel", () => {
-  it("keeps unsupported, unagreed and policy-blocked capabilities off, and follows actual voice readiness (home-r6-1)", () => {
+  it("uses current runtime capabilities, including remote restrictions, and follows actual voice readiness (home-r6-1, home-v7-1)", () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
-    const consent = { version: 99, at: "2026-11-09T12:00:00Z" };
     settings.voice.consent = true;
-    settings.targets.wsl = { on: true, consent };
-    settings.commands = { local: { on: true, askEvery: false, consent }, "wsl:Ubuntu": { on: true, askEvery: false, consent } };
     const admin = homeAdmin({ source: null, policy: AdminPolicySchema.parse({}) });
     const voice: VoiceStatus = { state: "waiting", detail: null, modelsReady: true, modelsMissing: [], modelsBytes: 0 };
-    expect(availableStatus(settings, admin, voice, "win32")).toEqual({ voice: "listening", commands: 2, computers: 0, wsl: true });
-    expect(availableStatus(settings, admin, voice, "linux")).toEqual({ voice: "listening", commands: 1, computers: 0, wsl: false });
-    for (const state of ["off", "needs-models", "downloading", "starting", "error"] as const) expect(availableStatus(settings, admin, { ...voice, state }, "win32").voice).toBe("off");
-    expect(availableStatus(settings, admin, { ...voice, state: "active" }, "linux").voice).toBe("listening");
-    expect(availableStatus(settings, admin, { ...voice, state: "muted" }, "linux").voice).toBe("muted");
-    expect(availableStatus(settings, admin, { ...voice, modelsReady: false }, "linux").voice).toBe("off");
-    expect(availableStatus(settings, null, voice, "win32")).toEqual({ voice: "off", commands: 0, computers: 0, wsl: false });
-    expect(availableStatus(settings, homeAdmin(heldUntilRestart({ source: null, policy: AdminPolicySchema.parse({}) })), voice, "win32")).toEqual({ voice: "off", commands: 0, computers: 0, wsl: false });
-    settings.commands.local!.consent.version = 0;
-    settings.targets.wsl.consent.version = 0;
-    expect(availableStatus(settings, admin, voice, "win32").commands).toBe(0);
-    expect(availableStatus(settings, { ...admin, source: "/etc/ember/policy.json", commands: undefined }, voice, "win32").commands).toBe(0);
+    const local = { id: "local" as const, kind: "local" as const, label: "Here", state: "ready" as const, can: "apps and commands", active: true, capabilities: { commands: true, work: true } };
+    const remote = { ...local, id: "ssh:work" as const, kind: "ssh" as const, label: "Work", capabilities: { commands: false, work: true } };
+    expect(availableStatus(settings, admin, voice, [local, remote])).toEqual({ voice: "listening", commands: 1, computers: 1, wsl: false });
+    expect(availableStatus(settings, admin, voice, [{ ...remote, capabilities: { commands: false, work: false } }])).toEqual({ voice: "listening", commands: 0, computers: 0, wsl: false });
+    for (const state of ["off", "needs-models", "downloading", "starting", "error"] as const) expect(availableStatus(settings, admin, { ...voice, state }, [local]).voice).toBe("off");
+    expect(availableStatus(settings, admin, { ...voice, state: "active" }, [local]).voice).toBe("listening");
+    expect(availableStatus(settings, admin, { ...voice, state: "muted" }, [local]).voice).toBe("muted");
+    expect(availableStatus(settings, admin, { ...voice, modelsReady: false }, [local]).voice).toBe("off");
+    expect(availableStatus(settings, null, voice, [local])).toEqual({ voice: "off", commands: 0, computers: 0, wsl: false });
+    expect(availableStatus(settings, homeAdmin(heldUntilRestart({ source: null, policy: AdminPolicySchema.parse({}) })), voice, [local])).toEqual({ voice: "off", commands: 0, computers: 0, wsl: false });
+    expect(availableStatus(settings, admin, voice, []).commands).toBe(0);
+    expect(availableStatus(settings, admin, voice, [{ ...local, capabilities: undefined }]).commands).toBe(0);
   });
 
   it("names the most urgent state first: setup, Copilot, a task that needs you, the work, then Ready", () => {

@@ -318,7 +318,7 @@ describe("with nothing set up", () => {
     expect(r.t.agent.activeLine()).toBe("");
     // The way to SSH from the handle, whenever SSH is allowed (§8.1, review #76).
     expect(r.t.menuItems().map(i => i.label ?? i.type)).toEqual(["separator", "Bring Ember to a computer…"]);
-    expect(r.t.summaries()).toEqual([{ id: "local", kind: "local", label: "This computer", state: "ready", can: "apps", active: true }]);
+    expect(r.t.summaries()).toEqual([{ id: "local", kind: "local", label: "This computer", state: "ready", can: "apps", active: true, capabilities: { commands: false, work: true } }]);
     expect(r.t.wsl).toBeNull();
     expect(r.t.quickContext()).toBeNull();
     expect(r.t.agent.describeScreen("local")).toBeNull();
@@ -763,17 +763,19 @@ describe("SSH targets", () => {
     expect(on.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ thought: "build-01 has no desktop, so I'll run commands there.", actions: [] }) });
   });
 
-  it("lets a remote's newly read policy only tighten commands for the link, never loosen them", async () => {
+  it("lets a remote's newly read policy only tighten commands and their status, never loosen them (home-v7-1)", async () => {
     const r = rig({ settings: { ...withHosts([hostRecord("build-01")]), ...commandsOn("ssh:build-01") } });
     const l = await connected(r);
     const svc = () => { const g = r.t.agent.handsFor("ssh:build-01"); if (!g.ok) throw new Error(g.why); return g.hands.commands; };
     expect(svc()!.mode()).toBe("on");
+    expect(r.t.summaries().find(s => s.id === "ssh:build-01")).toMatchObject({ capabilities: { commands: true, work: true } });
     l.emit("policy.changed", { ...adminSummary(noPolicy), commands: { local: "on", wsl: "on", ssh: "ask" } });
     expect(svc()!.mode()).toBe("ask");
     l.emit("policy.changed", { ...adminSummary(noPolicy), commands: { local: "on", wsl: "on", ssh: "on" } });
     expect(svc()!.mode()).toBe("ask");
     l.emit("policy.changed", { ...adminSummary(noPolicy), commands: { local: "on", wsl: "on", ssh: "off" } });
     expect(svc()).toBeNull();
+    expect(r.t.summaries().find(s => s.id === "ssh:build-01")).toMatchObject({ capabilities: { commands: false, work: true } });
   });
 
   it("lets a remote only lower its desktop access, never raise it", async () => {

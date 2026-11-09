@@ -131,8 +131,8 @@ Home brings them back. It still ends Home's Listen once, Voice Match teaching an
 to disk or sent automatically. Signing out or changing account clears the conversation and draft; a policy lockdown
 clears the draft too, including while Home is hidden. Quitting Ember destroys the page and discards unsent drafts.
 
-Home's Features line describes what is in force: commands and other computers need their current agreements and
-policy permission. Listening shows on only while the speech models and microphone are ready. Saved preferences
+Home's Features line follows the targets runtime's existing capability updates, including a remote's stricter policy.
+SSH counts only working connections; missing or old capability snapshots show nothing enabled. Listening shows on only while the speech models and microphone are ready. Saved preferences
 remain available after a policy restriction is lifted or missing models are downloaded.
 
 Home keeps the draft set aside by **Edit** and restores it after the edited request is sent, above any words typed
