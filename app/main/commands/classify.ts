@@ -5759,16 +5759,24 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
   // make takes the word after -j or -l only when it is all digits, so a value the text gives a variable there that isn't
   // one is a target or a variable, as written there (`T=deploy; make -j "$T"`), and an option-like one asks
-  // (commands-remote-w5-2).
+  // (commands-remote-w5-2). Unquoted, the shell splits that value into words, each after the count an argument of its
+  // own, attached or apart and for any task runner's job count (`T='4 deploy'; make -j$T`, `./gradlew --max-workers $T`:
+  // commands-remote-x6-1).
   const counts: Arg[] = [];
-  if (/make$/.test(h.key)) {
-    for (const o of p.opts) {
-      // A count attached (`-j$(nproc)`, `-j"$JOBS"`) is never a target: make takes only a number there.
-      if (o.value !== null || o.parts !== undefined || !/^(-[jl]|--(jobs|load-average))$/.test(o.name)) continue;
-      for (const f of h.e.knownForms(args[o.at + 1])) {
-        if (f === null || /^\d+(\.\d+)?$/.test(f)) continue;
-        if (f.startsWith("-")) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
-        else counts.push(lit(f));
+  for (const o of p.opts) {
+    if (!(/make$/.test(h.key) && /^-[jl]$/.test(o.name)) && !/^--(jobs|load-average|max-workers)$/.test(o.name)) continue;
+    const attached = o.parts !== undefined;
+    const word: Arg | undefined = attached ? { v: null, raw: args[o.at].raw, glob: false, parts: o.parts } : o.value === null ? args[o.at + 1] : undefined;
+    // A count attached and quoted (`-j"$JOBS"`) is never a target: make takes only a number there.
+    const quoted = word !== undefined && /"$/.test(word.raw);
+    if (!word || (attached && quoted)) continue;
+    for (const f of h.e.knownForms(word)) {
+      if (f === null) continue;
+      for (const [k, w] of (quoted ? [f] : f.split(/[ \t\n]+/).filter(x => x !== "")).entries()) {
+        // Attached, the first word is the count whatever it is; apart, only a number is.
+        if (k === 0 && (attached || /^\d+(\.\d+)?$/.test(w))) continue;
+        if (w.startsWith("-")) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
+        else counts.push(lit(w));
       }
     }
   }

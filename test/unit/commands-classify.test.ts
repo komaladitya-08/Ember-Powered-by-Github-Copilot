@@ -1438,6 +1438,32 @@ describe("the option tables: a flag that takes no value never takes the word aft
     expect(decided("make -j $(sysctl -n hw.logicalcpu)", "darwin").decision.verdict).toBe("run");
   });
 
+  it("builds what an unquoted job count's variable holds after the count, attached or apart, as the shell splits it (commands-remote-x6-1)", () => {
+    for (const [cmd, plain] of [
+      ["T='4 deploy'; make -j$T", "make -j4 deploy"], ["T='4 deploy'; make -j $T", "make -j 4 deploy"], ["J='8 deploy'; make -sj$J", "make -sj8 deploy"],
+      ["T='4 install'; make --jobs=$T", "make --jobs=4 install"], ["T='4 deploy'; make -j${T}", "make -j4 deploy"], ["J='4 CC=evil'; make -j$J", "make -j4 CC=evil"],
+      ["T='2 publish'; ./gradlew --max-workers=$T", "./gradlew --max-workers=2 publish"], ["T='2 publish'; ./gradlew --max-workers $T", "./gradlew --max-workers 2 publish"],
+      ["T='4 publish'; gradle --max-workers=$T", "gradle --max-workers=4 publish"], ["T='4 publish'; rake --jobs=$T", "rake --jobs=4 publish"],
+      ["T='4 publish'; rake --jobs $T", "rake --jobs 4 publish"],
+    ] as const) {
+      expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
+    }
+    expect(decided("T='4 deploy'; make -j$T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    expect(decided("T='2 publish'; ./gradlew --max-workers $T").decision.says).toContain("Runs gradlew publish, whose name says it publishes.");
+    // An option split out of it asks, as one there does (commands-remote-w5-2), and a make variable that could run a command.
+    for (const cmd of ["T='4 -f evil.mk'; make -j$T", "T='4 -f evil.mk'; make -j $T", "J='4 SHELL=/tmp/x'; make -j$J", "T='2 -b evil.gradle'; ./gradlew --max-workers=$T"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    // Quoted, it is one word: attached, only the count (make takes no other there); a number, a value Ember can't see or a
+    // processor count is the count, as before.
+    for (const cmd of [
+      "T='4 deploy'; make -j\"$T\"", "T=deploy; make -j\"$T\"", "J=4; make -j$J", "J=8; make -sj$J", "J=8; make --jobs=$J", "make -j$T", "make -j$(nproc)",
+      "make -j\"$(nproc)\"", "T=$(nproc); make -j$T", "W=4; ./gradlew --max-workers=$W build", "./gradlew --max-workers $W", "./gradlew --max-workers=$(nproc)", "make -j $JOBS",
+    ]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+  });
+
   it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {
     for (const cmd of ["cp notes.txt", "mv notes.txt", "install x.sh", "docker run --rm", "podman run -P"]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     for (const cmd of ["cp --help", "mv --version", "rsync -a src", "rsync src/"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
