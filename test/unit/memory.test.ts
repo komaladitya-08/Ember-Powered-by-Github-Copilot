@@ -648,6 +648,23 @@ describe("what memory never keeps", () => {
   ])("keeps %j, a Wi-Fi key's state with no value in its sentence (memory-x6-2)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A Wi-Fi key's value straight after its state's sentence, which writing the name out as a state's hid from the rule
+  // that reads a value after a full stop (memory-y6-2).
+  it.each([
+    ["PSK is enabled. BlueSky99!"], ["PSK: enabled. BlueSky99!"], ["PSK: rotated. It's BlueSky99!"], ["The network key is configured. It's BlueSky99!"],
+    ["Network key: configured; it's BlueSky99!"], ["WPA2 key: enabled; BlueSky99!"], ["The user's Wi-Fi PSK is rotated. It's BlueSky99! now"],
+    ["Network key: see sticker. BlueSky99"], ["The network key is WPA2. BlueSky99!"], ["PSK: rotated.\nBlueSky99!"],
+  ])("refuses %j and saves nothing, a Wi-Fi key after its state's full stop (memory-y6-2)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["PSK is enabled on the router"], ["PSK: rotated monthly"], ["The pre-shared key is rotated every 90 days"], ["PSK is enabled on the router. The guest network is open."],
+    ["PSK: rotated monthly. Next rotation in 90 days."], ["The network key is WPA2. The router is a TP-Link Archer C7."], ["PSK is enabled. WPA2-PSK, 5GHz."],
+    ["Network key: see sticker. Band: 5GHz, channel 36."], ["PSK is enabled. Firmware 3.0.0.4 is installed."],
+  ])("keeps %j, a Wi-Fi key's state with no value after it (memory-y6-2)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
 
   // A secret said as changed, current or to be, the way people most often say one, and a service, a router's label or a
   // capitals setting with its value (memory-r5-1, safety-privacy-1, safety-privacy-c4-2, memory-1).

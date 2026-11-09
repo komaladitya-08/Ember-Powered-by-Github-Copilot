@@ -214,6 +214,13 @@ it("holds back a Makefile recipe, a unit file and an upgrade script that give a 
   await expect(prompt([upgrade])).rejects.toThrow(new Error("upgrade.sh appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
 });
 
+it("holds back a Wi-Fi note with the key after its state's full stop, and sends one with only the state (memory-y6-2)", async () => {
+  const wifi = await file("wifi.md", "# Wi-Fi\n\nPSK: rotated. It's BlueSky99! this month.\n");
+  await expect(prompt([wifi])).rejects.toThrow(new Error("wifi.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const state = await file("router.md", "# Router\n\nPSK is enabled on the router. WPA2-PSK, 5GHz.\n");
+  expect(await prompt([state])).toContain("PSK is enabled on the router");
+});
+
 it("sends a login form, a getpass CLI and an OAuth client, and takes a request that names a type, which hold no password (memory-r4-2, integrations-r4-1)", async () => {
   const form = await file("login.html", '<form method="post" action="/login">\n  <label for="username">Username:</label>\n  <input type="text" id="username" name="username">\n  <label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n</form>\n');
   const cli = await file("cli.py", 'import getpass\n\ndef main():\n    user = input("Username: ")\n    password = getpass.getpass("Password: ")\n    return user, password\n');

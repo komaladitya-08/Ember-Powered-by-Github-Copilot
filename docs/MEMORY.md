@@ -99,7 +99,8 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   mode aren't a value either when nothing shaped like one follows in the sentence, "PSK is enabled on the router",
   "Network key: see sticker", "The network key is WPA2", memory-r5-2, but never after a password's or a PIN's name,
   "The admin password is rotated monthly, currently Summer2024!", "PIN: active 4821", nor before a value, "The VPN
-  pre-shared key is configured to Tr0ub4dor&3", memory-x6-2), and a code counts only for
+  pre-shared key is configured to Tr0ub4dor&3", memory-x6-2, or one straight after its sentence, "PSK: rotated. It's
+  BlueSky99!", memory-y6-2), and a code counts only for
   something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors",
   "our office ZIP code is 90210" and, since a house, a home or an office locks only as someone's or "the" one,
   "Post office code: 560001", "Branch office code: 4410" and "our in-house code is 2000 lines long" (memory-v4-3)

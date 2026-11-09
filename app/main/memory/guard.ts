@@ -792,17 +792,23 @@ const TOLD_SECRET = new RegExp(
  * currently Summer2024!", "PIN: active 4821"), and never with a word shaped like a value later in the sentence or on
  * the next line ("The VPN pre-shared key is configured to Tr0ub4dor&3", "Network key: see below\nBlueSky99"), but a
  * mode, a standard, a band, a size or a count ("WPA2-PSK", "802.11ac", "5GHz", "AES-256", "90 days"): memory-x6-2.
+ * Nor with one straight after its sentence, perhaps after "it's" ("PSK: rotated. It's BlueSky99!", "WPA2 key: enabled;
+ * BlueSky99!"), as a value after a password's state is read (STATE_THEN): memory-y6-2.
  */
 const WIFI_KEY_NAMES = String.raw`network (?:security )?key|wpa[23]? (?:key|passphrase)|pre-?shared key|psk|wireless (?:network )?key|wlan key|wep key`;
 const KEY_STATE = String.raw`enabled|disabled|configured|see|rotated|supported|active|inactive|unset|(?:wpa[23]?|wep|tkip)(?:[-/](?:psk|personal|enterprise|sae|aes|ccmp|tkip|wpa[23]?))*`;
-const KEY_STATE_SAID = new RegExp(String.raw`\b(?:${WIFI_KEY_NAMES})s?\b(?=${FOR_WHAT}${SAYS}${NOW}(?:${KEY_STATE})(?![\w-])((?:[^.;!?]|[.;!?](?![\s"'”)]|$)){0,200}))`, "gi");
+const KEY_STATE_SAID = new RegExp(String.raw`\b(?:${WIFI_KEY_NAMES})s?\b(?=${FOR_WHAT}${SAYS}${NOW}(?:${KEY_STATE})(?![\w-])((?:[^.;!?]|[.;!?](?![\s"'”)]|$)){0,200})`
+  + String.raw`(?:[.;!?]+["'”)]*\s+([^\n]{0,80}))?)`, "gi");
 /** A Wi-Fi key's mode, standard, band or cipher, a size or a count, which are never its value. */
 const NOT_A_KEY = /^(?:(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*|802\.11[a-z]*|\d+(?:\.\d+)?(?:ghz|mhz|[kmg]bps)|\d+(?:-\d+)?-?(?:characters?|chars?|digits?|letters?|bits?|days?|weeks?|months?|hours?|minutes?)|\d{1,3}[dhwm])$/i;
+/** The first word of the sentence after a Wi-Fi key's state, past the words that say it is the key ("It's", "the key is"). */
+const NEXT_WORD = /^(?:(?:but|and|so|though|yet)\s+)?(?:(?:it|that)(?:['’]s|\s+is|\s+was)\s+|(?:the\s+)?(?:password|pin|code|value|key|passphrase|real\s+one)\s+is\s+)?(?:(?:now|currently)\s+)?(\S+)/i;
 /** `text` with each Wi-Fi key's name written out as "_" where only its state follows (KEY_STATE_SAID). */
 function withoutKeyStates(text: string): string {
-  return text.replace(KEY_STATE_SAID, (m: string, rest: string) => rest.split(/\s+/)
-    .map(w => w.replace(/^[(["'“<]+|[)\]"'”>,:]+$/g, ""))
-    .some(w => w.length >= 4 && /[0-9!@#$%^&*]/.test(w) && !NOT_A_KEY.test(w)) ? m : "_".repeat(m.length));
+  const value = (w: string) => w.length >= 4 && /[0-9!@#$%^&*]/.test(w) && !NOT_A_KEY.test(w);
+  const bare = (w: string) => w.replace(/^[(["'“<]+|[)\]"'”>,:]+$/g, "");
+  return text.replace(KEY_STATE_SAID, (m: string, rest: string, next: string | undefined) => rest.split(/\s+/).map(bare).some(value)
+    || value(bare(NEXT_WORD.exec(next ?? "")?.[1] ?? "")) ? m : "_".repeat(m.length));
 }
 /**
  * A secret said as changed or to be ("I changed my password to Summer2024!", "The user's password was changed to …",
