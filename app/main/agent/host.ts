@@ -1042,6 +1042,8 @@ export class AgentHost {
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
+  /** A local read refusal explains the limit without replacing the answer it refers to (voice-speaking-w7-1). */
+  private readonly answerReadNotices = new WeakSet<TranscriptEntry>();
   /** Lines restored from the saved copy: shown, but never a question a "yes" agrees to or words a task is checked against. */
   private readonly restored = new WeakSet<TranscriptEntry>();
   /** Lines Forget everything deleted from the saved copy: they stay on screen but are never saved again. */
@@ -1553,7 +1555,7 @@ export class AgentHost {
 
   /** The last retained answer. Home discloses if the explicit per-message memory bound was reached. */
   lastAnswer(): string | null {
-    return [...this.transcript].reverse().find(e => e.who === "ember" && !e.stopped)?.text ?? null;
+    return [...this.transcript].reverse().find(e => e.who === "ember" && !e.stopped && !this.answerReadNotices.has(e))?.text ?? null;
   }
 
   /**
@@ -3057,6 +3059,10 @@ export class AgentHost {
       const reply = question ? "Answer my question first, then ask me to read it out." : !answer ? "There isn't an answer to read yet." : !this.o.health?.().speaks
         ? "I'm not speaking replies right now. Speaking is under Voice in settings." : answer;
       this.answerLocally(text, reply, how);
+      if (reply !== answer) {
+        const notice = this.transcript.at(-1);
+        if (notice?.who === "ember") this.answerReadNotices.add(notice);
+      }
       return true;
     }
     // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).

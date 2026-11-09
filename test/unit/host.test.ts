@@ -142,7 +142,7 @@ function makeHost(extra: Partial<HostOptions> = {}) {
 }
 
 describe("reading the retained answer", () => {
-  it("explains that an approval must be answered first instead of silently claiming to read (voice-speaking-v7-1)", async () => {
+  it("keeps the answer available after an approval held back reading it (voice-speaking-v7-1, voice-speaking-w7-1)", async () => {
     let waiting = false;
     const waiters: (() => void)[] = [];
     const voiced: string[] = [];
@@ -161,6 +161,8 @@ describe("reading the retained answer", () => {
     expect(settings.get().speakResults).toBe(false);
     waiting = false;
     for (const resolve of waiters) resolve();
+    await host.ask("Read it out");
+    expect(voiced.at(-1)).toBe(answer);
     await host.stop();
   });
 
