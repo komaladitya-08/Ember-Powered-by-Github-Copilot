@@ -2516,3 +2516,5 @@ and processor-count job arguments may decide more loosely (commands-remote-r7-1)
 Download provenance also survives unknown URL filenames and downloader input from xargs or loops. Regression tests
 exercise separate tool calls so a same-line script question cannot conceal a missing download marker.
 An empty or unknown first Redis argument retains a question so shell word removal cannot expose a later deletion.
+
+A relative shell script with an unknown working folder is uncertain, including a script fed to `env -C … sh` on stdin.

@@ -1018,7 +1018,10 @@ class Classifier {
   recordScript(a: Arg, as: ScriptRef["as"], sc: Scope, candidate = false): void {
     if (a.v === null || a.v === "-" || a.v === "/dev/stdin" || sc.foreign) return;
     if (a.glob) { this.unclear("unclear.script-pattern", "It runs a script named by a pattern, which Ember can't read first."); return; }
-    if (!isAbsolute(a.v, sc.path.flavour) && !a.v.startsWith("~") && !sc.cwd) return;
+    if (!isAbsolute(a.v, sc.path.flavour) && !a.v.startsWith("~") && !sc.cwd) {
+      this.unclear("unclear.script-folder", "Ember can't tell which folder the script runs from.");
+      return;
+    }
     if (this.isDownloaded(a, sc)) return;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     const stream = (p: string) => sc.path.flavour === "posix" && /^\/(dev|proc)\//.test(p);

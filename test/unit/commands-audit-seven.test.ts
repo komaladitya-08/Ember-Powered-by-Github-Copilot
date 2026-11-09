@@ -53,3 +53,11 @@ describe("database command arguments", () => {
     expect(decide("O='--rdb /home/ana/.config/ember/settings.json'; redis-cli $O").verdict).toBe("refuse");
   });
 });
+
+describe("scripts in a folder the wrapper chooses", () => {
+  it("asks before a relative script is run from an unknown folder (commands-q6-2, i6b)", () => {
+    for (const command of ["env -C . sh < deploy.sh", "env --chdir=. bash < deploy.sh", "env -C . sh deploy.sh"]) {
+      expect(classify(command).findings.map(f => f.rule), command).toContain("unclear.script-folder");
+    }
+  });
+});

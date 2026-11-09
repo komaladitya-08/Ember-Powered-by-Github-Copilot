@@ -1007,3 +1007,6 @@ A fully named data download still marks only its own file.
 
 Redis commands whose first argument can be empty or cannot be resolved ask: shell
 word removal can expose a destructive command after it. Known variable values still protect Ember's own files.
+
+A wrapper that changes to a folder Ember cannot establish, such as `env -C . sh < deploy.sh`, keeps a question
+before a relative script can run. An unknown starting folder never means that there is no script to inspect.
