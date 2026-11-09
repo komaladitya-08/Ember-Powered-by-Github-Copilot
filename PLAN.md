@@ -2026,20 +2026,20 @@ phase took one rule: nothing may decide less safely than main (4d64d3a, the audi
 every probe command the reviews had gathered, about 7,000 forms, and main's own 3,784-case corpus through the classifier
 and the run_command flow, on main and on the tree; it began at 1,115 lines that decided less safely than main. Where a
 rule couldn't be held it was narrowed to main's. A job count is only a number, a processor count's substitution or
-arithmetic of numbers, quoted or not, so one held in a variable asks whatever the command set it to, as on main
-(f1bf100, which replaces the variable counts of f2e0739, 8d9a2e2, f31e822, 16737fd and 36ac73c; commands-q6-3, -q6-5,
--a7-1). A read, mapfile, readarray, select or getopts over text Ember can't see, and a for over a pattern, a variable or
-a substitution, ask (f637cb2; -a7-2). A loop or if that changes the folder, sets a variable, holds a `[[ … ]]` test or
-anything that asks keeps main's question and is never announced (3f37dea, `holdsFlow`; -b7-1 to -b7-4). Those two narrow
-round one's read-through of loops (d4d7ebe), which judged a body once in the folder the line starts in, so `for i in 1
-2; do sed -i … ember/settings.json; cd ~/.config; done` edited Ember's settings on its second pass with no question
-(-b7-1, P1). Two forms main ran are refused: `patch -d`, `--directory` or `--di` into Ember's folder, and `cd --` or
-`pushd --` into it (0d3ae58, a28ab38; -a7-3, -a7-4, -b7-5). At the end main's corpus had 0 commands decided less safely
-and 3 more safely, and the probe corpora's 320 looser lines (the classifier and the flow counted apart) were 141
-commands: 139 job counts written as a processor count or arithmetic of numbers, each run by main with a plain number;
-one written-out for loop whose body main runs written out; and `cd -- ~/.config/ember`, which the tree refuses but the
-comparison ranks below an unknown verdict. An adversarial reviewer tried about 1,600 more forms against main; what it
-found is fixed above or left below.
+arithmetic of numbers, quoted or not, so one held in a variable and attached to its option asks whatever the command set
+it to, while one given apart from make's `-j` runs, both as on main (f1bf100, which replaces the variable counts of
+f2e0739, 8d9a2e2, f31e822, 16737fd and 36ac73c; commands-q6-3, -q6-5, -a7-1). A read, mapfile, readarray, select or
+getopts over text Ember can't see, and a for over a pattern, a variable or a substitution, ask (f637cb2; -a7-2). A loop
+or if that changes the folder, sets a variable, holds a `[[ … ]]` test or anything that asks keeps main's question and
+is never announced (3f37dea, `holdsFlow`; -b7-1 to -b7-4). Those two narrow round one's read-through of loops (d4d7ebe),
+which judged a body once in the folder the line starts in, so `for i in 1 2; do sed -i … ember/settings.json; cd
+~/.config; done` edited Ember's settings on its second pass with no question (-b7-1, P1). Two forms main ran are
+refused: `patch -d`, `--directory` or `--di` into Ember's folder, and `cd --` or `pushd --` into it (0d3ae58, a28ab38;
+-a7-3, -a7-4, -b7-5). At the end main's corpus had 0 commands decided less safely and 3 more safely, and the probe
+corpora's 320 looser lines (the classifier and the flow counted apart) were 141 commands: 139 job counts written as a
+processor count or arithmetic of numbers, each run by main with a plain number; one written-out for loop whose body main
+runs written out; and `cd -- ~/.config/ember`, which the tree refuses but the comparison ranks below an unknown verdict.
+An adversarial reviewer tried about 1,600 more forms against main; what it found is fixed above or left below.
 
 **Merges.** Lanes P, Q, R, S, T and U merged in that order, then b8bec38, the repairs (f7b35ec, be5c59b, 6880ad4,
 cd1a9ae, 3fc0b66), the second repairs (c959a43, 5d9639e, f2c2e0b) and the commands phase (a48f234): 106 commits, 15 of
@@ -2050,9 +2050,11 @@ printf escapes, which kept a2dbf36's.
 
 **Consent and departures.** No consent text or version changed (`CONSENT_VERSION` 7, `FEATURE_CONSENT_VERSION` as round
 one left it). No departure from §2: every package says so, and the commands phase only moved decisions back to main's or
-tightened them (§2 "Commands"). Against main, two kinds of command decide more loosely, both checked: a job count
-written as a number, a processor count or arithmetic of numbers, which main runs as a plain number, and a written-out
-loop or if whose every command runs on its own.
+tightened them (§2 "Commands"). Against main, two kinds of command decide more loosely: a job count written as a number,
+a processor count or arithmetic of numbers, which main runs as a plain number, and a written-out loop or if whose every
+command, as written, runs on its own. The second is not safe: after the merge a review found that a loop's body is
+judged once, with the loop's words used only for Ember's own refusal, so `for f in --hard; do git reset $f; done` and
+`for f in -delete; do find . $f; done` run where main asks (commands-c7-1, left at a48f234).
 
 **Left.** From the last reviews: a MySQL password in a list of a program's arguments (a compose file's exec-form
 healthcheck, a subprocess list, `docker inspect`'s Test array) is neither hidden nor refused, also so on main
@@ -2062,21 +2064,24 @@ another field (-q6-2), and so are pretty-printed sign-up forms whose next line i
 labelled "Key:" on the line after the network's name (-q6-5); and a keep test pins a demo password under a second
 password field (-q6-6). After Forget my voice the screen reader reads the focused Teach button, whose label and
 description name Ember, over the announcement, as it did before round six (voice-listening-q6-1, P2), and "Teach your
-voice again" can still read as training the person's own voice (-z6-1). Commands, each also so on main: an empty options
-variable before redis-cli's command runs it, and commands on its input with it (`O=''; redis-cli $O FLUSHALL`;
-commands-q6-1); `env -C . sh < deploy.sh` runs a script Ember never reads (-q6-2); a variable in an option's attached
-value is judged as a path only for Ember's own refusal, so `d=~; tar -C "$d" -xf /tmp/x.tar` and `curl -o"$d" …` run,
-and so does a written-out loop with such a body; a NUL-separated read loop that deletes Ember's folder asks rather than
-refuses; `patch -d ~ -p0 < p` runs, since a write into the home folder itself doesn't ask; a shell script's loops are
-still read through and judged once in the folder the script starts in (`judgeScripts`), where holding them as on the
-command line would be stricter than main; `optIs` takes a long option only from three letters, so another tool's
-two-letter abbreviation of a file or folder option would be missed (none found beyond patch's `--di`); `xargs
---process-slot-var=PATH` runs; and lane P's first package left a remote added in an earlier command, copies through
-inline code, PowerShell's `foreach` (commands-remote-c3-2), sh -c's "$0", a cd before a pattern and `find -exec` (-v4-4)
-and its native SSH, WSL and PowerShell checks (commands-remote-6). The comparison's script ranks a verdict it doesn't
-know above a refusal. Stricter than main, and left as such: redis-cli with its options held in a variable asks as a
-change even for a read (`O='-h db'; redis-cli $O INFO`). No package reached commands-remote-r5-2 (P2: "at the root of
-frontend/" still places nothing), home-c5-1 (P2), -r5-1 and -c5-2, tasks-approvals-c5-1 (P2) and -c5-2,
+voice again" can still read as training the person's own voice (-z6-1). Commands: a written-out loop's words never reach
+the judging of its body, so a word that changes what a command does runs where main asks (commands-c7-1, above); and,
+each also so on main, an empty options variable before redis-cli's command runs it, and commands on its input with it
+(`O=''; redis-cli $O FLUSHALL`; commands-q6-1); `env -C . sh < deploy.sh` runs a script Ember never reads (-q6-2); a
+variable in an option's attached value is judged as a path only for Ember's own refusal, so `d=~; tar -C "$d" -xf
+/tmp/x.tar` and `curl -o"$d" …` run, the download unmarked, so running it later asks nothing, and so does a written-out
+loop with such a body; a job count given apart as a substitution or a variable read from a file (`xargs -P $(cat
+jobs.txt) echo`) is split into words that become options and a command; a NUL-separated read loop that deletes Ember's
+folder asks rather than refuses; `patch -d ~ -p0 < p` runs, since a write into the home folder itself doesn't ask; a
+shell script's loops are still read through and judged once in the folder the script starts in (`judgeScripts`), where
+holding them as on the command line would be stricter than main; `optIs` takes a long option only from three letters, so
+another tool's two-letter abbreviation of a file or folder option would be missed (none found beyond patch's `--di`);
+`xargs --process-slot-var=PATH` runs; and lane P's first package left a remote added in an earlier command, copies
+through inline code, PowerShell's `foreach` (commands-remote-c3-2), sh -c's "$0", a cd before a pattern and `find -exec`
+(-v4-4) and its native SSH, WSL and PowerShell checks (commands-remote-6). The comparison's script ranks a verdict it
+doesn't know above a refusal. Stricter than main, and left as such: redis-cli with its options held in a variable asks
+as a change even for a read (`O='-h db'; redis-cli $O INFO`). No package reached commands-remote-r5-2 (P2: "at the root
+of frontend/" still places nothing), home-c5-1 (P2), -r5-1 and -c5-2, tasks-approvals-c5-1 (P2) and -c5-2,
 integrations-c5-1 (P2), -r5-1 and -r5-2, accessibility-visual-r5-1 and -c5-1, voice-speaking-r5-1, -r5-2, -c5-1 and
 -c5-2, install-docs-c5-1 to -c5-3, and first-run-r5-1 and -c5-1. Partly fixed or skipped in the packages: the box clear
 of the cards at 1024×768 Larger (companion-r5-1); "The Wi-Fi is BlueSky99" and "The alarm is 4821" (memory-1) and

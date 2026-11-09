@@ -458,15 +458,17 @@ the automated tests don't stand in for them.
   says “Listening…”, as the handle's badge does, instead of “Hearing you…”. Hear me more clearly's line, the Speak note,
   Task activity's “Waiting for you” and “Done”, and Ask's “I'll see: …” or that Ember can't answer aren't said while the
   microphone is open for a request either: they wait until it closes, and then only what is still news is said, once,
-  each as a full sentence; Settings says “Connected.” only when that changes, not at every request. Lines a screen
+  each as a full sentence; Settings says “Connected.” only when that changes, not at every request. These lines a screen
   reader is told are worded without Ember's name, so said through your speakers they neither wake Ember nor become your
   request: Settings' line for talk Listen once couldn't tell was a request, Hear me more clearly's line, the Speak note,
   the line about Ember's voice and **Hear Ember**'s result, Listen once's lines (“Press Listen once, then just say your
   request.”, “Stops the answer on its way, then listens for one request.”, “Checking what was said…”), Ask's “I'll see:
   …”, Home's status line, Hide's line and what the composer says of a message, Voice Match's lines as teaching ends or
-  your voice is forgotten (with no “Ember, stop” in them), and the update check's (“Version 0.1.2 is out.”). The line
-  about Ember's voice is said only once it has held: never that the voice is being checked, nothing when Ember's voice
-  only loads again after a quiet spell, and **Try again**'s outcome even when it ends as before.
+  your voice is forgotten (with no “Ember, stop” in them), and the update check's (“Version 0.1.2 is out.”). After
+  **Forget my voice**, though, the keyboard moves to **Teach Ember my voice**, and a screen reader reads that button and
+  its description, both with Ember's name in them, over the line that says your voice is forgotten. The line about
+  Ember's voice is said only once it has held: never that the voice is being checked, nothing when Ember's voice only
+  loads again after a quiet spell, and **Try again**'s outcome even when it ends as before.
 - **Teaching Ember your voice with a screen reader on speakers learns your voice, not the screen reader's.** Ember
   leaves out what the screen reader reads of each prompt, and when you speak before it has finished, Settings says “Your
   screen reader was still reading. Wait for it to finish, then say:” and the phrase again.
@@ -620,16 +622,20 @@ the automated tests don't stand in for them.
 - **The first command after Ember starts fits the command window** (90 columns by 12 rows at the default text size)
   instead of drawing 100 by 30, with lines cut off and the end of the output out of view. After you enlarge the
   command window and close it, the next command starts at the size of the window it opens in.
-- **An ordinary bash loop or if runs without a question** when every command in it would run by itself, it sets no
-  variable, changes no folder and works only on words written out in the command (`for i in 1 2 3; do echo $i; done`,
-  `if [ -f package.json ]; then npm test; fi`, `while read -r l; do …; done <<< 'a b'`). Any other asks as a whole
-  (“Ember can't tell exactly what this does.”): one with a command in it that asks, which is never started with only the
-  4-second Stop, even when your words asked for that command; one with a `cd`, `pushd` or `popd`, since a later pass
-  would run somewhere else; one that sets a variable or has a `[[ … ]]` test; and one that reads text Ember can't see (a
-  `read`, `mapfile` or `select` of a file, a pipe or a variable, as in `while IFS= read -r l; do …; done < list.txt`) or
-  loops over it (a `for` over a pattern, a variable or `{1..3}`). So does a command inside one run with PATH changed or
-  a library preloaded (`if true; then LD_PRELOAD=./x.so ls; fi`), on this computer and on an SSH computer, as do zsh's
-  short forms run from a bash script. A download made inside one is remembered, so running it later asks.
+- **An ordinary bash loop or if runs without a question** when every command in it, as written there, would run by
+  itself, it sets no variable, changes no folder and works only on words written out in the command (`for i in 1 2 3; do
+  echo $i; done`, `if [ -f package.json ]; then npm test; fi`, `while read -r l; do …; done <<< 'a b'`). Ember judges
+  those commands once, without the loop's words put in them, so a word that changes what one does still gets past it:
+  `for f in -delete; do find . $f; done` runs without a question, though `find . -delete` asks. Any other asks as a
+  whole (“Ember can't tell exactly what this does.”): one with a command in it that asks, which is never started with
+  only the 4-second Stop, even when your words asked for that command; one with a `cd`, `pushd` or `popd`, since a later
+  pass would run somewhere else; one that sets a variable or has a `[[ … ]]` test; and one that reads text Ember can't
+  see (a `read`, `mapfile` or `select` of a file, a pipe or a variable, as in `while IFS= read -r l; do …; done <
+  list.txt`) or loops over it (a `for` over a pattern, a variable or `{1..3}`). So does a command inside one run with
+  PATH changed or a library preloaded (`if true; then LD_PRELOAD=./x.so ls; fi`), on this computer and on an SSH
+  computer, as do zsh's short forms run from a bash script. A download made inside one is remembered, so running it
+  later asks. Outside a loop too, a `read`, `mapfile` or `getopts` of text Ember can't see asks (`read -r l <
+  notes.txt`).
 - **Running a file the task downloaded still asks once it is renamed or copied:** after `mv`, `cp`, `ln`, `rsync` (with
   `-R` or `--files-from` too), `tee`, `dd`, `cat x.py > y.py`, `dos2unix -n`, `sort -o`, `split`, a `tar` or `zip` of it
   unpacked again, a copy through `xargs` or one named by a cut of its
@@ -644,10 +650,12 @@ the automated tests don't stand in for them.
   list names (`curl -OJ`, `wget -r`, `wget -i`, `aria2c -i`), one saved under a name or folder held in a variable (`curl
   -o "$f"`, and the same with wget, aria2c, axel, fetch, lwp-download or PowerShell's `-OutFile`) and a WebClient's
   `DownloadFile`. Afterwards running a file from the folder it saved into, or that folder's build tools and test
-  runners, asks too (anywhere, when Ember can't tell the folder). A file fetched through `env -C` or `sudo -D` with the
-  shell's `>` counts as downloaded where the shell put it, and a downloaded patch applied (`patch`, `git apply`, `git
-  am`, also with `-d` or `-C`) or code pulled from an address (`git pull https://…`) marks the files it changes, so the
-  next `make`, `npm test` or build script there asks.
+  runners, asks too (anywhere, when Ember can't tell the folder). A variable attached to a short option (`curl -o"$f"`,
+  `wget -O"$f"`) still gets past this: that download runs without a question, and running it later asks
+  nothing, as before. A file fetched through `env -C` or `sudo -D` with the shell's `>` counts as downloaded where the
+  shell put it, and a downloaded patch applied (`patch`, `git apply`, `git am`, also with `-d` or `-C`) or code pulled
+  from an address (`git pull https://…`) marks the files it changes, so the next `make`, `npm test` or build script
+  there asks.
 - **Command questions say what really happens:** “the current folder” (“Deletes what it finds under the current
   folder.”) instead of “.”, “..” or “{}”; “Deletes everything in the current folder.” for `rm -rf *`, and after a cd the
   folder it works in (“Deletes everything in ~/Documents.”), as for an unpack; folders in your home folder from ~, as
@@ -717,10 +725,11 @@ the automated tests don't stand in for them.
   `--report-dir`, uv's and poetry's `--cache-dir`, `file -f`, `tar --listed-incremental`, `parallel --wd`, `sudo -R`). A
   job count runs as a number, a processor count or arithmetic of numbers, attached or apart (`make -j4`, `make
   -j$(nproc)`, `make -j $(nproc)`, `cmake --build build -j $(nproc)`, `ctest -j$(nproc)`, `pytest -n $(nproc)`, gradle's
-  `--max-workers=$(nproc)`), and so does `make -j "$JOBS"`, while one held in a variable written straight after its
-  option asks, whatever the command set it to (`make -j$N`, `N=4; make -j$N`, `./gradlew --max-workers=$N`, `mvn
-  --threads $N`), as does one the command read from a file (`X=$(cat jobs.txt); make -j $X`); `T=deploy; make -j "$T"`
-  and `T='4 deploy'; make -j $T` ask as `make deploy` does.
+  `--max-workers=$(nproc)`), and so does a variable given to make's `-j` apart (`make -j "$JOBS"`, `N=4; make -j $N`),
+  while one attached to its option asks, whatever the command set it to (`make -j$N`, `N=4; make -j$N`, `./gradlew
+  --max-workers=$N`), as do a variable given apart to most other tools (`mvn --threads $N`, `cmake --build build -j $N`)
+  and a count the command read from a file (`X=$(cat jobs.txt); make -j $X`); `T=deploy; make -j "$T"` and `T='4
+  deploy'; make -j $T` ask as `make deploy` does.
 - **A database change given on a client's input asks,** as one on its command line does: `redis-cli <<< FLUSHALL`, `echo
   'db.dropDatabase()' | mongosh`, one Ember can't see on redis-cli's line (`redis-cli "$CMD"`), and an SQL file fed with
   `<` whose name says it deletes (`psql app < drop_users.sql`), as with `-f`. A file redis-cli's options name is judged
@@ -831,11 +840,12 @@ the automated tests don't stand in for them.
   `const token = process.env.GITHUB_TOKEN;`, `credentials = boto3.Session().get_credentials()`), so Projects requests
   and files, a reviewed patch and task views that hold them aren't refused. A user name with a digit said as a login
   (“my login is jsmith42”), or a user at a computer whose name has a digit (“admin@nas1”), is refused, as it may be the
-  password. Some shorthand (“The Wi-Fi is BlueSky99”), a code said with “'s” (“The gym's code is 4821”) and a MySQL
-  password written in a list of a program's arguments still get past it, so keep passwords out of what you tell Ember
-  and the files you give Projects.
-- **Passwords in code, settings and forms are held back however a file holds them,** in memory, Projects and task views:
-  a value under a key named for a secret in a Ruby or PHP hash (`:password => '…'`), a YAML mapping or list
+  password. Some shorthand (“The Wi-Fi is BlueSky99”), a code said with “'s” (“The gym's code is 4821”), a password
+  after “salted” in a note on how it is stored (“Password: hashed, SHA-256, salted, Summer2024!”), a Wi-Fi key labelled
+  “Key:” on the line after the network's name and a MySQL password written in a list of a program's arguments still get
+  past it, so keep passwords out of what you tell Ember and the files you give Projects.
+- **Passwords in code, settings and forms are held back in more of the ways a file holds them,** in memory, Projects and
+  task views: a value under a key named for a secret in a Ruby or PHP hash (`:password => '…'`), a YAML mapping or list
   (`passwords:` with `db: …` under it), a pretty-printed JSON section (`"Secrets": {…}`), a Python dict or list or a
   dotted setting (`secrets.db: …`), `define('DB_PASSWORD', '…')` and `<password>…</password>`, a quoted passphrase
   (`ADMIN_PASSWORD="Key Lime Pie 2024!"`), a password a pretty-printed form puts on the line below its label or in its
