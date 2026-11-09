@@ -1593,6 +1593,25 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["node --test-reporter-destination stdout --test", "node --redirect-warnings warn.log app.js", "uv run --cache-dir .cache pytest", "file -f list.txt"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
   });
 
+  it("judges the file redis-cli's --rdb writes its dump to and the files its TLS options and --eval read, written out or in a variable (commands-z6-2)", () => {
+    for (const f of ["/home/ana/.config/ember/settings.json", "/home/ana/.bashrc", "/home/ana/.ssh/authorized_keys", "/etc/passwd"]) {
+      each([
+        [`redis-cli --rdb ${f}`, `touch ${f}`], [`redis-cli --functions-rdb ${f}`, `touch ${f}`], [`redis-cli -h db --rdb=${f}`, `touch ${f}`], [`redis-cli --rdb ${f} -h db`, `touch ${f}`],
+        [`O='--rdb ${f}'; redis-cli $O`, `touch ${f}`], [`O='-h db'; redis-cli $O --rdb ${f}`, `touch ${f}`], [`O='--functions-rdb ${f}'; redis-cli $O`, `touch ${f}`],
+      ]);
+    }
+    for (const f of ["/home/ana/.config/ember/audit.jsonl", "/home/ana/.ssh/id_rsa", "/home/ana/.netrc"]) {
+      each([
+        [`redis-cli --key ${f} PING`, `cat ${f}`], [`redis-cli --tls --cert ${f} PING`, `cat ${f}`], [`redis-cli --cacert ${f} PING`, `cat ${f}`], [`redis-cli --eval ${f}`, `cat ${f}`],
+        [`O='--key ${f}'; redis-cli $O PING`, `cat ${f}`], [`O='--cacert ${f}'; redis-cli $O PING`, `cat ${f}`],
+      ]);
+    }
+    for (const d of ["/home/ana/.config/ember", "/home/ana/.ssh"]) each([[`redis-cli --cacertdir ${d} PING`, `ls ${d}`], [`O='--cacertdir ${d}'; redis-cli $O PING`, `ls ${d}`]]);
+    // A dump to the project or the terminal, and a read, run as before; options in a variable still ask.
+    for (const cmd of ["redis-cli --rdb dump.rdb", "redis-cli --rdb -", "redis-cli -h db --rdb backup/dump.rdb", "redis-cli --tls --cacertdir certs PING", "redis-cli -h db PING"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    expect(decided("O='--rdb dump.rdb'; redis-cli $O").decision.verdict).toBe("ask");
+  });
+
   it("keeps GNU grep's --ignore (its --ignore-case), rg's --ignore and lsd's -L and -t switches, so the file after them is judged (commands-remote-v5-5)", () => {
     each([
       ["grep -i --ignore pass ~/.netrc", "grep pass ~/.netrc"], ["grep -r --ignore pass ~/.config/ember", "grep -r pass ~/.config/ember"], ["egrep --ignore pass ~/.netrc", "egrep pass ~/.netrc"],

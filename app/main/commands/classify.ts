@@ -3367,13 +3367,24 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     for (const a of h.args) if (a.v !== null && !isOption(a) && /\.(c|m)?js$/i.test(a.v)) runScript(h, a);
   } else if (k === "redis-cli") {
     // -c (cluster mode), -x, -e and --tls take no value (commands-remote-c4-3).
-    const p = opts(h, { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] });
+    const spec: OptSpec = { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] };
+    const p = opts(h, spec);
+    // The files its options name: --rdb and --functions-rdb write a dump there; the TLS files and --eval's script are
+    // read (commands-z6-2).
+    const files = { write: ["rdb", "functions-rdb"], read: ["cacert", "cacertdir", "cert", "key", "eval"] };
+    optionFiles(h, h.args, p, files);
     if (values(p, "eval").length || has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
     if (has(p, "a", "pass") || values(p, "a").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-    // A command word Ember can't see all of (`redis-cli "$c"`): each value the text gives it, split as the shell may.
+    // A command word Ember can't see all of (`redis-cli "$c"`): each value the text gives it, split as the shell may,
+    // and the files that options split out of it name judged as written out, never making it run (commands-z6-2).
     const [word, ...rest] = p.operands;
-    if (word?.v === null) for (const f of h.e.knownForms(word)) redisCommand(h, f === null ? [null] : [...f.trim().split(/\s+/), ...rest.map(a => a.v)]);
-    else redisCommand(h, p.operands.map(a => a.v));
+    if (word?.v === null) {
+      for (const f of h.e.knownForms(word)) {
+        redisCommand(h, f === null ? [null] : [...f.trim().split(/\s+/), ...rest.map(a => a.v)]);
+        const split = f === null ? [] : [...f.split(/\s+/).filter(w => w !== "").map(w => lit(w)), ...rest];
+        if (split.length) optionFiles(h, split, parseOpts(split, spec), files);
+      }
+    } else redisCommand(h, p.operands.map(a => a.v));
     // With no command on its line it runs the commands its input gives, one a line (`redis-cli <<< FLUSHALL`, `echo
     // DEL x | redis-cli`); with -x its input is the last argument's value (commands-remote-c5-3).
     if (p.operands.length === 0 && !has(p, "x")) {
