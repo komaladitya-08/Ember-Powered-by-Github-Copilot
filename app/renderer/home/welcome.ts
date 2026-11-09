@@ -108,6 +108,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let checkEpoch = 0;
   /** The newest provider check that was started: only it may put the provider away after its step was abandoned. */
   let checkRun = 0;
+  /** Only this step owns this id: Home's hidden controller cannot revoke its adoption on a redraw. */
+  let providerAdoption: string | null = null;
+  function cancelProviderAdoption(): void {
+    if (providerAdoption) void window.emberProvider?.cancelAdoption(providerAdoption).catch(() => undefined);
+    providerAdoption = null;
+  }
   /** Setup fixes under way: their buttons stay disabled however often the rows are drawn again. */
   const fixPending = new Set<string>();
   /** `kept`: the host still in use after a check of an edit to it failed (first-run-r2-1). */
@@ -169,6 +175,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     setTimeout(() => { if (active) deps.arrived(); }, 600);
   }
   function finish(): void {
+    cancelProviderAdoption();
     active = false;
     navigation++;
     wantLevel(false);
@@ -186,6 +193,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // Leaving the provider step: an older check is dropped, and going back to Copilot puts away a provider this visit
     // set up; one in use as the step opened stays on (first-run-c1-2).
     if (step === "provider" && to !== "provider") {
+      cancelProviderAdoption();
       checkEpoch++;
       if (to === "sign-in" && checkSaves) { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
     }
@@ -431,6 +439,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   const provField = (id: string) => $(id) as HTMLInputElement;
   const prefilled = { done: false };
   function openProvider(): void {
+    cancelProviderAdoption();
     checkEpoch++;
     providerCheck = { phase: "idle", line: "" };
     prefilled.done = false;
@@ -455,9 +464,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     return null;
   }
   /**
-   * Saves the fields, the key, the card's yes for exactly this address, then asks the service for its models. With the
-   * provider in use as the step opened, the details typed are asked first, as they are, and saved only once they
-   * answer (`kept`: the host still in use after a check that failed).
+   * With a provider in use, asks the typed details first, then commits its key and agreed settings together only
+   * once they answer (`kept`: the host still in use after a check that failed). A fresh setup saves before testing.
    */
   const checkProvider = latestOnly<{ epoch: number; result: ProviderTest; kept?: string }>(
     async () => {
@@ -476,17 +484,16 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
         const tried = await api.test({ type: f.type, baseUrl: f.baseUrl, host, ...(f.key.trim() ? { key: f.key } : {}) });
         if (epoch !== checkEpoch) return { epoch, result: { ok: false, why: "" } };
         if (!tried.ok) return { epoch, result: tried, kept: keep };
-        // It answers: adopted whole (moments, not a network wait), unless a choice made since (“Use GitHub Copilot
-        // instead”, or Home's own) owns the provider now. The details go with the card's yes for their host in one
-        // change, so the provider in use never leaves force for Copilot between, then a typed key for it, as Home's
-        // held edit does (first-run-r4-3).
+        // A later choice owns the provider; otherwise main stages the key and settings as one durable adoption.
         if (since !== providerChoice()) return { epoch, result: tried };
-        const agreed = await api.agree(host, { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null });
-        if (!agreed.ok) return { epoch, result: { ok: false, why: agreed.why } };
-        if (f.key.trim()) {
-          const k = await api.saveKey(f.key);
-          if (!k.ok) return { epoch, result: { ok: false, why: k.why } };
-        }
+        const id = crypto.randomUUID();
+        providerAdoption = id;
+        const adopted = await api.adopt({ id, from: keep, host,
+          move: { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null },
+          ...(f.key.trim() ? { key: f.key } : {}) }).catch(() => ({ ok: false as const, why: "I couldn't save these details. Try again." }));
+        if (providerAdoption !== id || epoch !== checkEpoch) return { epoch, result: { ok: false, why: "" } };
+        providerAdoption = null;
+        if (!adopted.ok) return { epoch, result: { ok: false, why: adopted.why }, ...(settings?.provider.on && endpointHost(settings.provider.baseUrl) === keep ? { kept: keep } : {}) };
         return { epoch, result: tried };
       }
       // Back, an edit or another check can come between any two steps. Each step that does something (the card's yes
@@ -503,7 +510,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (!saved) return { epoch, result: { ok: false, why: "I couldn't save these details. The notice at the top says why." } };
       if (abandoned()) return { epoch, result: { ok: false, why: "" } };
       if (f.key.trim()) {
-        const k = await api.saveKey(f.key);
+        const k = await api.saveKey(f.key, host);
         if (!k.ok) return { epoch, result: { ok: false, why: k.why } };
         if (abandoned()) return { epoch, result: { ok: false, why: "" } };
       }
@@ -576,7 +583,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   $("w-p-keep").addEventListener("click", () => {
     // The details in use, as they were: the fields show them again without the typed key, and Continue goes on with
     // them; the button goes, so the focus goes to Continue (first-run-c3-1).
-    checkEpoch++;
+    cancelProviderAdoption(); checkEpoch++;
     edited = false;
     providerCheck = { phase: "idle", line: "" };
     prefilled.done = false;
@@ -589,7 +596,13 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     void turnOwnOff(true);
   });
   // A deliberate choice made in Home replaces whatever was true of the old state.
-  onProviderChoice(() => showOffFailure(false));
+  onProviderChoice(() => {
+    showOffFailure(false);
+    if (providerCheck.phase === "checking" && visitInUse) {
+      cancelProviderAdoption(); checkEpoch++;
+      providerCheck = { phase: "idle", line: "" };
+    }
+  });
   function renderProvider(): { label: string; why: string } {
     const needs = $("w-p-needs");
     if (!needs.childElementCount) needs.replaceChildren(...PROVIDER_STEP.needs.map(t => el("li", { textContent: t })));
@@ -962,6 +975,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   // Any edit makes an earlier check (or a check in flight) say nothing about what is now typed.
   for (const id of ["w-p-type", "w-p-url", "w-p-key", "w-p-conductor", "w-p-worker"]) {
     $(id).addEventListener("input", () => {
+      cancelProviderAdoption();
       checkEpoch++;
       edited = true;
       // A provider in use as the step opened stays on: its edit is checked before it counts (first-run-r2-1).

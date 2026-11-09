@@ -54,6 +54,11 @@ let checkingFor: string | null = null;
 let adoptionId: string | null = null;
 /** A draft key belongs to the host it was typed for, even while another host's edit is held. */
 let keyHost: string | null = null;
+function bindDraftKey(host: string | null): void {
+  if (!host) return;
+  if (input("byok-key").value && keyHost !== host) input("byok-key").value = "";
+  keyHost = host;
+}
 /** A newer edit revokes a keyring operation before it can publish the old draft. */
 function cancelAdoption(): void {
   if (adoptionId) void api()?.cancelAdoption(adoptionId).catch(() => undefined);
@@ -135,6 +140,7 @@ async function adopt(host: string): Promise<void> {
   if (!a || !own || !was) return;
   const run = heldRun;
   const keyField = input("byok-key");
+  if (keyField.value && keyHost !== host) { bindDraftKey(host); say(PROVIDER_WORDS.pasteKey, true); keyField.focus(); return; }
   const key = keyField.value.trim() ? keyField.value : "";
   const d = { ...own, ...was.fields };
   checkingFor = host;
@@ -226,6 +232,7 @@ function draw(): void {
   const fill = (id: string, v: string) => { const el = input(id); if (document.activeElement !== el) el.value = v; };
   if (document.activeElement !== select("byok-type")) select("byok-type").value = p.type;
   fill("byok-url", p.baseUrl);
+  bindDraftKey(endpointHost(input("byok-url").value));
   fill("byok-conductor", p.conductor ?? "");
   fill("byok-worker", p.worker ?? "");
   fill("byok-azure", p.azureApiVersion ?? "");
@@ -380,10 +387,12 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     const field = input("byok-key");
     const key = field.value;
     if (!key.trim()) { say(PROVIDER_WORDS.pasteKey, true); field.focus(); return; }
+    const host = endpointHost(held?.fields.baseUrl ?? own?.baseUrl ?? "");
+    if (!host || keyHost !== host) { bindDraftKey(host); say(PROVIDER_WORDS.pasteKey, true); field.focus(); return; }
     // Saved now it would be for the host still in force: it waits in the field for the held edit's yes (integrations-c3-1).
     if (held) { say(providerHeldKey(endpointHost(held.fields.baseUrl ?? ""))); return; }
     noteProviderChoice();
-    void a.saveKey(key).then(r => {
+    void a.saveKey(key, host).then(r => {
       if (r.ok) { field.value = ""; replacing = false; say(PROVIDER_WORDS.keySaved); } else say(r.why, true);
       return reread();
     }).then(() => { if (!replacing) ($("byok-key-replace") as HTMLButtonElement).focus(); });
@@ -398,10 +407,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
       const host = endpointHost(input("byok-url").value);
       if (id === "byok-key") keyHost = host;
       // Keep a key through path edits and incomplete typing, but never send it to a different authority.
-      if (id === "byok-url" && host) {
-        if (input("byok-key").value && keyHost !== host) input("byok-key").value = "";
-        keyHost = host;
-      }
+      if (id === "byok-url") bindDraftKey(host);
       if (!held || checkingFor === null) return;
       cancelAdoption(); heldRun++; checkingFor = null; draw();
     });

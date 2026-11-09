@@ -266,9 +266,15 @@ describe("Home's provider channels", () => {
     expect(calls).toEqual([]);
   });
 
-  it("takes one string of key-like size for saveKey, and nothing for the others", async () => {
+  it("refuses a key without its expected host (integrations-v7-9)", async () => {
     const { call, calls } = wire();
-    for (const bad of [[], [42], [""], ["k".repeat(9000)], [KEY, "extra"], [{ key: KEY }]]) {
+    expect(await call(PROVIDER_IPC.saveKey, HOME, KEY)).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    expect(calls).toEqual([]);
+  });
+
+  it("takes a key of bounded size and its host for saveKey, and nothing for the others", async () => {
+    const { call, calls } = wire();
+    for (const bad of [[], [42], [""], ["k".repeat(9000)], [KEY, 42], [KEY, "BAD HOST"], [KEY, "a.example", "extra"], [{ key: KEY }]]) {
       expect(await call(PROVIDER_IPC.saveKey, HOME, ...bad)).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
     }
     expect(await call(PROVIDER_IPC.removeKey, HOME, "x")).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
@@ -280,7 +286,7 @@ describe("Home's provider channels", () => {
     }
     expect(await call(PROVIDER_IPC.state, HOME, 1)).toBeNull();
     expect(calls).toEqual([]);
-    expect(await call(PROVIDER_IPC.saveKey, HOME, KEY)).toEqual({ ok: true });
+    expect(await call(PROVIDER_IPC.saveKey, HOME, KEY, "a.example")).toEqual({ ok: true });
     expect(await call(PROVIDER_IPC.removeKey, HOME)).toEqual({ ok: true });
     expect(calls).toEqual(["save", "remove"]);
   });
@@ -328,7 +334,7 @@ describe("Home's provider channels", () => {
 
   it("never sends the key back, and never logs it, even when saving it fails", async () => {
     const { call, logs } = wire({ saveKey: async k => { throw new Error(`keyring refused ${k}`); } });
-    const r = await call(PROVIDER_IPC.saveKey, HOME, KEY);
+    const r = await call(PROVIDER_IPC.saveKey, HOME, KEY, "a.example");
     expect(r).toEqual({ ok: false, why: PROVIDER_FAILED });
     expect(JSON.stringify(logs)).not.toContain(KEY);
     expect(JSON.stringify(logs)).toContain("provider.ipc_failed");

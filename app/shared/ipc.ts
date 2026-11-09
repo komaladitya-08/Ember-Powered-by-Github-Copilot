@@ -806,7 +806,7 @@ export interface EmberProviderApi {
   state(): Promise<ProviderState>;
   onChanged(fn: () => void): () => void;
   /** Saves the API key, encrypted (refused without a keyring); it is never sent back. */
-  saveKey(key: string): Promise<ProviderDone>;
+  saveKey(key: string, host: string): Promise<ProviderDone>;
   removeKey(): Promise<ProviderDone>;
   /**
    * Records the yes to the card for `host` (the endpoint's host in settings now, or that of `move`, the held edit's

@@ -7,7 +7,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
 
@@ -33,7 +33,7 @@ const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], 
  * does (in force while on and agreed for the address's host; a saved key kept only for its own host), and the card's
  * yes is saved and broadcast.
  */
-interface Seed { failAdoption?: boolean; slowAdoption?: boolean; consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
+interface Seed { failAdoption?: boolean | string; slowAdoption?: boolean; consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -54,6 +54,11 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 });
 afterAll(async () => { if (gate) return; await browser.close(); server.close(); });
+afterEach(async () => {
+  if (gate) return;
+  // A page's subscription state belongs to one journey; release its renderer before the next journey starts.
+  await Promise.all(browser.contexts().map(context => context.close()));
+});
 
 async function open(seed: Seed = {}): Promise<Page> {
   const settings = structuredClone(DEFAULT_SETTINGS);
@@ -112,12 +117,16 @@ async function open(seed: Seed = {}): Promise<Page> {
           return { allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false, ...providerState, ...live };
         },
         onChanged: () => () => undefined,
-        saveKey: () => { window.__frCalls.push("saveKey"); keyHost = hostOf(window.__frState.settings.provider.baseUrl); return Promise.resolve({ ok: true }); },
+        saveKey: (_key: string, host: string) => {
+          window.__frCalls.push("saveKey");
+          if (host !== hostOf(window.__frState.settings.provider.baseUrl)) return Promise.resolve({ ok: false, why: "The address changed: check it, then agree again." });
+          keyHost = host; return Promise.resolve({ ok: true });
+        },
         removeKey: async () => ({ ok: true }),
         cancelAdoption: async (id: string) => { cancelled.add(id); window.__frCalls.push(`cancel-adoption:${id}`); },
         adopt: async (request: { id: string; host: string; move: object; key?: string }) => {
           window.__frCalls.push(`adopt:${request.host}`);
-          if (failAdoption) return { ok: false, why: "The API key couldn't be saved. Check the keyring, then try again." };
+          if (failAdoption) return { ok: false, why: typeof failAdoption === "string" ? failAdoption : "The API key couldn't be saved. Check the keyring, then try again." };
           if (slowAdoption) {
             const result = await defer("adopt") as { ok: boolean; why?: string };
             if (cancelled.has(request.id)) return { ok: false, why: "The address changed: check it, then agree again." };
@@ -126,7 +135,7 @@ async function open(seed: Seed = {}): Promise<Page> {
           window.__frCalls.push(`move:${JSON.stringify(request.move)}`);
           window.__frState.settings.provider = { ...window.__frState.settings.provider, ...request.move, on: true,
             consent: { version: 1, at: "2026-11-09T00:00:00Z", host: request.host } };
-          keyHost = request.key ? request.host : null;
+          keyHost = request.key ? request.host : keyHost === request.host ? keyHost : null;
           window.__frEmit("onSettingsChanged", copy(window.__frState.settings));
           return { ok: true };
         },
@@ -144,7 +153,7 @@ async function open(seed: Seed = {}): Promise<Page> {
         test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState, failAdoption: !!seed.failAdoption, slowAdoption: !!seed.slowAdoption });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState, failAdoption: seed.failAdoption ?? false, slowAdoption: !!seed.slowAdoption });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
@@ -823,7 +832,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     };
     const kept = (p: Page) => p.evaluate(() => ({ on: window.__frState.settings.provider.on, baseUrl: window.__frState.settings.provider.baseUrl }));
     const working = { on: true, baseUrl: "https://api.example.com/v1" };
-    const changed = (p: Page) => calls(p).then(c => c.filter(x => x.startsWith("save:") || x === "saveKey" || x.startsWith("agree:") || x === "test"));
+    const changed = (p: Page) => calls(p).then(c => c.filter(x => x.startsWith("save:") || x === "saveKey" || x.startsWith("agree:") || x.startsWith("adopt:") || x === "test"));
 
     // A slip: a field cleared and the button pressed says what to fill; typing it back switches nothing off.
     const a = await inUse();
@@ -886,8 +895,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((await calls(d)).filter(x => x.startsWith("agree:") || x === "saveKey")).toEqual([]);
     expect(await d.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
 
-    // Details that answer replace the old ones: written with the card's yes for the new host in one change, so the
-    // provider in use never leaves force for Copilot between (first-run-r4-3), then the key for it.
+    // Details that answer replace the old ones with their key in one adoption (first-run-r4-3, integrations-r7-1).
     const e = await inUse();
     await e.fill("#w-p-url", "https://api2.example.com/v1");
     await e.fill("#w-p-key", "sk-good-not-real");
@@ -895,7 +903,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => calls(e)).toContain("test-draft:api2.example.com+key");
     await settle(e, "test", { ok: true, host: "api2.example.com", models: 2 });
     await expect.poll(() => e.locator("#w-p-result").innerText()).toBe("Connected to api2.example.com. It lists 2 models.");
-    expect(await changed(e)).toEqual(["agree:api2.example.com", "saveKey"]);
+    expect(await changed(e)).toEqual(["adopt:api2.example.com"]);
     expect(await calls(e)).toContain(`move:${JSON.stringify({ type: "openai", baseUrl: "https://api2.example.com/v1", conductor: "gpt-4.1", worker: null })}`);
     expect(await kept(e)).toEqual({ on: true, baseUrl: "https://api2.example.com/v1" });
     expect(await calls(e)).not.toContain(off);
@@ -1050,6 +1058,45 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
+  it.each(["The keyring refused the replacement key.", "The provider settings couldn't be saved."])("keeps the working setup provider and key when adoption fails: %s (integrations-r7-1)", async why => {
+    const p = await open({ liveState: true, failAdoption: why, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", conductor: "fixture-model", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    try {
+      await next(p).click(); await p.locator("#w-back").click();
+      await p.fill("#w-p-url", "https://b.example/v1"); await p.fill("#w-p-key", "b-fixture-key");
+      await next(p).click(); await expect.poll(() => calls(p)).toContain("test-draft:b.example+key");
+      await settle(p, "test", { ok: true, host: "b.example", models: 1 });
+      await expect.poll(() => p.locator("#w-p-result").innerText()).toContain("Nothing has changed: I'm still using a.example.");
+      expect(await p.locator("#w-p-result").innerText()).toContain(why);
+      expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+      expect(await p.locator("#w-p-key").inputValue()).toBe("b-fixture-key");
+      expect(await p.evaluate(() => window.emberProvider!.state())).toMatchObject({ keySaved: true, host: "a.example" });
+      expect((await calls(p)).filter(c => c === "saveKey" || c.startsWith("agree:"))).toEqual([]);
+      if (process.env.EMBER_UI_EVIDENCE) await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "welcome-adoption-failure.png"), fullPage: true });
+    } finally { await p.close(); }
+  }, 20_000);
+
+  it.each(["edit", "back"] as const)("cancels setup adoption on %s while a keyring result is pending (integrations-r7-1)", async action => {
+    const p = await open({ liveState: true, slowAdoption: true, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", conductor: "fixture-model", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    try {
+      await next(p).click(); await p.locator("#w-back").click();
+      await p.fill("#w-p-url", "https://b.example/v1"); await p.fill("#w-p-key", "b-fixture-key");
+      await next(p).click(); await settle(p, "test", { ok: true, host: "b.example", models: 1 });
+      await expect.poll(() => calls(p)).toContain("adopt:b.example");
+      if (action === "edit") await p.fill("#w-p-conductor", "new-fixture-model");
+      else await p.locator("#w-back").click();
+      await expect.poll(async () => (await calls(p)).some(c => c.startsWith("cancel-adoption:"))).toBe(true);
+      await settle(p, "adopt", { ok: true }); await p.waitForTimeout(100);
+      expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+      expect(await p.evaluate(() => window.emberProvider!.state())).toMatchObject({ keySaved: true, host: "a.example" });
+      if (action === "edit") expect(await p.locator("#w-p-conductor").inputValue()).toBe("new-fixture-model");
+      expect((p as Page & { errors: string[] }).errors).toEqual([]);
+    } finally { await p.close(); }
+  }, 20_000);
+
   it("keeps the provider, its saved key and the typed replacement key after atomic adoption fails (integrations-r7-1)", async () => {
     const using = "a.example";
     const p = await open({ home: true, liveState: true, failAdoption: true, providerState: { keySaved: true },
@@ -1090,6 +1137,26 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
       await p.locator("#byok-key").fill("c-fixture-key");
       await p.locator("#byok-url").fill("https://c.example:8443/v1");
       expect(await p.locator("#byok-key").inputValue()).toBe("");
+    } finally { await p.close(); }
+  }, 20_000);
+
+  it("clears a held draft key when a newer saved provider replaces its host (integrations-v7-9)", async () => {
+    const p = await open({ home: true, liveState: true, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    try {
+      await p.fill("#byok-url", "https://b.example/v1"); await p.keyboard.press("Tab");
+      await p.fill("#byok-key", "b-fixture-key");
+      await p.evaluate(() => {
+        const s = window.__frState.settings;
+        s.provider = { ...s.provider, baseUrl: "https://c.example/v1", consent: { version: 1, at: "2026-11-09T00:01:00Z", host: "c.example" } };
+        window.__frEmit("onSettingsChanged", structuredClone(s));
+      });
+      await expect.poll(() => p.locator("#byok-url").inputValue()).toBe("https://c.example/v1");
+      expect(await p.locator("#byok-key").inputValue()).toBe("");
+      await p.locator("#byok-key-form").evaluate(form => form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true })));
+      expect(await calls(p)).not.toContain("saveKey");
+      expect((p as Page & { errors: string[] }).errors).toEqual([]);
     } finally { await p.close(); }
   }, 20_000);
 

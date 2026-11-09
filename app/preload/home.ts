@@ -149,7 +149,7 @@ const provider: EmberProviderApi = {
   cancelAdoption: id => ipcRenderer.invoke(PROVIDER_IPC.cancelAdoption, id),
   state: () => ipcRenderer.invoke(PROVIDER_IPC.state),
   onChanged: fn => listen<null>(PROVIDER_IPC.changed, () => fn()),
-  saveKey: key => ipcRenderer.invoke(PROVIDER_IPC.saveKey, key),
+  saveKey: (key, host) => ipcRenderer.invoke(PROVIDER_IPC.saveKey, key, host),
   removeKey: () => ipcRenderer.invoke(PROVIDER_IPC.removeKey),
   agree: (host, move) => (move ? ipcRenderer.invoke(PROVIDER_IPC.agree, host, move) : ipcRenderer.invoke(PROVIDER_IPC.agree, host)),
   test: draft => (draft ? ipcRenderer.invoke(PROVIDER_IPC.test, draft) : ipcRenderer.invoke(PROVIDER_IPC.test)),

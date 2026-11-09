@@ -237,7 +237,7 @@ export class ProviderKeyStore {
   }
 
   /** Stages a replacement before synchronously publishing its key and settings together (integrations-r7-1). */
-  async replaceWith(key: string | undefined, host: string, current: () => boolean, change: (keyId: string | null) => void): Promise<KeySave> {
+  async replaceWith(key: string | undefined, host: string, current: () => boolean, change: (keyId: string | null) => void, owner?: { before: string; after: string }): Promise<KeySave> {
     if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
     const revision = ++this.revision;
     const fresh = () => revision === this.revision && current();
@@ -254,6 +254,7 @@ export class ProviderKeyStore {
     }
     if (!fresh()) return { ok: false, why: PROVIDER_HOST_CHANGED };
     const nonce = randomUUID();
+    const state = `${this.file}.${nonce}.state`;
     const files = [this.file, hostFile(this.file)].map((file, i) => ({ file, stage: `${file}.${nonce}.stage`, backup: `${file}.${nonce}.backup`,
       data: sealed === undefined ? undefined : i === 0 ? sealed : Buffer.from(host), old: false, published: false }));
     for (const f of files) { this.artifacts.add(f.stage); this.artifacts.add(f.backup); }
@@ -261,6 +262,7 @@ export class ProviderKeyStore {
     try {
       // Write both new files before touching either old one; backups contain encrypted bytes and host metadata only.
       for (const f of files) if (f.data) fs.writeFileSync(f.stage, f.data, { mode: 0o600, flush: true });
+      if (owner) { this.artifacts.add(state); fs.writeFileSync(state, JSON.stringify(owner), { mode: 0o600, flush: true }); }
       if (!fresh()) return { ok: false, why: PROVIDER_HOST_CHANGED };
       for (const f of files) {
         try { fs.renameSync(f.file, f.backup); f.old = true; }
@@ -282,6 +284,7 @@ export class ProviderKeyStore {
         // A backup surviving a failed rollback is the only durable original: leave it for recovery.
         if (committed || !f.old) try { fs.rmSync(f.backup, { force: true }); this.artifacts.delete(f.backup); } catch { /* clear() retries private artefacts */ }
       }
+      if (committed || files.every(f => !f.old)) try { fs.rmSync(state, { force: true }); this.artifacts.delete(state); } catch { /* recovery or Remove retries */ }
     }
   }
 
@@ -302,16 +305,31 @@ export class ProviderKeyStore {
   }
 
   /** Restores an interrupted replacement for the endpoint settings still name; sealed host binding is checked on load. */
-  recover(host: string, force = false): void {
-    if (!force && this.savedHost() === host) return;
-    for (const backup of this.transactionFiles().filter(f => f.startsWith(`${this.file}.`) && f.endsWith(".backup"))) {
-      const nonce = backup.slice(this.file.length + 1, -".backup".length);
+  recover(host: string, force = false, owner?: string): void {
+    const nonces = new Set(this.transactionFiles().filter(f => /\.(?:backup|state)$/.test(f)).map(f => {
+      const prefix = f.startsWith(`${this.file}.`) ? this.file : hostFile(this.file);
+      return f.slice(prefix.length + 1, f.lastIndexOf("."));
+    }));
+    for (const nonce of nonces) {
+      const backup = `${this.file}.${nonce}.backup`;
       const metadata = `${hostFile(this.file)}.${nonce}.backup`;
       try {
+        const state = `${this.file}.${nonce}.state`;
+        let restore = force || this.savedHost() !== host;
+        if (fs.existsSync(state)) {
+          const saved = JSON.parse(fs.readFileSync(state, "utf8")) as { before?: unknown; after?: unknown };
+          // Host alone cannot tell A/v1 + old key from A/v2 + new key after an interrupted same-host edit.
+          if (!owner || typeof saved.before !== "string" || typeof saved.after !== "string") continue;
+          if (saved.after === owner && saved.before !== owner) continue;
+          if (saved.before !== owner) continue;
+          restore ||= saved.after !== owner;
+        }
+        if (!restore) continue;
         const from = fs.existsSync(metadata) ? metadata : hostFile(this.file);
         if (fs.readFileSync(from, "utf8").trim() !== host) continue;
         ++this.revision;
-        fs.renameSync(backup, this.file);
+        // A rollback or recovery may already have restored the key before the metadata rename was interrupted.
+        if (fs.existsSync(backup)) fs.renameSync(backup, this.file);
         if (from === metadata) fs.renameSync(metadata, hostFile(this.file));
         return;
       } catch { /* the original remains private; no key is used unless its sealed host matches */ }
@@ -327,7 +345,7 @@ export class ProviderKeyStore {
     const prefixes = [path.basename(this.file) + ".", path.basename(hostFile(this.file)) + "."];
     try {
       return fs.readdirSync(path.dirname(this.file)).filter(name => prefixes.some(prefix => name.startsWith(prefix)
-        && /^[0-9a-f-]{36}\.(?:stage|backup)$/.test(name.slice(prefix.length)))).map(name => path.join(path.dirname(this.file), name));
+        && /^[0-9a-f-]{36}\.(?:stage|backup|state)$/.test(name.slice(prefix.length)))).map(name => path.join(path.dirname(this.file), name));
     } catch { return []; /* no readable data folder: never guess a key */ }
   }
 
@@ -430,7 +448,7 @@ export function redactingLogger(base: Logger, secret: () => string | null | read
 
 /** What the provider service needs from main (the settings store, the policy, the key store, the network). */
 export interface ProviderServiceDeps {
-  settings: { get(): Settings; own(): Settings; update(patch: SettingsPatch): Settings };
+  settings: { get(): Settings; own(): Settings; update(patch: SettingsPatch, opts?: { requirePersist?: boolean; expectedProvider?: Settings["provider"] }): Settings };
   admin: () => LoadedAdminPolicy;
   keys: Pick<ProviderKeyStore, "savedHost" | "canPersist" | "save" | "load" | "clear"> & Partial<Pick<ProviderKeyStore, "replaceWith" | "recover" | "cleanupTransactions">>;
   /** The user agreed to Ember at all (hasConsent): until then nothing is sent anywhere. */
@@ -472,11 +490,12 @@ export function createProviderService(d: ProviderServiceDeps) {
   const readKey = (always = false): Promise<void> => {
     const host = hostNow();
     if (stored || !host || !allowed() || (!always && !d.settings.get().provider.on)) return Promise.resolve();
-    d.keys.recover?.(host);
+    const owner = JSON.stringify(d.settings.own().provider);
+    d.keys.recover?.(host, false, owner);
     if (d.keys.savedHost() !== host) return Promise.resolve();
     const started = revision;
     const pending = reading ?? d.keys.load().then(async k => {
-      if (k && k.host !== host && started === revision) { d.keys.recover?.(host, true); k = await d.keys.load(); }
+      if (k && k.host !== host && started === revision) { d.keys.recover?.(host, true, owner); k = await d.keys.load(); }
       // A key sealed for another host than the one beside it is no key at all.
       if (started === revision && allowed() && (always || d.settings.get().provider.on) && k && k.host === host && host === hostNow()) {
         stored = k; d.keys.cleanupTransactions?.(); d.log.info("provider.key_read", {}); d.changed();
@@ -515,6 +534,21 @@ export function createProviderService(d: ProviderServiceDeps) {
     return r;
   };
 
+  const settingsChanged = (): void => {
+    if (committing) return;
+    invalidate();
+    if (!allowed() || !d.settings.get().provider.on) retire();
+    const saved = d.keys.savedHost();
+    const host = endpointHost(d.settings.own().provider.baseUrl);
+    if (saved && saved !== host) {
+      d.keys.clear();
+      retire();
+      d.log.info("provider.key_cleared", { why: "endpoint_changed" });
+      d.changed();
+    }
+    void readKey();
+  };
+
   return {
     /** The saved key and its host, once read (null: none, or not needed yet). */
     key: (): StoredKey | null => stored,
@@ -528,20 +562,7 @@ export function createProviderService(d: ProviderServiceDeps) {
       return !stored && !!host && allowed() && d.settings.get().provider.on && d.keys.savedHost() === host;
     },
     /** The settings changed: a key saved for another host than the endpoint now is deleted, and one now needed is read. */
-    settingsChanged(): void {
-      if (committing) return;
-      invalidate();
-      if (!allowed() || !d.settings.get().provider.on) retire();
-      const saved = d.keys.savedHost();
-      const host = endpointHost(d.settings.own().provider.baseUrl);
-      if (saved && saved !== host) {
-        d.keys.clear();
-        retire();
-        d.log.info("provider.key_cleared", { why: "endpoint_changed" });
-        d.changed();
-      }
-      void readKey();
-    },
+    settingsChanged,
     /** Signing out: the key goes. */
     forget(): void {
       invalidate();
@@ -565,18 +586,35 @@ export function createProviderService(d: ProviderServiceDeps) {
           if (!current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
           const previousKey = stored;
           const next = { ...before, ...request.move, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host: request.host } };
-          const result = await d.keys.replaceWith!(request.key, request.host, current, keyId => {
+          const keepKey = request.key === undefined && request.host === request.from;
+          const publish = (keyId: string | null): void => {
             committing = true;
-            retire();
-            stored = request.key === undefined ? null : { key: request.key.trim(), host: request.host, keyId };
-            try { d.settings.update({ provider: next }); }
+            if (!keepKey) {
+              retire();
+              stored = request.key === undefined ? null : { key: request.key.trim(), host: request.host, keyId };
+            }
+            try { d.settings.update({ provider: next }, { requirePersist: true, expectedProvider: before }); }
             catch (err) {
               // Settings listeners run after persistence: an observer fault cannot undo an already committed choice.
-              if (JSON.stringify(d.settings.own().provider) !== JSON.stringify(next)) { stored = previousKey; throw err; }
+              if (JSON.stringify(d.settings.own().provider) !== JSON.stringify(next)) {
+                if (started === revision) stored = previousKey;
+                throw err;
+              }
               d.log.warn("provider.adoption_notice_failed", {});
             } finally { committing = false; }
-          });
-          if (!result.ok) stored = previousKey;
+          };
+          // A same-host edit without a typed replacement keeps the existing sealed key and its identity.
+          let result: KeySave;
+          if (keepKey) {
+            try { publish(null); result = { ok: true }; }
+            catch { result = { ok: false, why: "Ember couldn't save these provider details. Check its settings notice, then try again." }; }
+          } else result = await d.keys.replaceWith!(request.key, request.host, current, publish, { before: fingerprint, after: JSON.stringify(next) });
+          if (!result.ok) {
+            if (started === revision) {
+              stored = previousKey;
+              if (JSON.stringify(d.settings.own().provider) !== fingerprint) settingsChanged();
+            }
+          }
           else {
             invalidate(); d.log.info("provider.adopted", {});
             try { d.changed(); } catch { d.log.warn("provider.adoption_notice_failed", {}); }
@@ -588,10 +626,11 @@ export function createProviderService(d: ProviderServiceDeps) {
         return operation;
       },
       state: () => providerStateOf({ settings: d.settings.get(), admin: d.admin(), keys: d.keys }),
-      saveKey: async (key: string): Promise<KeySave> => {
+      saveKey: async (key: string, expectedHost: string): Promise<KeySave> => {
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
         const host = hostNow();
         if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
+        if (host !== expectedHost) return { ok: false, why: PROVIDER_HOST_CHANGED };
         invalidate();
         const started = revision;
         // Serialise writes so cancelling an old save cannot erase a newer key.
@@ -688,7 +727,8 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
 /**
  * What a test of the endpoint found. `cause`, for a failure: nothing answered (refused, timed out, unreachable: the
  * provider is down), or it answered but has no model list at that address (`no-list`: 404, 405 or 501 on GET /models,
- * as some gateways that answer chat only do), which a held edit's check takes as an answer (integrations-r4-2).
+ * as some gateways that answer chat only do). A held edit keeps the working provider after that ambiguous answer
+ * (integrations-c5-1).
  */
 export type TestResult = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
