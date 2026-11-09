@@ -2526,3 +2526,5 @@ The xargs process-slot-var gate is unconditional: arbitrary child environment na
 Link targets include protected ancestor folders in the own-file refusal, including known POSIX and PowerShell variables.
 
 Shell scripts retain questions for loops: reading a body once does not establish later passes' arguments or folders.
+
+Intent matching fails closed for unestablished root-of and on-place phrases instead of announcing a different path.

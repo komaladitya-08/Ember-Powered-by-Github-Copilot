@@ -1354,6 +1354,11 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
   if (F.length === 0) return null;
   if (F.some(f => ALWAYS_ASK.has(f.cls))) return null;
   if (F.some(f => f.widening.some(x => ALWAYS_BROADER.has(x)))) return null;
+  // Unestablished place phrases must not turn a command on another folder into "as you asked" (commands-remote-r5-2).
+  const places = userWords.normalize("NFKC");
+  if (/\b(?:at|in)\s+(?:the\s+)?(?:root|top(?:\s+level)?)\s+of\b/i.test(places)) return null;
+  const files = F.some(f => f.objects.some(o => o.kind === "path" || o.kind === "glob"));
+  if (files && /\bon\b(?!\s+(?:my|this|the current)\s+(?:computer|machine|pc)\b)/i.test(places)) return null;
   if (NEGATION.test(userWords.normalize("NFKC")) || KEEPS.test(userWords.normalize("NFKC"))) return null;
   const groups = new Map<string, Finding[]>();
   for (const f of F) {

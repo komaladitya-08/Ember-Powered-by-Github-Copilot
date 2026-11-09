@@ -1019,3 +1019,7 @@ file or a different executable even when the command text looks ordinary.
 
 A link to a folder containing Ember's settings or records is refused too: creating a link first cannot let a later
 statement reach those files under another name. This applies to ln, Windows mklink and PowerShell links or junctions.
+
+A place Ember cannot establish keeps a command asking: “At the root of frontend/, delete the build folder” never
+announces deletion of the current folder's build, and “on the desktop” or “on the NAS” does not silently mean here.
+Use the exact path to name the intended folder.
