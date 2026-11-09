@@ -7,6 +7,8 @@ import fs, { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { linuxSystem } from "../../app/main/platform/linux/system";
+import type { PlatformDeps } from "../../app/main/platform/types";
 
 const electron = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- hoisted above the imports
@@ -1044,6 +1046,30 @@ describe("VoiceService", () => {
     v.cancelEnrol();
     proc.emit("message", { type: "utterance", text: "Fresh request.", ms: 0, window: "wake", generation: 1 });
     expect(events).toEqual([{ type: "utterance", text: "Fresh request.", ms: 0, window: "wake" }]);
+  });
+
+  it("protects teaching from a screen reader whose GNOME check is still pending without permitting guessed speech (reliability-v7-2)", async () => {
+    const settles: ((value: string) => void)[] = [];
+    const platform = linuxSystem({ env: {}, electron: { app: { isAccessibilitySupportEnabled: () => false } } } as unknown as PlatformDeps, {
+      run: async (_cmd, args) => args.includes("screen-reader-enabled") ? new Promise<string>(resolve => settles.push(resolve)) : "true",
+      setTimeout: () => ({}),
+    });
+    const a11y = platform.a11y as typeof platform.a11y & { screenReaderState?: () => boolean | null };
+    // The hearing guard is cautious about unknown; reader-only speech still needs a positive screenReaderOn result.
+    const { v } = service(true, { screenReaderOn: () => a11y.screenReaderState ? a11y.screenReaderState() !== false : a11y.screenReaderOn() });
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 10 });
+    expect(a11y.screenReaderOn()).toBe(false);
+    expect(v.enrol()).toBe(true);
+    expect(posted(proc, "enrol")).toEqual([{ type: "enrol", generation: 1, reader: true }]);
+    await flush();
+    settles[0]("true");
+    await flush();
+    expect(a11y.screenReaderOn()).toBe(true);
+    // The first enrolment was already protected before that late positive answer arrived.
+    expect(posted(proc, "enrol")).toHaveLength(1);
+    v.cancelEnrol();
   });
 
   it("tells the voice process a screen reader reads the prompts aloud as teaching starts, and says Listen once waits for it in a line screen readers aren't told (voice-listening-r4-1)", async () => {

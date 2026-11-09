@@ -185,7 +185,7 @@ export interface VoiceOptions {
   playback?: "context" | "element";
   /** A wake's request opens a conversation (settings' voice.conversation; engine.ts CONVERSATION_IDLE_MS). */
   conversation?: () => boolean;
-  /** A screen reader runs (Platform a11y.screenReaderOn): it says Listen once's status lines through the speakers. */
+  /** A screen reader runs, or has not yet been ruled out: protect Listen once and teaching from spoken UI words. */
   screenReaderOn?: () => boolean;
   /** The mic page can read how loud the computer's output is (PlatformVoice.outputLevel). */
   outputLevel?: boolean;

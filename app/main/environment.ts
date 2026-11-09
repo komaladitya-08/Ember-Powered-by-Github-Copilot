@@ -69,7 +69,7 @@ export interface EnvInputs {
   platform: string;
   arch: string;
   /** Accessibility (screen reading). Omitted when not probed. */
-  accessibility?: { enabled: boolean | null; pyatspi: boolean };
+  accessibility?: { enabled: boolean | null; pyatspi: boolean | null; checking?: boolean };
   /** Could Ember open the X display? (Xvfb, xrdp, ssh -X and su leave XDG_SESSION_TYPE unset or "tty".) Omitted when not probed. */
   x11?: boolean;
   /** Ember's keyboard shortcuts another app already holds (Electron accelerators). Omitted when not known yet. */
@@ -287,8 +287,12 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
 
   if (i.accessibility) {
     const a = i.accessibility;
-    if (!a.pyatspi) {
+    if (a.checking || a.pyatspi === null) {
+      checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Checking screen reading… Wait a moment, then press Check again." });
+    } else if (!a.pyatspi) {
       checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" });
+    } else if (a.enabled === null) {
+      checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "The screen-reading switch couldn't be checked. Press Check again, or check your desktop session." });
     } else if (a.enabled === false) {
       checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: `Accessibility is off, so Ember can only see screenshots. Turn it on, then ${LINUX_A11Y_RESTART}.`, fix: "enable-accessibility" });
     } else if (a.enabled && i.applied?.includes("enable-accessibility")) {
