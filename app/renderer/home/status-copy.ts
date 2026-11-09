@@ -5,7 +5,12 @@
  * recent entries), and reads nothing new.
  */
 
-import type { ActivityEntry } from "../../shared/ipc";
+import type { ActivityEntry, Status, VoiceStatus } from "../../shared/ipc";
+import type { Settings } from "../../main/settings";
+import type { OS } from "../../shared/shortcuts";
+import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
+import { parseTargetId } from "../../shared/targets";
+import { modeFor } from "./computers-copy";
 import { STATUS_WORDS, type TaskEntry } from "../../shared/activity";
 import { dayLabel } from "./copy";
 
@@ -121,6 +126,26 @@ export interface WhatsOn {
   /** Computers over SSH the user added. */
   computers: number;
   wsl: boolean;
+}
+
+/**
+ * Capabilities in force now, not the saved preferences (home-r6-1). Missing status, policy or speech readiness never
+ * claims that listening works. Remote commands also need that target's current first-use agreement.
+ */
+export function availableStatus(settings: Settings | null, admin: Status["admin"] | null, voice: VoiceStatus | null, os: OS): Pick<WhatsOn, "voice" | "commands" | "computers" | "wsl"> {
+  const off = { voice: "off" as const, commands: 0, computers: 0, wsl: false };
+  if (!settings || !admin || admin.error !== null || admin.held) return off;
+  const agreed = (version: number | undefined, required: number) => (version ?? 0) >= required;
+  const hosts = admin.features.ssh === false ? [] : settings.targets.hosts.filter(h => agreed(h.consent.version, FEATURE_CONSENT_VERSION.ssh));
+  const wsl = os === "win32" && admin.features.wsl !== false && settings.targets.wsl.on && agreed(settings.targets.wsl.consent.version, FEATURE_CONSENT_VERSION.wsl);
+  const commands = Object.entries(settings.commands).filter(([id, command]) => {
+    const target = parseTargetId(id);
+    if (!target || !command?.on || !agreed(command.consent.version, FEATURE_CONSENT_VERSION.commands)) return false;
+    const mode = modeFor(admin, target.kind);
+    return mode !== null && mode !== "off" && (target.kind === "local" || (target.kind === "wsl" ? wsl : hosts.some(h => h.id === target.name)));
+  }).length;
+  const listening = settings.wakeWord && settings.voice.consent && admin.features.voice !== false && voice?.modelsReady;
+  return { voice: !listening ? "off" : voice.state === "muted" ? "muted" : voice.state === "waiting" || voice.state === "active" ? "listening" : "off", commands, computers: hosts.length, wsl };
 }
 
 /**

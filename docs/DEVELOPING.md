@@ -126,6 +126,10 @@ runtime. It does not change the app's consent or speaking settings.
 
 ### Using Ember
 
+Home's Features line describes what is in force: commands and other computers need their current agreements and
+policy permission. Listening shows on only while the speech models and microphone are ready. Saved preferences
+remain available after a policy restriction is lifted or missing models are downloaded.
+
 Home keeps the draft set aside by **Edit** and restores it after the edited request is sent, above any words typed
 while Send was waiting. An earlier acknowledgement cannot close a newer edit. No draft is sent automatically.
 

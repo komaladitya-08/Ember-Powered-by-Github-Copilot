@@ -129,6 +129,23 @@ const task = (id: string, title: string, items: ActivityItem[], status: TaskEntr
   activity: { startedAt: Date.now() - 5000, items, dropped: 0, steps: items.length, failedSteps: 0, counts: {}, questions: 0, approvals: 0, asking: status === "waiting", retry: 0, slow: false, nearLimit: false, live: "Working in Text Editor" },
 });
 
+it.skipIf(gate)("shows only capabilities permitted now, and listening only with a working microphone (home-r6-1)", async () => {
+  const consent = { version: 99, at: "2026-11-09T12:00:00Z" };
+  const settings = { wakeWord: true, voice: { ...DEFAULT_SETTINGS.voice, consent: true }, commands: { local: { on: true, askEvery: false, consent } }, targets: { ...DEFAULT_SETTINGS.targets, hosts: [{ id: "work", dest: "work", resolved: { user: "demo", hostname: "work.example", port: 22, jump: [] }, consent }] } };
+  const policy = AdminPolicySchema.parse({ features: { ssh: false }, commands: { local: "off", ssh: "off", wsl: "off" } });
+  const admin = homeAdmin({ source: "/etc/ember/policy.json", policy });
+  const page = await open("home", { settings, admin });
+  try {
+    await page.evaluate(() => window.__pane.emit("onVoiceStatus", { state: "needs-models", modelsReady: false, detail: "Download speech models.", modelsMissing: [], modelsBytes: 0 }));
+    expect(await page.locator("#whats-on").innerText()).toBe("Listening off · Memory off · Commands off");
+    await page.evaluate(a => window.__pane.emit("onAdminChanged", a), homeAdmin({ source: null, policy: AdminPolicySchema.parse({}) }));
+    await page.evaluate(() => window.__pane.emit("onVoiceStatus", { state: "waiting", modelsReady: true, detail: "Listening.", modelsMissing: [], modelsBytes: 0 }));
+    expect(await page.locator("#whats-on").innerText()).toBe("Listening on · Memory off · Commands on · 1 computer over SSH");
+    await page.evaluate(a => window.__pane.emit("onAdminChanged", a), homeAdmin(heldUntilRestart({ source: null, policy: AdminPolicySchema.parse({}) })));
+    expect(await page.locator("#whats-on").innerText()).toBe("Listening off · Memory off · Commands off");
+  } finally { await page.close(); }
+}, 30_000);
+
 describe.skipIf(gate)("Home's Task activity, while a task works (2026-11-07 product audit)", () => {
   it("keeps keyboard focus on a running task's control when the task does its next step (home-2)", async () => {
     const page = await open("home");
