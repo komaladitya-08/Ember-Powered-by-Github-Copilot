@@ -1010,3 +1010,6 @@ word removal can expose a destructive command after it. Known variable values st
 
 A wrapper that changes to a folder Ember cannot establish, such as `env -C . sh < deploy.sh`, keeps a question
 before a relative script can run. An unknown starting folder never means that there is no script to inspect.
+
+An extraction directory given by a variable or substitution asks instead of being mistaken for the current folder.
+For an archive this task downloaded, an unknown extraction directory keeps download provenance anywhere it may land.

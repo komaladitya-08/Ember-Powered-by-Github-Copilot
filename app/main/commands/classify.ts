@@ -3909,6 +3909,12 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const create = has(p, "c", "create", "r", "append", "u", "update", "A", "catenate", "concatenate");
   const archive = values(p, "f", "file")[0];
   const dir = values(p, "C", "directory")[0];
+  const unknownArgs = h.args.some(a => a.v === null || a.glob);
+  if (unknownArgs) {
+    h.e.unclear("unclear.unresolved-arg", "Ember can't tell which arguments tar gets.");
+    optionFiles(h, a, p, { into: ["C", "directory"] });
+    if (h.e.ctx.downloaded.size || h.e.downloads.length) h.e.markUnnamed(null, h.sc);
+  }
   if (has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I")) || values(p, "checkpoint-action").length) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
   // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
   for (const f of values(p, "T", "files-from", "X", "exclude-from", ...(bsd ? ["I"] : []))) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
@@ -3937,7 +3943,10 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
       h.e.add("destroy", "archive.unpack", `Unpacks ${archive ?? "an archive"} over files in ${into.text === "." ? thisFolder(h, into) : into.text}.`, { objects: [into] });
     }
     // From a download, or a pipe that fetched one or packs one (`tar cf - x.sh | tar xf - -C tools`: commands-remote-c2-2).
-    if ((archive && h.e.isDownloaded(lit(archive), h.sc)) || (archive === "-" || !archive) && (h.s.fetchBefore || h.e.pipe.carried === true)) if (into.abs) h.e.downloads.push(into.abs);
+    if ((archive && h.e.isDownloaded(lit(archive), h.sc)) || (archive === "-" || !archive) && (h.s.fetchBefore || h.e.pipe.carried === true)) {
+      if (unknownArgs) h.e.markUnnamed(null, h.sc);
+      else if (into.abs) h.e.downloads.push(into.abs);
+    }
     objsOf(h, p.operands, "write");
   }
 });

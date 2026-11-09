@@ -61,3 +61,16 @@ describe("scripts in a folder the wrapper chooses", () => {
     }
   });
 });
+
+describe("an archive destination held in a variable", () => {
+  it("asks instead of treating the unknown extraction folder as the project (commands-remote-c7-2, i6b)", () => {
+    for (const option of ['-C "$d"', '-C"$d"', '--directory="$d"']) {
+      expect(decide(`d=~; tar ${option} -xf /tmp/x.tar`).verdict, option).toBe("ask");
+    }
+    const context = { ...contextOf("linux"), downloaded: new Set(["/home/ana/proj/x.tar"]) };
+    const unpack = classifyCommand('d=/tmp; tar -C "$d" -xf x.tar', "bash", context);
+    const run = classifyCommand("bash /tmp/run.sh", "bash", { ...context, downloaded: new Set(unpack.downloads) });
+    expect(run.findings.map(f => f.rule)).toContain("escape.run-downloaded");
+    expect(decide('d=~/.config/ember; tar -C "$d" -xf /tmp/x.tar').verdict).toBe("refuse");
+  });
+});
