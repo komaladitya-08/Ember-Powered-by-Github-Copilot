@@ -436,7 +436,7 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     expect(await judged(plain, "./t.sh")).toBe(`success: ${plain}`);
   });
 
-  it("runs a loop or an if on a bash command line without asking when every command in it is ordinary (commands-remote-2)", async () => {
+  it("runs an if on a bash command line without asking when every command in it is ordinary, and asks before a loop as main does (commands-remote-2, commands-c7-1)", async () => {
     const judged = async (command: string, shell?: "bash" | "zsh") => {
       setCommandJudge(null);
       const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: true, real: p }), run: () => ({ output: ["1\n"] }), ...(shell === "zsh" ? { facts: { shells: ["zsh", "bash"], shellPaths: { zsh: "/bin/zsh", bash: "/bin/bash" } } } : {}) });
@@ -444,12 +444,14 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
       const card = (h.asked[0]?.panel as { card: CommandCard } | undefined)?.card;
       return { result: r.resultType, rules: h0rules(h), says: card?.says ?? [] };
     };
-    for (const plain of [
-      "for i in 1 2 3; do echo $i; done",
-      "if [ -f package.json ]; then npm test; fi",
-      "while read -r l; do echo \"$l\"; done <<< \"a b\"",
-      "until false; do break; done",
-    ]) expect(await judged(plain), plain).toMatchObject({ result: "success", rules: [] });
+    expect(await judged("if [ -f package.json ]; then npm test; fi")).toMatchObject({ result: "success", rules: [] });
+    // Every loop keeps its own words and asks, as on main, however plain its body (commands-c7-1).
+    for (const loop of ["for i in 1 2 3; do echo $i; done", "while read -r l; do echo \"$l\"; done <<< \"a b\"", "until false; do break; done"]) {
+      const got = await judged(loop);
+      expect(got.result, loop).toBe("denied");
+      expect(got.rules, loop).toEqual(expect.arrayContaining(["unclear.do", "unclear.done"]));
+      expect(got.says, loop).toContain("Ember can't tell exactly what this does.");
+    }
     // A dangerous command inside asks as on main, with the loop's or the if's own words too (commands-b7-2).
     for (const [risky, rule] of [["if [ -f x ]; then rm x; fi", "posix.rm"], ["for f in a.log b.log; do rm \"$f\"; done", "posix.rm"]]) {
       const got = await judged(risky);
@@ -506,10 +508,12 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
       expect(got.rules, command).toContain("unclear.assignment");
       expect(got.says, command).toContain("It changes how commands are found or run.");
     }
-    // IFS in front of a loop's read is no assignment; the line loop over a file asks because Ember can't see what it
-    // reads (commands-a7-2), with the loop's own words as on main (commands-b7-2), and over written-out text it runs.
+    // IFS in front of a loop's or an if's read is no assignment; the line loop over a file asks because Ember can't see
+    // what it reads (commands-a7-2), with the loop's own words as on main (commands-b7-2), and so does one over
+    // written-out text, as every loop does (commands-c7-1); an if's read of written-out text runs.
     expect(await judged("while IFS= read -r l; do echo \"$l\"; done < list.txt")).toMatchObject({ result: "denied", rules: ["unclear.while", "unclear.do", "unclear.done", "unclear.read-text"] });
-    expect(await judged("while IFS= read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ result: "success", rules: [] });
+    expect(await judged("while IFS= read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ result: "denied", rules: ["unclear.while", "unclear.do", "unclear.done"] });
+    expect(await judged("if IFS= read -r l <<< 'a b'; then echo \"$l\"; fi")).toMatchObject({ result: "success", rules: [] });
   });
 
   it("says plainly when it can't read all of a script, and not that the user didn't ask when they named it (review #27)", async () => {
@@ -2673,7 +2677,7 @@ describe("a read loop over text Ember can't see, as the flow reads it through (c
     }
   });
 
-  it("asks before a read loop that only prints or tests text Ember can't see, and runs one over a here-string Ember sees", async () => {
+  it("asks before a read loop that only prints or tests text Ember can't see, and before one over a here-string Ember sees as before any loop", async () => {
     for (const command of [
       "printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do echo \"$d\"; done", "ls | while read -r f; do test -f \"$f\"; done",
       "printf 'build\\n' | while read -r d; do touch \"$d/x\"; done",
@@ -2682,9 +2686,10 @@ describe("a read loop over text Ember can't see, as the flow reads it through (c
       expect((await call(h, { target: "this computer", command })).resultType, command).toBe("denied");
       expect(h0rules(h), command).toContain("unclear.read-text");
     }
+    // Over text Ember sees it asks only for the loop's own words, as every loop does (commands-c7-1).
     const h = local();
-    expect((await call(h, { target: "this computer", command: "while read -r d; do mkdir -p \"$d/x\"; done <<< build" })).resultType).toBe("success");
-    expect(h.asked).toEqual([]);
+    expect((await call(h, { target: "this computer", command: "while read -r d; do mkdir -p \"$d/x\"; done <<< build" })).resultType).toBe("denied");
+    expect(h0rules(h)).toEqual(["unclear.while", "unclear.do", "unclear.done"]);
   });
 });
 
@@ -2734,11 +2739,13 @@ describe("a read or a loop over text Ember can't see, as the flow judges it (com
     }
   });
 
-  it("runs a loop or if that sets no variable from text Ember can't see, as its commands written out would", async () => {
-    for (const command of [
-      "for i in 1 2 3; do echo $i; done", "if [ -f package.json ]; then npm test; fi", "while read -r l; do echo \"$l\"; done <<< 'a b'",
-      "while true; do echo x; break; done", "read -r a b <<< 'x y'; echo \"$a\"",
-    ]) expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
+  it("runs an if or a read that sets no variable from text Ember can't see, as its commands written out would; a loop asks as main does", async () => {
+    for (const command of ["if [ -f package.json ]; then npm test; fi", "read -r a b <<< 'x y'; echo \"$a\"", "if read -r l <<< 'a b'; then echo \"$l\"; fi"]) {
+      expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
+    }
+    for (const command of ["for i in 1 2 3; do echo $i; done", "while read -r l; do echo \"$l\"; done <<< 'a b'", "while true; do echo x; break; done"]) {
+      expect(await judged(command), command).toMatchObject({ result: "denied", asked: 1, ran: 0 });
+    }
   });
 });
 
@@ -2807,11 +2814,61 @@ describe("a loop or an if that changes the folder, sets a variable or asks, as t
     }
   });
 
-  it("still runs a loop or an if that sets no variable, changes no folder and asks for nothing else", async () => {
+  it("still runs an if that sets no variable, changes no folder and asks for nothing else; a loop asks as main does (commands-c7-1)", async () => {
+    for (const command of ["if [ -f package.json ]; then npm test; fi", "if git diff --quiet; then echo clean; else echo dirty; fi"]) {
+      expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
+    }
+    for (const command of ["for i in 1 2 3; do echo $i; done", "while read -r l; do echo \"$l\"; done <<< 'a b'", "until [ -f x ]; do sleep 1; done"]) {
+      const got = await judged(command);
+      expect(got, command).toMatchObject({ result: "denied", asked: 1, ran: 0 });
+      expect(loopWords(got.rules), command).toBe(true);
+    }
+  });
+});
+
+describe("every bash loop on a command line, as the flow judges it (commands-c7-1)", () => {
+  /** CL's own judge on this computer, in /home/ana/proj, the user saying no to any question. */
+  const judged = async (command: string, words = "") => {
+    setCommandJudge(null);
+    const h = harness({
+      binding: LOCAL, words, answers: ["deny"], paths: p => ({ exists: true, real: p }),
+      state: { cwd: "/home/ana/proj", downloaded: new Set(), running: false },
+    });
+    const r = await call(h, { target: "this computer", command });
+    const card = (h.asked[0]?.panel as { card: CommandCard } | undefined)?.card;
+    return { result: r.resultType, text: r.textResultForLlm, asked: h.asked.length, announced: h.announced.length, ran: h.starts.length, rules: h0rules(h), says: card?.says ?? [] };
+  };
+
+  it("asks with the loop's own words before any for, while or until loop, whatever its body, as main does", async () => {
     for (const command of [
-      "for i in 1 2 3; do echo $i; done", "if [ -f package.json ]; then npm test; fi", "while read -r l; do echo \"$l\"; done <<< 'a b'",
-      "until [ -f x ]; do sleep 1; done", "if git diff --quiet; then echo clean; else echo dirty; fi",
-    ]) expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
+      // A for list's or a read's own value reaches an option no row judges: written out, `git reset --hard` asks.
+      "for f in --hard; do git reset $f; done", "for i in 1 2; do git reset $f; for f in --hard; do :; done; done",
+      "for i in 1 2; do git reset $l; read -r l <<< '--hard'; done",
+      // A loop whose every command would run alone asks too.
+      "for i in 1 2 3; do echo $i; done", "for n in 2 4; do echo $n; done", "while true; do echo x; break; done", "until [ -f x ]; do sleep 1; done",
+      "while read -r l; do echo \"$l\"; done <<< 'a b'", "while read -r d; do mkdir -p \"$d/x\"; done <<< build", "for i in 1 2; { echo $i; }",
+      "if [ -f x ]; then for i in 1; do echo $i; done; fi", "echo a; for i in 1; do echo $i; done | cat",
+    ]) {
+      const got = await judged(command);
+      expect(got, command).toMatchObject({ result: "denied", asked: 1, ran: 0 });
+      expect(got.rules.some(r => /^unclear\.(for|while|until)$/.test(r)), command).toBe(true);
+      expect(got.says, command).toContain("Ember can't tell exactly what this does.");
+    }
+  });
+
+  it("refuses Ember's folder named in a loop before anything asks, and says what a dangerous command in one does", async () => {
+    const refused = await judged("for d in ~/.config/ember; do rm -rf \"$d\"; done");
+    expect(refused.text).toMatch(/^Not allowed: Ember won't run this/);
+    expect(refused).toMatchObject({ asked: 0, ran: 0 });
+    const risky = await judged("for f in a.log b.log; do rm \"$f\"; done", "delete a.log and b.log");
+    expect(risky).toMatchObject({ result: "denied", asked: 1, announced: 0, ran: 0 });
+    expect(risky.says).toEqual(expect.arrayContaining(["Deletes a.log and b.log.", "Ember can't tell exactly what this does."]));
+  });
+
+  it("still runs an if whose every command runs alone, and a read of written-out text outside a loop", async () => {
+    for (const command of ["if [ -f package.json ]; then npm test; fi", "if git diff --quiet; then echo clean; else echo dirty; fi", "read -r a b <<< 'x y'; echo \"$a\""]) {
+      expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
+    }
   });
 });
 

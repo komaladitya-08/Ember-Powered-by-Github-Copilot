@@ -205,36 +205,45 @@ Ember stops and asks before a command that:
   -C"$d" cmd`), which may hold the command it runs; only `xargs -P` and `parallel -j` take a count there (`xargs
   -P$(nproc) cmd`).
 
-**Loops and `if` on a command line** in bash or sh run without a question only when the whole line is plain: then
-`if`, `then`, `else`, `fi`, `for`, `while`, `until`, `do` and `done` don't ask by themselves, and Ember judges every
-command inside them as if it were written out once, in the folder the line starts in. So `for i in 1 2 3; do echo
-$i; done`, `if [ -f package.json ]; then npm test; fi`, `until [ -f done.txt ]; do sleep 1; done` and `while read -r
-l; do echo "$l"; done <<< 'a b'` run. Anything else asks with the loop's own words ("Ember can't tell exactly what
+**Loops on a command line** in bash or sh always ask, whatever their body, as they did before: a line with `for`,
+`while`, `until` or `select` anywhere in it asks with the loop's own words ("Ember can't tell exactly what this
+does."), so `for i in 1 2 3; do echo $i; done` and `while read -r l; do echo "$l"; done <<< 'a b'` ask too. Ember
+judges a loop's body once, and a value from the loop's own list or a `read` can reach an option that nothing Ember
+judges looks at: `for f in --hard; do git reset $f; done` is `git reset --hard`. Ember's own folder named in a loop is
+still refused before anything asks (`for d in ~/.config/ember; do rm -rf "$d"; done`), the card still says what a
+dangerous command in the loop does ("Deletes a.log and b.log."), and a loop never runs with a Stop because your words
+asked for what it does. (A shell script's loops are read; below.)
+
+**An `if` on a command line** in bash or sh runs without a question only when the whole line is plain: then `if`,
+`then`, `elif`, `else` and `fi` don't ask by themselves, and Ember judges every command in it as if it were written
+out, in the folder the line starts in. So `if [ -f package.json ]; then npm test; fi` and `if git diff --quiet; then
+echo clean; else echo dirty; fi` run. Anything else asks with the `if`'s own words ("Ember can't tell exactly what
 this does."), whatever it does:
-- **a command in the line that asks.** `if [ -f x ]; then rm x; fi` asks, and a loop never runs with a Stop because
-  your words asked for what it does: with "delete the build folder", `while true; do rm -rf build; cd ..; done` asks.
-- **a folder change** (`cd`, `pushd`, `popd`) anywhere in the line, because the next pass would run somewhere Ember
-  didn't judge: `for i in 1 2; do cat .config/ember/settings.json; cd ..; done` asks.
+- **a command in the line that Ember says anything about**, one that would ask or not. `if [ -f x ]; then rm x; fi`
+  asks, and so does `if true; then echo hi > out.txt; fi` even when out.txt isn't there (written out, `echo hi >
+  out.txt` runs then); an `if` never runs with a Stop because your words asked for what it does: with "delete the
+  build folder", `if [ -d build ]; then rm -rf build; fi` asks.
+- **a folder change** (`cd`, `chdir`, `pushd`, `popd`) anywhere in the line: `if [ -d x ]; then cd x; fi` asks.
 - **a variable set** anywhere in the line, from text Ember sees or not (`x=…`, also in front of a command, `export`,
   `declare`, `typeset`, `local`, `readonly`, `printf -v`, `set`, `unset`, `shift`, `wait -p`, `exec`, `${x:=…}`), or a
-  file sourced (`source`, `.`): `for i in 1; do x=$(cat f); echo $x; done` and `if [ -f x ]; then y=1; fi` ask. A
-  `for` loop's own variable over written-out words and a `read` of written-out text (below) are the exceptions.
-- **a `[[ … ]]` test**, in a loop or an `if` or not: `if [[ -d build ]]; then make; fi` asks. (In a script, a plain
-  one is read; below.)
-- **text Ember can't see.** A `read`, `mapfile`, `readarray`, `select` or `getopts`, in a loop or not, asks ("It works
-  on text Ember can't see.") whatever its variables are used for afterwards, unless it reads its own input and that is
-  a here-string or here-document of written-out text (`read -r a b <<< 'x y'`, or its loop's `done <<< 'a b'` or
-  `done <<'EOF'`): a file (`done < list.txt`, `read -r l < f`), a pipe (`cat list | while read -r d`), another
-  descriptor (`read -u 3`, `read <&3`), a substitution or a variable (`<<< "$d"`, `<<< "$HOME"`) all ask, and so does
-  a `for` loop whose list has any word that isn't written out (a pattern such as `*.log`, a variable, `~`, `{1..3}`, a
-  substitution, `"$@"`). `IFS` in front of a loop's or an `if`'s `read` changes only how that `read` splits the line
-  (`while IFS= read -r l`); in front of any other command it asks.
+  file sourced (`source`, `.`): `if x=$(cat f); then echo $x; fi` and `if [ -f x ]; then y=1; fi` ask. A `read` of
+  written-out text (below) is the exception.
+- **a `[[ … ]]` test**, in an `if` or not: `if [[ -d build ]]; then make; fi` and `[[ -d build ]] && make` ask. (In a
+  script, a plain one is read; below.)
+- **text Ember can't see.** A `read`, `mapfile`, `readarray`, `select` or `getopts`, in an `if`, a loop or neither,
+  asks ("It works on text Ember can't see.") whatever its variables are used for afterwards, unless it reads its own
+  input and that is a here-string or here-document of written-out text (`read -r a b <<< 'x y'`, `if read -r l <<<
+  'a b'; then echo "$l"; fi`): a file (`read -r l < f`, `done < list.txt`), a pipe (`cat list | while read -r d`),
+  another descriptor (`read -u 3`, `read <&3`), a substitution or a variable (`<<< "$d"`, `<<< "$HOME"`) all ask, and
+  a loop's card says so too when its list has any word that isn't written out (a pattern such as `*.log`, a variable,
+  `~`, `{1..3}`, a substitution, `"$@"`). `IFS` in front of a loop's or an `if`'s `read` changes only how that `read`
+  splits the line (`if IFS= read -r l <<< 'a b'`); in front of any other command it asks.
 
-Ember's own folder named in sight is refused before any of this (`for d in ~/.config/ember; do rm -rf "$d"; done`).
-zsh's, PowerShell's and cmd's `if` and `for` always ask, and so do a loop in a shell the command starts (`bash -c
-'…'`), a loop whose variable is `PATH` or another that changes how commands are found, `case`, functions and `{ … }`
-groups. A variable set after `then`, `do`, `else`, `!` or `time` is judged as one set at the start of a command: `if
-true; then LD_PRELOAD=./x.so ls; fi` asks, as `LD_PRELOAD=./x.so ls` does.
+Ember's own folder named in sight is refused before any of this. zsh's, PowerShell's and cmd's `if` and `for` always
+ask, and so do an `if` in a shell the command starts (`bash -c '…'`), `case`, functions and `{ … }` groups. A loop
+whose variable is `PATH` or another that changes how commands are found says so on its card too ("It changes how
+commands are found or run."). A variable set after `then`, `do`, `else`, `!` or `time` is judged as one set at the
+start of a command: `if true; then LD_PRELOAD=./x.so ls; fi` asks, as `LD_PRELOAD=./x.so ls` does.
 
 **Shell scripts are read first.** When a command runs a shell script (`sh deploy.sh`, `bash t.sh`, `source env.sh`,
 `./t.sh`, `powershell -File t.ps1`, `& .\t.ps1`, `cmd /c t.bat`, and the same behind `env`, `nice`, `timeout` and the

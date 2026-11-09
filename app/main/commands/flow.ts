@@ -756,7 +756,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const real = new Map<string, string>();
   probe.forEach((p, i) => { const r = found[i].real; if (r !== null && r !== p) real.set(p, r); });
   if (real.size) cls = j.classifyCommand(a.command, shell, { ...cctx, real });
-  // An sh or bash loop or `if` asks only for what its commands do, as in a script (commands-remote-2).
+  // An sh or bash `if` asks only for what its commands do, as in a script; a loop asks as on main (commands-remote-2, c7-1).
   cls = withoutReadFlow(cls, shell);
 
   // Step 6: the branch facts a push's announcement needs.

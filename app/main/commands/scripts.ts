@@ -190,8 +190,9 @@ async function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 /**
  * The classifier reads an sh or bash script's if, then, else, for, while, until, do and done as words it can't follow,
  * though it classifies every command in them (a condition, a loop's body, a substitution in its list) and leaves a
- * variable in a file argument unresolved (which asks): inside such a script, or on such a command line, these words
- * alone don't make it ask (review #27, commands-remote-2; readThrough). A plain `[[ … ]]` test doesn't either (plainTest). case, functions, traps, select and `{ … }` groups
+ * variable in a file argument unresolved (which asks): inside such a script, or in an `if` on such a command line (a
+ * loop there always asks: withoutReadFlow), these words alone don't make it ask (review #27, commands-remote-2;
+ * readThrough). A plain `[[ … ]]` test doesn't either (plainTest). case, functions, traps, select and `{ … }` groups
  * (whose commands the classifier doesn't read) still ask, and so do zsh's flow words (its short forms run the command
  * after the condition: `if [[ -n x ]] rm -rf ~`) and PowerShell's and cmd's if and for, whose blocks the classifier
  * doesn't read inside.
@@ -201,6 +202,11 @@ const SCRIPT_FLOW = new Set([
   "unclear.do", "unclear.done", "unclear.in",
 ]);
 const FLOW_SHELLS: ReadonlySet<ShellId> = new Set<ShellId>(["sh", "bash"]);
+/**
+ * A loop's own words (`for`, `while`, `until`, `do`, `done`; select and case ask by their own): a command line with any
+ * of them keeps every flow word and asks, as on main, whatever the loop's body is (withoutReadFlow, commands-c7-1).
+ */
+const LOOP_FLOW: ReadonlySet<string> = new Set(["unclear.for", "unclear.while", "unclear.until", "unclear.do", "unclear.done", "unclear.in"]);
 /** `[[ … ]]` operators whose operands bash evaluates as arithmetic or reads as a variable's name: a `$(…)` in a subscript runs. */
 const TEST_RUNS = new Set(["-eq", "-ne", "-lt", "-le", "-gt", "-ge", "-v", "-R"]);
 
@@ -230,15 +236,20 @@ export function readThrough(f: Finding, got: Classification, shell: ShellId): bo
 }
 
 /**
- * A command line's classification without the flow words Ember reads through (readThrough): a loop or an `if` on an
- * sh or bash command line whose commands all run without a question runs as they would written out
- * (commands-remote-2). Anything else keeps them and asks as on main, where every loop and `if` asked: a command in the
- * line that asks (a dangerous one the user's words asked for is never announced from inside a loop: commands-b7-2),
- * a `[[ … ]]` test (main reads one through only in a script: commands-b7-4), or a line that sets a variable or changes
- * the folder (holdsFlow), since a body is judged once, in the folder and with the values the line starts with
- * (commands-b7-1, b7-3). A classification that doesn't say (no holdsFlow) keeps them.
+ * A command line's classification without the flow words Ember reads through (readThrough): an `if` on an sh or bash
+ * command line with no other finding runs as its commands would written out (commands-remote-2). A line
+ * with any loop (for, while, until; select asks by its own word) keeps them and asks, as on main, whatever its body:
+ * the classifier judges a body once, and what it knows of a loop's list or a read's text serves only Ember's own
+ * refusal, so a written-out list can carry a value past a program's row (`for f in --hard; do git reset $f; done`:
+ * commands-c7-1). Anything else keeps them and asks as on main, where every loop and `if` asked: a command in the line
+ * that has any finding (one that asks, or an overwrite whether or not the file is there; a dangerous one the user's
+ * words asked for is never announced from inside an `if`: commands-b7-2), a `[[ … ]]` test (main reads one through only
+ * in a script: commands-b7-4), or a line that sets a variable or changes the folder (holdsFlow), since the commands
+ * are judged with the values and in the folder the line starts with (commands-b7-1, b7-3). A classification that
+ * doesn't say (no holdsFlow) keeps them. Ember's own refusal is the classifier's, so it comes first either way.
  */
 export function withoutReadFlow(cls: Classification, shell: ShellId): Classification {
+  if (cls.findings.some(f => LOOP_FLOW.has(f.rule))) return cls;
   const findings = cls.findings.filter(f => !(SCRIPT_FLOW.has(f.rule) && readThrough(f, cls, shell)));
   const x = cls as Partial<ClassificationExtra>;
   if (findings.length === cls.findings.length || findings.length > 0 || x.holdsFlow !== false) return cls;
