@@ -99,7 +99,7 @@ it.skipIf(process.env.EMBER_CONVERSATION_LIVE !== "1")("keeps the conversation a
   }
 }, 240_000);
 
-it.skipIf(process.env.EMBER_CONVERSATION_LIVE !== "1")("keeps an unsent draft across closing Home, clears it on a privacy reset while hidden, and still quits (home-r7-1)", async () => {
+it.skipIf(process.env.EMBER_CONVERSATION_LIVE !== "1")("keeps a safe Home title and unsent draft across closing, clears on privacy reset and still quits (home-r7-1, listening-refresh-1)", async () => {
   const requireCjs = createRequire(import.meta.url);
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), "ember-home-draft-"));
   fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }));
@@ -111,6 +111,8 @@ it.skipIf(process.env.EMBER_CONVERSATION_LIVE !== "1")("keeps an unsent draft ac
     await expect.poll(() => !!page(), { timeout: 20_000 }).toBe(true);
     const home = page()!;
     await home.locator("#conversation-message").waitFor({ state: "visible", timeout: 20_000 });
+    expect(await home.title()).toBe("Companion home");
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes("/renderer/home/index.html"))!.getTitle())).toBe("Companion home");
     await home.locator("#conversation-message").fill("My private unsent draft");
     const id = await app.evaluate(({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes("/renderer/home/index.html"))!;
@@ -121,6 +123,8 @@ it.skipIf(process.env.EMBER_CONVERSATION_LIVE !== "1")("keeps an unsent draft ac
     expect(await app.evaluate(({ BrowserWindow }, id) => !!BrowserWindow.fromId(id), id)).toBe(true);
     expect(await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.isVisible(), id)).toBe(false);
     await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)!.show(), id);
+    expect(await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)!.getTitle(), id)).toBe("Companion home");
+    expect(await home.title()).toBe("Companion home");
     expect(await home.locator("#conversation-message").inputValue()).toBe("My private unsent draft");
     await app.evaluate(({ BrowserWindow }, id) => {
       const win = BrowserWindow.fromId(id)!;

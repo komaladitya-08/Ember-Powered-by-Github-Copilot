@@ -362,6 +362,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   text (companion-v7-2). Its window and page title are “Companion request”, so opening it does not read the wake name
   into the microphone (voice-listening-r6-2, voice-listening-q6-1). Voice Match failure lines use the first person and
   also update that focused description (voice-listening-r6-3).
+- **Home's window title** is “Companion home”, removing the wake name from the controlled native title and document
+  accessibility root. Native reader announcement order and application names remain device checks. The visible
+  Ember heading and its accessible Home name stay;
+  self-window protection recognises the unique title and legacy titles (listening-refresh-1).
 - **Composer progress** says “Thinking… The reply will appear above.” to avoid reading the wake name, including its
   possessive, into an idle microphone (voice-listening-r6-1).
 - **Setup focus** uses name-free accessible headings, while visible headings keep Ember's name. The Start result

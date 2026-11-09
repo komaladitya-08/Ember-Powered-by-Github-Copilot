@@ -781,6 +781,16 @@ describe("policy: review round 6", () => {
     expect(JSON.parse(sunk[0]).value).toBeUndefined();
   });
 
+  it("keeps current and legacy own titles private without claiming Files' Home (listening-refresh-1)", () => {
+    for (const name of ["Companion home", "Companion request", "Ember", "Ember overlay", "Ask Ember", "Ember's desk", "Ember microphone", "Ember commands"]) {
+      expect(isEmberWindow({ app: "", name, pid: null }, 4242), name).toBe(true);
+      expect(isEmberWindow({ app: "nautilus", name, pid: 3100 }, 4242), name).toBe(false);
+    }
+    expect(isEmberWindow({ app: "nautilus", name: "Home", pid: null }, 4242)).toBe(false);
+    expect(isEmberWindow({ app: "nautilus", name: "Home", pid: 3100 }, 4242)).toBe(false);
+    expect(isEmberWindow({ app: "nautilus", name: "Home", pid: 4242 }, 4242)).toBe(true);
+  });
+
   it("a window only titled “Ember” in another program (Files showing ~/Ember) isn't Ember's own (DK6-1)", () => {
     expect(isEmberWindow({ app: "nautilus", name: "Ember", pid: 3100 }, 4242)).toBe(false);
     expect(isEmberWindow({ app: "org.gnome.Nautilus", name: "ember", pid: 3100 }, 4242)).toBe(false);
