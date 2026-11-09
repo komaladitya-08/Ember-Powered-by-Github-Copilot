@@ -328,6 +328,25 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 30_000);
 
+  it("keeps a stopped edited request and its displaced draft exactly once (home-c5-1)", async () => {
+    const { page } = await home(exchange(4));
+    try {
+      const field = page.locator("#conversation-message");
+      await field.fill("My unsent draft");
+      await page.locator("#conversation li.you").last().getByRole("button", { name: /Edit your message/ }).click();
+      await field.fill("Edited request waiting to go");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => field.inputValue()).toBe("My unsent draft");
+      await page.evaluate(() => {
+        window.__home.emit("onConversationTurn", { turn: "thinking" });
+        window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" });
+      });
+      expect(await field.inputValue()).toBe("Edited request waiting to go\n\nMy unsent draft");
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "stopped" }));
+      expect(await field.inputValue()).toBe("Edited request waiting to go\n\nMy unsent draft");
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("keeps the composer and its Send in view while a reply grows above it, and leaves alone someone reading elsewhere (home-1)", async () => {
     const seed = exchange(12);
     const { page, errors } = await home(seed);
