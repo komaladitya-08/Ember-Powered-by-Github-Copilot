@@ -600,8 +600,9 @@ describe("the ask box", () => {
     // Read all carries the suggestions over to the whole answer (companion-v6-1), and the overlay's word that its end
     // has shown changes what the box offers (companion-v6-2).
     expect(main).toMatch(/const suggest = expandedSuggest\(lastState\.suggest, lastState\.bubble, full\);\n\s+setState\(\{ talking: false, bubble: expandedBubble\(lastState\.bubble, full\), \.\.\.\(suggest !== lastState\.suggest \? \{ suggest \} : \{\}\) \}\);/);
+    // The overlay's report is read only once its sender is known to be the overlay (companion-y6-2).
     const reported = main.slice(main.indexOf("ipcMain.on(OVERLAY.bubble,"));
-    expect(reported.slice(0, reported.indexOf("\n  });"))).toMatch(/const rect = bubbleBoxOf\(raw\);\n\s+if \(!overlay\?\.owns\(event\.sender\) \|\| rect === undefined\) return;[\s\S]+if \(\(overlay\.bubbleRect\(\)\?\.endShown === true\) !== ended\) askOffersChanged\(\);/);
+    expect(reported.slice(0, reported.indexOf("\n  });"))).toMatch(/\{\n\s+if \(!overlay\?\.owns\(event\.sender\)\) return;\n\s+const rect = bubbleBoxOf\(raw\);\n\s+if \(rect === undefined\) return;[\s\S]+if \(\(overlay\.bubbleRect\(\)\?\.endShown === true\) !== ended\) askOffersChanged\(\);/);
     const open = main.slice(main.indexOf("const openAsk = "), main.indexOf("let audit: AuditLog"));
     expect(open).toMatch(/suggestions: askOffers\(\)/);
     expect(open).not.toMatch(/personalRef\.current\(\)/);

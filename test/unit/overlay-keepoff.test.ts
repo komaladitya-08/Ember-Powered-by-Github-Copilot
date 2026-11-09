@@ -343,10 +343,10 @@ describe("where Ember's bubble is, for the Ask box to open beside it (companion-
     expect(m.bubbleRect()).toBeNull();
   });
 
-  it("is told by the overlay page only, as a box or null (main.ts checks the sender and the shape)", async () => {
+  it("is told by the overlay page only, as a box or null (main.ts checks the sender before it reads the report, then its shape: companion-y6-2)", async () => {
     const { readFileSync } = await import("node:fs");
     const main = readFileSync("app/main/main.ts", "utf8");
-    expect(main).toMatch(/ipcMain\.on\(OVERLAY\.bubble, \(event, raw: unknown\) => \{\n\s+const rect = bubbleBoxOf\(raw\);\n\s+if \(!overlay\?\.owns\(event\.sender\) \|\| rect === undefined\) return;/);
+    expect(main).toMatch(/ipcMain\.on\(OVERLAY\.bubble, \(event, raw: unknown\) => \{\n\s+if \(!overlay\?\.owns\(event\.sender\)\) return;\n\s+const rect = bubbleBoxOf\(raw\);\n\s+if \(rect === undefined\) return;/);
     expect(main).toContain("bubble: () => overlay?.bubbleRect() ?? null,");
   });
 });

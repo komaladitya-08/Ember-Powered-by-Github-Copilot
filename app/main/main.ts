@@ -2756,8 +2756,9 @@ function start(): void {
     askWindow.keepClear();
   });
   ipcMain.on(OVERLAY.bubble, (event, raw: unknown) => {
+    if (!overlay?.owns(event.sender)) return;
     const rect = bubbleBoxOf(raw);
-    if (!overlay?.owns(event.sender) || rect === undefined) return;
+    if (rect === undefined) return;
     const ended = overlay.bubbleRect()?.endShown === true;
     overlay.setBubble(event.sender, rect);
     // An answer opened in full showed its end, or another bubble came: what answers it is offered or goes (companion-v6-2).
