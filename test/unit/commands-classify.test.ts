@@ -361,6 +361,31 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(decided("d=~/.config/ember; printf \"%s\\0\" \"$d\" | xargs -0 rm -rf").cls.refuse?.rule).toBe("ember.path");
   });
 
+  it("refuses a NUL-separated read loop over Ember's folder or settings as the line-separated one is, never asking it (commands-y6-1)", () => {
+    const decided = (cmd: string) => runCase({ cmd, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" });
+    for (const [cmd, refusal] of [
+      ["printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
+      ["printf '/home/ana/.config/ember\\0' | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
+      ["printf '%s\\0' ~/.config/ember build | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
+      ["printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do cat \"$f\"; done", READ],
+      ["printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do : > \"$f\"; done", CHANGE],
+      ["printf '%s\\n' ~/.config/ember | while read -r d; do rm -rf \"$d\"; done", CHANGE],
+      // The shell's own `read` drops a NUL, so what it reads is the two halves together.
+      ["printf '/home/ana/.config/em\\0ber\\n' | while read -r d; do rm -rf \"$d\"; done", CHANGE],
+    ] as const) {
+      const { cls } = decided(cmd);
+      expect(cls.refuse?.rule, cmd).toBe("ember.path");
+      expect(cls.refuse?.says, cmd).toBe(refusal);
+    }
+    // In the project it asks as before, and no line of its card holds a NUL.
+    for (const cmd of ["printf '%s\\0' build dist | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", "printf 'build\\0dist\\0' | xargs rm -rf", "printf '%s\\0' build | xargs -0 rm -rf"]) {
+      const { cls, decision } = decided(cmd);
+      expect(cls.refuse, cmd).toBeNull();
+      expect(decision.verdict, cmd).toBe("ask");
+      expect(decision.says.join(" ").includes("\0"), cmd).toBe(false);
+    }
+  });
+
   it("keeps a download a download through a cut or a default, and refuses Ember's folder that one could name (commands-remote-w5-1)", () => {
     // Each step of a task in turn, the downloads carried from one to the next as the flow carries them.
     const steps = (ctx: ContextName, ...cmds: string[]): string[] => {
