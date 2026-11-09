@@ -23,7 +23,8 @@ Ember's desk, a private display where Ember can work out of your way, is Linux-o
   but takes no screenshots and doesn't borrow the mouse or keyboard.
 - About 1 GB of disk for Ember and its standard speech models, and each optional extra's size again if you turn it on
   (**Computers without internet access** lists them).
-- About 600 MB of memory while Ember is idle and listening, and about 550 MB more with **Hear me more clearly**.
+- About 790–930 MB of memory while Ember is idle and listening, and about 550 MB more with **Hear me more clearly**.
+  The lower figure uses native listening; the upper figure uses WebAssembly listening where the native backend can't run.
 - A microphone only for “Hey Ember”: everything else works typed.
 
 ## Download

@@ -961,7 +961,8 @@ the automated tests don't stand in for them.
 #### Install and docs
 
 - **The README says what Ember needs before you download it, and what its first start asks:** a Copilot account (or
-  your own provider), GNOME on Xorg, about 1 GB of disk and 600 MB of memory, then the welcome's six steps and the
+  your own provider), GNOME on Xorg, about 1 GB of disk and 790–930 MB of memory while idle and listening (native
+  and WebAssembly listening respectively), then the welcome's six steps and the
   ask, stop and settings keys on each kind of computer. It says how to start the AppImage, which adds no apps-menu
   entry, that Kokoro and Supertonic are Windows and macOS voices (on RHEL, Ember's own voice is Kitten Nano), and
   where Ember's log is when you report a problem. Its sign-in and own-provider steps match first run and Settings ›
