@@ -930,6 +930,9 @@ regression alongside the Electron smoke.
   doesn't load falls back to WebAssembly in the voice process without it stopping. A `voice.model_wasm_fallback` (a
   model made on WebAssembly) fails `--native` too, and so does a run whose voice process never got ready. A caller's own
   `EMBER_SHERPA_CAPI` or `EMBER_VOICE_BACKEND` is never passed on.
+  With `--compositor --settle 70 --sample 30` on 4 shared vCPUs (2026-11-08), the listening process took 238–244 MB on
+  the C API against 402–403 MB on WebAssembly: 695–785 MB and 14.2–15.4 % of a core in all, against 942–947 MB and
+  14.3–15.5 % (Ember's other processes vary by about 90 MB from run to run).
 - The voice process must listen from the sample's start to its end, or the total leaves it out: the script takes the
   process list as the sample begins and reads each process's memory as it ends, and reads Ember's log at both points.
   The first line then says "not throughout the sample" and the JSON's `listeningGap` says why in three cases. No voice
@@ -938,9 +941,6 @@ regression alongside the Electron smoke.
   microphone went quiet). Or none is in the rows at the end. `--native` fails then, and so does any run with a budget;
   without one the run only says so. A page that closes during the sample (a restart closes the microphone's) is left
   out of the pages; it used to leave the run waiting for ever.
-  With `--compositor --settle 70 --sample 30` on 4 shared vCPUs (2026-11-08), the listening process took 238–244 MB on
-  the C API against 402–403 MB on WebAssembly: 695–785 MB and 14.2–15.4 % of a core in all, against 942–947 MB and
-  14.3–15.5 % (Ember's other processes vary by about 90 MB from run to run).
 - `--max-cpu 16 --max-pss 850` with `--native`, and `--max-cpu 16 --max-pss 950` without it, are the budget for a
   change: past either figure it says so and exits 1. Each sits above what CI measures so that only a large regression
   fails it, never noise; the target is docs/ASSISTANT.md's. CI's `el8` job runs both as its last steps, past the first
