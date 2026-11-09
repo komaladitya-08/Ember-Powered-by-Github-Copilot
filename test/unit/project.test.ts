@@ -195,6 +195,16 @@ it("holds back a deploy script and a README that give a password to a program's 
   expect(await prompt([safe])).toContain("mysqldump -u root -p");
 });
 
+it("sends a build guide's Makefile lines, a build script and a CMakeLists that link MySQL, and holds back one that prints an htpasswd line (memory-x6-4)", async () => {
+  const make = await file("BUILD.md", "# Building\n\nThe Makefile:\n\n    CC = gcc\n    CFLAGS = -Wall -O2 -I/usr/include/mysql -pthread\n    LDLIBS = -lmysqlclient\n");
+  const build = await file("build.sh", "#!/bin/sh\n# Build the reporting tool against the system MySQL client library.\ngcc -Wall -O2 -I/usr/include/mysql -pthread -o report main.c db.c -lmysqlclient\n");
+  const cmake = await file("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(report C)\nadd_executable(report main.c db.c)\ntarget_include_directories(report PRIVATE /usr/include/mysql)\ntarget_link_libraries(report mysqlclient -pthread)\n");
+  const result = await prompt([make, build, cmake]);
+  for (const line of ["-I/usr/include/mysql -pthread", "target_link_libraries(report mysqlclient -pthread)"]) expect(result).toContain(line);
+  const auth = await file("auth.sh", "#!/bin/sh\nhtpasswd -nbB admin Wint3r!Sh0p > .htpasswd\n");
+  await expect(prompt([auth])).rejects.toThrow(new Error("auth.sh appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+});
+
 it("sends a login form, a getpass CLI and an OAuth client, and takes a request that names a type, which hold no password (memory-r4-2, integrations-r4-1)", async () => {
   const form = await file("login.html", '<form method="post" action="/login">\n  <label for="username">Username:</label>\n  <input type="text" id="username" name="username">\n  <label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n</form>\n');
   const cli = await file("cli.py", 'import getpass\n\ndef main():\n    user = input("Username: ")\n    password = getpass.getpass("Password: ")\n    return user, password\n');

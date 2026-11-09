@@ -64,27 +64,40 @@ const VALUE_PATTERNS: readonly RegExp[] = [
 
 /**
  * A value that is a password itself, never a variable, a template or a placeholder: not `$DB_PASS`, `%PW%`, `{{ pw }}`,
- * `<password>`, `*` (a prompt), capitals alone (`-pPASSWORD` in a README) or a word for one (`yourpassword`).
+ * `<password>`, `*` (a prompt), capitals alone (`-pPASSWORD` in a README) or a word for one (`yourpassword`), nor an
+ * unquoted redirection (`> .htpasswd`: memory-x6-4).
  */
-const OPTION_VALUE = String.raw`(?![$%{<*[])(?![A-Z][A-Z_]*(?![^\s"'|;&]))(?!(?:your[-_]?|my[-_]?)?(?:password|passwd|pass|pwd|secret|token|key)(?![^\s"'|;&]))[^\s"'|;&]+`;
+const OPTION_VALUE = String.raw`(?![$%{<*[])(?!(?<!["'])>)(?![A-Z][A-Z_]*(?![^\s"'|;&]))(?!(?:your[-_]?|my[-_]?)?(?:password|passwd|pass|pwd|secret|token|key)(?![^\s"'|;&]))[^\s"'|;&]+`;
 /** What may stand between a program and its option on one line: other words, at most 200 characters, never a pipe or `;`. */
 const ARGS = String.raw`(?:[ \t]+[^\s|;&]+){0,12}?`;
+/**
+ * MySQL's and MariaDB's clients, whose `-p` is a password, as a command word: alone or with its folder, after a space,
+ * a quote or a shell's separator (`sudo mysql`, `docker exec db mysql`, `$(mysql …)`), never a library, a folder or
+ * another program in a build line (`-I/usr/include/mysql -pthread`, `mysqlclient -pthread`, `mysql_config --cflags
+ * -pipe`, `--user=mysql -pid-file=…`): memory-x6-4.
+ */
+const MYSQL_CLIENT = String.raw`(?<![^\s;&|(\`"'])(?:\.{0,2}\/(?:[\w.-]+\/)*)?(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mysqlshow|mysqlslap|mysqlpump|mysqlbinlog|mysqlsh|mariadb(?:-(?:dump|admin|import|check|show|slap|binlog))?)(?:\.exe)?(?=[ \t])`;
+/** htpasswd's options and the numbers some take (`-nbB -C 10`), one of them with `b` (the password on the line). */
+const HTPASSWD_OPTIONS = String.raw`(?=(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)*?[ \t]+-[A-Za-z]*b)(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)+`;
+/** A word that is no shell operator (`>`, `<`, `|`). */
+const HTPASSWD_WORD = String.raw`(?![<>|])\S+`;
 /**
  * Programs whose short option carries a password (safety-privacy-c5-2): each pattern's first group is kept, its second is
  * the value's quote and its third the value, which is hidden. `mysql -pWint3r!Sh0p` and `mysql -p'…'` (attached; a
  * bare `-p` prompts), `curl -u admin:…` and `--user admin:…` (after the colon), `docker login -p …`, `mongo -p …`,
- * `sshpass -p …`, `redis-cli -a …`, `smbclient -U admin%…`, `htpasswd -b file user …`, `openssl … -k …` and `-pass
- * pass:…`, `net use \\srv\share … /user:admin …`, and `echo '…' | sudo -S`.
+ * `sshpass -p …`, `redis-cli -a …`, `smbclient -U admin%…`, `htpasswd -b file user …` and `htpasswd -nb user …` (to its
+ * output: no file), `openssl … -k …` and `-pass pass:…`, `net use \\srv\share … /user:admin …`, and `echo '…' | sudo -S`.
  */
 const OPTION_PASSWORDS: readonly RegExp[] = [
-  new RegExp(String.raw`(\b(?:mysql\w*|mariadb\w*)${ARGS}[ \t]+-p)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(${MYSQL_CLIENT}${ARGS}[ \t]+-p)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\b(?:curl|wget)${ARGS}[ \t]+(?:-u|--user)(?:[ \t]+|=)["']?[^\s"':|;&]*:)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\b(?:docker|podman|nerdctl|buildah|helm)${ARGS}[ \t]+login${ARGS}[ \t]+(?:-p|--password)[ \t]+)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\b(?:mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport)${ARGS}[ \t]+-p[ \t]*)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\bsshpass${ARGS}[ \t]+-p[ \t]*)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\bredis-cli${ARGS}[ \t]+-a[ \t]+)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\bsmbclient${ARGS}[ \t]+-U[ \t]*["']?[^\s"'%|;&]+%)(["']?)(${OPTION_VALUE})\2`, "g"),
-  new RegExp(String.raw`(\bhtpasswd(?:[ \t]+-\w+)*[ \t]+-\w*b\w*(?:[ \t]+-\w+)*[ \t]+\S+[ \t]+\S+[ \t]+)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\bhtpasswd(?=(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)*?[ \t]+-[A-Za-z]*n)${HTPASSWD_OPTIONS}[ \t]+${HTPASSWD_WORD}[ \t]+)(["']?)(${OPTION_VALUE})\2`, "g"),
+  new RegExp(String.raw`(\bhtpasswd(?!(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)*?[ \t]+-[A-Za-z]*n)${HTPASSWD_OPTIONS}[ \t]+${HTPASSWD_WORD}[ \t]+${HTPASSWD_WORD}[ \t]+)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\bopenssl${ARGS}[ \t]+(?:-k[ \t]+|-pass(?:in|out)?[ \t]+pass:))(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\bnet[ \t]+use${ARGS}[ \t]+/user:\S+[ \t]+)(["']?)(${OPTION_VALUE})\2`, "gi"),
   new RegExp(String.raw`(\bnet[ \t]+use(?:[ \t]+[A-Za-z]:)?[ \t]+\\\\\S+[ \t]+)(["']?)((?!/)${OPTION_VALUE})\2`, "gi"),

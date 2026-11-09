@@ -84,6 +84,28 @@ describe("redactSecrets", () => {
   ])("leaves %j alone: a prompt, a variable, a placeholder or another program's option (safety-privacy-c5-2)", text => {
     expect(redactSecrets(text)).toBe(text);
   });
+  // htpasswd printing to its output takes no file, and a MySQL client is a command word, never a library or a path in
+  // a build line (memory-x6-4).
+  it.each([
+    ["htpasswd -nb admin Wint3r!Sh0p", `htpasswd -nb admin ${SECRET_HIDDEN}`],
+    ["htpasswd -nbB admin Wint3r!Sh0p > .htpasswd", `htpasswd -nbB admin ${SECRET_HIDDEN} > .htpasswd`],
+    ["htpasswd -nbB -C 10 admin Wint3r!Sh0p", `htpasswd -nbB -C 10 admin ${SECRET_HIDDEN}`],
+    ["htpasswd -bc .htpasswd admin Wint3r!Sh0p", `htpasswd -bc .htpasswd admin ${SECRET_HIDDEN}`],
+    ["docker exec -i db mysql -uroot -pWint3r!Sh0p shop < dump.sql", `docker exec -i db mysql -uroot -p${SECRET_HIDDEN} shop < dump.sql`],
+    ["sudo mysql -pWint3r!Sh0p", `sudo mysql -p${SECRET_HIDDEN}`], ["/usr/bin/mysqldump -pWint3r!Sh0p shop", `/usr/bin/mysqldump -p${SECRET_HIDDEN} shop`],
+    ["mariadb-dump -u root -pWint3r!Sh0p shop", `mariadb-dump -u root -p${SECRET_HIDDEN} shop`],
+    ['sh -c "mysql -u root -pWint3r!Sh0p shop"', `sh -c "mysql -u root -p${SECRET_HIDDEN} shop"`],
+  ])("hides the password in %j (memory-x6-4)", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+  it.each([
+    ["CFLAGS = -Wall -O2 -I/usr/include/mysql -pthread"], ["gcc main.c `mysql_config --cflags --libs` -pthread -o app"],
+    ["target_link_libraries(report mysqlclient -pthread)"], ["gcc -I/usr/include/mysql -pedantic -Wall -o app main.c"],
+    ["g++ -std=c++17 -I/usr/include/mariadb -pipe -c db.cpp"], ["pip install mysqlclient -pre"], ["LIBS = $(mysql_config --libs) -pthread -lm"],
+    ["mysqld_safe --user=mysql -pid-file=/run/mysqld.pid"], ["Install mysql-server and then run make -pj4"], ["htpasswd -nB admin"],
+  ])("leaves %j alone: a build line or a prompt, which names a MySQL library, never a client's password (memory-x6-4)", text => {
+    expect(redactSecrets(text)).toBe(text);
+  });
 
   it("leaves ordinary text alone", () => {
     for (const text of ["sk-learn is scikit-learn", "risk-assessment-for-the-quarterly-planning-2026", "task-1234567890abcdefghijklmnopqrstuvwxyz", "hf_short", "sk_live_short", "build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value", "--compass=north", "--max-passes=3"]) {
