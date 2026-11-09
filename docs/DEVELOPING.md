@@ -2271,8 +2271,10 @@ node scripts/commands/compare.mjs --baseline ../ember-audit-baseline --current .
 Only the current checkout needs `npm ci`. The baseline must be that exact commit with all tracked files unchanged. Untracked and ignored files are refused
 outside the intentional `node_modules` and `.cache` roots, since source or build configuration could shadow imports.
 The tool reads all four baseline corpora, current additions, generated adversarial forms and the script/sequence
-regressions in `test/fixtures/commands/comparison.json`; `--extra-cases <json>` adds review probes. It never runs a
-corpus command: the local flow uses a scripted runner and denies every approval. Ordinary runs, task-directory
+regressions in `test/fixtures/commands/comparison.json`; `--extra-cases <json>` adds review probes.
+Portable independent review inputs are included by default, so the command above reproduces the seventh-round
+audit's 7,213 cases without `--extra-cases`. It never runs a corpus command: the local flow uses a scripted runner
+and denies every approval. Ordinary runs, task-directory
 changes, questions and refusals are recorded separately, and each expected stage of a multi-call sequence is compared, including its exact input command. Truncated or
 mislabelled sequences fail rather than borrowing the combined command's job-count exception.
 `summary.json` gives counts, `comparison.json` gives differences and unknown outcomes, and the two bundles and full
