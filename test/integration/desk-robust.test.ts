@@ -19,7 +19,8 @@ import { DESK } from "../../app/shared/desk";
 import { deskAgentScript } from "../unit/desk-agent-build";
 import type { Logger } from "../../app/main/logger";
 
-const h = vi.hoisted(() => ({ ipc: null as unknown as import("node:events").EventEmitter, windows: [] as { webContents: object }[] }));
+const h = vi.hoisted(() => ({ ipc: null as unknown as import("node:events").EventEmitter, windows: [] as { webContents: object }[],
+  handlers: new Map<string, (event: { sender: object }) => unknown>() }));
 vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
   h.ipc = new EventEmitter();
@@ -39,7 +40,10 @@ vi.mock("electron", async () => {
     setBounds() {}
   }
   const area = { x: 0, y: 0, width: 1920, height: 1080 };
-  return { BrowserWindow, ipcMain: { on: (ch: string, fn: (...a: unknown[]) => void) => h.ipc.on(ch, fn) }, screen: { getPrimaryDisplay: () => ({ workArea: area }), getDisplayMatching: () => ({ workArea: area }) } };
+  return { BrowserWindow, ipcMain: {
+    on: (ch: string, fn: (...a: unknown[]) => void) => h.ipc.on(ch, fn),
+    handle: (ch: string, fn: (event: { sender: object }) => unknown) => h.handlers.set(ch, fn),
+  }, screen: { getPrimaryDisplay: () => ({ workArea: area }), getDisplayMatching: () => ({ workArea: area }) } };
 });
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -109,7 +113,7 @@ describe.skipIf(!available)("Ember's desk when things go wrong", () => {
     desk.stop();
   }, 60_000);
 
-  it.skipIf(!hasXev)("takes over with a German keyboard: the desk gets the characters the user typed", async () => {
+  it.skipIf(!hasXev)("takes over with a German keyboard after registering sender-checked desk reading (reliability-v7-test-1)", async () => {
     const { DeskView } = await import("../../app/main/desk/view");
     const desk = make(259);
     const place: DeskPlace = await open(desk);
@@ -125,6 +129,9 @@ describe.skipIf(!available)("Ember's desk when things go wrong", () => {
       return place.input.focusedWindow() === xev;
     }, 10_000)).toBe(true);
     const view = new DeskView(quiet);
+    const describe = h.handlers.get(DESK.describe);
+    expect(describe).toBeTypeOf("function");
+    await expect(describe!({ sender: {} })).rejects.toThrow("This window can't read Ember's desk.");
     view.show(place);
     const win = h.windows.at(-1)!;
     const send = (ch: string, v?: unknown) => h.ipc.emit(ch, { sender: win.webContents }, v);
