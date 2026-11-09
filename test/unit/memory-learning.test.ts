@@ -822,6 +822,40 @@ describe("“forget that”, the instruction check and the conversation's line",
     }
   });
 
+  it("leaves a request about what a program or a computer holds in memory to the conversation, and still answers one about me or my family (memory-x6-6)", () => {
+    for (const text of [
+      "Delete what my Python process allocated from memory", "Clear what my browser is holding from memory", "Remove where my files are cached from memory",
+      "Remove how my program caches images from memory", "Remove what I use for testing from memory", "Remove what my app cached from memory",
+      "Delete what my script loaded from memory", "Clear what my tabs use from memory", "Remove what I'm using from memory",
+    ]) {
+      expect(memoryAsk(text), text).toBeNull();
+      const off = learning({ inForce: () => false });
+      expect(off.l.intent(text, { own: true }), text).toBeNull();
+      expect(off.opened).not.toHaveBeenCalled();
+    }
+    for (const text of [
+      "Remove where I live from memory", "Remove what my wife likes from memory", "Delete where my sister lives from memory", "Remove who my manager is from memory",
+      "Remove when my birthday is from memory", "Remove what I like from memory", "Remove where I'm staying from memory",
+    ]) {
+      expect(memoryAsk(text), text).toBe("forget");
+    }
+  });
+
+  it("answers a forget about what I do, how I take something or what I use as a name in code while memory is off, and leaves one about what I use a program for to the conversation (memory-y6-6)", () => {
+    for (const text of [
+      "Remove what I do for a living from memory", "Remove what I do for work from memory", "Remove how I take my coffee from memory",
+      "Remove where I take my kids from memory", "Remove what I use as my nickname from memory",
+    ]) {
+      expect(memoryAsk(text), text).toBe("forget");
+      const off = learning({ inForce: () => false });
+      expect(off.l.intent(text, { own: true }), text).toBe(FORGET_OFF);
+      expect(off.opened).toHaveBeenCalledWith("list");
+    }
+    for (const text of ["Remove what I use for testing from memory", "Remove what I do in my browser from memory", "Remove how I use the cache from memory", "Remove what I take up in RAM from memory"]) {
+      expect(memoryAsk(text), text).toBeNull();
+    }
+  });
+
   it("adds no “I won't keep this” after a “remember” tag that recalls what we shared, and keeps it after a fact about me (memory-c5-2)", () => {
     const off = learning({ inForce: () => false });
     for (const text of [

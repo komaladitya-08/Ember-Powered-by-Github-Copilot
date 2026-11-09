@@ -195,6 +195,41 @@ it("holds back a deploy script and a README that give a password to a program's 
   expect(await prompt([safe])).toContain("mysqldump -u root -p");
 });
 
+it("sends a build guide's Makefile lines, a build script and a CMakeLists that link MySQL, and holds back one that prints an htpasswd line (memory-x6-4)", async () => {
+  const make = await file("BUILD.md", "# Building\n\nThe Makefile:\n\n    CC = gcc\n    CFLAGS = -Wall -O2 -I/usr/include/mysql -pthread\n    LDLIBS = -lmysqlclient\n");
+  const build = await file("build.sh", "#!/bin/sh\n# Build the reporting tool against the system MySQL client library.\ngcc -Wall -O2 -I/usr/include/mysql -pthread -o report main.c db.c -lmysqlclient\n");
+  const cmake = await file("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(report C)\nadd_executable(report main.c db.c)\ntarget_include_directories(report PRIVATE /usr/include/mysql)\ntarget_link_libraries(report mysqlclient -pthread)\n");
+  const result = await prompt([make, build, cmake]);
+  for (const line of ["-I/usr/include/mysql -pthread", "target_link_libraries(report mysqlclient -pthread)"]) expect(result).toContain(line);
+  const auth = await file("auth.sh", "#!/bin/sh\nhtpasswd -nbB admin Wint3r!Sh0p > .htpasswd\n");
+  await expect(prompt([auth])).rejects.toThrow(new Error("auth.sh appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+});
+
+it("holds back a Makefile recipe, a unit file and an upgrade script that give a MySQL client its password (memory-y6-1)", async () => {
+  const db = await file("DB.md", "# Database\n\n```make\ndb-reset:\n\t@mysql -u root -pWint3r!Sh0p shop < schema.sql\n```\n");
+  await expect(prompt([db])).rejects.toThrow(new Error("DB.md appears to contain a password, token or key on line 5. Remove that file or the value, then send again."));
+  const unit = await file("BACKUP.md", "[Service]\nType=oneshot\nExecStart=/usr/bin/mysqldump -u backup -pWint3r!Sh0p --all-databases\n");
+  await expect(prompt([unit])).rejects.toThrow(new Error("BACKUP.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const upgrade = await file("upgrade.sh", "#!/bin/sh\ncd /opt/lampp\nbin/mysql_upgrade -u root -pWint3r!Sh0p\n");
+  await expect(prompt([upgrade])).rejects.toThrow(new Error("upgrade.sh appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+});
+
+it("holds back a Wi-Fi note with the key after its state's full stop, and sends one with only the state (memory-y6-2)", async () => {
+  const wifi = await file("wifi.md", "# Wi-Fi\n\nPSK: rotated. It's BlueSky99! this month.\n");
+  await expect(prompt([wifi])).rejects.toThrow(new Error("wifi.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const state = await file("router.md", "# Router\n\nPSK is enabled on the router. WPA2-PSK, 5GHz.\n");
+  expect(await prompt([state])).toContain("PSK is enabled on the router");
+});
+
+it("holds back a network note with the key and the router's login after its settings, and sends the settings alone (memory-y6-3)", async () => {
+  const network = await file("network.md", "# Network\n\nWi-Fi: HomeNet / WPA2-PSK / 5GHz / BlueSky99!\nHome network: HomeNet / 192.168.1.1 / admin / Summer2024!\n");
+  await expect(prompt([network])).rejects.toThrow(new Error("network.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const router = await file("router.md", "# Network\n\nHome network: HomeNet / 192.168.1.1 / admin / Summer2024!\n");
+  await expect(prompt([router])).rejects.toThrow(new Error("router.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const settings = await file("settings.md", "# Network\n\nWi-Fi: HomeNet / WPA2-PSK / 5GHz\nHome network: HomeNet / 192.168.1.1 / admin\n");
+  expect(await prompt([settings])).toContain("HomeNet / WPA2-PSK / 5GHz");
+});
+
 it("sends a login form, a getpass CLI and an OAuth client, and takes a request that names a type, which hold no password (memory-r4-2, integrations-r4-1)", async () => {
   const form = await file("login.html", '<form method="post" action="/login">\n  <label for="username">Username:</label>\n  <input type="text" id="username" name="username">\n  <label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n</form>\n');
   const cli = await file("cli.py", 'import getpass\n\ndef main():\n    user = input("Username: ")\n    password = getpass.getpass("Password: ")\n    return user, password\n');
@@ -203,6 +238,42 @@ it("sends a login form, a getpass CLI and an OAuth client, and takes a request t
   for (const line of ["Password:", "getpass.getpass", "oauth2.googleapis.com/token", "Add a token: string field"]) expect(result).toContain(line);
   const table = await file("users.html", "<table>\n  <tr><td>Password:</td><td>Summer2024!</td></tr>\n</table>\n");
   await expect(prompt([table])).rejects.toThrow(new Error("users.html appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+});
+
+it("holds back a pretty-printed welcome page and a prompt whose comment gives the password, and sends the login form beside them (memory-x6-1)", async () => {
+  const welcome = await file("welcome.html", "<!doctype html>\n<html>\n  <body>\n    <h1>Welcome to the office</h1>\n    <p>\n      <strong>Wi-Fi password:</strong>\n    </p>\n    <p>\n      BlueSky99!\n    </p>\n  </body>\n</html>\n");
+  await expect(prompt([welcome])).rejects.toThrow(new Error("welcome.html appears to contain a password, token or key on line 9. Remove that file or the value, then send again."));
+  const door = await file("door.html", "<dl>\n  <dt>Door PIN:</dt>\n  <dd>\n    4821\n  </dd>\n</dl>\n");
+  await expect(prompt([door])).rejects.toThrow(new Error("door.html appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const login = await file("login.py", 'import getpass\n\ndef ask():\n    return input("Password: ")  # default on the test box: Summer2024!\n');
+  await expect(prompt([login])).rejects.toThrow(new Error("login.py appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const form = await file("form.html", '<form>\n  <label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n  <button type="submit">Sign in</button>\n</form>\n');
+  expect(await prompt([form])).toContain("Sign in");
+});
+
+it("holds back a demo login form that gives the password beside its field, and sends one that doesn't (memory-y6-4)", async () => {
+  const demo = await file("demo-login.html", '<table>\n  <tr><td>Password:</td><td><input type="password" name="pw"></td><td><small>(demo: Demo1234!)</small></td></tr>\n</table>\n');
+  await expect(prompt([demo])).rejects.toThrow(new Error("demo-login.html appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+  const login = await file("login.html", '<form><label>Password:</label><input type="password" name="pw"><button>Sign in</button></form>\n');
+  expect(await prompt([login])).toContain("Sign in");
+});
+
+it("sends locale files, a prompt with a ticket in its comment and a form with a Remember password checkbox (memory-y6-5)", async () => {
+  const en = await file("en.yml", 'en:\n  login:\n    username: "Username:"\n    password: "Password:"\n');
+  const ru = await file("ru.json", '{\n  "password": "Пароль:",\n  "pin": "PIN:"\n}\n');
+  const sv = await file("sv.json", '{\n  "currentPassword": "Nuvarande lösenord:",\n  "password": "Lösenord:",\n  "newPassword": "New:"\n}\n');
+  const cli = await file("cli.py", 'import getpass\n\npw = getpass.getpass("Password: ")  # see PROJ-1234\n');
+  const form = await file("form.html", '<label>Remember password:</label><input type="checkbox" value="1">\n');
+  const result = await prompt([en, ru, sv, cli, form]);
+  for (const line of ['password: \\"Password:\\"', "Пароль:", "Lösenord:", "# see PROJ-1234", "Remember password:"]) expect(result).toContain(line);
+});
+
+it("takes a request to point the API key at an environment read or another stage, beside one that gives a key (memory-x6-5)", async () => {
+  const app = await file("app.py", "print(1)\n");
+  for (const q of ["Set the API key to process.env.API_KEY", "Change the API key to staging", "Switch the API key to read-only"]) {
+    expect(await projectPrompt([app], "review", q, new AbortController().signal, privateDir)).toContain(q);
+  }
+  await expect(projectPrompt([app], "review", "Change the API token to Wint3r!Sh0p", new AbortController().signal, privateDir)).rejects.toThrow("Remove passwords");
 });
 
 it("takes a request about user scripts passing a check and sends a path built into root, beside a user's name and password (memory-w5-4, memory-w5-5)", async () => {

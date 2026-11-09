@@ -290,19 +290,24 @@ const KNOWS = String.raw`know|knew|learned|learnt|remember|remembered`;
 const SAVED = String.raw`saved|kept|stored|noted`;
 /** What Ember keeps about someone, after "everything you know about…": "me", "us", "my wife", "Priya". */
 const YOU_KEPT = String.raw`(?:${YOU})?(?:${KNOWS}|${SAVED})`;
+/** A program's words, which say a computer's memory, never Ember's (memory-x6-6). */
+const MACHINE_WORDS = String.raw`apps?|browsers?|process(?:es)?|scripts?|programs?|tabs?|files?|folders?|caches?|cached|caching|games?|allocated|loaded|holding|using|ram|buffers?`;
 /**
  * What only Ember's memory holds, so a bare "from memory" after it can only be Ember's ("Delete everything from memory",
  * "Remove that from memory", "Remove what I told you from memory", "Remove that I'm vegetarian from memory", "Remove
  * where I live from memory", "Delete my email from memory", "Remove all my details from memory"): memory-c5-1. Never
  * "it" or a thing named ("Remove the tab from memory", "Clear Firefox from memory"), which may be a computer's memory
- * (memory-c4-1).
+ * (memory-c4-1). "What my …" only of the user's own details or people ("what my wife likes", "where my sister lives"),
+ * "what I …" only with a verb about the user, and neither with a program's words after it ("what my Python process
+ * allocated", "what I use for testing", "what I'm using"): memory-x6-6. "Do" and "take" are the user's ("what I do for a
+ * living", "how I take my coffee"), and "use" only before "as" ("what I use as my nickname"): memory-y6-6.
  */
 const ONLY_EMBERS = String.raw`(?:that|this|everything|all(?:\s+of\s+(?:that|this))?|(?:everything|all|anything)\s+about\s+(?:me|us)`
   + String.raw`|all\s+(?:of\s+)?(?:my|our)\s+(?:personal\s+)?(?:details|info|information|data)`
   + String.raw`|(?:everything|all|anything|what|whatever)\s+${YOU}(?:${KNOWS}|${SAVED})(?:\s+about\s+(?:me|us))?`
   + String.raw`|(?:what|whatever|everything|all)\s+(?:i|we)(?:['’]ve|\s+have)?\s+(?:said|told\s+you|wrote|written|mentioned|shared)`
   + String.raw`|(?:the\s+fact\s+)?(?:that\s+)?(?:i['’](?:m|ve|d)|i\s+(?:am|live|work|like|love|hate|prefer|have|use|eat|drink))\b.*`
-  + String.raw`|(?:where|what|who|when|how)\s+(?:my\b|i['’]m\b|i\s+(?:live|work|am|do|like|love|hate|prefer|eat|drink|study|come|grew|was\s+born|take|use|stay)\b).*`
+  + String.raw`|(?:where|what|who|when|how)\s+(?:${MY_DETAIL}|i['’]m\b|i\s+(?:live|work|am|do|like|love|hate|prefer|eat|drink|study|come|grew|was\s+born|take|stay|use(?=\s+as\b))\b)(?![^\n]*\b(?:${MACHINE_WORDS})\b).*`
   + String.raw`|(?:my|our)\s+e-?mail)`;
 /**
  * "Forget that I…", "forget my address", "forget where I live", "forget everything about me", "forget what you know

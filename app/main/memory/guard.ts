@@ -24,9 +24,8 @@ const BEFORE_WORDS = String.raw`its(?=${CLAUSE_WORD}[ \t,]*${CLAUSE_WORD}${CLAUS
   + String.raw`|(?:typed|entered|hashed|masked)(?=${CLAUSE_WORD}${CLAUSE_END}|${STATE_END})`;
 /**
  * Words that follow a secret's name without being its value ("the password is required", "PIN: the tab is pinned",
- * "Password: changed yesterday"): a value is anything else ("hunter2", "correct-horse"). A Wi-Fi key's state, where to
- * look and its mode too ("PSK is enabled on the router", "Network key: see sticker", "PSK: rotated monthly", "The
- * network key is WPA2"): memory-r5-2.
+ * "Password: changed yesterday"): a value is anything else ("hunter2", "correct-horse"). A Wi-Fi key's state is no
+ * value only after a Wi-Fi key's name (withoutKeyStates).
  */
 const NOT_A_VALUE = [
   "the", "a", "an", "my", "your", "our", "their", "his", "her", "this", "that", "it", "not", "no", "now", "being", "been", "changed",
@@ -35,8 +34,7 @@ const NOT_A_VALUE = [
   "different", "unchanged", "missing", "incorrect", "invalid", "valid", "too", "very", "also", "still", "fine", "empty", "blank", "none",
   "shown", "visible", "encrypted", "optional", "case-sensitive", "long", "short", "below", "above", "here", "there",
   "done", "due", "expiring", "broken", "working", "ok", "okay", "complete", "temporary", "known", "unknown", "shared", "sent",
-  "printed", "written", "listed", "attached", "included", "strict", "changing", "same", "enabled", "disabled", "configured", "see",
-  "rotated", "supported", "active", "inactive", "unset", "wpa", "wpa2", "wpa3", "wep", "tkip", BEFORE_WORDS,
+  "printed", "written", "listed", "attached", "included", "strict", "changing", "same", BEFORE_WORDS,
 ].join("|");
 
 /**
@@ -226,8 +224,15 @@ interface CodeKey { name: string; count: boolean; pin: boolean; compared: boolea
 const NAME_OF = /^(?:field|fields|header|headers|name|names|param|params|label|labels|id|ids|attr|attribute|env|var|variable|prop|property|column|cookie|slot|input|selector|path|url|uri|endpoint|file|type|kind|ref|prefix|placeholder|message|msg|error|hint)$/i;
 /** The end of a value in code: the line's end, a comma, a semicolon, a closing bracket or a comment. */
 const CODE_AFTER_END = /^\s*(?:$|[,;)\]}]|\/\/|#)/;
-/** A label's words, a colon at their end ("Password:", "PIN :"), letters only. */
-const label = (s: string) => /^[\p{L}_][\p{L}_ '’-]{0,40}:\s*$/u.test(s);
+/**
+ * A label's words, a colon at their end ("Password:", "PIN :"), letters only, among them a secret's name or a field's
+ * ("Username:", "E-mail:"), never another word ("hunter:", "Summer:"): memory-x6-3. A secret's name in another language
+ * ("Пароль:", "Lösenord:", "Código:"), a field's word ("New:", "Confirm password:", "Strength:") and a name withoutLabels
+ * wrote out as "_" (`password: "Password:"` reaches here as `"________:"`) are one too: memory-y6-5.
+ */
+const LABEL_WORD = /^(?:user(?:name)?|name|mail|account|id|code|phrase|answer|otp|new|current|old|confirm|confirmation|repeat|again|retype|verify|strength|пароль|пин|код|lösenord|losenord|passord|kodeord|adgangskode|salasana|tunnusluku|koodi|heslo|jelszó|şifre|sifre|κωδικός|συνθηματικό|clave|código|codigo|kód|kod|kode|pinkod|パスワード|暗証番号|密码|密碼|비밀번호|סיסמה)$/iu;
+const label = (s: string) => /^[\p{L}_][\p{L}_ '’-]{0,40}:\s*$/u.test(s)
+  && (s.split(/[\s:'’-]+/).some(w => /^_{3,}$/.test(w)) || s.split(/[\s_:'’-]+/).some(w => SENTENCE_WORD.test(w) || LABEL_WORD.test(w)));
 /**
  * An address with no credentials in it, and none of its parts shaped like a token ("https://oauth2.googleapis.com/token",
  * never "https://user:pass@host" or a webhook's "https://hooks.slack.com/services/T0/B0/x8Kq…"): memory-r4-2.
@@ -411,12 +416,27 @@ const STRONG_SECRET = new Set(["password", "passwords", "passwd", "pwd", "pw", "
   "credential", "credentials", "creds", "apikey", "psk", "wifi"]);
 /**
  * Whether `s`, a literal, is a sentence about a secret, not one: three or more words, one of them naming a secret
- * ("Forgot your password?", "Passwords don't match", "Mot de passe oublié"), never a passphrase of words alone.
+ * ("Forgot your password?", "Passwords don't match", "Mot de passe oublié"), never a passphrase of words alone. An
+ * English word for one is a noun as a UI's text uses it, after a word like "your", "the", "enter" or "of", or before
+ * one like "is", "don't" or "required" ("Sign in", "logged out"), and no word is shaped like a password or is a run of
+ * four digits, so "sign of four 1887", "Key Lime Pie 2024!", "login now 4821" and "pass the salt please" are values
+ * (memory-x6-3).
  */
 const SENTENCE_WORD = /^(?:pass(?:word|words|phrase|code)?|passe|passwort|kennwort|contrase[ñn]a|senha|wachtwoord|parola|hasło|pins?|tokens?|secrets?|keys?|credentials?|login|sign|logged|api)$/i;
+const SENTENCE_BEFORE = /^(?:your|the|a|an|my|our|their|his|her|its|this|that|no|new|current|old|temporary|confirm|enter|re-?enter|retype|repeat|type|forgot|forgotten|reset|change|choose|create|set|update|show|hide|invalid|incorrect|wrong|of|for|with|by|to|without)$/i;
+const SENTENCE_AFTER = /^(?:is|are|was|were|be|been|has|have|had|must|should|will|can|cannot|can['’]t|could|do|does|did|don['’]t|doesn['’]t|didn['’]t|isn['’]t|aren['’]t|wasn['’]t|not|required|needed|incorrect|invalid|expired|expires|mismatch|match|matches|too|field|reset|changed|updated|saved|sent|strength|hint|failed|succeeded|successful)$/i;
 function sentence(s: string): boolean {
   const ws = s.trim().split(/\s+/);
-  return ws.length >= 3 && ws.some(w => SENTENCE_WORD.test(w.replace(/[^\p{L}]+/gu, "")));
+  if (ws.length < 3 || ws.some(w => secretShaped(w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")) || /\d{4}/.test(w))) return false;
+  const bare = ws.map(w => w.replace(/^[^\p{L}'’]+|[^\p{L}'’]+$/gu, ""));
+  return bare.some((w, i) => {
+    const n = w.replace(/[^\p{L}]+/gu, "");
+    if (!SENTENCE_WORD.test(n)) return false;
+    // The other languages' words name only a password ("Mot de passe oublié", "Passwort vergessen?").
+    if (!/^(?:pass(?:word|words|phrase|code)?|pins?|tokens?|secrets?|keys?|credentials?|login|sign|logged|api)$/i.test(n)) return true;
+    const next = bare[i + 1] ?? "";
+    return SENTENCE_BEFORE.test(bare[i - 1] ?? "") || SENTENCE_AFTER.test(next) || (/^(?:sign|login|logged)$/i.test(n) && /^(?:in|up|out|on|off)$/i.test(next));
+  });
 }
 /** Whether `s`, a literal under a name for tokens, could be one: shaped like a secret, or a run of 12 or more letters and digits. */
 const tokenShaped = (s: string) => secretShaped(s) || (!/[\s\\/]|:\/\//.test(s) && s.length >= 12 && /\d/.test(s) && /[A-Za-z]/.test(s));
@@ -500,8 +520,9 @@ function holdsValue(value: string, name: string, op: string | undefined, own: st
   if (/^-?[*&][A-Za-z_][\w.-]*$/.test(value)) return false;
   const literal = /^(["'`])(.*)\1$/.exec(value)?.[2];
   // A literal that names a secret ("'projects.secrets'", "\"api_key\"") or says something about one in a sentence
-  // ("base64 encoded json representation of credentials."): its words are read by the other rules all the same.
-  if (literal !== undefined && (namesSecret(literal.replace(/[.\s/:-]+/g, "_")) || sentence(literal))) return false;
+  // ("base64 encoded json representation of credentials."): its words are read by the other rules all the same. A
+  // name has no spaces, so "pass the salt please" is a passphrase (memory-x6-3).
+  if (literal !== undefined && ((!/\s/.test(literal.trim()) && namesSecret(literal.replace(/[.\s/:-]+/g, "_"))) || sentence(literal))) return false;
   // A bare name that names a secret, as a list of them does ("secrets:\n  - db_password").
   if (literal === undefined && /^[a-z][a-z0-9]*(?:[_.-][a-z0-9]+)*$/.test(value) && !/\d/.test(value) && namesSecret(value.replace(/[.-]/g, "_"))) return false;
   // Under a name for tokens, only one token, alone: never an expression or a lexer's rule ("(r'\\d+', Number)").
@@ -646,14 +667,85 @@ function withoutCodeKeys(text: string, found?: { held: boolean }): string {
 /**
  * A secret's name as a prompt's or a label's words, with nothing where its value would be (memory-r4-2): a string that
  * ends after its ":" and code after the string (`input("Password: ")`, `getpass.getpass("Password: ")`,
- * `Console.Write("Password: ");`, `read -s -p "Password: " PASS`), or an element's text that ends there with no text
- * after it on its line, nor on the next when nothing follows (`<label for="password">Password:</label>`, `Password:
- * <input type="password">`). Only the name is written out. `<td>Password:</td><td>hunter2</td>`, `echo "Password:"
- * hunter2` and `print("Password:", "hunter2")` stay values.
+ * `Console.Write("Password: ");`, `read -s -p "Password: " PASS`), with no word shaped like a password in that code
+ * or a comment after it, or an element's text that ends there with no text after it up to the field it labels
+ * (`<label for="password">Password:</label>`, `Password: <input type="password">`): valueAfterLabel. Only the name is
+ * written out. `<td>Password:</td><td>hunter2</td>`, `<p>Your PIN:</p>\n\n<p>4821</p>`, `echo "Password:" hunter2`,
+ * `print("Password:", "hunter2")` and `input("Password: ")  # Summer2024!` stay values (memory-x6-1).
  */
 const LABEL = /\b(?:pass(?:word|phrase|code)?|passwd|pwd|pin|passcode|token|secret|api[ _-]?key)s?[ \t]*:[ \t]*(?=["'`<])/gi;
 /** An HTML element's tag where a label's text ends, never a word in angle brackets ("<hunter>", "<your password>"). */
 const HTML_TAG = /^<\/?(?:label|input|td|th|tr|span|div|p|b|strong|i|em|u|small|dt|dd|li|a|button|select|option|br|code|font|legend|fieldset|form|h[1-6])(?:\s[^<>]*)?\/?>/i;
+/**
+ * A field's own value attribute, or "": never a check box's, a radio button's or a button's, whose value is the form's
+ * ("1", "on", "Log in"): memory-y6-5.
+ */
+const valueOf = (tag: string) => {
+  if (/\stype\s*=\s*["']?(?:checkbox|radio|submit|button|reset|image)\b/i.test(tag)) return "";
+  const v = /\svalue\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
+  return (v?.[1] ?? v?.[2] ?? v?.[3] ?? "").trim();
+};
+/**
+ * Whether a field's value or an option's is one: set, never empty, a reference or an expression, nor a Razor model's
+ * member ('value="@Model.Password"': memory-y6-5).
+ */
+const heldValue = (value: string) => value !== "" && !REFERENCE.test(value) && !PLACEHOLDER.test(value) && !/^\{[^"'`]*\}$/.test(value)
+  && !/^@(?:Model|ViewBag|ViewData|TempData)\.[A-Za-z_][\w.]*$/.test(value);
+/**
+ * Whether a label's value follows it at `from` (memory-x6-1): the first text past blank and markup-only lines, as
+ * pretty-printed HTML puts it ("<p>Your PIN:</p>\n\n<p>4821</p>"), unless it is another label ("Username:"), or a
+ * field's own value ('<input type="password" value="Summer2024!">'), never an empty one, a reference or an expression
+ * ('value=""', 'value="{{ form.password }}"', "value={password}"); a select's is its options' text or value. Past a
+ * field with no value the rest of its line is read, a table's next cells on it too, and a word there shaped like a
+ * password, or a PIN's digits after a PIN's label, is the label's ('<input type="password"> <small>(demo: Demo1234!)</small>'),
+ * never the form's own words ("Sign in", "Remember me"): memory-y6-4. At most 400 characters are read, and markup
+ * before the field that runs past them is taken to hold a value (fail closed).
+ */
+function valueAfterLabel(text: string, from: number, pin: boolean): boolean {
+  const end = Math.min(text.length, from + 400);
+  let beside = false;
+  for (const m of text.slice(from, end).matchAll(/<[^<>]*>|<[^<>]*$|[^<]+|</g)) {
+    const s = m[0];
+    // A tag cut off or never closed, or a "<" in the text.
+    if (s.startsWith("<") && !s.endsWith(">")) return !beside;
+    if (s.startsWith("<")) {
+      if (beside || !/^<(?:input|select)\b/i.test(s)) continue;
+      if (heldValue(valueOf(s))) return true;
+      if (/^<select\b/i.test(s)) {
+        // Its options, up to the select's end (at most 2 KiB on, or it holds one).
+        const at = from + m.index + s.length;
+        const close = text.slice(at, at + 2048).search(/<\/select\b/i);
+        if (close < 0) return true;
+        for (const o of text.slice(at, at + close).matchAll(/<option\b[^<>]*>([^<]*)/gi)) if (heldValue(valueOf(o[0])) || heldValue(o[1]!.trim())) return true;
+      }
+      beside = true;
+      continue;
+    }
+    if (beside) {
+      const nl = s.indexOf("\n");
+      const words = (nl < 0 ? s : s.slice(0, nl)).replace(/&(?:[a-z]+|#\d+|#x[0-9a-f]+);/gi, " ").split(/\s+/)
+        .map(w => w.replace(/^[("'“[<]+|[)"'”\],.;:>]+$/g, ""));
+      if (words.some(w => secretShaped(w) || (pin && /^\d{4,12}$/.test(w)))) return true;
+      if (nl >= 0) return false;
+      continue;
+    }
+    const t = s.trim();
+    if (t) return !/^[\p{L} ]{1,40}:$/u.test(t);
+  }
+  return !beside && end < text.length;
+}
+/**
+ * Whether code after a prompt's string holds a word shaped like a password, or a comment after it does ('("Password:",
+ * Summer2024!)', 'input("Password: ")  # Summer2024!'): memory-x6-1. A variable's name in the code is passed over, and
+ * an issue's key, a to-do's owner and a version in the comment ("PROJ-1234", "TODO(bob2)", "Python3.8+"): memory-y6-5.
+ */
+const NOTE_WORD = /^(?:[A-Z][A-Z0-9]*-\d+|(?:TODO|FIXME|XXX|HACK|NOTE|BUG)\([^()\s]*\)|[A-Za-z]*-?v?\d+(?:\.\d+)+\+?)$/;
+function valueAfterPrompt(after: string): boolean {
+  const mark = after.search(/#|\/\//);
+  const code = mark < 0 ? after : after.slice(0, mark);
+  return code.split(/[\s,;()[\]{}+.]+/).some(w => secretShaped(w) && !codeLineName(w))
+    || (mark >= 0 && after.slice(mark).split(/\s+/).some(w => secretShaped(w.replace(/[,.;:]+$/, "")) && !NOTE_WORD.test(w.replace(/[,.;:]+$/, ""))));
+}
 /** `text` with each prompt's or label's secret name (LABEL) written out as "_". */
 function withoutLabels(text: string): string {
   return text.replace(LABEL, (m: string, at: number) => {
@@ -664,14 +756,13 @@ function withoutLabels(text: string): string {
     const rest = text.slice(at + m.length, lineEnd);
     const q = rest[0]!;
     // Inside a string that closes here, with only code after it, or a shell's read with its variable's name; or markup
-    // after it and no text, on its line and on the next.
-    const textOf = (t: string) => t.replace(/<[^<>]*>/g, " ").trim();
-    const next = nl < 0 ? "" : text.slice(nl + 1, text.indexOf("\n", nl + 1) < 0 ? text.length : text.indexOf("\n", nl + 1));
+    // after it and no text up to the field it labels.
     const after = rest.slice(1);
     const prompt = q !== "<"
       ? (text.slice(lineStart, at).split(q).length - 1) % 2 === 1 && !/["'`][^"'`\n]*\w[^"'`\n]*["'`]/.test(after)
         && (/^\s*(?:$|[),;+\]}]|\.\w|\/\/|#)/.test(after) || (/^\s*read\b/.test(line) && /^\s+[A-Za-z_]\w*\s*(?:;|$)/.test(after)))
-      : HTML_TAG.test(rest) && !textOf(rest) && !textOf(next).replace(/^[\p{L} ]{1,40}:$/u, "");
+        && !valueAfterPrompt(after)
+      : HTML_TAG.test(rest) && !valueAfterLabel(text, at + m.length, /^(?:pin|passcode)/i.test(m));
     return prompt ? m.replace(/^[^:\s]+/, w => "_".repeat(w.length)) : m;
   });
 }
@@ -734,6 +825,31 @@ const TOLD_SECRET = new RegExp(
   "i",
 );
 /**
+ * A Wi-Fi key's state, where to look for it or its mode, after a router's name for the key, with no value in the rest
+ * of its sentence ("PSK is enabled on the router", "Network key: see sticker", "PSK: rotated monthly", "The network key
+ * is WPA2"): memory-r5-2. Only after these names, never a password's or a PIN's ("The admin password is rotated monthly,
+ * currently Summer2024!", "PIN: active 4821"), and never with a word shaped like a value later in the sentence or on
+ * the next line ("The VPN pre-shared key is configured to Tr0ub4dor&3", "Network key: see below\nBlueSky99"), but a
+ * mode, a standard, a band, a size or a count ("WPA2-PSK", "802.11ac", "5GHz", "AES-256", "90 days"): memory-x6-2.
+ * Nor with one straight after its sentence, perhaps after "it's" ("PSK: rotated. It's BlueSky99!", "WPA2 key: enabled;
+ * BlueSky99!"), as a value after a password's state is read (STATE_THEN): memory-y6-2.
+ */
+const WIFI_KEY_NAMES = String.raw`network (?:security )?key|wpa[23]? (?:key|passphrase)|pre-?shared key|psk|wireless (?:network )?key|wlan key|wep key`;
+const KEY_STATE = String.raw`enabled|disabled|configured|see|rotated|supported|active|inactive|unset|(?:wpa[23]?|wep|tkip)(?:[-/](?:psk|personal|enterprise|sae|aes|ccmp|tkip|wpa[23]?))*`;
+const KEY_STATE_SAID = new RegExp(String.raw`\b(?:${WIFI_KEY_NAMES})s?\b(?=${FOR_WHAT}${SAYS}${NOW}(?:${KEY_STATE})(?![\w-])((?:[^.;!?]|[.;!?](?![\s"'”)]|$)){0,200})`
+  + String.raw`(?:[.;!?]+["'”)]*\s+([^\n]{0,80}))?)`, "gi");
+/** A Wi-Fi key's mode, standard, band or cipher, a size or a count, which are never its value. */
+const NOT_A_KEY = /^(?:(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*|802\.11[a-z]*|\d+(?:\.\d+)?(?:ghz|mhz|[kmg]bps)|\d+(?:-\d+)?-?(?:characters?|chars?|digits?|letters?|bits?|days?|weeks?|months?|hours?|minutes?)|\d{1,3}[dhwm])$/i;
+/** The first word of the sentence after a Wi-Fi key's state, past the words that say it is the key ("It's", "the key is"). */
+const NEXT_WORD = /^(?:(?:but|and|so|though|yet)\s+)?(?:(?:it|that)(?:['’]s|\s+is|\s+was)\s+|(?:the\s+)?(?:password|pin|code|value|key|passphrase|real\s+one)\s+is\s+)?(?:(?:now|currently)\s+)?(\S+)/i;
+/** `text` with each Wi-Fi key's name written out as "_" where only its state follows (KEY_STATE_SAID). */
+function withoutKeyStates(text: string): string {
+  const value = (w: string) => w.length >= 4 && /[0-9!@#$%^&*]/.test(w) && !NOT_A_KEY.test(w);
+  const bare = (w: string) => w.replace(/^[(["'“<]+|[)\]"'”>,:]+$/g, "");
+  return text.replace(KEY_STATE_SAID, (m: string, rest: string, next: string | undefined) => rest.split(/\s+/).map(bare).some(value)
+    || value(bare(NEXT_WORD.exec(next ?? "")?.[1] ?? "")) ? m : "_".repeat(m.length));
+}
+/**
  * A secret said as changed or to be ("I changed my password to Summer2024!", "The user's password was changed to …",
  * "The Netflix password changed to hunter2", "my password: changed it to hunter22", "remember I set my PIN to 4821",
  * "I updated the alarm code to 4821", "The password will be hunter2", "My password used to be hunter2"): memory-r5-1,
@@ -743,14 +859,33 @@ const TOLD_SECRET = new RegExp(
  * every 90 days" stay facts.
  */
 const NOT_A_CHANGE = String.raw`(?:${NOT_A_VALUE}|something|anything|nothing|one|whatever|mine|yours|default|expire|a\s+new)`;
-const LENGTH = String.raw`(?!\d+\+?\s*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b)`;
+const LENGTH_SAID = String.raw`\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b`;
+const LENGTH = String.raw`(?!${LENGTH_SAID})`;
+/** A length said before what it will be, which is read past ("The door PIN will be 4-digit 4821"): memory-y6-3. */
+const LENGTH_FIRST = String.raw`(?:${LENGTH_SAID}[ \t]*[,;:]?[ \t]*(?:(?:it|that)(?:['’]s|\s+is)\s+)?)?`;
 const CHANGE_VALUE = String.raw`["'“]?(?!${NOT_A_CHANGE}(?:[\s.,;!?"'”]|$))${LENGTH}(?:(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}|[^\s"'”.,;!?]{3,}(?=["'”]?\s*(?:$|[.,;!?])))`;
 const LATER_VALUE = String.raw`["'“]?(?!${NOT_A_VALUE}(?:[\s.,;!?"'”]|$))${LENGTH}(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}`;
 const CHANGE_TO = String.raw`\s*[:,–—-]?\s*(?:(?:has|have|had)\s+been\s+|(?:was|were|is|are|got|gets|been)\s+)?(?:just\s+|now\s+|recently\s+)?(?:changed|set|reset|updated|switched)(?:\s+(?:it|them))?\s+(?:back\s+)?to\s+`;
 const LATER_BE = String.raw`\s+(?:(?:will|would|should|shall|must|might|could)(?:\s+now)?\s+be|is\s+going\s+to\s+be|used\s+to\s+be|became|becomes)\s+`;
-const TOLD_CHANGE = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}(?:${CHANGE_TO}${CHANGE_VALUE}|${LATER_BE}${LATER_VALUE})`, "i");
+const TOLD_CHANGE = new RegExp(String.raw`\b(${SECRET_NAMES})s?\b${FOR_WHAT}(?:${CHANGE_TO}(${CHANGE_VALUE})|${LATER_BE}${LENGTH_FIRST}(${LATER_VALUE}))`, "gi");
 const CHANGED_MY = new RegExp(String.raw`\b(?:changed|change|set|reset|updated|update|switched|switch)\s+(?:(?:my|our|the|their|his|her|your|[a-z]+['’]s)\s+)?(?:[\w-]+\s+){0,3}?`
-  + String.raw`(?:\b${SECRET_NAMES}s?|(?:${PLACE_NAMES})\s+(?:code|combination|combo)s?)\s+(?:back\s+)?to\s+${CHANGE_VALUE}`, "i");
+  + String.raw`(?:\b(${SECRET_NAMES})s?|(?:${PLACE_NAMES})\s+(?:code|combination|combo)s?)\s+(?:back\s+)?to\s+(${CHANGE_VALUE})`, "gi");
+/** An API key's or a secret key's name, whose value is a token, never a word or code. */
+const API_NAME = /^(?:api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)$/i;
+/**
+ * Whether `text` says a secret as changed or to be (TOLD_CHANGE, CHANGED_MY): an API key's only as a value shaped like
+ * a token, never one word, a version or code where it goes ("Set the API key to staging", "Switch the API key to
+ * read-only", "The API key was updated to v3.", "Set the API key to process.env.API_KEY"): memory-x6-5.
+ */
+function toldChange(text: string): boolean {
+  for (const re of [TOLD_CHANGE, CHANGED_MY]) {
+    for (const m of text.matchAll(re)) {
+      const value = (m[2] ?? m[3] ?? "").replace(/^["'“]+|["'”.,;!?]+$/g, "");
+      if (!API_NAME.test(m[1] ?? "") || (tokenShaped(value) && !/^(?:process\.env|import\.meta\.env|os\.environ|env|config|settings)\./i.test(value))) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * A password, passcode or passphrase with its value straight after ("VPN password hunter2", "the password 'Summer2024!'",
@@ -911,16 +1046,31 @@ const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[
  * A value after a word for a secret's state and a comma or a full stop ("PIN: entered, 4821", "Password: masked, but
  * it's hunter2", "password: typed. BlueSky99", "Password: hidden, it's hunter2"): the state isn't its value, but
  * what follows it may be: memory-r5-3. Only a value with a digit or a symbol, never a length or a count ("The password
- * is required, 12 characters"), so "Passwords are hashed. Tokens are rotated." and "Password: masked, PIN: entered" stay.
+ * is required, 12 characters", "The PIN is required, 4-digit") or how it is hashed or encrypted ("Passwords are hashed,
+ * SHA-256", "Password: hashed, argon2id": memory-x6-5), so "Passwords are hashed. Tokens are rotated." and "Password:
+ * masked, PIN: entered" stay. A length or an algorithm is read past to what follows it ("The PIN is required, 4-digit,
+ * 4821", "Password: hashed, SHA-256, but it's Summer2024!"), and an algorithm's or an encoding's name ends a word
+ * ("SHA-256,", "base64-encoded"), so "Rs2024!" is a value: memory-y6-3.
  */
-const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}${NOW}[A-Za-z][A-Za-z'’-]*[ \t]*[,;.][ \t]*(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
+const STATE_LENGTH = String.raw`\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b`;
+const STATE_ALGORITHM = String.raw`(?:(?:sha|aes|rsa|des|md|hs|rs|es|ps|blake|crc)-?\d+|argon2(?:id|i|d)?|bcrypt\w*|pbkdf2\w*|base(?:16|32|58|64)(?:url)?|utf-?(?:8|16))`
+  + String.raw`(?:-(?:hashed|encoded|encrypted|signed|salted|based))?(?![^\s"'”,.;:)])`;
+const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}${NOW}[A-Za-z][A-Za-z'’-]*[ \t]*[,;.][ \t]*`
+  + String.raw`(?:(?:${STATE_LENGTH}|${STATE_ALGORITHM})[ \t]*[,;:]?[ \t]*)?(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
   + String.raw`(?:(?:it|that)(?:['’]s|\s+is|\s+was)\s+|(?:the\s+)?(?:password|pin|code|value|real\s+one)\s+is\s+)?["'“]?`
-  + String.raw`(?!\d+\+?\s*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b)(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
+  + String.raw`(?!${STATE_LENGTH})(?!${STATE_ALGORITHM})(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
 /**
  * A network and its key said together ("Guest Wi-Fi: BlueSky / BlueSky99", "Home network: BlueSky, key BlueSky99"),
- * the key with a digit or a symbol: safety-privacy-c4-2.
+ * the key with a digit or a symbol: safety-privacy-c4-2. Never its router's address, its standard, its mode or its band
+ * ("Home network: HomeNet / 192.168.1.1", "Wi-Fi: HomeNet, 802.11ac", "Wi-Fi: HomeNet / WPA2-PSK"), which may come before
+ * the key ("Wi-Fi: HomeNet / WPA2-PSK, key BlueSky99"): memory-x6-5. Up to six of them may ("Wi-Fi: HomeNet / WPA2-PSK /
+ * 5GHz / BlueSky99!"), and after the router's address its user ("Home network: HomeNet / 192.168.1.1 / admin /
+ * Summer2024!"): memory-y6-3.
  */
-const NETWORK_PAIR = /\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:(?:key|password|pass|pw|passphrase|psk)\s+)?["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}/i;
+const NETWORK_SETTING = String.raw`(?:\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?|802\.11[a-z]*|(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*|\d+(?:\.\d+)?\s?(?:ghz|mhz|[kmg]bps))`;
+const NETWORK_PAIR = new RegExp(String.raw`\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:${NETWORK_SETTING}\s*[,/]?\s*){0,6}`
+  + String.raw`(?:(?<=\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\s*[,/]?\s*)[A-Za-z][\w.-]{0,31}\s*[,/]\s*)?`
+  + String.raw`(?:(?:key|password|pass|pw|passphrase|psk)\s+)?["'“]?(?!${NETWORK_SETTING}(?:[\s.,;!?)"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}`, "i");
 /**
  * A service a person signs in to and a value shaped like a password straight after its name ("Netflix: hunter2", "The
  * user's Gmail: Tr0ub4dor&3", "The user's Netflix account: hunter2", "Netflix login hunter2"): safety-privacy-1. Never a
@@ -933,8 +1083,11 @@ function serviceValue(text: string): boolean {
   for (const m of text.matchAll(SERVICE_VALUE)) if (secretShaped(m[1]!.replace(/[.,;!?)]+$/, ""))) return true;
   return false;
 }
-/** A capitals setting for a password ("DB_PASS=Tr0ub4dor&3"), a value with a digit or a symbol, never a reference: memory-1. */
-const SHOUTED_PASS = /\b[A-Z][A-Z0-9]*_PASS\s*[:=]\s*["']?(?![$%{<])(?=[^\s"']{0,64}[0-9!@#$%^&*])[^\s"']{4,}/;
+/**
+ * A capitals setting for a password ("DB_PASS=Tr0ub4dor&3"), a value with a digit or a symbol, never a reference: memory-1.
+ * Never a filter's or a renderer's pass ("LOW_PASS=8000", "HIGH_PASS: 2000", "RENDER_PASS=shadow2"): memory-x6-5.
+ */
+const SHOUTED_PASS = /\b(?!(?:LOW|HIGH|BAND|ALL|RENDER)_PASS\b)[A-Z][A-Z0-9]*_PASS\s*[:=]\s*["']?(?![$%{<])(?=[^\s"']{0,64}[0-9!@#$%^&*])[^\s"']{4,}/;
 /**
  * A secret's name, then another label and a value shaped like a password, as a mapping reads once its lines are run
  * together, the way memory keeps a fact ("credentials: admin: Wint3r!Sh0p", "Wi-Fi: home: BlueSky99"), never a
@@ -1083,7 +1236,7 @@ function luhn(digits: string): boolean {
 export function memoryRefusal(text: string): string | null {
   // Code where a value would be names no secret (memory-r4-1, memory-r4-2): its names are written out first, its values kept.
   const found = { held: false };
-  const said = withoutCodeKeys(withoutLabels(text.replace(AUTH_REFERENCE, "_").replace(SHELL_PWD, "_")), found);
+  const said = withoutKeyStates(withoutCodeKeys(withoutLabels(text.replace(AUTH_REFERENCE, "_").replace(SHELL_PWD, "_")), found));
   const probe = said.replace(NAMED_NO_VALUE, " ");
   if (found.held || redactSecrets(probe) !== probe || secretPair(text) || promptThen(text)) return "it holds a password, token or key";
   // The redactor hides a key only with its END line too: a key's first line alone is still a key's start (audit).
@@ -1092,7 +1245,7 @@ export function memoryRefusal(text: string): string | null {
   if (TOLD_SECRET.test(said) || BARE_PASSWORD.test(said) || BARE_PIN.test(pins) || loginPass(said) || PLACE_CODE.test(said)
     || CODE_FOR_PLACE.test(said) || BARE_CVV.test(said) || USED_AS.test(said) || LOGIN_PAIR.test(said) || WIFI_KEY.test(said) || SEED_WORDS.test(said) || nestedSecret(said)
     || PIN_NUMBER.test(pins) || DEVICE_CODE.test(said) || TOLD_TOKEN.test(said) || ADMIN_PAIR.test(said) || ADMIN_SET.test(said) || VALUE_FIRST.test(said)
-    || TOLD_CHANGE.test(said) || CHANGED_MY.test(said) || NETWORK_PAIR.test(said) || serviceValue(said) || SHOUTED_PASS.test(said) || STATE_THEN.test(said)) {
+    || toldChange(said) || NETWORK_PAIR.test(said) || serviceValue(said) || SHOUTED_PASS.test(said) || STATE_THEN.test(said)) {
     return "it holds a password, PIN or code";
   }
   // Said as a login's one value, it may be the user name ("my login is jsmith42"): the model is told it may be the

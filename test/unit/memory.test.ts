@@ -349,6 +349,88 @@ describe("what memory never keeps", () => {
   ])("still refuses %j, a value after a prompt or a label, or in an address (memory-r4-2, integrations-r4-1)", text => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
+  // A label's value past a blank or markup-only line, as pretty-printed HTML puts it, an input's own value, and a
+  // password in a comment or a bare word after a prompt's string: round six's labels kept them (memory-x6-1).
+  it.each([
+    ["<p>Your PIN:</p>\n\n<p>4821</p>"], ["<h3>Wi-Fi password:</h3>\n\n<p>BlueSky99</p>"], ["<dt>Password:</dt>\n<dd>\n  Summer2024!\n</dd>"],
+    ['<label for="pw">Password:</label>\n<input type="password" value="Summer2024!">'], ['<label>Password:</label> <input type="password" value="Summer2024!">'],
+    ["<p>\n  <strong>Wi-Fi password:</strong>\n</p>\n<p>\n  BlueSky99!\n</p>"], ["<dl>\n  <dt>Door PIN:</dt>\n  <dd>\n    4821\n  </dd>\n</dl>"],
+    ["<label>Password:</label>\n<br>\n<span>Summer2024!</span>"], ["<strong>Password:</strong>\n\nSummer2024!"], ["<td>PIN:</td>\n<td>\n4821\n</td>"],
+    ['input("Password: ")  # default on the test box: Summer2024!'], ['console.log("Password: ") // Summer2024!'], ['("Password:", Summer2024!)'],
+    ['print("Password:", Summer2024)'], ['"Password: ".concat(Summer2024)'],
+  ])("refuses %j, a value after a label past the markup between, or after a prompt (memory-x6-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  it.each([
+    ['<label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n  <button type="submit">Sign in</button>'],
+    ['<label htmlFor="password">Password:</label>\n<input\n  type="password"\n  value={password}\n  onChange={e => setPassword(e.target.value)}\n/>'],
+    ['<label>Password:</label>\n<input type="password" name="password" value="">'], ['<label>Password:</label>\n\n<input type="password" value="{{ form.password }}">'],
+    ["<dt>Password:</dt>\n\n<dt>Username:</dt>"], ["<li>Username:</li>\n<li>Password:</li>"], ['input("Password: ")  # asked once, never stored'],
+    ['pw = getpass.getpass("Password: ")  # read from the terminal'], ['msg = "Password: " + pw'],
+  ])("keeps %j, a label for a field or a prompt with code after it (memory-x6-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A password beside a field with no value on its line, or in a select's option, which round six stopped reading at
+  // the field (memory-y6-4).
+  it.each([
+    ['<tr><td>Password:</td><td><input type="password" name="pw"></td><td><small>(demo: Demo1234!)</small></td></tr>'],
+    ['<label>Password:</label><input type="password"> <small>(demo: Demo1234!)</small>'], ['<p>Wi-Fi password: <input type="text" readonly> BlueSky99!</p>'],
+    ['<label>PIN:</label><input type="password" maxlength="4"> 4821'], ['<b>Password:</b><input type="password"><p>Summer2024!</p>'],
+    ['<label>Password:</label><select><option>Summer2024!</option></select>'], ['<label>Password:</label>\n<select name="pw">\n  <option value="Summer2024!">Old one</option>\n</select>'],
+  ])("refuses %j and saves nothing, a value beside a field or in its option (memory-y6-4)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ['<label>Password:</label><input type="password"><button>Sign in</button>'], ['<label>Password:</label><input type="password"> <label>Remember me</label>'],
+    ['<tr><td>Password:</td><td><input type="password" name="pw"></td><td><a href="/forgot">Forgot your password?</a></td></tr>'],
+    ['<label>Password:</label><input type="password"> <small>At least 12 characters</small>'], ['<label>Password:</label><select><option value=""></option></select>'],
+    ['<label for="password">Password:</label>\n<input type="password" id="password">\n<small>(demo: see the wiki)</small>'],
+  ])("keeps %j, a field with no value and words of the form's own beside it (memory-y6-4)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A passphrase that happens to hold a secret's word, and a word before a colon, read as UI text under a key named
+  // for a secret (memory-x6-3).
+  it.each([
+    ['network={\n    ssid="HomeNet"\n    psk="sign of four 1887"\n}'], ['ADMIN_PASSWORD="Key Lime Pie 2024!"'], ['const PASSWORD = "login now 4821";'],
+    ['wifi_password = "sign of the times"'], ['password: "Open Sesame Key"'], ['WIFI_PASSWORD="open sesame key"'], ["define('DB_PASSWORD', 'Open Sesame Key 1');"],
+    ['passwords:\n  wifi: "pass the salt please"'], ['password = "hunter:"'], ['password: "Summer:"'],
+  ])("refuses %j, a passphrase or a word with a colon under a key named for a secret (memory-x6-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  it("saves nothing for a Wi-Fi password said as a quoted passphrase with a secret's word in it (memory-x6-3)", () => {
+    for (const text of ['The Wi-Fi password: "pass the salt please"', `The user's Wi-Fi password: "sign of four 1887"`]) {
+      expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind, text).toBe("refused");
+    }
+  });
+  it.each([
+    ['"forgotPassword": "Forgot your password?"'], ['"passwordMismatch": "Passwords don\'t match"'], ['"pinPrompt": "Enter your PIN"'],
+    ['"tokenExpired": "Your session token has expired."'], ['"loginButton": "Sign in to continue"'], ['"forgotPassword": "Mot de passe oublié ?"'],
+    ['"passwordLabel": "Password:",'], ['"passwordHint": "New password:"'], ["define('DB_PASSWORD_HELP', 'Enter the database password here');"],
+  ])("keeps %j, UI text about a secret under a key named for one (memory-x6-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A label in a locale file, in any language, a prompt with a ticket, a to-do or a version in its comment, and a
+  // checkbox's or a template's value, which round six's label and prompt rules refused (memory-y6-5).
+  it.each([
+    ['password: "Password:"'], ['"password": "Пароль:"'], ['"password": "Lösenord:"'], ['"currentPassword": "Current password:"'], ['"newPassword": "New:"'],
+    ['"pin": "PIN:"'], ['"token": "Access token:"'], ['"secret": "Client secret:"'], ['PASSWORD_PROMPT = "Enter password:"'], ['"password": "Passord:"'],
+    ['"password": "Salasana:"'], ['"password": "Heslo:"'], ['"password": "Jelszó:"'], ['"password": "Şifre:"'], ['"password": "Κωδικός:"'],
+    ['"password": "Adgangskode:"'], ['"pin": "Código:"'], ['"confirmPassword": "Confirm password:"'], ['"passwordStrength": "Strength:"'], ['"repeatPassword": "Repeat:"'],
+    ['"password": "パスワード:"'], ['getpass.getpass("Password: ")  # see PROJ-1234'], ['Console.Write("Password: "); // see JIRA-4521'],
+    ['pw = input("Password: ")  # Python3.8+'], ['pw = input("Password: ")  # TODO(bob2): mask it'],
+    ['<label>Remember password:</label><input type="checkbox" value="1">'], ['<label>Show password:</label><input type="checkbox" value="on">'],
+    ['<label>Password:</label><input type="password" value="@Model.Password">'],
+  ])("keeps %j, a label, a prompt or a field with no password in it (memory-y6-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ['password = "hunter:"'], ['password: "Summer:"'], ['"password": "Hunter2:"'], ['"password": "Password"'], ['getpass.getpass("Password: ")  # Summer2024!'],
+    ['<label>Password:</label><input type="text" value="Summer2024!">'], ['<label>Password:</label><input type="hidden" value="Summer2024!">'],
+    ['<label>Password:</label><input type="checkbox"> Summer2024!'], ['<label>Password:</label><input type="password" value="@dmin2024">'],
+  ])("still refuses %j, a password beside them (memory-y6-5)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
 
   // A version, an issue, a setting or a user at a computer said as a login, a disk's size and a formula: round four's
   // login and admin rules refused them (safety-privacy-c4-3, memory-c4-2).
@@ -588,6 +670,41 @@ describe("what memory never keeps", () => {
   ])("keeps %j, which names no secret (safety-privacy-c4-2, memory-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A Wi-Fi key's state words said of any secret, or with a value later in the sentence, which round six took for no
+  // value everywhere (memory-x6-2).
+  it.each([
+    ["The admin password is rotated monthly, currently Summer2024!"], ["The admin password is rotated monthly; this month it's Summer2024!"],
+    ["The VPN pre-shared key is configured to Tr0ub4dor&3"], ["The Wi-Fi password is configured as BlueSky99!"], ["PIN: active 4821"],
+    ["The PIN is unset, use 4821"], ["Wi-Fi password: see the fridge, it's BlueSky99"], ["The Wi-Fi password is WPA2 BlueSky99"],
+    ["Password: inactive (old one was Summer2024!)"], ["The PSK is configured as BlueSky99"], ["Network key: see sticker (BlueSky99)"],
+    ["Network key: WPA2 BlueSky99"], ["PSK: rotated monthly, now BlueSky99"], ["Network key: see below\nBlueSky99"], ["password: disabled hunter2"],
+  ])("refuses %j and saves nothing, a password after a state word (memory-x6-2)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["The PSK is enabled on both routers"], ["Network key: WPA2-PSK"], ["The pre-shared key is rotated every 90 days"], ["The WEP key is disabled"],
+    ["The wireless key is configured on the 5GHz band"],
+  ])("keeps %j, a Wi-Fi key's state with no value in its sentence (memory-x6-2)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A Wi-Fi key's value straight after its state's sentence, which writing the name out as a state's hid from the rule
+  // that reads a value after a full stop (memory-y6-2).
+  it.each([
+    ["PSK is enabled. BlueSky99!"], ["PSK: enabled. BlueSky99!"], ["PSK: rotated. It's BlueSky99!"], ["The network key is configured. It's BlueSky99!"],
+    ["Network key: configured; it's BlueSky99!"], ["WPA2 key: enabled; BlueSky99!"], ["The user's Wi-Fi PSK is rotated. It's BlueSky99! now"],
+    ["Network key: see sticker. BlueSky99"], ["The network key is WPA2. BlueSky99!"], ["PSK: rotated.\nBlueSky99!"],
+  ])("refuses %j and saves nothing, a Wi-Fi key after its state's full stop (memory-y6-2)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["PSK is enabled on the router"], ["PSK: rotated monthly"], ["The pre-shared key is rotated every 90 days"], ["PSK is enabled on the router. The guest network is open."],
+    ["PSK: rotated monthly. Next rotation in 90 days."], ["The network key is WPA2. The router is a TP-Link Archer C7."], ["PSK is enabled. WPA2-PSK, 5GHz."],
+    ["Network key: see sticker. Band: 5GHz, channel 36."], ["PSK is enabled. Firmware 3.0.0.4 is installed."],
+  ])("keeps %j, a Wi-Fi key's state with no value after it (memory-y6-2)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
 
   // A secret said as changed, current or to be, the way people most often say one, and a service, a router's label or a
   // capitals setting with its value (memory-r5-1, safety-privacy-1, safety-privacy-c4-2, memory-1).
@@ -614,6 +731,43 @@ describe("what memory never keeps", () => {
     ["The user's GitHub: octocat2"], ["Amazon: order 123-4567"], ["Steam: 250 games"], ["DB_PASS=$DB_PASSWORD"], ["Wi-Fi: BlueSky / 5GHz"],
     ["The wireless keyboard is broken"], ["Netflix login is via Google"],
   ])("keeps %j, which says no secret (memory-r5-1, safety-privacy-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // An API key changed to a word or code, a network with its address or mode, a filter's setting and how a password is
+  // stored, which round six's change, network, _PASS and state rules refused (memory-x6-5).
+  it.each([
+    ["Set the API key to process.env.API_KEY"], ["Change the API key to staging"], ["Set the API key to production."], ["Switch the API key to read-only"],
+    ["The API key was updated to v3."], ["Home network: HomeNet / 192.168.1.1"], ["Wi-Fi: HomeNet / WPA2-PSK"], ["Wi-Fi: HomeNet, 802.11ac"],
+    ["LOW_PASS=8000"], ["HIGH_PASS: 2000"], ["Passwords are hashed, SHA-256"], ["The password is encrypted, AES-256"], ["Password: hashed, argon2id"],
+    ["Password: hashed, bcrypt2b"], ["The PIN is required, 4-digit"], ["The PIN will be 6-digit"],
+  ])("keeps %j, which says no secret (memory-x6-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["Set the API key to sk_abc123def456ghi789"], ["Change the API token to Wint3r!Sh0p"], ["I changed my password to staging."],
+    ["Wi-Fi: HomeNet / WPA2-PSK, key BlueSky99"], ["Home network: HomeNet / 192.168.1.1, password BlueSky99"], ["DB_PASS=Tr0ub4dor&3"],
+    ["Password: hashed, but it's Summer2024!"], ["The PIN will be 4821"],
+  ])("still refuses %j, a secret beside them (memory-x6-5)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  // A key, a router's login or a PIN after more than one setting, a length or an algorithm, which round six's
+  // exclusions read no further than, and a password shaped like an algorithm's name (memory-y6-3).
+  it.each([
+    ["Wi-Fi: HomeNet / WPA2-PSK / 5GHz / BlueSky99!"], ["Home network: HomeNet / 192.168.1.1 / admin / Summer2024!"], ["Wi-Fi: HomeNet / 802.11ac / WPA2 / BlueSky99"],
+    ["Wi-Fi: HomeNet / 5GHz / WPA2-PSK, key BlueSky99"], ["Home network: HomeNet, 192.168.1.1, admin, Summer2024!"], ["The PIN is required, 4-digit, 4821"],
+    ["The PIN is set, 4-digit, it's 4821"], ["The door PIN will be 4-digit 4821"], ["Password: hashed, SHA-256, but it's Summer2024!"], ["Password: typed, Rs2024!"],
+    ["Password: typed, Des2024!"], ["Password: entered, es2024!"], ["The PIN is required, 4 digits, 4821"], ["The password will be 12 characters: Summer2024!"],
+  ])("refuses %j and saves nothing, a secret after a setting, a length or an algorithm (memory-y6-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["Wi-Fi: HomeNet / WPA2-PSK / 5GHz"], ["Wi-Fi: HomeNet / 802.11ac / WPA2"], ["Home network: HomeNet / 192.168.1.1 / admin"],
+    ["Home network: HomeNet / 192.168.1.1 / admin / Netgear"], ["Password: hashed, SHA-256, salted"], ["The PIN is required, 4-digit, numbers only"],
+    ["Passwords are hashed, SHA-256, then stored."], ["The password is hashed, SHA-256."], ["Password: hashed, RS256"], ["Password: hashed, HS256, with a salt"],
+    ["The PIN will be 6 digits long"], ["The password must be 12+ characters"], ["Passwords: hashed, SHA-512, base64-encoded"], ["Password: hashed, SHA-256-hashed"],
+    ["Home network: HomeNet / 192.168.1.1 / gateway / 10.0.0.1"],
+  ])("keeps %j, settings, a length or an algorithm with no secret after them (memory-y6-3)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
 

@@ -80,18 +80,29 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   is as often its password, "P@ss-w0rd": safety-privacy-1; the model is told it may be the login's password, never
   that it is one), a secret said as changed, current or to be ("my Wi-Fi password is now BlueSky99", "I changed my
   PIN to 4821", "the user's password was reset to Summer2024!", "the password will be hunter2"; never "the password is
-  now required", "the PIN changed to 6 digits" or "I changed my password manager to 1Password": memory-r5-1), a
-  service and a value shaped like a password ("Netflix: hunter2", "Netflix login hunter2", never "Gmail:
-  priya2@gmail.com": safety-privacy-1), a router's label names and a network with its key ("WLAN key: …", "Guest
-  Wi-Fi: BlueSky / BlueSky99": safety-privacy-c4-2), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  now required", "the PIN changed to 6 digits" or "I changed my password manager to 1Password": memory-r5-1; an API
+  key's only as a value shaped like a token, never "Set the API key to staging" or "… to process.env.API_KEY":
+  memory-x6-5), a service and a value shaped like a password ("Netflix: hunter2", "Netflix login hunter2", never
+  "Gmail: priya2@gmail.com": safety-privacy-1; a capitalised word with a digit is how passwords are written, so "Steam:
+  Portal2" is refused too), a router's label names and a network with its key ("WLAN key: …", "Guest Wi-Fi: BlueSky /
+  BlueSky99": safety-privacy-c4-2; never its address, standard, mode or band, "Home network: HomeNet / 192.168.1.1",
+  "Wi-Fi: HomeNet / WPA2-PSK", memory-x6-5, though a key or the router's login after them is refused, "Wi-Fi: HomeNet /
+  WPA2-PSK / 5GHz / BlueSky99!", "Home network: HomeNet / 192.168.1.1 / admin / Summer2024!", memory-y6-3), a capitals setting for a password ("DB_PASS=Tr0ub4dor&3", never a
+  filter's "LOW_PASS=8000"), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
   "hashed" and "masked" only before more words with no digit or symbol: "password: never logged", but "Wi-Fi password
   is its BlueSky99" and "Password for Gmail is never Summer2024!" are refused, memory-v5-1; "typed", "entered",
   "hashed" and "masked" also at the clause's end, "Passwords are hashed.", "Password: Masked", but not before a value
   in brackets, "PIN: entered (4821)", memory-w5-3, nor before one after a comma or a full stop, "PIN: entered, 4821",
-  "Password: hidden, it's hunter2", memory-r5-3; a Wi-Fi key's state, where to look and its mode aren't a value
-  either, "PSK is enabled on the router", "Network key: see sticker", "The network key is WPA2", memory-r5-2), and a code counts only for
+  "Password: hidden, it's hunter2", memory-r5-3, though how it is hashed or how long it is may follow, "Passwords are
+  hashed, SHA-256", "The PIN is required, 4-digit", memory-x6-5, but not before a value, "The PIN is required, 4-digit,
+  4821", "Password: hashed, SHA-256, but it's Summer2024!", "The door PIN will be 4-digit 4821", memory-y6-3; after a Wi-Fi key's router name, its state, where to look and its
+  mode aren't a value either when nothing shaped like one follows in the sentence, "PSK is enabled on the router",
+  "Network key: see sticker", "The network key is WPA2", memory-r5-2, but never after a password's or a PIN's name,
+  "The admin password is rotated monthly, currently Summer2024!", "PIN: active 4821", nor before a value, "The VPN
+  pre-shared key is configured to Tr0ub4dor&3", memory-x6-2, or one straight after its sentence, "PSK: rotated. It's
+  BlueSky99!", memory-y6-2), and a code counts only for
   something that locks: "the access control code 401", "backup exit code 255", "the access code 401 errors",
   "our office ZIP code is 90210" and, since a house, a home or an office locks only as someone's or "the" one,
   "Post office code: 560001", "Branch office code: 4410" and "our in-house code is 2000 lines long" (memory-v4-3)
@@ -142,11 +153,19 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   password too ("username bob pass hunter", never "the user should pass validation": memory-v5-4), but never a
   lowercase plural straight after "user" nor a word for a check after "pass" ("Why don't the user scripts pass
   linting?", "Ensure user inputs pass sanitisation.": memory-w5-4). A prompt's or a label's words are no value
-  (memory-r4-2): a string that ends after "Password:" with code after it (`getpass.getpass("Password: ")`, `read -s
-  -p "Password: " PASS`), an element's text that ends there with only markup after it, on its line and the next
-  (`<label for="password">Password:</label>`; never `<td>Password:</td><td>hunter2</td>` or `print("Password:",
-  "hunter2")`), and `$PWD`. Nor is a quoted label ("Password:"), a sentence about a secret ("Forgot your
-  password?"), an address with no credentials and no part shaped like a token ('TOKEN_URL =
+  (memory-r4-2): a string that ends after "Password:" with code after it and no word shaped like a password in that
+  code or a comment after it (`getpass.getpass("Password: ")`, `read -s -p "Password: " PASS`; never
+  `input("Password: ")  # Summer2024!`), an element's text that ends there with only markup after it up to the field
+  it labels, past blank and markup-only lines, at most 400 characters (`<label for="password">Password:</label>` before
+  its `<input>`; never `<td>Password:</td><td>hunter2</td>`, `<p>Your PIN:</p>\n\n<p>4821</p>`, an `<input>` with a
+  `value` or `print("Password:", "hunter2")`: memory-x6-1; nor a word shaped like a password, or a PIN's digits, on
+  the line after a field with no value, `<input type="password"> <small>(demo: Demo1234!)</small>`, nor a `<select>`'s
+  option: memory-y6-4; a ticket, a to-do or a version in a prompt's comment, "# see PROJ-1234", "TODO(bob2)",
+  "Python3.8+", and a check box's or a button's value are none either: memory-y6-5), and `$PWD`. Nor is a quoted label
+  with a secret's or a field's name in a common language ("Password:", "Пароль:", "Lösenord:", "Código:", "New:",
+  "Confirm password:", never "hunter:": memory-y6-5), a sentence about a secret, its word used as UI text uses it and no word
+  shaped like a password or four digits in it ("Forgot your password?", "Passwords don't match"; never "sign of four
+  1887" or "pass the salt please": memory-x6-3), an address with no credentials and no part shaped like a token ('TOKEN_URL =
   "https://oauth2.googleapis.com/token"'), what a key that names where a secret is holds ("PASSWORD_FIELD",
   "API_KEY_HEADER", "secretName", "tokenType"; never one shaped like a password), a tokenizer's setting, or, in a
   request, a type, null or an environment read with words after it and no digit or symbol in the sentence ("Add a
@@ -377,7 +396,11 @@ download, so English-only MiniLM is the trade-off for now.
      Monday", "Forget HomeNet", "Forget Starbucks", "Forget Ember", "Remove Photoshop from memory"; "from memory" only
      with "your", "Ember's" or "my", after the user's details or a name, or after what only Ember's memory holds
      ("Delete everything from memory", "Remove that from memory", "Remove what I told you from memory", "Delete my email
-     from memory", "Erase Priya's birthday from memory", "Remove where I live from memory": memory-c5-1), never "it" or
+     from memory", "Erase Priya's birthday from memory", "Remove where I live from memory": memory-c5-1; "what my …"
+     only of the user's details or people, "what I …" only with a verb about the user ("Remove what I do for a living
+     from memory", "Remove how I take my coffee from memory", "use" only before "as": memory-y6-6), and neither with a
+     program's words, so "Delete what my Python process allocated from memory" and "Remove what I use for testing from
+     memory" are the conversation's: memory-x6-6), never "it" or
      a thing named, and never a photo app's memories, so "Remove this tab from memory", "Remove it from memory" and
      "Delete my memories of Paris in Photos" are the conversation's: memory-r3-1, memory-v4-1, memory-v4-2, memory-c4-1; a photo
      app by any capitalised name but Ember's ("…in Microsoft Photos", "…on Pinterest", "…in Immich": memory-w5-6) and
