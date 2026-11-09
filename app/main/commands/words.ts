@@ -176,6 +176,13 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
   // A word Ember can't see that is only a processor count's substitution or a variable (`$(nproc)`, `` `nproc` ``,
   // `"$JOBS"`) is the usual job count, as a number is; a literal word (`install`) is still a target (commands-remote-v5-4).
   const numberNext = (k: number): boolean => k + 1 < args.length && (/^\d+(\.\d+)?$/.test(args[k + 1].v ?? "") || (args[k + 1].v === null && COUNT_WORD.test(args[k + 1].raw)));
+  // A separate unseen value can split into options and the program itself. Keep the parsed option for own-path
+  // checks, but expose the value as the first unknown program just as an attached unseen value is (commands-v7-5).
+  const unseenValue = (at: number, name: string): Parsed | null => {
+    const value = args[at + 1];
+    if (!spec.stopAtOperand || value.v !== null || ((spec.jobCounts ?? []).includes(name.replace(/^--?/, "")) && countWord(value.raw))) return null;
+    return { opts, operands: [...operands, ...args.slice(at + 1)], restAt: at + 1, missingValue };
+  };
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
     const v = a.v;
@@ -219,8 +226,8 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       const name = `--${eq >= 0 ? body.slice(0, eq) : body}`;
       if (eq >= 0) opts.push({ name, value: body.slice(eq + 1), at: k });
       else if (longValue.has(name.slice(2))) {
-        if (k + 1 < args.length) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else { opts.push({ name, value: null, at: k }); missingValue = true; }
-      } else if (longNumeric.has(name.slice(2)) && numberNext(k)) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else opts.push({ name, at: k });
+        if (k + 1 < args.length) { opts.push({ name, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, name); if (unseen) return unseen; k++; } else { opts.push({ name, value: null, at: k }); missingValue = true; }
+      } else if (longNumeric.has(name.slice(2)) && numberNext(k)) { opts.push({ name, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, name); if (unseen) return unseen; k++; } else opts.push({ name, at: k });
       continue;
     }
     // A short cluster: -rf, -fFILE, -C dir.
@@ -230,13 +237,13 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       if (shortOptional.includes(c) || shortNumeric.includes(c)) {
         const attached = v.slice(j + 1);
         if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
-        else if (shortNumeric.includes(c) && numberNext(k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else opts.push({ name: `-${c}`, at: k });
+        else if (shortNumeric.includes(c) && numberNext(k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, `-${c}`); if (unseen) return unseen; k++; } else opts.push({ name: `-${c}`, at: k });
         break;
       }
       if (shortValue.includes(c)) {
         const attached = v.slice(j + 1);
         if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
-        else if (k + 1 < args.length) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else { opts.push({ name: `-${c}`, value: null, at: k }); missingValue = true; }
+        else if (k + 1 < args.length) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, `-${c}`); if (unseen) return unseen; k++; } else { opts.push({ name: `-${c}`, value: null, at: k }); missingValue = true; }
         break;
       }
       opts.push({ name: `-${c}`, at: k });

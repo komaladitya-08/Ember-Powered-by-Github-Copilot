@@ -2709,6 +2709,12 @@ describe("a job count, as the flow judges it (commands-a7-1)", () => {
     ]) expect(await judged(command), command).toMatchObject({ result: "denied", asked: 1 });
   });
 
+  it("asks before a separate wrapper option value can hide a different command (commands-q6-3, i6b, commands-v7-5)", async () => {
+    for (const command of ["N='1 rm -rf ~'; xargs -P $N echo", "xargs -P $(cat jobs.txt) echo", "env -C $(cat folder.txt) echo", "nice -n $(cat priority.txt) echo", "parallel --jobs $N echo"]) {
+      expect(await judged(command), command).toMatchObject({ result: "denied", asked: 1 });
+    }
+  });
+
   it("runs a job count written as a number, a processor count or arithmetic of numbers", async () => {
     for (const command of ["make -j4", "make -j$(nproc)", "make -j \"$(nproc)\"", "xargs -P$(nproc) echo", "make -j$((2*4))"]) {
       expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });

@@ -3691,6 +3691,7 @@ reg(NATIVE, ["xargs"], h => {
   if (has(p, "process-slot-var")) h.e.unclear("unclear.assignment", "It changes the environment of the commands it runs.");
   // The file it reads its input from, a variable in it judged for Ember's own refusal (commands-remote-v5-2).
   optionFiles(h, h.args, p, { read: ["a", "arg-file"] }, false);
+  if (h.e.refuse) return;
   // A bare -i or --replace replaces {}.
   const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
@@ -5858,6 +5859,7 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
     if (h.key === "uv" && values(p, "with").length) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
     // The folder it runs the command in, its cache and the files it reads (commands-remote-v5-3).
     optionFiles(h, rest, p, { cd: ["directory", "cwd", "C"], into: ["cache-dir"], read: ["with-requirements", "config-file", "env-file"] });
+    if (h.e.refuse) return;
     h.e.payload(p.operands, h.sc, `${h.key} ${verb}`);
     return;
   }

@@ -1044,3 +1044,8 @@ job counts. A new attached count only applies to an option explicitly listed as 
 A relative symbolic-link target is checked beside the destination as well. When the destination could be a folder,
 Ember checks both places the link could be created, and asks if it cannot establish that base. Known destination
 variables retain the own-file refusal. GNU ln's `--relative` keeps its source-folder meaning.
+
+A wrapper's separate option value can supply more words too: `N='1 rm -rf ~'; xargs -P $N echo` runs the command
+hidden in N. Ember therefore asks when a wrapper's separate value is a variable or another expansion it cannot see,
+including env's folder, nice's priority and xargs's input file. Literal values and the exact written job counts keep
+working; a known protected path in the option still refuses.

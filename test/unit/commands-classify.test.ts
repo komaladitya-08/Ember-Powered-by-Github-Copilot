@@ -233,7 +233,7 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
       "set -e; d=~/.config/ember; echo \"$d\"", "set -euo pipefail; d=~/.config/ember; [ -d \"$d\" ]", "d=~/.config/ember; xargs echo <<< hello", "d=build; rm -rf \"${d:?}\"",
       "d=build; xargs rm -rf <<< \"$d\"", "d=./bin; \"$d/tool\" --x", "f=notes.txt; xargs -a \"$f\" echo", "d=x; rm -rf \"${d:+y}\"",
     ]) expect(refused(cmd), cmd).toBeUndefined();
-    expect(classifyCommand("f=notes.txt; xargs -a \"$f\" echo", "bash", contextOf("linux")).findings).toEqual([]);
+    expect(classifyCommand("f=notes.txt; xargs -a \"$f\" echo", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("unclear.program");
   });
 
   it("refuses Ember's folder through a variable in a wrapper's option written with its value attached, as when it is apart (commands-remote-w5-6)", () => {

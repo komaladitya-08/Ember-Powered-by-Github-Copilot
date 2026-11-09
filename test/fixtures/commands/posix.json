@@ -15836,6 +15836,30 @@
   {
    "cmd": "redis-cli <<< PING",
    "verdict": "run"
+  },
+  {
+   "cmd": "xargs -P $(cat jobs.txt) echo",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "xargs -P $N echo",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "N='1 rm -rf ~'; xargs -P $N echo",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "env -C $(cat folder.txt) echo",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "nice -n $(cat priority.txt) echo",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "parallel -j $(cat jobs.txt) echo",
+   "verdict": "ask"
   }
  ]
 }

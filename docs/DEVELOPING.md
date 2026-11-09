@@ -2544,3 +2544,8 @@ Symbolic-link checks resolve relative targets from each possible destination bas
 variables. Untyped POSIX destinations are checked as a file and as a folder unless flags establish one; Windows
 symbolic links also receive the destination-parent guard. Baseline source-path refusals remain in force, and ln's
 `--relative` continues to resolve the source from the command's folder.
+
+For `stopAtOperand`, an unseen separate option value retains its parsed option for path checks and also becomes the
+first unknown operand, just as an unseen attached value does. Never consume it and classify only the later visible
+program: unquoted expansion can supply a different command. The only count exception uses an explicit job option and
+`countWord()` on the value as written, never a variable's tracked value (commands-q6-3, i6b, commands-v7-5).

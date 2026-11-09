@@ -154,3 +154,19 @@ describe("processor substitutions outside the permitted job-count exception", ()
     }
   });
 });
+
+describe("separate wrapper option values", () => {
+  it("asks before a value it cannot see can supply the command instead (commands-q6-3, i6b, commands-v7-5)", () => {
+    for (const command of [
+      "xargs -P $(cat jobs.txt) echo", "xargs --max-procs $(cat jobs.txt) echo", "xargs -P $N echo",
+      "N='1 rm -rf ~'; xargs -P $N echo", 'N=4; xargs -P "$N" echo',
+      "env -C $(cat folder.txt) echo", "env --chdir $D echo", "nice -n $(cat priority.txt) echo",
+      "parallel -j $(cat jobs.txt) echo", "parallel --jobs $N echo", "xargs -a $(cat input.txt) echo",
+    ]) expect(decide(command).verdict, command).toBe("ask");
+    for (const command of ["xargs -P 4 echo", "xargs -P $(nproc) echo", "xargs --max-procs $(getconf _NPROCESSORS_ONLN) echo", "parallel -j $((2+2)) echo", "env -C . echo", "nice -n 4 echo"]) {
+      expect(decide(command).verdict, command).toBe("run");
+    }
+    expect(decide('d=~/.config/ember/settings.json; xargs -a "$d" echo').verdict).toBe("refuse");
+    expect(decide('N=4; xargs -P $N cat ~/.config/ember/settings.json').verdict).toBe("refuse");
+  });
+});
