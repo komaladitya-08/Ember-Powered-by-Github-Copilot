@@ -814,14 +814,30 @@ function withoutKeyStates(text: string): string {
  * every 90 days" stay facts.
  */
 const NOT_A_CHANGE = String.raw`(?:${NOT_A_VALUE}|something|anything|nothing|one|whatever|mine|yours|default|expire|a\s+new)`;
-const LENGTH = String.raw`(?!\d+\+?\s*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b)`;
+const LENGTH = String.raw`(?!\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b)`;
 const CHANGE_VALUE = String.raw`["'“]?(?!${NOT_A_CHANGE}(?:[\s.,;!?"'”]|$))${LENGTH}(?:(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}|[^\s"'”.,;!?]{3,}(?=["'”]?\s*(?:$|[.,;!?])))`;
 const LATER_VALUE = String.raw`["'“]?(?!${NOT_A_VALUE}(?:[\s.,;!?"'”]|$))${LENGTH}(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}`;
 const CHANGE_TO = String.raw`\s*[:,–—-]?\s*(?:(?:has|have|had)\s+been\s+|(?:was|were|is|are|got|gets|been)\s+)?(?:just\s+|now\s+|recently\s+)?(?:changed|set|reset|updated|switched)(?:\s+(?:it|them))?\s+(?:back\s+)?to\s+`;
 const LATER_BE = String.raw`\s+(?:(?:will|would|should|shall|must|might|could)(?:\s+now)?\s+be|is\s+going\s+to\s+be|used\s+to\s+be|became|becomes)\s+`;
-const TOLD_CHANGE = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}(?:${CHANGE_TO}${CHANGE_VALUE}|${LATER_BE}${LATER_VALUE})`, "i");
+const TOLD_CHANGE = new RegExp(String.raw`\b(${SECRET_NAMES})s?\b${FOR_WHAT}(?:${CHANGE_TO}(${CHANGE_VALUE})|${LATER_BE}(${LATER_VALUE}))`, "gi");
 const CHANGED_MY = new RegExp(String.raw`\b(?:changed|change|set|reset|updated|update|switched|switch)\s+(?:(?:my|our|the|their|his|her|your|[a-z]+['’]s)\s+)?(?:[\w-]+\s+){0,3}?`
-  + String.raw`(?:\b${SECRET_NAMES}s?|(?:${PLACE_NAMES})\s+(?:code|combination|combo)s?)\s+(?:back\s+)?to\s+${CHANGE_VALUE}`, "i");
+  + String.raw`(?:\b(${SECRET_NAMES})s?|(?:${PLACE_NAMES})\s+(?:code|combination|combo)s?)\s+(?:back\s+)?to\s+(${CHANGE_VALUE})`, "gi");
+/** An API key's or a secret key's name, whose value is a token, never a word or code. */
+const API_NAME = /^(?:api[ _-]?(?:key|token)|secret(?: access)?[ _-]?key)$/i;
+/**
+ * Whether `text` says a secret as changed or to be (TOLD_CHANGE, CHANGED_MY): an API key's only as a value shaped like
+ * a token, never one word, a version or code where it goes ("Set the API key to staging", "Switch the API key to
+ * read-only", "The API key was updated to v3.", "Set the API key to process.env.API_KEY"): memory-x6-5.
+ */
+function toldChange(text: string): boolean {
+  for (const re of [TOLD_CHANGE, CHANGED_MY]) {
+    for (const m of text.matchAll(re)) {
+      const value = (m[2] ?? m[3] ?? "").replace(/^["'“]+|["'”.,;!?]+$/g, "");
+      if (!API_NAME.test(m[1] ?? "") || (tokenShaped(value) && !/^(?:process\.env|import\.meta\.env|os\.environ|env|config|settings)\./i.test(value))) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * A password, passcode or passphrase with its value straight after ("VPN password hunter2", "the password 'Summer2024!'",
@@ -982,16 +998,23 @@ const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[
  * A value after a word for a secret's state and a comma or a full stop ("PIN: entered, 4821", "Password: masked, but
  * it's hunter2", "password: typed. BlueSky99", "Password: hidden, it's hunter2"): the state isn't its value, but
  * what follows it may be: memory-r5-3. Only a value with a digit or a symbol, never a length or a count ("The password
- * is required, 12 characters"), so "Passwords are hashed. Tokens are rotated." and "Password: masked, PIN: entered" stay.
+ * is required, 12 characters", "The PIN is required, 4-digit") or how it is hashed or encrypted ("Passwords are hashed,
+ * SHA-256", "Password: hashed, argon2id": memory-x6-5), so "Passwords are hashed. Tokens are rotated." and "Password:
+ * masked, PIN: entered" stay.
  */
 const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}${NOW}[A-Za-z][A-Za-z'’-]*[ \t]*[,;.][ \t]*(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
   + String.raw`(?:(?:it|that)(?:['’]s|\s+is|\s+was)\s+|(?:the\s+)?(?:password|pin|code|value|real\s+one)\s+is\s+)?["'“]?`
-  + String.raw`(?!\d+\+?\s*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b)(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
+  + String.raw`(?!\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b)`
+  + String.raw`(?!(?:sha|aes|rsa|des|md|hs|rs|es|ps|blake|crc)-?\d+\b|argon2(?:id|i|d)?\b|bcrypt\w*\b|pbkdf2\w*\b)(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
 /**
  * A network and its key said together ("Guest Wi-Fi: BlueSky / BlueSky99", "Home network: BlueSky, key BlueSky99"),
- * the key with a digit or a symbol: safety-privacy-c4-2.
+ * the key with a digit or a symbol: safety-privacy-c4-2. Never its router's address, its standard, its mode or its band
+ * ("Home network: HomeNet / 192.168.1.1", "Wi-Fi: HomeNet, 802.11ac", "Wi-Fi: HomeNet / WPA2-PSK"), which may come before
+ * the key ("Wi-Fi: HomeNet / WPA2-PSK, key BlueSky99"): memory-x6-5.
  */
-const NETWORK_PAIR = /\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:(?:key|password|pass|pw|passphrase|psk)\s+)?["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}/i;
+const NETWORK_SETTING = String.raw`(?:\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?|802\.11[a-z]*|(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*|\d+(?:\.\d+)?\s?(?:ghz|mhz|[kmg]bps))`;
+const NETWORK_PAIR = new RegExp(String.raw`\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:${NETWORK_SETTING}\s*[,/]?\s*)?`
+  + String.raw`(?:(?:key|password|pass|pw|passphrase|psk)\s+)?["'“]?(?!${NETWORK_SETTING}(?:[\s.,;!?)"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}`, "i");
 /**
  * A service a person signs in to and a value shaped like a password straight after its name ("Netflix: hunter2", "The
  * user's Gmail: Tr0ub4dor&3", "The user's Netflix account: hunter2", "Netflix login hunter2"): safety-privacy-1. Never a
@@ -1004,8 +1027,11 @@ function serviceValue(text: string): boolean {
   for (const m of text.matchAll(SERVICE_VALUE)) if (secretShaped(m[1]!.replace(/[.,;!?)]+$/, ""))) return true;
   return false;
 }
-/** A capitals setting for a password ("DB_PASS=Tr0ub4dor&3"), a value with a digit or a symbol, never a reference: memory-1. */
-const SHOUTED_PASS = /\b[A-Z][A-Z0-9]*_PASS\s*[:=]\s*["']?(?![$%{<])(?=[^\s"']{0,64}[0-9!@#$%^&*])[^\s"']{4,}/;
+/**
+ * A capitals setting for a password ("DB_PASS=Tr0ub4dor&3"), a value with a digit or a symbol, never a reference: memory-1.
+ * Never a filter's or a renderer's pass ("LOW_PASS=8000", "HIGH_PASS: 2000", "RENDER_PASS=shadow2"): memory-x6-5.
+ */
+const SHOUTED_PASS = /\b(?!(?:LOW|HIGH|BAND|ALL|RENDER)_PASS\b)[A-Z][A-Z0-9]*_PASS\s*[:=]\s*["']?(?![$%{<])(?=[^\s"']{0,64}[0-9!@#$%^&*])[^\s"']{4,}/;
 /**
  * A secret's name, then another label and a value shaped like a password, as a mapping reads once its lines are run
  * together, the way memory keeps a fact ("credentials: admin: Wint3r!Sh0p", "Wi-Fi: home: BlueSky99"), never a
@@ -1163,7 +1189,7 @@ export function memoryRefusal(text: string): string | null {
   if (TOLD_SECRET.test(said) || BARE_PASSWORD.test(said) || BARE_PIN.test(pins) || loginPass(said) || PLACE_CODE.test(said)
     || CODE_FOR_PLACE.test(said) || BARE_CVV.test(said) || USED_AS.test(said) || LOGIN_PAIR.test(said) || WIFI_KEY.test(said) || SEED_WORDS.test(said) || nestedSecret(said)
     || PIN_NUMBER.test(pins) || DEVICE_CODE.test(said) || TOLD_TOKEN.test(said) || ADMIN_PAIR.test(said) || ADMIN_SET.test(said) || VALUE_FIRST.test(said)
-    || TOLD_CHANGE.test(said) || CHANGED_MY.test(said) || NETWORK_PAIR.test(said) || serviceValue(said) || SHOUTED_PASS.test(said) || STATE_THEN.test(said)) {
+    || toldChange(said) || NETWORK_PAIR.test(said) || serviceValue(said) || SHOUTED_PASS.test(said) || STATE_THEN.test(said)) {
     return "it holds a password, PIN or code";
   }
   // Said as a login's one value, it may be the user name ("my login is jsmith42"): the model is told it may be the

@@ -80,17 +80,22 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   is as often its password, "P@ss-w0rd": safety-privacy-1; the model is told it may be the login's password, never
   that it is one), a secret said as changed, current or to be ("my Wi-Fi password is now BlueSky99", "I changed my
   PIN to 4821", "the user's password was reset to Summer2024!", "the password will be hunter2"; never "the password is
-  now required", "the PIN changed to 6 digits" or "I changed my password manager to 1Password": memory-r5-1), a
-  service and a value shaped like a password ("Netflix: hunter2", "Netflix login hunter2", never "Gmail:
-  priya2@gmail.com": safety-privacy-1), a router's label names and a network with its key ("WLAN key: …", "Guest
-  Wi-Fi: BlueSky / BlueSky99": safety-privacy-c4-2), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  now required", "the PIN changed to 6 digits" or "I changed my password manager to 1Password": memory-r5-1; an API
+  key's only as a value shaped like a token, never "Set the API key to staging" or "… to process.env.API_KEY":
+  memory-x6-5), a service and a value shaped like a password ("Netflix: hunter2", "Netflix login hunter2", never
+  "Gmail: priya2@gmail.com": safety-privacy-1; a capitalised word with a digit is how passwords are written, so "Steam:
+  Portal2" is refused too), a router's label names and a network with its key ("WLAN key: …", "Guest Wi-Fi: BlueSky /
+  BlueSky99": safety-privacy-c4-2; never its address, standard, mode or band, "Home network: HomeNet / 192.168.1.1",
+  "Wi-Fi: HomeNet / WPA2-PSK", memory-x6-5), a capitals setting for a password ("DB_PASS=Tr0ub4dor&3", never a
+  filter's "LOW_PASS=8000"), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
   "hashed" and "masked" only before more words with no digit or symbol: "password: never logged", but "Wi-Fi password
   is its BlueSky99" and "Password for Gmail is never Summer2024!" are refused, memory-v5-1; "typed", "entered",
   "hashed" and "masked" also at the clause's end, "Passwords are hashed.", "Password: Masked", but not before a value
   in brackets, "PIN: entered (4821)", memory-w5-3, nor before one after a comma or a full stop, "PIN: entered, 4821",
-  "Password: hidden, it's hunter2", memory-r5-3; after a Wi-Fi key's router name, its state, where to look and its
+  "Password: hidden, it's hunter2", memory-r5-3, though how it is hashed or how long it is may follow, "Passwords are
+  hashed, SHA-256", "The PIN is required, 4-digit", memory-x6-5; after a Wi-Fi key's router name, its state, where to look and its
   mode aren't a value either when nothing shaped like one follows in the sentence, "PSK is enabled on the router",
   "Network key: see sticker", "The network key is WPA2", memory-r5-2, but never after a password's or a PIN's name,
   "The admin password is rotated monthly, currently Summer2024!", "PIN: active 4821", nor before a value, "The VPN

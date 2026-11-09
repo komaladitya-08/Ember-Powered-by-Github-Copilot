@@ -216,6 +216,14 @@ it("holds back a pretty-printed welcome page and a prompt whose comment gives th
   expect(await prompt([form])).toContain("Sign in");
 });
 
+it("takes a request to point the API key at an environment read or another stage, beside one that gives a key (memory-x6-5)", async () => {
+  const app = await file("app.py", "print(1)\n");
+  for (const q of ["Set the API key to process.env.API_KEY", "Change the API key to staging", "Switch the API key to read-only"]) {
+    expect(await projectPrompt([app], "review", q, new AbortController().signal, privateDir)).toContain(q);
+  }
+  await expect(projectPrompt([app], "review", "Change the API token to Wint3r!Sh0p", new AbortController().signal, privateDir)).rejects.toThrow("Remove passwords");
+});
+
 it("takes a request about user scripts passing a check and sends a path built into root, beside a user's name and password (memory-w5-4, memory-w5-5)", async () => {
   const app = await file("app.py", "print(1)\n");
   for (const q of ["Why don't the user scripts pass linting?", "How do I make user uploads pass scanning?", "Do the user queries pass sanitisation?"]) {

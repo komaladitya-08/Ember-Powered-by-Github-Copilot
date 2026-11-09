@@ -676,6 +676,23 @@ describe("what memory never keeps", () => {
   ])("keeps %j, which says no secret (memory-r5-1, safety-privacy-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // An API key changed to a word or code, a network with its address or mode, a filter's setting and how a password is
+  // stored, which round six's change, network, _PASS and state rules refused (memory-x6-5).
+  it.each([
+    ["Set the API key to process.env.API_KEY"], ["Change the API key to staging"], ["Set the API key to production."], ["Switch the API key to read-only"],
+    ["The API key was updated to v3."], ["Home network: HomeNet / 192.168.1.1"], ["Wi-Fi: HomeNet / WPA2-PSK"], ["Wi-Fi: HomeNet, 802.11ac"],
+    ["LOW_PASS=8000"], ["HIGH_PASS: 2000"], ["Passwords are hashed, SHA-256"], ["The password is encrypted, AES-256"], ["Password: hashed, argon2id"],
+    ["Password: hashed, bcrypt2b"], ["The PIN is required, 4-digit"], ["The PIN will be 6-digit"],
+  ])("keeps %j, which says no secret (memory-x6-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["Set the API key to sk_abc123def456ghi789"], ["Change the API token to Wint3r!Sh0p"], ["I changed my password to staging."],
+    ["Wi-Fi: HomeNet / WPA2-PSK, key BlueSky99"], ["Home network: HomeNet / 192.168.1.1, password BlueSky99"], ["DB_PASS=Tr0ub4dor&3"],
+    ["Password: hashed, but it's Summer2024!"], ["The PIN will be 4821"],
+  ])("still refuses %j, a secret beside them (memory-x6-5)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
 
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
