@@ -187,6 +187,8 @@ runtime. It does not change the app's consent or speaking settings.
   **Read it out**, typed, spoken or chosen as a suggestion, reads the retained answer through the current speaking
   settings and policy. It never turns on **Read finished tasks out loud**; when speaking is off, Ember says where to
   change it and leaves it off. An explicit request to read future task results still changes that separate preference.
+  **Hear Ember** reports each sample's failure, including a second attempt with no installed voice, without waiting
+  for the sample's 12-second outer deadline merely because the previous attempt failed too.
   - **Keep my recent conversation after Ember closes** (`keepConversation`, off by default; Home › Conversation): saves the
     latest 60 messages (at most 2 MiB) in `conversation.json` in the data folder (mode 0600, folder 0700; written
     atomically through a temp file, fsync and rename, last state wins), and shows them again after a restart once the
