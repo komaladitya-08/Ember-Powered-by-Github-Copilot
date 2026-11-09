@@ -253,6 +253,17 @@ describe("docs/DEVELOPING.md", () => {
     expect(line).toContain("xcompmgr");
   });
 
+  it("keeps the C API's and WebAssembly's measured figures in the --native bullet, not in the one after it (reliability-y6-2)", () => {
+    const dev = read("docs/DEVELOPING.md");
+    const rest = dev.slice(dev.indexOf("**What Ember costs at rest.**"), dev.indexOf("### Connecting Copilot"));
+    // Markdown carries a two-space-indented line on as part of the bullet above it.
+    const bullets = rest.split(/\n(?=- )/).map(b => flat(b).trim());
+    const figures = bullets.find(b => /the listening process took [^.]* on the C API against [^.]* on WebAssembly/.test(b)) ?? "";
+    expect(figures).toMatch(/^- A development build listens on WebAssembly\. `--native` listens on sherpa-onnx's C API/);
+    const gap = bullets.find(b => b.startsWith("- The voice process must listen from the sample's start to its end")) ?? "";
+    expect(gap).toMatch(/it used to leave the run waiting for ever\.$/);
+  });
+
   it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {
     const paths = [...WINDOWS_MIC_FIX.matchAll(/Settings › [^()]+?microphone/g)].map(m => m[0]);
     expect(paths.length).toBe(2);
