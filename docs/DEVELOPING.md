@@ -139,7 +139,8 @@ runtime. It does not change the app's consent or speaking settings.
   never that bindings are missing or ready. Neither a first read nor a later session-bus check blocks Stop; `ember doctor`
   waits asynchronously for the completed checks. If the GNOME switch cannot be read, the row says it could not be
   checked. Screen-reader detection also queries GNOME off the main thread, caches its answer for a minute and keeps
-  using Chromium's current accessibility state. A missing pyatspi is looked for again, so Ember
+  using Chromium's current accessibility state. While reader detection is unknown, teaching and Listen once use
+  their screen-reader guards; that uncertainty never enables speaking only meant for a detected reader. A missing pyatspi is looked for again, so Ember
   keeps answering while that import takes up to 5 s) (**Show the details** has every
   row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
   request in the ask box; and **Your Ember** sums it up before **Start Ember**. Nothing is read, heard or sent before

@@ -427,6 +427,7 @@ describe("accessibility probes", () => {
     const readerCalls = () => fake.calls.filter(c => c.args.includes("screen-reader-enabled"));
     expect(readerCalls()).toHaveLength(1);
     fire();
+    // Keep a known reader for speaking while a fresh answer is pending.
     expect(a.screenReaderOn()).toBe(true);
     for (let i = 0; i < 8; i++) await Promise.resolve();
     expect(readerCalls()).toHaveLength(2);

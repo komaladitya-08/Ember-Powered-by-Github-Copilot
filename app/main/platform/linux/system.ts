@@ -43,13 +43,17 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
 
   let screenReader = false;
   let readerFresh = false;
+  let readerKnown = false;
   let readerLooking = false;
   /** GNOME's cached switch, refreshed off the main thread, plus Chromium's current accessibility state. */
   const screenReaderOn = (): boolean => {
     if (!readerFresh && !readerLooking) {
       readerLooking = true;
       void Promise.resolve().then(() => (io.run ?? execAsync)("gsettings", ["get", "org.gnome.desktop.a11y.applications", "screen-reader-enabled"], { timeout: 2000 }))
-        .then(out => { screenReader = typeof out === "string" && out.trim() === "true"; }, () => { screenReader = false; })
+        .then(out => {
+          readerKnown = typeof out === "string" && /^(true|false)$/.test(out.trim());
+          screenReader = readerKnown && (out as string).trim() === "true";
+        }, () => { readerKnown = false; screenReader = false; })
         .finally(() => {
           readerLooking = false;
           readerFresh = true;
@@ -119,6 +123,10 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
     doctorProbes: () => linuxDoctorProbes({ execPath: deps.execPath, which: whichLinux, exec, exists: io.exists, env: deps.env }),
     a11y: {
       screenReaderOn,
+      screenReaderState: () => {
+        screenReaderOn();
+        return deps.electron.app.isAccessibilitySupportEnabled() ? true : readerKnown && readerFresh && !readerLooking ? screenReader : null;
+      },
       // GNOME's "Animations" switch off counts as asking for calm mode.
       systemReducedMotion: () => {
         try { return exec("gsettings", ["get", "org.gnome.desktop.interface", "enable-animations"], { encoding: "utf8", timeout: 2000 }).trim() === "false"; } catch { return false; }

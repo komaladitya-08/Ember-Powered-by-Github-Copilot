@@ -4,6 +4,7 @@ import { accessibilityProbe, type ExecAsync } from "../../app/main/platform/linu
 import { inspectEnvironment, type EnvInputs } from "../../app/main/environment";
 import { linuxSystem } from "../../app/main/platform/linux/system";
 import type { PlatformDeps } from "../../app/main/platform/types";
+import { speaksAloud } from "../../app/shared/speech";
 import { holdsBack } from "../../app/shared/setup-attention";
 
 const base: EnvInputs = { env: { DISPLAY: ":0", XDG_SESSION_TYPE: "x11" }, platform: "linux", arch: "x64", osRelease: 'ID="rhel"\nVERSION_ID="8.4"', glibc: "2.28", versions: { node: "24" } };
@@ -61,6 +62,48 @@ describe("Linux's responsive screen-reading check", () => {
     expect(platform.a11y.screenReaderOn()).toBe(true);
     electronReader = true;
     expect(platform.a11y.screenReaderOn()).toBe(true);
+  });
+
+  it("keeps a confirmed reader's streamed reply speaking while its cache refresh waits (reliability-v7-3)", async () => {
+    let expire: () => void = () => undefined;
+    const pending: ((v: string) => void)[] = [];
+    let calls = 0;
+    const platform = linuxSystem({ env: {}, electron: { app: { isAccessibilitySupportEnabled: () => false } } } as unknown as PlatformDeps, {
+      run: async (_cmd, args) => {
+        if (!args.includes("screen-reader-enabled")) return "true";
+        return ++calls === 1 ? "true" : new Promise<string>(resolve => pending.push(resolve));
+      },
+      setTimeout: fn => { expire = fn; return {}; },
+    });
+    platform.a11y.screenReaderOn();
+    await flush();
+    expect(speaksAloud({ speak: false, speakWithScreenReader: true }, platform.a11y.screenReaderOn)).toBe(true);
+    expire();
+    expect(speaksAloud({ speak: false, speakWithScreenReader: true }, platform.a11y.screenReaderOn)).toBe(true);
+    expect(platform.a11y.screenReaderState?.()).toBeNull();
+    await flush();
+    pending[0]("false");
+    await flush();
+    expect(speaksAloud({ speak: false, speakWithScreenReader: true }, platform.a11y.screenReaderOn)).toBe(false);
+  });
+
+  it("keeps unknown reader state protective for hearing and silent for reader-only speech (reliability-v7-2)", async () => {
+    let malformed = false;
+    let refresh: () => void = () => undefined;
+    const platform = linuxSystem({ env: {}, electron: { app: { isAccessibilitySupportEnabled: () => false } } } as unknown as PlatformDeps, {
+      run: async (_cmd, args) => args.includes("screen-reader-enabled") ? malformed ? "unknown" : "false" : "true",
+      setTimeout: fn => { refresh = fn; return {}; },
+    });
+    expect(platform.a11y.screenReaderState?.()).toBeNull();
+    expect(platform.a11y.screenReaderOn()).toBe(false);
+    await flush();
+    expect(platform.a11y.screenReaderState?.()).toBe(false);
+    malformed = true;
+    refresh();
+    expect(platform.a11y.screenReaderState?.()).toBeNull();
+    await flush();
+    expect(platform.a11y.screenReaderState?.()).toBeNull();
+    expect(platform.a11y.screenReaderOn()).toBe(false);
   });
 
   it("doesn't call screen reading ready after the GNOME switch couldn't be checked (reliability-c7-1)", async () => {

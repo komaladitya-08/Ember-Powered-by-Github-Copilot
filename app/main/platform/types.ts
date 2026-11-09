@@ -469,6 +469,8 @@ export interface PlatformDoctorProbes {
 export interface A11yProbes {
   /** A real screen reader runs. linux: asynchronous GNOME screen-reader-enabled (cached 60 s) || app.isAccessibilitySupportEnabled() (today); win32: SPI_GETSCREENREADER; darwin: VoiceOver. */
   screenReaderOn(): boolean;
+  /** For microphone guards: null while an OS query is pending or could not be checked, never permission to speak. */
+  screenReaderState?(): boolean | null;
   /** The OS asks for less motion. linux: gsettings enable-animations false (today); win32/darwin: systemPreferences.getAnimationSettings().prefersReducedMotion. */
   systemReducedMotion(): boolean;
 }
