@@ -174,7 +174,8 @@ function enrolFrame(frame: Float32Array, capturedAt?: number): void {
   const now = Date.now();
   for (const seg of backend.vad(frame)) { void enrolment.heard(seg, enrolSpeechFrom ?? now); enrolSpeechFrom = null; }
   if (!backend.speaking()) enrolSpeechFrom = null;
-  else enrolSpeechFrom ??= now;
+  // (A phrase heard in this frame may have ended the teaching: gave up.)
+  else if (enrolSpeechFrom === null) { enrolSpeechFrom = now; enrolment?.speechBegan(); }
 }
 function endEnrolment(): void {
   enrolment = null;

@@ -284,7 +284,8 @@ export interface VoiceStatus {
 /**
  * The effective local voice as Home shows it (VoiceService.naturalStatus): `off` (service stopped); `later` (selected at start:
  * decided the next time it speaks); `checking` (Ember's voice is loading to time this computer); `needs-voice` (Ember's own voice isn't downloaded yet, so nothing can be timed);
- * `downloading` (`percent` of it so far); `ready` (fetched: it speaks from the next reply); `on` (it speaks now);
+ * `downloading` (`percent` of it so far); `ready` (fetched: it speaks from the next reply); `on` (it speaks now, also while
+ * it is let go after two quiet minutes and loads again: voice-listening-c5-1);
  * `too-slow`; `failed` (the download failed: Try again); `wont-load` (downloaded, but it wouldn't load); `needs-native`
  * (Ember's faster speech didn't load on this computer, and Kokoro needs it).
  */

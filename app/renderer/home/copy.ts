@@ -58,7 +58,7 @@ export function composerCount(n: number, limit = CONVERSATION_REQUEST_LIMIT): st
  */
 export const COMPOSER_THINKING = "Thinking… Ember's reply will appear above.";
 /** The same while it waits, unsent, for a switch of model service that waits for the work under way (main's "held" turn: home-r4-4). */
-export const COMPOSER_HELD = "Ember will send this to the new model service once what it's doing now has finished. Stop response cancels it.";
+export const COMPOSER_HELD = "This goes to the new model service once what's under way now has finished. Stop response cancels it.";
 export function composerStillWaiting(service?: string): string {
   return `Still waiting for ${service === "user" ? "your model provider" : service ? "the model service" : "Copilot"}… Stop response ends this reply.`;
 }
@@ -70,14 +70,18 @@ export function conversationNewQuestion(messages: number, kept: boolean): string
   const what = messages === 1 ? "the message here" : `the ${messages} messages here`;
   return `Start a new conversation? This clears ${what}${kept ? " and deletes the copy saved on this computer" : ""}.`;
 }
-/** The composer's status line (#conversation-compose-status, a live region): what happened to what was sent or copied (home-11). */
+/**
+ * The composer's status line (#conversation-compose-status, a live region): what happened to what was sent or copied
+ * (home-11). Without the name: it is said as a request ends, and "Ember couldn't answer this request. …", said into the
+ * wake word's microphone, woke Ember and was sent as a request in 38 of 40 placements (voice-listening-r5-1).
+ */
 export const COMPOSER_SAYS = {
   copied: "Copied message.",
   copyFailed: "Couldn't copy this message. Select its text and copy it manually.",
-  replyFailed: "Ember couldn't finish this reply. Review the message above; you can edit your request and send again.",
+  replyFailed: "This reply couldn't be finished. Review the message above; you can edit your request and send again.",
   // A Problem line with no reply begun since the request (the model service refused it): nothing to finish
   // (reliability-performance-c1-1).
-  notAnswered: "Ember couldn't answer this request. Review the message above; you can edit your request and send again.",
+  notAnswered: "This request got no answer. Review the message above; you can edit your request and send again.",
   replied: "Reply received.",
   loadFailed: "Couldn't load this conversation. New replies will still appear here.",
   started: "Started a new conversation. Memory, reminders and running tasks are untouched.",
@@ -88,7 +92,7 @@ export const COMPOSER_SAYS = {
   stopFailed: "Couldn't stop this response. Try again, or use Stop everything.",
   empty: "Enter a request of up to 2,000 characters.",
   // The request's turn ended with no reply to read (home-c1-1), or a "stop" stopped everything (no turn came).
-  noReply: "Ember didn't write a reply. Task activity shows any task it started.",
+  noReply: "No reply was written. Task activity shows any task this request started.",
   replyStopped: "The reply was stopped before it finished.",
   stoppedAll: "Stopped everything, running tasks included.",
 } as const;
@@ -109,7 +113,7 @@ export function problemInHome(text: string): { text: string; settings: boolean }
 export const PROBLEM_SETTINGS = "Models & connections…";
 /** Stop response, pressed: what it stopped, or that nothing was under way (home-3: never a stop that didn't happen). */
 export const CONVERSATION_STOPPED = "Response stopped. Running tasks continue.";
-export const CONVERSATION_NOTHING_TO_STOP = "Ember isn't answering anything right now, so there was nothing to stop.";
+export const CONVERSATION_NOTHING_TO_STOP = "Nothing is being answered right now, so there was nothing to stop.";
 /** Given-back words that, with what is in the composer, are over the limit (home-c4-2): Send refuses them as they are. */
 const GIVEN_BACK_OVER = `Together they're over ${CONVERSATION_REQUEST_LIMIT.toLocaleString("en-GB")} characters: send them one at a time.`;
 /** What is under given-back words is over the limit by itself (home-v5-3): one at a time won't send it either. */
@@ -369,7 +373,23 @@ export function handleCornerText(p: HandlePosition | undefined): string {
   return sideOf(p) === "left" ? "bottom-left corner" : "bottom-right corner";
 }
 
-/** The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. */
+/**
+ * Your Ember's line under Hide (#presence-text, a status line): where Ember is when it can't be by the cursor, or that it
+ * hides. Without the name, as the status panel's line: "Ember is hidden. …", said into the wake word's microphone, woke
+ * Ember and was sent as a request in 40 of 40 placements (voice-listening-r5-1).
+ */
+export function presenceLine(p: { overlay: boolean; hidden: boolean }, corner: HandlePosition | undefined): string {
+  return !p.overlay
+    ? `This desktop session can't show your character beside your cursor, so it lives in the card in the ${handleCornerText(corner)}.`
+    : p.hidden ? "Hidden. It shows itself again when it needs to ask you something." : "";
+}
+
+/**
+ * The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. Worded under the
+ * heading, without the name, wherever Ember can listen: a screen reader says it as it changes (a reconnect, Hide), and
+ * "Ember is beside your cursor. …" said into the wake word's microphone woke Ember and was sent as a request in 39 of
+ * 40 placements (voice-listening-r5-1). Before Start nothing is heard, and a locked-down Ember doesn't listen.
+ */
 export function tagline(t: {
   failing: number; onboarded: boolean; phase: string | null; hidden: boolean; overlay: boolean; waitingForTasks?: boolean;
   /** Setup rows that don't fail but need the user (a warning that holds Ember back, or one with a button). */
@@ -390,21 +410,21 @@ export function tagline(t: {
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
   // Locked down, connecting can't help: say why Ember can't answer, never "Connect Copilot".
   if (t.locked) return t.held ? "Your organisation changed Ember's policy, so Ember can't answer or act until you restart it." : "Your organisation's Ember policy has a problem, so Ember can't answer or act until it's fixed.";
-  if (t.failing) return `Ember needs ${things(t.failing)} fixed before it can work on this computer.`;
-  const where = !t.overlay ? `Ember is in the ${handleCornerText(t.corner)}.` : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
+  if (t.failing) return `Needs ${things(t.failing)} fixed before it can work on this computer.`;
+  const where = !t.overlay ? `In the ${handleCornerText(t.corner)}.` : t.hidden ? "Hidden for now." : "Beside your cursor.";
   const service = t.service === "user" ? "your model provider" : t.service ? "the model service" : "Copilot";
-  if (t.phase === "error" && t.waitingForTasks) return `${where} ${t.service ? service[0].toUpperCase() + service.slice(1) : "Copilot"} isn't answering: Ember reconnects once the tasks that are running finish.`;
+  if (t.phase === "error" && t.waitingForTasks) return `${where} ${t.service ? service[0].toUpperCase() + service.slice(1) : "Copilot"} isn't answering: reconnecting once the tasks that are running finish.`;
   // Ember's own model connection stopped: never the provider's fault or Copilot's sign-in (accessibility-visual-c1-2),
   // in the bubble's words for it ("Copilot isn't running", "My model connection isn't running").
   if (t.phase === "error" && t.runtime === "reconnecting") return `${where} Reconnecting to ${service}…`;
   if (t.phase === "error" && t.runtime === "stopped") return `${where} ${t.service ? "Ember's model connection" : "Copilot"} isn't running: Models & connections says why.`;
-  if (t.phase === "error" && t.service) return `${where} Ember can't connect to ${service} yet: Models & connections says why.`;
+  if (t.phase === "error" && t.service) return `${where} Can't connect to ${service} yet: Models & connections says why.`;
   if (t.phase === "signed-out" && t.waitingFor) return `${where} Agree to use ${t.waitingFor} in Models & connections to start asking.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to ${service}…`;
   // Ready, with setup rows still worth a look: said, so a warning isn't left in a closed fold (review #95).
   // An empty label: another app holds the ask shortcut and its fallback (D-45b), so settings' Ask Ember… is the way.
-  const ask = askLabel ? `Press ${askLabel} to ask it anything.` : "Ask it anything with Ask Ember… below.";
+  const ask = askLabel ? `Press ${askLabel} to ask anything.` : "Ask anything with the Ask button below.";
   return `${where} ${ask}${t.look ? ` The setup check has ${things(t.look)} worth a look.` : ""}`;
 }
 
@@ -1501,27 +1521,32 @@ export function clearHearingLine(s: ClearHearingStatus | undefined): string {
   }
 }
 
-/** Effective selected voice and actual playback/fallback from the service, without guessing from the old toggle. */
+/**
+ * Effective selected voice and actual playback/fallback from the service, without guessing from the old toggle. Worded
+ * without Ember's name: it changes by itself (a voice too slow just now, one that stopped working), and is said then
+ * (#natural-live), where "Ember speaks in Kitten Nano." said into the idle wake microphone woke Ember and was sent as a
+ * request in 32 of 40 placements (voice-listening-c5-1; design-system.md "Screen readers").
+ */
 export function naturalVoiceView(s: NaturalVoiceStatus | undefined, model: NaturalModel = "kitten"): { text: string; retry: boolean; busy: boolean } {
   const name = NATURAL_CHOICES[model].name;
-  const fallback = s?.voice === "kitten" ? "Ember uses Kitten Nano."
-    : s?.voice === "system" || model === "kitten" ? "Ember uses this computer's system voice when available."
-    : "Ember uses Kitten Nano when available, otherwise this computer's system voice.";
+  const fallback = s?.voice === "kitten" ? "Replies use Kitten Nano."
+    : s?.voice === "system" || model === "kitten" ? "Replies use this computer's system voice when available."
+    : "Replies use Kitten Nano when available, otherwise this computer's system voice.";
   if (!s || s.model && s.model !== model) return { text: `${name} is selected. Checking voice availability…`, retry: false, busy: true };
   switch (s.state) {
-    case "later": return { text: `${name} will be checked the next time Ember speaks.`, retry: false, busy: false };
+    case "later": return { text: `${name} will be checked the next time a reply is spoken.`, retry: false, busy: false };
     case "checking": return { text: `Checking ${name} on this computer…`, retry: false, busy: true };
     case "needs-voice": return { text: `Kitten Nano is included in the speech models. Use Show speech model download to add it (63.8 MB for this voice). ${fallback}`, retry: false, busy: false };
     case "downloading": return { text: `Downloading ${name}… ${Math.max(0, Math.min(99, Math.round(s.percent)))}%`, retry: false, busy: true };
-    case "ready": return { text: `${name} is ready for Ember's next reply.`, retry: false, busy: false };
-    case "on": return { text: s.voice && s.voice !== model ? `${name} is selected. ${fallback}` : `Ember speaks in ${name}.`, retry: false, busy: false };
+    case "ready": return { text: `${name} is ready for the next reply.`, retry: false, busy: false };
+    case "on": return { text: s.voice && s.voice !== model ? `${name} is selected. ${fallback}` : `Replies are spoken in ${name}.`, retry: false, busy: false };
     // Kitten is timed again at every start, so a busy moment or one failure needn't cost it the session (voice-speaking-6):
     // Try again loads and times it now. An optional voice's slow verdict is kept for a week.
     case "too-slow": return model === "kitten"
-      ? { text: `${name} was too slow just now, perhaps because this computer was busy, so Ember uses this computer's system voice when available. Try again when it's less busy.`, retry: true, busy: false }
+      ? { text: `${name} was too slow just now, perhaps because this computer was busy, so replies use this computer's system voice when available. Try again when it's less busy.`, retry: true, busy: false }
       : { text: `${name} is too slow on this computer. ${fallback}`, retry: false, busy: false };
     case "wont-load": return model === "kitten"
-      ? { text: `${name} ${s.stopped ? "stopped working" : "couldn't load"}, so Ember uses this computer's system voice when available. Try again, or restart Ember.`, retry: true, busy: false }
+      ? { text: `${name} ${s.stopped ? "stopped working" : "couldn't load"}, so replies use this computer's system voice when available. Try again, or restart the app.`, retry: true, busy: false }
       : { text: `${name} couldn't load. ${fallback}`, retry: false, busy: false };
     case "needs-native": return { text: `${name} isn't available on this computer. ${fallback}`, retry: false, busy: false };
     case "failed": return { text: model !== "kitten" ? `Couldn't download ${name}. ${s.detail} ${fallback}` : `Couldn't prepare Kitten Nano. ${s.detail} Download the speech models above to try again. ${fallback}`, retry: model !== "kitten", busy: false };
@@ -1548,12 +1573,13 @@ export const HEAR_WAITING = "Getting Ember's voice ready…";
  * Ember said cut the sample off.
  */
 export function hearEmberLine(r: HearResult): string {
-  if (r.spoke) return `Ember spoke in ${r.voice === "system" ? "this computer's system voice" : NATURAL_CHOICES[r.voice].name}.`;
+  // Without the name: said just after the sample, into the wake word's microphone (voice-listening-r5-1).
+  if (r.spoke) return `Spoken in ${r.voice === "system" ? "this computer's system voice" : NATURAL_CHOICES[r.voice].name}.`;
   if (r.why === "managed") return "Your organisation has turned speaking off.";
-  if (r.why === "locked") return "Ember doesn't speak while the screen is locked.";
-  if (r.why === "silent") return "Ember couldn't speak just now. The setup check says why.";
+  if (r.why === "locked") return "Nothing is spoken while the screen is locked.";
+  if (r.why === "silent") return "The sample couldn't be spoken just now. The setup check says why.";
   if (r.why === "stopped") return "";
-  return "Ember isn't speaking out loud now. Choose Always above to hear it.";
+  return "Nothing is spoken out loud now. Choose Always above to hear the sample.";
 }
 
 /** Plain, local-only feedback and labels for the upcoming reminder inventory. */

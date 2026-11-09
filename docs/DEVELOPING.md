@@ -605,7 +605,9 @@ after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases that d
 While a screen reader runs, which reads each prompt aloud, teaching takes nothing it reads: speech that begins within
 1.5 s of a prompt showing, or in a prompt's own words ("Say…", "Heard 2 of 4…", "That was too short…"), teaches
 nothing, and a phrase said so soon after the reading that the two ran together is asked for again ("Your screen reader
-was still reading. Wait for it to finish, then say: …"). Listen once's line then isn't announced either.
+was still reading. Wait for it to finish, then say: …"), as is one said as soon as its prompt showed (on headphones
+nothing is read into the microphone) when nothing follows it for 5 s: never dropped without a word. Listen once's line
+then isn't announced either.
 It decides only what a voice may approve: every voice is heard, and a request it doesn't
 match simply can't approve anything (owner decision of 2026-11-05: on a laptop's microphone the owner's own requests
 scored 0.50–0.74 against the 0.75 bar, in the range of other people's). **Forget my voice** deletes your voiceprint and the words Ember learnt (the button says so). With **Keep learning my voice** (on by default once Voice Match knows you), the
@@ -752,7 +754,8 @@ speech models. Keep the bundled sherpa, eSpeak NG and phonemiser licence notices
 remove those transitive library obligations. The neural synthesis utility releases after two minutes without pending
 generation and rewarms on the next wake, when the ask box opens and when a typed request starts (`warmSpeech`, which
 with listening off opens the speak-only page too: a cold voice put the first sound 2.7 s after Send, a warm one
-0.8 s); queued playback retains its own ownership. Captured audio remains in memory
+0.8 s); a voice already on stays on in Settings › Voice as it loads again, so nothing there changes or is said to a
+screen reader then; queued playback retains its own ownership. Captured audio remains in memory
 and on the device.
 
 `node scripts/voice/bench.mjs --kokoro <models-directory>` compares default Kitten with explicitly requested Kokoro in

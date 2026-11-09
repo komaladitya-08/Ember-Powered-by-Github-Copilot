@@ -263,6 +263,13 @@ export class VoiceGate {
  * began about 0.2 s after it did.
  */
 export const READER_LEAD_MS = 1500;
+/**
+ * A segment dropped for READER_LEAD_MS that says the phrase once, in none of a prompt's words, is the owner's own when
+ * nothing follows it for this long (ms): on headphones nothing is read into the microphone, and one who reads the prompt
+ * may speak at once. It is asked for again ("over"), never dropped without a word (voice-listening-r5-2). Over speakers
+ * the owner begins their phrase well within it after a reading the recognizer wrote without its first word.
+ */
+export const QUICK_PHRASE_WAIT_MS = 5000;
 /** What a screen reader reads of a prompt (match-copy.ts), as the recognizer writes it: never how a phrase begins. */
 const PROMPT_WORDS = /^\W*(?:say|says|said|heard|that|your\s+screen|wait|finish|learning)\b/i;
 
@@ -275,10 +282,10 @@ export interface EnrolReader {
   now?(): number;
 }
 
-/** The phrase's own longer words (not the name), each said twice when the owner's phrase ran on from the reading. */
-function saidTwice(words: string, phrase: string): boolean {
+/** How many times the phrase's own longer words (not the name) were said, at most: twice when the owner's ran on from the reading. */
+function timesSaid(words: string, phrase: string): number {
   const heard = words.toLowerCase().replace(/whether/g, "weather");
-  return phrase.toLowerCase().split(/[^a-z']+/).filter(w => w.length >= 5 && w !== "ember").some(w => heard.split(w).length > 2);
+  return Math.max(0, ...phrase.toLowerCase().split(/[^a-z']+/).filter(w => w.length >= 5 && w !== "ember").map(w => heard.split(w).length - 1));
 }
 
 /**
@@ -296,6 +303,8 @@ export class Enrolment {
 
   /** When the prompt now showing showed (`reader`'s clock). */
   private promptAt: number;
+  /** A phrase said as its prompt showed, asked for again unless speech follows it (QUICK_PHRASE_WAIT_MS). */
+  private quick: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private printer: Printer, private tell: (s: EnrolState) => void, readonly of = ENROL_PHRASES.length, private limits: { quietMs: number; totalMs: number } = ENROL_LIMITS, private reader?: EnrolReader) {
     this.maxTries = of * 3;
@@ -318,11 +327,16 @@ export class Enrolment {
   async heard(samples: Float32Array, startedAt?: number): Promise<void> {
     if (this.finished) return;
     this.waitQuietly();
+    this.speechBegan();
     if (this.reader) {
       const words = this.reader.said(samples);
-      if ((startedAt !== undefined && startedAt - this.promptAt < READER_LEAD_MS) || PROMPT_WORDS.test(words)) {
-        // (Its own reading says the phrase once; said twice, the owner's ran on from it, and is asked for again.)
-        if (saidTwice(words, ENROL_PHRASES[Math.min(this.prints.length, ENROL_PHRASES.length - 1)])) { this.tries++; this.again("over"); }
+      const prompted = PROMPT_WORDS.test(words);
+      if ((startedAt !== undefined && startedAt - this.promptAt < READER_LEAD_MS) || prompted) {
+        // (Its own reading says the phrase once; said twice, the owner's ran on from it, and is asked for again. Said
+        // once with none of a prompt's words, it may be the owner's, said at once: asked for again if nothing follows.)
+        const times = timesSaid(words, ENROL_PHRASES[Math.min(this.prints.length, ENROL_PHRASES.length - 1)]);
+        if (times > 1) { this.tries++; this.again("over"); }
+        else if (times === 1 && !prompted) this.askSoon();
         return;
       }
     }
@@ -349,6 +363,19 @@ export class Enrolment {
     this.tell({ state: "heard", got: this.prints.length, of: this.of });
   }
 
+  /** Speech began (the VAD): a phrase said as its prompt showed is followed by more, so nothing is asked for it. */
+  speechBegan(): void {
+    if (this.quick) clearTimeout(this.quick);
+    this.quick = null;
+  }
+
+  /** A phrase said as its prompt showed: asked for again once nothing has followed it for QUICK_PHRASE_WAIT_MS. */
+  private askSoon(): void {
+    this.speechBegan();
+    this.quick = setTimeout(() => { this.quick = null; if (this.finished) return; this.tries++; this.again("over"); }, QUICK_PHRASE_WAIT_MS);
+    this.quick.unref?.();
+  }
+
   /** Teaching stops: the user's Cancel (no `why`), or why it gave up (EnrolEnd). */
   cancel(why?: EnrolEnd): void {
     if (this.finished) return;
@@ -362,6 +389,7 @@ export class Enrolment {
 
   private finish(): void {
     this.finished = true;
+    this.speechBegan();
     clearTimeout(this.total);
     if (this.quiet) clearTimeout(this.quiet);
     this.quiet = null;

@@ -449,12 +449,12 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // handle and the Ask box said "Reconnecting…".
     await expect.poll(() => text("state-word")).toBe("Reconnecting…");
     expect(await p.evaluate(() => document.getElementById("ring")?.dataset.ring)).toBe("starting");
-    expect(await text("tagline")).toBe("Ember is beside your cursor. Reconnecting to your model provider…");
+    expect(await text("tagline")).toBe("Beside your cursor. Reconnecting to your model provider…");
     expect(await connect()).toEqual({ hidden: false, text: "Models & connections…" });
     // It gave up: not connected, with the way to Check again, still never the provider's details.
     await emit(p, "onAgentStatus", { ...crashed, detail: "Ember's model connection keeps stopping. Press Check again to retry, or restart Ember." });
     await expect.poll(() => text("state-word")).toBe("Not connected");
-    expect(await text("tagline")).toBe("Ember is beside your cursor. Ember's model connection isn't running: Models & connections says why.");
+    expect(await text("tagline")).toBe("Beside your cursor. Ember's model connection isn't running: Models & connections says why.");
     expect(await connect()).toEqual({ hidden: false, text: "Models & connections…" });
     // The provider itself refusing is still the provider's, as before (first-run-r1).
     await emit(p, "onAgentStatus", { ...crashed, reason: "models", detail: "Enter the model your provider should use in Ember's settings, under Models & connections." });
@@ -474,7 +474,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator(".copilot .btn:not(.quiet):visible, #byok .btn:not(.quiet):visible").count()).toBe(1);
     // Nor does the rest of Home point to Copilot: the hint, the tagline and the status panel's button (integrations-r3-1).
     expect(await p.locator("#byok-hint").innerText()).toBe("Ember can't answer until you agree to use 127.0.0.1:18409.");
-    expect(await p.evaluate(() => document.getElementById("tagline")?.textContent)).toBe("Ember is beside your cursor. Agree to use 127.0.0.1:18409 in Models & connections to start asking.");
+    expect(await p.evaluate(() => document.getElementById("tagline")?.textContent)).toBe("Beside your cursor. Agree to use 127.0.0.1:18409 in Models & connections to start asking.");
     expect(await p.evaluate(() => document.getElementById("p-connect")?.textContent)).toBe("Check my provider…");
     await p.locator("#byok-no").click();
     await expect.poll(() => shown("byok-consent")).toBe(false);
@@ -482,7 +482,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#agent-text").innerText()).toBe(signedOut.detail);
     expect(await shown("own-provider")).toBe(true);
     expect(await shown("connection-help")).toBe(false);
-    expect(await p.evaluate(() => document.getElementById("tagline")?.textContent)).toBe("Ember is beside your cursor. Connect Copilot to start asking.");
+    expect(await p.evaluate(() => document.getElementById("tagline")?.textContent)).toBe("Beside your cursor. Connect Copilot to start asking.");
     expect(await p.evaluate(() => document.getElementById("p-connect")?.textContent)).toBe("Connect Copilot…");
     // Turned on again with no address yet: no note, so signing in leads, and the switch already on isn't offered.
     await p.evaluate(() => { const s = window.__frState.settings as { provider: Record<string, unknown> }; s.provider = { ...s.provider, on: true, baseUrl: "" }; window.__frEmit("onSettingsChanged", s); });

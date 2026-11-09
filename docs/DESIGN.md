@@ -357,13 +357,13 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   its reply show; the composer's line, right under its buttons, says "Thinking…" until the reply, "Still waiting for
   Copilot… Stop response ends this reply." while the bubble says so (for a request from the Ask box or by voice too,
   where the settings key lands on Stop response, until the wait ends: home-r2-3, but never over a note about the draft
-  being written, such as Edit's caution that sending again may repeat actions or the over-limit note: home-c3-1), "Ember
-  will send this to the new model service once what it's doing now has finished. Stop response cancels it." while it
+  being written, such as Edit's caution that sending again may repeat actions or the over-limit note: home-c3-1), "This
+  goes to the new model service once what's under way now has finished. Stop response cancels it." while it
   is held for a switch of model service (main's "held" turn, with the status word "Switching model service…":
   home-r4-4), and, when main says the turn ended with nothing
-  written (it only started a task or ran a step), "Ember didn't write a reply. Task activity shows any task it
-  started."; main sends a turn's lines (its reply, its Problem line) before its end, so a model error says "Ember
-  couldn't finish this reply…" (home-r2-1), never counts a request waiting for a reconnect as over (home-r2-2), and says
+  written (it only started a task or ran a step), "No reply was written. Task activity shows any task this request
+  started."; main sends a turn's lines (its reply, its Problem line) before its end, so a model error says "This reply
+  couldn't be finished…" (home-r2-1), never counts a request waiting for a reconnect as over (home-r2-2), and says
   with the end when a Stop ended it: "Response stopped. Running tasks continue." for the bubble's Stop too, "Stopped
   everything, running tasks included." for Stop everything (home-c2-2); a Stop ends a request still waiting for a
   reconnect at once, and every message of the composer's that it ended before it went (its own line never came) comes
@@ -445,14 +445,21 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   window is open, and Listen once's line is said through a status line of its own, which never says "Ember is already
   listening.", nor "Answer Ember's question first." while a conversation waits for that answer (shown under the button,
   as its description). While they say nothing new, both of those status lines are emptied, so reading the page never
-  finds a line beside the one shown that no longer holds. Hear me more clearly's line and the note that no voice spoke
-  a reply are said the same way, each through a status line of its own: once it has held, only when its words change,
-  and never while the microphone opens or is open for a request. Task activity says a task's new state only once the
+  finds a line beside the one shown that no longer holds. Hear me more clearly's line, the voice row's line and the note
+  that no voice spoke a reply are said the same way, each through a status line of its own: once it has held, only when
+  its words change, and never while the microphone opens or is open for a request. The voice row's says only where
+  the voice stands, never that it is checking or downloading, and the voice loading again after two quiet minutes
+  changes nothing it says. Task activity says a task's new state only once the
   microphone has closed (each task's state as it is by then, once), the connection line is written only when its words
   change, and Ask says what it will see, or that it can't answer, once the microphone has closed, while it is still
   open. These lines, and Listen once's, are worded without Ember's name: said into the wake word's microphone,
-  “Ember will see: …” and “Ember couldn't speak: …” woke Ember and were sent as requests. Ask speaks in the first
-  person (“I'll see: …”).
+  “Ember will see: …” and “Ember couldn't speak: …” woke Ember and were sent as requests. So are the lines Home says
+  by itself or after a press, outside those windows: the status panel's (“Beside your cursor. Press Ctrl+Alt+Space to
+  ask anything.”, “… Reconnecting to Copilot…”), Hide's (“Hidden. It shows itself again…”), the composer's outcome
+  and refusal (“This request got no answer. …”, “Reconnecting to Copilot. …”), what Hear Ember found (“Spoken in
+  Kitten Nano.”), and how Voice Match's teaching ended or the voice was forgotten (“Your voice is learnt. …”), which
+  also leaves out the “Ember, stop” the shown line quotes: said into the microphone, it stops Ember. Ask speaks in the
+  first person (“I'll see: …”).
 - **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
   from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
 

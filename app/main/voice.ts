@@ -1128,7 +1128,10 @@ export class VoiceService {
       this.ttsStopped = false;
     }
     if (this.neuralVoice && !this.locked) {
-      if (!this.tts && !this.naturalFetch && (!this.naturalWanted || !this.naturalOff)) this.setNatural({ state: "checking" });
+      // A voice already speaking this session that is only loaded again after VOICE_IDLE_MS stays "on": "checking" and
+      // back at every first wake after two quiet minutes was said by a screen reader over the request, and into the idle
+      // wake microphone, where it woke Ember (voice-listening-c5-1). A load that now fails still says so (voiceFailed).
+      if (!this.tts && !this.naturalFetch && (!this.naturalWanted || !this.naturalOff) && this.natural.state !== "on") this.setNatural({ state: "checking" });
       this.voiceProcess(); this.idleVoice();
     }
   }

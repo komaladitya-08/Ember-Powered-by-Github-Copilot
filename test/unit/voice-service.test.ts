@@ -2188,6 +2188,33 @@ describe("speech models", () => {
       expect(electron.procs).toHaveLength(1);
     });
 
+    it("says nothing new of the voice as it loads again after two quiet minutes, at a wake, a request or Ask (voice-listening-c5-1)", async () => {
+      // Each rewarm published "checking", then "on" again: Home said "Checking Kitten Nano on this computer…" over the
+      // request after "Hey Ember", and "Ember speaks in Kitten Nano." into the idle wake microphone, where it woke Ember.
+      vi.useFakeTimers();
+      const seen: string[] = [];
+      const { v } = service(true, { neuralVoice: true, native: true, onNatural: s => seen.push(s.state) });
+      v.warmVoice();
+      expect(v.naturalStatus.state).toBe("checking");
+      electron.procs[0].emit("message", { type: "ready", loadMs: 900, rate: 22_050, voice: kitten() });
+      expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(electron.procs[0].kill).toHaveBeenCalledOnce();
+      seen.length = 0;
+      v.warmVoice();
+      v.warmSpeech();
+      expect(electron.procs).toHaveLength(2);
+      expect(v.naturalStatus).toEqual({ state: "on", model: "kitten", voice: "kitten" });
+      electron.procs[1].emit("message", { type: "ready", loadMs: 900, rate: 22_050, voice: kitten() });
+      expect(seen).toEqual([]);
+      // A load that now fails is still said.
+      await vi.advanceTimersByTimeAsync(120_000);
+      v.warmVoice();
+      electron.procs[2].emit("message", { type: "error", message: "too slow here: 0.81 of real time", reason: "slow" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen).toEqual(["too-slow"]);
+    });
+
     it("logs which voice speaks, on which build, how fast", async () => {
       const { log: l, lines } = recording();
       const { v } = service(true, { neuralVoice: true, native: true, log: l });

@@ -31,7 +31,7 @@ import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speec
 import type { Settings, SettingsPatch } from "../../main/settings";
 import {
   dayLabel, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, memoryDeleteFailedText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep,
-  conversationContextLine, rereadsStatusOnFocus, modelLabel, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed,
+  conversationContextLine, rereadsStatusOnFocus, modelLabel, presenceLine, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed,
   type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
@@ -2512,9 +2512,7 @@ function renderPresence(p: Presence): void {
   $("hide-row").hidden = !p.overlay;
   ($("p-hide") as HTMLInputElement).checked = p.hidden;
   ($("p-follow") as HTMLInputElement).checked = !p.paused;
-  const line = !p.overlay
-    ? `This desktop session can't show Ember beside your cursor, so it lives in the card in the ${handleCornerText(settings?.handlePosition)}.`
-    : p.hidden ? "Ember is hidden. It shows itself again when it needs to ask you something." : "";
+  const line = presenceLine(p, settings?.handlePosition);
   if ($("presence-text").textContent !== line) $("presence-text").textContent = line;
   renderTagline();
 }
@@ -2586,6 +2584,7 @@ function renderVoice(v: VoiceStatus): void {
   voice = v;
   clearLive.hold(micHeld(v));
   speakLive.hold(micHeld(v));
+  naturalLive.hold(micHeld(v));
   holdTaskNews(micHeld(v));
   renderVoiceFix();
   const text = heardThrough(v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);
@@ -2739,8 +2738,15 @@ $("consent-yes").addEventListener("click", () => {
   });
 });
 $("consent-no").addEventListener("click", () => { consentClosed(); $("consent").hidden = true; $("wake").focus(); });
+/**
+ * The voice row's line, said through its own status line as Hear me more clearly's is: once it has held, only when its
+ * words change, and never while the microphone opens or is open for a request. Said straight into #voice-live, it was
+ * read over the request after "Hey Ember" as the voice loaded again, and took the voice line's place there, so the voice
+ * line was said again as the conversation ended (voice-listening-c5-1).
+ */
+const naturalLive = heldLive($("natural-live"));
 /** The voice choice discloses the optional Kokoro download before switching. */
-const naturalUI = mountNaturalVoice({ save, live: voiceLive, managed: () => managed.has("naturalVoice") });
+const naturalUI = mountNaturalVoice({ save, live: text => naturalLive.say(text), managed: () => managed.has("naturalVoice") });
 /**
  * Hear me more clearly's line, said through its own status line as the voice line is: once it has held, only when its
  * words change, and never while the microphone opens or is open for a request (`micHeld`). Written on every voice push,
