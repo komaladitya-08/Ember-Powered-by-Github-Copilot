@@ -133,8 +133,9 @@ window title and “Ask or tell me” for the full accessible field label. Its s
 field on one line at narrow widths and Larger text. The self-window privacy fallback recognises this title as well as
 older titles, so a missing process id still cannot expose that window to the agent.
 
-Home's page and native window title are “Companion home”, keeping ordinary window activation free of the wake name
-while the visible heading still says Ember. The self-window privacy fallback recognises this unique title and every
+Home's page and native window title are “Companion home”, removing the wake name from those controlled title surfaces
+while the visible heading still says Ember. Native reader announcement order and application names remain device
+checks. The self-window privacy fallback recognises this unique title and every
 legacy title when the process id is unknown; an unrelated Files window called Home remains usable.
 Home's automatic thinking line also avoids the wake name, including possessives, while keeping its reply-location hint.
 
