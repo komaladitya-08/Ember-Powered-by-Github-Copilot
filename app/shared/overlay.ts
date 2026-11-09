@@ -21,6 +21,11 @@ export const OVERLAY = {
   handleMenu: "handle:menu",
   /** The fallback card's content height, so the card fits what it shows. */
   handleFit: "handle:fit",
+  /**
+   * The fallback card has shown the last line of the answer opened in full on it (its words, as main sent them), so the
+   * Ask box may offer what answers them, as the overlay's word does (BubbleBox.endShown; companion-repairs-x6-3).
+   */
+  handleAnswerEnd: "handle:answer-end",
   /** Where the task cards are (global DIP), so Ember keeps off their buttons. */
   cards: "overlay:cards",
   /** Where Ember's bubble is (global DIP; null: none on that display), so the Ask box opens clear of it. */
@@ -48,6 +53,29 @@ export interface Rect { x: number; y: number; width: number; height: number }
  * offer, and the box offered "Yes, please" to it all the same).
  */
 export interface BubbleBox extends Rect { endShown?: true }
+
+/**
+ * What an overlay's report of its bubble (OVERLAY.bubble) says: a place (global DIP), with `endShown` only as `true`;
+ * null when none shows; undefined for anything else, which main refuses (not a rect, or an `endShown` that isn't true).
+ */
+export function bubbleBoxOf(r: unknown): BubbleBox | null | undefined {
+  if (r === null) return null;
+  if (!r || typeof r !== "object") return undefined;
+  const o = r as Record<string, unknown>;
+  if (!["x", "y", "width", "height"].every(k => Number.isFinite(o[k]))) return undefined;
+  if (o.endShown !== undefined && o.endShown !== null && o.endShown !== true) return undefined;
+  return { x: o.x as number, y: o.y as number, width: o.width as number, height: o.height as number, ...(o.endShown === true ? { endShown: true as const } : {}) };
+}
+
+/**
+ * Whether the answer opened in full shown now (`b`) has shown its last line, for askSuggestions: by its overlay's word
+ * (`box`: BubbleBox.endShown), or, without a compositor, the corner card's (`cardEnded`: the words of the answer opened
+ * in full whose last line the card showed, OVERLAY.handleAnswerEnd), which counts only for those very words shown now
+ * (companion-repairs-x6-3: the card showed all of it, offer included, and the box never offered "Yes, please").
+ */
+export function answerEndShown(b: Pick<BubbleState, "visible" | "expanded" | "thought">, box: BubbleBox | null | undefined, cardEnded: string | null): boolean {
+  return box?.endShown === true || (b.visible && b.expanded === true && cardEnded !== null && cardEnded === b.thought);
+}
 
 export interface OverlayInit {
   displayId: number;
@@ -279,4 +307,6 @@ export interface HandleApi {
   bubbleAction(id: string): void;
   /** Fallback card only: the height its content needs. */
   fit(height: number): void;
+  /** Fallback card only: the answer opened in full on it (its words) has shown its last line (OVERLAY.handleAnswerEnd). */
+  answerEnd(words: string): void;
 }

@@ -27,7 +27,7 @@ import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } fr
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult, type RetryResult } from "../shared/ipc";
-import { OVERLAY, IDLE_BUBBLE, askSuggestions, askSuggestionsComing, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
+import { OVERLAY, IDLE_BUBBLE, answerEndShown, askSuggestions, askSuggestionsComing, bubbleBoxOf, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
@@ -695,8 +695,14 @@ function start(): void {
   let tasksShown = () => { /* nothing to tell until then */ };
   /** What the Ask box offers may have changed: an open box hears of it (set once the box is made, below). */
   let askOffersChanged = () => { /* no box yet */ };
+  /**
+   * The words of the answer opened in full whose last line the corner card has shown (no compositor: the card shows the
+   * bubble; OVERLAY.handleAnswerEnd), null once that answer no longer shows (companion-repairs-x6-3).
+   */
+  let cardEnded: string | null = null;
   const showState = (next: Partial<EmberState>) => {
     lastState = { ...lastState, ...next };
+    if (next.bubble && !answerEndShown(next.bubble, null, cardEnded)) cardEnded = null;
     if (next.tasks) tasksShown();
     // The answer its chips follow went, or a new one came (companion-c2-2).
     if (next.bubble || "suggest" in next) askOffersChanged();
@@ -1324,9 +1330,10 @@ function start(): void {
   /**
    * What the Ask box suggests now (askSuggestions): none while a question is up, those that follow the answer only
    * while it shows, and those that answer its last words only while those show: opened in full, once the overlay says
-   * its end has (companion-r2-1, companion-c2-2, companion-v6-2).
+   * its end has, or without a compositor the corner card (companion-r2-1, companion-c2-2, companion-v6-2,
+   * companion-repairs-x6-3).
    */
-  const askOffers = () => askSuggestions(lastState, personalRef?.current() ?? [], !!confirmer?.waiting, overlay?.bubbleRect()?.endShown === true);
+  const askOffers = () => askSuggestions(lastState, personalRef?.current() ?? [], !!confirmer?.waiting, answerEndShown(lastState.bubble, overlay?.bubbleRect(), cardEnded));
   askOffersChanged = () => askWindow.setSuggestions(askOffers());
   /** When the latest request went (for the task it may have started), and the latest reply's words. */
   let askedAt = 0;
@@ -2748,12 +2755,12 @@ function start(): void {
     // A card that came up or grew under the open box: the box moves off it (companion-r5-1).
     askWindow.keepClear();
   });
-  ipcMain.on(OVERLAY.bubble, (event, rect: unknown) => {
-    if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
-    const endShown = rect && (rect as { endShown?: unknown }).endShown;
-    if (endShown !== null && endShown !== undefined && endShown !== true) return;
+  ipcMain.on(OVERLAY.bubble, (event, raw: unknown) => {
+    if (!overlay?.owns(event.sender)) return;
+    const rect = bubbleBoxOf(raw);
+    if (rect === undefined) return;
     const ended = overlay.bubbleRect()?.endShown === true;
-    overlay.setBubble(event.sender, rect && { x: rect.x, y: rect.y, width: rect.width, height: rect.height, ...(endShown ? { endShown } : {}) });
+    overlay.setBubble(event.sender, rect);
     // An answer opened in full showed its end, or another bubble came: what answers it is offered or goes (companion-v6-2).
     if ((overlay.bubbleRect()?.endShown === true) !== ended) askOffersChanged();
     // A question (or the box's own Listen once's "Listening…", never a wake's: companion-c2-3) that found no room clear
@@ -2834,6 +2841,13 @@ function start(): void {
   });
   ipcMain.on(OVERLAY.handleMenu, event => {
     if (isHandle(event.sender)) showMenu();
+  });
+  // The corner card showed the last line of the answer opened in full on it: what answers it is offered, only for the
+  // answer shown now (a word about one that has gone is dropped: companion-repairs-x6-3).
+  ipcMain.on(OVERLAY.handleAnswerEnd, (event, words: unknown) => {
+    if (!isHandle(event.sender) || typeof words !== "string" || words.length > CONVERSATION_TEXT_LIMIT || words === cardEnded || !answerEndShown(lastState.bubble, null, words)) return;
+    cardEnded = words;
+    askOffersChanged();
   });
   ipcMain.on(OVERLAY.handleFit, (event, height: unknown) => {
     if (handle && isHandle(event.sender) && typeof height === "number") { handle.fit(height); deskViewRef?.handleMoved(); askWindow.keepClear(); }

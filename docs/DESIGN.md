@@ -121,7 +121,8 @@ They share one emotion rig, so switching never changes behaviour.
   is up, and the box shows the ones that follow the answer ("Close it", "Read it out") only while that answer shows,
   and the ones that answer its last words, usually an offer ("Yes, please", "No, thanks"), only while those show too:
   not while the bubble cuts it short under **Read all**, and opened in full only once its last line has been in view,
-  all of it at once or scrolled to (the overlay says so: `endShown`), as one cut short to the room or longer than
+  all of it at once or scrolled to (the overlay says so: `endShown`; without a compositor the corner card does, for
+  the words it shows), as one cut short to the room or longer than
   its sixteen lines isn't at first (`askSuggestions`; a change while a reply is typed waits until the field is
   cleared). While
   the box is open its row keeps the room it opened with, rows and all: none to offer puts the row out of sight, fewer
@@ -184,8 +185,12 @@ They share one emotion rig, so switching never changes behaviour.
   nowhere clear whole (a 1024 x 768 screen at Larger text) is cut short a line at a time to the
   tallest place clear of the box, the handle, the cards and the settings window, never under three
   lines, and its text scrolls inside it; with no such place it goes where it always went. Once
-  the box closes, one cut short for it keeps off the box's place no more and shows whole where it
-  can (it may move to do so); one that showed whole stays where it is.
+  the box closes, one whose text didn't all show for it (cut short, or narrowed into a side strip
+  with its text running on) keeps off the box's place no more and shows whole where it can (it may
+  move to do so); one that showed whole stays where it is. When the box opens on an answer opened in
+  full that keeps off nothing of it (the one that moved, or one opened with **Read all** while the
+  box was closed), or grows into it as it opens, the answer keeps off the box from then on as it does
+  with Read all, so the field never lies over its lines; a box that opens clear of it never moves it.
   While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times

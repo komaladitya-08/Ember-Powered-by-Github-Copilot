@@ -63,7 +63,7 @@ vi.mock("electron", () => {
 const { AskWindow, MAC_SETTLE_MS, clearOfCards, roomForAnswer, stepsAsideFor } = await import("../../app/main/ask");
 type Box = { x: number; y: number; width: number; height: number };
 const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-const { IDLE_BUBBLE, askSuggestions, askSuggestionsComing } = await import("../../app/shared/overlay");
+const { IDLE_BUBBLE, answerEndShown, askSuggestions, askSuggestionsComing, bubbleBoxOf } = await import("../../app/shared/overlay");
 
 afterEach(() => { made.length = 0; menus.length = 0; vi.useRealTimers(); });
 
@@ -415,6 +415,52 @@ describe("the ask box", () => {
     expect(expandedSuggest(null, kept, made.thought)).toBeNull();
   });
 
+  it("offers what answers an answer opened in full once its overlay says its end has shown, and refuses any other word for it (companion-repairs-x6-4)", () => {
+    const thought = "Tokyo is nine hours ahead of London, so it is evening there. ".repeat(6) + "Want me to add a world clock?";
+    const full = { ...IDLE_BUBBLE, visible: true, thought, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+    const s = { bubble: full, suggest: { thought, items: ["Yes, please", "No, thanks"] } };
+    const items = [{ text: "Yes, please", follows: true, answers: true }, { text: "No, thanks", follows: true, answers: true }];
+    const rect = { x: 98, y: 427, width: 410, height: 333 };
+    // What main's OVERLAY.bubble handler keeps of each report, and what the box offers then (askOffers).
+    const offered = (box: ReturnType<typeof bubbleBoxOf>) => askSuggestions(s, items, false, answerEndShown(full, box, null));
+    expect(bubbleBoxOf(rect)).toEqual(rect);
+    expect(offered(bubbleBoxOf(rect))).toEqual([]);
+    expect(bubbleBoxOf({ ...rect, endShown: true })).toEqual({ ...rect, endShown: true });
+    expect(offered(bubbleBoxOf({ ...rect, endShown: true }))).toEqual(["Yes, please", "No, thanks"]);
+    // Anything but true for it, or a shape that isn't a rect, is refused (undefined: main keeps what it had) ...
+    for (const bad of [{ ...rect, endShown: "yes" }, { ...rect, endShown: 1 }, { ...rect, x: "98" }, { ...rect, width: Infinity }, { x: 1, y: 2 }, "rect", 7, undefined]) {
+      expect(bubbleBoxOf(bad), JSON.stringify(bad) ?? "undefined").toBeUndefined();
+    }
+    // ... and never drops extra fields through to main's record: only the rect and endShown.
+    expect(bubbleBoxOf({ ...rect, endShown: null, html: "<b>" })).toEqual(rect);
+    expect(bubbleBoxOf(null)).toBeNull();
+  });
+
+  it("offers what answers an answer opened in full in the corner card once the card has shown its end, for those very words only (companion-repairs-x6-3)", async () => {
+    // No compositor: the card showed all of it, its offer included, after Read all, and the box offered nothing.
+    const thought = "Tokyo is nine hours ahead of London, so it is evening there. ".repeat(6) + "Want me to add a world clock?";
+    const full = { ...IDLE_BUBBLE, visible: true, thought, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+    const s = { bubble: full, suggest: { thought, items: ["Yes, please", "No, thanks"] } };
+    const items = [{ text: "Yes, please", follows: true, answers: true }, { text: "No, thanks", follows: true, answers: true }];
+    const offered = (b: typeof full, cardEnded: string | null) => askSuggestions({ ...s, bubble: b }, items, false, answerEndShown(b, null, cardEnded));
+    expect(offered(full, null)).toEqual([]);
+    expect(offered(full, thought)).toEqual(["Yes, please", "No, thanks"]);
+    // The card's word for other words (an answer that has gone), for one not opened in full, or one not shown: nothing.
+    expect(answerEndShown(full, null, "Night light is on.")).toBe(false);
+    expect(answerEndShown({ ...full, expanded: false }, null, thought)).toBe(false);
+    expect(answerEndShown({ ...full, visible: false }, null, thought)).toBe(false);
+    // The overlay's word stands as before.
+    expect(answerEndShown(full, { x: 0, y: 0, width: 10, height: 10, endShown: true }, null)).toBe(true);
+    // Main takes the card's word only from the handle, only as text no longer than a conversation keeps, and only for the
+    // answer shown now; it forgets it once that answer no longer shows.
+    const { readFileSync } = await import("node:fs");
+    const main = readFileSync("app/main/main.ts", "utf8");
+    const told = main.slice(main.indexOf("ipcMain.on(OVERLAY.handleAnswerEnd,"));
+    expect(told.slice(0, told.indexOf("\n  });"))).toMatch(/if \(!isHandle\(event\.sender\) \|\| typeof words !== "string" \|\| words\.length > CONVERSATION_TEXT_LIMIT \|\| words === cardEnded \|\| !answerEndShown\(lastState\.bubble, null, words\)\) return;\n\s+cardEnded = words;\n\s+askOffersChanged\(\);/);
+    const show = main.slice(main.indexOf("const showState = "));
+    expect(show.slice(0, show.indexOf("\n  };"))).toContain("if (next.bubble && !answerEndShown(next.bubble, null, cardEnded)) cardEnded = null;");
+  });
+
   it("keeps what doesn't answer an answer's last words for one cut short, which the keyboard can't open: Read it out, Close it (companion-v6-1)", async () => {
     const { predictNext } = await import("../../app/main/personal/predict");
     const { expandedBubble, expandedSuggest } = await import("../../app/main/agent/presenter");
@@ -550,12 +596,13 @@ describe("the ask box", () => {
     // Main offers in the box only what askSuggestions offers now, and takes a chip back only if it is offered now.
     const { readFileSync } = await import("node:fs");
     const main = readFileSync("app/main/main.ts", "utf8");
-    expect(main).toMatch(/const askOffers = \(\) => askSuggestions\(lastState, personalRef\?\.current\(\) \?\? \[\], !!confirmer\?\.waiting, overlay\?\.bubbleRect\(\)\?\.endShown === true\);/);
+    expect(main).toMatch(/const askOffers = \(\) => askSuggestions\(lastState, personalRef\?\.current\(\) \?\? \[\], !!confirmer\?\.waiting, answerEndShown\(lastState\.bubble, overlay\?\.bubbleRect\(\), cardEnded\)\);/);
     // Read all carries the suggestions over to the whole answer (companion-v6-1), and the overlay's word that its end
     // has shown changes what the box offers (companion-v6-2).
     expect(main).toMatch(/const suggest = expandedSuggest\(lastState\.suggest, lastState\.bubble, full\);\n\s+setState\(\{ talking: false, bubble: expandedBubble\(lastState\.bubble, full\), \.\.\.\(suggest !== lastState\.suggest \? \{ suggest \} : \{\}\) \}\);/);
+    // The overlay's report is read only once its sender is known to be the overlay (companion-y6-2).
     const reported = main.slice(main.indexOf("ipcMain.on(OVERLAY.bubble,"));
-    expect(reported.slice(0, reported.indexOf("\n  });"))).toMatch(/if \(endShown !== null && endShown !== undefined && endShown !== true\) return;[\s\S]+if \(\(overlay\.bubbleRect\(\)\?\.endShown === true\) !== ended\) askOffersChanged\(\);/);
+    expect(reported.slice(0, reported.indexOf("\n  });"))).toMatch(/\{\n\s+if \(!overlay\?\.owns\(event\.sender\)\) return;\n\s+const rect = bubbleBoxOf\(raw\);\n\s+if \(rect === undefined\) return;[\s\S]+if \(\(overlay\.bubbleRect\(\)\?\.endShown === true\) !== ended\) askOffersChanged\(\);/);
     const open = main.slice(main.indexOf("const openAsk = "), main.indexOf("let audit: AuditLog"));
     expect(open).toMatch(/suggestions: askOffers\(\)/);
     expect(open).not.toMatch(/personalRef\.current\(\)/);

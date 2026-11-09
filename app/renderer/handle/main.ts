@@ -174,6 +174,28 @@ wholeEl.addEventListener("scroll", judgeWhole, { passive: true });
 window.addEventListener("resize", () => { paintWhole(); judgeWhole(); });
 document.fonts.addEventListener("loadingdone", judgeWhole);
 
+// ── An answer opened in full ("Read all") on the card: main told once its last line has been in view (all of it, or
+// its text scrolled to its end), as the overlay's bubble tells it (endShown), so the Ask box offers what answers those
+// words (companion-repairs-x6-3: without a compositor it never offered "Yes, please" after Read all) ──
+/** The words of the answer opened in full on the card (null: none), and whether main was told its end showed. */
+let opened: { words: string; told: boolean } | null = null;
+/** Measured (a layout read) until it is told: on the shown card, with room for its words, at its end. */
+function judgeAnswerEnd(): void {
+  if (!opened || opened.told) return;
+  const r = thoughtEl.getBoundingClientRect();
+  const shown = fallback && document.visibilityState === "visible" && wordsClear();
+  if (!wholeInView(
+    { scrollTop: thoughtEl.scrollTop, scrollHeight: thoughtEl.scrollHeight, clientHeight: thoughtEl.clientHeight, top: r.top, bottom: r.bottom, viewportHeight: window.innerHeight },
+    { shown, fontsLoaded: document.fonts.status === "loaded" },
+  )) return;
+  opened.told = true;
+  api.answerEnd(opened.words);
+}
+thoughtEl.addEventListener("scroll", judgeAnswerEnd, { passive: true });
+// Fitted by main (or squeezed): all of it may show now.
+window.addEventListener("resize", judgeAnswerEnd);
+document.fonts.addEventListener("loadingdone", judgeAnswerEnd);
+
 /** The picker's target beside Ember's name (§8.1): nothing for this computer. The corner card gives its own (cardBadge). */
 let badgeKey = "";
 function renderTarget(s: EmberState, given?: TargetBadge | null): void {
@@ -307,6 +329,10 @@ api.onState(s => {
   requestAnimationFrame(fitCard);
   // Judged once laid out (and again when the card is fitted to it: resize).
   if (whole && !whole.seen) requestAnimationFrame(judgeWhole);
+  // An answer opened in full, judged afresh for new words (a new one, or the same one opened again).
+  const words = b.visible && b.expanded && !b.streaming && b.thought ? b.thought : null;
+  if (words !== (opened?.words ?? null)) opened = words === null ? null : { words, told: false };
+  if (opened && !opened.told) requestAnimationFrame(judgeAnswerEnd);
 });
 
 /**
