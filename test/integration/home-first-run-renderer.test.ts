@@ -1007,7 +1007,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     for (const page of [p, q]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
-  it("(al) Home adopts an edit of my provider in use to a host that answers but lists no models, saying it asks for the model as typed; one that refuses the key changes nothing (integrations-r4-2)", async () => {
+  it("(al) Home keeps the working provider when an edited host returns no model list or refuses its key (integrations-c5-1)", async () => {
     const using = "127.0.0.1:18308";
     const service = { kind: "user", host: using };
     const p = await open({ home: true, liveState: true, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
@@ -1022,14 +1022,14 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await settle(p, "test", { ok: false, why: "127.0.0.1:18309 needs an API key." });
     await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`127.0.0.1:18309 needs an API key. Nothing has changed: Ember still uses ${using}.`);
     expect((await calls(p)).filter(c => c.startsWith("agree:"))).toEqual([]);
-    // It answers, with no model list there: adopted with the yes, in one change, saying what Ember asks it for.
+    // A blanket404 is not proof that the replacement can answer: keep the working endpoint.
     await p.locator("#byok-yes").click();
     await expect.poll(async () => (await calls(p)).filter(c => c === "test-draft:127.0.0.1:18309").length).toBe(2);
     await settle(p, "test", { ok: false, why: "127.0.0.1:18309 answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" }, 1);
-    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. 127.0.0.1:18309 answered but lists no models, so Ember asks it for mock-model as typed.");
-    expect(await calls(p)).toContain("agree:127.0.0.1:18309");
-    expect(await provider()).toMatchObject({ baseUrl: "http://127.0.0.1:18309/v1", consent: { host: "127.0.0.1:18309" } });
-    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(false);
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`127.0.0.1:18309 answered, but has no model list at that address. Check the endpoint and the provider. Nothing has changed: Ember still uses ${using}.`);
+    expect((await calls(p)).filter(c => c.startsWith("agree:"))).toEqual([]);
+    expect(await provider()).toMatchObject({ baseUrl: `http://${using}/v1`, consent: { host: using } });
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
