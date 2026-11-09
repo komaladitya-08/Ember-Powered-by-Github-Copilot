@@ -287,6 +287,47 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     return settled;
   }
 
+  it("puts my draft back after sending an edited request and preserves words changed during the send (home-c5-1)", async () => {
+    const { page } = await home(exchange(4));
+    try {
+      const field = page.locator("#conversation-message");
+      await field.fill("My earlier unsent draft");
+      await page.locator("#conversation li.you").last().getByRole("button", { name: /Edit your message/ }).click();
+      await field.fill("Edited request");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => field.inputValue()).toBe("My earlier unsent draft");
+      expect(await page.evaluate(() => window.__home.sent)).toEqual(["Edited request"]);
+      expect(await page.locator("#conversation-cancel-edit").isHidden()).toBe(true);
+      await page.locator("#conversation li.you").last().getByRole("button", { name: /Edit your message/ }).click();
+      await field.fill("Another edited request");
+      await page.evaluate(() => { window.__home.hold = true; });
+      await page.locator("#conversation-send").click();
+      await field.fill("New words while it sends");
+      await page.evaluate(() => { window.__home.release(); window.__home.hold = false; });
+      await expect.poll(() => field.inputValue()).toBe("My earlier unsent draft\n\nNew words while it sends");
+      expect(await page.evaluate(() => window.__home.sent)).toEqual(["Edited request", "Another edited request"]);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("keeps a newer Edit open when an earlier edited send is acknowledged (home-c5-1)", async () => {
+    const { page } = await home(exchange(4));
+    try {
+      const field = page.locator("#conversation-message");
+      await field.fill("My original draft");
+      await page.locator("#conversation li.you").last().getByRole("button", { name: /Edit your message/ }).click();
+      await page.evaluate(() => { window.__home.hold = true; });
+      await page.locator("#conversation-send").click();
+      await page.locator("#conversation li.you").first().getByRole("button", { name: /Edit your message/ }).click();
+      await field.fill("Newer edit left open");
+      await page.evaluate(() => window.__home.release());
+      await expect.poll(() => page.locator("#conversation-send").getAttribute("aria-disabled")).toBeNull();
+      expect(await field.inputValue()).toBe("Newer edit left open");
+      expect(await page.locator("#conversation-cancel-edit").isVisible()).toBe(true);
+      await page.locator("#conversation-cancel-edit").click();
+      expect(await field.inputValue()).toBe("My original draft");
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("keeps the composer and its Send in view while a reply grows above it, and leaves alone someone reading elsewhere (home-1)", async () => {
     const seed = exchange(12);
     const { page, errors } = await home(seed);

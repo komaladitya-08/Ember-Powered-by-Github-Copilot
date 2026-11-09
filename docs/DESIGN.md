@@ -400,6 +400,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   that request never stays (home-w5-4), above the draft from before Edit (home-r4-1); Edit on another request keeps
   them above it, as left and still words given back ("…The message that wasn't sent stays above it…"), so Cancel edit
   still names them and says when they're over 2,000 characters with that draft (home-w5-3);
+  after an edited request is sent, the draft Edit set aside comes back, above any new words typed while Send waited;
+  an acknowledgement of an earlier send never closes a newer Edit (home-c5-1);
   together over 2,000 characters, the line says to send them one at a time, never to send again (home-c4-2), but to
   shorten what was being written or edited where that alone is over (home-v5-3); one whose line came (Ember answered it itself, or it went to
   the model) never does, however far the conversation has moved past it (home-v4-1); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's

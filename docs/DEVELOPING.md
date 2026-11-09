@@ -126,6 +126,9 @@ runtime. It does not change the app's consent or speaking settings.
 
 ### Using Ember
 
+Home keeps the draft set aside by **Edit** and restores it after the edited request is sent, above any words typed
+while Send was waiting. An earlier acknowledgement cannot close a newer edit. No draft is sent automatically.
+
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
   lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
