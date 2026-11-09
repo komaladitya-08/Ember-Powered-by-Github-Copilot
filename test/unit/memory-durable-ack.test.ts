@@ -6,10 +6,10 @@ import { MemoryLearning } from "../../app/main/memory/learning";
 import { MemoryService } from "../../app/main/memory/service";
 import type { MemoryFile } from "../../app/main/memory/store";
 
-function service() {
+function service(once = false) {
   let graph = new MemoryGraph();
   let fails = true;
-  const save = vi.fn((next: MemoryGraph) => { if (fails) throw new Error("ENOSPC"); graph = new MemoryGraph(structuredClone(next.toJSON())); });
+  const save = vi.fn((next: MemoryGraph) => { if (fails) { if (once) fails = false; throw new Error("ENOSPC"); } graph = new MemoryGraph(structuredClone(next.toJSON())); });
   const file: MemoryFile = { path: "/unused/memory.json", load: () => graph, save, erase: () => undefined };
   const changed = vi.fn();
   const semantic = { changed, flush() {}, stop() {} } as unknown as SemanticMemory;
@@ -66,6 +66,23 @@ describe("durable memory acknowledgement", () => {
     expect(learning.intent("Call me Ram", { own: true })).toMatch(/couldn't save/);
     expect(learned).not.toHaveBeenCalled();
     expect(s.memory.list()).toEqual([]);
+    learning.stopNow(); s.memory.stop();
+  });
+
+
+  it("stops a multi-fact answer at its first failed write even when the next write would work (memory-w7-1)", () => {
+    const s = service(true);
+    const learned = vi.fn();
+    const learning = new MemoryLearning({ memory: s.memory, inForce: () => true, questionsOn: () => true,
+      askedAt: () => null, setAskedAt() {}, idle: () => true, locked: () => false, say: () => true,
+      onLearned: learned, log: { info() {}, warn() {} } });
+    learning.intent("get to know me", { own: true });
+    for (let i = 0; i < 3; i++) learning.intent("skip", { own: true });
+    expect(learning.intent("short answers and spoken aloud", { own: true })).toMatch(/couldn't save/);
+    expect(s.save).toHaveBeenCalledOnce();
+    expect(s.memory.list()).toEqual([]);
+    expect(learned).not.toHaveBeenCalled();
+    expect(learning.intent("UTC", { own: true })).toBeNull();
     learning.stopNow(); s.memory.stop();
   });
 

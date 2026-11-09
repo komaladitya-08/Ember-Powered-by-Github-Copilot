@@ -471,6 +471,8 @@ export class MemoryLearning {
     const added: Fact[] = [];
     for (const f of facts) {
       const r = this.d.memory.learn(f);
+      // A later successful write must not hide an earlier lost answer in this batch (memory-w7-1).
+      if (r.kind === "refused" && (this.d.memory.trouble === "unsaved" || this.d.memory.trouble === "unreadable")) break;
       if (r.kind !== "refused") kept++;
       // (Said again: kept, and already known, so nothing new to show.)
       if (r.kind === "added") added.push(r.fact);

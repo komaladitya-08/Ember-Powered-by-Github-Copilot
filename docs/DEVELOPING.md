@@ -2296,7 +2296,8 @@ answer that looks like it holds one isn't offered as context, and the status say
 Memory acknowledges a new or reinforced fact only after its graph write succeeds (`memory-r2`). On a full disk or
 another write failure, the old graph and recall index stay in place, no new learned line is emitted, and the
 remember tool says nothing new was kept. The spoken introduction ends with a save-failure explanation. Existing
-memory remains available; try again after correcting the storage problem.
+memory remains available; try again after correcting the storage problem. An answer that generates several facts
+stops at the first write failure, so a later successful save cannot conceal its partial failure (`memory-w7-1`).
 
 A request the model service refuses or can't finish says why in the conversation's words (`projectFailureText`): a
 refused key points at the key in settings, a usage limit says to try later, files over the model's limit say to choose

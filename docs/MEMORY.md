@@ -208,6 +208,8 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   acknowledges them (memory-r2). A failed write refuses the new fact, leaves the previous graph and recall index
   unchanged, and says nothing new was kept. The spoken interview stops with a save-failure explanation instead of
   promising to remember an answer it couldn't save. Recall-use metadata and sleep-time upkeep remain batched.
+  A multi-fact answer stops at its first failed write; later facts cannot clear that failure or make the interview
+  claim the whole answer was kept (memory-w7-1). Earlier successfully saved answers remain available.
 
 **Better recall** (step 8) adds matching by meaning, once the user downloads its model:
 - `embed-model.ts`: all-MiniLM-L6-v2 (int8, 23 MB, Apache-2.0) on onnxruntime-web's WebAssembly with one thread, the
