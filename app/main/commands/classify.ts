@@ -6124,19 +6124,21 @@ reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
   for (const f of values(p, "i", "input-file")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // Where it saves (review #169): aria2c's -d folder (-o names a file in it), fetch's and axel's -o (a file or a
   // folder), lwp-download's second operand (the same); otherwise the name the address ends in.
+  // A folder or a name Ember can't see all of (`-d "$d"`, `-o "$f"`) is a download as curl's and wget's are: the names
+  // the text gives it, else unnamed, so running what it saved asks (commands-remote-x6-3).
   const dir = h.key === "aria2c" ? values(p, "d", "dir")[0] : undefined;
-  if (dir === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+  if (dir === null) h.e.downloadUnnamed(null, h.sc);
   else if (dir !== undefined) writeInto(h, dir);
   const at = (name: string): string => (dir ? `${dir}/${name}` : name);
   const named = (u: Arg): string | null => (u.v ? u.v.replace(/[?#].*$/, "").split("/").pop() || "index.html" : null);
-  const outs = values(p, "o", "out", "output");
-  for (const o of outs) {
-    if (o === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
-    else if (o !== "-") saveAs(h, at(o));
+  const outs = optionWords(h.args, p, "o", "out", "output");
+  for (const w of outs) {
+    if (w.v === null) h.e.downloadTo(dir ? { ...w, parts: [`${dir}/`, ...(w.parts ?? [{ name: null }])] } : w, h.sc);
+    else if (w.v !== "-") saveAs(h, at(w.v));
   }
   if (h.key === "lwp-download" && p.operands.length >= 2) {
     const [url, to] = p.operands;
-    if (to.v === null) { h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name."); return; }
+    if (to.v === null) { h.e.downloadTo(to, h.sc); return; }
     saveAs(h, to.v);
     // A folder gets the file by the address's name.
     const name = named(url);

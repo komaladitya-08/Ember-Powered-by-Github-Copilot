@@ -178,7 +178,7 @@ Ember stops and asks before a command that:
   by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder;
   a download whose saved name Ember can't tell (one the server or a list picks: `curl -OJ`, `wget
   --content-disposition`, `wget -r`, `wget -i`, `aria2c -i`; one in a variable or an expression: `curl -o "$f"`,
-  `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
+  `aria2c -o "$f"` or `-d "$d"`, `axel -o "$f"`, `fetch -o "$f"`, `lwp-download … "$f"`, `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
   `DownloadFile`) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
   saved into or below, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the
   folder either); a listing or a read never does; and a patch this task downloaded or fetched applied with `patch`,
