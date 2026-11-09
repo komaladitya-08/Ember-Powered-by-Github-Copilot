@@ -75,10 +75,18 @@ export function targetsFoldRest(s: Pick<Settings, "commands" | "targets">, admin
   const orgOff = [sshOff ? "working on other computers" : "", wslOff ? "working in WSL" : "", commandsOff.length ? `commands ${listed(commandsOff)}` : ""].filter(Boolean);
   if (!can.length && !orgOff.length) return onboardingRest(os);
   if (!can.length && !userOff.length) return " are turned off by your organisation.";
+  // Nothing on, and only commands elsewhere turned off (a policy that lets them run on this computer only): first run's
+  // opening, then what the organisation turned off.
+  if (!can.length && !sshOff && !wslOff && !cmdOff("local")) return ` are off until you turn them on. Your organisation has turned off ${listed(orgOff)}.`;
+  // Commands on this computer get their own clause: "other computers and commands on this computer" reads as both on
+  // this computer (safety-privacy-r4-2).
+  const others = userOff.filter(o => o !== "commands on this computer");
+  const offWords = (items: string[]) => (items.length > 1 || items[0] !== "WSL" ? "are off until you turn them on" : "is off until you turn it on");
   const said = [
     can.length ? `you let Ember ${listed(can)}.` : "",
     localCmd || wslCmd || sshCmd ? "It runs commands only in its own window, where you can watch and stop them." : "",
-    userOff.length ? `${listed(userOff)} ${userOff.length > 1 || userOff[0] !== "WSL" ? "are off until you turn them on" : "is off until you turn it on"}.` : "",
+    others.length && others.length < userOff.length ? `${listed(others)} ${offWords(others)}, and so are commands on this computer.`
+      : userOff.length ? `${listed(userOff)} ${offWords(userOff)}.` : "",
     orgOff.length ? `Your organisation has turned off ${listed(orgOff)}.` : "",
   ].filter(Boolean);
   return `: ${said.map((t, i) => (i === 0 || /^[A-Z]/.test(t) ? t : t[0]!.toUpperCase() + t.slice(1))).join(" ")}`;

@@ -644,7 +644,7 @@ function renderAdmin(a: Status["admin"]): void {
   if (agent) renderAgent(agent);
   renderRecipient();
   renderTagline();
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"], ["screen-images", "screenImages"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["clear-on", "clearHearing"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"], ["screen-images", "screenImages"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -654,10 +654,14 @@ function renderAdmin(a: Status["admin"]): void {
   privacyKey = "";
   renderTaskReasoning();
   if (settings) renderPrivacy(settings);
+  // The voice choice too, as in force, before the voice status has come (safety-privacy-v6-1).
   if (voice) renderVoice(voice);
+  else renderNatural();
   if (settings) applyMemorySettings(settings);
   if (settings) applyRoutineSettings(settings);
   if (settings) applyAutonomySettings(settings);
+  // The rest of the switches it manages, as in force (safety-privacy-w5-2).
+  if (settings) { applyUpdateSettings(settings); drawVoiceSwitches(settings); }
 }
 // The policy changed while Ember ran: everything drawn from it is drawn again at once, as a window opened now would
 // draw it (the notice, What Ember reads, sends and keeps, the switches it manages, first run, computers, extensions),
@@ -1911,7 +1915,8 @@ $("memory-questions-hint").textContent = MEMORY_QUESTIONS_HINT;
 /** The paused note was shown (once a session: Not now hides it). */
 let pausedSeen = false;
 function applyMemorySettings(s: Settings): void {
-  const on = s.memory.on && s.memory.consent.version >= MEMORY_VERSION;
+  // As in force: held locked down after a policy change, the settings still hold it on (safety-privacy-w5-2).
+  const on = s.memory.on && s.memory.consent.version >= MEMORY_VERSION && !managed.has("memory");
   ($("memory-on") as HTMLInputElement).checked = on;
   // Questions are memory's: their switch shows only while memory is on.
   ($("memory-questions") as HTMLInputElement).checked = s.memory.questions;
@@ -2006,7 +2011,7 @@ function renderRoutines(rows: RoutineRow[]): void {
   }
 }
 function applyRoutineSettings(s: Settings): void {
-  ($("routines-on") as HTMLInputElement).checked = s.routines.on && s.routines.consent.version >= ROUTINES_VERSION;
+  ($("routines-on") as HTMLInputElement).checked = s.routines.on && s.routines.consent.version >= ROUTINES_VERSION && !managed.has("routines");
   if (!routineRows.length) renderRoutines(routineRows);
 }
 $("routines-on").addEventListener("change", e => {
@@ -2028,7 +2033,7 @@ mountReminders(window.ember);
 const UPDATES_VERSION = FEATURE_CONSENT_VERSION.updates;
 $("updates-consent-text").textContent = UPDATES_CONSENT_TEXT;
 function applyUpdateSettings(s: Settings): void {
-  ($("updates-on") as HTMLInputElement).checked = s.updates.on && s.updates.consent.version >= FEATURE_CONSENT_VERSION.updates;
+  ($("updates-on") as HTMLInputElement).checked = s.updates.on && s.updates.consent.version >= FEATURE_CONSENT_VERSION.updates && !managed.has("updates");
 }
 /** The how-to's words as last written, to leave its live region alone when a push brings the same ones. */
 let shownHow = "";
@@ -2679,11 +2684,20 @@ $("match-teach").addEventListener("click", startEnrol);
 // Teach comes back (and takes focus) once main says teaching stopped; Forget hides itself, so focus goes to Teach now.
 $("match-cancel").addEventListener("click", () => { matchCancelled = true; void window.ember.cancelEnrolVoice(); });
 $("match-forget").addEventListener("click", () => { void window.ember.forgetVoice(); focusFirst(["match-teach", "match-on", "wake"]); });
+/**
+ * Listening for the name, hearing more clearly and speaking, as in force: a switch the organisation turned off shows
+ * off, also while Ember holds itself locked down after a policy change and the settings still hold it on
+ * (safety-privacy-w5-2, v6-1).
+ */
+function drawVoiceSwitches(s: Status["settings"]): void {
+  ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent && !managed.has("wakeWord");
+  ($("clear-on") as HTMLInputElement).checked = s.voice.clearHearing && !managed.has("clearHearing");
+  ($("speak") as HTMLSelectElement).value = managed.has("speak") ? "never" : speakChoice(s);
+  ($("speak-results") as HTMLInputElement).checked = s.speakResults && !managed.has("speak");
+}
 function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
-  ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
-  ($("speak") as HTMLSelectElement).value = speakChoice(s);
-  ($("speak-results") as HTMLInputElement).checked = s.speakResults;
+  drawVoiceSwitches(s);
   ($("speak-rate") as HTMLSelectElement).value = String(nearestRate(s.voice.rate));
   renderHear(s);
   naturalUI.settings(s);

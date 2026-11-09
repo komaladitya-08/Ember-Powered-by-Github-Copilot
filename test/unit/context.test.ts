@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { Perception } from "../../app/main/perception";
+import { Perception, type PerceptionOptions } from "../../app/main/perception";
+import { isPromptWindow, isSecurityWindow } from "../../app/main/policy/policy";
 import type { AtspiSidecar, AxNode } from "../../app/main/perception/sidecar";
 import type { Logger } from "../../app/main/logger";
+import type { StackedWindow } from "../../app/main/platform/types";
 import type { X11 } from "../../app/main/x11";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -186,5 +188,96 @@ describe("while GNOME Shell's own password prompt is open (safety-privacy-3)", (
     expect(seen).toMatchObject({ nodes: [], window: null, authPrompt: "unchecked", capture: null });
     expect(seen.text).not.toMatch(/Inbox|Priya|Quarterly/);
     expect(reads()).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("while an authentication prompt's own X11 window is open, focused or not (safety-privacy-3)", () => {
+  const MAIL = { id: 1, pid: 42, title: "Inbox - Priya's mail", wmClass: "Mail thunderbird", x: 0, y: 0, width: 800, height: 600 };
+  const stacked = (id: number, pid: number, title: string, wmClass: string): StackedWindow => {
+    const r = { x: 100, y: 100, width: 400, height: 200 };
+    return { id, client: id, pid, title, wmClass, ...r, outer: r, inner: r, overrideRedirect: false };
+  };
+  /**
+   * Thunderbird in front, with the keyboard; above it in the stack, unfocused, a window of class `wmClass` ("fails": the
+   * stack itself can't be read). `check`: Linux's prompt-window check is given, as main.ts gives it on Linux only.
+   */
+  function beside(wmClass: string | "fails", check = true) {
+    let reads = 0;
+    const sidecar = {
+      readWindow: async () => { reads++; return { window: { app: "thunderbird", pid: 42, name: MAIL.title, role: "frame", active: true, bounds: null }, nodes: [node(1, "text", "Message", { states: ["focused"], text: "Quarterly figures attached" })], ms: 3 }; },
+      shellOverlays: async () => ({ overlays: [], complete: true }),
+      listWindows: async () => ({ windows: [] }),
+    } as unknown as AtspiSidecar;
+    const x11 = {
+      stack: () => {
+        if (wmClass === "fails") throw new Error("BadWindow (invalid Window parameter)");
+        return [stacked(1, 42, MAIL.title, MAIL.wmClass), stacked(2, 77, "", wmClass)];
+      },
+      activeWindow: () => MAIL, focusWindow: () => MAIL,
+      clientWindows: () => (wmClass === "fails" ? [MAIL] : [MAIL, { ...MAIL, id: 2, pid: 77, title: "", wmClass }]),
+      capture: () => null,
+    } as unknown as NonNullable<PerceptionOptions["x11"]>;
+    const p = new Perception({ sidecar, x11, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 1280, height: 1024 }), log: quiet,
+      ...(check ? { isPromptWindow: (w: { app?: string }) => isPromptWindow(w) } : {}) });
+    return { p, reads: () => reads };
+  }
+  const PROMPTS = ["pinentry-gtk-2 Pinentry-gtk-2", "gnome-ssh-askpass Gnome-ssh-askpass", "x11-ssh-askpass SshAskpass",
+    "polkit-gnome-authentication-agent-1 Polkit-gnome-authentication-agent-1", "gcr-prompter Gcr-prompter", "pinentry-qt Pinentry-qt"];
+
+  it.each(PROMPTS)("reads, sends and does nothing while %s's window is open behind the user's window", async wmClass => {
+    const { p, reads } = beside(wmClass);
+    expect(await p.promptOpen()).toBe(true);
+    // The borrowed mouse and keyboard look at the same check (withCursor's systemDialogOpen).
+    expect(await p.systemDialogOpen()).toBe(true);
+    const c = await p.quickContext();
+    expect(c?.text).not.toMatch(/Inbox|Priya|Quarterly|thunderbird/i);
+    expect(c?.text).toMatch(/Ember read nothing: a password prompt is open, so Ember looks away until it's done/);
+    expect(c?.target).toEqual({});
+    const d = await p.describe();
+    expect(d).not.toMatch(/Inbox|Priya|Quarterly|thunderbird/i);
+    expect(d).toMatch(/Ember read nothing: a password prompt is open/);
+    const seen = await p.perceive({ image: true, scope: "window" });
+    expect(seen).toMatchObject({ nodes: [], window: null, authPrompt: true, capture: null });
+    expect(seen.text).not.toMatch(/Inbox|Priya|Quarterly/);
+    // describe and perceive look first and read nothing; the request's context is read only to be thrown away.
+    expect(reads()).toBeLessThanOrEqual(1);
+  });
+
+  it("goes on reading beside a security app that stays open, which is only left out itself (firewall-config, a password manager, the shell)", async () => {
+    for (const wmClass of ["firewall-config Firewall-config", "keepassxc KeePassXC", "seahorse Seahorse", "gnome-shell Gnome-shell", "gedit Gedit"]) {
+      const { p } = beside(wmClass);
+      expect(await p.promptOpen(), wmClass).toBe(false);
+      expect(await p.systemDialogOpen(), wmClass).toBe(false);
+      expect((await p.quickContext())?.text, wmClass).toContain("Inbox - Priya's mail");
+    }
+  });
+
+  it("reads and sends nothing, and says it can't tell, when the window stack can't be read (fail closed)", async () => {
+    const { p, reads } = beside("fails");
+    expect(await p.promptOpen()).toBe("unchecked");
+    expect(await p.systemDialogOpen()).toBe(true);
+    const c = await p.quickContext();
+    expect(c?.text).not.toMatch(/Inbox|Priya|Quarterly|thunderbird/i);
+    expect(c?.text).toMatch(/can't tell whether a system dialog \(a password prompt\) is open/);
+    const seen = await p.perceive({ image: false, scope: "window" });
+    expect(seen).toMatchObject({ nodes: [], window: null, authPrompt: "unchecked" });
+    expect(reads()).toBeLessThanOrEqual(1);
+  });
+
+  it("is today's check where the platform gives none (Windows and macOS list their prompts through the helper)", async () => {
+    const { p } = beside("pinentry-gtk-2 Pinentry-gtk-2", false);
+    expect(await p.promptOpen()).toBe(false);
+    expect((await p.quickContext())?.text).toContain("Inbox - Priya's mail");
+    expect(isPromptWindow({ app: "pinentry" }, "win32")).toBe(false);
+    expect(isPromptWindow({ app: "SecurityAgent" }, "darwin")).toBe(false);
+  });
+
+  it("names only prompts that the security-window check already leaves out", () => {
+    for (const app of ["pinentry-gtk-2", "Pinentry-gtk-2", "gnome-ssh-askpass", "x11-ssh-askpass", "ksshaskpass", "polkit-gnome-authentication-agent-1",
+      "polkit-mate-authentication-agent-1", "gcr-prompter"]) {
+      expect(isPromptWindow({ app }), app).toBe(true);
+      expect(isSecurityWindow({ app }), app).toBe(true);
+    }
+    for (const app of ["firewall-config", "gnome-shell", "seahorse", "keepassxc", "gedit", ""]) expect(isPromptWindow({ app }), app).toBe(false);
   });
 });

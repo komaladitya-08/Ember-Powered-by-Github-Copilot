@@ -680,7 +680,8 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     expect(keep(`${l.lead}${rest(both, none)}`)).toBe("Other computers and commands: you let Ember run commands on this computer, and work and run commands on computers you reach over SSH. It runs commands only in its own window, where you can watch and stop them.");
     // WSL on Windows (elsewhere it isn't Ember's to use).
     const wsl = { ...base, targets: { ...base.targets, wsl: { on: true, consent: agreed } } } as Settings;
-    expect(keep(`${l.lead}${rest(wsl, none, "win32")}`)).toBe("Other computers and commands: you let Ember work in WSL. Other computers and commands on this computer are off until you turn them on.");
+    // Never "other computers and commands on this computer", which reads as both on this computer (safety-privacy-r4-2).
+    expect(keep(`${l.lead}${rest(wsl, none, "win32")}`)).toBe("Other computers and commands: you let Ember work in WSL. Other computers are off until you turn them on, and so are commands on this computer.");
     expect(rest(wsl, none, "linux")).toBe(l.rest);
     // Under the organisation's lockdown nothing is offered, and nothing the person turned on is said to be on.
     expect(keep(`${l.lead}${rest(both, allOff)}`)).toBe("Other computers and commands are turned off by your organisation.");
@@ -688,6 +689,12 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     // A policy that doesn't mention commands turns them off; other computers may still be turned on.
     expect(keep(`${l.lead}${rest(base, noCommands)}`)).toBe("Other computers and commands: other computers are off until you turn them on. Your organisation has turned off commands on this computer and on computers you reach over SSH.");
     expect(keep(`${l.lead}${rest(both, noCommands, "win32")}`)).toBe("Other computers and commands: you let Ember work on computers you reach over SSH. WSL is off until you turn it on. Your organisation has turned off commands on this computer, in WSL and on computers you reach over SSH.");
+    // A policy that lets commands run only on this computer, with nothing turned on yet: first run's opening, then what the
+    // organisation turned off, never "other computers and commands on this computer are off" (safety-privacy-r4-2).
+    const localOnly = { source: "/etc/ember/policy.json", features: {}, commands: { local: "on", wsl: "off", ssh: "off" } } as const;
+    expect(keep(`${l.lead}${rest(base, localOnly)}`)).toBe("Other computers and commands are off until you turn them on. Your organisation has turned off commands on computers you reach over SSH.");
+    expect(keep(`${l.lead}${rest(base, localOnly, "win32")}`)).toBe("Other computers and commands are off until you turn them on. Your organisation has turned off commands in WSL and on computers you reach over SSH.");
+    expect(keep(`${l.lead}${rest(ssh, localOnly)}`)).toBe("Other computers and commands: you let Ember work on computers you reach over SSH. Commands on this computer are off until you turn them on. Your organisation has turned off commands on computers you reach over SSH.");
     expect(keep(`${l.lead}${rest(local, { source: "/etc/ember/policy.json", features: { ssh: false }, commands: { local: "on" } })}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Your organisation has turned off working on other computers.");
     // A switch whose card isn't agreed to at its version isn't on, as main counts it.
     expect(rest({ ...base, commands: { local: { on: true, askEvery: false, consent: { version: 0, at: null } } } } as Settings, none)).toBe(l.rest);

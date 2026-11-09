@@ -8,8 +8,9 @@ import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { AdminPolicySchema, auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, managedKeys } from "../../app/main/admin";
-import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { AdminPolicySchema, applyAdminPolicy, auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, lockedDown, managedKeys } from "../../app/main/admin";
+import { DEFAULT_SETTINGS, type Settings } from "../../app/main/settings";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
 import type { ActivityEntry, StatusPlatform, UpdateStatus } from "../../app/shared/ipc";
@@ -675,6 +676,22 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     await page.close();
   });
 
+  /**
+   * Switches the person left on that a held lockdown turns off: listening for the name, Hear me more clearly, memory,
+   * routines, updates, asked apps. The voice they chose, Kokoro, shows as Kitten Nano (`heldVoice`).
+   */
+  const HELD_OFF = ["#wake", "#clear-on", "#memory-on", "#routines-on", "#updates-on", "#trust-apps"];
+  const heldVoice = async (page: Page) => {
+    expect(await page.locator("#natural-model").inputValue()).toBe("kitten");
+    expect(await page.locator("#natural-model").isDisabled()).toBe(true);
+  };
+  const leftOn = (at: string) => ({
+    wakeWord: true, voice: { ...DEFAULT_SETTINGS.voice, consent: true, clearHearing: true, natural: true, naturalModel: "kokoro" as const },
+    memory: { ...DEFAULT_SETTINGS.memory, on: true, consent: { version: FEATURE_CONSENT_VERSION.memory, at } },
+    routines: { on: true, consent: { version: FEATURE_CONSENT_VERSION.routines, at } },
+    updates: { ...DEFAULT_SETTINGS.updates, on: true, consent: { version: FEATURE_CONSENT_VERSION.updates, at } },
+  });
+
   it("never says Work without asking or apps let in without asking go ahead while Ember holds itself locked down after a policy change (safety-privacy-v5-1)", async () => {
     // As main sends it once the policy changed mid-run: the settings still as the person left them (the store took its
     // policy at start), the admin the held lockdown.
@@ -686,6 +703,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
         commands: { local: { on: true, askEvery: false, consent: agreed } },
         autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } },
         grants: { gedit: "act" },
+        ...leftOn(agreed.at),
       },
       admin: { source: held.source, error: held.error ?? null, held: true, managed: managedKeys(p), features: p.features, provider: null, confirmEveryAction: p.confirmEveryAction,
         allowGrants: p.allowGrants, retentionDays: auditRetentionDays(held), neverLook: p.neverLook, commands: { local: commandMode(held, "local"), wsl: commandMode(held, "wsl"), ssh: commandMode(held, "ssh") }, sshHostsLimited: false },
@@ -706,6 +724,13 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
       expect(await page.locator(id).isChecked()).toBe(false);
       expect(await page.locator(id).isDisabled()).toBe(true);
     }
+    // Every other switch the lockdown turned off shows off as well, as a lockdown read at start draws it, though the
+    // settings still hold it on (safety-privacy-w5-2).
+    for (const id of HELD_OFF) {
+      expect(await page.locator(id).isChecked(), id).toBe(false);
+      expect(await page.locator(id).isDisabled(), id).toBe(true);
+    }
+    await heldVoice(page);
     expect(page.errors).toEqual([]);
     await page.close();
   });
@@ -718,9 +743,12 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
         commands: { local: { on: true, askEvery: false, consent: agreed } },
         autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } },
         grants: { gedit: "act" },
+        ...leftOn(agreed.at),
       },
       admin: homeAdmin(ordinary),
     });
+    for (const id of HELD_OFF) expect(await page.locator(id).isChecked(), id).toBe(true);
+    expect(await page.locator("#natural-model").inputValue()).toBe("kokoro");
     const fold = page.locator("#privacy-terms-fold");
     await fold.locator("summary").click();
     const line = (icon: string) => page.locator(`#privacy-terms li[data-icon='${icon}']`).innerText();
@@ -736,12 +764,37 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     expect(await line("eye")).toContain("Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
     expect(await line("plug")).toBe("Other computers and commands are turned off by your organisation.");
     expect(await notice()).toBe("Your organisation changed Ember's policy. Restart Ember to use it.");
-    for (const id of ["#screen-images", "#autonomy-on"]) {
-      expect(await page.locator(id).isChecked()).toBe(false);
-      expect(await page.locator(id).isDisabled()).toBe(true);
+    for (const id of ["#screen-images", "#autonomy-on", ...HELD_OFF]) {
+      expect(await page.locator(id).isChecked(), id).toBe(false);
+      expect(await page.locator(id).isDisabled(), id).toBe(true);
     }
+    await heldVoice(page);
+    await evidence(page, "privacy-held");
     // Still open where the person was reading.
     expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("draws every switch and choice while Ember holds itself locked down as the same lockdown read at start draws it (safety-privacy-v6-1)", async () => {
+    const at = "2026-11-04T12:00:00Z";
+    const user: Settings = { ...structuredClone(DEFAULT_SETTINGS), ...leftOn(at), speakResults: true, screenImages: true };
+    const ordinary = { policy: AdminPolicySchema.parse({ commands: { local: "on" } }), source: "/etc/ember/policy.json" };
+    const start = lockedDown("/etc/ember/policy.json", "Unexpected token");
+    /** Each checkbox's and choice's state on the page: on or off (or the choice), and whether it can be changed. */
+    const drawn = (page: Page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll<HTMLInputElement | HTMLSelectElement>("input[type=checkbox], select")]
+      .map(e => [e.id, `${e instanceof HTMLSelectElement ? e.value : e.checked ? "on" : "off"}${e.disabled ? " disabled" : ""}`])));
+    // A lockdown read at start: the settings with its policy applied, as the store hands them to Home.
+    const first = await open("voice", { settings: applyAdminPolicy(user, start.policy) as unknown as Record<string, unknown>, admin: homeAdmin(start) });
+    const atStart = await drawn(first);
+    expect(atStart["clear-on"]).toBe("off disabled");
+    expect(atStart["natural-model"]).toBe("kitten disabled");
+    expect(first.errors).toEqual([]);
+    await first.close();
+    // Held after a policy change: the settings still as the person left them, Hear me more clearly on and Kokoro chosen.
+    const page = await open("voice", { settings: user as unknown as Record<string, unknown>, admin: homeAdmin(heldUntilRestart(ordinary)) });
+    await expect.poll(() => drawn(page)).toEqual(atStart);
+    await evidence(page, "voice-held");
     expect(page.errors).toEqual([]);
     await page.close();
   });

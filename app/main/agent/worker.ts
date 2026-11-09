@@ -4528,7 +4528,8 @@ export class Worker {
 
   /**
    * A password prompt the desktop's shell draws itself is open (Perception.promptOpen: GNOME Shell's polkit and keyring
-   * dialogs, which no X11 window shows): no step is taken until it's done, by accessibility as with the borrowed mouse
+   * dialogs, which no X11 window shows, and on Linux a prompt program's own window, focused or not, such as pinentry's):
+   * no step is taken until it's done, by accessibility as with the borrowed mouse
    * (CLAUDE.md "Never"; safety-privacy-3), and the refusal is audited. A check that can't be made, or fails, refuses too
    * (fail closed, safety-privacy-r1), in words that say Ember can't tell rather than that a prompt is open
    * (safety-privacy-c1-2), or, when the helper can't work here at all, that it isn't working and where the setup check

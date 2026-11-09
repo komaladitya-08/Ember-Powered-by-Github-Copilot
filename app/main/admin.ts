@@ -287,6 +287,8 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.features.voice === false) keys.push("wakeWord");
   if (admin.features.speak === false) keys.push("speak");
   if (admin.features.voice === false || admin.features.speak === false) keys.push("naturalVoice");
+  // Hear me more clearly, which applyAdminPolicy turns off with voice (safety-privacy-v6-1).
+  if (admin.features.voice === false) keys.push("clearHearing");
   if (admin.features.screenImages === false) keys.push("screenImages");
   if (modelsManaged(admin.models)) keys.push("models");
   if (!admin.allowGrants) keys.push("grants", "askedApps");

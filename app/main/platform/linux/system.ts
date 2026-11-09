@@ -14,7 +14,7 @@ import { SETTINGS, changeSetting, findApp, hasBuiltInShell, isTerminalApp, launc
 import { ADMIN_POLICY_FILE, loadAdminPolicy, providerApiKey } from "../../admin";
 import { autostartFile, foreignAutostartNote, launchCommand, syncAutostart } from "../../autostart";
 import { journalAvailable, journalSink } from "../../policy/audit";
-import { isSecurityWindow } from "../../policy/policy";
+import { isPromptWindow, isSecurityWindow } from "../../policy/policy";
 import { CLIPBOARD_FORMATS } from "../../agent/clipboard-formats";
 import { NEVER_LOOK_DEFAULTS } from "../../../shared/never-look";
 import { KEYS, SHORTCUTS } from "../../../shared/shortcuts";
@@ -125,7 +125,8 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
       nativeSpeechDir: resourcesPath => path.join(resourcesPath, "voice-native"),
       naturalVoice: false,
     },
-    privacy: { neverLookDefaults: NEVER_LOOK_DEFAULTS.linux, isSecurityWindow: w => isSecurityWindow(w) },
+    // A pinentry, ssh-askpass or polkit agent's window stops all reading and every step while it is up (safety-privacy-3).
+    privacy: { neverLookDefaults: NEVER_LOOK_DEFAULTS.linux, isSecurityWindow: w => isSecurityWindow(w), isPromptWindow: w => isPromptWindow(w) },
     clipboardFormats: CLIPBOARD_FORMATS.linux,
     lifecycle: {
       appUserModelId: null,

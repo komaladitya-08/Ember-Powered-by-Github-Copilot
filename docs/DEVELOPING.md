@@ -392,8 +392,10 @@ your mouse**: it waits until you're still, moves the pointer visibly, and puts i
 the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
 acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
 take screenshots or press keys (nor asks to borrow your mouse or keyboard, or says it's borrowing them without asking,
-while one such as pinentry or ssh-askpass has the keyboard); while GNOME Shell's own prompt is up (or Ember can't tell, because the shell is too busy
-or didn't answer, or because the accessibility helper isn't working: then Ember says so and points to the setup check),
+while one such as pinentry or ssh-askpass has the keyboard); while GNOME Shell's own prompt is up, or the window of a
+prompt program (pinentry, ssh-askpass, a polkit agent or gcr's prompter) is open, focused or not (or Ember can't tell,
+because the shell is too busy or didn't answer, the window list can't be read, or the accessibility helper isn't
+working: then Ember says so and points to the setup check),
 it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
 it's going ahead without asking), until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
 windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
@@ -410,7 +412,9 @@ first run's "Before Ember starts" again, word for word as it reads now (Search f
 "audit" and the like), but for pointing to the never-look list below and saying when screenshots are off, when Work
 without asking is on (ordinary steps are said instead of asked) or apps were let in without asking (each as the policy
 in force allows it: while Ember holds itself locked down after a policy change, it says screenshots are off and Ember
-asks before acting in an app, and both switches below show off), and which of other
+asks before acting in an app, and every switch the lockdown turns off shows off, there and in the other panes:
+screenshots, Work without asking, working in an app you asked for help with, listening for the name, Hear me more
+clearly, memory, routines and update notices, and the voice shows Kitten Nano), and which of other
 computers, WSL and commands you turned on or your organisation turned off; while open it follows where requests go, the
 policy and those settings, and isn't drawn again for an unrelated change.
 **What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80
@@ -737,7 +741,7 @@ Supertonic 3 (int8, about 129 MB, `SUPERTONIC_VOICE`) is the other optional voic
 list. It runs only on the native addon (Windows and macOS: the C API binding can't pass its generation config), and its
 weights are under the BigScience Open RAIL-M licence, whose use restrictions pass on to users.
 
-**Hear me more clearly** (`voice.clearHearing`, Settings › Voice) fetches `CLEAR_SPEECH` (Parakeet TDT 0.6B v2, 482 MB) on Windows, macOS and Linux's C API, and starts the voice process again with it; the log says `voice.clear_wanted`, `voice.clear_ready`, and `clear: true` on `voice.ready`. An organisation's `features.voice: false` turns it off.
+**Hear me more clearly** (`voice.clearHearing`, Settings › Voice) fetches `CLEAR_SPEECH` (Parakeet TDT 0.6B v2, 482 MB) on Windows, macOS and Linux's C API, and starts the voice process again with it; the log says `voice.clear_wanted`, `voice.clear_ready`, and `clear: true` on `voice.ready`. An organisation's `features.voice: false` turns it off, shown as managed.
 
 Kokoro, Supertonic and Parakeet come from sherpa-onnx's GitHub releases (served from
 `release-assets.githubusercontent.com`) only when the user turns them on; no package or models zip carries them.
@@ -1205,7 +1209,7 @@ the lockdown turns off), and the restart reads the new policy whole. Every key i
 
 | Key | Effect |
 |---|---|
-| `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the optional native voice off and its model download from starting, shown as managed |
+| `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the optional native voice off and its model download from starting, and `voice` keeps Hear me more clearly off, shown as managed |
 | `features.actions` | Ember answers and guides ("show me") but never acts in apps |
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
 | `features.screenImages` | Accessibility text only; no screenshots go to the model ("Send screenshots for tasks" off, managed) |

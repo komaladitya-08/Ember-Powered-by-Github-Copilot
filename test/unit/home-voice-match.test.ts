@@ -184,7 +184,8 @@ describe("When Ember asks first", () => {
     expect(keys.has("askedApps") && keys.has("reviewCommands")).toBe(true);
     const [apps, commands] = trustView({ askedApps: false, reviewCommands: true }, keys);
     expect(apps).toEqual({ id: "trust-apps", checked: false, disabled: true, locked: true, title: MANAGED_TEXT, describedBy: "trust-apps-hint trust-managed" });
-    expect(commands).toMatchObject({ checked: true, disabled: true, locked: true, describedBy: "trust-commands-hint trust-managed" });
+    // Shown off as in force, though the settings still hold it on (a held lockdown; safety-privacy-w5-2).
+    expect(commands).toMatchObject({ checked: false, disabled: true, locked: true, describedBy: "trust-commands-hint trust-managed" });
     // Only the managed one is locked.
     expect(trustView({ askedApps: true, reviewCommands: true }, new Set(["reviewCommands"])).map(r => r.locked)).toEqual([false, true]);
     expect(page).toContain(`<span id="trust-managed" hidden>${MANAGED_TEXT}</span>`);

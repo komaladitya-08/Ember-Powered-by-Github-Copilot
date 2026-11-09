@@ -39,6 +39,8 @@ describe("main.ts's privacy wiring (critique integration-1)", () => {
     expect(MAIN).toContain("isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),");
     expect(MAIN).toContain("keys: sys.keys, os: platform.os, isSecurityWindow: privacy.isSecurityWindow,");
     expect(MAIN).toContain("words: sys.words, isSecurityWindow: privacy.isSecurityWindow,");
+    // Perception is given the platform's prompt-window check (Linux's pinentry, ssh-askpass, polkit agents; safety-privacy-3).
+    expect(MAIN).toContain("words: sys.words, isSecurityWindow: privacy.isSecurityWindow, isPromptWindow: sys.privacy.isPromptWindow,");
     // Today's direct wiring is gone: nothing judges a window around the union.
     expect(MAIN).not.toContain("isTerminalApp: name => isTerminalWindowApp(");
     expect(MAIN).not.toMatch(/isSecurityWindow: sys\.privacy\.isSecurityWindow,? (?!isTerminalApp)/);
