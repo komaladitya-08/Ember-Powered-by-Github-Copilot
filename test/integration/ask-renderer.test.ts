@@ -423,7 +423,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
-  it("shows every suggestion and comfortable controls at narrow widths, every text size and forced colours", async () => {
+  it("shows every suggestion and comfortable controls at narrow widths, every text size and forced colours (companion-v7-2)", async () => {
     const page = await pageAt();
     try {
       for (const size of ["default", "large", "larger"] as const) for (const width of [320, 460]) for (const forced of [false, true]) {

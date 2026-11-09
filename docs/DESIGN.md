@@ -358,7 +358,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   known. Any change to the recipient or the shown agreement re-arms its half-second stray-press guard (first-run-c7-1).
 - **Voice focus** uses “Set up Voice Match” and a separate name-free state description when focus returns after
   teaching or forgetting a voice. The full visible explanation remains available to read. Ask's focused field says
-  “Ask or tell me”, and its window and page title are “Companion request”, so opening it does not read the wake name
+  “Ask or tell me”, with a short visible “Ask…” prompt so an empty field stays one line at narrow widths and Larger
+  text (companion-v7-2). Its window and page title are “Companion request”, so opening it does not read the wake name
   into the microphone (voice-listening-r6-2, voice-listening-q6-1). Voice Match failure lines use the first person and
   also update that focused description (voice-listening-r6-3).
 - **Composer progress** says “Thinking… The reply will appear above.” to avoid reading the wake name, including its
