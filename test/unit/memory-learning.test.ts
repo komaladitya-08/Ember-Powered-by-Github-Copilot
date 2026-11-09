@@ -822,6 +822,25 @@ describe("“forget that”, the instruction check and the conversation's line",
     }
   });
 
+  it("leaves a request about what a program or a computer holds in memory to the conversation, and still answers one about me or my family (memory-x6-6)", () => {
+    for (const text of [
+      "Delete what my Python process allocated from memory", "Clear what my browser is holding from memory", "Remove where my files are cached from memory",
+      "Remove how my program caches images from memory", "Remove what I use for testing from memory", "Remove what my app cached from memory",
+      "Delete what my script loaded from memory", "Clear what my tabs use from memory", "Remove what I'm using from memory",
+    ]) {
+      expect(memoryAsk(text), text).toBeNull();
+      const off = learning({ inForce: () => false });
+      expect(off.l.intent(text, { own: true }), text).toBeNull();
+      expect(off.opened).not.toHaveBeenCalled();
+    }
+    for (const text of [
+      "Remove where I live from memory", "Remove what my wife likes from memory", "Delete where my sister lives from memory", "Remove who my manager is from memory",
+      "Remove when my birthday is from memory", "Remove what I like from memory", "Remove where I'm staying from memory",
+    ]) {
+      expect(memoryAsk(text), text).toBe("forget");
+    }
+  });
+
   it("adds no “I won't keep this” after a “remember” tag that recalls what we shared, and keeps it after a fact about me (memory-c5-2)", () => {
     const off = learning({ inForce: () => false });
     for (const text of [

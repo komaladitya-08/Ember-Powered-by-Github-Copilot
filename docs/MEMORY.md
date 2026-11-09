@@ -389,7 +389,10 @@ download, so English-only MiniLM is the trade-off for now.
      Monday", "Forget HomeNet", "Forget Starbucks", "Forget Ember", "Remove Photoshop from memory"; "from memory" only
      with "your", "Ember's" or "my", after the user's details or a name, or after what only Ember's memory holds
      ("Delete everything from memory", "Remove that from memory", "Remove what I told you from memory", "Delete my email
-     from memory", "Erase Priya's birthday from memory", "Remove where I live from memory": memory-c5-1), never "it" or
+     from memory", "Erase Priya's birthday from memory", "Remove where I live from memory": memory-c5-1; "what my …"
+     only of the user's details or people, "what I …" only with a verb about the user, and neither with a program's
+     words, so "Delete what my Python process allocated from memory" and "Remove what I use for testing from memory"
+     are the conversation's: memory-x6-6), never "it" or
      a thing named, and never a photo app's memories, so "Remove this tab from memory", "Remove it from memory" and
      "Delete my memories of Paris in Photos" are the conversation's: memory-r3-1, memory-v4-1, memory-v4-2, memory-c4-1; a photo
      app by any capitalised name but Ember's ("…in Microsoft Photos", "…on Pinterest", "…in Immich": memory-w5-6) and
