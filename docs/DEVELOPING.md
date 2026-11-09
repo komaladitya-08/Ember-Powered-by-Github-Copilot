@@ -541,6 +541,8 @@ probes; late replies cannot publish tools or continue an HTTP handshake. Agreein
 normal refresh, without erasing still-current feature/plugin agreements. Browsing a marketplace before the
 extensions feature card remains available after global agreement; it does not approve installing or using tools
 (integrations-refresh-c1 / extensions-refresh-consent-1).
+An installation already under way retains only its captured local runtime-uninstall cleanup when stopped; this
+cannot initiate another install or marketplace request after revocation (extensions-consent-review-1).
 
 - **Only MCP servers load.** Ember reads a plugin's manifest (`plugin.json`, `.github/plugin/plugin.json`,
   `.claude-plugin/plugin.json`) and its MCP servers (`mcpServers`, `mcp.json`, `.mcp.json`), copies the plugin into

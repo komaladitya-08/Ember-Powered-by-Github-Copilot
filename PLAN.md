@@ -2185,6 +2185,10 @@ and pending probes; late replies cannot publish tools or dispatch the next HTTP 
 stdio probes start no process. Restoring global agreement allows the existing refresh to resume, retaining current
 feature/plugin cards. Browsing before the extension feature card still works after global agreement. No consent
 version, card wording, tool authority or owner choice is weakened.
+First review found the new RPC guard also blocked cleanup when agreement was revoked during a runtime install
+(extensions-consent-review-1, P2). The failing fake-runtime regression retained its downloaded copy. Cleanup now
+captures only that already-authorised install's local uninstall operation before awaiting it; all initiating RPCs
+remain gated, and a revoked install stops before copying or probing the downloaded plugin.
 
 **Commands (M12).** Restored baseline questions for ordinary command-line `if` and error-checking HOME/PWD
 expansions. Unknown URL names, attached download destinations, URLs supplied through xargs/loops, configured Git

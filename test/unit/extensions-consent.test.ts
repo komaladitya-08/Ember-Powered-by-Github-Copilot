@@ -113,6 +113,37 @@ describe("extensions require the current global agreement", () => {
     await f.service.browse("fixture");
     expect(browse).toHaveBeenCalledTimes(1);
   });
+
+  it("removes the runtime's downloaded copy when global agreement is revoked during installation (extensions-consent-review-1)", async () => {
+    let finish!: () => void;
+    let began!: () => void;
+    const started = new Promise<void>(resolve => { began = resolve; });
+    let root = "", copy = "";
+    const uninstall = vi.fn(async () => { fs.rmSync(copy, { recursive: true, force: true }); });
+    const client = { rpc: { plugins: {
+      marketplaces: { list: async () => ({ marketplaces: [{ name: "remote", source: `Local: ${root}` }] }) },
+      install: () => new Promise<void>(resolve => { finish = resolve; began(); }), uninstall,
+    } } };
+    const f = fixture(true, [HTTP], { client: () => client as never });
+    const dir = path.dirname(f.store.dir);
+    root = path.join(dir, "market");
+    copy = path.join(dir, "copilot", "installed-plugins", "remote", "downloaded");
+    fs.mkdirSync(path.join(root, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".claude-plugin", "marketplace.json"), JSON.stringify({ name: "remote", owner: { name: "Fixture" },
+      plugins: [{ name: "downloaded", source: { source: "github", repo: "fixture/downloaded" } }],
+    }));
+    fs.mkdirSync(path.join(copy, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(path.join(copy, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "downloaded", mcpServers: { fixture: HTTP } }));
+    const pending = f.service.install("remote", "downloaded");
+    await started;
+    f.consent(false);
+    finish();
+    expect((await pending).ok).toBe(false);
+    expect(uninstall).toHaveBeenCalledExactlyOnceWith({ name: "downloaded@remote" });
+    expect(fs.existsSync(copy)).toBe(false);
+    expect(f.probe).not.toHaveBeenCalled();
+    expect(f.store.read()).toHaveLength(1);
+  });
 });
 
 describe("stopped extension probes", () => {

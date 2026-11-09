@@ -426,17 +426,21 @@ export class ExtensionsService implements ExtensionsApi {
     if (this.items.some(i => i.source === source)) return { ok: false, why: "It's already installed." };
     const id = `${slug(name, 40)}-${slug(marketplace, 40)}-${crypto.randomBytes(3).toString("hex")}`;
     const dst = this.store.pluginDir(id);
-    let viaRuntime = false;
+    let cleanRuntime: (() => Promise<unknown>) | null = null;
     const epoch = this.epoch;
     try {
       const root = await this.marketplaceRoot(marketplace);
+      if (epoch !== this.epoch || !this.active()) throw new Error("extensions stopped");
       const listed = root ? readMarketplace(root).plugins.find(p => p.name === name) : undefined;
       if (!listed) return { ok: false, why: "Ember couldn't find that plugin." };
       let src = listed.folder;
       if (!src) {
         // Kept elsewhere (a GitHub repository at a pinned commit): the runtime fetches it, and Ember copies it.
-        await this.rpc().plugins.install({ source });
-        viaRuntime = true;
+        const plugins = this.rpc().plugins;
+        // Capture only this already-authorised install's local cleanup: revocation still blocks every new RPC.
+        cleanRuntime = () => plugins.uninstall({ name: source });
+        await plugins.install({ source });
+        if (epoch !== this.epoch || !this.active()) throw new Error("extensions stopped");
         src = path.join(this.o.copilotHome, "installed-plugins", marketplace, name);
         if (!fs.existsSync(src)) return { ok: false, why: "Ember couldn't fetch that plugin." };
       }
@@ -480,7 +484,7 @@ export class ExtensionsService implements ExtensionsApi {
       return { ok: false, why: m === "too big" ? "It's too big to install." : m === "not connected" ? "Ember isn't connected to Copilot yet." : m === "outside its marketplace" || m === "not a folder" ? "Its files aren't in its marketplace, so Ember didn't install it." : "Ember couldn't install it." };
     } finally {
       // The runtime's own install is only a download: Ember runs its copy, so the runtime keeps nothing enabled.
-      if (viaRuntime) { try { await this.rpc().plugins.uninstall({ name: source }); } catch (err) { this.o.log.warn("extensions.runtime_uninstall_failed", { err }); } }
+      if (cleanRuntime) { try { await cleanRuntime(); } catch (err) { this.o.log.warn("extensions.runtime_uninstall_failed", { err }); } }
       this.busy.delete(id);
       this.changed();
     }
