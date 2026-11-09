@@ -585,6 +585,8 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
+  An unsaved key belongs to the host where it was entered: a different valid host or port clears the field, including
+  a saved-address prefill when reopening it. Path-only edits and unfinished URL typing retain it (first-run-v7-1).
   Main's words for a check or a connection (written for Models & connections, which speaks of Ember) are said in first
   run's own voice on every visit, on the sign-in step too: “I can't reach <host>…”, “…and I'll connect in a moment.”
   (`inMyVoice`, first-run-r4-2), and what they call Ember's comes along: “…the GitHub sign-in I found (my saved

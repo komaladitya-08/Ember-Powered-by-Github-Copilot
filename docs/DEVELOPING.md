@@ -126,6 +126,10 @@ runtime. It does not change the app's consent or speaking settings.
 
 ### Using Ember
 
+During setup, an unsaved provider key stays tied to the host where it was entered. A different valid host or port
+clears it, including when reopening the form restores a saved address. Path-only edits and an unfinished address
+while typing keep it. Changing the address alone leaves the provider and key already in use untouched.
+
 First run's Agree waits until Ember knows where requests will go. If the recipient or the shown agreement changes,
 the half-second protection against a stray press starts again; nothing is read, heard or sent while it waits.
 
