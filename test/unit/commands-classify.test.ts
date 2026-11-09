@@ -1706,6 +1706,40 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["make -j $JOBS", "make -j \"$JOBS\"", "mvn -T $X package", "ninja -j $X"]) expect(rules(cmd), cmd).toEqual([]);
   });
 
+  it("judges patch's -d and --directory as the folder it writes in: Ember's own refused, one Ember can't see asked about (commands-a7-3)", () => {
+    for (const cmd of [
+      "patch -d ~/.config/ember -p0 < /tmp/p", "patch --directory=$HOME/.config/ember -p0 -i /tmp/p", "patch --directory ~/.config/ember < /tmp/p",
+      "patch -d ~/.config/ember -p0 <<'EOF'\n--- settings.json\n+++ settings.json\n@@ -1 +1 @@\n-{}\n+{\"autonomy\":true}\nEOF", "patch -d /etc/ember -p0 < p",
+    ]) {
+      expect(decided(cmd).cls.refuse?.rule, cmd).toBe("ember.path");
+      expect(decided(cmd).cls.refuse?.says, cmd).toBe("Ember won't run this: it would change Ember's own safety settings, records or programs.");
+    }
+    for (const cmd of ["patch -d \"$d\" -p0 < /tmp/p", "patch --directory=\"$d\" -p1 -i fix.patch", "patch -d\"$d\" -p0 < p", "patch -Rd\"$d\" < p"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    // A folder of the project is patched as before.
+    for (const cmd of ["patch -d src -p1 < fix.patch", "patch -dsrc -p1 < fix.patch", "patch --directory=src -p1 -i fix.patch", "patch -p1 < fix.patch"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+  });
+
+  it("takes -- as the end of cd's and pushd's options, so the folder after it is the one judged (commands-a7-4)", () => {
+    for (const [cmd, plain] of [
+      ["cd -- ~/.config/ember && sed -i s/false/true/ settings.json", "cd ~/.config/ember && sed -i s/false/true/ settings.json"],
+      ["pushd -- ~/.config/ember && tar -xf /tmp/x.tar", "pushd ~/.config/ember && tar -xf /tmp/x.tar"],
+      ["cd -- /etc/ember && cat policy.json", "cd /etc/ember && cat policy.json"],
+      ["cd -L -- ~/.config/ember && rm -f settings.json", "cd -L ~/.config/ember && rm -f settings.json"],
+    ] as const) {
+      expect(decided(cmd).cls.refuse?.rule, cmd).toBe("ember.path");
+      expect(decided(cmd).cls.refuse?.says, cmd).toBe(decided(plain).cls.refuse?.says);
+    }
+    // cd -P lands where the folder really is: after --, the folder is still the one named.
+    expect(decided("cd -P -- ~/.config/ember && rm -f x").cls.refuse?.rule).toBe(decided("cd -P ~/.config/ember && rm -f x").cls.refuse?.rule);
+    // Anywhere else it changes nothing: a project folder, home with no folder after it.
+    for (const cmd of ["cd -- src && ls", "cd -- && ls", "pushd -- src && make"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    expect(decided("cd -- src && rm -f x").cls.probe).toEqual(decided("cd src && rm -f x").cls.probe);
+  });
+
   it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {
     for (const cmd of ["cp notes.txt", "mv notes.txt", "install x.sh", "docker run --rm", "podman run -P"]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     for (const cmd of ["cp --help", "mv --version", "rsync -a src", "rsync src/"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");

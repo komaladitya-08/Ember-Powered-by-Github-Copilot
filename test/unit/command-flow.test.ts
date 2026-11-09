@@ -2740,3 +2740,18 @@ describe("a read or a loop over text Ember can't see, as the flow judges it (com
     ]) expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
   });
 });
+
+describe("patch -d and cd -- in Ember's folder, as the flow judges them (commands-a7-3, commands-a7-4)", () => {
+  it("refuses to patch, unpack into or edit Ember's folder named after patch -d or cd --", async () => {
+    for (const command of [
+      "patch -d ~/.config/ember -p0 < /tmp/p", "patch --directory=$HOME/.config/ember -p0 -i /tmp/p",
+      "cd -- ~/.config/ember && sed -i s/false/true/ settings.json", "pushd -- ~/.config/ember && tar -xf /tmp/x.tar", "cd -- /etc/ember && cat policy.json",
+    ]) {
+      setCommandJudge(null);
+      const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: true, real: p }) });
+      const r = await call(h, { target: "this computer", command });
+      expect(r.textResultForLlm, command).toMatch(/^Not allowed: Ember won't run this/);
+      expect(h.starts, command).toEqual([]);
+    }
+  });
+});

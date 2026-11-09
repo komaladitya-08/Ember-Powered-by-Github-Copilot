@@ -3199,7 +3199,11 @@ reg(NATIVE, ["cd", "chdir", "pushd", "popd", "set-location", "push-location", "p
     const b = bindPs(h, PS_CMDLETS["set-location"]);
     target = (b.named.get("Path") ?? b.named.get("LiteralPath") ?? [])[0];
   } else {
-    const ops = h.args.filter(a => !(a.v !== null && /^-[LPe@]+$/.test(a.v)) && !(h.sc.family === "cmd" && a.v?.toLowerCase() === "/d"));
+    // `--` ends a POSIX cd's or pushd's options: the folder is the word after it (`cd -- ~/.config/ember`), never `--`
+    // itself (commands-a7-4).
+    const dd = h.sc.family === "cmd" ? -1 : h.args.findIndex(a => a.v === "--");
+    const before = dd < 0 ? h.args : h.args.slice(0, dd);
+    const ops = [...before.filter(a => !(a.v !== null && /^-[LPe@]+$/.test(a.v)) && !(h.sc.family === "cmd" && a.v?.toLowerCase() === "/d")), ...(dd < 0 ? [] : h.args.slice(dd + 1))];
     target = ops[0];
     if (ops.length > 1 && h.sc.family === "cmd") target = { ...ops[0], v: ops.map(o => o.v).join(" ") };
   }
@@ -6709,6 +6713,10 @@ reg(NATIVE, ["patch", "gpatch"], h => {
   const dir = values(p, "d", "directory")[0];
   if (dir !== undefined) sc = child(h.sc, { cwd: dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) });
   const ph: H = { ...h, sc, shellSc: h.shellSc ?? h.sc };
+  // The folder it changes files in, which the patch's own text names: judged as a folder written into, so Ember's own is
+  // refused and one Ember can't see asks (commands-a7-3).
+  optionFiles(h, h.args, p, { into: ["d", "directory"] });
+  if (h.args.some(a => a.v === null && /^(-[A-Za-z]*d|--dir(e(c(t(o(ry?)?)?)?)?)?=)/.test(a.raw))) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   for (const f of values(p, "i", "input")) if (f) h.e.usePath(lit(f), "read", sc);
   for (const f of values(p, "o", "output", "r", "reject-file")) overwrites(ph, f === null ? { v: null, raw: "?", glob: false } : lit(f));
   const [file, patchFile] = p.operands;
