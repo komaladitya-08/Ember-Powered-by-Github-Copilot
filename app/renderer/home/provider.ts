@@ -52,6 +52,8 @@ let heldRun = 0;
 /** The host a held edit's check is asking now (its "I agree" waits meanwhile). */
 let checkingFor: string | null = null;
 let adoptionId: string | null = null;
+/** A draft key belongs to the host it was typed for, even while another host's edit is held. */
+let keyHost: string | null = null;
 /** A newer edit revokes a keyring operation before it can publish the old draft. */
 function cancelAdoption(): void {
   if (adoptionId) void api()?.cancelAdoption(adoptionId).catch(() => undefined);
@@ -393,6 +395,13 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
   });
   for (const id of ["byok-url", "byok-key", "byok-type", "byok-conductor", "byok-worker", "byok-wire", "byok-azure"]) {
     $(id).addEventListener("input", () => {
+      const host = endpointHost(input("byok-url").value);
+      if (id === "byok-key") keyHost = host;
+      // Keep a key through path edits and incomplete typing, but never send it to a different authority.
+      if (id === "byok-url" && host) {
+        if (input("byok-key").value && keyHost !== host) input("byok-key").value = "";
+        keyHost = host;
+      }
       if (!held || checkingFor === null) return;
       cancelAdoption(); heldRun++; checkingFor = null; draw();
     });

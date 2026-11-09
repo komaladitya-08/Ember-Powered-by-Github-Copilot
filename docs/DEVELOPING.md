@@ -1095,6 +1095,8 @@ then publishes the sealed key and the agreed settings together (integrations-r7-
 failure retains the old endpoint and key; the new key stays in its field to retry. Editing or abandoning a pending
 draft sends `provider:cancel-adoption`, and policy, consent or settings changes invalidate it too. No key returns
 through either channel. Same-host key replacement uses the same staged storage transaction (integrations-v7-1).
+A key typed into Home's replacement draft is cleared when the address changes to another valid host or port;
+path-only edits and incomplete address typing keep it, and the saved key in use stays untouched (integrations-v7-2).
 A host that has no model list at that address (404, 405 or 501 on GET /models) leaves the working provider in place
 (integrations-c5-1): that response could be a chat-only gateway or simply the wrong address, so it is not evidence
 that the replacement can answer. The typed details remain available to correct. One that can't be reached, times

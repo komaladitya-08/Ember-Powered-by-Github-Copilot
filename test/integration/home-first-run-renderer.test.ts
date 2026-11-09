@@ -1069,6 +1069,30 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     } finally { await p.close(); }
   }, 20_000);
 
+  it("keeps a typed key with its draft host and clears it before another authority can receive it (integrations-v7-2)", async () => {
+    const p = await open({ home: true, liveState: true, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    try {
+      await p.locator("#byok-url").fill("https://b.example/v1"); await p.keyboard.press("Tab");
+      await p.locator("#byok-key").fill("b-fixture-key");
+      await p.locator("#byok-url").fill("https://b.example/v2");
+      expect(await p.locator("#byok-key").inputValue()).toBe("b-fixture-key");
+      await p.locator("#byok-url").fill("https://");
+      expect(await p.locator("#byok-key").inputValue()).toBe("b-fixture-key");
+      await p.locator("#byok-url").fill("https://c.example/v1");
+      expect(await p.locator("#byok-key").inputValue()).toBe("");
+      await p.keyboard.press("Tab");
+      await p.waitForTimeout(AGREE_ARM_MS + 100); await p.locator("#byok-yes").click();
+      await expect.poll(() => calls(p)).toContain("test-draft:c.example");
+      expect((await calls(p)).some(c => c === "test-draft:c.example+key")).toBe(false);
+      expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+      await p.locator("#byok-key").fill("c-fixture-key");
+      await p.locator("#byok-url").fill("https://c.example:8443/v1");
+      expect(await p.locator("#byok-key").inputValue()).toBe("");
+    } finally { await p.close(); }
+  }, 20_000);
+
   it("cancels an overtaken adoption and keeps the newer draft when the old keyring result arrives (integrations-r7-1)", async () => {
     const p = await open({ home: true, liveState: true, slowAdoption: true, providerState: { keySaved: true },
       agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
