@@ -15684,7 +15684,7 @@
   },
   {
    "cmd": "cat \"${HOME:?}/notes.txt\"",
-   "verdict": "run"
+   "verdict": "ask"
   },
   {
    "cmd": "T=deploy; make -j \"$T\"",

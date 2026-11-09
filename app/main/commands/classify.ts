@@ -2056,14 +2056,11 @@ class Engine extends Classifier {
         // `${url##*/}`, `${d:-x}`) may be other text too, so a part Ember can't see stays as well: the near rule and a
         // copied download still see it (commands-remote-w5-1). HOME and PWD are the scope's, as `$HOME` is (w5-3).
         const val = seg.of === "HOME" ? sc.home : seg.of === "PWD" ? sc.cwd : null;
-        if (val !== null && seg.exact) { v += val; parts.push(val); pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
-        else {
-          unresolved = true;
-          // A default's plain text (`${d:-build}`, `${XDG_CONFIG_HOME:-$HOME/.config}`, `${d:-~/x}`) is a value too.
-          const alt = seg.alt === undefined || /[`"'\\]|\$(?!HOME(?!\w)|\{HOME\})/.test(seg.alt) || (/\$|^~/.test(seg.alt) && !sc.home) ? undefined
-            : seg.alt.replace(/^~(?=\/|$)/, sc.home ?? "").replace(/\$(HOME(?!\w)|\{HOME\})/g, sc.home ?? "");
-          parts.push({ name: seg.of, ...(seg.exact ? {} : { cut: true as const }), ...(val !== null ? { value: val } : {}), ...(alt !== undefined ? { alt } : {}) });
-        }
+        unresolved = true;
+        // A default's plain text (`${d:-build}`, `${XDG_CONFIG_HOME:-$HOME/.config}`, `${d:-~/x}`) is a value too.
+        const alt = seg.alt === undefined || /[`"'\\]|\$(?!HOME(?!\w)|\{HOME\})/.test(seg.alt) || (/\$|^~/.test(seg.alt) && !sc.home) ? undefined
+          : seg.alt.replace(/^~(?=\/|$)/, sc.home ?? "").replace(/\$(HOME(?!\w)|\{HOME\})/g, sc.home ?? "");
+        parts.push({ name: seg.of, ...(seg.exact ? {} : { cut: true as const }), ...(val !== null ? { value: val } : {}), ...(alt !== undefined ? { alt } : {}) });
       } else { unresolved = true; parts.push({ name: null }); }
     }
     const globs = /[*?]/.test(unquoted) || /\[[^\]]*\]/.test(unquoted);

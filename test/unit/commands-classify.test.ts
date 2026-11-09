@@ -529,8 +529,8 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
       "rm -rf \"${HOME:-/home/ana}/.config/ember\"", "rm -rf \"${HOME%/}/.config/ember\"", "cd ~/.config && rm -rf \"${PWD:?}/ember\"",
     ]) expect(refused(cmd), cmd).toBe("ember.path");
     expect(refused("rm -rf \"${HOME:?}/Library/Application Support/ember\"", "darwin")).toBe("ember.path");
-    // ${HOME:?} is the home folder: the rest of it is judged as the plain path is.
-    expect(classifyCommand("rm -rf \"${HOME:?}/proj/build\"", "bash", contextOf("linux")).findings.map(f => f.says)).toContain("Deletes ~/proj/build and everything in it.");
+    // Its known value still protects Ember; the unresolved expansion keeps the baseline question.
+    expect(classifyCommand("rm -rf \"${HOME:?}/proj/build\"", "bash", contextOf("linux")).findings.map(f => f.cls)).toContain("destroy");
   });
 
   it("refuses Ember's own folder reached through a PowerShell variable the command sets, as when it is named (commands-remote-c3-2)", () => {
@@ -1113,7 +1113,10 @@ describe("loops and ifs (commands-remote-2)", () => {
     // of written-out text on the read's own input, or no variable at all.
     for (const cmd of [
       "if [ -f package.json ]; then npm test; fi", "read -r a b <<< 'x y'; echo \"$a\"", "mapfile -t a <<< 'x'", "if IFS= read -r l <<< 'a'; then echo \"$l\"; fi",
-    ]) expect(flow(cmd).findings, cmd).toEqual([]);
+    ]) {
+      if (cmd.startsWith("if ")) expect(flow(cmd).findings.map(f => f.rule), cmd).toContain("unclear.if");
+      else expect(flow(cmd).findings, cmd).toEqual([]);
+    }
     // A loop over written-out words or text asks for nothing more than its own words, which every loop keeps (commands-c7-1).
     for (const cmd of [
       "for i in 1 2 3; do echo $i; done", "for n in 'a b' \"c\" d-e; do echo \"$n\"; done", "while read -r l; do echo \"$l\"; done <<< 'a b'",
@@ -1156,10 +1159,9 @@ describe("loops and ifs (commands-remote-2)", () => {
     for (const cmd of ["[[ -d build ]] && make", "[[ -f x ]] || touch x", "if [[ -d build ]]; then make; fi", "while [[ ! -f done.txt ]]; do sleep 1; done"]) {
       expect(flow(cmd).findings.map(f => f.rule), cmd).toContain("unclear.keyword");
     }
-    // An if that does none of that is still read through, as its commands written out would run; a loop that does none
-    // of it keeps its words all the same, as every loop does (commands-c7-1).
+    // An ordinary if and an ordinary loop both keep the baseline question (commands-remote-r7-1).
     for (const cmd of ["if [ -f package.json ]; then npm test; fi", "if git diff --quiet; then echo clean; else echo dirty; fi", "if true; then ls; umask 022; fi"]) {
-      expect(flow(cmd).findings, cmd).toEqual([]);
+      expect(flow(cmd).findings.map(f => f.rule), cmd).toContain("unclear.if");
     }
     for (const cmd of [
       "for i in 1 2 3; do echo $i; done", "while read -r l; do echo \"$l\"; done <<< 'a b'", "while IFS= read -r l; do echo \"$l\"; done <<EOF\na\nb\nEOF",
@@ -1167,7 +1169,7 @@ describe("loops and ifs (commands-remote-2)", () => {
     ]) expect(loopWords(cmd), cmd).not.toEqual([]);
   });
 
-  it("keeps every bash loop's own words on a command line, as main did, whatever its body, and reads a plain if through (commands-c7-1)", () => {
+  it("keeps every bash loop's own words on a command line, as main did, whatever its body, and keeps an ordinary if's question (commands-c7-1, commands-remote-r7-1)", () => {
     const flow = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash");
     for (const cmd of [
       "for f in --hard; do git reset $f; done", "for i in 1 2; do git reset $f; for f in --hard; do :; done; done",
@@ -1176,7 +1178,7 @@ describe("loops and ifs (commands-remote-2)", () => {
       "for i in 1 2\ndo echo $i\ndone", "if true; then for i in 1; do echo $i; done; fi", "for f in a b; do echo \"$f\"; done | cat",
     ]) expect(flow(cmd).findings.map(f => f.rule), cmd).toEqual(expect.arrayContaining(["unclear.do", "unclear.done"]));
     for (const cmd of ["if [ -f package.json ]; then npm test; fi", "if git diff --quiet; then echo clean; else echo dirty; fi", "if IFS= read -r l <<< 'a'; then echo \"$l\"; fi"]) {
-      expect(flow(cmd).findings, cmd).toEqual([]);
+      expect(flow(cmd).findings.map(f => f.rule), cmd).toContain("unclear.if");
     }
   });
 

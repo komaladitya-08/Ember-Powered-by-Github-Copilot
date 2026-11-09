@@ -2508,3 +2508,7 @@ the cache's version that runs when `ps` shows it; where `ps` isn't read, on Wind
 installed from the zip, which shares the single-instance lock, or any older one when the cache holds another version).
 Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.
+
+Command audit comparisons must check the classifier and the real `run_command` flow against the frozen audit baseline.
+Command-line `if` and error-checking HOME/PWD parameter expansions retain its questions; only the documented literal
+and processor-count job arguments may decide more loosely (commands-remote-r7-1).

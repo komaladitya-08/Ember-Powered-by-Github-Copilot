@@ -214,30 +214,11 @@ still refused before anything asks (`for d in ~/.config/ember; do rm -rf "$d"; d
 dangerous command in the loop does ("Deletes a.log and b.log."), and a loop never runs with a Stop because your words
 asked for what it does. (A shell script's loops are read; below.)
 
-**An `if` on a command line** in bash or sh runs without a question only when the whole line is plain: then `if`,
-`then`, `elif`, `else` and `fi` don't ask by themselves, and Ember judges every command in it as if it were written
-out, in the folder the line starts in. So `if [ -f package.json ]; then npm test; fi` and `if git diff --quiet; then
-echo clean; else echo dirty; fi` run. Anything else asks with the `if`'s own words ("Ember can't tell exactly what
-this does."), whatever it does:
-- **a command in the line that Ember says anything about**, one that would ask or not. `if [ -f x ]; then rm x; fi`
-  asks, and so does `if true; then echo hi > out.txt; fi` even when out.txt isn't there (written out, `echo hi >
-  out.txt` runs then); an `if` never runs with a Stop because your words asked for what it does: with "delete the
-  build folder", `if [ -d build ]; then rm -rf build; fi` asks.
-- **a folder change** (`cd`, `chdir`, `pushd`, `popd`) anywhere in the line: `if [ -d x ]; then cd x; fi` asks.
-- **a variable set** anywhere in the line, from text Ember sees or not (`x=…`, also in front of a command, `export`,
-  `declare`, `typeset`, `local`, `readonly`, `printf -v`, `set`, `unset`, `shift`, `wait -p`, `exec`, `${x:=…}`), or a
-  file sourced (`source`, `.`): `if x=$(cat f); then echo $x; fi` and `if [ -f x ]; then y=1; fi` ask. A `read` of
-  written-out text (below) is the exception.
-- **a `[[ … ]]` test**, in an `if` or not: `if [[ -d build ]]; then make; fi` and `[[ -d build ]] && make` ask. (In a
-  script, a plain one is read; below.)
-- **text Ember can't see.** A `read`, `mapfile`, `readarray`, `select` or `getopts`, in an `if`, a loop or neither,
-  asks ("It works on text Ember can't see.") whatever its variables are used for afterwards, unless it reads its own
-  input and that is a here-string or here-document of written-out text (`read -r a b <<< 'x y'`, `if read -r l <<<
-  'a b'; then echo "$l"; fi`): a file (`read -r l < f`, `done < list.txt`), a pipe (`cat list | while read -r d`),
-  another descriptor (`read -u 3`, `read <&3`), a substitution or a variable (`<<< "$d"`, `<<< "$HOME"`) all ask, and
-  a loop's card says so too when its list has any word that isn't written out (a pattern such as `*.log`, a variable,
-  `~`, `{1..3}`, a substitution, `"$@"`). `IFS` in front of a loop's or an `if`'s `read` changes only how that `read`
-  splits the line (`if IFS= read -r l <<< 'a b'`); in front of any other command it asks.
+**An `if` on a command line** in bash or sh always asks, as every loop does. Ember keeps the baseline's question
+also for `if [ -f package.json ]; then npm test; fi`: judging its body once cannot establish every execution path.
+A `[[ … ]]` test on a command line also asks. A `read`, `mapfile`, `readarray`, `select` or `getopts` over text Ember
+can't see asks whether or not it is in a flow construct. An ordinary read of its own written-out here-string or
+here-document (`read -r a b <<< 'x y'`) can run outside one.
 
 Ember's own folder named in sight is refused before any of this. zsh's, PowerShell's and cmd's `if` and `for` always
 ask, and so do an `if` in a shell the command starts (`bash -c '…'`), `case`, functions and `{ … }` groups. A loop
@@ -453,7 +434,7 @@ Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`, or a cut or a default
 of a variable, `~/.config/"${x%y}"`, which may be other text than its value) or a pattern before it could match one
-(`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is, and a default's text counts as a value
+(`rm -rf ~/.c*/$x`); `${HOME:?}` keeps the baseline's question, with its known value still used to refuse Ember's own folder; a default's text counts as a value
 (`"${XDG_CONFIG_HOME:-$HOME/.config}/ember"` is Ember's folder). A variable is judged where a command uses it, so one that only names Ember's
 folder to test or print it on the terminal (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
 input while nothing takes what it prints (`grep -q ember <<< "$p"`, `echo "$p" | wc -c`; never an awk or sed program
