@@ -798,7 +798,9 @@ the automated tests don't stand in for them.
   start an extension server, send its saved headers or expose its tools, even when its feature card is current.
   Losing agreement stops servers and pending checks; late replies cannot continue a check or restore tools.
   Agreeing again resumes the normal checks while retaining still-current extension cards. An installation already
-  under way keeps its local runtime-copy cleanup when cancelled.
+  under way keeps its local runtime-copy cleanup when cancelled. Losing agreement closes the current model
+  connection, stops pending requests and tasks, and pauses sign-in renewals. Late tool replies cannot continue
+  the retired connection; agreeing again permits a new connection.
 - **Your own model server not running? Ember says so.** With Ollama or LM Studio stopped, Models & connections says
   Ember can't reach the model server on this computer instead of Connected, and its status stays still while the
   server is off instead of flipping to “Connecting…” every minute. A request asks whether it is running (“Is it

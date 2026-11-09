@@ -57,14 +57,15 @@ export interface SessionExtensions {
   verify(shown: ShownTool[]): void;
   /**
    * A failed call's text (only `additionalContext` can be added: the SDK doesn't let a failure be rewritten, so the raw
-   * failure reaches the model and this says it is untrusted data).
+   * failure may reach the model only while its permission remains current; otherwise the bound runtime must retire).
    */
   postToolUseFailure?(input: PostToolUseFailureHookInput): Promise<PostToolUseFailureHookOutput | void>;
   /**
    * Gives the gate the session's live tool list (verifySessionTools): a server may change a tool mid-session
    * (notifications/tools/list_changed), so every call is checked against what the model is shown at that moment.
+   * `retire` must close this exact runtime transport; tools stay off without it because raw failures cannot be rewritten.
    */
-  bind?(shown: () => Promise<ShownTool[]>, stop?: (servers: string[]) => Promise<void>): void;
+  bind?(shown: () => Promise<ShownTool[]>, stop?: (servers: string[]) => Promise<void>, retire?: () => Promise<void>): void;
   /**
    * A server said its tool list changed (`mcp.tools.list_changed`). The runtime's metadata has no hints, so a change
    * of hints alone can't be checked against the pin: that server's tools ask from then on in this session.
@@ -173,7 +174,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
  * could be read at all), or the runtime doesn't answer in time. The extension tools it shows go to `ext.verify`,
  * which turns off any that differ from their pins.
  */
-export async function verifySessionTools(session: CopilotSession, granted: string[], timeoutMs = 10_000, ext?: SessionExtensions): Promise<string[]> {
+export async function verifySessionTools(session: CopilotSession, granted: string[], timeoutMs = 10_000, ext?: SessionExtensions, retire?: () => Promise<void>): Promise<string[]> {
   return withTimeout((async () => {
     await session.rpc.tools.initializeAndValidate();
     const meta = await session.rpc.tools.getCurrentMetadata();
@@ -196,7 +197,7 @@ export async function verifySessionTools(session: CopilotSession, granted: strin
         const now = await session.rpc.tools.getCurrentMetadata();
         if (!Array.isArray(now.tools)) throw new Error("the runtime did not report its tools");
         return now.tools.filter(isAdmitted);
-      }, async servers => { await Promise.all(servers.map(serverName => session.rpc.mcp.disable({ serverName }))); });
+      }, async servers => { await Promise.all(servers.map(serverName => session.rpc.mcp.disable({ serverName }))); }, retire);
       if (ext.listChanged && typeof session.on === "function") {
         session.on(e => { if (e.type === "mcp.tools.list_changed") ext.listChanged?.(String((e.data as { serverName?: unknown }).serverName ?? "")); });
       }

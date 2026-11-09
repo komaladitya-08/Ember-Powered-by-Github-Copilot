@@ -12,6 +12,7 @@ import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore } from "../../app/main/
 import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { ServerSpec } from "../../app/main/extensions/manifest";
 import type { Logger } from "../../app/main/logger";
+import { hardenedSessionConfig } from "../../app/main/agent/session-config";
 
 const processBoundary = vi.hoisted(() => ({ spawn: vi.fn(() => { throw new Error("No process may start in this test."); }) }));
 vi.mock("node:child_process", async original => ({ ...await original<typeof import("node:child_process")>(), spawn: processBoundary.spawn }));
@@ -180,5 +181,61 @@ describe("stopped extension probes", () => {
     finish(new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })));
     expect((await pending).ok).toBe(false);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("extension results keep the permission of their own session", () => {
+  const bound = (retire: () => Promise<void> = vi.fn(async () => undefined)) => {
+    const f = fixture(true, [HTTP], { audit: () => ({ write() {} }) as never, confirmer: () => ({ ask: async () => "once" }) as never });
+    const session = f.service.forSession()!;
+    const name = session.tools[0];
+    const shown = [{ name, description: TOOL.description, input_schema: TOOL.inputSchema }];
+    session.verify(shown);
+    session.bind!(async () => shown, async () => undefined, retire);
+    const config = hardenedSessionConfig({ tools: [], systemMessage: { mode: "append", content: "" },
+      workingDirectory: path.dirname(f.store.dir), onPermissionRequest: () => ({ kind: "denied-interactively-by-user" }), extensions: session });
+    const input = { toolName: name, toolArgs: {}, sessionId: "fixture", timestamp: new Date(), workingDirectory: path.dirname(f.store.dir) };
+    return { ...f, session, config, input, retire };
+  };
+
+  it("withholds a late success through the actual hardened hook after revoke and re-agree (extensions-consent-review-2)", async () => {
+    const f = bound();
+    const invoke = { sessionId: "fixture" };
+    expect(await f.config.hooks!.onPreToolUse!(f.input, invoke)).toMatchObject({ permissionDecision: "allow" });
+    const normal = await f.config.hooks!.onPostToolUse!({ ...f.input, toolResult: { resultType: "success", textResultForLlm: "NORMAL_CONTROL" } }, invoke);
+    expect(normal?.modifiedResult?.textResultForLlm).toContain("NORMAL_CONTROL");
+    f.consent(false);
+    f.consent(true);
+    const late = await f.config.hooks!.onPostToolUse!({ ...f.input, toolResult: { resultType: "success", textResultForLlm: "REVOKED_RESULT" } }, invoke);
+    expect(late?.modifiedResult?.textResultForLlm).not.toContain("REVOKED_RESULT");
+    expect(late?.modifiedResult?.binaryResultsForLlm).toEqual([]);
+  });
+
+  it("holds an unrewritable late failure until the bound runtime retirement finishes (extensions-consent-review-2)", async () => {
+    let close!: () => void;
+    const retired = new Promise<void>(resolve => { close = resolve; });
+    const retire = vi.fn(() => retired);
+    const f = bound(retire);
+    f.consent(false);
+    let returned = false;
+    const pending = Promise.resolve(f.config.hooks!.onPostToolUseFailure!({ ...f.input, error: "REVOKED_FAILURE" }, { sessionId: "fixture" }))
+      .then(value => { returned = true; return value; });
+    await Promise.resolve();
+    expect(retire).toHaveBeenCalledTimes(1);
+    expect(returned).toBe(false);
+    close();
+    await pending;
+    expect(returned).toBe(true);
+  });
+
+  it("denies a tool without the runtime retirement binding (extensions-consent-review-2)", async () => {
+    const f = fixture(true, [HTTP], { audit: () => ({ write() {} }) as never, confirmer: () => ({ ask: async () => "once" }) as never });
+    const session = f.service.forSession()!;
+    const name = session.tools[0];
+    const shown = [{ name, description: TOOL.description, input_schema: TOOL.inputSchema }];
+    session.verify(shown);
+    session.bind!(async () => shown);
+    expect(await session.preToolUse({ toolName: name, toolArgs: {}, sessionId: "fixture", timestamp: new Date(), workingDirectory: "." }))
+      .toMatchObject({ permissionDecision: "deny" });
   });
 });

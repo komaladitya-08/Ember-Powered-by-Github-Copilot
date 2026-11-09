@@ -502,6 +502,8 @@ const RECHECK_MS = 5 * 60_000;
 
 export interface GrantKeeperDeps {
   fetch: Fetch;
+  /** Current global agreement; omitted only by callers without a consent boundary (unit helpers). */
+  allowed?: () => boolean;
   store: () => TokenStore | null;
   /** The token Copilot is connected with now: only that one's grant is kept alive. */
   inUse: () => string | null;
@@ -533,12 +535,14 @@ export class GrantKeeper {
   constructor(private d: GrantKeeperDeps) {}
 
   private now(): number { return (this.d.now ?? Date.now)(); }
+  private allowed(): boolean { return this.d.allowed?.() !== false; }
 
   /**
    * Copilot connects with `token` now: its grant is kept alive (`grant`; else the one kept alive already, which may be
    * in memory only, without a keyring; else the stored one), and none when the token is another sign-in's.
    */
   use(token: string | null, grant?: Grant | null): void {
+    if (!this.allowed()) { this.stop(); return; }
     const g = grant ?? (this.grant?.token === token ? this.grant : null);
     const store = token && !g ? this.d.store() : null;
     if (!store) { this.track(token && g?.token === token ? g : null); return; }
@@ -546,7 +550,7 @@ export class GrantKeeper {
     // The stored one is read as every read of it is (on macOS without holding the main process while the keychain asks).
     const turn = this.turn;
     void store.loadGrant().then(s => {
-      if (turn === this.turn && this.d.inUse() === token) this.track(s?.token === token ? s : null);
+      if (this.allowed() && turn === this.turn && this.d.inUse() === token) this.track(s?.token === token ? s : null);
     }, () => undefined);
   }
 
@@ -563,10 +567,12 @@ export class GrantKeeper {
    * wins: the renewal isn't saved. Never throws.
    */
   async freshen(): Promise<void> {
+    if (!this.allowed()) return;
+    const turn = this.turn;
     const store = this.d.store();
     const read = store?.generation;
     const g = await store?.loadGrant();
-    if (!store || !g || !renewable(g, this.now()) || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
+    if (!this.allowed() || turn !== this.turn || !store || !g || !renewable(g, this.now()) || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
     if (this.now() - this.lastFreshen < RENEW_RETRY_MS) return;
     this.lastFreshen = this.now();
     try {
@@ -574,7 +580,7 @@ export class GrantKeeper {
       // Signed out while it was read or renewed, or another sign-in saved (the device flow; the keeper's own renewal of
       // it, saved already): the renewal isn't saved over that, so the account the user left doesn't come back. The token
       // it replaces stopped working with it anyway (final review S1).
-      if (store.generation !== read) { this.d.log?.("auth.renewal_dropped", { when: "before use" }); return; }
+      if (!this.allowed() || turn !== this.turn || store.generation !== read) { this.d.log?.("auth.renewal_dropped", { when: "before use" }); return; }
       // The stored one stopped working with the renewal: the store gives the new one from now on, from the file or, not
       // kept (a full or read-only disk), for this run (cross-review X13). Sealed off the main thread on macOS.
       const kept = await store.saveAsync(next);
@@ -586,7 +592,7 @@ export class GrantKeeper {
 
   private track(grant: Grant | null): void {
     this.stop();
-    if (!grant || !renewable(grant, this.now())) return;
+    if (!this.allowed() || !grant || !renewable(grant, this.now())) return;
     this.grant = grant;
     this.after(grant.expiresAt! - RENEW_BEFORE_MS - this.now(), () => this.due(grant));
   }
@@ -613,6 +619,7 @@ export class GrantKeeper {
    * would be refused too (cross-review X12).
    */
   refused(token: string): void {
+    if (!this.allowed()) { this.stop(); return; }
     const g = this.grant;
     if (!g || g.token !== token || this.d.inUse() !== token || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
     if (this.timer) clearTimeout(this.timer);
@@ -625,6 +632,7 @@ export class GrantKeeper {
    * at once: nothing under way, or the old token about to run out. Until then the old one, which still works, stays.
    */
   private due(grant: Grant): void {
+    if (!this.allowed()) { this.stop(); return; }
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (this.grant !== grant || this.d.inUse() !== grant.token) return;
@@ -635,16 +643,18 @@ export class GrantKeeper {
   }
 
   private async renew(grant: Grant): Promise<void> {
+    if (!this.allowed()) return;
+    const turn = this.turn;
     let next: Grant;
     try {
       next = await this.renewed(grant);
     } catch (err) {
       const refused = err instanceof RenewalRefused;
       this.d.log?.("auth.renew_failed", { err, refused });
-      if (!refused && this.grant === grant && renewable(grant, this.now())) this.after(RENEW_RETRY_MS, () => this.due(grant));
+      if (this.allowed() && turn === this.turn && !refused && this.grant === grant && renewable(grant, this.now())) this.after(RENEW_RETRY_MS, () => this.due(grant));
       return;
     }
-    if (this.grant !== grant || this.d.inUse() !== grant.token) return;
+    if (!this.allowed() || turn !== this.turn || this.grant !== grant || this.d.inUse() !== grant.token) return;
     // The old token stopped working with the renewal: Copilot is reconnected with the new one at once (with no await
     // between, so the reconnects Copilot makes on its own use it too), and only then is it saved, so a slow keyring
     // doesn't hold the switch (on macOS it is sealed off the main thread). Kept for the next start; not kept (no keyring,
@@ -663,7 +673,12 @@ export class GrantKeeper {
     const key = grant.refreshToken ?? "";
     let p = this.renewals.get(key);
     if (!p) {
-      p = renewGrant(this.d.fetch, grant, () => this.now()).finally(() => this.renewals.delete(key));
+      p = renewGrant(async (url, init) => {
+        if (!this.allowed()) throw new Error("Global agreement is needed before renewal.");
+        const response = await this.d.fetch(url, init);
+        if (!this.allowed()) throw new Error("Global agreement was withdrawn during renewal.");
+        return response;
+      }, grant, () => this.now()).finally(() => this.renewals.delete(key));
       this.renewals.set(key, p);
     }
     return p;

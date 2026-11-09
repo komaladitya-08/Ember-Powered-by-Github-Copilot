@@ -28,6 +28,8 @@ import type { PromptCaps } from "../targets/types";
 
 export interface ConductorDeps {
   client: CopilotClient;
+  /** Closes this exact runtime transport before an unrewritable revoked extension failure can return. */
+  retireRuntime?: () => Promise<void>;
   settings: SettingsStore;
   presenter: Presenter;
   log: Logger;
@@ -899,7 +901,7 @@ export class Conductor {
       d.log.info("conductor.leftovers_deleted", { count: deleted.size });
     }
     if (life !== this.lifetime || !this.session) return;
-    const tools = await verifySessionTools(this.session, this.toolNames, undefined, d.extensions);
+    const tools = await verifySessionTools(this.session, this.toolNames, undefined, d.extensions, d.retireRuntime ?? (() => d.client.forceStop()));
     d.log.info("conductor.tools", { tools });
     const ms = d.turnStartMs ?? TURN_START_MS;
     const silentMs = d.turnSilentMs ?? TURN_SILENT_MS;

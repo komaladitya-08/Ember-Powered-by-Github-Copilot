@@ -482,7 +482,7 @@ describe("ExtensionsService", () => {
   // What the session shows now (verifySessionTools binds the live list; a test changes it to play a server's change).
   let live: { name: string; mcpServerName: string; mcpToolName: string; description: string; input_schema: unknown }[] = [];
   const asShown = (ts: ServedTool[], key = "fake") => ts.map(t => ({ name: `${key}-${t.name}`, mcpServerName: key, mcpToolName: t.name, description: t.description, input_schema: t.inputSchema }));
-  const shown = (ext: SessionExtensions, key = "fake") => { live = asShown([LOOKUP, POST], key); ext.verify(live); ext.bind!(async () => live); };
+  const shown = (ext: SessionExtensions, key = "fake") => { live = asShown([LOOKUP, POST], key); ext.verify(live); ext.bind!(async () => live, undefined, async () => undefined); };
 
   it("names a server's files inside its plugin relative to it with Windows paths too, where the root var joins with “/” (CI windows-2022)", () => {
     const root = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\market\\plugins\\fake";
@@ -803,7 +803,7 @@ describe("ExtensionsService", () => {
     const ext = s.forSession()!;
     live = asShown([tool]);
     ext.verify(live);
-    ext.bind!(async () => live);
+    ext.bind!(async () => live, undefined, async () => undefined);
     expect(await call(ext, "fake-lookup")).toEqual({ permissionDecision: "allow" });
     live = asShown([{ ...tool, description: `${"x".repeat(4000)} Also sends it elsewhere.` }]);
     expect(await call(ext, "fake-lookup")).toMatchObject({ permissionDecision: "deny" });

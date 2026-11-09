@@ -532,7 +532,7 @@ describe("main's sign-in wiring", () => {
     expect(MAIN).toContain("currentToken = f?.token ?? null; keeper.use(currentToken);");
     expect(MAIN).toMatch(/ipcMain\.handle\(IPC\.signOut, guard\(async \(\) => \{.*?finally \{.*?currentToken = null; keeper\.use\(null\);/);
     // A stored sign-in that ran out while Ember was off is renewed before it is looked at.
-    expect(MAIN).toContain("const findToken = async () => { await keeper.freshen(); return resolveToken(");
+    expect(MAIN).toContain("const findToken = async () => { if (!consented()) return null; await keeper.freshen(); if (!consented()) return null; const found = await resolveToken(");
     expect(MAIN).toContain("if (!provider) await keeper.freshen();");
     // Copilot is reconnected only when nothing is under way.
     expect(MAIN).toContain("idle: () => agent?.idle ?? true,");
@@ -562,7 +562,7 @@ describe("main's sign-in wiring", () => {
     // Signed out since the look began: nothing is connected, the first sign-in found or the next after a refusal.
     expect(MAIN).toContain([
       "const connectWith = async (found: ResolvedToken | null, how: \"user\" | \"auto\" = \"user\", since = signOuts) => {",
-      "if (since !== signOuts) return { phase: agent?.getStatus().phase, found: null };",
+      "if (since !== signOuts || !consented()) return { phase: agent?.getStatus().phase, found: null };",
       "return connectFirstAccepted(async () => { const next = await findToken(); return since === signOuts ? next : null; }, async f => {",
     ].join(" "));
     // Check again's look and the start's (from before the keychain pause and the renewal) count from when they began.

@@ -127,6 +127,8 @@ interface SessionGate {
   listChanged: Set<string>;
   epoch: number;
   stop?: (servers: string[]) => Promise<void>;
+  retire?: () => Promise<void>;
+  retiring?: Promise<void>;
   tools: Map<string, { item: StoredItem; server: StoredServer; tool: PinnedTool }>;
 }
 
@@ -160,6 +162,7 @@ export class ExtensionsService implements ExtensionsApi {
       const next = this.active();
       const consentedNow = this.globallyConsented();
       if ((active && !next) || (consented && !consentedNow)) this.stopPart().stop();
+      if (consented && !consentedNow && this.session?.retire) void this.retire(this.session).catch(() => this.o.log.warn("extensions.runtime_retire_failed"));
       active = next;
       consented = consentedNow;
     });
@@ -671,9 +674,10 @@ export class ExtensionsService implements ExtensionsApi {
       postToolUse: input => this.result(gate, input),
       postToolUseFailure: input => this.failure(gate, input),
       verify: shown => this.verify(gate, shown),
-      bind: (live, stop) => {
+      bind: (live, stop, retire) => {
         gate.live = live;
         gate.stop = stop;
+        if (retire) gate.retire = retire;
         // Removal/Stop can win the race with session startup; the late binding must not restart anything.
         const stale = [...new Set([...gate.tools.values()].filter(e => !this.active() || gate.epoch !== this.epoch || !this.items.some(i => i.id === e.item.id && i.enabled)).map(e => e.server.key))];
         if (stale.length && stop) void stop(stale).catch(err => this.o.log.warn("extensions.stop_failed", { err }));
@@ -756,6 +760,7 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   private async decide(gate: SessionGate, input: PreToolUseHookInput): Promise<PreToolUseHookOutput> {
+    if (!gate.retire || gate.retiring) return { permissionDecision: "deny", permissionDecisionReason: "Ember couldn't check this extension's runtime, so it didn't run the tool." };
     const e = gate.tools.get(input.toolName);
     const generation = this.generation;
     const shownAsPinned = await this.shownNow(gate, input.toolName, generation);
@@ -795,20 +800,52 @@ export class ExtensionsService implements ExtensionsApi {
     return deny(REFUSED);
   }
 
-  /**
-   * A failed call: the SDK passes its text to the model as it is (a failure can't be rewritten), so Ember says it is
-   * untrusted, and the conversation is tainted (a failure is an easy way to smuggle text): every later call asks.
-   */
+  /** Only the same verified session, item and tool pin may consume a result. */
+  private outputCurrent(gate: SessionGate, name: string): boolean {
+    const e = gate.tools.get(name);
+    return !!gate.retire && !gate.retiring && this.active() && gate === this.session && gate.epoch === this.epoch
+      && !!e && this.items.includes(e.item) && e.item.enabled && e.item.consentedAt !== null
+      && e.item.servers.includes(e.server) && e.server.tools.some(t => t.hash === e.tool.hash && !t.changed)
+      && gate.shown.get(name) === true;
+  }
+
+  private retire(gate: SessionGate): Promise<void> {
+    // Install the barrier before calling it: a re-entrant settings notification must not retire twice.
+    gate.retiring ??= gate.retire ? Promise.resolve().then(gate.retire) : new Promise<never>(() => { /* no bound transport: never release a raw failure */ });
+    return gate.retiring;
+  }
+
+  private withheldResult(): PostToolUseHookOutput {
+    return { modifiedResult: { textResultForLlm: "The extension reply was withheld because its permission changed. Don't retry it.", resultType: "failure", binaryResultsForLlm: [] } };
+  }
+
+  private async retireBeforeOutput(gate: SessionGate): Promise<void> {
+    try { await this.retire(gate); }
+    catch {
+      this.o.log.warn("extensions.runtime_retire_failed");
+      await new Promise<never>(() => { /* the SDK swallows hook errors: never return an unrewritable failure */ });
+    }
+  }
+
+  private async withheldFailure(gate: SessionGate): Promise<PostToolUseFailureHookOutput> {
+    await this.retireBeforeOutput(gate);
+    return { additionalContext: "This extension was stopped. Don't use its failure or retry it." };
+  }
+
+  /** A current failure is untrusted; a stale raw failure cannot return until its runtime transport is closed. */
   private async failure(gate: SessionGate, input: PostToolUseFailureHookInput): Promise<PostToolUseFailureHookOutput> {
+    if (!this.outputCurrent(gate, input.toolName)) return this.withheldFailure(gate);
     const e = gate.tools.get(input.toolName);
     const text = typeof input.error === "string" ? input.error : "";
     const signals = injectionSignals(text);
     this.tainted = true;
     try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, chars: text.length, signals, ...(SAVED_OUTPUT.test(text) ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    if (!this.outputCurrent(gate, input.toolName)) return this.withheldFailure(gate);
     return { additionalContext: failureNote(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName) };
   }
 
   private async result(gate: SessionGate, input: PostToolUseHookInput): Promise<PostToolUseHookOutput | void> {
+    if (!this.outputCurrent(gate, input.toolName)) { await this.retireBeforeOutput(gate); return this.withheldResult(); }
     const e = gate.tools.get(input.toolName);
     const text = typeof input.toolResult?.textResultForLlm === "string" ? input.toolResult.textResultForLlm : "";
     const signals = injectionSignals(text);
@@ -817,6 +854,7 @@ export class ExtensionsService implements ExtensionsApi {
     const truncated = SAVED_OUTPUT.test(text);
     if (signals.length || truncated) this.tainted = true;
     try { this.audit({ phase: "result", ext: e?.item.id ?? null, tool: input.toolName, chars: text.length, signals, ...(truncated ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    if (!this.outputCurrent(gate, input.toolName)) { await this.retireBeforeOutput(gate); return this.withheldResult(); }
     // Text only (the conductor is never sent images), wrapped as untrusted.
     // Only Ember's own fields: the server's raw text (contents, its log) never rides along.
     return { modifiedResult: { textResultForLlm: wrapResult(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName, text, signals.length > 0 || truncated), resultType: input.toolResult?.resultType ?? "success", binaryResultsForLlm: [] } };
