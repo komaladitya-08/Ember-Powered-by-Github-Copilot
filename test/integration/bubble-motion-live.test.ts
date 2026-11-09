@@ -355,6 +355,56 @@ function reopenedOver(): { name: string; open: Stage; closed: Stage; reopened: S
   return out;
 }
 /**
+ * The same answer opened in full with the Ask box open where it shows whole, clear of the box, on a 1280 x 720 screen at
+ * Larger text with Ember at 180,540: the box opened on the answer cut short, below Ember (ask.ts openingBounds, a row:
+ * its offer is under Read all), Read all, Esc, then the box opened again to reply a row taller (\`opening\`: where it is
+ * then; \`replied\`: the box open), over it as nothing by Ember is clear of it (companion-z6-1).
+ */
+function replyAfterWhole(): { open: Stage; closed: Stage; opening: Stage; replied: Stage } {
+  const html = document.documentElement;
+  html.dataset.textSize = "larger";
+  html.style.setProperty("--text-scale", "1.3");
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;inset:0";
+  document.body.append(host);
+  const words = ["Tokyo", "is", "nine", "hours", "ahead", "of", "London,", "so", "it", "is", "evening", "there."];
+  const cutState = { visible: true, mood: "idle" as const, title: "Ember", actions: [{ id: "ui:more", label: "Read all" }] };
+  const full = { ...cutState, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+  type Box = { x: number; y: number; width: number; height: number };
+  const area = (a: Box, c: Box) => Math.max(0, Math.min(a.x + a.width, c.x + c.width) - Math.max(a.x, c.x)) * Math.max(0, Math.min(a.y + a.height, c.y + c.height) - Math.max(a.y, c.y));
+  const b = new ReasoningBubble(host);
+  b.setThought(Array.from({ length: 110 }, (_, i) => words[i % 12]).join(" ") + " Want me to add a world clock?");
+  b.setExpanded(true);
+  b.setActions([{ key: "ui:close", label: "Close", onClick: () => undefined }, { key: "ui:conversation", label: "Open conversation", onClick: () => undefined }]);
+  b.setVisible(true);
+  const screen = { width: 1280, height: 720 }, handle = { x: 1008, y: 652, width: 260, height: 56 }, anchor = { x: 180, y: 564 };
+  const box = { x: 8, y: 576, width: 728, height: 111 }, reopened = { x: 8, y: 376, width: 728, height: 142 };
+  const t = b.root.querySelector<HTMLElement>(".eb-thought")!;
+  const placeFor = (held: { box: Box | null; grew?: true }) => b.place(anchor, screen, 60, held.box ? [handle, held.box] : [handle], [], [], held.box && held.grew ? [held.box] : []);
+  const read = (open: Box | null): Stage => {
+    const r = b.rect();
+    return { spot: r && { x: r.x, y: r.y, w: r.width, h: r.height }, whole: t.scrollHeight <= t.clientHeight + 1, over: r && open ? area(r, open) : 0 };
+  };
+  let held = askKeepOff(box, askKeepOffKey(cutState), { box: null, question: "" });
+  held = askKeepOff(box, askKeepOffKey(full), held, true, b.clipped(), b.rect());
+  placeFor(held);
+  const open = read(box);
+  // Esc: state.askBox goes null; it showed whole, so it stays where it is.
+  held = askKeepOff(null, askKeepOffKey(full), held, true, b.clipped(), b.rect());
+  placeFor(held);
+  const closed = read(null);
+  // Ctrl+Alt+Space to reply: the box opens on it, a row taller for "Yes, please" and "No, thanks".
+  const opening = read(reopened);
+  held = askKeepOff(reopened, askKeepOffKey(full), held, true, b.clipped(), b.rect());
+  placeFor(held);
+  const replied = read(reopened);
+  b.root.remove();
+  host.remove();
+  delete html.dataset.textSize;
+  html.style.removeProperty("--text-scale");
+  return { open, closed, opening, replied };
+}
+/**
  * Question hints left in the page for main to read from its accessibility tree: Linux's at the bubble's own width (the
  * two chords on one line) and a Mac's narrowed to 220 px (each chord on a line of its own). Their hosts' ids.
  */
@@ -390,6 +440,7 @@ function axHints(): string[] {
     openedInFull: openedInFull(),
     closedAfterCut: closedAfterCut(),
     reopenedOver: reopenedOver(),
+    replyAfterWhole: replyAfterWhole(),
     axHints: axHints(),
     // Ember's own font, loaded: the key hints are measured in it, not in a fallback a runner happens to have.
     emberSans: [...document.fonts].some(f => f.family.replace(/"/g, "") === "Ember Sans" && f.status === "loaded"),
@@ -463,6 +514,11 @@ type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext"
    * full with the box closed and the box opened on it (reopenedOver).
    */
   reopenedOver: { name: string; open: Stage; closed: Stage; reopened: Stage; direct: Stage; replied: Stage }[];
+  /**
+   * An answer opened in full with the box open that showed whole, the box closed, then opened again on it to reply
+   * (replyAfterWhole).
+   */
+  replyAfterWhole: { open: Stage; closed: Stage; opening: Stage; replied: Stage };
   /** What a screen reader reads of each hint left in the page (by its host's id). */
   axHints: Record<string, string | null>;
   /** Whether the bundled "Ember Sans" (Inter) had loaded when the hints were measured. */
@@ -666,6 +722,21 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
       expect(replied.spot, name).not.toBeNull();
       expect(replied.over, name).toBe(0);
     }
+  });
+
+  it("keeps an answer opened in full with the box open that showed whole clear of the box opening on it again to reply (companion-z6-1)", () => {
+    const { open, closed, opening, replied } = result.replyAfterWhole;
+    // Read all with the box open: whole above Ember, clear of the box; Esc: it stays where it is, whole.
+    expect(open.spot).not.toBeNull();
+    expect(open.whole).toBe(true);
+    expect(open.over).toBe(0);
+    expect(closed.whole).toBe(true);
+    expect(closed.spot).toEqual(open.spot);
+    // The box opens to reply on its last lines, its offer and its Close (37,720 px² of it, live) ...
+    expect(opening.over).toBeGreaterThan(0);
+    // ... and it keeps off the box, still shown (it kept off only the first box's old place, and stayed under the field).
+    expect(replied.spot).not.toBeNull();
+    expect(replied.over).toBe(0);
   });
 
   it("reads a question's key hint to a screen reader with the \" · \" only between its chords, never before the first (companion-v4-3)", () => {
