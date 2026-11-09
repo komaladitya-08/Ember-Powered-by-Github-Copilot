@@ -537,6 +537,25 @@ The runtime is `app/main/extensions/` (ExtensionsService, the `ExtensionsApi` Ho
 `app/shared/extensions.ts`. A spike on the bundled runtime (Copilot SDK 1.0.21, empty mode, the mock model) decided what
 it builds on:
 
+The current **Before Ember starts** agreement is required before any marketplace request, extension-server probe or
+session exposure, as well as each feature/plugin agreement required for running tools. A saved feature agreement
+cannot bypass an absent or older global agreement. Losing global agreement revokes loaded servers and pending
+probes; late replies cannot publish tools or continue an HTTP handshake. Agreeing globally again permits the
+normal refresh, without erasing still-current feature/plugin agreements. Browsing a marketplace before the
+extensions feature card remains available after global agreement; it does not approve installing or using tools
+(integrations-refresh-c1 / extensions-refresh-consent-1).
+An installation already under way retains only its captured local runtime-uninstall cleanup when stopped; this
+cannot initiate another install or marketplace request after revocation (extensions-consent-review-1).
+An extension reply must still belong to the same agreed item, pinned tool and session epoch when its post-tool
+hook runs. Each session binds a capability that closes its exact runtime transport; tools stay off without it.
+The SDK can rewrite a successful result, but it cannot suppress a raw failure and catches hook errors. A stale
+success or failure therefore waits for public `CopilotClient.forceStop()` to close that transport before its hook
+returns. Global agreement loss also retires ordinary model turns, synchronously invalidates pending requests and
+tasks, and stops sign-in renewals; a settings or status observer cannot prevent transport closure. A new agreement
+permits the same host to connect again, while an old session's callback cannot close its replacement
+(extensions-consent-review-2). A request already dispatched before revocation may finish; no new model or renewal
+request may start while agreement is absent.
+
 - **Only MCP servers load.** Ember reads a plugin's manifest (`plugin.json`, `.github/plugin/plugin.json`,
   `.claude-plugin/plugin.json`) and its MCP servers (`mcpServers`, `mcp.json`, `.mcp.json`), copies the plugin into
   `extensions/plugins/<id>/`, and passes each server to the conductor's session as an explicit `mcpServers` entry. Its

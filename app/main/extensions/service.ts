@@ -27,10 +27,10 @@ import { appEnv } from "../hands/system";
 import type { Logger } from "../logger";
 import { injectionSignals } from "../perception/injection";
 import type { AuditLog } from "../policy/audit";
-import type { Settings, SettingsPatch } from "../settings";
+import { hasConsent, type Settings, type SettingsPatch } from "../settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
-import { MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed } from "../../renderer/home/extensions-copy";
+import { EXTENSIONS_START_AGREEMENT, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
 import { REFUSED, classify, failureNote, gateQuestion, wrapResult } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
@@ -127,6 +127,8 @@ interface SessionGate {
   listChanged: Set<string>;
   epoch: number;
   stop?: (servers: string[]) => Promise<void>;
+  retire?: () => Promise<void>;
+  retiring?: Promise<void>;
   tools: Map<string, { item: StoredItem; server: StoredServer; tool: PinnedTool }>;
 }
 
@@ -155,10 +157,14 @@ export class ExtensionsService implements ExtensionsApi {
     this.store = new ExtensionStore(o.dir);
     this.items = this.store.read();
     let active = this.active();
+    let consented = this.globallyConsented();
     o.settings.onChange?.(() => {
       const next = this.active();
-      if (active && !next) this.stopPart().stop();
+      const consentedNow = this.globallyConsented();
+      if ((active && !next) || (consented && !consentedNow)) this.stopPart().stop();
+      if (consented && !consentedNow && this.session?.retire) void this.retire(this.session).catch(() => this.o.log.warn("extensions.runtime_retire_failed"));
       active = next;
+      consented = consentedNow;
     });
     // Revoke an earlier run's leases. Legacy pid files are dropped too; their numbers are never signalled.
     try { for (const f of fs.readdirSync(this.store.runDir)) fs.rmSync(path.join(this.store.runDir, f), { force: true }); } catch { /* no run folder yet */ }
@@ -189,10 +195,12 @@ export class ExtensionsService implements ExtensionsApi {
     return this.o.admin().features.extensions !== false;
   }
 
-  /** Allowed, turned on, and agreed to (FEATURE_CONSENT_VERSION.extensions): only then does a session get tools. */
+  private globallyConsented(): boolean { return hasConsent(this.o.settings.get()); }
+
+  /** Current global and extension agreements, allowed and turned on: only then does a session get tools. */
   active(): boolean {
     const e = this.o.settings.get().extensions;
-    return this.allowed() && e.on && e.consent.version >= FEATURE_CONSENT_VERSION.extensions;
+    return this.globallyConsented() && this.allowed() && e.on && e.consent.version >= FEATURE_CONSENT_VERSION.extensions;
   }
 
   /** The runtime is connected (Copilot or a model provider is ready): only then are marketplaces listed (integrations-v2). */
@@ -200,14 +208,14 @@ export class ExtensionsService implements ExtensionsApi {
     return this.o.client() !== null;
   }
 
-  /** The user agreed to extensions' first-use card at its current version. */
+  /** The global agreement and extensions' first-use card are both current. */
   consented(): boolean {
-    return this.o.settings.get().extensions.consent.version >= FEATURE_CONSENT_VERSION.extensions;
+    return this.globallyConsented() && this.o.settings.get().extensions.consent.version >= FEATURE_CONSENT_VERSION.extensions;
   }
 
   /** The card's yes in Home (a click there, never the model): records the agreement and turns extensions on. */
   async agree(): Promise<void> {
-    if (!this.allowed() || !this.o.settings.update) return;
+    if (!this.globallyConsented() || !this.allowed() || !this.o.settings.update) return;
     if (!this.consented()) {
       for (const item of this.items) item.consentedAt = null;
       this.save();
@@ -267,15 +275,17 @@ export class ExtensionsService implements ExtensionsApi {
   // ---- Marketplaces (registered with the runtime, which fetches them) ----
 
   private rpc() {
+    if (!this.globallyConsented()) throw new Error(EXTENSIONS_START_AGREEMENT);
     const c = this.o.client();
     if (!c) throw new Error("not connected");
     return c.rpc;
   }
 
   async marketplaces(): Promise<Marketplace[]> {
-    if (!this.allowed()) return [];
+    if (!this.globallyConsented() || !this.allowed()) return [];
     try {
       const r = await this.rpc().plugins.marketplaces.list();
+      if (!this.globallyConsented()) return [];
       // Copilot's own (isDefault) and the organisation's (managed) can't be removed: Home shows them so (integrations-4).
       return r.marketplaces.map(m => ({ name: m.name, source: m.source, ...(m.isDefault ? { builtIn: true } : {}), ...(m.managed ? { managed: true } : {}) }));
     } catch (err) {
@@ -286,6 +296,7 @@ export class ExtensionsService implements ExtensionsApi {
 
   /** Checks what a user typed as a marketplace: a GitHub repository or an https address (a local folder in development). */
   marketplaceSource(source: string): string | null {
+    if (!this.globallyConsented()) return null;
     const s = source.trim();
     if (!s || s.length > 500) return null;
     if (GITHUB_SOURCE.test(s)) return s;
@@ -298,6 +309,7 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   async addMarketplace(source: string): Promise<{ ok: true } | { ok: false; why: string }> {
+    if (!this.globallyConsented()) return { ok: false, why: EXTENSIONS_START_AGREEMENT };
     if (!this.allowed()) return { ok: false, why: "Your organisation has turned extensions off." };
     const s = typeof source === "string" ? this.marketplaceSource(source) : null;
     if (!s) return { ok: false, why: "Enter a GitHub repository (owner/name) or an https address." };
@@ -321,6 +333,7 @@ export class ExtensionsService implements ExtensionsApi {
 
   /** Removes a marketplace the user added; one built into Copilot or set by the organisation is refused, saying so. */
   async removeMarketplace(name: string): Promise<{ ok: true } | { ok: false; why: string }> {
+    if (!this.globallyConsented()) return { ok: false, why: EXTENSIONS_START_AGREEMENT };
     if (typeof name !== "string" || !name) return { ok: false, why: "Ember couldn't remove that marketplace." };
     try {
       await this.rpc().plugins.marketplaces.remove({ name, force: true });
@@ -340,6 +353,7 @@ export class ExtensionsService implements ExtensionsApi {
   /** The folder the runtime keeps a marketplace's catalogue in: a local one's own, else its cache (found by name). */
   private async marketplaceRoot(name: string): Promise<string | null> {
     const list = await this.rpc().plugins.marketplaces.list();
+    if (!this.globallyConsented()) return null;
     const m = list.marketplaces.find(x => x.name === name);
     if (!m) return null;
     const local = /^Local: (.+)$/.exec(m.source)?.[1];
@@ -366,6 +380,7 @@ export class ExtensionsService implements ExtensionsApi {
 
   /** What `marketplace` offers, or why its list couldn't be fetched or read (integrations-r2): never an empty list for that. */
   async browse(marketplace: string): Promise<MarketplaceEntry[] | { ok: false; why: string }> {
+    if (!this.globallyConsented()) return { ok: false, why: EXTENSIONS_START_AGREEMENT };
     if (!this.allowed() || typeof marketplace !== "string") return [];
     try {
       // The runtime fetches (or refreshes) the catalogue; Ember reads it for what it offers.
@@ -406,6 +421,7 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   private async installNow(marketplace: string, name: string): Promise<{ ok: true; id: string } | { ok: false; why: string }> {
+    if (!this.globallyConsented()) return { ok: false, why: EXTENSIONS_START_AGREEMENT };
     if (!this.allowed()) return { ok: false, why: "Your organisation has turned extensions off." };
     if (!this.consented()) return { ok: false, why: "Agree to extensions in settings first." };
     if (typeof marketplace !== "string" || typeof name !== "string" || !PATH_NAME.test(marketplace) || !PATH_NAME.test(name)) return { ok: false, why: "Ember couldn't find that plugin." };
@@ -413,17 +429,21 @@ export class ExtensionsService implements ExtensionsApi {
     if (this.items.some(i => i.source === source)) return { ok: false, why: "It's already installed." };
     const id = `${slug(name, 40)}-${slug(marketplace, 40)}-${crypto.randomBytes(3).toString("hex")}`;
     const dst = this.store.pluginDir(id);
-    let viaRuntime = false;
+    let cleanRuntime: (() => Promise<unknown>) | null = null;
     const epoch = this.epoch;
     try {
       const root = await this.marketplaceRoot(marketplace);
+      if (epoch !== this.epoch || !this.active()) throw new Error("extensions stopped");
       const listed = root ? readMarketplace(root).plugins.find(p => p.name === name) : undefined;
       if (!listed) return { ok: false, why: "Ember couldn't find that plugin." };
       let src = listed.folder;
       if (!src) {
         // Kept elsewhere (a GitHub repository at a pinned commit): the runtime fetches it, and Ember copies it.
-        await this.rpc().plugins.install({ source });
-        viaRuntime = true;
+        const plugins = this.rpc().plugins;
+        // Capture only this already-authorised install's local cleanup: revocation still blocks every new RPC.
+        cleanRuntime = () => plugins.uninstall({ name: source });
+        await plugins.install({ source });
+        if (epoch !== this.epoch || !this.active()) throw new Error("extensions stopped");
         src = path.join(this.o.copilotHome, "installed-plugins", marketplace, name);
         if (!fs.existsSync(src)) return { ok: false, why: "Ember couldn't fetch that plugin." };
       }
@@ -467,13 +487,14 @@ export class ExtensionsService implements ExtensionsApi {
       return { ok: false, why: m === "too big" ? "It's too big to install." : m === "not connected" ? "Ember isn't connected to Copilot yet." : m === "outside its marketplace" || m === "not a folder" ? "Its files aren't in its marketplace, so Ember didn't install it." : "Ember couldn't install it." };
     } finally {
       // The runtime's own install is only a download: Ember runs its copy, so the runtime keeps nothing enabled.
-      if (viaRuntime) { try { await this.rpc().plugins.uninstall({ name: source }); } catch (err) { this.o.log.warn("extensions.runtime_uninstall_failed", { err }); } }
+      if (cleanRuntime) { try { await cleanRuntime(); } catch (err) { this.o.log.warn("extensions.runtime_uninstall_failed", { err }); } }
       this.busy.delete(id);
       this.changed();
     }
   }
 
   private probe(spec: ServerSpec, cwd: string): Promise<ProbeResult> {
+    if (!this.globallyConsented()) return Promise.resolve({ ok: false, why: EXTENSIONS_START_AGREEMENT });
     if (this.o.probe) return this.o.probe(spec, cwd);
     // The kill switch ends a probe under way (its signal is replaced at each stop).
     const signal = this.stopAsks.signal;
@@ -555,6 +576,7 @@ export class ExtensionsService implements ExtensionsApi {
       if (epoch !== this.epoch || !this.items.includes(item) || !this.active()) return;
       if (!s.spec) continue;
       const r = await this.probe(s.spec, this.store.pluginDir(item.id));
+      if (epoch !== this.epoch || !this.items.includes(item) || !this.active()) return;
       if (!r.ok) { s.status = r.needsAuth ? "needs-auth" : "failed"; s.detail = r.why; continue; }
       const before = s.tools.filter(t => t.changed).length;
       s.tools = checkPins(s.tools, r.tools);
@@ -652,9 +674,10 @@ export class ExtensionsService implements ExtensionsApi {
       postToolUse: input => this.result(gate, input),
       postToolUseFailure: input => this.failure(gate, input),
       verify: shown => this.verify(gate, shown),
-      bind: (live, stop) => {
+      bind: (live, stop, retire) => {
         gate.live = live;
         gate.stop = stop;
+        if (retire) gate.retire = retire;
         // Removal/Stop can win the race with session startup; the late binding must not restart anything.
         const stale = [...new Set([...gate.tools.values()].filter(e => !this.active() || gate.epoch !== this.epoch || !this.items.some(i => i.id === e.item.id && i.enabled)).map(e => e.server.key))];
         if (stale.length && stop) void stop(stale).catch(err => this.o.log.warn("extensions.stop_failed", { err }));
@@ -737,6 +760,7 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   private async decide(gate: SessionGate, input: PreToolUseHookInput): Promise<PreToolUseHookOutput> {
+    if (!gate.retire || gate.retiring) return { permissionDecision: "deny", permissionDecisionReason: "Ember couldn't check this extension's runtime, so it didn't run the tool." };
     const e = gate.tools.get(input.toolName);
     const generation = this.generation;
     const shownAsPinned = await this.shownNow(gate, input.toolName, generation);
@@ -776,20 +800,52 @@ export class ExtensionsService implements ExtensionsApi {
     return deny(REFUSED);
   }
 
-  /**
-   * A failed call: the SDK passes its text to the model as it is (a failure can't be rewritten), so Ember says it is
-   * untrusted, and the conversation is tainted (a failure is an easy way to smuggle text): every later call asks.
-   */
+  /** Only the same verified session, item and tool pin may consume a result. */
+  private outputCurrent(gate: SessionGate, name: string): boolean {
+    const e = gate.tools.get(name);
+    return !!gate.retire && !gate.retiring && this.active() && gate === this.session && gate.epoch === this.epoch
+      && !!e && this.items.includes(e.item) && e.item.enabled && e.item.consentedAt !== null
+      && e.item.servers.includes(e.server) && e.server.tools.some(t => t.hash === e.tool.hash && !t.changed)
+      && gate.shown.get(name) === true;
+  }
+
+  private retire(gate: SessionGate): Promise<void> {
+    // Install the barrier before calling it: a re-entrant settings notification must not retire twice.
+    gate.retiring ??= gate.retire ? Promise.resolve().then(gate.retire) : new Promise<never>(() => { /* no bound transport: never release a raw failure */ });
+    return gate.retiring;
+  }
+
+  private withheldResult(): PostToolUseHookOutput {
+    return { modifiedResult: { textResultForLlm: "The extension reply was withheld because its permission changed. Don't retry it.", resultType: "failure", binaryResultsForLlm: [] } };
+  }
+
+  private async retireBeforeOutput(gate: SessionGate): Promise<void> {
+    try { await this.retire(gate); }
+    catch {
+      this.o.log.warn("extensions.runtime_retire_failed");
+      await new Promise<never>(() => { /* the SDK swallows hook errors: never return an unrewritable failure */ });
+    }
+  }
+
+  private async withheldFailure(gate: SessionGate): Promise<PostToolUseFailureHookOutput> {
+    await this.retireBeforeOutput(gate);
+    return { additionalContext: "This extension was stopped. Don't use its failure or retry it." };
+  }
+
+  /** A current failure is untrusted; a stale raw failure cannot return until its runtime transport is closed. */
   private async failure(gate: SessionGate, input: PostToolUseFailureHookInput): Promise<PostToolUseFailureHookOutput> {
+    if (!this.outputCurrent(gate, input.toolName)) return this.withheldFailure(gate);
     const e = gate.tools.get(input.toolName);
     const text = typeof input.error === "string" ? input.error : "";
     const signals = injectionSignals(text);
     this.tainted = true;
     try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, chars: text.length, signals, ...(SAVED_OUTPUT.test(text) ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    if (!this.outputCurrent(gate, input.toolName)) return this.withheldFailure(gate);
     return { additionalContext: failureNote(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName) };
   }
 
   private async result(gate: SessionGate, input: PostToolUseHookInput): Promise<PostToolUseHookOutput | void> {
+    if (!this.outputCurrent(gate, input.toolName)) { await this.retireBeforeOutput(gate); return this.withheldResult(); }
     const e = gate.tools.get(input.toolName);
     const text = typeof input.toolResult?.textResultForLlm === "string" ? input.toolResult.textResultForLlm : "";
     const signals = injectionSignals(text);
@@ -798,6 +854,7 @@ export class ExtensionsService implements ExtensionsApi {
     const truncated = SAVED_OUTPUT.test(text);
     if (signals.length || truncated) this.tainted = true;
     try { this.audit({ phase: "result", ext: e?.item.id ?? null, tool: input.toolName, chars: text.length, signals, ...(truncated ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    if (!this.outputCurrent(gate, input.toolName)) { await this.retireBeforeOutput(gate); return this.withheldResult(); }
     // Text only (the conductor is never sent images), wrapped as untrusted.
     // Only Ember's own fields: the server's raw text (contents, its log) never rides along.
     return { modifiedResult: { textResultForLlm: wrapResult(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName, text, signals.length > 0 || truncated), resultType: input.toolResult?.resultType ?? "success", binaryResultsForLlm: [] } };

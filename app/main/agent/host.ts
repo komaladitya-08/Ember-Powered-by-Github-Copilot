@@ -916,6 +916,7 @@ export class AgentHost {
   private projectService: ServiceKind = false;
   private projectRun: AbortController | null = null;
   private client: CopilotClient | null = null;
+  private readonly retiringClients = new WeakMap<CopilotClient, Promise<void>>();
   /** The connected runtime, for the extensions' marketplaces (null until Copilot is ready). */
   get copilotClient(): CopilotClient | null {
     return this.status.phase === "ready" ? this.client : null;
@@ -1837,6 +1838,15 @@ export class AgentHost {
     return halted.finally(() => this.o.history?.store.flush());
   }
 
+  /** Closes current model traffic on global agreement loss, while allowing this host to start after renewal. */
+  pauseForConsent(): Promise<void> {
+    const client = this.client;
+    if (client) return this.retireExtensionsRuntime(client, this.gen);
+    const halted = this.halt(false);
+    this.stopForPermission();
+    return halted;
+  }
+
   private halt(forget: boolean): Promise<void> {
     ++this.gen;
     if (this.retry) { clearTimeout(this.retry); this.retry = null; }
@@ -2133,6 +2143,7 @@ export class AgentHost {
       this.conductorChat = chatOf;
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
+        retireRuntime: () => this.retireExtensionsRuntime(client, gen),
         reminders: this.reminders,
         ...(routines ? { routines } : {}),
         ...(extensions ? { extensions } : {}),
@@ -3332,7 +3343,7 @@ export class AgentHost {
     this.dropHeld();
     if (underWay) this.presenter.stopped();
     this.o.log.info("agent.answer_stopped", { underWay });
-    const aborting = this.conductor?.abort();
+    const aborting = this.client && this.retiringClients.has(this.client) ? undefined : this.conductor?.abort();
     this.turnChanged();
     await aborting;
     // (The turn is over from Ember's side, whether or not the runtime confirms it: a switch waiting for it is made.)
@@ -3376,7 +3387,7 @@ export class AgentHost {
     for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedByAll.add(t.id);
     this.tasks?.cancelAll();
     this.confirmer?.cancelAll();
-    const aborting = this.conductor?.abort();
+    const aborting = this.client && this.retiringClients.has(this.client) ? undefined : this.conductor?.abort();
     this.turnChanged();
     await aborting;
   }
@@ -3685,6 +3696,42 @@ export class AgentHost {
     const client = this.client;
     this.client = null;
     if (client) await this.stopClient(client);
+  }
+
+  /** Retires only the runtime that owned the revoked permission; normal reconnect keeps this host usable. */
+  private retireExtensionsRuntime(client: CopilotClient, gen: number): Promise<void> {
+    const already = this.retiringClients.get(client);
+    if (already) return already;
+    const current = gen === this.gen && client === this.client;
+    const retired = current ? ++this.gen : null;
+    // No observer, settings read or cancellation callback may prevent closing the owned transport.
+    const closed = client.forceStop();
+    this.retiringClients.set(client, closed);
+    if (retired !== null) void closed.then(() => {
+      if (retired === this.gen && !this.quitting) void this.launch(this.token, this.source);
+    }, () => { this.o.log.warn("agent.extension_runtime_retire_failed"); });
+    if (current) {
+      this.stopForPermission();
+      if (retired !== this.gen) return closed;
+      if (this.retry) { clearTimeout(this.retry); this.retry = null; }
+      try {
+        this.cutOff = runtimeWords(this.serviceKind()).cutOff;
+        this.presenter.reset();
+        this.setStatus({ phase: "error", reason: "runtime", detail: runtimeWords(this.serviceKind()).stopped });
+      } catch { /* the transport is already closed; a failed UI observer cannot undo retirement */ }
+    }
+    return closed;
+  }
+
+  /** Invalidates pending main-side continuations before runtime teardown yields. */
+  private stopForPermission(): void {
+    const stop = (part: () => void) => { try { part(); } catch { /* every other part must still stop */ } };
+    stop(() => this.stopped());
+    stop(() => this.projectRun?.abort());
+    this.queued = [];
+    stop(() => this.dropHeld());
+    stop(() => this.tasks?.cancelAll());
+    stop(() => this.confirmer?.cancelAll());
   }
 
   /** Stops the runtime; one that doesn't answer (hung) is killed. */

@@ -2183,6 +2183,32 @@ key saving carries a required expected host through IPC to main. A late main-sid
 rebinding the key (integrations-v7-4 to -v7-9). Independent service/store/crash and actual-renderer probes accepted
 the final repairs. No additional endpoint request or broader provider consent was introduced.
 
+**Extensions' global agreement (M9).** A fresh challenge confirmed a valid persisted older global agreement with
+current extension/plug-in cards could still refresh a saved server before `hasConsent` was true
+(integrations-refresh-c1 / extensions-refresh-consent-1, P1). This was reproduced with fake HTTP/stdio probers and
+an actual settings/store boundary; no natural historical upgrade sequence is claimed. Global agreement now gates
+marketplace RPCs, probes, direct enable/install/reagreement and session exposure. Revocation stops bound servers
+and pending probes; late replies cannot publish tools or dispatch the next HTTP handshake message. Already-stopped
+stdio probes start no process. Restoring global agreement allows the existing refresh to resume, retaining current
+feature/plugin cards. Browsing before the extension feature card still works after global agreement. No consent
+version, card wording, tool authority or owner choice is weakened.
+First review found the new RPC guard also blocked cleanup when agreement was revoked during a runtime install
+(extensions-consent-review-1, P2). The failing fake-runtime regression retained its downloaded copy. Cleanup now
+captures only that already-authorised install's local uninstall operation before awaiting it; all initiating RPCs
+remain gated, and a revoked install stops before copying or probing the downloaded plugin.
+Second review reproduced a late tool result reaching the SDK-facing hook after global revocation
+(extensions-consent-review-2, P1). The SDK can replace successful results but cannot suppress raw failures, and
+swallows hook errors. Every extension session now needs an exact-runtime retirement capability before any tool can
+run. Results recheck their session epoch, item, tool pin and agreement before consumption; stale successes and
+failures wait for the supported public `forceStop()` transport barrier. Global agreement loss proactively retires
+the active model connection, including turns without extensions, invalidates main-side pending requests/tasks
+synchronously and stops token renewals at their outbound/read/write/reconnect boundaries. Transport closure runs
+before fallible UI or cancellation observers. Reagreement permits a non-quitting host restart; generation and
+client identity prevent an old hook from stopping its replacement. Actual bundled-runtime/mock-provider tests
+verify no new model request after revocation for late successes, raw failures and an ordinary held screen read,
+plus renewal and old-hook controls. Post-renewal model requests contain neither revoked success nor failure
+markers. These finite offline controls do not claim a whole CI gate or real-provider/native validation.
+
 **Commands (M12).** Restored baseline questions for ordinary command-line `if` and error-checking HOME/PWD
 expansions. Unknown URL names, attached download destinations, URLs supplied through xargs/loops, configured Git
 fetches/pulls and opaque interpreter copies retain download provenance across calls. The known CSV download followed

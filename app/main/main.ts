@@ -2083,12 +2083,23 @@ function start(): void {
    * reconnected with the new token at once (review #138, cross-review X11, X12).
    */
   const keeper = new GrantKeeper({
-    fetch: (url, init) => net.fetch(url, init), store: () => tokens, inUse: () => currentToken, idle: () => agent?.idle ?? true,
-    reconnect: async token => { currentToken = token; await agent?.start(token, "stored"); },
+    allowed: consented,
+    fetch: (url, init) => {
+      if (!consented()) throw new Error("Finish Ember's setup first.");
+      return net.fetch(url, init);
+    },
+    store: () => consented() ? tokens : null, inUse: () => consented() ? currentToken : null, idle: () => agent?.idle ?? true,
+    reconnect: async token => { if (!consented()) return; currentToken = token; await agent?.start(token, "stored"); },
     log: (event, data) => log.info(event, data),
   });
   /** The sign-in to use: the first source whose token Copilot hasn't refused this run (a stored one that ran out renewed first). */
-  const findToken = async () => { await keeper.freshen(); return resolveToken(tokens, process.env, ghOptions(), refusedTokens).catch(() => null); };
+  const findToken = async () => {
+    if (!consented()) return null;
+    await keeper.freshen();
+    if (!consented()) return null;
+    const found = await resolveToken(tokens, process.env, ghOptions(), refusedTokens).catch(() => null);
+    return consented() ? found : null;
+  };
   /**
    * Counts Sign out, from the click: a sign-in that a look under way then finds isn't connected, which would undo the
    * sign-out (the account just left, read or renewed before its file was cleared) (final review S1).
@@ -2100,7 +2111,7 @@ function start(): void {
    * `since`: the count of sign-outs when the look for `found` began. Signed out since: nothing is connected (none used).
    */
   const connectWith = async (found: ResolvedToken | null, how: "user" | "auto" = "user", since = signOuts) => {
-    if (since !== signOuts) return { phase: agent?.getStatus().phase, found: null };
+    if (since !== signOuts || !consented()) return { phase: agent?.getStatus().phase, found: null };
     return connectFirstAccepted(async () => { const next = await findToken(); return since === signOuts ? next : null; }, async f => {
       currentToken = f?.token ?? null;
       keeper.use(currentToken);
@@ -3473,7 +3484,7 @@ function start(): void {
       textScale: () => textScale(settings.get().textSize),
       userData, runtimePath: runtime.path, settings, log: redactingLogger(log, () => providers.secrets()).child("agent"), setState, provider: providerNow, probeProvider: () => providers.api.test(), admin: () => policy, signInWith: signInWith(),
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
-      refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
+      refuseConnect: () => !consented() ? "Finish Ember's setup first." : modelServiceRefusal(admin), policyHeld: () => !!admin.held,
       // Not while this screen is locked: a turn still running then would read it for the model (cross-review X9).
       describeScreen: () => seeing.describe(), screenLocked: () => screenLock?.locked ?? false, hands,
       // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
@@ -3621,10 +3632,14 @@ function start(): void {
     powerMonitor.on("unlock-screen", () => keeper.wake());
     // The brain connects once the user has agreed to what Ember does (first run asks).
     let brainStarted = false;
+    let brainAgreement = 0;
+    let brainAgreed = consented();
     const startBrain = async () => {
       if (brainStarted || !consented()) return;
       brainStarted = true;
       const since = signOuts;
+      const agreed = brainAgreement;
+      const current = () => consented() && agreed === brainAgreement && since === signOuts;
       // macOS asks for the login keychain password before Ember may read its saved sign-in (after every update of an
       // ad-hoc-signed Ember). The read is asynchronous there, and Ember's windows still come up first, with a status that
       // says what the prompt is for (review #241). Only on the first start of a new version: other starts read at once,
@@ -3635,23 +3650,41 @@ function start(): void {
         setStatus("keychain", "Reading your saved API key…");
         try { await providers.ensureKey(); } finally { setStatus("keychain", null); }
       }
+      if (!current()) return;
       const keychain = !provider && platform.os === "darwin" && !!tokens?.firstReadSinceUpdate();
       if (keychain) {
         setStatus("keychain", "Reading your saved sign-in from the keychain…");
         await new Promise(r => setTimeout(r, KEYCHAIN_PAUSE_MS));
       }
+      if (!current()) return;
       if (!provider) await keeper.freshen();
+      if (!current()) return;
       const found = provider ? null : await resolveToken(tokens, process.env, ghOptions()).finally(() => { if (keychain) setStatus("keychain", null); });
+      if (!current()) return;
       log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none", ...(providerNow()?.kind === "user" ? { provider: "user" } : {}), ...(tokens?.unreadable ? { saved: "unreadable" } : {}) });
       // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
       // (then "Sign in" may use it at once, so it isn't counted as the token in use). One Copilot refuses gives way to
       // the next source. Signed out while it looked (the settings window is up during a keychain prompt or a slow
       // renewal): nothing found then is connected (final review S1).
+      if (!current()) return;
       const { phase } = provider ? { phase: await agent?.start(null, undefined, "auto") } : await connectWith(found, "auto", since);
+      if (!current()) return;
       if (phase === "signed-out") { currentToken = null; keeper.use(null); }
     };
     brainStart = startBrain();
-    settings.onChange(() => { const p = startBrain(); if (brainStarted) brainStart = brainStart.then(() => p); });
+    settings.onChange(() => {
+      if (!consented()) {
+        if (brainAgreed) {
+          brainStarted = false; ++brainAgreement; keeper.stop();
+          void agent?.pauseForConsent().catch(() => log.warn("agent.consent_pause_failed"));
+          stopEverything("settings");
+        }
+        brainAgreed = false;
+        return;
+      }
+      brainAgreed = true;
+      const p = startBrain(); if (brainStarted) brainStart = brainStart.then(() => p);
+    });
     // Another model chosen in settings: switched in place (running tasks keep going).
     let models = JSON.stringify(settings.get().models);
     settings.onChange(next => {
