@@ -37,6 +37,7 @@ async function voiceProcess(backend: (o: { onError?: (err: unknown) => void; run
   await import("../../app/voice/process");
   const port = Object.assign(new EventEmitter(), { start: vi.fn() });
   return {
+    port,
     init: (o: { wasm?: boolean; voiceprint?: string } = {}) => parent.emit("message", { data: { type: "init", generation: 0, models: { kws: "k", vad: "v", asr: "a" }, monitor: false, dev: false, ...o }, ports: [port] }),
     message: (data: unknown) => parent.emit("message", { data }),
     frame: (f = new Float32Array(512).fill(0.01)) => port.emit("message", { data: f }),
@@ -45,6 +46,8 @@ async function voiceProcess(backend: (o: { onError?: (err: unknown) => void; run
 }
 
 afterEach(() => { vi.useRealTimers(); });
+/** The microphone's port of a voice process. */
+const port = (p: { port: EventEmitter }) => p.port;
 
 describe("the voice process", () => {
   for (const change of ["cancel", "voiceprint", "enrol"] as const) {
@@ -178,6 +181,105 @@ describe("the voice process", () => {
     expect(p.sent().filter(m => m.type === "silent")).toEqual([{ type: "silent", on: true }]);
     p.frame(new Float32Array(512).fill(0.0001)); // even a quiet room's noise is sound
     expect(p.sent().filter(m => m.type === "silent")).toEqual([{ type: "silent", on: true }, { type: "silent", on: false }]);
+  });
+
+  describe("while Ember learns a voice (Voice Match)", () => {
+    const relevant = (p: { sent: () => { type: string }[] }) => p.sent().filter(m => !["alive", "stats", "ready"].includes(m.type));
+
+    it("still hears “Ember, stop”: it stops everything and the teaching ends, saying why (voice-listening-v1)", async () => {
+      vi.useFakeTimers();
+      let spotted = 0;
+      const p = await voiceProcess(() => quiet({ spot: () => { spotted++; return spotted === 30 ? ["ember_stop"] : []; }, transcribe: () => "Ember, stop." }));
+      p.init();
+      p.message({ type: "enrol", generation: 1 });
+      for (let i = 0; i < 60; i++) { p.frame(); vi.advanceTimersByTime(32); }
+      expect(spotted).toBeGreaterThan(0);
+      expect(relevant(p)).toEqual([
+        { type: "enrol", state: "listening", got: 0, of: 4 },
+        { type: "enrol", state: "cancelled", got: 0, of: 4, why: "stopped" },
+        { type: "stop", generation: 1 },
+      ]);
+    });
+
+    it("still hears “Ember, stop” when the spotter takes the bare name first, as the real one does (voice-listening-r1)", async () => {
+      vi.useFakeTimers();
+      let spotted = 0;
+      const p = await voiceProcess(() => quiet({ spot: () => { spotted++; return spotted === 30 ? ["ember"] : []; }, transcribe: () => "Ember, stop." }));
+      p.init();
+      p.message({ type: "enrol", generation: 1 });
+      // (Checked once "stop" can have been said: here, with no pause, 1.2 s after the name.)
+      for (let i = 0; i < 100; i++) { p.frame(); vi.advanceTimersByTime(32); }
+      expect(relevant(p)).toEqual([
+        { type: "enrol", state: "listening", got: 0, of: 4 },
+        { type: "enrol", state: "cancelled", got: 0, of: 4, why: "stopped" },
+        { type: "stop", generation: 1 },
+      ]);
+    });
+
+    it("takes no wake or request meanwhile: its phrases (“Hey Ember, open my calendar.”) aren't requests (voice-listening-v1)", async () => {
+      vi.useFakeTimers();
+      const p = await voiceProcess(() => quiet({ spot: () => ["hey_ember"], transcribe: () => "Hey Ember, open my calendar." }));
+      p.init();
+      p.message({ type: "enrol", generation: 1 });
+      p.message({ type: "follow-up", ms: 8000 });
+      for (let i = 0; i < 60; i++) { p.frame(); vi.advanceTimersByTime(32); }
+      expect(relevant(p)).toEqual([{ type: "enrol", state: "listening", got: 0, of: 4 }]);
+    });
+
+    it("ends the teaching as stopped when the kill switch stops listening (voice-listening-v1)", async () => {
+      const p = await voiceProcess(() => quiet());
+      p.init();
+      p.message({ type: "enrol", generation: 1 });
+      p.message({ type: "enrol-cancel", why: "stopped" });
+      expect(relevant(p).at(-1)).toEqual({ type: "enrol", state: "cancelled", got: 0, of: 4, why: "stopped" });
+    });
+
+    it("hears wakes again once the teaching is over", async () => {
+      vi.useFakeTimers();
+      let wake = false;
+      const p = await voiceProcess(() => quiet({ spot: () => wake ? ["hey_ember"] : [], transcribe: () => "Hey Ember." }));
+      p.init();
+      p.message({ type: "enrol", generation: 1 });
+      p.message({ type: "enrol-cancel" });
+      wake = true;
+      for (let i = 0; i < 10; i++) { p.frame(); vi.advanceTimersByTime(32); }
+      expect(relevant(p).map(m => m.type)).toContain("wake");
+    });
+  });
+
+  it("says a Listen once window heard only digital silence (a muted microphone), just before it times out (voice-listening-4)", async () => {
+    const zeros = new Float32Array(512);
+    for (const [frame, silent] of [[zeros, true], [new Float32Array(512).fill(0.0001), false]] as const) {
+      const p = await voiceProcess(() => quiet());
+      let now = Date.now();
+      const spy = vi.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        p.init();
+        p.message({ type: "listen-once", generation: 1, from: now, ms: 8000 });
+        for (let i = 0; i < 260; i++) { now += 32; port(p).emit("message", { data: { samples: frame, capturedAt: now } }); }
+        const said = p.sent().filter(m => m.type === "silent" || m.type === "listening");
+        expect(said.at(-1)).toMatchObject({ type: "listening", on: false, reason: "timeout", window: "manual" });
+        expect(said.some(m => m.type === "silent")).toBe(silent);
+        if (silent) expect(said.at(-2)).toEqual({ type: "silent", on: true, manual: true });
+      } finally { spy.mockRestore(); }
+    }
+  });
+
+  it("leaves out what a screen reader said as Listen once opened, with the phrases main sends, and hears the request after it (voice-listening-c2-1)", async () => {
+    for (const announced of [["Listening for one request…"], undefined]) {
+      const texts = ["Listening for one request.", "Turn on do not disturb."];
+      let n = 0;
+      const p = await voiceProcess(() => quiet({ vad: () => (++n === 20 || n === 60 ? [new Float32Array(8192).fill(0.05)] : []), transcribe: () => texts.shift() ?? "" }));
+      let now = Date.now();
+      const spy = vi.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        p.init();
+        p.message({ type: "listen-once", generation: 1, from: now, ms: 8000, ...(announced ? { announced } : {}) });
+        for (let i = 0; i < 80; i++) { now += 32; port(p).emit("message", { data: { samples: new Float32Array(512).fill(0.05), capturedAt: now } }); }
+        // (Without a screen reader nothing is left out: main sends no phrases then.)
+        expect(p.sent().filter(m => m.type === "utterance").map(m => (m as { type: string; text?: string }).text)).toEqual([announced ? "Turn on do not disturb." : "Listening for one request."]);
+      } finally { spy.mockRestore(); }
+    }
   });
 
   it("passes on other errors at start as they are", async () => {

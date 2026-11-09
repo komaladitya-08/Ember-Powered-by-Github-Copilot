@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { HANDLE_MARGIN, HANDLE_POSITIONS, handleCorner, otherSide, sideOf } from "../../app/shared/handle-place";
 import { DEFAULT_SETTINGS, SettingsStore, repairSettings } from "../../app/main/settings";
-import { handleCornerText, tagline } from "../../app/renderer/home/copy";
+import { handleCornerText, presenceLine, tagline } from "../../app/renderer/home/copy";
 
 const PILL = { width: 200, height: 56 };
 const TAB = { width: 56, height: 56 };
@@ -221,11 +221,11 @@ describe("copy that says where the handle is", () => {
   });
 
   it("in the line at the top of settings, while Ember lives in the corner card", () => {
-    expect(tagline({ ...base, overlay: false })).toMatch(/^Ember is in the bottom-right corner\./);
-    expect(tagline({ ...base, overlay: false, corner: "bottom-left" })).toMatch(/^Ember is in the bottom-left corner\./);
-    expect(tagline({ ...base, overlay: false, corner: "bottom-right" })).toMatch(/^Ember is in the bottom-right corner\./);
+    expect(tagline({ ...base, overlay: false })).toMatch(/^In the bottom-right corner\./);
+    expect(tagline({ ...base, overlay: false, corner: "bottom-left" })).toMatch(/^In the bottom-left corner\./);
+    expect(tagline({ ...base, overlay: false, corner: "bottom-right" })).toMatch(/^In the bottom-right corner\./);
     // Beside the cursor, the corner isn't named.
-    expect(tagline({ ...base, corner: "bottom-left" })).toMatch(/^Ember is beside your cursor\./);
+    expect(tagline({ ...base, corner: "bottom-left" })).toMatch(/^Beside your cursor\./);
     expect(home).toContain("hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true, corner: settings?.handlePosition,");
   });
 
@@ -236,7 +236,9 @@ describe("copy that says where the handle is", () => {
     // Ember on screen's line follows a change too (said again only when its words change: it is a live region).
     expect(home).toContain("if (presence) renderPresence(presence);");
     expect(home).toContain('if ($("presence-text").textContent !== line) $("presence-text").textContent = line;');
-    expect(home).toContain("`This desktop session can't show Ember beside your cursor, so it lives in the card in the ${handleCornerText(settings?.handlePosition)}.`");
+    expect(home).toContain("const line = presenceLine(p, settings?.handlePosition);");
+    expect(presenceLine({ overlay: false, hidden: false }, "bottom-left")).toBe("This desktop session can't show your character beside your cursor, so it lives in the card in the bottom-left corner.");
+    expect(presenceLine({ overlay: false, hidden: false }, undefined)).toMatch(/in the bottom-right corner\.$/);
     // Neither says bottom-right on its own any more.
     expect(home).not.toMatch(/bottom-right corner/);
   });

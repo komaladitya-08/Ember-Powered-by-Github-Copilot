@@ -118,6 +118,7 @@ export function waitingPerception(p: PerceptionPort, ready: () => Promise<unknow
     perceive: (...a) => after(() => p.perceive(...a)),
     systemDialogOpen: () => after(() => p.systemDialogOpen()),
     windows: () => after(() => p.windows()),
+    ...(p.promptOpen ? { promptOpen: () => after(() => p.promptOpen!()) } : {}),
   };
 }
 
@@ -158,6 +159,7 @@ function usingPerception(p: PerceptionPort, use: () => void): PerceptionPort {
     systemDialogOpen: () => { use(); return p.systemDialogOpen(); },
     windows: () => { use(); return p.windows(); },
     ...(p.systemDialogReason ? { systemDialogReason: () => { use(); return p.systemDialogReason!(); } } : {}),
+    ...(p.promptOpen ? { promptOpen: () => p.promptOpen!() } : {}),
   };
 }
 

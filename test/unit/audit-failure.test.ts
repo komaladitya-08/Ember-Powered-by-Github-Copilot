@@ -115,7 +115,8 @@ describe("a worker whose audit log fails (review #117)", () => {
   it("a step whose record can't be written before it is taken isn't taken, and the task stops", async () => {
     const { call, events, halt } = makeWorker(e => e.event === "decision");
     await call("perceive_window", {});
-    await expect(call("click", { id: 1 })).rejects.toThrow();
+    // (Said to the model as a stop, not left to the runtime's "Tool execution failed": tasks-approvals-8.)
+    expect((await call("click", { id: 1 })).textResultForLlm).toMatch(/^Stopped/);
     expect(events).toEqual([]);
     expect(halt().halted).toBe(true);
     expect(halt().haltReason).toMatch(/audit log/);

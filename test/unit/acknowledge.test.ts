@@ -16,6 +16,17 @@ describe("afterAck", () => {
     expect(afterAck("Online banking is open.", "On it.")).toBe("Online banking is open.");
     expect(afterAck("On it, opening Mail now.", null)).toBe("On it, opening Mail now.");
   });
+
+  it("drops it before a dash too, spaced or not, so “On it — opening Mail.” isn't said after “On it.” (voice-speaking-12)", () => {
+    expect(afterAck("On it — opening Mail.", "On it.")).toBe("opening Mail.");
+    expect(afterAck("On it – opening Mail.", "On it.")).toBe("opening Mail.");
+    expect(afterAck("On it - opening Mail.", "On it.")).toBe("opening Mail.");
+    expect(afterAck("On it—opening Mail.", "On it.")).toBe("opening Mail.");
+    expect(afterAck("Let me check – it's sunny.", "Let me check.")).toBe("it's sunny.");
+    expect(afterAck("Let me check — it's sunny.", "Let me check.")).toBe("it's sunny.");
+    // Not where the words go on as another sentence.
+    expect(afterAck("On items like these, I ask first.", "On it.")).toBe("On items like these, I ask first.");
+  });
 });
 
 describe("acknowledgement", () => {

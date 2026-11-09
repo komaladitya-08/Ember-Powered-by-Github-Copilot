@@ -173,7 +173,8 @@ describe("a task's time limit", () => {
     await vi.advanceTimersByTimeAsync(MIN + 1);
     expect(task.inner.haltReason).toBe("I stopped because the task took longer than 20 minutes.");
     await vi.advanceTimersByTimeAsync(5000);
-    expect(result).toEqual({ success: false, summary: "I stopped because the task took longer than 20 minutes." });
+    // (A limit's: TaskManager adds what it had done by then, tasks-approvals-3.)
+    expect(result).toEqual({ success: false, summary: "I stopped because the task took longer than 20 minutes.", limit: true });
   });
 
   it("still stops a task 20 minutes in while no question is up", async () => {
@@ -187,7 +188,8 @@ describe("a task's time limit", () => {
     await vi.advanceTimersByTimeAsync(2);
     expect(task.inner.haltReason).toBe("I stopped because the task took longer than 20 minutes.");
     await vi.advanceTimersByTimeAsync(5000);
-    expect(result).toEqual({ success: false, summary: "I stopped because the task took longer than 20 minutes." });
+    // (A limit's: TaskManager adds what it had done by then, tasks-approvals-3.)
+    expect(result).toEqual({ success: false, summary: "I stopped because the task took longer than 20 minutes.", limit: true });
   });
 
   it("starts no clock again for a question that ends with its task", async () => {

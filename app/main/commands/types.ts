@@ -49,9 +49,22 @@ export interface Finding {
   widening: string[];
   /** The finding holds only if this path exists (an overwrite); the decision drops it when the target says it doesn't. */
   ifExists?: string;
+  /**
+   * A copy or a move to a name written without a slash (`mv report.pdf ~/Documents`): when the target says `ifExists`
+   * is a folder, the file goes inside it, so the finding is this one instead, held only if `ifExists` there exists
+   * (standingFindings; commands-remote-r1).
+   */
+  inFolder?: { says: string; objects: CommandObject[]; ifExists: string };
   /** Index into Classification.commands. */
   at: number;
 }
+
+/** The card's line for removing packages (`npm uninstall`, `pip uninstall`): the intent row says "Removing" for it. */
+export const PKG_REMOVES = "Removes packages.";
+/** `npm prune`'s line: it removes what the project doesn't list, which no words name exactly, so it always asks. */
+export const PKG_PRUNES = "Removes packages the project doesn't list.";
+/** `yarn autoclean --force`'s line: it deletes files in the installed packages, so it always asks too (commands-remote-r1). */
+export const PKG_CLEANS = "Deletes files in node_modules that .yarnclean lists.";
 
 /** One simple command as parsed (wrappers unwrapped, quotes removed). */
 export interface ParsedCommand {
@@ -114,6 +127,26 @@ export interface PathFact {
   exists: boolean | null;
   /** Its real path (symlinks, 8.3 short names and junctions resolved; of the nearest existing parent plus the rest when it doesn't exist); null: couldn't tell. */
   real: string | null;
+  /** It is a folder, or a link to one; absent: not known to be one (a target that doesn't say counts it as a file). */
+  dir?: boolean;
+}
+
+/**
+ * The findings that stand once the target said what is there (§3.8.2 rule 3): one about a name that is a folder is
+ * about the file inside it (Finding.inFolder), and an overwrite of a path that isn't there is dropped. Pure.
+ */
+export function standingFindings(findings: readonly Finding[], paths: ReadonlyMap<string, PathFact> | undefined): Finding[] {
+  const out: Finding[] = [];
+  for (const f of findings) {
+    let g = f;
+    if (f.inFolder && f.ifExists !== undefined && paths?.get(f.ifExists)?.dir === true) {
+      const { inFolder, ...rest } = f;
+      g = { ...rest, says: inFolder.says, objects: inFolder.objects, ifExists: inFolder.ifExists };
+    }
+    if (g.ifExists !== undefined && paths?.get(g.ifExists)?.exists === false) continue;
+    out.push(g);
+  }
+  return out;
 }
 
 /** A git work tree's push facts, read with fixed argv by the target (§3.7). */
@@ -167,6 +200,11 @@ export interface CommandDecision {
   unasked: boolean;
   /** How long the card's Allow stays disarmed (ms). */
   armMs: number;
+  /**
+   * The AI reviewer's own words for why it cleared the command (review.ts): model text that can name files and the
+   * request, so it is audited in a field of its own, which the system journal keeps as a size only (safety-privacy-v1).
+   */
+  review?: string;
 }
 
 /** Everything decideCommand reads. */
@@ -319,6 +357,11 @@ export interface CommandCard {
   classes?: DangerClass[];
   /** An announcement the AI review cleared (commands/review.ts), not one the user's own words asked for exactly. */
   reviewed?: boolean;
+  /**
+   * The target's home folder, for a POSIX shell: the header says it as ~ ("in ~/src/app", commands-remote-8). Shown
+   * only; the approval binds the whole `cwd`.
+   */
+  home?: string;
 }
 
 /** What a target offers for commands right now. */

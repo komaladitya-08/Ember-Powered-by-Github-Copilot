@@ -210,6 +210,8 @@ describe("the Windows SystemPlatform", () => {
     expect(s.paths.runtimeExe).toBe("copilot-runtime.exe");
     expect(s.privacy.isSecurityWindow({ app: "consent" })).toBe(true);
     expect(s.privacy.isSecurityWindow({ app: "notepad", title: "notes.txt - Notepad" })).toBe(false);
+    // Windows' prompts come from the helper's list, never from a window's program (safety-privacy-3 is Linux's).
+    expect(s.privacy.isPromptWindow).toBeUndefined();
     expect(s.fixes.ids).toEqual(["open-microphone-settings", "unblock-helper"]);
   });
 

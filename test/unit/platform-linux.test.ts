@@ -180,7 +180,9 @@ describe("the Linux platform", () => {
     // "/home/u/.config/ember" on Linux; path.join's own separators where this suite also runs (Windows CI).
     expect(sys.paths.userData("/home/u/.config", "/home/u")).toBe(path.join("/home/u/.config", "ember"));
     expect(sys.fixes.ids).toEqual(["enable-accessibility"]);
-    expect(sys.lifecycle.sessionEnd).toBeNull();
+    // A GNOME on Xorg logout ends the X server under Ember: the session ending, not a crash (reliability-performance-r1).
+    expect(sys.lifecycle.sessionEnd).toBe("display-gone");
+    expect(sys.lifecycle.watchDisplay).toBeTypeOf("function");
     expect(sys.lifecycle.appMenu).toBe(false);
     expect(sys.lifecycle.appUserModelId).toBeNull();
     expect(sys.lifecycle.activateOwnWithInput).toBe(true);

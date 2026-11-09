@@ -53,6 +53,15 @@ describe("SettingsStore", () => {
     expect(r.recoveredFrom && fs.existsSync(r.recoveredFrom)).toBe(true);
   });
 
+  it("keeps when updates last asked GitHub, and repairs a bad time without losing the rest (integrations-v3)", () => {
+    expect(DEFAULT_SETTINGS.updates.checkedAt).toBeNull();
+    const agreed = { version: 1, at: "2026-11-05T09:00:00.000Z" };
+    fs.writeFileSync(file, JSON.stringify({ updates: { on: true, consent: agreed, told: "0.2.0", checkedAt: "2026-11-05T10:01:00.000Z" } }));
+    expect(new SettingsStore(file).load().settings.updates).toEqual({ on: true, consent: agreed, told: "0.2.0", checkedAt: "2026-11-05T10:01:00.000Z" });
+    fs.writeFileSync(file, JSON.stringify({ updates: { on: true, consent: agreed, told: "0.2.0", checkedAt: 42 } }));
+    expect(new SettingsStore(file).load().settings.updates).toEqual({ on: true, consent: agreed, told: "0.2.0", checkedAt: null });
+  });
+
   it("recovers from a corrupt file", () => {
     fs.writeFileSync(file, "{ not json");
     const r = new SettingsStore(file).load();
@@ -84,7 +93,21 @@ describe("settings keep what the user set (review fixes)", () => {
     expect(r.recoveredFrom).toBeTruthy();
     expect(s.get().privacy.neverLook).toEqual(["thunderbird", "remmina"]);
     expect(s.get().grants).toEqual({ gedit: "act" });
-    expect(s.get().voice).toEqual({ consent: true, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false });
+    expect(s.get().voice).toEqual({ consent: true, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1 });
+  });
+
+  it("speaks at the speed chosen, as made by default, and puts a speed out of range back to that (voice-speaking-7)", () => {
+    expect(DEFAULT_SETTINGS.voice.rate).toBe(1);
+    expect(SettingsSchema.parse({ voice: { rate: 1.15 } }).voice.rate).toBe(1.15);
+    for (const rate of [9, 0.2, "fast", null]) {
+      const dir = tmp();
+      const file = path.join(dir, "settings.json");
+      fs.writeFileSync(file, JSON.stringify({ voice: { consent: true, rate } }));
+      const s = new SettingsStore(file);
+      s.load();
+      expect(s.get().voice.rate, String(rate)).toBe(1);
+      expect(s.get().voice.consent).toBe(true);
+    }
   });
 
   it("a change made by hand while Ember runs is kept when Ember saves something else", () => {
@@ -237,7 +260,7 @@ describe("a change sent from the settings window", () => {
     expect(withOwnTrust({ size: 70 }, own)).toEqual({ size: 70 });
     const home = fs.readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
     expect(home).toContain("void save({ trust: { askedApps: (e.target as HTMLInputElement).checked } } as SettingsPatch);");
-    expect(fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8")).toContain("settings.update(ownNeverLook(withOwnProvider(withOwnTrust(patch, settings.own().trust), settings.own().provider))");
+    expect(fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8")).toContain("settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(withOwnTrust(patch, settings.own().trust), settings.own().provider), settings.own().extensions))");
   });
 });
 
@@ -286,5 +309,27 @@ describe("natural voice model preference", () => {
     expect(store.get().voice.naturalModel).toBe("kitten");
     fs.writeFileSync(file, JSON.stringify({ voice: { natural: false, naturalModel: "unknown", muted: true } }));
     expect(new SettingsStore(file).load().settings.voice).toMatchObject({ natural: false, naturalModel: "kitten", muted: true });
+  });
+});
+
+describe("sending screenshots for tasks (safety-privacy-7)", () => {
+  it("is on by default, kept off once the user turns it off, and a bad value is repaired to on", () => {
+    expect(DEFAULT_SETTINGS.screenImages).toBe(true);
+    const s = new SettingsStore(file);
+    s.load();
+    s.update({ screenImages: false });
+    expect(new SettingsStore(file).load().settings.screenImages).toBe(false);
+    fs.writeFileSync(file, JSON.stringify({ screenImages: "nope", speak: false }));
+    expect(new SettingsStore(file).load().settings).toMatchObject({ screenImages: true, speak: false });
+  });
+
+  it("is off and managed where the organisation turned screenshots off, and its true turns nothing on", async () => {
+    const { AdminPolicySchema, applyAdminPolicy, managedKeys, parseAdminPolicy } = await import("../../app/main/admin");
+    const off = AdminPolicySchema.parse({ features: { screenImages: false } });
+    expect(applyAdminPolicy(DEFAULT_SETTINGS, off).screenImages).toBe(false);
+    expect(managedKeys(off)).toContain("screenImages");
+    expect(applyAdminPolicy({ ...DEFAULT_SETTINGS, screenImages: false }, AdminPolicySchema.parse({ features: { screenImages: true } })).screenImages).toBe(false);
+    expect(managedKeys(AdminPolicySchema.parse({}))).not.toContain("screenImages");
+    expect(applyAdminPolicy(DEFAULT_SETTINGS, parseAdminPolicy("{ nope", "/etc/ember/policy.json").policy).screenImages).toBe(false);
   });
 });

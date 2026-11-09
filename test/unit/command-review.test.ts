@@ -47,6 +47,13 @@ describe("the reviewer's prompt and answer", () => {
     expect(d.rules).toContain("ai-review");
     expect(d.says).toEqual(["Ember's review: asked to clean."]);
   });
+
+  it("keeps the reviewer's words out of the reason, which goes to the system journal, and in a field of their own (safety-privacy-v1)", () => {
+    const d = reviewedDecision(ask(), { run: true, does: "removes a file", why: "user asked to remove ~/Documents/HR/salaries-2026-layoffs.xlsx" });
+    expect(d.reason).toBe("Reviewed: routine for the request.");
+    expect(d.review).toBe("user asked to remove ~/Documents/HR/salaries-2026-layoffs.xlsx");
+    expect(reviewedDecision(ask(), { run: true, does: "removes a file", why: "" }).review).toBeUndefined();
+  });
 });
 
 describe("the review gate's labelled commands (eval/review/commands.json)", () => {

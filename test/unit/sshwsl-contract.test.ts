@@ -126,7 +126,7 @@ describe("settings for targets and commands", () => {
 
   it("versions global consent separately from the feature cards", () => {
     expect(CONSENT_VERSION).toBe(7);
-    expect(FEATURE_CONSENT_VERSION).toEqual({ wsl: 1, ssh: 1, commands: 1, memory: 3, routines: 1, extensions: 2, autonomy: 2, provider: 1, updates: 1 });
+    expect(FEATURE_CONSENT_VERSION).toEqual({ wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 3, autonomy: 2, provider: 1, updates: 1 });
   });
 });
 
@@ -387,7 +387,7 @@ const OPS: { [O in Op]: { args: OpArgs<O>; result: OpResult<O> } } = {
   "apps.list": { args: {}, result: { apps: [{ id: "org.gnome.gedit.desktop", name: "Text Editor", keywords: ["text"], categories: ["Utility"], argv: ["gedit", "%U"], terminal: false }] } },
   "apps.launch": { args: { epoch: 1, appId: "org.gnome.gedit.desktop", stamp: { ...stamp, kind: "open_app" } }, result: { status: "deny", reason: "Ember doesn't run terminals", pid: 77 } },
   "cmd.facts": { args: {}, result: facts },
-  "cmd.inspect": { args: { paths: ["/home/deploy/build"], cwd: "/home/deploy" }, result: { paths: [{ exists: true, real: "/home/deploy/build" }, { exists: null, real: null }] } },
+  "cmd.inspect": { args: { paths: ["/home/deploy/build"], cwd: "/home/deploy" }, result: { paths: [{ exists: true, real: "/home/deploy/build", dir: true }, { exists: null, real: null }] } },
   "cmd.git": { args: { cwd: "/home/deploy/src/app" }, result: { git: { branch: "feature-x", pushDefault: "simple", upstream: "origin/feature-x" } } },
   "cmd.run": {
     args: { epoch: 1, spec },

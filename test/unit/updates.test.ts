@@ -3,10 +3,13 @@
  * GitHub with no token, each version is announced once, a bad reply stays quiet, and the link is built from the number.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CHECK_EVERY_MS, FIRST_CHECK_MS, isNewer, newestVersion, releasePage, RELEASES_URL, UpdateChecker, versionOf } from "../../app/main/updates";
+import { CHECK_EVERY_MS, FIRST_CHECK_MS, installKind, isNewer, newestVersion, NPM_MARKER, releasePage, RELEASES_URL, UpdateChecker, updateNotice, versionOf } from "../../app/main/updates";
 import { applyAdminPolicy, managedKeys, parseAdminPolicy } from "../../app/main/admin";
-import { updateStatusText, UPDATES_CONSENT_TEXT } from "../../app/renderer/home/copy";
+import { type Segment, updateHowTo, updateOut, updateStatusText, UPDATES_CONSENT_TEXT } from "../../app/renderer/home/copy";
+import { releaseFiles } from "../../scripts/package/release.mjs";
 import { SettingsSchema } from "../../app/main/settings";
 
 const release = (tag_name: string, draft = false) => ({ tag_name, draft, html_url: "https://evil.example/" });
@@ -92,6 +95,111 @@ describe("the update checker", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps to once a day across restarts: a start soon after a look asks nothing until the day is out (integrations-v3)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-05T10:00:00Z"));
+    let kept: string | null = null;
+    const fetch = vi.fn(async () => reply([release("v0.1.1")]));
+    const start = () => {
+      const c = new UpdateChecker({
+        fetch: fetch as never, current: "0.1.1", allowed: () => true, told: () => null, announce: vi.fn(), changed: vi.fn(), log: { warn: vi.fn() },
+        lastChecked: () => kept, checked: at => { kept = at; },
+      });
+      c.refresh();
+      return c;
+    };
+    const first = start();
+    await vi.advanceTimersByTimeAsync(FIRST_CHECK_MS);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(kept).toBe("2026-11-05T10:01:00.000Z");
+    first.stop();
+    // Two hours later Ember starts again (three times): nothing is asked for the next 22 hours.
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+    const again = [start(), start(), start()];
+    expect(again[0].status).toMatchObject({ phase: "idle", checkedAt: "2026-11-05T10:01:00.000Z" });
+    await vi.advanceTimersByTimeAsync(22 * 60 * 60 * 1000 - 1);
+    expect(fetch).toHaveBeenCalledOnce();
+    again[1].stop(); again[2].stop();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    again[0].stop();
+  });
+
+  it("still says a newer version it found is out after a restart within the day, with no request (integrations-r6)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-05T12:00:00Z"));
+    const fetch = vi.fn(async () => reply([release("v9.9.9")]));
+    const start = (current: string, told: string | null) => {
+      const c = new UpdateChecker({
+        fetch: fetch as never, current, allowed: () => true, told: () => told, announce: vi.fn(), changed: vi.fn(), log: { warn: vi.fn() },
+        lastChecked: () => "2026-11-05T10:00:00.000Z", checked: vi.fn(),
+      });
+      c.refresh();
+      return c;
+    };
+    const again = start("0.1.1", "9.9.9");
+    expect(again.status).toEqual({ phase: "available", latest: "9.9.9", checkedAt: "2026-11-05T10:00:00.000Z" });
+    expect(updateStatusText(again.status)).not.toBe(updateStatusText({ phase: "idle", latest: null, checkedAt: "2026-11-05T10:00:00.000Z" }));
+    expect(fetch).not.toHaveBeenCalled();
+    again.stop();
+    // Updated to it since: nothing newer is said until the next look.
+    const updated = start("9.9.9", "9.9.9");
+    expect(updated.status.phase).toBe("idle");
+    updated.stop();
+    // Never told of one: as before.
+    const none = start("0.1.1", null);
+    expect(none.status.phase).toBe("idle");
+    none.stop();
+  });
+
+  it("keeps saying a newer version it found is out, with how to get it, when a later look fails (install-docs-c2-2)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-08T12:00:00Z"));
+    // Found before a restart, then the day's look fails (offline, a captive portal).
+    const c = new UpdateChecker({
+      fetch: (async () => { throw new TypeError("fetch failed"); }) as never, current: "0.1.1", allowed: () => true, told: () => "0.1.2",
+      announce: vi.fn(), changed: vi.fn(), log: { warn: vi.fn() }, lastChecked: () => "2026-11-08T11:00:00.000Z", checked: vi.fn(),
+    });
+    c.refresh();
+    expect(updateOut(c.status)).toBe(true);
+    await c.check();
+    expect(c.status).toMatchObject({ phase: "failed", latest: "0.1.2" });
+    expect(updateStatusText(c.status)).toBe("Version 0.1.2 is out. Couldn't look for anything newer just now; the next check is tomorrow.");
+    // Home keeps See what's new… and the how-to while a newer version is known, whatever the last look did.
+    expect(updateOut(c.status)).toBe(true);
+    expect(updateOut({ phase: "checking", latest: "0.1.2", checkedAt: null })).toBe(true);
+    for (const phase of ["failed", "checking", "idle", "current", "off"] as const) expect(updateOut({ phase, latest: null, checkedAt: null }), phase).toBe(false);
+    const page = fs.readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8");
+    expect(page).toContain('($("updates-open") as HTMLButtonElement).hidden = !updateOut(s);');
+    c.stop();
+  });
+
+  it("counts a failed look, waits at most a day for a clock set back, and ignores a time it can't read (integrations-v3)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-05T10:00:00Z"));
+    const run = async (kept: string | null, fetch = vi.fn(async () => reply([release("v0.1.1")]))) => {
+      const saved: string[] = [];
+      const c = new UpdateChecker({
+        fetch: fetch as never, current: "0.1.1", allowed: () => true, told: () => null, announce: vi.fn(), changed: vi.fn(), log: { warn: vi.fn() },
+        lastChecked: () => kept, checked: at => { saved.push(at); },
+      });
+      c.refresh();
+      return { c, fetch, saved };
+    };
+    const failed = await run(null, vi.fn(async () => { throw new TypeError("offline"); }));
+    await vi.advanceTimersByTimeAsync(FIRST_CHECK_MS);
+    expect(failed.saved).toEqual(["2026-11-05T10:01:00.000Z"]);
+    failed.c.stop();
+    const future = await run("2027-01-01T00:00:00.000Z");
+    await vi.advanceTimersByTimeAsync(CHECK_EVERY_MS);
+    expect(future.fetch).toHaveBeenCalledOnce();
+    future.c.stop();
+    const unreadable = await run("yesterday");
+    await vi.advanceTimersByTimeAsync(FIRST_CHECK_MS);
+    expect(unreadable.fetch).toHaveBeenCalledOnce();
+    unreadable.c.stop();
+  });
+
   it("asks GitHub alone, with no token and no version of Ember", async () => {
     const { c, fetch } = checker();
     await c.check();
@@ -137,11 +245,11 @@ describe("the update checker", () => {
 
 describe("the setting", () => {
   it("is off by default, with no consent", () => {
-    expect(SettingsSchema.parse({}).updates).toEqual({ on: false, consent: { version: 0, at: null }, told: null });
+    expect(SettingsSchema.parse({}).updates).toEqual({ on: false, consent: { version: 0, at: null }, told: null, checkedAt: null });
   });
   it("can be turned off by the administrator, and is off under lockdown", () => {
     const policy = parseAdminPolicy(JSON.stringify({ features: { updates: false } }), "test").policy;
-    const on = { ...SettingsSchema.parse({}), updates: { on: true, consent: { version: 1, at: "x" }, told: null } };
+    const on = { ...SettingsSchema.parse({}), updates: { on: true, consent: { version: 1, at: "x" }, told: null, checkedAt: null } };
     expect(applyAdminPolicy(on, policy).updates.on).toBe(false);
     expect(managedKeys(policy)).toContain("updates");
     expect(parseAdminPolicy("not json", "test").policy.features.updates).toBe(false);
@@ -154,10 +262,108 @@ describe("Home's words", () => {
     expect(UPDATES_CONSENT_TEXT).toMatch(/never downloads or installs/);
   });
   it("says each state in a sentence", () => {
-    expect(updateStatusText({ phase: "available", latest: "0.2.0", checkedAt: null })).toBe("Ember 0.2.0 is out.");
-    expect(updateStatusText({ phase: "failed", latest: null, checkedAt: null })).toBe("Couldn't check for updates. Ember will try again tomorrow.");
+    expect(updateStatusText({ phase: "available", latest: "0.2.0", checkedAt: null })).toBe("Version 0.2.0 is out.");
+    expect(updateStatusText({ phase: "failed", latest: null, checkedAt: null })).toBe("Couldn't check for updates. The next check is tomorrow.");
+    // Started again within a day of a look: no "shortly" (integrations-v3).
+    expect(updateStatusText({ phase: "idle", latest: null, checkedAt: null })).toBe("Updates will be checked shortly.");
+    expect(updateStatusText({ phase: "idle", latest: null, checkedAt: "2026-11-05T10:01:00.000Z" })).toBe("Updates are checked once a day. Check now looks at once.");
     expect(updateStatusText({ phase: "checking", latest: null, checkedAt: null })).toBe("Checking…");
     expect(updateStatusText({ phase: "off", latest: null, checkedAt: null })).toBe("");
     expect(updateStatusText({ phase: "current", latest: null, checkedAt: null })).toBe("You have the latest version.");
+  });
+});
+
+describe("how to install a new version, for this kind of install (install-docs-11)", () => {
+  const has = (...files: string[]) => (p: string) => files.includes(p);
+  const kind = (os: "linux" | "win32" | "darwin", execPath: string, o: { appImage?: string; files?: string[]; packaged?: boolean } = {}) =>
+    installKind({ os, packaged: o.packaged ?? true, execPath, appImage: o.appImage ?? null, exists: has(...(o.files ?? [])) });
+
+  it("tells the RPM, the AppImage, the Windows zip, the Mac's app and the npm launcher's copy apart (install-docs-11)", () => {
+    expect(kind("linux", "/opt/ember/ember")).toBe("rpm");
+    expect(kind("linux", "/tmp/.mount_EmberAb/ember/ember", { appImage: "/home/k/Ember-0.1.1-x86_64.AppImage" })).toBe("appimage");
+    expect(kind("win32", "C:\\Users\\k\\AppData\\Local\\Programs\\Ember\\Ember.exe")).toBe("zip");
+    expect(kind("darwin", "/Applications/Ember.app/Contents/MacOS/Ember")).toBe("app");
+    // The npm launcher's cache marks each complete version folder (packages/npm/lib/launcher.mjs).
+    expect(fs.readFileSync(path.resolve("packages/npm/lib/launcher.mjs"), "utf8")).toContain(`const MARKER = "${NPM_MARKER}";`);
+    const npmLinux = "/home/k/.cache/ember-npm/0.1.1";
+    expect(kind("linux", "/tmp/.mount_EmberCd/ember/ember", { appImage: `${npmLinux}/Ember-0.1.1-x86_64.AppImage`, files: [`${npmLinux}/${NPM_MARKER}`] })).toBe("npm");
+    const npmWin = "C:\\Users\\k\\AppData\\Local\\ember-npm\\0.1.1";
+    expect(kind("win32", `${npmWin}\\Ember\\Ember.exe`, { files: [`${npmWin}\\${NPM_MARKER}`] })).toBe("npm");
+    const npmMac = "/Users/k/Library/Caches/ember-npm/0.1.1";
+    expect(kind("darwin", `${npmMac}/Ember.app/Contents/MacOS/Ember`, { files: [`${npmMac}/${NPM_MARKER}`] })).toBe("npm");
+    // Development, or a Linux build run from somewhere no package puts it: nothing to say.
+    expect(kind("linux", "/opt/ember/ember", { packaged: false })).toBeNull();
+    expect(kind("linux", "/home/k/src/ember/release/linux-unpacked/ember")).toBeNull();
+  });
+
+  /** A line as it reads (its commands are in <code>: below). */
+  const text = (s: Segment[]) => s.map(x => (typeof x === "string" ? x : "code" in x ? x.code : x.kbd)).join("");
+
+  it("says how to update under “Version X is out.”, in Home's words, while a newer version is out (install-docs-11)", () => {
+    expect(text(updateHowTo("rpm", "0.1.2"))).toBe("To update, quit Ember, download the new RPM from See what's new…, then run sudo dnf upgrade ./ember-0.1.2-1.el8.x86_64.rpm in the folder you saved it to.");
+    expect(text(updateHowTo("appimage", "0.1.2"))).toBe("To update, quit Ember, save Ember-0.1.2-x86_64.AppImage from See what's new… where this one is, then run chmod +x Ember-0.1.2-x86_64.AppImage there and start it.");
+    expect(text(updateHowTo("zip", "0.1.2"))).toBe("To update, quit Ember, download Ember-0.1.2-win-x64.zip from See what's new… and replace this Ember folder with the one in it.");
+    expect(text(updateHowTo("app", "0.1.2"))).toBe("To update, quit Ember, download the new dmg for this Mac from See what's new… and drag Ember into Applications over this one, then allow its permissions again.");
+    expect(text(updateHowTo("npm", "0.1.2"))).toBe("To update, quit Ember, run npm i -g ember-copilot@latest and start ember again.");
+    expect(updateHowTo(null, "0.1.2")).toEqual([]);
+    // Home shows it only while a newer version is out, under its status line, from main's word of the install, and
+    // a screen reader hears it: announced as it fills, and read with See what's new… (install-docs-r2-2).
+    const home = fs.readFileSync(path.resolve("app/renderer/home/index.html"), "utf8");
+    expect(home).toContain('<p class="hint" id="updates-status" role="status"></p>\n      <p class="hint" id="updates-how" aria-live="polite"></p>');
+    expect(home).toContain('<button type="button" id="updates-open" class="btn small" aria-describedby="updates-how" hidden>See what\'s new…</button>');
+    const page = fs.readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8");
+    expect(page).toContain('const how = updateOut(s) ? updateHowTo(platform?.install ?? null, s.latest) : [];');
+    const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
+    expect(main).toContain("install: installKind({ os: platform.os, packaged: app.isPackaged, execPath: process.execPath, appImage: runningAppImage(process.env, process.execPath), exists: fs.existsSync }),");
+    expect(fs.readFileSync(path.resolve("README.md"), "utf8").replace(/\s+/g, " ")).toContain("**Updates** says how for the way you installed Ember");
+  });
+});
+
+describe("the commands in Updates' how-to (install-docs-r2-2, install-docs-i3)", () => {
+  const code = (s: Segment[]) => s.flatMap(x => (typeof x !== "string" && "code" in x ? [x.code] : []));
+  const kinds = ["rpm", "appimage", "zip", "app", "npm"] as const;
+
+  it("names the new version's file in every command, so a bare sudo dnf upgrade never upgrades the whole system instead (install-docs-r2-2)", () => {
+    // Typed as round two wrote it, `sudo dnf upgrade` upgrades every system package and leaves Ember as it was.
+    expect(code(updateHowTo("rpm", "0.1.2"))).toEqual(["sudo dnf upgrade ./ember-0.1.2-1.el8.x86_64.rpm"]);
+    // The same command README gives for the RPM, with the version filled in.
+    const readme = fs.readFileSync(path.resolve("README.md"), "utf8");
+    expect(readme).toContain("`sudo dnf upgrade ./ember-<version>-1.el8.x86_64.rpm`");
+    expect(code(updateHowTo("appimage", "0.1.2"))).toEqual(["Ember-0.1.2-x86_64.AppImage", "chmod +x Ember-0.1.2-x86_64.AppImage"]);
+    expect(code(updateHowTo("zip", "0.1.2"))).toEqual(["Ember-0.1.2-win-x64.zip"]);
+    expect(code(updateHowTo("npm", "0.1.2"))).toEqual(["npm i -g ember-copilot@latest", "ember"]);
+    // Every file a line names is one the release has, as release.mjs and README's downloads spell it.
+    const files = releaseFiles("0.1.2");
+    for (const kind of kinds) {
+      for (const c of code(updateHowTo(kind, "0.1.2"))) {
+        for (const named of c.match(/[\w.-]*0\.1\.2[\w.-]*/g) ?? []) expect(files, `${kind}: ${c}`).toContain(named.replace(/^\.\//, ""));
+        // No package command without the file it installs.
+        if (/\b(dnf|rpm|yum)\b/.test(c)) expect(c, kind).toMatch(/\.rpm$/);
+      }
+    }
+  });
+
+  it("puts only a version of plain numbers into a command the person may copy, and says nothing otherwise (install-docs-r2-2)", () => {
+    for (const kind of kinds) {
+      expect(updateHowTo(kind, "0.1.2; rm -rf ~"), kind).toEqual([]);
+      expect(updateHowTo(kind, null), kind).toEqual([]);
+      expect(updateHowTo(kind, "1.0.0-beta.1"), kind).toEqual([]);
+    }
+  });
+});
+
+describe("the notice that a new version is out", () => {
+  it("opens Home's Updates section at See what's new… when clicked (install-docs-11)", () => {
+    const notice = updateNotice("0.2.0");
+    expect(notice).toEqual({ title: "Ember: a new version is out", body: "Ember 0.2.0 is out. Open Ember's settings to see what's new.", section: "updates:updates-open" });
+    // The section's heading and the button it focuses, which shows while a version is out (home/main.ts showSection).
+    const home = fs.readFileSync(path.resolve("app/renderer/home/index.html"), "utf8");
+    const [section, control] = notice.section.split(":");
+    expect(home).toContain(`<h2 id="${section}-h" tabindex="-1">Updates</h2>`);
+    expect(home).toMatch(new RegExp(`<button type="button" id="${control}" class="btn small" aria-describedby="updates-how" hidden>See what's new…</button>`));
+    // main.ts shows it with a click that opens Home there, as the handle menu's items do.
+    const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
+    expect(main).toContain("notify(notice.title, notice.body, () => { showHome(); sendToHome(IPC.focusSection, notice.section); });");
+    expect(main).toContain('n.on("click", () => { clickable.delete(n); onClick(); });');
   });
 });

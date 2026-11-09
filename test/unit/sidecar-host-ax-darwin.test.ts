@@ -512,4 +512,28 @@ describe("the sidecar host on the macOS AX provider (the bench as AX describes i
     expect(await call("shell_overlays")).toEqual({ overlays: [], complete: true });
     expect(fake.pidsAsked.has(88) || fake.pidsAsked.has(354)).toBe(false);
   });
+
+  it("answers shell_overlays from the window server's list before the Accessibility permission is given, so a step that needs no app can still be checked (reliability-performance-c2-2)", async () => {
+    const { fake, call } = hostOn();
+    fake.trustedAnswer = false;
+    expect(await call("shell_overlays")).toEqual({ overlays: [], complete: true });
+    fake.extraWindows = [{ id: 34, pid: 88, owner: "SecurityAgent", title: "", bounds: at(500, 300, 440, 280), layer: 1000, alpha: 1 }];
+    expect(await call("shell_overlays")).toEqual({ overlays: [{ role: "dialog", name: "", text: "", bounds: at(500, 300, 440, 280) }], complete: true });
+    fake.extraWindows = [{ id: 8, pid: 354, owner: "Dock", title: "", bounds: at(0, 0, 1440, 900), layer: 18, alpha: 1 }];
+    expect(await call("shell_overlays")).toEqual({ overlays: [{ role: "overview", name: "", text: "", bounds: null }], complete: true });
+    // Nothing was asked over AX, and every read still needs the permission.
+    expect(fake.calls).toEqual([]);
+    await expect(call("read_window", {})).rejects.toThrow(NEEDS_PERMISSION);
+    await expect(call("list_windows", {})).rejects.toThrow(NEEDS_PERMISSION);
+  });
+
+  it("answers shell_overlays incomplete when the window list can't be read, and says why when the AX API can't be loaded at all (fail closed) (reliability-performance-c2-2)", async () => {
+    const { fake, call } = hostOn();
+    fake.trustedAnswer = false;
+    fake.onScreenWindows = () => { throw new Error("CGWindowListCopyWindowInfo failed"); };
+    expect(await call("shell_overlays")).toEqual({ overlays: [], complete: false });
+    const none = setup(undefined, { open: false });
+    const host = new Host(none.p, { settleMs: 0, ownerPid: EMBER, env: {} });
+    expect(JSON.parse((await host.handle('{"id":1,"method":"shell_overlays","params":{}}'))!).error.message).toBe("the macOS accessibility API couldn't be loaded (koffi is missing)");
+  });
 });

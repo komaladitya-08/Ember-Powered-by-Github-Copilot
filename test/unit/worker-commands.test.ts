@@ -414,6 +414,20 @@ describe("grants and questions by target", () => {
   });
 });
 
+describe("a command's question quotes the user, not the goal (tasks-approvals-c1-1)", () => {
+  it("puts the user's own words under a command they didn't ask for, never the model's goal", async () => {
+    setCommandJudge({
+      classifyCommand: (_t, shell) => ({ shell, family: "posix", findings: [], refuse: null, probe: [], needsGit: false, downloads: [], programs: [], commands: [] }),
+      decideCommand: () => ({ verdict: "ask", reason: "x", classes: ["destroy"], rules: [], says: ["Deletes ~/Documents/old and everything in it.", "You didn't ask for this."], unasked: true, armMs: 1500 }),
+      shapeOutput: () => "ok", redactSecrets: t => t, trackSecretPrompts: () => ({ output: () => undefined, enter: () => undefined, spans: () => [] }),
+      outputTaint: () => null, resolveTargetPath: p => p,
+    });
+    const { call, asked } = makeWorker({ target: REMOTE, commands: commandService(REMOTE), answer: "deny", spec: { goal: "Clean the build folder and delete ~/Documents/old", userWords: "clean the build folder" } });
+    await call("run_command", { target: "build-01", command: "rm -rf ~/Documents/old", why: "to tidy up" });
+    expect(asked[0]).toMatchObject({ context: "Clean the build folder and delete ~/Documents/old", taskLine: "“clean the build folder”" });
+  });
+});
+
 describe("a no to a command is the task's no", () => {
   it("marks the task declined until a command runs", async () => {
     const decided: DecideInput[] = [];

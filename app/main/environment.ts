@@ -31,7 +31,7 @@ export interface WindowsEnvInputs {
   powershell: "full" | "constrained" | "policy" | "blocked-download" | "missing" | "unknown";
   /** The helper's threads and Ember's process report different DPI awareness (mixed scaling may put clicks off). */
   dpiMixed: boolean;
-  /** Why the helper couldn't read apps (its own words), for "missing". */
+  /** Why the helper couldn't read apps, in the host's plain words (HelperStatus.detail, never its `cause`), for "missing". */
   helperDetail?: string;
   /**
    * "Let desktop apps access your microphone" as Electron's getMediaAccessStatus("microphone") reads it ("denied" when
@@ -103,6 +103,8 @@ export interface Check {
   fix?: FixId | TargetFixId;
   /** A second button, for when `fix` was used and didn't take (macOS: Reset Ember's permissions, review #99). */
   alt?: FixId;
+  /** OK now that its fix took, but the user still has something to do (its detail says what), so first run keeps it (first-run-3). */
+  next?: true;
 }
 
 export interface EnvReport {
@@ -291,7 +293,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
       checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: `Accessibility is off, so Ember can only see screenshots. Turn it on, then ${LINUX_A11Y_RESTART}.`, fix: "enable-accessibility" });
     } else if (a.enabled && i.applied?.includes("enable-accessibility")) {
       // Turned on from this setup check: apps opened before still can't be read until they restart (Qt, Chromium, Firefox).
-      checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them." });
+      checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them.", next: true });
     } else {
       checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: a.enabled ? "Accessibility is on" : "Accessibility bus available" });
     }
@@ -368,7 +370,8 @@ function inspectWindows(i: EnvInputs): EnvReport {
         checks.push(screen("warn", "Windows blocked Ember's accessibility helper because it came from the internet.", "unblock-helper"));
         break;
       case "missing":
-        checks.push(screen("warn", w.helperDetail ? `Ember's accessibility helper didn't start: ${w.helperDetail}` : "Ember's accessibility helper didn't start."));
+        // One full stop at the end, whether or not the host's words end with one (reliability-performance-w5-1).
+        checks.push(screen("warn", `Ember's accessibility helper didn't start${w.helperDetail ? `: ${w.helperDetail.replace(/[.\s]+$/, "")}` : ""}.`));
         break;
       case "unknown": break;
     }

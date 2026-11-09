@@ -13,16 +13,57 @@ export const MATCH_TEXT = {
   /** enrolVoice() said no: Ember isn't listening just now (muted, starting, or not working), so it can't hear the phrases. */
   notListening: "Ember isn't listening just now, so it can't learn your voice. Try again once it's listening for “Ember”.",
   say: "Say:",
-  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:" },
+  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" },
   teach: "Teach Ember my voice",
   teachAgain: "Teach Ember my voice again",
   cancel: "Cancel",
   forget: "Forget my voice",
   learnt: "Ember knows your voice now.",
   stopped: "Stopped teaching Ember your voice.",
-  forgot: "Ember forgot your voice.",
+  /** Forget my voice deletes the words learnt from what the user said too (personal/service.ts forgetVoice): said so. */
+  forgot: "Ember forgot your voice and the words it learnt.",
+  forgetHint: "Also forgets the words Ember learnt from what you said.",
   progressLabel: "Phrases Ember has heard",
+  /** Teaching ended before Ember learnt the voice, and not by the user's Cancel (VoiceMatchStatus.ended). */
+  ended: {
+    "gave-up": "Ember couldn't learn your voice: too many phrases didn't sound alike. Try again somewhere quiet, with only you speaking.",
+    timeout: "Teaching stopped because Ember didn't hear a phrase for a while. Try again when you're ready.",
+    interrupted: "Teaching stopped because Ember stopped listening. Try again once it's listening for “Ember”.",
+  },
 } as const;
+
+/**
+ * What a screen reader is told as teaching ends or the voice is forgotten (matchAnnouncement): the news of the lines
+ * shown, worded without Ember's name and without a phrase it answers. Said into the wake word's microphone, "Ember knows
+ * your voice now. …" woke Ember and was sent as a request in 22 of 40 placements and "Ember forgot your voice…" in 24,
+ * and the line shown for no voice quotes “Ember, stop”, which stops it (voice-listening-r5-1). Nor with an "it" for
+ * Ember: heard alone, "…forgotten. Anyone who talks to it is heard. Teach it your voice…" read as the person's own
+ * voice (voice-listening-x6-4). Nor with more listening than the line shown says: right after Forget my voice,
+ * "Everyone who talks is heard." said all talk near the computer is, where the line shown says only that anyone who
+ * talks to Ember is heard (voice-listening-y6-3). `none` is said only after teaching or forgetting, so "again".
+ */
+export const MATCH_SAID = {
+  none: "Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.",
+  on: "On: your voice can answer questions out loud, and other voices can't. Everyone is still heard. Your voiceprint stays on this computer.",
+  off: "Off: answer questions by clicking. Your voiceprint is kept until you forget it.",
+  noModel: "Voice Match's model is missing or was damaged. Download it above to put that right.",
+  learnt: "Your voice is learnt.",
+  stopped: "Stopped teaching your voice.",
+  forgot: "Your voiceprint and the words learnt from what you said are forgotten.",
+  ended: {
+    "gave-up": "Your voice wasn't learnt: too many phrases didn't sound alike. Try again somewhere quiet, with only you speaking.",
+    timeout: "Teaching stopped because no phrase was heard for a while. Try again when you're ready.",
+    interrupted: "Teaching stopped because listening stopped. Try again once listening starts again.",
+  },
+} as const;
+
+/** `matchText`'s news as a screen reader is told it (MATCH_SAID). */
+function matchSaid(m: VoiceMatchStatus): string {
+  if (noModel(m)) return MATCH_SAID.noModel;
+  const state = !m.enrolled ? MATCH_SAID.none : m.on ? MATCH_SAID.on : MATCH_SAID.off;
+  const ended = m.ended === "gave-up" || m.ended === "timeout" || m.ended === "interrupted" ? MATCH_SAID.ended[m.ended] : null;
+  return ended ? `${ended} ${state}` : state;
+}
 
 export interface MatchView {
   /** The whole group: hidden without a match status, while listening is off, or while the organisation turned voice off. */
@@ -58,7 +99,10 @@ const noModel = (m: VoiceMatchStatus) => m.model === false && !m.enrolling;
 export function matchText(m: VoiceMatchStatus, speakerBytes: number | null = null): string {
   if (m.enrolling) return `Say each phrase as you would ask Ember (${m.enrolling.got} of ${m.enrolling.of} heard).`;
   if (noModel(m)) return matchNoModelText(!!m.wanted, speakerBytes);
-  return !m.enrolled ? MATCH_TEXT.none : m.on ? MATCH_TEXT.on : MATCH_TEXT.off;
+  const state = !m.enrolled ? MATCH_TEXT.none : m.on ? MATCH_TEXT.on : MATCH_TEXT.off;
+  // Why the last teaching didn't learn the voice, until it is taught again (an earlier voiceprint is still in use).
+  const ended = m.ended === "gave-up" || m.ended === "timeout" || m.ended === "interrupted" ? MATCH_TEXT.ended[m.ended] : null;
+  return ended ? `${ended} ${state}` : state;
 }
 
 export function matchPrompt(e: NonNullable<VoiceMatchStatus["enrolling"]>): string {
@@ -90,7 +134,8 @@ export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boole
 
 /**
  * What `#voice-live` says when Voice Match's status changes (null: nothing new). Each phrase is said as it is asked for,
- * with how many were heard, and the end says how it ended. `cancelled`: the user pressed Cancel.
+ * with how many were heard, and the end says how it ended (`m.ended`: never "learnt" for teaching that gave up while an
+ * earlier voiceprint is kept, voice-listening-5), in MATCH_SAID's words. `cancelled`: the user pressed Cancel.
  */
 export function matchAnnouncement(prev: VoiceMatchStatus | undefined, m: VoiceMatchStatus | undefined, cancelled = false): string | null {
   if (!m) return null;
@@ -100,8 +145,12 @@ export function matchAnnouncement(prev: VoiceMatchStatus | undefined, m: VoiceMa
     if (p && p.got === e.got && p.phrase === e.phrase && p.again === e.again) return null;
     return e.again || e.got === 0 ? matchPrompt(e) : `Heard ${e.got} of ${e.of}. ${matchPrompt(e)}`;
   }
-  if (prev?.enrolling) return `${cancelled ? MATCH_TEXT.stopped : m.enrolled ? MATCH_TEXT.learnt : ""} ${matchText(m)}`.trim();
-  if (prev?.enrolled && !m.enrolled) return `${MATCH_TEXT.forgot} ${matchText(m)}`;
+  if (prev?.enrolling) {
+    const how = cancelled || m.ended === "cancelled" || m.ended === "stopped" ? MATCH_SAID.stopped
+      : m.ended === "learnt" || (!m.ended && m.enrolled) ? MATCH_SAID.learnt : "";
+    return `${how} ${matchSaid(m)}`.trim();
+  }
+  if (prev?.enrolled && !m.enrolled) return `${MATCH_SAID.forgot} ${matchSaid(m)}`;
   return null;
 }
 
@@ -128,6 +177,7 @@ export function trustView(trust: { askedApps: boolean; reviewCommands: boolean }
   return TRUST_ROWS.map(({ id, key }) => {
     const locked = managed.has(key);
     // aria-describedby wins over the title, so the managed note is one of the descriptions too.
-    return { id, checked: trust[key], disabled: locked, locked, title: locked ? MANAGED_TEXT : "", describedBy: locked ? `${id}-hint trust-managed` : `${id}-hint` };
+    // Off while the organisation turns it off, as in force (the settings may still hold it on: safety-privacy-w5-2).
+    return { id, checked: trust[key] && !locked, disabled: locked, locked, title: locked ? MANAGED_TEXT : "", describedBy: locked ? `${id}-hint trust-managed` : `${id}-hint` };
   });
 }

@@ -31,6 +31,10 @@ export const VOICE = {
 export interface SpeakRequest {
   text: string;
   append?: boolean;
+  /** A reply in another language (speechLanguage): said only by a local voice for it, never by Kitten. */
+  lang?: string;
+  /** The speaking speed setting (0.8 to 1.4), when it isn't 1. */
+  rate?: number;
 }
 
 /** One chunk of a reply in Ember's own voice: mono samples at `rate` Hz, for reply `id` (main numbers them). */

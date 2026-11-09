@@ -397,6 +397,14 @@ describe("audit journal copy (review round 3)", () => {
     expect(choice).toEqual({ event: "action", kind: "select", element: { role: "combo box", nameChars: 6 }, valueChars: 14, after: { states: [], selectedChars: 14 } });
     expect(JSON.parse(journalLine(JSON.stringify({ event: "decision", kind: "keys", value: "ctrl+s" }))).value).toBe("ctrl+s");
   });
+
+  it("keeps a command review's words as their size only, since the model's paraphrase can name the file (safety-privacy-v1)", async () => {
+    const { journalLine } = await import("../../app/main/policy/audit");
+    const why = "user asked to remove ~/Documents/HR/salaries-2026-layoffs.xlsx";
+    const line = journalLine(JSON.stringify({ event: "command", phase: "decided", command: "rm ~/Documents/HR/salaries-2026-layoffs.xlsx", commandChars: 44, verdict: "announce", reason: "Reviewed: routine for the request.", review: why }));
+    expect(line).not.toMatch(/salaries|HR|layoffs|asked to remove/);
+    expect(JSON.parse(line)).toMatchObject({ reason: "Reviewed: routine for the request.", reviewChars: why.length, commandChars: 44 });
+  });
 });
 
 describe("policy: review round 4", () => {
@@ -1683,5 +1691,25 @@ describe("questions about an element without a name (live retest: 'Borrow your m
   });
   it("an unnamed text area isn't 'the text in the text'", () => {
     expect(plainQuestion(req({ kind: "text", element: { role: "text", name: "" }, value: "Hi", mode: "replace", currentText: "old" }))).toBe("Replace everything in the text area in Mousepad with “Hi”?");
+  });
+});
+
+describe("the limit on actions a minute (tasks-approvals-2)", () => {
+  it("paces rather than refuses for good: a step it turned away isn't counted, and it says when the next one fits", () => {
+    let now = 0;
+    const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ mousepad: "act" }), now: () => now, rateLimit: 3 });
+    for (let i = 0; i < 3; i++) expect(e.decide(req({})).verdict).toBe("allow");
+    expect(e.paceMs()).toBe(60_000);
+    now = 30_000;
+    // Asked again and again while it is full: paced each time, and none of those counts against the next minute.
+    for (let i = 0; i < 5; i++) expect(e.decide(req({}))).toMatchObject({ verdict: "deny", paced: true });
+    expect(e.paceMs()).toBe(30_000);
+    expect(e.perMinute).toBe(3);
+    now = 60_000;
+    expect(e.paceMs()).toBe(0);
+    expect(e.decide(req({})).verdict).toBe("allow");
+    // Still at most three in any 60 s.
+    for (let i = 0; i < 2; i++) expect(e.decide(req({})).verdict).toBe("allow");
+    expect(e.decide(req({}))).toMatchObject({ verdict: "deny", paced: true });
   });
 });

@@ -209,6 +209,46 @@ describe("a secret split across fields (review S2)", () => {
   });
 });
 
+describe("a disk's use and code that names a token, which hold no secret (memory-c4-2, memory-r4-2)", () => {
+  it("shows a disk's use as a label and value, and an auth module's code", () => {
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Root", value: "45G / 100G" }] }))).toBe(null);
+    expect(why(stack({ kind: "text", text: "Disk usage: root: 45GB / 100GB" }))).toBe(null);
+    expect(why(stack({ kind: "code", lines: ["export function verify(token: string): boolean {", "  return token.length > 0;", "}"] }))).toBe(null);
+  });
+
+  it("still refuses a password in code or as a label and value", () => {
+    expect(why(stack({ kind: "code", lines: ['const password = "Summer2024!";'] }))).toBe("secret");
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Admin", value: "admin / j3nkins!" }] }))).toBe("secret");
+  });
+});
+
+describe("a code block's line read with the lines before it (memory-w5-2)", () => {
+  it("shows an object whose last property is the same name as its variable", () => {
+    expect(why(stack({ kind: "code", lines: ["const auth = {", "  username: user,", "  password: password", "};"] }))).toBe(null);
+    expect(why(stack({ kind: "file", path: "src/auth.js", lines: ["auth = {", "  username: urlUsername,", "  password: urlPassword", "};"] }))).toBe(null);
+  });
+  it("still refuses a line that holds a password alone or after an object's opening", () => {
+    expect(why(stack({ kind: "code", lines: ["  password: password"] }))).toBe("secret");
+    expect(why(stack({ kind: "code", lines: ["const auth = {", "  password: hunter2", "};"] }))).toBe("secret");
+    expect(why(stack({ kind: "code", lines: ["Router password:", "hunter2 is my password"] }))).toBe("secret");
+  });
+  it("refuses a password under a section, a mapping or a hash's entry named for secrets, and shows a schema (safety-privacy-r5-1, safety-privacy-c5-1)", () => {
+    expect(why(stack({ kind: "file", path: "appsettings.json", lines: ["{", '  "Secrets": {', '    "Database": "Wint3r!Sh0p"', "  }", "}"] }))).toBe("secret");
+    expect(why(stack({ kind: "file", path: "vars.yml", lines: ["passwords:", "  db: Summer2024!"] }))).toBe("secret");
+    expect(why(stack({ kind: "code", lines: ["SMTP = {", "  :password => 'Kx7#pQ2!mz',", "}"] }))).toBe("secret");
+    expect(why(stack({ kind: "code", lines: ["password: {", "  type: String,", "  required: true", "}"] }))).toBe(null);
+  });
+});
+
+describe("a password's state as a label's value (memory-w5-3)", () => {
+  it.each([["Password", "Masked"], ["Password", "Hashed"], ["PIN", "Entered"]])("shows %s: %s", (label, value) => {
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Account", value: "priya@example.com" }, { label, value }] }))).toBe(null);
+  });
+  it("still refuses a value after the state", () => {
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Password", value: "hashed hunter2" }] }))).toBe("secret");
+  });
+});
+
 describe("ordinary paths and words that only look private (re-review S-d)", () => {
   it.each([
     "/private/tmp/report.txt", "/private/var/folders/x/notes.txt", "~/Documents/Talk.key", "My keyring is on the desk", "Keychains sync across Macs",

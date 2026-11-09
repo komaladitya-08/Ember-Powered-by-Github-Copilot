@@ -58,6 +58,7 @@ describe.skipIf(process.env.EMBER_SPEECH_CONSENT_TEST !== "1")("Home speech cons
         if (name === "voiceStatus") return async () => ({ state: "off", detail: null, modelsReady: false, modelsMissing: ["vad"], modelsBytes: 1_000_000 });
         if (name === "updateSettings") return (patch: unknown) => new Promise((resolve, reject) => { window.__calls.push(`save:${JSON.stringify(patch)}`); window.__saves.push({ resolve, reject }); });
         if (name === "downloadVoice") return async () => { window.__calls.push("download"); };
+        if (name === "cancelVoiceDownload") return async () => { window.__calls.push("cancel-download"); };
         return () => new Promise(() => undefined);
       } }) as never;
     }, { status });
@@ -88,6 +89,32 @@ describe.skipIf(process.env.EMBER_SPEECH_CONSENT_TEST !== "1")("Home speech cons
     expect(await page.locator("#consent-yes").getAttribute("aria-busy")).toBeNull();
     expect(await page.locator("#consent-yes").isEnabled()).toBe(true);
     expect(await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).checked)).toBe(false);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  it("says on the consent card that agreeing downloads the models, and offers Cancel while they download (voice-listening-6)", async () => {
+    const { page, errors, calls, open } = await freshHome();
+    await open();
+    const card = (await page.locator("#consent-text").innerText()).replace(/\s+/g, " ");
+    expect(card).toContain("Voice settings can turn this off. Agreeing also downloads the speech models (1 MB), once. If you teach Ember your voice,");
+    // Download pressed: its Cancel shows at once and takes focus.
+    await page.evaluate(() => { const b = document.getElementById("voice-download") as HTMLButtonElement; b.hidden = false; b.focus(); });
+    await page.locator("#voice-download").click();
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("voice-download-cancel");
+    expect(await page.locator("#voice-download-cancel").innerText()).toBe("Cancel download");
+    await page.evaluate(() => window.__emit("onVoiceStatus", { state: "downloading", detail: null, modelsReady: false, modelsMissing: ["vad"], modelsBytes: 1_000_000, downloading: true }));
+    expect(await page.locator("#voice-download-cancel").isVisible()).toBe(true);
+    await page.locator("#voice-download-cancel").click();
+    await expect.poll(() => calls("cancel-download")).toBe(1);
+    // Cancelled: the bar and Cancel go, the line says so, and focus goes back to Download.
+    await page.evaluate(() => window.__emit("onVoiceStatus", { state: "needs-models", detail: "Download cancelled.", modelsReady: false, modelsMissing: ["vad"], modelsBytes: 1_000_000 }));
+    expect(await page.locator("#voice-download-cancel").isHidden()).toBe(true);
+    expect(await page.locator("#voice-progress").isHidden()).toBe(true);
+    expect(await page.locator("#voice-text").innerText()).toBe("Download cancelled.");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("voice-download");
+    // Nothing missing: the card says nothing of a download.
+    await page.evaluate(() => window.__emit("onVoiceStatus", { state: "off", detail: null, modelsReady: true, modelsMissing: [], modelsBytes: 0 }));
+    expect(await page.locator("#consent-models").isHidden()).toBe(true);
     expect(errors).toEqual([]);
   }, 60_000);
 

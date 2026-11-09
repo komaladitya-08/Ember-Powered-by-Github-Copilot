@@ -26,6 +26,9 @@ export type Intro = z.infer<typeof IntroSchema>;
 const USER = [{ name: "User", kind: "person" as const }];
 const clean = (s: string | undefined) => (s ?? "").replace(/\s+/g, " ").trim().replace(/[.!]+$/, "");
 
+/** The fact for "spoken aloud" (Ember's speaking choice follows it: memory-5). */
+export const SPOKEN_FACT = "Likes answers spoken aloud";
+
 /** The facts an introduction gives (nothing for a skipped answer). */
 export function introFacts(a: Intro): NewFact[] {
   const out: NewFact[] = [];
@@ -37,7 +40,7 @@ export function introFacts(a: Intro): NewFact[] {
   const apps = clean(a.apps);
   if (apps) fact(`Uses these apps most: ${apps}`, "apps_most");
   if (a.length) fact(a.length === "short" ? "Prefers short answers" : "Prefers detailed answers", "answer_length");
-  if (a.spoken !== undefined) fact(a.spoken ? "Likes answers spoken aloud" : "Prefers answers not spoken aloud", "spoken_answers");
+  if (a.spoken !== undefined) fact(a.spoken ? SPOKEN_FACT : "Prefers answers not spoken aloud", "spoken_answers");
   const hours = clean(a.hours);
   if (hours) fact(`Timezone and working hours: ${hours}`, "working_hours");
   return out;
@@ -83,9 +86,22 @@ export function styleOf(said: string): Pick<Intro, "length" | "spoken"> {
   return out;
 }
 
+/** What comes before a name said aloud ("Call me Ram", "My name is Ram", "It's Ram", "Just Ram"). */
+const NAME_LEAD = /^(?:(?:(?:you\s+can|please|just)\s+)?call\s+me|my\s+name(?:\s+is|['’]s)|i['’]?m|i\s+am|it['’]?s|it\s+is|i\s+go\s+by|just)\s+/i;
+/** What comes after one ("Ram, please", "Ram, thanks", "Ram is fine"). */
+const NAME_TAIL = /(?:[,\s]+(?:please|thanks|thank\s+you|is\s+fine|will\s+do)|['’]s\s+fine)$/i;
+/** "Call me" and a short name after it: the name question's answer, not a call to make ("call me back later" is one). */
+const CALL_ME = /^(?:(?:you\s+can|please|just)\s+)?call\s+me\s+(?!(?:a|an|the|back|later|when|if|at|on|in|after|before|tomorrow|tonight|now|soon|about|to)\b)[^\s?]+(?:\s+[^\s?]+){0,3}[.!]*$/i;
+
+/** The name in an answer to "What should I call you?" as said, lead-in and "please" aside; all of it if nothing is left. */
+export function nameFrom(said: string): string {
+  const a = clean(said);
+  return a.replace(NAME_LEAD, "").replace(NAME_TAIL, "").replace(/[\s,;:]+$/, "") || a;
+}
+
 /** One answer as the facts it gives (a style answer that names neither length nor voice is kept as said). */
 export function answerFacts(key: IntroKey, said: string): NewFact[] {
-  const a = clean(said);
+  const a = key === "name" ? nameFrom(said) : clean(said);
   if (key === "style") {
     const st = styleOf(a);
     if (st.length || st.spoken !== undefined) return introFacts(st);
@@ -110,6 +126,9 @@ export class Interview {
 
   /** The question waiting for an answer. */
   get question(): string { return INTRO_QUESTIONS[this.at]?.ask ?? ""; }
+
+  /** `said` answers the question waiting though it reads like a request: "Call me Ram" to "What should I call you?" (memory-6). */
+  answers(said: string): boolean { return INTRO_QUESTIONS[this.at]?.key === "name" && CALL_ME.test(said.trim()); }
 
   answer(said: string, own: boolean): InterviewStep {
     const text = said.trim();

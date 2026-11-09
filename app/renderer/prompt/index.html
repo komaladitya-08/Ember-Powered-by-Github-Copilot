@@ -18,11 +18,12 @@
         <label id="field-label" for="field"></label>
         <input id="field" type="password" autocomplete="off" spellcheck="false" maxlength="1024">
       </form>
-      <p id="hint" class="hint" aria-live="polite" hidden></p>
+      <p id="hint" class="hint" aria-live="polite"></p>
       <div id="buttons" class="buttons"></div>
     </div>
-    <!-- Outside the card: a press's refusal stays readable when its card is pulled before the reply comes back. -->
-    <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
+    <!-- Outside the card: a press's refusal stays readable when its card is pulled before the reply comes back. Like the
+         hint, it is never hidden, only emptied, so a screen reader hears what fills it (accessibility-visual-c2-1). -->
+    <p id="notice" class="notice" role="status" aria-live="polite"></p>
   </main>
   <script src="main.js"></script>
 </body>

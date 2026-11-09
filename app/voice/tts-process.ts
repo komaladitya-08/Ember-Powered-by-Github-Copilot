@@ -11,7 +11,8 @@ import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, thr
 type FromMain =
   /** `model`: Kitten's folder; optional `natural`: Kokoro's folder. WASM can listen, but cannot make neural speech. */
   | { type: "init"; model: string; natural?: string | null; naturalVoice?: "kokoro" | "supertonic"; wasm?: boolean; capiDir?: string }
-  | { type: "say"; id: number; text: string }
+  /** `speed`: how fast it is said (the speaking speed setting), 1 as made. */
+  | { type: "say"; id: number; text: string; speed?: number }
   | { type: "hush"; id: number };
 
 /** Which voice speaks, its runtime/provider/threads, and measured generation seconds per playback second. */
@@ -45,8 +46,20 @@ let tts: Tts | null = null;
 let sid = 0;
 let rate = 24_000;
 let hushed = 0;
-const queue: { id: number; chunks: string[] }[] = [];
+const queue: { id: number; chunks: string[]; speed: number }[] = [];
 let busy = false;
+/**
+ * At most this much speech is made ahead of what the page has played. A chunk being made can't be stopped, so a reply
+ * that cuts in waits for it; made all at once, a long answer kept this process busy while it was heard
+ * (voice-speaking-10). A CHUNK_MAX chunk (about 7 s of speech) takes at most 3.5 s to make at NATURAL_MAX_RTF.
+ */
+const AHEAD_MS = 8_000;
+/**
+ * When the speech made so far will have played (performance.now(), which a clock set back can't move): on the page it
+ * can only end later, never sooner.
+ */
+let playsUntil = 0;
+let wait: ReturnType<typeof setTimeout> | null = null;
 
 const parent = process.parentPort;
 const send = (m: TtsProcessMessage) => parent.postMessage(m);
@@ -121,11 +134,15 @@ function step(): void {
   const item = queue[0];
   if (!item || !tts) { busy = false; return; }
   busy = true;
+  // Enough is made: the next chunk is made as playback nears it (a hush starts it at once).
+  const ahead = playsUntil - performance.now();
+  if (item.chunks.length && ahead > AHEAD_MS) { wait = setTimeout(() => { wait = null; step(); }, ahead - AHEAD_MS); return; }
   const chunk = item.chunks.shift();
   if (chunk !== undefined) {
     try {
-      const audio = tts.generate({ text: chunk, sid, speed: 1.0 });
+      const audio = tts.generate({ text: chunk, sid, speed: item.speed });
       if (!audio.samples.length) throw new Error("The voice produced no audio.");
+      playsUntil = Math.max(playsUntil, performance.now()) + (audio.samples.length / audio.sampleRate) * 1000;
       if (item.id > hushed) send({ type: "audio", id: item.id, samples: audio.samples, rate: audio.sampleRate, remaining: item.chunks.join(" ") });
     } catch (err) {
       // Main lets the local system voice say only the ungenerated remainder.
@@ -159,10 +176,15 @@ parent.on("message", e => {
   } else if (m.type === "say") {
     const chunks = speechChunks(m.text);
     if (!chunks.length) { send({ type: "done", id: m.id }); return; }
-    queue.push({ id: m.id, chunks });
+    // The speaking speed as settings keep it (0.8 to 1.4); anything else is said as made.
+    const speed = typeof m.speed === "number" && m.speed >= 0.8 && m.speed <= 1.4 ? m.speed : 1;
+    queue.push({ id: m.id, chunks, speed });
     // On the next turn: a hush sent right after (a new answer cutting this one off) is heard first.
     if (!busy) { busy = true; setImmediate(step); }
   } else if (m.type === "hush") {
     hushed = Math.max(hushed, m.id);
+    // Every reply made so far is hushed (main hushes up to its latest), and the page stopped playing it.
+    playsUntil = 0;
+    if (wait) { clearTimeout(wait); wait = null; setImmediate(step); }
   }
 });

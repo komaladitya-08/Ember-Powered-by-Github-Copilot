@@ -170,17 +170,18 @@ describe("the setup check in the settings window", () => {
 
   it("stays on the first-run screen until Start once a row needed the user, so fixing one row never hides the others (review #94)", () => {
     const v1 = setupView(MAC_FIRST, first);
-    expect(v1).toMatchObject({ failing: 1, needing: 3, open: true, beforeStart: true, note: "1 thing to fix" });
+    expect(v1).toMatchObject({ failing: 1, held: 3, needing: 3, open: true, beforeStart: true, note: "3 things to fix" });
     // Accessibility allowed: Screen Recording and Input Monitoring keep their buttons on screen.
     const v2 = setupView(allowed(MAC_FIRST, "accessibility"), { opened: true, beforeStart: v1.beforeStart });
-    expect(v2).toMatchObject({ failing: 0, needing: 2, open: false, beforeStart: true, note: "2 things worth a look" });
+    // Each of them still holds Ember back, so it is still to fix, as first run says (first-run-5).
+    expect(v2).toMatchObject({ failing: 0, held: 2, needing: 2, open: false, beforeStart: true, note: "2 things to fix" });
     // Everything allowed: the list (all OK) stays where the user was working until Start.
     expect(setupView(allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"), { opened: true, beforeStart: v2.beforeStart }))
       .toMatchObject({ needing: 0, beforeStart: true, note: "All good" });
   });
 
   it("opens and shows before Start for a warning with a fix, such as Linux's accessibility switch (review #161)", () => {
-    expect(setupView(LINUX_A11Y_OFF, first)).toMatchObject({ failing: 0, needing: 1, open: true, beforeStart: true, note: "1 thing worth a look" });
+    expect(setupView(LINUX_A11Y_OFF, first)).toMatchObject({ failing: 0, held: 1, needing: 1, open: true, beforeStart: true, note: "1 thing to fix" });
     // A warning with nothing to do keeps the fold shut and the first-run screen as it was.
     const other = LINUX_A11Y_OFF.map(r => (r.id === "accessibility" ? { id: r.id, label: r.label, status: "ok" as const } : r.id === "os" ? { ...r, status: "warn" as const } : r));
     // The note counts what the tagline and the sidebar's badge count: nothing needs the user, so all is good (UI audit #6).
@@ -209,8 +210,8 @@ describe("the line under the title in first run", () => {
 
   it("counts what fails once Ember has started, and says computer (review #160)", () => {
     // The sentence fix/bubble pins too (ui-copy.test.ts), word for word.
-    expect(tagline({ ...base, failing: 1 })).toBe("Ember needs 1 thing fixed before it can work on this computer.");
-    expect(tagline({ ...base, failing: 2 })).toBe("Ember needs 2 things fixed before it can work on this computer.");
+    expect(tagline({ ...base, failing: 1 })).toBe("Needs 1 thing fixed before it can work on this computer.");
+    expect(tagline({ ...base, failing: 2 })).toBe("Needs 2 things fixed before it can work on this computer.");
   });
 });
 
@@ -275,10 +276,65 @@ describe("Ember's hello once it starts", () => {
     });
   });
 
+  it("points to my own provider's note, never to Copilot, while it waits with no GitHub sign-in (integrations-v4-3)", () => {
+    const host = "127.0.0.1:19110";
+    const ask = `I need your OK for ${host} first.`;
+    expect(hello(at({ phase: "signed-out", providerWaiting: host, rows: MAC_FIRST }))).toEqual({
+      thought: `${ask} Open settings (Ctrl+Alt+E) and agree to use it in Models & connections, or turn off “Use my own model provider”.`,
+      mood: "attention", actions: settingsButton, holdMs: 15000,
+    });
+    expect(hello(at({ phase: "signed-out", providerWaiting: host, settingsKey: null })).thought).toBe(`${ask} Open settings and agree to use it in Models & connections, or turn off “Use my own model provider”.`);
+    expect(hello(at({ phase: "signed-out", providerWaiting: host, settingsOpen: true }))).toEqual({
+      thought: `${ask} Agree to use it in Models & connections in the settings window, or turn off “Use my own model provider”.`,
+      mood: "attention", actions: [], holdMs: 15000,
+    });
+    for (const more of [{}, { settingsOpen: true }, { settingsKey: null }]) {
+      expect(hello(at({ phase: "signed-out", providerWaiting: host, ...more })).thought, JSON.stringify(more)).not.toMatch(/GitHub|Copilot|\bconnect\b/);
+    }
+    // Only signed out: with a GitHub sign-in Copilot answers until the note is agreed, as ever.
+    expect(hello(at({ phase: "error", providerWaiting: host }))).toEqual(hello(at({ phase: "error" })));
+    expect(hello(at({ providerWaiting: host }))).toEqual(hello(at({})));
+    expect(hello(at({ phase: "signed-out", providerWaiting: null }))).toEqual(hello(at({ phase: "signed-out" })));
+    // main gives the hello the host the note waits for, as it gives the host's answers (providerWaiting), signed out only.
+    const greet = MAIN.slice(MAIN.indexOf("  const greet = () => {"), MAIN.indexOf("  const busyTasks = "));
+    expect(greet).toContain("const providerWaiting = phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null;");
+    expect(greet).toMatch(/hello\(\{[^}]*\bproviderWaiting, service, cannotWork \}\)/);
+  });
+
   it("waits for the network without a button when offline at start", () => {
     expect(hello(at({ phase: "error", waiting: true, rows: MAC_FIRST }))).toEqual({
       thought: "I can't reach GitHub yet: I'll connect as soon as the network is back.", mood: "error", actions: [], holdMs: 15000,
     });
+  });
+
+  it("names the user's own provider or the organisation's service that can't be reached, never GitHub, Copilot or the network (first-run-r1)", () => {
+    const local = { kind: "user", host: "localhost:11434" };
+    const remote = { kind: "user", host: "api.example.com" };
+    const org = { kind: "admin", host: "models.corp.example" };
+    // A retry waits: what it waits for, and for a model server on this computer, that it isn't running.
+    expect(hello(at({ phase: "error", waiting: true, service: local }))).toEqual({
+      thought: "I can't reach the model server on this computer (localhost:11434) yet. Start it, and I'll connect in a moment.", mood: "error", actions: [], holdMs: 15000,
+    });
+    expect(hello(at({ phase: "error", waiting: true, service: { kind: "user", host: "[::1]:1234" } })).thought).toContain("on this computer ([::1]:1234)");
+    expect(hello(at({ phase: "error", waiting: true, service: remote })).thought).toBe("I can't reach your model provider (api.example.com) yet. I'll connect as soon as it answers.");
+    expect(hello(at({ phase: "error", waiting: true, service: org })).thought).toBe("I can't reach your organisation's model service (models.corp.example) yet. I'll connect as soon as it answers.");
+    // Not connected: where to see why, by the settings window and the key Ember holds.
+    expect(hello(at({ phase: "error", service: remote }))).toEqual({
+      thought: "I can't connect to your model provider (api.example.com) yet. Open settings (Ctrl+Alt+E) to see why.", mood: "attention", actions: settingsButton, holdMs: 15000,
+    });
+    expect(hello(at({ phase: "error", service: remote, settingsKey: null })).thought).toBe("I can't connect to your model provider (api.example.com) yet. Open settings to see why.");
+    expect(hello(at({ phase: "error", service: org, settingsOpen: true })).thought).toBe("I can't connect to your organisation's model service (models.corp.example) yet: Models & connections in the settings window says why.");
+    for (const service of [local, remote, org]) {
+      for (const more of [{ waiting: true }, { waiting: false }, { settingsOpen: true }]) {
+        expect(hello(at({ phase: "error", service, ...more })).thought, JSON.stringify([service, more])).not.toMatch(/GitHub|Copilot|network/);
+      }
+    }
+    // Connected through it: as ever.
+    expect(hello(at({ service: remote }))).toEqual(hello(at({})));
+    // main gives the hello the connection's service.
+    const greet = MAIN.slice(MAIN.indexOf("  const greet = () => {"), MAIN.indexOf("  const busyTasks = "));
+    expect(greet).toContain("const service = agent?.getStatus().service;");
+    expect(greet).toMatch(/hello\(\{[^}]*\bservice, cannotWork \}\)/);
   });
 
   it("says first why Ember can't work here at all, in place of everything else", () => {
@@ -323,9 +379,9 @@ describe("the settings window's setup badge and line", () => {
     expect(setupBadge(3, 1)).toEqual({ text: "1", label: ", 1 thing to fix", tone: "fail" });
     expect(setupBadge(2, 0)).toEqual({ text: "2", label: ", 2 things worth a look", tone: "warn" });
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
-    expect(tagline({ ...base, look: 1 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything. The setup check has 1 thing worth a look.");
-    expect(tagline({ ...base, look: 2 }, "Win+Alt+Space")).toBe("Ember is beside your cursor. Press Win+Alt+Space to ask it anything. The setup check has 2 things worth a look.");
-    expect(tagline({ ...base, look: 0 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
+    expect(tagline({ ...base, look: 1 })).toBe("Beside your cursor. Press Ctrl+Alt+Space to ask anything. The setup check has 1 thing worth a look.");
+    expect(tagline({ ...base, look: 2 }, "Win+Alt+Space")).toBe("Beside your cursor. Press Win+Alt+Space to ask anything. The setup check has 2 things worth a look.");
+    expect(tagline({ ...base, look: 0 })).toBe("Beside your cursor. Press Ctrl+Alt+Space to ask anything.");
     // Before Start the instruction stays (review #160).
     expect(tagline({ ...base, onboarded: false, look: 2 })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");
   });
@@ -354,7 +410,9 @@ const doctorRow = (i: EnvInputs, id: string) => doctorChecks({
 describe("Linux's accessibility switch after Turn on", () => {
   it("keeps saying that apps already open need a restart, for as long as this Ember runs (review #98)", () => {
     const on = linux({ applied: ["enable-accessibility"] });
-    expect(row(on, "accessibility")).toMatchObject({ status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them." });
+    expect(row(on, "accessibility")).toMatchObject({ status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them.", next: true });
+    // So first run keeps the row (first-run-3); a row switched on before Ember started has nothing left to do.
+    expect(row(linux(), "accessibility")?.next).toBeUndefined();
     // Switched on before Ember started (or by hand): nothing to restart for Ember's sake.
     expect(row(linux(), "accessibility")?.detail).toBe("Accessibility is on");
     expect(afterFix([], "enable-accessibility")).toEqual(["enable-accessibility"]);
@@ -508,13 +566,19 @@ describe("the settings window when no voice speaks", () => {
   });
 
   it("says so under the Speak switch, and reads the setup check again when it changes (review #101)", () => {
-    expect(SPEAK_NO_VOICE).toBe("Ember couldn't speak: no local voice is available for your language. Your reply is still in the bubble. The setup check says how to add a voice.");
+    // Not begun with the name: said into the wake word's microphone, "Ember couldn't speak: …" woke Ember and was sent as
+    // a request in 20 of 20 real-model placements (voice-listening-r4-2).
+    expect(SPEAK_NO_VOICE).toBe("Your reply wasn't spoken: no local voice is available for your language. It's still in the bubble, and the setup check says how to add a voice.");
+    expect(SPEAK_NO_VOICE).not.toMatch(/\bEmber\b/);
     // Under the Speak control in the Voice section, whatever that control is (fix/voice makes it a <select>).
     const at = PAGE.indexOf("aria-labelledby=\"voice-h\"");
     const voice = PAGE.slice(at, PAGE.indexOf("</section>", at));
     expect(voice.indexOf("id=\"speak-note\"")).toBeGreaterThan(voice.indexOf("id=\"speak\""));
     expect(voice.indexOf("id=\"speak\"")).toBeGreaterThan(0);
-    expect(tagOf("speak-note")).toEqual({ tag: "p", attrs: { class: "hint", id: "speak-note", role: "status", hidden: "" } });
+    // Shown at once, and said through a status line of its own, on the page while empty, so its words are announced as
+    // they come (accessibility-visual-c1-1), never while the microphone is open for a request (voice-listening-r4-2).
+    expect(tagOf("speak-note")).toEqual({ tag: "p", attrs: { class: "hint", id: "speak-note" } });
+    expect(tagOf("speak-live")).toEqual({ tag: "p", attrs: { class: "sr", id: "speak-live", role: "status" } });
   });
 });
 
@@ -591,7 +655,7 @@ describe("the call sites", () => {
     for (const call of [
       "setupView(environment.checks", // renderChecks (#94, #160, #161)
       "toggle(\"after-setup\", !checksBeforeStart)", // the check before Start (#94)
-      "renderSetupBadge(view.needing, failing)", // the sidebar's badge (#95)
+      "renderSetupBadge(view.needing, failing, view.held)", // the sidebar's badge (#95, first-run-5)
       "[c.fix, c.alt]", // a row's second button (#99)
       "turnedOffWords(a.features, platform?.os)", // the policy line (#221; admin-copy.ts)
       "v.speechMissing === true", // the note under Speak (#101)

@@ -17,7 +17,12 @@ export interface SeesView {
   full: string;
 }
 
-const PRIVATE = "Ember won't look at this window";
+/**
+ * In the first person, as the box's other lines are, never with Ember's name: a screen reader says them as the box
+ * opens, into the wake word's microphone, and "Ember will see: <window>…" woke Ember and sent the window's title as a
+ * request in 20 of 20 real-model placements ("Ember won't look at this window." in 17 of 20; voice-listening-i5).
+ */
+const PRIVATE = "I won't look at this window";
 const s = (n: number) => (n === 1 ? "" : "s");
 
 /** What the chip says for `c`; null when Ember will see nothing (nothing is shown). */
@@ -38,8 +43,41 @@ export function seesView(c: Pick<AskContext, "sees" | "carries" | "privateWindow
     text: c.sees,
     extra: short.length ? `+ ${short.join(", ")}` : "",
     brief: fewer.length ? `+ ${fewer.join(", ")}` : "",
-    full: `Ember will see: ${c.sees}${joined ? `, with ${joined}` : ""}.`,
+    full: `I'll see: ${c.sees}${joined ? `, with ${joined}` : ""}.`,
   };
+}
+
+/**
+ * What the box says at the start of the line under its field while Ember can't answer a request (companion-6): the
+ * handle's word for why (`word`: host.ts unansweredWord), then that a request would get no answer yet. An ellipsis
+ * ("Reconnecting…") is dropped before the colon. Null while Ember can answer.
+ */
+export function unavailableLine(word: string | undefined): string | null {
+  return word ? `${word.replace(/…$/, "")}: I can't answer yet` : null;
+}
+
+/** Said in the live region when Ember can answer again while the box is open (companion-6: it still said "Offline"). */
+export const ANSWERS_AGAIN = "I can answer again.";
+
+/**
+ * What the box's live region held while the microphone was open for a request, one slot for each kind of line: what
+ * it said of the window before the first change came (`seesFrom`), why Ember couldn't answer before the first change
+ * came ("" when it could: `cantFrom`), and that the request went over the most that is sent (`over`). Unset: no change.
+ */
+export interface HeldNews { seesFrom?: string; cantFrom?: string; over?: boolean }
+
+/**
+ * What the live region says once the microphone has closed (voice-listening-v5-2): each kind of line as it stands now
+ * (`now`: what the chip says, why Ember can't answer or "", whether the request is still over), only where that
+ * differs from before the hold, the window first, each ending as a sentence; "" for nothing. A line a later one
+ * overtook isn't said: offline and back meanwhile said "Offline: I can't answer yet I'll see: … I can answer again."
+ */
+export function heldNewsLine(held: HeldNews, now: { sees: string; cant: string; over: boolean }, overLine: string): string {
+  const lines: string[] = [];
+  if (held.seesFrom !== undefined && now.sees && now.sees !== held.seesFrom) lines.push(now.sees);
+  if (held.cantFrom !== undefined && now.cant !== held.cantFrom) lines.push(now.cant || ANSWERS_AGAIN);
+  if (held.over && now.over) lines.push(overLine);
+  return lines.map(l => (/[.!?…]$/.test(l) ? l : `${l}.`)).join(" ");
 }
 
 /**

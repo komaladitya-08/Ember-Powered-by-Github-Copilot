@@ -6,6 +6,7 @@ import { z } from "zod";
 import { memoryRefusal } from "../memory/guard";
 import type { ProjectMode, ProjectSelection } from "../../shared/ipc";
 import type { ProjectExchange } from "./project-workspaces";
+import { friendlyError, type ServiceKind } from "./presenter";
 
 export const PROJECT_FILES = 6;
 const FILE_BYTES = 24 * 1024;
@@ -13,6 +14,72 @@ const TOTAL_BYTES = 64 * 1024;
 const textFile = /\.(?:[cm]?[jt]sx?|py|go|rs|rb|java|kt|swift|cs|[ch](?:pp)?|sh|ps1|css|html|sql|json|toml|ya?ml|md|rst|txt|diff|patch)$/i;
 const privateName = /(?:^\.|secret|credential|passwd|password|private.?key|token|\.lock$)/i;
 export class ProjectInputError extends Error {}
+
+/** Why a project request's model call failed, as the model service said it (never the prompt, which holds the files). */
+export interface ProjectModelFailure { message: string; errorType?: string; statusCode?: number; timedOut?: boolean }
+/** A project request the model service refused or couldn't finish: `message` is one plain sentence for Projects. */
+export class ProjectModelError extends Error {}
+/** The generic sentence, kept only for a failure nothing says more about. */
+export const PROJECT_MODEL_FAILED = "The model didn't finish the project request. Try again.";
+
+/**
+ * What a change of Ember's connection does to the Projects pane's work (integrations-r1): `keep` it, drop only the
+ * `previous` request and answer as context for the next send, or forget `all` of it. The organisation's lockdown
+ * forgets it all; Sign out and an account change do too, but from where they happen (main's sign-out handler,
+ * onAccountChanged), never from a "signed-out" status, which with no GitHub sign-in also means only that the user's
+ * own provider is off or waits for its card for a new address (integrations-c2-1). That, a reconnect, a model service
+ * out of reach for now, Copilot not answering or a refused sign-in keep the chosen files, the request, the answer and
+ * its diff: only sending waits. Once ready with another owner than the answer's (projectWorkspaceScope: another model
+ * service, address, key or GitHub account, or one not verified), the answer stays in view but is never sent there.
+ */
+export function projectAfterStatus(s: { phase: string; reason?: string }, exchange: { scope: string | null } | null, scopeNow: string | null): "keep" | "previous" | "all" {
+  if (s.phase === "error" && s.reason === "policy") return "all";
+  if (exchange && s.phase === "ready" && exchange.scope !== scopeNow) return "previous";
+  return "keep";
+}
+
+/**
+ * Whether a Projects action may run now. Each needs consent, an unlocked screen, actions not turned off (LOCKDOWN turns
+ * them off) and the settings window in view (`shown`). What reaches the model service (`send`: choosing what goes,
+ * sending, workspaces, commands) waits for a connection too; work on what is kept here (`local`: export, a file's
+ * Remove, applying the reviewed patch) sends nothing, so it doesn't (integrations-r3-2).
+ */
+export function projectMay(kind: "send" | "local", o: { consented: boolean; locked: boolean; actions: boolean; shown: boolean; ready: boolean }): boolean {
+  return o.consented && !o.locked && o.actions && o.shown && (kind === "local" || o.ready);
+}
+
+/**
+ * Whether a change of Ember's connection stops the Projects job under way: one that reaches the model service (`send`)
+ * stops as soon as Ember isn't ready; Apply patch's confirmation (`local`) sends nothing, so a reconnect try (Copilot's
+ * retries post "starting" while offline) leaves it up. Stop everything, the screen lock, Sign out and the lockdown stop
+ * either (integrations-v4-2).
+ */
+export function projectJobStops(kind: "send" | "local", phase: string): boolean {
+  return kind === "send" && phase !== "ready";
+}
+
+/** Said instead of sending a previous answer to another model service or account than the one that gave it (integrations-r1). */
+export const PROJECT_PREVIOUS_ELSEWHERE = "The previous answer came from another model service or account, so Ember didn't send it there. Send again without it.";
+
+/** A project request that ended before its answer: the person's Cancel, or the connection dropping under it (integrations-r1). */
+export function projectStopped(connectionLost: boolean): string {
+  return connectionLost ? "Ember lost its connection, so the request stopped. Send it again once Ember is connected." : "Project request cancelled.";
+}
+
+/**
+ * What Projects says when the model call failed (integrations-5): the conversation's own sentence for the cause
+ * (friendlyError: a refused key, a usage limit, a model that isn't there, the service down), and words of its own where
+ * a project differs, a request over the model's limit (the files, not the conversation) and the two-minute wait.
+ */
+export function projectFailureText(f: ProjectModelFailure | null, ctx: { provider?: ServiceKind; settingsKey?: string | null; local?: boolean } = {}): string {
+  if (!f) return PROJECT_MODEL_FAILED;
+  if (f.timedOut) return "The model took more than two minutes over it. Try fewer or smaller files, or a shorter request.";
+  const m = `${f.errorType ?? ""} ${f.message}`;
+  if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens|context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) {
+    return "The selected files and request are more than the model can take in at once. Choose fewer or smaller files.";
+  }
+  return friendlyError(f.message, f.errorType, { statusCode: f.statusCode, provider: ctx.provider, settingsKey: ctx.settingsKey, local: ctx.local });
+}
 
 export const projectRequest = z.object({
   mode: z.enum(["review", "plan", "patch"]),
@@ -27,7 +94,7 @@ export function projectCommandFolder(folder: string, privateDir: string) {
   const resolved = fsSync.realpathSync(folder);
   const relative = path.relative(fsSync.realpathSync(privateDir), resolved);
   if (/^[\\/]{2}|[\p{Cc}\p{Cf}]/u.test(resolved) || !relative || (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative))) {
-    throw new ProjectInputError("Choose a local folder outside Ember’s data folder.");
+    throw new ProjectInputError("Choose a local folder outside Ember's data folder.");
   }
   const selected = fsSync.lstatSync(resolved);
   if (!selected.isDirectory()) throw new ProjectInputError("Choose a project folder.");
@@ -82,11 +149,40 @@ export function removeProjectFile(files: readonly string[], name: unknown): stri
 
 export interface ProjectSource { name: string; file: string; resolved: string; text: string; stat: Stats; digest: string; bom: boolean }
 
+/**
+ * The line where memory's secret guard first finds what looks like a password, token or key in `text`: the first line
+ * it refuses with all the lines above it, found by halving (a dozen looks for a 24 KiB file), or null when the whole
+ * text passes. It only points the person at the line (integrations-r4-1): the refusal is always the whole text's.
+ */
+export function secretLine(text: string): number | null {
+  const lines = text.split("\n");
+  const refuses = (n: number) => memoryRefusal(lines.slice(0, n).join("\n")) !== null;
+  if (!refuses(lines.length)) return null;
+  let passes = 0, refused = lines.length;
+  while (refused - passes > 1) {
+    const mid = (passes + refused) >> 1;
+    if (refuses(mid)) refused = mid; else passes = mid;
+  }
+  return refused;
+}
+
+/** Which chosen files look like they hold a secret, and the line in each, so the person removes only those (integrations-r4-1). */
+export function projectSecretFiles(found: readonly { name: string; line: number | null }[]): string {
+  if (found.length === 1) {
+    const [{ name, line }] = found;
+    return `${name} appears to contain a password, token or key${line ? ` on line ${line}` : ""}. Remove that file or the value, then send again.`;
+  }
+  const named = found.map(f => f.line ? `${f.name} (line ${f.line})` : f.name);
+  return `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]} appear to contain a password, token or key. Remove those files or the values, then send again.`;
+}
+
 /** Reads only the selected regular files. A changed file is retried by the user, never sent partly. */
 export async function projectPrompt(files: readonly string[], mode: ProjectMode, question: string, signal: AbortSignal, privateDir: string, snapshots?: ProjectSource[], previous?: ProjectExchange | null): Promise<string> {
   const names = projectNames(files);
   if (memoryRefusal(question)) throw new ProjectInputError("Remove passwords, tokens and keys from the request.");
   const sources: { name: string; text: string }[] = [];
+  // Every chosen file is looked at before refusing, so the refusal names each one that holds a secret (integrations-r4-1).
+  const secrets: { name: string; line: number | null }[] = [];
   const privateRoot = (await fs.realpath(privateDir)).toLowerCase();
   let total = 0;
   for (const [index, file] of files.entries()) {
@@ -116,7 +212,7 @@ export async function projectPrompt(files: readonly string[], mode: ProjectMode,
       try { text = new TextDecoder("utf-8", { fatal: true }).decode(data.subarray(0, length)); }
       catch { throw new ProjectInputError("Choose UTF-8 text files."); }
       if (text.includes("\0")) throw new ProjectInputError("Choose UTF-8 text files.");
-      if (memoryRefusal(text)) throw new ProjectInputError("A selected file appears to contain a password, token or key.");
+      if (memoryRefusal(text)) { secrets.push({ name: names[index], line: secretLine(text) }); continue; }
       sources.push({ name: names[index], text });
       if (snapshots) {
         const bytes = data.subarray(0, length);
@@ -128,6 +224,7 @@ export async function projectPrompt(files: readonly string[], mode: ProjectMode,
     }
   }
   signal.throwIfAborted();
+  if (secrets.length) throw new ProjectInputError(projectSecretFiles(secrets));
   const action = {
     review: "Review the selected files. Give concrete findings with file and line references.",
     plan: "Plan the requested change. Include files likely to change and how to verify it.",

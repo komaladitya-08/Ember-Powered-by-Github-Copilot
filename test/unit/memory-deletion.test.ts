@@ -3,10 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryService } from "../../app/main/memory/service";
+import { MemoryService, UNDO_FORGET_MS } from "../../app/main/memory/service";
 import { memoryFile } from "../../app/main/memory/store";
 import { SemanticMemory, vectorFile } from "../../app/main/memory/embed";
 import { MemoryLearning } from "../../app/main/memory/learning";
+import type { Fact } from "../../app/main/memory/graph";
+import { applyRefinement, recentFacts } from "../../app/main/memory/refine";
+import { FORGET_THAT_MS, NOTHING_TO_FORGET, forgotReply } from "../../app/main/memory/questions";
+import { memoryForgottenText } from "../../app/renderer/home/copy";
 
 const dirs: string[] = [];
 const failure = () => { throw Object.assign(new Error("read-only filesystem"), { code: "EROFS" }); };
@@ -115,8 +119,9 @@ describe("durable memory deletion", () => {
     l.introduce({ name: "Ram" }); s.memory.flush();
     const id = s.memory.list()[0].id;
     expect(l.forget(id)).toBe(true);
-    expect(forgot).toHaveBeenCalledWith(id);
-    expect(l.intent("forget that", { own: true })).toBeNull();
+    expect(forgot).toHaveBeenCalledWith(id, expect.objectContaining({ undo: expect.any(String) }));
+    // Nothing kept lately: said so in code, never left to the model (memory-v1).
+    expect(l.intent("forget that", { own: true })).toBe(NOTHING_TO_FORGET);
     l.introduce({ work: "Artist" }); s.memory.flush();
     const original = s.memory.list(), erase = vi.spyOn(s.file, "erase").mockImplementation(failure);
     expect(() => l.forgetAll()).toThrow(/couldn't finish deleting/);
@@ -126,7 +131,8 @@ describe("durable memory deletion", () => {
     expect(() => l.forgetAll()).not.toThrow();
     expect(forgotAll).toHaveBeenCalledOnce();
     expect(s.memory.list()).toEqual([]);
-    expect(l.intent("forget that", { own: true })).toBeNull();
+    // Nothing kept lately: said so in code, never left to the model (memory-v1).
+    expect(l.intent("forget that", { own: true })).toBe(NOTHING_TO_FORGET);
     s.memory.stop();
   });
 
@@ -150,5 +156,173 @@ describe("durable memory deletion", () => {
     expect(s.vectors.load("a".repeat(64)).ids()).not.toContain(id);
     s.memory.forgetAll(); await s.semantic.catchUp(); s.semantic.flush();
     expect(fs.existsSync(s.vectors.path)).toBe(false); s.memory.stop();
+  });
+});
+
+describe("forgetting a fact forgets what Ember made from it (memory-3)", () => {
+  /** Two of the user's facts, then one idle pass's summary and guess drawn from them both. */
+  function refined() {
+    const s = setup();
+    s.memory.remember("Works at Globex on the billing team", [{ name: "User", kind: "person" }, { name: "Globex", kind: "organisation" }], "remember that I work at Globex on the billing team");
+    s.memory.remember("Has a medical appointment every Tuesday", [{ name: "User", kind: "person" }], "remember that I have a medical appointment every Tuesday");
+    let shown: Fact[] = [];
+    s.memory.refine(g => { shown = recentFacts(g, null); return 0; });
+    s.memory.refine(g => {
+      const r = applyRefinement(g, {
+        summaries: [{ entity: "User", summary: "Works at Globex on billing and has a medical appointment every Tuesday" }], contradictions: [],
+        reflections: [{ fact: "Is usually busy on Tuesdays because of medical appointments", about: [{ name: "User", kind: "person" }], from: shown.map(f => f.id) }],
+      }, shown);
+      return r.summaries + r.reflections;
+    });
+    const id = (start: string) => s.memory.list().find(i => i.text.startsWith(start))!.id;
+    return { ...s, id };
+  }
+
+  it("leaves none of a forgotten fact's summary or guess in the list or in what goes to Copilot", async () => {
+    const s = refined();
+    expect(s.memory.list().map(i => [i.text, i.kind ?? null])).toEqual(expect.arrayContaining([
+      ["Works at Globex on billing and has a medical appointment every Tuesday", "summary"],
+      ["Is usually busy on Tuesdays because of medical appointments", "guess"],
+    ]));
+    expect(s.memory.forget(s.id("Has a medical"))).toBe(true);
+    expect(s.memory.list().map(i => i.text)).toEqual(["Works at Globex on the billing team"]);
+    const sent = await s.memory.context("Am I free on Tuesday? Medical appointment?");
+    expect(sent).not.toMatch(/Tuesday|medical/i);
+    expect(new MemoryService({ dir: s.dir, log: s.log }).list().map(i => i.text)).toEqual(["Works at Globex on the billing team"]);
+    s.memory.stop();
+  });
+
+  it("forgets what Ember made from a fact the user corrects, since it holds the old words", () => {
+    const s = refined();
+    const fact = s.memory.list().find(i => i.text.startsWith("Has a medical"))!;
+    s.memory.correct(fact, "Has a dentist appointment every Tuesday");
+    expect(s.memory.list().map(i => i.text).sort()).toEqual(["Has a dentist appointment every Tuesday", "Works at Globex on the billing team"]);
+    s.memory.stop();
+  });
+
+  it("keeps the notes and their vectors when a correction that would forget them can't be saved (memory-3)", async () => {
+    const s = refined();
+    await s.semantic.catchUp();
+    const before = s.memory.list(), vectors = s.semantic.size;
+    const fact = before.find(i => i.text.startsWith("Has a medical"))!;
+    const save = vi.spyOn(s.file, "save").mockImplementation(failure);
+    expect(() => s.memory.correct(fact, "Has a dentist appointment every Tuesday")).toThrow(/couldn't save this correction/);
+    save.mockRestore();
+    expect(s.memory.list()).toEqual(before);
+    await s.semantic.catchUp();
+    expect(s.semantic.size).toBe(vectors);
+    s.memory.stop();
+  });
+
+  it("also forgets an older summary of the same thing that has no record of what it came from", () => {
+    const s = setup();
+    s.memory.remember("Has a medical appointment every Tuesday", [{ name: "User", kind: "person" }], "remember that I have a medical appointment every Tuesday");
+    s.memory.refine(g => g.add({ text: "Has a medical appointment every Tuesday and works late", about: [{ name: "User" }], predicate: "summary", single: true, source: "conversation", confidence: 0.5 }).kind === "added" ? 1 : 0);
+    const fact = s.memory.list().find(i => i.text === "Has a medical appointment every Tuesday")!;
+    expect(s.memory.forget(fact.id)).toBe(true);
+    expect(s.memory.list()).toEqual([]);
+    s.memory.stop();
+  });
+
+  it("says how many of Ember's own notes went with it", () => {
+    const s = refined();
+    expect(s.memory.forgetCounted(s.id("Has a medical"))).toEqual({ text: "Has a medical appointment every Tuesday", derived: 2, undo: expect.any(String) });
+    expect(forgotReply("Has a medical appointment every Tuesday", 2)).toBe("Forgotten: “Has a medical appointment every Tuesday”, and 2 notes I made from it.");
+    expect(forgotReply("Likes tea", 1)).toBe("Forgotten: “Likes tea”, and a note I made from it.");
+    expect(forgotReply("Likes tea")).toBe("Forgotten: “Likes tea”.");
+    s.memory.stop();
+  });
+});
+
+describe("Undo after Forget (memory-v2, memory-7)", () => {
+  it("puts a forgotten fact back exactly, with what it had replaced closed again and its vector, for a short while", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-11-07T10:00:00Z") });
+    const s = setup();
+    s.memory.remember("Lives in Leeds", [{ name: "User" }], "I live in Leeds", "lives_in");
+    s.memory.remember("Lives in York", [{ name: "User" }], "I live in York", "lives_in");
+    s.memory.flush(); await s.semantic.catchUp();
+    const before = s.file.load().toJSON();
+    const york = s.memory.list().find(i => i.text === "Lives in York")!;
+    const gone = s.memory.forgetCounted(york.id)!;
+    expect(s.memory.list().map(i => i.text)).toEqual(["Lives in Leeds"]);
+    expect(s.memory.restore(gone.undo)).toBe(true);
+    expect(s.file.load().toJSON()).toEqual(before);
+    expect(s.memory.list().map(i => i.text)).toEqual(["Lives in York"]);
+    await s.semantic.catchUp();
+    expect(s.semantic.size).toBe(2);
+    // Once only, and not after UNDO_FORGET_MS or Forget everything.
+    expect(s.memory.restore(gone.undo)).toBe(false);
+    const again = s.memory.forgetCounted(york.id)!;
+    vi.advanceTimersByTime(UNDO_FORGET_MS + 1);
+    expect(s.memory.restore(again.undo)).toBe(false);
+    const leeds = s.memory.forgetCounted(s.memory.list()[0].id)!;
+    s.memory.forgetAll();
+    expect(s.memory.restore(leeds.undo)).toBe(false);
+    expect(s.memory.list()).toEqual([]);
+    s.memory.stop();
+  });
+
+  it("puts back Ember's notes that went with the fact", () => {
+    const s = setup();
+    s.memory.remember("Has a medical appointment every Tuesday", [{ name: "User", kind: "person" }], "remember that I have a medical appointment every Tuesday");
+    const fact = s.memory.list()[0];
+    s.memory.refine(g => g.add({ text: "Is busy on Tuesdays", about: [{ name: "User" }], predicate: "reflection", source: "conversation", derivedFrom: [fact.id] }).kind === "added" ? 1 : 0);
+    const before = s.memory.list();
+    const gone = s.memory.forgetCounted(fact.id)!;
+    expect(s.memory.list()).toEqual([]);
+    expect(s.memory.restore(gone.undo)).toBe(true);
+    expect(s.memory.list()).toEqual(before);
+    s.memory.stop();
+  });
+});
+
+describe("Forget of what holds now (memory-12)", () => {
+  const learning = (s: ReturnType<typeof setup>, now: () => number) => new MemoryLearning({ memory: s.memory, inForce: () => true, questionsOn: () => false, askedAt: () => null,
+    setAskedAt: () => undefined, idle: () => false, locked: () => false, say: () => false, log: s.log, now });
+  const texts = (s: ReturnType<typeof setup>) => s.memory.list().map(i => i.text);
+
+  it("forgets only that when the user forgets their current employer, never bringing the old one back as current", () => {
+    let now = Date.parse("2026-11-07T10:00:00Z");
+    const s = setup(), l = learning(s, () => now);
+    s.memory.remember("Works at Globex", [{ name: "User" }], "I work at Globex", "works_at");
+    s.memory.remember("Works at Initech", [{ name: "User" }], "I work at Initech", "works_at");
+    now += 60_000;
+    const initech = s.memory.list()[0].id;
+    expect(texts(s)).toEqual(["Works at Initech"]);
+    // Home's Forget (and forget_memory) of a fact Ember didn't keep just now.
+    const gone = l.forgetCounted(initech)!;
+    expect(gone.back).toBeUndefined();
+    expect(texts(s)).toEqual([]);
+    // Globex is still what used to be true.
+    expect(s.memory.recall("Globex", 6, true).map(r => [r.fact.text, !!r.fact.invalidAt])).toEqual([["Works at Globex", true]]);
+    // Undo puts back exactly what went.
+    expect(l.restore(gone.undo)).toBe(true);
+    expect(texts(s)).toEqual(["Works at Initech"]);
+    s.memory.stop();
+  });
+
+  it("puts the old value back, and says so, when it undoes what Ember kept just now", () => {
+    let now = Date.parse("2026-11-07T10:00:00Z");
+    const s = setup(), l = learning(s, () => now);
+    s.memory.remember("Works at Globex", [{ name: "User" }], "I work at Globex", "works_at");
+    // Ember keeps the new value in this conversation ("Ember learned" with Undo, or "forget that" just after).
+    const tools = l.conductorMemory();
+    tools.remember("Works at Initech", [{ name: "User" }], "I work at Initech now", "works_at");
+    expect(texts(s)).toEqual(["Works at Initech"]);
+    now += 60_000;
+    expect(l.intent("forget that", { own: true })).toBe("Forgotten: “Works at Initech”. I remember “Works at Globex” again.");
+    expect(texts(s)).toEqual(["Works at Globex"]);
+    // The same through the list's Forget soon after; but not once it is no longer just now.
+    tools.remember("Works at Initech", [{ name: "User" }], "I work at Initech now", "works_at");
+    const soon = l.forgetCounted(s.memory.list()[0].id)!;
+    expect(soon.back).toEqual(["Works at Globex"]);
+    expect(memoryForgottenText(soon.text, soon.derived, soon.back)).toBe("Forgotten: “Works at Initech”. Ember remembers “Works at Globex” again.");
+    tools.remember("Works at Initech", [{ name: "User" }], "I work at Initech now", "works_at");
+    now += FORGET_THAT_MS + 1;
+    expect(l.forgetCounted(s.memory.list()[0].id)!.back).toBeUndefined();
+    expect(texts(s)).toEqual([]);
+    expect(forgotReply("Works at Initech", 0, [])).toBe("Forgotten: “Works at Initech”.");
+    expect(memoryForgottenText("Works at Initech", 1, ["Works at Globex", "Works at Hooli"])).toBe("Forgotten: “Works at Initech”, and a note Ember made from it. Ember remembers “Works at Globex” and “Works at Hooli” again.");
+    s.memory.stop();
   });
 });

@@ -187,6 +187,36 @@ function key(p: string, env: PathEnv, ci = caseless(p, env)): string {
 }
 
 /** `p` is `base` or inside it (both absolute, same flavour). */
+/**
+ * The name a copy of a download is recorded under when Ember can't tell its name (`cp "$f" dir/`, a pattern): a file in
+ * that folder, never the folder itself, so the folder's own tools aren't a download run (commands-remote-r4-3). No file
+ * can have this name.
+ */
+export const UNNAMED_COPY = "\u0000";
+
+/**
+ * The name a download is recorded under when Ember can't tell what it saved (curl -J, wget -r or -i, an output name it
+ * can't see): any file in that folder or below may be it, a project's own files too, so running one, or a build tool
+ * or test runner there, asks (commands-remote-r5-1, c5-2). No file can have this name.
+ */
+export const UNNAMED_DOWNLOAD = "\u0000\u0000";
+
+/** The folder a download of unknown name was recorded in (UNNAMED_COPY, UNNAMED_DOWNLOAD), or null for a named one. */
+export function unnamedFolder(d: string, env: PathEnv): string | null {
+  const s = sep(env);
+  const mark = d.endsWith(s + UNNAMED_DOWNLOAD) ? UNNAMED_DOWNLOAD : d.endsWith(s + UNNAMED_COPY) ? UNNAMED_COPY : null;
+  if (mark === null) return null;
+  // The root's marker (`/` + the mark) leaves the root itself.
+  return d.slice(0, -(s.length + mark.length)) || s;
+}
+
+/** Whether `p` is (or is inside) the download recorded as `d`: one of unknown name stands for what is inside its folder. */
+export function inDownload(p: string, d: string, env: PathEnv): boolean {
+  const folder = unnamedFolder(d, env);
+  if (folder === null) return isUnder(p, d, env);
+  return isUnder(p, folder, env) && !isUnder(folder, p, env);
+}
+
 export function isUnder(p: string, base: string, env: PathEnv): boolean {
   const ci = caseless(p, env) || caseless(base, env);
   const a = key(p, env, ci);

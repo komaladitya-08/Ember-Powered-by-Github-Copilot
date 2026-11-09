@@ -146,11 +146,28 @@ it.skipIf(process.env.EMBER_APPROVAL_TEST !== "1")("keeps a refused press visibl
     const p = (fn: "show" | "hide" | "hold" | "release", n?: number | boolean) => app!.evaluate((_e, a) => (globalThis as unknown as { __p: Record<string, (n?: unknown) => unknown> }).__p[a.fn](a.n), { fn, n });
     const winVisible = () => app!.evaluate(() => (globalThis as unknown as { __p: { visible(): boolean } }).__p.visible());
     const notice = page.locator("#notice");
-    const noticeShown = () => notice.evaluate(el => (el as HTMLElement).checkVisibility());
+    // Shown: its words in a box of their own (an empty line stays on the page as a box of nothing, accessibility-visual-c2-1).
+    const noticeShown = () => notice.evaluate(el => (el as HTMLElement).checkVisibility() && !!el.textContent && el.getBoundingClientRect().height > 0);
     const press = async () => { await page.getByRole("button", { name: "Not now", exact: true }).click({ timeout: 3000 }); };
     const title = () => page.locator("#title").innerText();
     const showHeld = async (n: number) => { await p("show", n); await expect.poll(() => page.locator("#card").isVisible()).toBe(true); await expect.poll(title).toBe("Question " + n); };
     await page.locator("#title").waitFor({ state: "visible" });
+    // The refusal's line and the hint are in the accessibility tree while they say nothing, so a screen reader hears
+    // what fills them: hidden until filled, they joined it with the refusal already in, unannounced, while focus
+    // stayed on Allow (accessibility-visual-c2-1).
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Accessibility.enable");
+    const ax = async (selector: string) => {
+      const { root } = await cdp.send("DOM.getDocument", { depth: -1 });
+      const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
+      const { nodes } = await cdp.send("Accessibility.getPartialAXTree", { nodeId, fetchRelatives: false });
+      const live = nodes[0].properties?.find(x => x.name === "live")?.value.value;
+      return { ignored: nodes[0].ignored, role: nodes[0].role?.value, live };
+    };
+    expect(await notice.innerText()).toBe("");
+    expect(await ax("#notice")).toEqual({ ignored: false, role: "status", live: "polite" });
+    expect((await ax("#hint")).ignored).toBe(false);
+    expect(await notice.evaluate(el => { const r = el.getBoundingClientRect(); return [r.width, r.height]; })).toEqual([0, 0]);
 
     // 1. Pulled before the reply: the card goes, the window hides, then the reply's refusal brings it back to be read.
     await p("hold", true);

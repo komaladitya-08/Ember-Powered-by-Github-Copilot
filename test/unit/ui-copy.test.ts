@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import {
   NEVER_LOOK_DEFAULTS, conversationContextLine, dayLabel, describeEntry, forUser, friendlyApp, keyLabel, missingDefaults, neverLookLabel, progressStep, retryMessage, tagline, tokens, usageLine,
 } from "../../app/renderer/home/copy";
 import { cardTask, cardText } from "../../app/renderer/handle/card";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { memoryOwnerOffersErase, memoryOwnerText, memoryPausedReply } from "../../app/shared/memory-owner";
 import { HOST_OS } from "../../app/main/platform/os";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-look";
 import { IDLE_BUBBLE, type BubbleState, type TaskCard } from "../../app/shared/overlay";
@@ -22,7 +23,10 @@ import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
 import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerConsentText, recipientWords, providerHint, providerTestText } from "../../app/renderer/home/copy";
+import * as conv from "../../app/renderer/home/copy";
+import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
+import { friendlyError, lostWords } from "../../app/main/agent/presenter";
+import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -45,6 +49,17 @@ describe("settings window words", () => {
 
   it("says what Check again found", () => {
     expect(retryMessage({ found: false, source: null })).toBe("No GitHub sign-in found on this computer. Run “gh auth login” in a terminal, then press Check again.");
+    // A model provider in force: what was checked is that provider, never a GitHub sign-in (integrations-c1-1).
+    expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false } })).toBe("Checked again: Ember still can't connect to 127.0.0.1:18408.");
+    expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: true } })).toBe("");
+    expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason: "network" } })).toBe("Checked again: Ember still can't connect to 127.0.0.1:18408.");
+  });
+
+  it("says Check again still can't connect only when the provider couldn't be reached, never when only a model or key is missing (integrations-c2-2)", () => {
+    for (const reason of ["models", "sign-in", "no-access", "runtime", "not-answering", "other"]) {
+      expect(retryMessage({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason } }), reason)
+        .toBe("Checked again: Ember still can't use 127.0.0.1:18408. The line above says why.");
+    }
     expect(retryMessage({ found: true, source: "github-cli" })).toBe("Found your GitHub CLI sign-in; connecting…");
     expect(retryMessage({ found: true, source: "environment" }, true)).toBe("Found a GitHub token in the environment; connected.");
     expect(retryMessage({ found: true, source: "stored" })).toBe("Found Ember's saved sign-in; connecting…");
@@ -59,15 +74,17 @@ describe("settings window words", () => {
   it("keeps the tagline in step with setup, Copilot and where Ember is", () => {
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
     expect(tagline({ ...base, onboarded: false, phase: "signed-out" })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");
-    expect(tagline({ ...base, phase: "signed-out" })).toBe("Ember is beside your cursor. Connect Copilot to start asking.");
-    expect(tagline({ ...base, phase: "starting" })).toBe("Ember is beside your cursor. Connecting to Copilot…");
-    expect(tagline(base)).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
-    expect(tagline({ ...base, hidden: true })).toMatch(/^Ember is hidden for now\./);
-    expect(tagline({ ...base, overlay: false })).toMatch(/^Ember is in the bottom-right corner\./);
-    expect(tagline({ ...base, failing: 2 })).toBe("Ember needs 2 things fixed before it can work on this computer.");
-    expect(tagline({ ...base, failing: 1 })).toBe("Ember needs 1 thing fixed before it can work on this computer.");
+    expect(tagline({ ...base, phase: "signed-out" })).toBe("Beside your cursor. Connect Copilot to start asking.");
+    // Signed out while my own provider's note waits: agreeing is the way on, not Copilot (integrations-r3-1).
+    expect(tagline({ ...base, phase: "signed-out", waitingFor: "127.0.0.1:18308" })).toBe("Beside your cursor. Agree to use 127.0.0.1:18308 in Models & connections to start asking.");
+    expect(tagline({ ...base, phase: "starting" })).toBe("Beside your cursor. Connecting to Copilot…");
+    expect(tagline(base)).toBe("Beside your cursor. Press Ctrl+Alt+Space to ask anything.");
+    expect(tagline({ ...base, hidden: true })).toMatch(/^Hidden for now\./);
+    expect(tagline({ ...base, overlay: false })).toMatch(/^In the bottom-right corner\./);
+    expect(tagline({ ...base, failing: 2 })).toBe("Needs 2 things fixed before it can work on this computer.");
+    expect(tagline({ ...base, failing: 1 })).toBe("Needs 1 thing fixed before it can work on this computer.");
     // Copilot stopped answering with tasks at work: no "connect" (signing in again isn't the fix).
-    expect(tagline({ ...base, phase: "error", waitingForTasks: true })).toBe("Ember is beside your cursor. Copilot isn't answering: Ember reconnects once the tasks that are running finish.");
+    expect(tagline({ ...base, phase: "error", waitingForTasks: true })).toBe("Beside your cursor. Copilot isn't answering: reconnecting once the tasks that are running finish.");
   });
 
   it("names days Today and Yesterday", () => {
@@ -266,14 +283,16 @@ describe("the command window's words (§8.5)", () => {
 
   it("names the window, its empty state, the card and its buttons exactly", () => {
     expect(keep(commandCopy.WINDOW_TITLE)).toBe("Ember commands");
-    expect(keep(commandCopy.EMPTY_TEXT)).toBe("No commands yet.");
+    expect(keep(commandCopy.EMPTY_TEXT)).toBe("Commands Ember runs show here. You can watch them, type into them and stop them.");
     expect(keep(commandCopy.ASK_HEADING)).toBe("Ember wants to run this command");
     expect(keep(commandCopy.askHeading({ target: "local", targetLabel: "This computer" }))).toBe("Ember wants to run this command");
     expect(keep(commandCopy.askHeading({ target: "ssh:build-01", targetLabel: "build-01" }))).toBe("Ember wants to run this command on build-01");
     expect(keep(commandCopy.askHeading({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }))).toBe("Ember wants to run this command in Ubuntu (WSL)");
     expect(commandCopy.isRiskyCard({ classes: ["destroy"] })).toBe(true);
     expect(commandCopy.isRiskyCard({ classes: ["remote-delete", "publish"] })).toBe(true);
-    expect(commandCopy.isRiskyCard({ classes: ["publish"] })).toBe(false);
+    // Every danger class, as the bubble tags it "Risky step" (commands-remote-v3); a card asked only by policy has none.
+    for (const c of ["publish", "secret", "system", "escape", "unclear"] as const) expect(commandCopy.isRiskyCard({ classes: [c] }), c).toBe(true);
+    expect(commandCopy.isRiskyCard({ classes: [] })).toBe(false);
     expect(commandCopy.isRiskyCard({})).toBe(false);
     expect(keep(commandCopy.ANNOUNCE_HEADING)).toBe("About to run this, as you asked");
     // A command the review cleared (the user didn't ask for exactly it) says so in the announcement's heading.
@@ -307,6 +326,19 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.headerLine({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)", shell: "bash", cwd: "~/project" }))).toBe("In Ubuntu (WSL) · bash · in ~/project");
   });
 
+  it("says the home folder as ~ in a POSIX shell's header, and every other folder whole (commands-remote-8)", () => {
+    const h = (cwd: string, home: string | undefined, shell: "bash" | "zsh" | "sh" | "powershell" = "bash") =>
+      keep(commandCopy.headerLine({ target: "local", targetLabel: "This computer", shell, cwd, ...(home !== undefined ? { home } : {}) }));
+    expect(h("/home/ana/src/app", "/home/ana")).toBe("On this computer · bash · in ~/src/app");
+    expect(h("/home/ana", "/home/ana")).toBe("On this computer · bash · in ~");
+    expect(h("/home/ana/x", "/home/ana/")).toBe("On this computer · bash · in ~/x");
+    expect(h("/home/anabel/x", "/home/ana")).toBe("On this computer · bash · in /home/anabel/x");
+    expect(h("/srv/app", "/home/ana", "zsh")).toBe("On this computer · zsh · in /srv/app");
+    expect(h("/home/ana/x", undefined)).toBe("On this computer · bash · in /home/ana/x");
+    expect(h("/x", "/")).toBe("On this computer · bash · in /x");
+    expect(h("C:\\Users\\ana\\p", "C:\\Users\\ana", "powershell")).toBe("On this computer · PowerShell · in C:\\Users\\ana\\p");
+  });
+
   it("says how a run ended in its status line", () => {
     expect(keep(commandCopy.RUNNING_STATUS)).toBe("Running…");
     expect(keep(commandCopy.WAITING_STATUS)).toBe("Waiting for you to type in this window.");
@@ -334,6 +366,13 @@ describe("the command window's words (§8.5)", () => {
     expect(commandCopy.durationText(9_960)).toBe("10\u00a0s");
     expect(commandCopy.durationText(59_600)).toBe("1\u00a0min");
     expect(commandCopy.durationText(2_000)).toBe("2\u00a0s");
+  });
+
+  it("says a run that took under 0.05 s took less than 0.1 s, never 0 s (commands-remote-5)", () => {
+    for (const ms of [0, 20, 49]) expect(commandCopy.durationText(ms), String(ms)).toBe("less than 0.1\u00a0s");
+    expect(commandCopy.durationText(50)).toBe("0.1\u00a0s");
+    expect(say({ ms: 20 })).toBe("Finished in less than 0.1\u00a0s.");
+    expect(say({ code: 2, ms: 20 })).toBe("Ended with exit code 2 after less than 0.1\u00a0s.");
   });
 
   it("says whether typing reaches the command, and what it waits for", () => {
@@ -420,6 +459,24 @@ describe("the prompt window's words (§8.6)", () => {
       title: "build-01 asks", body: ["PIN for token:"], field: "Answer", buttons: ["Send", "Cancel"],
     });
     expect(promptCopy.promptView({ id: "8", kind: "secret", secret: "other", host: "build-01", prompt: "x" }).field?.masked).toBe(true);
+  });
+
+  it("on an SSH before 8.5, names no asker, says to read the question first and that the answer is never kept (commands-remote-3)", () => {
+    for (const prompt of ["deploy@build-01.example.com's password: ", "Enter passphrase for key '/home/ana/.ssh/id_ed25519': "]) {
+      const v = text({ id: "9", kind: "secret", secret: "other", host: "build-01", prompt, unmarked: true });
+      expect(v, prompt).toEqual({
+        title: "A question while connecting to build-01",
+        body: [
+          "This computer's SSH can't show whether this question comes from SSH itself or from build-01, so read it before you answer: what you type goes to whoever asked.",
+          prompt,
+          "Ember hands your answer to SSH only: it's never saved, logged or sent to Copilot.",
+        ],
+        field: "Answer", buttons: ["Send", "Cancel"],
+      });
+      expect(v.title).not.toMatch(/ asks$/);
+      // The question itself stays quoted: it is the text ssh printed, not Ember's words.
+      expect(promptCopy.promptView({ id: "9", kind: "secret", secret: "other", host: "build-01", prompt, unmarked: true }).body[1]).toEqual({ kind: "quote", text: prompt });
+    }
   });
 });
 
@@ -598,6 +655,50 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     for (const s of [computersCopy.COMPUTERS_INTRO, computersCopy.COMMANDS_INTRO, computersCopy.WSL_SWITCH, computersCopy.OFFER_SWITCH, computersCopy.ADD_PLACEHOLDER, computersCopy.OPEN_COMMANDS]) {
       expect(page).toContain(s);
     }
+  });
+
+  it("says in Apps & privacy what the person turned on and what the organisation turned off, never that what is on is off (safety-privacy-r4-2)", () => {
+    const l = computersCopy.ONBOARDING_LINE;
+    const rest = computersCopy.targetsFoldRest;
+    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const base = structuredClone(DEFAULT_SETTINGS) as Settings;
+    const host = { id: "build-01", dest: "deploy@build-01", resolved: { user: "deploy", hostname: "build-01", port: 22, jump: [] }, consent: agreed };
+    const none = { source: null, features: {} };
+    const allOff = { source: "error", features: { ssh: false, wsl: false }, commands: { local: "off", wsl: "off", ssh: "off" } } as const;
+    const noCommands = { source: "/etc/ember/policy.json", features: {}, commands: { local: "off", wsl: "off", ssh: "off" } } as const;
+    // Nothing turned on, nothing turned off: first run's own words, on each OS.
+    expect(rest(base, none)).toBe(l.rest);
+    expect(rest(base, none, "win32")).toBe(l.restWindows);
+    // Commands on this computer, turned on with their card (the re-rater's probe).
+    const local = { ...base, commands: { local: { on: true, askEvery: false, consent: agreed } } } as Settings;
+    expect(keep(`${l.lead}${rest(local, none)}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
+    expect(keep(`${l.lead}${rest(local, none, "win32")}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers and WSL are off until you turn them on.");
+    // A computer reached over SSH, with and without commands there.
+    const ssh = { ...base, targets: { ...base.targets, hosts: [host] } } as Settings;
+    expect(keep(`${l.lead}${rest(ssh, none)}`)).toBe("Other computers and commands: you let Ember work on computers you reach over SSH. Commands on this computer are off until you turn them on.");
+    const both = { ...ssh, commands: { local: local.commands.local, "ssh:build-01": { on: true, askEvery: false, consent: agreed } } } as Settings;
+    expect(keep(`${l.lead}${rest(both, none)}`)).toBe("Other computers and commands: you let Ember run commands on this computer, and work and run commands on computers you reach over SSH. It runs commands only in its own window, where you can watch and stop them.");
+    // WSL on Windows (elsewhere it isn't Ember's to use).
+    const wsl = { ...base, targets: { ...base.targets, wsl: { on: true, consent: agreed } } } as Settings;
+    // Never "other computers and commands on this computer", which reads as both on this computer (safety-privacy-r4-2).
+    expect(keep(`${l.lead}${rest(wsl, none, "win32")}`)).toBe("Other computers and commands: you let Ember work in WSL. Other computers are off until you turn them on, and so are commands on this computer.");
+    expect(rest(wsl, none, "linux")).toBe(l.rest);
+    // Under the organisation's lockdown nothing is offered, and nothing the person turned on is said to be on.
+    expect(keep(`${l.lead}${rest(both, allOff)}`)).toBe("Other computers and commands are turned off by your organisation.");
+    expect(rest(both, allOff, "win32")).toBe(" are turned off by your organisation.");
+    // A policy that doesn't mention commands turns them off; other computers may still be turned on.
+    expect(keep(`${l.lead}${rest(base, noCommands)}`)).toBe("Other computers and commands: other computers are off until you turn them on. Your organisation has turned off commands on this computer and on computers you reach over SSH.");
+    expect(keep(`${l.lead}${rest(both, noCommands, "win32")}`)).toBe("Other computers and commands: you let Ember work on computers you reach over SSH. WSL is off until you turn it on. Your organisation has turned off commands on this computer, in WSL and on computers you reach over SSH.");
+    // A policy that lets commands run only on this computer, with nothing turned on yet: first run's opening, then what the
+    // organisation turned off, never "other computers and commands on this computer are off" (safety-privacy-r4-2).
+    const localOnly = { source: "/etc/ember/policy.json", features: {}, commands: { local: "on", wsl: "off", ssh: "off" } } as const;
+    expect(keep(`${l.lead}${rest(base, localOnly)}`)).toBe("Other computers and commands are off until you turn them on. Your organisation has turned off commands on computers you reach over SSH.");
+    expect(keep(`${l.lead}${rest(base, localOnly, "win32")}`)).toBe("Other computers and commands are off until you turn them on. Your organisation has turned off commands in WSL and on computers you reach over SSH.");
+    expect(keep(`${l.lead}${rest(ssh, localOnly)}`)).toBe("Other computers and commands: you let Ember work on computers you reach over SSH. Commands on this computer are off until you turn them on. Your organisation has turned off commands on computers you reach over SSH.");
+    expect(keep(`${l.lead}${rest(local, { source: "/etc/ember/policy.json", features: { ssh: false }, commands: { local: "on" } })}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Your organisation has turned off working on other computers.");
+    // A switch whose card isn't agreed to at its version isn't on, as main counts it.
+    expect(rest({ ...base, commands: { local: { on: true, askEvery: false, consent: { version: 0, at: null } } } } as Settings, none)).toBe(l.rest);
+    expect(rest({ ...base, targets: { ...base.targets, hosts: [{ ...host, consent: { version: 0, at: null } }] } } as Settings, none)).toBe(l.rest);
   });
 });
 
@@ -812,6 +913,15 @@ describe("Comfort & access › Glass (the Glass setting)", () => {
 
 describe("the Model provider group's words (Copilot section)", () => {
   it("names the endpoint's host in the card, with screenshots and the key's destination, in sentence case and British spelling", () => {
+    // First run has no switch: its last sentence is the step's Back, and every word about what is sent is the same (first-run-10).
+    const home = providerConsentText("models.example.com");
+    const firstRun = providerConsentText("models.example.com", "first-run");
+    expect(firstRun.endsWith(" Back takes you to GitHub Copilot instead.")).toBe(true);
+    expect(firstRun.replace(" Back takes you to GitHub Copilot instead.", "")).toBe(home.replace(" Turn this off to go back to Copilot.", ""));
+    // A provider already in use as its first-run step opens: Back leaves it on, so the card says nothing of going back;
+    // its own button switches it off (first-run-c1-2).
+    expect(providerConsentText("models.example.com", "in-use")).toBe(firstRun.replace(" Back takes you to GitHub Copilot instead.", ""));
+    expect(readFileSync("app/renderer/home/welcome.ts", "utf8")).toContain('providerConsentText(host, visitInUse ? "in-use" : "first-run")');
     expect(providerConsentText("models.example.com")).toBe("Ember will send what it would send to GitHub Copilot to models.example.com instead: your requests, what it reads from your screen and apps, what it remembers that bears on them, what commands print, and for tasks, screenshots of the windows it works in, with password fields and never-look windows blacked out. That service's own terms and privacy rules apply, and it may keep what it gets. Your API key is kept encrypted on this computer and goes only to models.example.com. Turn this off to go back to Copilot.");
   });
 
@@ -819,17 +929,48 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(providerHint({ managed: null, inForce: false, on: false, host: null })).toBe("Use a model service of your own instead of GitHub Copilot: OpenAI, Azure OpenAI, Anthropic, or a model server on this computer such as Ollama or LM Studio.");
     expect(providerHint({ managed: null, inForce: false, on: true, host: null })).toBe("Enter the service's address to use it.");
     expect(providerHint({ managed: null, inForce: false, on: true, host: "models.example.com" })).toBe("Ember uses GitHub Copilot until you agree to use models.example.com.");
+    // With no GitHub sign-in there's no Copilot to use meanwhile (integrations-r3-1).
+    expect(providerHint({ managed: null, inForce: false, on: true, host: "models.example.com", signedOut: true })).toBe("Ember can't answer until you agree to use models.example.com.");
     expect(providerHint({ managed: null, inForce: true, on: true, host: "localhost:11434" })).toBe("Ember sends your requests to localhost:11434 instead of Copilot. A change applies from your next message; tasks already running finish where they started.");
     expect(providerHint({ managed: "organisation", inForce: false, on: false, host: null })).toBe("Managed by your organisation: Ember uses its model service.");
     expect(providerHint({ managed: "off", inForce: false, on: true, host: "x.example.com" })).toBe("Managed by your organisation: Ember uses GitHub Copilot.");
+  });
+
+  it("says, while an edit of my provider in use to another host waits for its note, that the one in use still answers, and that a failed check changed nothing (integrations-c3-1)", () => {
+    expect(providerHeldHint("127.0.0.1:18308", "127.0.0.1:18309")).toBe("Ember still uses 127.0.0.1:18308. Agree to use 127.0.0.1:18309 to switch.");
+    expect(providerHeldHint("127.0.0.1:18308", null)).toBe("Ember still uses 127.0.0.1:18308. Enter the new address to switch.");
+    expect(providerHeldShown("127.0.0.1:18308", "127.0.0.1:18309")).toBe("Read the note above: Ember still uses 127.0.0.1:18308, and sends nothing to 127.0.0.1:18309 until you agree.");
+    expect(providerHeldChecking("127.0.0.1:18309")).toBe("Checking 127.0.0.1:18309…");
+    expect(providerHeldKept("127.0.0.1:18308", "Ember can't reach 127.0.0.1:18309. Check the address and the network.")).toBe("Ember can't reach 127.0.0.1:18309. Check the address and the network. Nothing has changed: Ember still uses 127.0.0.1:18308.");
+    expect(providerHeldKept("127.0.0.1:18308")).toBe("Nothing has changed: Ember still uses 127.0.0.1:18308.");
+    expect(providerHeldKey("api.example.com")).toBe("Ember saves this key with the new address once you agree to use api.example.com.");
+    expect(providerHeldKey(null)).toBe("Enter the service's address first.");
+  });
+
+  it("says the note came up for an address just entered, and why Test connection waits (integrations-7)", () => {
+    expect(providerCardShown("127.0.0.1:18108")).toBe("Read the note above: Ember sends nothing to 127.0.0.1:18108 until you agree.");
+    // Once agreed, the line says where requests go now, never that nothing goes there (integrations-r4).
+    expect(providerAgreedText("127.0.0.1:18108")).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18108.");
+    // A held edit adopted though the new host lists no models: what Ember will ask it for (integrations-r4-2).
+    expect(providerAgreedUnlisted("gw.example.com", "gpt-4.1")).toBe("Agreed. gw.example.com answered but lists no models, so Ember asks it for gpt-4.1 as typed.");
+    expect(providerAgreedUnlisted("gw.example.com", null)).toBe("Agreed. gw.example.com answered but lists no models, so Ember asks it for the models as typed.");
+    expect(providerTestWaits({ host: null, agreed: false, managed: false })).toBe("Enter the endpoint to test it.");
+    expect(providerTestWaits({ host: "models.example.com", agreed: false, managed: false })).toBe("Test connection works once you agree to the note above for models.example.com.");
+    expect(providerTestWaits({ host: "models.example.com", agreed: true, managed: false })).toBeNull();
+    expect(providerTestWaits({ host: "models.example.com", agreed: false, managed: true })).toBeNull();
   });
 
   it("reports a connection test in one sentence, and says why a key can't be kept", () => {
     expect(providerTestText({ ok: true, host: "models.example.com", models: 3 })).toBe("Connected to models.example.com. It lists 3 models.");
     expect(providerTestText({ ok: true, host: "models.example.com", models: 1 })).toBe("Connected to models.example.com. It lists 1 model.");
     expect(providerTestText({ ok: true, host: "localhost:1234", models: null })).toBe("Connected to localhost:1234.");
+    // The models it names, so the exact id can be chosen (integrations-9).
+    expect(providerTestText({ ok: true, host: "localhost:11434", models: 1, ids: ["llama3.2:3b"] })).toBe("Connected to localhost:11434. It lists 1 model: llama3.2:3b.");
+    expect(providerTestText({ ok: true, host: "models.example.com", models: 12, ids: ["gpt-4.1", "gpt-4o", "o3"] })).toBe("Connected to models.example.com. It lists 12 models, such as gpt-4.1 and gpt-4o.");
+    expect(providerTestText({ ok: true, host: "models.example.com", models: 12, ids: ["gpt-4.1"] })).toBe("Connected to models.example.com. It lists 12 models, such as gpt-4.1.");
     expect(providerTestText({ ok: false, why: "models.example.com needs an API key." })).toBe("models.example.com needs an API key.");
-    expect(PROVIDER_NO_KEYRING).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. A model server on this computer that needs no key still works.");
+    // With the way forward (integrations-13).
+    expect(PROVIDER_NO_KEYRING).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works.");
     expect(PROVIDER_WORDS).toEqual({
       keySaved: "Key saved.", keyRemoved: "Key removed.", pasteKey: "Paste the API key first.", testing: "Testing…",
       testFailed: "Ember couldn't test the connection. Try again.",
@@ -924,5 +1065,449 @@ describe("modelDestination and recipientWords (microphone consent names the real
   it("sends nothing anywhere while locked down, or when the organisation's address can't be read", () => {
     expect(modelDestination({ ...base, locked: true, adminProvider: "https://a.example" }).kind).toBe("none");
     expect(modelDestination({ ...base, adminProvider: "not a url" }).kind).toBe("none");
+  });
+});
+
+/** Every file under `dir`, as repository paths. */
+function listFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(d => (d.isDirectory() ? listFiles(`${dir}/${d.name}`) : [`${dir}/${d.name}`]));
+}
+
+describe("Home's conversation words (2026-11-07 product audit)", () => {
+  it("counts a long message near the limit, and says how much to shorten one over it (home-5)", () => {
+    expect(conv.composerCount(0)).toBe("");
+    expect(conv.composerCount(1799)).toBe("");
+    expect(conv.composerCount(1800)).toBe("1,800 of 2,000 characters.");
+    expect(conv.composerCount(2000)).toBe("2,000 of 2,000 characters.");
+    expect(conv.composerCount(2001)).toBe("2,001 of 2,000 characters, 1 too many.");
+    expect(conv.composerCount(3240)).toBe("3,240 of 2,000 characters, 1,240 too many.");
+    expect(conv.COMPOSER_OVER).toBe("This message is longer than 2,000 characters. Shorten it to send it.");
+  });
+
+  it("marks where the messages kept from before a restart end, and searches the conversation, not a session (home-8)", () => {
+    expect(conv.CONVERSATION_RESTORED_END).toBe("The messages above are from before Ember restarted, for you to read. Ember doesn't remember them: it starts afresh below.");
+    expect(conv.conversationSearchCount(1)).toBe("1 matching message in this conversation.");
+    expect(conv.conversationSearchCount(3)).toBe("3 matching messages in this conversation.");
+    // A restored line from another day says which; today's keep the time alone.
+    const now = new Date(2026, 10, 7, 15, 0);
+    expect(conv.conversationWhen(new Date(2026, 10, 7, 9, 5).toISOString(), "9:05 AM", now)).toBe("9:05 AM");
+    expect(conv.conversationWhen(new Date(2026, 10, 6, 9, 5).toISOString(), "9:05 AM", now)).toBe("Yesterday, 9:05 AM");
+  });
+
+  it("names the composer's send key the way each OS does (accessibility-visual-7, home-11)", () => {
+    expect(conv.composerSendHint("linux")).toBe("Up to 2,000 characters. Enter adds a new line. Ctrl+Enter sends.");
+    expect(conv.composerSendHint("win32")).toBe("Up to 2,000 characters. Enter adds a new line. Ctrl+Enter sends.");
+    expect(conv.composerSendHint("darwin")).toBe("Up to 2,000 characters. Enter adds a new line. Command+Enter sends.");
+    for (const os of ["linux", "win32", "darwin"] as const) expect(conv.composerSendHint(os)).not.toContain("⌘");
+  });
+
+  it("says in Home that the speech models' Download is right below Listen once, not \"in Settings\" (home-11)", () => {
+    // Main words it for Settings itself (listenOnceInSettings, voice-listening-8), so Home shows what it is sent.
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain('return source === "home" ? listenOnceInSettings(heard) : heard;');
+    expect(readFileSync("app/main/voice.ts", "utf8")).toContain('if (s.reason === "needs-models") return { ...s, detail: "Download the speech models below first." };');
+    const home = readFileSync("app/renderer/home/main.ts", "utf8");
+    expect(home).toContain("if (v !== voice) showListenOnce(v.listenOnce);");
+    expect(home).not.toContain("Download speech models in Settings first.");
+  });
+
+  it("writes every apostrophe Ember shows straight, never U+2019 (accessibility-visual-6, home-11)", () => {
+    const files = [...listFiles("app"), ...listFiles("packages")].filter(f => /\.(ts|html)$/.test(f) && !f.endsWith(".test.ts"));
+    // Matching data, not words Ember shows: a quote character set and an app's own localised name.
+    const MATCHING: Record<string, RegExp> = { "app/main/commands/lex-powershell.ts": /SINGLE_QUOTES = /, "app/main/policy/vocabulary.ts": /trousseaux d’accès/ };
+    const curly: string[] = [];
+    for (const f of files) {
+      readFileSync(f, "utf8").split("\n").forEach((line, i) => {
+        const t = line.trim();
+        if (!t.includes("’") || /^(\/\/|\*|\/\*)/.test(t) || MATCHING[f]?.test(t)) return;
+        // Inside a regex character class ([‘’]) it matches what others write.
+        if (t.replace(/\[[^\]]*\]/g, "").replace(/\s\/\/ .*$/, "").includes("’")) curly.push(`${f}:${i + 1}`);
+      });
+    }
+    expect(curly).toEqual([]);
+  });
+
+  it("keeps the composer's statuses as tested words, in the house style (home-11)", () => {
+    expect(conv.COMPOSER_SAYS).toEqual({
+      copied: "Copied message.",
+      copyFailed: "Couldn't copy this message. Select its text and copy it manually.",
+      replyFailed: "This reply couldn't be finished. Review the message above; you can edit your request and send again.",
+      notAnswered: "This request got no answer. Review the message above; you can edit your request and send again.",
+      replied: "Reply received.",
+      loadFailed: "Couldn't load this conversation. New replies will still appear here.",
+      started: "Started a new conversation. Memory, reminders and running tasks are untouched.",
+      startFailed: "Couldn't start a new conversation. Try again.",
+      sending: "Sending request…",
+      sendFailed: "Couldn't send. Your draft is still here; try again.",
+      editCancelled: "Edit cancelled. Your previous draft is restored.",
+      stopFailed: "Couldn't stop this response. Try again, or use Stop everything.",
+      empty: "Enter a request of up to 2,000 characters.",
+      noReply: "No reply was written. Task activity shows any task this request started.",
+      replyStopped: "The reply was stopped before it finished.",
+      stoppedAll: "Stopped everything, running tasks included.",
+    });
+    expect(conv.CONVERSATION_STOPPED).toBe("Response stopped. Running tasks continue.");
+    expect(conv.CONVERSATION_NOTHING_TO_STOP).toBe("Nothing is being answered right now, so there was nothing to stop.");
+    // Home's main.ts writes none of them inline any more.
+    const home = readFileSync("app/renderer/home/main.ts", "utf8");
+    for (const said of Object.values(conv.COMPOSER_SAYS)) expect(home).not.toContain(`"${said}"`);
+  });
+
+  it("refuses a message sent while Ember isn't connected by why, and says it is still there (reliability-performance-v2)", () => {
+    expect(composerRefusal({ phase: "signed-out" })).toBe("Connect Copilot in Models & connections, then send again.");
+    expect(composerRefusal({ phase: "starting" })).toBe("Still connecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "network" })).toBe("Copilot can't be reached right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "not-answering" })).toBe("Reconnecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true })).toBe("Copilot isn't answering: reconnecting once the tasks that are running finish. Your message is still here.");
+    expect(composerRefusal({ phase: "error", reason: "policy" })).toBe("Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.");
+    for (const reason of ["sign-in", "no-access", "models", "runtime", "other"] as const) {
+      expect(composerRefusal({ phase: "error", reason })).toBe("Can't connect to Copilot yet: Models & connections says why. Your message is still here.");
+    }
+    // Copilot stopped and Ember is reconnecting by itself: nothing in Models & connections helps (reliability-performance-v2).
+    expect(composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot stopped unexpectedly. Reconnecting…" })).toBe("Reconnecting to Copilot. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot keeps stopping. Press Check again to retry, or restart Ember." })).toBe("Can't connect to Copilot yet: Models & connections says why. Your message is still here.");
+    // The service in use is named, never Copilot when it isn't the one.
+    expect(composerRefusal({ phase: "starting", service: { kind: "user", host: "llm.local" } })).toBe("Still connecting to your model provider. Your message is still here: send it again in a moment.");
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "llm.example.com" } })).toBe("The model service can't be reached right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true, service: { kind: "user", host: "llm.local" } })).toBe("Your model provider isn't answering: reconnecting once the tasks that are running finish. Your message is still here.");
+  });
+
+  it("lets a typed \"stop\" that stops everything through while Ember isn't connected, as the Ask box does (home-c2-1)", () => {
+    const waiting = { phase: "error" as const, reason: "not-answering" as const, waitingForTasks: true };
+    // Waiting for the running task before it reconnects: that task is what "stop" stops.
+    expect(composerSendRefusal(waiting, true)).toBeNull();
+    expect(composerSendRefusal({ phase: "starting" }, true)).toBeNull();
+    // Anything else is refused as before, and so is a ready Ember's nothing.
+    expect(composerSendRefusal(waiting, false)).toBe("Copilot isn't answering: reconnecting once the tasks that are running finish. Your message is still here.");
+    expect(composerSendRefusal({ phase: "ready" }, false)).toBeNull();
+    // Signed out while my own provider's note waits for its host: agreeing is the way on, and the host is named (integrations-r4-3).
+    expect(composerSendRefusal({ phase: "signed-out" }, false, "127.0.0.1:18308")).toBe("Agree to use 127.0.0.1:18308 in Models & connections, then send again.");
+    expect(composerSendRefusal({ phase: "signed-out" }, false, null)).toBe("Connect Copilot in Models & connections, then send again.");
+    expect(composerSendRefusal({ phase: "starting" }, false, "127.0.0.1:18308")).toBe("Still connecting to Copilot. Your message is still here: send it again in a moment.");
+    // main.ts decides the stop before the refusal, after consent and the locked screen.
+    const main = readFileSync("app/main/main.ts", "utf8").replace(/\s+/g, " ");
+    const at = (s: string) => { const i = main.indexOf(s); expect(i, s).toBeGreaterThan(-1); return i; };
+    const consent = at('if (!consented()) throw new Error("Finish setup before sending a request.");');
+    const locked = at('if (screenLock?.locked) throw new Error("Unlock your screen before sending a request.");');
+    const stops = at("const stops = agent?.stopsWith(text) === true;");
+    const refused = at("const refusal = composerSendRefusal(status, stops, status.phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null);");
+    expect(consent).toBeLessThan(locked);
+    expect(locked).toBeLessThan(stops);
+    expect(stops).toBeLessThan(refused);
+    expect(main).not.toContain("if (status?.phase !== \"ready\") throw new Error(composerRefusal(");
+  });
+
+  it("names Models & connections in a Problem line Home shows, where it said Ember's settings, and offers it only where settings can help (home-7)", () => {
+    expect(conv.problemInHome("The model service reported a problem. Try again; if it keeps happening, check the model service in Ember's settings (Ctrl+Alt+E).")).toEqual({
+      text: "The model service reported a problem. Try again; if it keeps happening, check the model service in Models & connections.", settings: true,
+    });
+    expect(conv.problemInHome("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).").text).toBe("The model I'm set to use isn't available. Pick another one in Models & connections.");
+    expect(conv.problemInHome("Copilot didn't accept the sign-in. Open settings to sign in again.").text).toBe("Copilot didn't accept the sign-in. Open Models & connections to sign in again.");
+    expect(conv.problemInHome("Not connected: Connect your GitHub account in settings, then ask me again.").text).toBe("Not connected: Connect your GitHub account in Models & connections, then ask me again.");
+    // Nothing in settings helps: the line as it was, and no button.
+    expect(conv.problemInHome("Copilot had a problem on its side. Try again in a moment.")).toEqual({ text: "Copilot had a problem on its side. Try again in a moment.", settings: false });
+    expect(conv.PROBLEM_SETTINGS).toBe("Models & connections…");
+  });
+
+  it("offers Models & connections… on the line that says Ember stopped reconnecting, whose Check again is there (reliability-performance-r3-2)", () => {
+    for (const w of [lostWords(false), lostWords("user")]) {
+      expect(conv.problemInHome(w.gaveUp)).toEqual({ text: w.gaveUp, settings: true });
+      // Reconnecting by itself, or connected again: nothing in Models & connections helps.
+      expect(conv.problemInHome(w.reconnecting).settings).toBe(false);
+      expect(conv.problemInHome(w.reconnected).settings).toBe(false);
+    }
+  });
+
+  it("says a Stop ended my messages before they were sent, and that their words are back, above any draft, to edit or send again (home-r3-1, home-v4-2)", () => {
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED)).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here to edit or send again.");
+    expect(conv.composerGivenBack(conv.COMPOSER_SAYS.stoppedAll)).toBe("Stopped everything, running tasks included. Your message wasn't sent, so it's back here to edit or send again.");
+    // Every message a Stop dropped, and above what was typed since (home-v4-2).
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2)).toBe("Response stopped. Running tasks continue. Your 2 messages weren't sent, so they're back here to edit or send again.");
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true)).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above what you were writing, to edit or send again.");
+    expect(conv.composerGivenBack(conv.COMPOSER_SAYS.stoppedAll, 3, true)).toBe("Stopped everything, running tasks included. Your 3 messages weren't sent, so they're back here, above what you were writing, to edit or send again.");
+    // A line about the draft: another request's wait leaves it be.
+    expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED))).toBe(false);
+    expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, true))).toBe(false);
+  });
+
+  it("keeps Edit's caution when a Stop gives my message back above the request I'm editing, and Cancel edit keeps it (home-r4-1)", () => {
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true })).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above the request you're editing. Sending that request again may repeat actions.");
+    expect(conv.composerEditCancelled(0, true)).toBe("Edit cancelled. Your previous draft is restored.");
+    expect(conv.composerEditCancelled(1, false)).toBe("Edit cancelled. The message that wasn't sent is back here to edit or send again.");
+    expect(conv.composerEditCancelled(2, false)).toBe("Edit cancelled. The 2 messages that weren't sent are back here to edit or send again.");
+    expect(conv.composerEditCancelled(1, true)).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent.");
+    // Notes about the draft: another request's wait leaves them be.
+    expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true }))).toBe(false);
+    expect(conv.composerLineYields(conv.composerEditCancelled(1, false))).toBe(false);
+  });
+
+  it("says when the messages a Stop gave back are together too long to send, never \"send again\" (home-c4-2)", () => {
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, false, { over: true })).toBe("Response stopped. Running tasks continue. Your 2 messages weren't sent, so they're back here. Together they're over 2,000 characters: send them one at a time.");
+    expect(conv.composerGivenBack(conv.COMPOSER_SAYS.stoppedAll, 1, true, { over: true })).toBe("Stopped everything, running tasks included. Your message wasn't sent, so it's back here, above what you were writing. Together they're over 2,000 characters: send them one at a time.");
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true, over: true })).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above the request you're editing. Together they're over 2,000 characters: send them one at a time. Sending that request again may repeat actions.");
+    expect(conv.composerEditCancelled(2, false, true)).toBe("Edit cancelled. The 2 messages that weren't sent are back here. Together they're over 2,000 characters: send them one at a time.");
+    expect(conv.composerEditCancelled(1, true, true)).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent. Together they're over 2,000 characters: send them one at a time.");
+    // Each goes, as the over-limit note does, once what is there fits: with no edit open, for an empty line; with one,
+    // for Edit's caution (home-v5-2).
+    for (const line of [conv.COMPOSER_OVER, conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, false, { over: true }), conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true, over: true }), conv.composerEditCancelled(2, false, true)]) {
+      expect(conv.composerSaysOver(line), line).toBe(true);
+      expect(conv.composerLineFits(line, false), line).toBe("");
+    }
+    for (const line of ["", conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2), conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true }), conv.composerEditCancelled(2, false), conv.CONVERSATION_EDIT]) {
+      expect(conv.composerSaysOver(line), line).toBe(false);
+      expect(conv.composerLineFits(line, true), line).toBeNull();
+    }
+  });
+
+  it("keeps Edit's caution when what a Stop gave back above my edit fits again, and clears the line only with no edit open (home-v5-2)", () => {
+    for (const line of [conv.COMPOSER_OVER, conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true, over: true }), conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true, over: true, draftOver: true })]) {
+      expect(conv.composerLineFits(line, true), line).toBe(conv.CONVERSATION_EDIT);
+      expect(conv.composerLineFits(line, false), line).toBe("");
+    }
+  });
+
+  it("says to shorten the draft or edited request that is over the limit by itself, never to send one at a time (home-v5-3)", () => {
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { over: true, draftOver: true })).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above what you were writing, which is longer than 2,000 characters: shorten it to send it.");
+    expect(conv.composerGivenBack(conv.COMPOSER_SAYS.stoppedAll, 2, true, { editing: true, over: true, draftOver: true })).toBe("Stopped everything, running tasks included. Your 2 messages weren't sent, so they're back here, above the request you're editing, which is longer than 2,000 characters: shorten it to send it. Sending that request again may repeat actions.");
+    // With no draft under them, each of the messages fits by itself: one at a time.
+    expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, false, { over: true, draftOver: true })).toBe(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, false, { over: true }));
+    expect(conv.composerEditCancelled(1, true, true, { draftOver: true })).toBe("Edit cancelled. Your previous draft is restored, below the message that wasn't sent. That draft is longer than 2,000 characters: shorten it to send it.");
+    // Said over the limit: it goes once what is there fits, and another request's wait leaves it be.
+    for (const line of [conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { over: true, draftOver: true }), conv.composerEditCancelled(1, true, true, { draftOver: true })]) {
+      expect(conv.composerSaysOver(line), line).toBe(true);
+      expect(conv.composerLineYields(line), line).toBe(false);
+    }
+  });
+
+  it("says Cancel edit kept the messages a Stop gave back as I left them (home-v5-1)", () => {
+    expect(conv.composerEditCancelled(1, true, false, { changed: true })).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, and your previous draft is restored below it.");
+    expect(conv.composerEditCancelled(2, true, false, { changed: true })).toBe("Edit cancelled. The 2 messages that weren't sent stay here with your changes, and your previous draft is restored below them.");
+    expect(conv.composerEditCancelled(1, false, false, { changed: true })).toBe("Edit cancelled. The message that wasn't sent stays here with your changes, to edit or send again.");
+    expect(conv.composerEditCancelled(2, false, true, { changed: true })).toBe("Edit cancelled. The 2 messages that weren't sent stay here with your changes. Together they're over 2,000 characters: send them one at a time.");
+    // None kept (the person deleted them): only the draft from before Edit (home-w5-2).
+    expect(conv.composerEditCancelled(0, true, false, { changed: true })).toBe("Edit cancelled. Your previous draft is restored.");
+    for (const line of [conv.composerEditCancelled(1, true, false, { changed: true }), conv.composerEditCancelled(2, false, true, { changed: true })]) {
+      expect(conv.composerLineYields(line), line).toBe(false);
+    }
+  });
+
+  it("says a second Edit keeps the messages a Stop gave back above it, and when they're over the limit with it (home-w5-3)", () => {
+    expect(conv.composerEditAgain(1)).toBe("Review this as a new request, then choose Send. The message that wasn't sent stays above it. Sending again may repeat actions; nothing is sent by choosing Edit.");
+    expect(conv.composerEditAgain(2, true)).toBe("Review this as a new request, then choose Send. The 2 messages that weren't sent stay above it. Together they're over 2,000 characters: send them one at a time. Sending again may repeat actions; nothing is sent by choosing Edit.");
+    // A note about the draft: another request's wait leaves it be; once what is there fits, Edit's caution stays.
+    for (const line of [conv.composerEditAgain(1), conv.composerEditAgain(2, true)]) expect(conv.composerLineYields(line), line).toBe(false);
+    expect(conv.composerLineFits(conv.composerEditAgain(2, true), true)).toBe(conv.CONVERSATION_EDIT);
+    expect(conv.composerLineFits(conv.composerEditAgain(1), true)).toBeNull();
+  });
+
+  it("never says the request I edited stayed after Cancel edit, since it never does (home-w5-4)", () => {
+    for (const messages of [0, 1, 2]) for (const draft of [false, true]) for (const over of [false, true]) for (const changed of [false, true]) {
+      const line = conv.composerEditCancelled(messages, draft, over, { changed });
+      expect(line, line).not.toMatch(/request you edited|repeat actions/);
+      // Said over the limit, it goes once what is there fits, as no edit is open: nothing it said is left unsaid.
+      expect(conv.composerLineFits(line, false), line).toBe(over && messages ? "" : null);
+    }
+  });
+
+  it("lets another request's wait take the composer's line only from an earlier outcome, never from a note about my draft (home-c3-1)", () => {
+    for (const line of ["", conv.COMPOSER_SAYS.replied, conv.COMPOSER_SAYS.replyFailed, conv.COMPOSER_SAYS.notAnswered, conv.COMPOSER_SAYS.noReply, conv.COMPOSER_SAYS.stoppedAll, conv.COMPOSER_SAYS.copied, conv.COMPOSER_SAYS.editCancelled, conv.CONVERSATION_STOPPED, conv.CONVERSATION_NOTHING_TO_STOP]) {
+      expect(conv.composerLineYields(line), line).toBe(true);
+    }
+    for (const line of [conv.CONVERSATION_EDIT, conv.COMPOSER_OVER, conv.COMPOSER_SAYS.empty, conv.COMPOSER_SAYS.sendFailed, conv.COMPOSER_SAYS.sending, "The model service can't be reached right now. Your message is still here: send it again once you're online."]) {
+      expect(conv.composerLineYields(line), line).toBe(false);
+    }
+  });
+
+  it("offers Models & connections only on a Problem line that sends me there, never one for my administrator or GitHub, and names it once (home-r3-2, accessibility-visual-c3-2)", () => {
+    // Ember's own lines, as friendlyError and the connection write them.
+    const org = friendlyError("401 Unauthorized", undefined, { provider: true, statusCode: 401 });
+    expect(org).toBe("Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings.");
+    expect(conv.problemInHome(org)).toEqual({ text: org, settings: false });
+    const github = "No Copilot model I can use: None of the models Copilot lists are enabled for this account. Turn one on in your Copilot settings on GitHub.";
+    expect(conv.problemInHome(github)).toEqual({ text: github, settings: false });
+    expect(conv.problemInHome("Copilot isn't available to this account: This GitHub account doesn't have Copilot. Add Copilot to it, or ask whoever manages your GitHub plan.").settings).toBe(false);
+    // The user's own provider with no model set: the section named once, with the way there.
+    expect(conv.problemInHome("No model set for your provider: Enter the model your provider should use in Ember's settings, under Models & connections.")).toEqual({
+      text: "No model set for your provider: Enter the model your provider should use in Models & connections.", settings: true,
+    });
+    // Ember gave up reconnecting: Check again is in Models & connections, so the line that names it has the way there.
+    for (const w of [lostWords(false), lostWords("user"), lostWords(true)]) expect(conv.problemInHome(w.gaveUp)).toEqual({ text: w.gaveUp, settings: true });
+    expect(conv.problemInHome("Copilot isn't running: Ember's Copilot runtime stopped while connecting. Press Check again.").settings).toBe(true);
+    // Lines the user can act on in Models & connections keep it.
+    expect(conv.problemInHome(friendlyError("401", "authentication")).settings).toBe(true);
+    expect(conv.problemInHome(friendlyError("401", undefined, { provider: "user", statusCode: 401 })).settings).toBe(true);
+    expect(conv.problemInHome(friendlyError("model_not_supported")).settings).toBe(true);
+    expect(conv.problemInHome(friendlyError("something odd")).settings).toBe(true);
+    // Nothing there helps: a hiccup, the network, ending a conversation, a reconnect under way.
+    for (const said of [friendlyError("502 Bad Gateway"), friendlyError("ECONNRESET"), friendlyError("prompt token count exceeds the limit"), lostWords(false).reconnecting]) {
+      expect(conv.problemInHome(said).settings, said).toBe(false);
+    }
+  });
+
+  it("asks whether my model server on this computer is running, never to wait until I'm online (integrations-r2-2)", () => {
+    for (const host of ["127.0.0.1:11434", "localhost:1234", "[::1]:8080"]) {
+      expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "user", host } }), host)
+        .toBe("The model server on this computer can't be reached. Is it running? Your message is still here: send it again once it is.");
+    }
+    // A provider elsewhere, and the organisation's service on this computer, are still out of reach over the network.
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "user", host: "api.example.com" } })).toBe("Your model provider can't be reached right now. Your message is still here: send it again once you're online.");
+    expect(composerRefusal({ phase: "error", reason: "network", service: { kind: "admin", host: "127.0.0.1:11434" } })).toBe("The model service can't be reached right now. Your message is still here: send it again once you're online.");
+  });
+
+  it("asks before New conversation clears the messages, and names the saved copy when there is one (home-9)", () => {
+    expect(conv.conversationNewQuestion(1, false)).toBe("Start a new conversation? This clears the message here.");
+    expect(conv.conversationNewQuestion(12, false)).toBe("Start a new conversation? This clears the 12 messages here.");
+    expect(conv.conversationNewQuestion(12, true)).toBe("Start a new conversation? This clears the 12 messages here and deletes the copy saved on this computer.");
+  });
+
+  it("says what removing an entry from Never look at or an app's Always changes (safety-privacy-11)", () => {
+    expect(conv.neverLookRemovedText("keepassxc", "linux")).toBe("Removed KeePassXC. Ember may read its windows now; Restore defaults puts it back.");
+    expect(conv.neverLookRemovedText("Thunderbird", "linux")).toBe("Removed Thunderbird. Ember may read its windows now.");
+    // A password prompt stays unread whatever the list says.
+    expect(conv.neverLookRemovedText("polkit", "linux")).toBe("Removed Password prompts (polkit). Ember still never reads password prompts; Restore defaults puts it back.");
+    expect(conv.neverLookRemovedText("credentialuibroker", "win32")).toBe("Removed Password prompts (Windows Security). Ember still never reads password prompts; Restore defaults puts it back.");
+    expect(conv.grantRemovedText("Thunderbird")).toBe("Removed Thunderbird. Ember asks again before its first action there.");
+  });
+
+  it("names what deleting all routines and reminders deletes, with each plural right and no count of zero (integrations-10)", () => {
+    expect(reminderDeleteScope(1, 0)).toBe("Delete your routine? This removes saved reminders too.");
+    expect(reminderDeleteScope(3, 0)).toBe("Delete all 3 routines? This removes saved reminders too.");
+    expect(reminderDeleteScope(0, 1)).toBe("Delete your waiting reminder? This removes saved reminders too.");
+    expect(reminderDeleteScope(0, 2)).toBe("Delete all 2 waiting reminders? This removes saved reminders too.");
+    expect(reminderDeleteScope(2, 1)).toBe("Delete 2 routines and 1 waiting reminder? This removes saved reminders too.");
+    expect(reminderDeleteScope(1, 1)).toBe("Delete 1 routine and 1 waiting reminder? This removes saved reminders too.");
+    expect(reminderDeleteScope(0, 0)).toBe("Delete your saved reminders?");
+  });
+});
+
+describe("what Memory says while saved memory can't be opened (memory-2, integrations-2)", () => {
+  it("names the reason, and never tells someone to erase memory that is only waiting", () => {
+    expect(memoryOwnerText("checking", true)).toBe("Checking your GitHub account…");
+    expect(memoryOwnerText("own-provider", true)).toBe("Memory works only with GitHub Copilot, so it's paused while Ember uses your own model provider. What Ember remembers stays on this computer. Turn off “Use my own model provider” in Models & connections to use it again.");
+    expect(memoryOwnerText("org-provider", false)).toBe("Memory works only with GitHub Copilot, so it's paused while Ember uses your organisation's model service. What Ember remembers stays on this computer.");
+    expect(memoryOwnerText("unverified", true)).toBe("Ember couldn't check your GitHub account, so memory is paused. It comes back when Ember reconnects.");
+    expect(memoryOwnerText("signed-out", false)).toBe("Sign in with GitHub to use saved memory.");
+    expect(memoryOwnerText("signed-out", true)).toBe("Sign in with GitHub to use saved memory. Until then it stays hidden on this computer, and Forget everything clears it.");
+    expect(memoryOwnerText("other-account", true)).toBe("This saved memory belongs to another GitHub account, so Ember keeps it hidden. Use Forget everything to clear it.");
+    expect(memoryOwnerText("unowned", true)).toBe("Ember can't tell which GitHub account this saved memory belongs to, so it stays hidden. Use Forget everything to clear it.");
+    // An older main that sends no reason: what it said before.
+    expect(memoryOwnerText(undefined, true)).toBe(memoryOwnerText("unowned", true));
+    expect(memoryOwnerText(undefined, false)).toBe("Sign in with GitHub to use saved memory.");
+    for (const r of ["checking", "own-provider", "org-provider", "unverified"] as const) {
+      expect(memoryOwnerOffersErase(r, true)).toBe(false);
+      expect(memoryOwnerText(r, true)).not.toContain("Forget everything");
+    }
+    for (const r of ["signed-out", "other-account", "unowned", undefined] as const) expect(memoryOwnerOffersErase(r, true)).toBe(true);
+    expect(memoryOwnerOffersErase("signed-out", false)).toBe(false);
+  });
+
+  it("answers in Ember's own words when memory is on but paused, opening Memory only where the answer is there", () => {
+    expect(memoryPausedReply("checking")).toEqual({ text: "I'm still checking your GitHub account, so memory isn't ready yet. Ask me again in a moment.", open: false });
+    expect(memoryPausedReply("own-provider")).toEqual({ text: "Memory works only with GitHub Copilot, so it's paused while I use your own model provider, and I can't keep what you tell me.", open: false });
+    expect(memoryPausedReply("org-provider")).toEqual({ text: "Memory works only with GitHub Copilot, so it's paused while I use your organisation's model service, and I can't keep what you tell me.", open: false });
+    expect(memoryPausedReply("unverified")).toEqual({ text: "I couldn't check your GitHub account, so memory is paused. It comes back when I reconnect.", open: false });
+    expect(memoryPausedReply("signed-out")).toEqual({ text: "Memory needs you signed in with GitHub, so I can't keep what you tell me yet.", open: false });
+    expect(memoryPausedReply("other-account")).toEqual({ text: "The memory saved on this computer isn't matched to your GitHub account, so memory is paused. I've opened Memory in Settings.", open: true });
+    expect(memoryPausedReply("unowned")).toEqual(memoryPausedReply("other-account"));
+  });
+});
+
+describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
+  const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+  const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+
+  it("lets the person stop tasks sending screenshots, saying what that costs, in their own row", async () => {
+    const { SCREEN_IMAGES_TEXT } = await import("../../app/renderer/home/copy");
+    expect(SCREEN_IMAGES_TEXT).toEqual({
+      heading: "What tasks may send",
+      label: "Send screenshots for tasks",
+      hint: "A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.",
+    });
+    expect(page).toContain(`<h3 class="sub">${SCREEN_IMAGES_TEXT.heading}</h3>`);
+    expect(page).toContain(`<label class="switch-row"><input type="checkbox" id="screen-images" role="switch" aria-describedby="screen-images-hint"><span>${SCREEN_IMAGES_TEXT.label}</span></label>`);
+    expect(page).toContain(`<p class="row-note" id="screen-images-hint">${SCREEN_IMAGES_TEXT.hint}</p>`);
+    // Saved as the user's own switch, shown as applied (the organisation's off wins, a held lockdown's too:
+    // safety-privacy-w5-2), and dimmed when it manages it.
+    expect(main).toContain(`void save({ screenImages: (e.target as HTMLInputElement).checked });`);
+    expect(main).toContain(`($("screen-images") as HTMLInputElement).checked = s.screenImages && !managed.has("screenImages");`);
+    expect(main).toContain(`["screen-images", "screenImages"]`);
+  });
+
+  it("is what Apps & privacy's copy of the consent says, where first run's words no longer fit there (safety-privacy-r4)", async () => {
+    const { privacyFoldWords } = await import("../../app/renderer/home/copy");
+    const first = "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already.";
+    // The words are first run's own, as the page has them.
+    expect(page.replace(/<[^>]+>/g, "")).toContain(first);
+    expect(privacyFoldWords(first, { screenImages: true })).toBe(
+      "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is below, under Never look at, and common password managers are on it already.");
+    expect(privacyFoldWords(first, { screenImages: false })).toBe(
+      "It reads the window you're working in through the desktop's accessibility service. Send screenshots for tasks is off (below), so it takes no screenshots for tasks. App windows on your never-look list and password prompts are never read. The list is below, under Never look at, and common password managers are on it already.");
+    // Any other text is left as it is.
+    expect(privacyFoldWords("It sends no usage statistics.", { screenImages: false })).toBe("It sends no usage statistics.");
+  });
+
+  it("says ordinary steps go ahead without asking while Work without asking is on, and which apps never ask (safety-privacy-c4-1)", async () => {
+    const { privacyFoldWords } = await import("../../app/renderer/home/copy");
+    const hand = " in an app, and always before anything hard to undo. It never types passwords. ";
+    // The words are first run's own, after the line's bold lead, as the page has them.
+    expect(page).toContain(`<b>It asks before acting</b>${hand}<span`);
+    expect(privacyFoldWords(hand, { screenImages: true })).toBe(hand);
+    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, autonomy: true, grants: true })}`).toBe(
+      "It asks before acting on anything risky or hard to undo. Work without asking is on (below), so for ordinary steps it tells you what it's doing instead. It never types passwords. ");
+    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, grants: true })}`).toBe(
+      "It asks before acting in an app, except those you let it act in without asking (below), and always before anything hard to undo. It never types passwords. ");
+    // The onboarding line's words after its lead, on either OS, are the ones the settings and the policy leave.
+    const { onboardingRest } = await import("../../app/renderer/home/computers-copy");
+    for (const os of ["linux", "win32"] as const) expect(privacyFoldWords(onboardingRest(os), { screenImages: true, targets: ": now" })).toBe(": now");
+    expect(privacyFoldWords(onboardingRest("darwin"), { screenImages: true })).toBe(onboardingRest("darwin"));
+  });
+
+  it("is found by searching for screenshots, by its own words, and by \"pictures\"", async () => {
+    const { SCREEN_IMAGES_TEXT } = await import("../../app/renderer/home/copy");
+    const { SEARCH_ALIASES } = await import("../../app/renderer/home/search-copy");
+    // Its own label carries "screenshots" (a setting's own words rank first); the pane's alias, the other words.
+    expect(SCREEN_IMAGES_TEXT.label).toMatch(/\bscreenshots\b/);
+    expect(SEARCH_ALIASES["privacy-h"]).toMatch(/\bpictures\b/);
+  });
+});
+
+describe("What Ember did for a command the review cleared (safety-privacy-v1)", () => {
+  it("still says the review's words from the user's own audit file, now kept apart from the reason", async () => {
+    const { describeEntry } = await import("../../app/renderer/home/copy");
+    const v = describeEntry({ t: "2026-11-07T10:00:00Z", event: "command", phase: "decided", verdict: "announce", reason: "Reviewed: routine for the request.", review: "asked to clean the build" });
+    expect(v?.why).toBe("Reviewed: routine for the request (asked to clean the build).");
+    expect(describeEntry({ t: "2026-11-07T10:00:00Z", event: "command", phase: "decided", verdict: "announce", reason: "Reviewed: routine for the request." })?.why).toBe("Reviewed: routine for the request.");
+  });
+});
+
+describe("Home after the last run ended unexpectedly (rp-5)", () => {
+  it("says Ember closed unexpectedly and where its log is, in a status note that has words only then (accessibility-visual-c1-1)", async () => {
+    const { closedUnexpectedlyText } = await import("../../app/renderer/home/copy");
+    expect(closedUnexpectedlyText("/home/ada/.config/ember/logs/ember.log")).toBe("Ember closed unexpectedly last time. Its log shows what it was doing until then: /home/ada/.config/ember/logs/ember.log");
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    // On the page while empty, so a screen reader announces it as it fills.
+    expect(page).toContain(`<p id="run-notice" class="managed" role="status"></p>`);
+    const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`$("run-notice").textContent = status.unexpectedExit ? closedUnexpectedlyText(status.logFile) : "";`);
+  });
+});
+
+describe("the log file in About this build (rp-8)", () => {
+  it("can be copied and shown in the file manager, as the address beside it can be copied", async () => {
+    const { showLogLabel } = await import("../../app/renderer/home/copy");
+    expect(showLogLabel("linux")).toBe("Show in Files");
+    expect(showLogLabel("win32")).toBe("Show in File Explorer");
+    expect(showLogLabel("darwin")).toBe("Show in Finder");
+    const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`["Log file", status.logFile, "log"],`);
+    expect(main).toContain(`copy.setAttribute("aria-label", kind === "log" ? "Copy the log file's path" : \`Copy the address \${val}\`);`);
+    expect(main).toContain(`window.ember.showLogFile().catch(() => { show.textContent = "Couldn't open it"; });`);
+  });
+
+  it("is shown by a channel that opens only Ember's own log file, whatever the page sends", () => {
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`ipcMain.handle(IPC.showLogFile, guard(() => { shell.showItemInFolder(log.file); }));`);
+    const preload = readFileSync(new URL("../../app/preload/home.ts", import.meta.url), "utf8");
+    expect(preload).toContain(`showLogFile: () => ipcRenderer.invoke(IPC.showLogFile),`);
   });
 });

@@ -154,8 +154,8 @@ reported in every PR that touches it.
 | End of speech → a sign Ember heard (sound or motion) | after Copilot answers | **≤ 150 ms** |
 | End of speech → first word, without Copilot's time | ≈ 2.0 s | **≤ 600 ms** |
 | Interrupting Ember by speaking → it stops talking | needs "Hey Ember" | **≤ 200 ms, no wake word** |
-| Idle CPU (listening, silence, no window open) | ≈ 15–20 % (estimated without the setup page) | **≤ 3 %** |
-| Idle memory (Ember's processes, PSS) | ≈ 600 MB (estimated without the setup page) | **≤ 400 MB** |
+| Idle CPU (listening, silence, no window open) | ≈ 11–15 % awake with Home open, on either listening backend (CI 10.8 %); about 6 % once dozing | **≤ 3 %** |
+| Idle memory (Ember's processes, PSS) | ≈ 700–790 MB listening on the C API the Linux packages run, ≈ 900–950 MB on WebAssembly (Home open; the listening process ≈ 240 MB against ≈ 400 MB) | **≤ 400 MB** |
 | Words wrong on your names, apps and projects | not measured | **halved** against the phase-0 baseline |
 
 ## 4. Decisions and phases
@@ -163,8 +163,12 @@ reported in every PR that touches it.
 ### Phase 0: measure it every time
 
 - `scripts/perf/footprint.mjs` launches the built app headless with a temporary data folder, voice on and silence
-  fed in. It prints PSS and CPU per process, and per page through DevTools, as this plan's numbers were taken. It
-  also writes JSON for CI's `el8` job to keep as an artifact. It fails only on a large regression, never on noise.
+  fed in. It prints PSS and CPU per process, and per page through DevTools, as this plan's numbers were taken, then the
+  same as JSON. With `--max-cpu` and `--max-pss` (docs/DEVELOPING.md records the figures) it fails only on a large
+  regression, never on noise. CI's `el8` job runs it with that budget, after the desktop suites, past the first minute
+  and under a compositor, so the overlay beside the cursor is counted (`--compositor`): listening on the C API the
+  Linux packages run (`--native`), then on WebAssembly, each against its own budget. It says which backend it measured,
+  and fails when the listening process wasn't there from the sample's start to its end.
 - `voice.latency` logs transcription time and the steps from transcript arrival to the first speaking report. `voice.hush_ack`
   logs how long the speaking renderer took to acknowledge cancellation. The logs contain no words (CLAUDE.md privacy).
   See the [timing fields in the development guide](DEVELOPING.md#how-speech-runs-native-synthesis-native-or-webassembly-listening).
@@ -207,7 +211,13 @@ reported in every PR that touches it.
    Moonshine's 0.13 s off the wait without changing when a request ends.) Lower `MIN_SILENCE` to 450 ms only when the
    transcript so far ends like a finished request ("?", a verb's object, a known command shape). Keep 600–900 ms when
    it trails off ("and…", "the…"). This is a rule-based first step, and it needs streaming partials (phase 2).
-   Measured against the false cut-off rate on the clip set.
+   Measured against the false cut-off rate on the clip set. (2026-11-07: the trailing half is built. A request the VAD
+   ends on a word no request ends on, "a", "the", "to", "and", "my", "um" and the like, with no "?" or "!"
+   (engine.ts `trailsOff`), is held for 0.9 s (`TRAIL_HOLD_MS`) and joined to what follows: "And make the text a" …
+   0.7 or 0.9 s … "bit bigger." is now one request where it was "And make the text a." (voice-listening-3). Nothing
+   else waits longer, a stop after the pause still stops, and a cancel drops what was held. 2026-11-08: only what comes
+   within 6 dB of the held part's loudness is joined, as a follow-up must come near the wake's: others' talk 12–19 dB
+   under it was joined in 12 of 18 real-model cases and now in none; the half goes as it was (voice-listening-c1-2).)
 
 ### Phase 2: listen like a person
 
@@ -253,13 +263,23 @@ reported in every PR that touches it.
    Adopt one only with a reviewed licence, a SHA-256 pin and a clear win.
 3. **Speech-shaped answers.** For voice turns the persona already asks for 1–3 short sentences. Add spoken-style
    rules: contractions, numbers said as words, no lists. Pick the voice's speed and pauses per sentence type
-   (questions rise, lists get pauses).
+   (questions rise, lists get pauses). (Partly built 2026-11-07: money, clock times, paths, "~" and "#N" are said as
+   words, emoji aren't said, and a list's items end with a pause: `spokenText`, app/voice/spoken.ts.)
 
 ### Phase 5: cost almost nothing at idle
 
 1. **Draw less.**
-   - The handle already drops to about 15 fps when still. It will stop drawing entirely after about 10 s still, and
-     wake on any state change. Same for each overlay.
+   - The overlay, the handle and Home's hero draw an awake Ready face at rest about 6 times a second (`restingGap`;
+     measured on Xvfb with xcompmgr, Home closed: the overlay's canvas 14–17 drawings a second against 23–24, the
+     handle's 15 against 21, the whole tree 8.7–10.1 % of a core against 11.4–15.2 %; Home's hero 11.5 against 18.4).
+     An idle glance held is drawn at that rate too once the eyes are there (rp-4, round five: the overlay 13.2–14.1
+     drawings a second to 10.6–11.5, the whole tree 7.6–8.3 % of a core to 6.0–6.8 %, pointer still, listening off).
+     Fidgets and the handle's idle saccades are most of what is left. They will stop drawing entirely after about 10 s
+     still, and wake on any state change (the resting rate is the owner's decision). Home behind other windows draws
+     its still faces no more (`homeFrameGap`; measured with Home open: Home's renderer 0.3 % of a core against
+     2.5–3 %, its hero 0.1 drawings a second against 12, the whole tree 9.2 % against 11.6–12.9 %).
+   - The main process moves Ember 60 times a second only while it or the pointer moves, and about 10 once both have
+     been still for 2 s (`tickGap`): main at rest 1.0–1.15 % of a core against 1.8–2.2 %.
    - Software compositing (no GPU) gets a cheaper still frame.
    - Target: renderers plus GPU process under 2 % at idle.
 2. **Fewer live windows.** Follow PR #100's pattern on every OS:
@@ -318,7 +338,7 @@ machine before they can become a default.
 
 The owner asked for voice that "keeps improving, recognizing my voice, and … predict[s] what I'm going to say next".
 Three parts, all on this computer, measured with scripts/voice/match-bench.mjs and scripts/voice/words-bench.mjs.
-What Ember keeps for them is in "Before Ember starts" and the microphone's card (`CONSENT_VERSION` 2).
+What Ember keeps for them is in "Before Ember starts" and the microphone's card (added in `CONSENT_VERSION` 2).
 
 ### 7.1 Voice Match that adapts (app/voice/adapt.ts, adapt-sample.ts; main: app/main/personal/service.ts)
 
@@ -415,7 +435,11 @@ thanks" after a question, "Close it" after opening something, "Turn … off" aft
 next one" after a task on one item, "Read it out" after an unspoken answer, "What went wrong?" after a failure, a
 request said twice this session, and by time of day otherwise. Nothing risky, but one built from the user's own risky
 request just now ("Send it to Priya" after a request to send). Shown under the answer in the bubble (only under the
-answer they were made for, never with a question or buttons up) and in the Ask box (only while the field is empty),
+answer they were made for, never with a question or buttons up) and in the Ask box (only while the field is empty,
+never while a question is up, those that follow the answer only while it shows, and "Yes, please" and "No, thanks",
+which answer its last words, only while those show: not while the bubble cuts it short under Read all, and opened in
+full only once its last line has been in view, also past its first 600 characters: `askSuggestions`, and
+only in a box that opened with some, in no more rows than it opened with, so its field never moves),
 captioned "Ember suggests". A click sends them as the user's choice of Ember's words (`suggested`): the usual policy
 applies, and they never count as the user's own words for a command (no announce-with-Stop: host.ts
 `UserRequest.suggested`). After a spoken reply that asked something the follow-up window is 12 s instead of 8 (no
@@ -448,8 +472,9 @@ new claim that the measurements prove Kitten sounds better. Earlier Piper timing
 above remain intact and should not be read as the current runtime policy.
 
 `DEFAULT_VOICE` is the verified Kitten archive with model id `tts`, Apache-2.0 licensing and a complete 63,815,222-byte
-download (about 63.8 MB). The standard model downloads now total 138,478,723 bytes (about 138.5 MB), including the
-unchanged listening and Voice Match models. Preparation and bundled-model staging use this standard manifest.
+download (about 63.8 MB). The standard model downloads then totalled 138,478,723 bytes (about 138.5 MB), including the
+unchanged listening and Voice Match models; since Moonshine v2 base became the recognizer they total 219,886,389 bytes
+(about 220 MB, 130 MB of it for listening). Preparation and bundled-model staging use this standard manifest.
 Kitten runs on one native CPU thread and must meet the measured real-time factor cap of 0.5. Unsupported, missing,
 slow or failed Kitten uses an installed local system voice; there is no production Piper or neural WebAssembly
 fallback. WebAssembly ASR remains available. Kokoro remains an explicit optional native choice, with its own download

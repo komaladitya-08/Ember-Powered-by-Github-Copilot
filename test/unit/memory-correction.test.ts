@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SemanticMemory, vectorFile } from "../../app/main/memory/embed";
 import { FactSchema, SOURCES, type Source } from "../../app/main/memory/graph";
 import { MemoryLearning } from "../../app/main/memory/learning";
+import { NOTHING_TO_FORGET } from "../../app/main/memory/questions";
 import { MemoryService, type MemoryItem } from "../../app/main/memory/service";
 import { memoryFile } from "../../app/main/memory/store";
 
@@ -201,7 +202,8 @@ describe("correction invalidation", () => {
     expect(await pending).toBe("");
     expect(forgot).toHaveBeenCalledExactlyOnceWith(expected.id);
     expect(learned).not.toHaveBeenCalled();
-    expect(l.intent("forget that", { own: true })).toBeNull();
+    // Nothing kept lately: said so in code, never left to the model (memory-v1).
+    expect(l.intent("forget that", { own: true })).toBe(NOTHING_TO_FORGET);
     l.stopNow();
   });
 

@@ -54,7 +54,8 @@ function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Pro
   settings.load();
   const conductor = new Conductor({
     client, settings,
-    presenter: new Presenter(p => states.push(p)),
+    // A model service that isn't Copilot (the provider below), as the host's presenter knows it (integrations-v1).
+    presenter: new Presenter(p => states.push(p), undefined, undefined, undefined, undefined, true),
     log: createLogger({ dir: path.join(dir, "logs") }),
     stateFile: path.join(dir, "agent.json"),
     workDir: path.join(dir, "empty"),
@@ -196,8 +197,8 @@ describe("conductor on the real Copilot runtime", () => {
       for (let i = 0; i < 300 && !why.length; i++) await new Promise(r => setTimeout(r, 50));
       expect(why).toEqual(["silent turn"]);
       expect(asked).toBe(1);
-      expect(states.some(s => s.bubble?.title === "Still waiting for Copilot…" && s.bubble.mood === "thinking")).toBe(true);
-      expect(states.at(-1)?.bubble).toMatchObject({ mood: "error", thought: "Copilot didn't answer. Ask me again in a moment." });
+      expect(states.some(s => s.bubble?.title === "Still waiting for the model service…" && s.bubble.mood === "thinking")).toBe(true);
+      expect(states.at(-1)?.bubble).toMatchObject({ mood: "error", thought: "The model service didn't answer. Ask me again in a moment." });
       // The turn was ended: the runtime let go of the request it was waiting on, and the session went idle at once
       // (not given up on: no onStuck).
       expect(await (conductor.ending ?? Promise.resolve(true))).toBe(true);
@@ -299,8 +300,9 @@ describe("the conversation lasts one run of Ember (host on the real runtime)", (
       stall = true;
       const from = states.length;
       await host.ask("what time is it in Tokyo");
-      expect(await until(() => states.slice(from).some(s => s.bubble?.title === "Still waiting for Copilot…"))).toBe(true);
-      expect(await until(() => states.slice(from).some(s => s.bubble?.thought === "Copilot didn't answer. Ask me again in a moment."))).toBe(true);
+      // The test server is the model service in use, never called Copilot (integrations-v1).
+      expect(await until(() => states.slice(from).some(s => s.bubble?.title === "Still waiting for the model service…"))).toBe(true);
+      expect(await until(() => states.slice(from).some(s => s.bubble?.thought === "The model service didn't answer. Ask me again in a moment."))).toBe(true);
       stall = false;
       // The abort ended it at once: nothing was reconnected.
       expect(await until(() => conductor?.ending === null)).toBe(true);

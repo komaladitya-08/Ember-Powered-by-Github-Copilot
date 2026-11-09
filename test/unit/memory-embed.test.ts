@@ -428,4 +428,30 @@ describe("Better recall's download", () => {
     expect(r.status()).toEqual({ state: "absent", bytes: MEMORY_MODEL_BYTES });
     expect(fs.readdirSync(path.join(dir, "models"))).toEqual([]);
   });
+
+  it("lets a download finish while Ember checks the account again on a reconnect, and pauses only the model's use (memory-8)", async () => {
+    const dir = tmp();
+    let ready = true, wanted = true, cancelled = false;
+    const r = new BetterRecall({
+      dir, modelsRoot: path.join(dir, "models"), log: quiet, memoryOn: () => ready && wanted, memoryWanted: () => wanted,
+      fork: () => { throw new Error("not in this test"); },
+      download: (_url, _dest, _progress, signal) => new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => { cancelled = true; reject(new Error("cancelled")); });
+      }),
+    });
+    const fetching = r.download();
+    // A reconnect: memory is on, but its account is being checked again.
+    ready = false;
+    r.settingsChanged();
+    expect(cancelled).toBe(false);
+    expect(r.status().state).toBe("downloading");
+    ready = true;
+    r.settingsChanged();
+    expect(cancelled).toBe(false);
+    // Turned off: the download is cancelled, as before.
+    wanted = false;
+    r.settingsChanged();
+    await fetching;
+    expect(cancelled).toBe(true);
+  });
 });

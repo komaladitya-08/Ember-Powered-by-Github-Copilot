@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { announcement, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, SUGGEST_CAPTION, type BubbleView } from "./bubble";
+import { announcement, answerRoom, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, stepParts, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, SUGGEST_CAPTION, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -40,6 +40,17 @@ describe("announcement", () => {
     expect(announcement(view({ mood: "thinking", thought: "Let me look…" }))).toBe("");
     expect(announcement(view({ mood: "acting", thought: "Clicking" }))).toBe("");
     expect(announcement(view({ visible: false, thought: "Hello" }))).toBe("");
+  });
+
+  it("says once that Ember is still waiting, and how the keyboard stops it, though the bubble still thinks (accessibility-visual-2)", () => {
+    const stalled = view({ mood: "thinking", title: "Still waiting for Copilot…", thought: "“what time is it in Tokyo”", streaming: true, stalled: true, step: "Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops everything." });
+    expect(announcement(stalled)).toBe("Ember says: Still waiting for Copilot… Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops everything.");
+    expect(announcement({ ...stalled, step: null })).toBe("Ember says: Still waiting for Copilot…");
+    expect(announcement({ ...stalled, where: "on build-01" })).toMatch(/^Ember says, on build-01: Still waiting/);
+    // An ordinary thought stays unsaid, and so does a stall flag on any other mood or a hidden bubble.
+    expect(announcement({ ...stalled, stalled: false })).toBe("");
+    expect(announcement({ ...stalled, mood: "acting" })).toBe("");
+    expect(announcement({ ...stalled, visible: false })).toBe("");
   });
 
   it("reads a whole question with its title", () => {
@@ -271,6 +282,54 @@ describe("bubbleFit: room beside the settings window", () => {
   });
 });
 
+describe("bubbleFit: across the open Ask box an answer grew into (companion-c3-1)", () => {
+  const screen = { width: 1024, height: 768 }, handle = { x: 752, y: 700, width: 260, height: 56 };
+  const answer = { width: 330, height: 277 }, tall = () => 277;
+  const covers = (p: { x: number; y: number; width: number; height: number }, r: { x: number; y: number; width: number; height: number }) =>
+    p.x < r.x + r.width && p.x + p.width > r.x && p.y < r.y + r.height && p.y + p.height > r.y;
+
+  it("goes below the box or above it, the side nearer Ember, where nothing by Ember is clear of it, never over Ember or the handle", () => {
+    // Ember at the top centre at Larger text, the box under it: no room by Ember, so below the box, slid past the handle.
+    const top = { x: 195, y: 245, width: 728, height: 173 };
+    expect(bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, top], tall)).toBeNull();
+    const below = bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, top], tall, [top])!;
+    expect(below).toEqual({ x: 416, y: 424, width: 330, height: 277 });
+    expect(covers(below, handle)).toBe(false);
+    // Ember at the bottom centre, the box over it: above the box, which is nearer Ember than nothing.
+    const bottom = { x: 195, y: 364, width: 728, height: 173 };
+    const ember = { x: 559, y: 704 };
+    const above = bubbleFit({ x: ember.x, y: ember.y + 24 }, answer, screen, 60, [handle, bottom], tall, [bottom])!;
+    expect(above.y + above.height).toBeLessThanOrEqual(bottom.y);
+    expect(covers(above, { x: ember.x - 45, y: ember.y - 66, width: 90, height: 102 })).toBe(false);
+  });
+
+  it("is still beside Ember, and never across the box, wherever there is room by Ember", () => {
+    // A 1280 x 800 screen: beside Ember, above the box, as before.
+    const wide = { width: 1280, height: 800 }, box = { x: 323, y: 297, width: 728, height: 173 };
+    const by = bubbleFit({ x: 640, y: 135 }, answer, wide, 60, [box], tall);
+    expect(by).not.toBeNull();
+    expect(bubbleFit({ x: 640, y: 135 }, answer, wide, 60, [box], tall, [box])).toEqual(by);
+    // Nothing to go across: no room is no room.
+    expect(bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, { x: 195, y: 245, width: 728, height: 173 }], tall, [])).toBeNull();
+    // No room above or below the box either (it fills the screen's height): none.
+    const full = { x: 195, y: 20, width: 728, height: 700 };
+    expect(bubbleFit({ x: 559, y: 135 }, answer, screen, 60, [handle, full], tall, [full])).toBeNull();
+  });
+
+  it("tells whether the tallest finished answer still has a place in Ember's column beside a box, for the Ask box to keep a row only then (accessibility-visual-c4-1)", () => {
+    // 1024 x 768 at Larger text, Ember in the middle and the box above it, a row taller: no room left for the answer.
+    expect(answerRoom({ x: 512, y: 474 }, 60, screen, { x: 195, y: 245, width: 728, height: 236 }, 1.3)).toBe(false);
+    // Lower down, room above the box; at the top with the box under Ember, room below a box a row shorter.
+    expect(answerRoom({ x: 512, y: 584 }, 60, screen, { x: 195, y: 355, width: 728, height: 236 }, 1.3)).toBe(true);
+    expect(answerRoom({ x: 512, y: 134 }, 60, screen, { x: 195, y: 245, width: 728, height: 236 }, 1.3)).toBe(false);
+    expect(answerRoom({ x: 512, y: 134 }, 60, screen, { x: 195, y: 245, width: 728, height: 173 }, 1.3)).toBe(true);
+    // Room below Ember (the bubble's own place), clear of a box above it, at the default text size on 1280 x 800.
+    expect(answerRoom({ x: 640, y: 474 }, 60, { width: 1280, height: 800 }, { x: 360, y: 243, width: 560, height: 188 }, 1)).toBe(true);
+    // Never over Ember: under a box at the top whose only room below is where Ember is.
+    expect(answerRoom({ x: 512, y: 450 }, 60, screen, { x: 195, y: 8, width: 728, height: 300 }, 1.3)).toBe(false);
+  });
+});
+
 describe("bubble styles", () => {
   it("keeps line breaks, hides the caret unless streaming, and calms down with html.calm", () => {
     expect(BUBBLE_CSS).toMatch(/\.eb-thought \{[^}]*white-space: pre-line/);
@@ -424,6 +483,43 @@ describe("the bubble's hierarchy (UI audit #9)", () => {
     expect(keyHintParts("Or press Ctrl+Alt+E and go to Conversation.")).toBeNull();
     expect(keyHintParts("Clicking “Rename”")).toBeNull();
     expect(keyHintParts(null)).toBeNull();
+  });
+
+  it("keeps each chord on one line with its word, also in a bubble narrowed beside the Ask box, as the corner card does (companion-r2-4)", () => {
+    // Narrowed to 273 px beside the open box at Larger text, the hint broke inside a chord ("Ctrl Alt" / "N not now").
+    // A chord breaks under its keycaps only where it alone is wider than the row (companion-r3-2: a Mac's four keys ran
+    // past the glass at 220 px); bubble-motion-live.test.ts measures it on every OS and text size.
+    expect(BUBBLE_CSS).toContain(".eb-step .eb-key { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; box-sizing: border-box; min-width: 0; max-width: 100%; padding-left: 1em; white-space: nowrap; }");
+    // __dirname, as the source pins below: a file URL's pathname is "/D:/a/…" on Windows, which no file has.
+    const src = fs.readFileSync(path.join(__dirname, "bubble.ts"), "utf8");
+    const step = src.slice(src.indexOf("  setStep(text: string | null): void {"), src.indexOf("  setWhole("));
+    expect(step).toMatch(/className: "eb-key" \}\);\n\s+chord\.append\(\.\.\.caps, word\);/);
+  });
+
+  it("draws the \" · \" between two chords only where they share a line, never ending or starting one (accessibility-visual-r3-2)", () => {
+    // Each chord's own, in the room before it; the list starts that room left of the row, where it is clipped.
+    expect(BUBBLE_CSS).toContain(".eb-step .eb-keys { display: flex; flex-wrap: wrap; margin-left: -1em; clip-path: inset(-4px -4px -4px 1em); }");
+    // Before a chord that follows another only: the first one's, clipped from sight, was still read ("· Ctrl Alt Y
+    // allow": companion-v4-3; bubble-motion-live.test.ts reads the accessibility tree).
+    expect(BUBBLE_CSS).toContain(".eb-step .eb-key + .eb-key::before { content: \"·\"; position: absolute; left: 0; top: 0; width: 1em; text-align: center; }");
+    expect(BUBBLE_CSS).not.toMatch(/\.eb-step \.eb-key::before/);
+    // No " · " text between the chords any more (it was left at the first line's end).
+    const src = fs.readFileSync(path.join(__dirname, "bubble.ts"), "utf8");
+    const step = src.slice(src.indexOf("  setStep(text: string | null): void {"), src.indexOf("  setWhole("));
+    expect(step).not.toContain('createTextNode(" · ")');
+    expect(step).toContain('className: "eb-keys"');
+  });
+
+  it("keeps a question's keys as keycaps under a note before them, on a line of its own (tasks-approvals-6)", () => {
+    const note = "To answer yes by voice, set up Voice Match in Settings › Voice, so I know it's you. For now, click Allow.";
+    expect(stepParts(`${note}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now`)).toEqual({ lead: note, keys: [{ keys: ["Ctrl", "Alt", "Y"], word: "allow" }, { keys: ["Ctrl", "Alt", "N"], word: "not now" }] });
+    expect(stepParts("Ctrl+Alt+Y allow")).toEqual({ lead: null, keys: [{ keys: ["Ctrl", "Alt", "Y"], word: "allow" }] });
+    // A note alone, or a line that isn't keys after it, is words as before.
+    expect(stepParts(note)).toEqual({ lead: null, keys: null });
+    expect(stepParts(`${note}\nOr press Ctrl+Alt+E.`)).toEqual({ lead: null, keys: null });
+    // Heard as one: the note, then the keys.
+    expect(announcement({ visible: true, mood: "attention", title: "May I?", thought: "Click “Send”?", streaming: false, step: `${note}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now` }))
+      .toBe(`Ember needs you: May I? Click “Send”? ${note} Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
   });
 
   it("says a risky question is one before anything else, as its tag shows it", () => {

@@ -7,8 +7,10 @@
  * version number, never from what the reply says.
  */
 
+import path from "node:path";
 import { z } from "zod";
-import type { UpdateStatus } from "../shared/ipc";
+import type { OS } from "../shared/shortcuts";
+import type { InstallKind, UpdateStatus } from "../shared/ipc";
 
 const REPO = "komaladitya-08/Ember-Powered-by-Github-Copilot";
 /** Every release, not /releases/latest: that skips prereleases, and every Ember so far is one. */
@@ -55,6 +57,38 @@ export function releasePage(version: string): string | null {
   return v ? `https://github.com/${REPO}/releases/tag/v${v.join(".")}` : null;
 }
 
+/**
+ * The system notification that `version` is out, and where clicking it leads: Home's Updates section, at its "See
+ * what's new…" (shown while a newer version is out; the section's heading otherwise). The body still says where to go,
+ * for a notification centre that doesn't pass the click on.
+ */
+export function updateNotice(version: string): { title: string; body: string; section: string } {
+  return { title: "Ember: a new version is out", body: `Ember ${version} is out. Open Ember's settings to see what's new.`, section: "updates:updates-open" };
+}
+
+/** The file the npm launcher (packages/npm/lib/launcher.mjs, MARKER) leaves in each complete version folder. */
+export const NPM_MARKER = ".ember-npm-complete";
+
+/**
+ * How this Ember was installed, so Home's Updates can say how to update it (install-docs-11), or null when it can't
+ * tell (development, a build run from elsewhere). The npm launcher's copy has its marker in the version folder: beside
+ * the AppImage, above Ember\Ember.exe, or beside Ember.app. Otherwise the RPM installs into /opt/ember, the AppImage
+ * runs with APPIMAGE set (runningAppImage), and Windows and macOS have one package each (the zip; the app, from the dmg
+ * or the zip).
+ */
+export function installKind(o: { os: OS; packaged: boolean; execPath: string; appImage: string | null; exists: (file: string) => boolean }): InstallKind | null {
+  if (!o.packaged) return null;
+  const p = o.os === "win32" ? path.win32 : path.posix;
+  const folder = o.os === "linux" ? (o.appImage ? p.dirname(o.appImage) : null)
+    : o.os === "win32" ? p.dirname(p.dirname(o.execPath))
+    : p.resolve(o.execPath, "../../../..");
+  if (folder !== null && o.exists(p.join(folder, NPM_MARKER))) return "npm";
+  if (o.os === "win32") return "zip";
+  if (o.os === "darwin") return "app";
+  if (o.appImage) return "appimage";
+  return o.execPath.startsWith("/opt/ember/") ? "rpm" : null;
+}
+
 export interface UpdateCheckerOptions {
   /** Electron's net.fetch in main, so the system's proxy is used. */
   fetch: (url: string, init: RequestInit) => Promise<Response>;
@@ -65,6 +99,10 @@ export interface UpdateCheckerOptions {
   told(): string | null;
   /** A newer version than `told()`: tell the user, and remember it. */
   announce(version: string): void;
+  /** When it last asked GitHub (ISO, kept in the settings), or null: a restart then waits out the day (integrations-v3). */
+  lastChecked?(): string | null;
+  /** It asked GitHub at `at` (ISO): keep it for the next start. */
+  checked?(at: string): void;
   changed(status: UpdateStatus): void;
   log: { warn(event: string, fields?: Record<string, unknown>): void };
   now?: () => Date;
@@ -90,8 +128,33 @@ export class UpdateChecker {
   refresh(): void {
     if (!this.o.allowed()) { this.stop(); this.phase = "idle"; this.latest = null; this.checkedAt = null; }
     // Announcing changes the settings, which lands here mid-look: that look schedules the next one itself.
-    else if (!this.timer && !this.looking) this.schedule(FIRST_CHECK_MS);
+    else if (!this.timer && !this.looking) {
+      this.checkedAt ??= this.lastLook();
+      // A newer version found before a restart (the one the user was told of) is still out: said again at once, with
+      // no request, until the next look or until Ember is that version (integrations-r6).
+      const told = this.o.told();
+      if (this.phase === "idle" && this.latest === null && told !== null && isNewer(told, this.o.current)) { this.latest = told; this.phase = "available"; }
+      this.schedule(this.firstWait());
+    }
     this.o.changed(this.status);
+  }
+
+  /** The last look's time as kept, or null when there is none or it can't be read. */
+  private lastLook(): string | null {
+    const at = this.o.lastChecked?.() ?? null;
+    return at !== null && Number.isFinite(Date.parse(at)) ? at : null;
+  }
+
+  /**
+   * How long the first look waits: a minute after start, or until a day after the last look when that is later, so
+   * restarting Ember never asks GitHub more than once a day (integrations-v3). Never more than a day: a clock set back
+   * doesn't stop it looking.
+   */
+  private firstWait(): number {
+    const at = this.lastLook();
+    if (at === null) return FIRST_CHECK_MS;
+    const due = Date.parse(at) + CHECK_EVERY_MS - (this.o.now?.() ?? new Date()).getTime();
+    return Math.min(CHECK_EVERY_MS, Math.max(FIRST_CHECK_MS, due));
   }
 
   stop(): void {
@@ -125,6 +188,7 @@ export class UpdateChecker {
       if (text.length > MAX_REPLY_CHARS) throw new Error("reply too long");
       const newest = newestVersion(JSON.parse(text));
       this.checkedAt = (this.o.now?.() ?? new Date()).toISOString();
+      this.o.checked?.(this.checkedAt);
       this.latest = newest !== null && isNewer(newest, this.o.current) ? newest : null;
       this.phase = this.latest ? "available" : "current";
       const told = this.o.told();
@@ -132,6 +196,8 @@ export class UpdateChecker {
     } catch (err) {
       this.phase = "failed";
       this.o.log.warn("updates.check_failed", { err: err instanceof Error ? err.name : "unknown" });
+      // A look that failed counts too: Home says Ember tries again tomorrow, and a restart keeps to that.
+      if (this.o.allowed()) this.o.checked?.((this.o.now?.() ?? new Date()).toISOString());
     }
     this.o.changed(this.status);
     return this.status;

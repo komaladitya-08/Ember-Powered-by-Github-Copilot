@@ -16,7 +16,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsReply, resultsRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "../../app/main/agent/status";
 import type { Task } from "../../app/main/agent/tasks";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
@@ -127,12 +127,12 @@ describe("catch-up", () => {
       task({ id: "c", title: "Old one", status: "done", finished: NOW - CATCH_UP_MS - 1 }),
       task({ id: "d", title: "Write the report" }),
     ];
-    expect(catchUpReply(tasks, NOW)).toBe("2 tasks finished. “Check the logs”: it didn't finish. “Tidy the desktop”: done. Moved 3 screenshots to Pictures. One task is still under way.");
+    expect(catchUpReply(tasks, NOW)).toBe("2 tasks ended. “Check the logs”: it didn't finish. “Tidy the desktop”: done. Moved 3 screenshots to Pictures. One task is still under way.");
   });
 
   it("counts the rest beyond three, and says plainly when nothing finished", () => {
     const many = [1, 2, 3, 4, 5].map(i => task({ id: `t${i}`, title: `Task ${i}`, status: "done", finished: NOW - i * 1000 }));
-    expect(catchUpReply(many, NOW)).toBe("5 tasks finished. “Task 1”: done. “Task 2”: done. “Task 3”: done. And 2 more.");
+    expect(catchUpReply(many, NOW)).toBe("5 tasks ended. “Task 1”: done. “Task 2”: done. “Task 3”: done. And 2 more.");
     expect(catchUpReply([], NOW)).toBe("Nothing new: no tasks finished in the last two hours.");
   });
 
@@ -142,7 +142,7 @@ describe("catch-up", () => {
       task({ id: "b", title: "Tidy the desktop", status: "done", finished: NOW - 2000, result: { success: true, summary: "Moved **3** screenshots to `Pictures`." } }),
       task({ id: "c", title: "Check the logs", status: "cancelled", finished: NOW - 3000 }),
     ];
-    expect(catchUpReply(tasks, NOW)).toBe("3 tasks finished. “Build the app”: build-01's connection dropped, so I stopped this. “Tidy the desktop”: done. Moved 3 screenshots to Pictures. “Check the logs”: you stopped it.");
+    expect(catchUpReply(tasks, NOW)).toBe("3 tasks ended. “Build the app”: build-01's connection dropped, so I stopped this. “Tidy the desktop”: done. Moved 3 screenshots to Pictures. “Check the logs”: you stopped it.");
   });
 });
 
@@ -271,5 +271,57 @@ describe("AgentHost's status answer", () => {
     settings.update = () => { throw new Error("disk full"); };
     await host.ask("just show me");
     expect(answers).toEqual([RESULTS_REPLY.loudSilent, RESULTS_REPLY.failed]);
+  });
+});
+
+describe("how a stopped task ended, in the catch-up and the status answer (tasks-approvals-v1)", () => {
+  it("never says “you stopped it” about a task whose question ran out of time, or one the user said Not now to", () => {
+    const tasks = [
+      task({ id: "a", title: "Send the Q3 report to Priya", status: "cancelled", endedBy: "expired", finished: NOW - 1000 }),
+      task({ id: "b", title: "Empty the trash", status: "cancelled", endedBy: "declined", finished: NOW - 2000 }),
+      task({ id: "c", title: "Fill in the form", status: "cancelled", endedBy: "took-over", finished: NOW - 3000 }),
+    ];
+    const caught = catchUpReply(tasks, NOW);
+    expect(caught).not.toContain("you stopped it");
+    expect(caught).toBe("3 tasks ended. “Send the Q3 report to Priya”: my question to you wasn't answered in time. “Empty the trash”: you said not now. “Fill in the form”: you took the mouse back.");
+    expect(statusReply("status", [tasks[0]], NOW)).toBe("Nothing's running right now. The last thing was “Send the Q3 report to Priya”: my question to you wasn't answered in time.");
+    // A real Stop still says so.
+    expect(catchUpReply([task({ status: "cancelled", endedBy: "stop", finished: NOW - 1000 })], NOW)).toBe("One task ended. “Tidy the desktop”: you stopped it.");
+  });
+
+  it("opens with how many tasks ended, never that one finished which then didn't finish or wasn't answered (tasks-approvals-r3-2)", () => {
+    const unanswered = task({ id: "a", title: "Clean the build folder", status: "cancelled", endedBy: "expired", finished: NOW - 1000 });
+    expect(catchUpReply([unanswered], NOW)).toBe("One task ended. “Clean the build folder”: my question to you wasn't answered in time.");
+    const failed = task({ id: "b", title: "Send the report", status: "failed", finished: NOW - 2000 });
+    expect(catchUpReply([unanswered, failed], NOW)).toBe("2 tasks ended. “Clean the build folder”: my question to you wasn't answered in time. “Send the report”: it didn't finish.");
+    expect(catchUpReply([unanswered], NOW)).not.toMatch(/finished/);
+  });
+});
+
+describe("retryRequest", () => {
+  it("hears a bare “try again” and its kin, which carry the failed task's words (tasks-approvals-1)", () => {
+    for (const t of ["try again", "Ember, try again.", "Try that again please", "please try it again", "again", "one more time", "Have another go", "give it another try", "retry", "Hey Ember, do it again"]) expect(retryRequest(t), t).toBe(true);
+  });
+
+  it("hears it asked as a question, agreed to or once more (tasks-approvals-c1-3)", () => {
+    for (const t of ["can you try again?", "Could you try that again, please?", "yes, try again", "Sure, try it again", "ok try again", "try once more", "once more"]) expect(retryRequest(t), t).toBe(true);
+  });
+
+  it("leaves anything more to the conversation, whose words are its own", () => {
+    for (const t of ["try again and delete the draft", "try again tomorrow at 9", "send it again", "try again with Firefox", "don't try again", "can you try again with Firefox?", "no, don't try once more", ""]) expect(retryRequest(t), t).toBe(false);
+  });
+});
+
+describe("stopRequest", () => {
+  it("hears a typed stop of everything, as “Ember, stop” is heard (tasks-approvals-v2)", () => {
+    for (const t of ["stop", "Stop!", "stop it", "stop that", "Ember, stop", "stop everything", "Stop all tasks", "stop the task", "please stop", "cancel", "cancel that", "cancel everything", "stop now", "hey Ember, stop everything please"]) expect(stopRequest(t), t).toBe(true);
+  });
+
+  it("hears the other short ways people type a stop of what Ember is doing (tasks-approvals-v2)", () => {
+    for (const t of ["stop typing", "Stop doing that!", "stop working", "stop what you're doing", "abort", "halt", "stop stop", "no, stop", "wait stop", "Ember, abort the task"]) expect(stopRequest(t), t).toBe(true);
+  });
+
+  it("leaves a stop of something else to the conversation", () => {
+    for (const t of ["stop the music", "stop the timer at 5", "cancel my 3pm meeting", "don't stop", "stop sharing my screen", "how do I stop a task?", "stop typing in caps", "forget that", "abort the merge", ""]) expect(stopRequest(t), t).toBe(false);
   });
 });

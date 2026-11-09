@@ -25,7 +25,16 @@ const required = process.env.EMBER_ATSPI_TEST === "1" && process.platform === "l
 /** A box on the card (CSS px from the window's top), its visible and full heights, and its line height. */
 interface Box { top: number; bottom: number; ch: number; sh: number; lh: number; shown: boolean }
 interface Layout { vh: number; thought: Box; whole: Box; hint: Box; step: Box; actions: Box; task: Box }
-interface Report { size: string; height: number; layout: Layout; before: string[]; scrolled: string[]; squeezed: Layout; squeezedSent: string[]; fits: string[] }
+/** An ordinary question (no whole text, accessibility-visual-1): fitted, then squeezed, then fitted again; Allow's hold and what a click on it sent. */
+interface Plain { height: number; layout: Layout; keys: { caps: string[]; text: string; stepRight: number; hints: { top: number; bottom: number; right: number; text: string }[] }; held: string | null; squeezedHeld: string | null; squeezedClick: string[]; freedHeld: string | null; freedClick: string[] }
+/**
+ * A question's key hints as drawn, measured by their text (Range.getClientRects), not their block's box, which is always
+ * the column's width: how far right each one's words reach, on how many lines, and the tops of its keycaps.
+ */
+interface Hints { stepRight: number; winWidth: number; hints: { text: string; right: number; lines: number; capTops: number[] }[] }
+/** What main heard the card say of answers opened in full (OVERLAY.handleAnswerEnd), after each step: "long", "short". */
+interface Opened { before: string[]; scrolled: string[]; notOpened: string[]; short: string[] }
+interface Report { size: string; height: number; layout: Layout; before: string[]; scrolled: string[]; squeezed: Layout; squeezedSent: string[]; fits: string[]; plain: Plain; wholeKeys: Hints; shiftKeys: Hints; opened: Opened }
 
 /** Ember's own HandleWindow and page prefs, in Electron: the card for one text size, the question, what the page sent. */
 const CHILD = `
@@ -67,10 +76,20 @@ app.whenReady().then(async () => {
     return { vh: innerHeight, thought: box("thought"), whole: box("whole"), hint: box("whole-hint"), step: box("step"), actions: box("actions"), task: box("task") };
   })()\`);
   const toEnd = () => wc.executeJavaScript('(() => { const b = document.getElementById("whole"); b.scrollTop = b.scrollHeight; })()');
+  const measureKeys = (): Promise<unknown> => wc.executeJavaScript(\`(() => {
+    const top = r => Math.round(r.top);
+    const hints = [...document.querySelectorAll("#step .key-hint")].map(h => {
+      const range = document.createRange(); range.selectNodeContents(h);
+      const rects = [...range.getClientRects()].filter(r => r.width > 0);
+      return { text: h.textContent, right: Math.max(...rects.map(r => r.right)), lines: new Set(rects.map(top)).size, capTops: [...h.querySelectorAll("kbd")].map(k => top(k.getBoundingClientRect())) };
+    });
+    return { stepRight: document.getElementById("step").getBoundingClientRect().right, winWidth: innerWidth, hints };
+  })()\`);
   card.sendState(state(1, LONG));
   await sleep(1200);
   const height = card.win.getContentSize()[1];
   const layout = await measure();
+  const wholeKeys = await measureKeys();
   const before = [...sent];
   await toEnd();
   await sleep(400);
@@ -87,7 +106,74 @@ app.whenReady().then(async () => {
   // A short whole text that fits, on a card fitted to it again: in view at once.
   card.sendState(state(3, "Dear team,\\nsee you at lunch.\\nBye"));
   await sleep(1200);
-  process.stdout.write("RESULT " + JSON.stringify({ size, height, layout, before, scrolled, squeezed, squeezedSent, fits: [...sent] }) + "\\n");
+  const fits = [...sent];
+  // An ordinary question (no whole text) with three answers: the card grows until its sentence shows whole; on a card
+  // too small for it, Allow holds (a real click on it sends nothing) until the card has room again.
+  const plainState = state(4, "");
+  delete plainState.bubble!.whole;
+  plainState.bubble = { ...plainState.bubble!, thought: "Type \\u201cDear team, the meeting moved to Thursday\\u201d into the document in Mousepad?\\nYour task: write the note about the meeting", step: "Ctrl+Alt+Y allow \\u00b7 Ctrl+Alt+N not now",
+    actions: [{ id: "q4:allow", label: "Allow", primary: true }, { id: "q4:always", label: "Always in Mousepad" }, { id: "q4:deny", label: "Not now" }] };
+  card.sendState(plainState);
+  await sleep(1200);
+  const plainHeight = card.win.getContentSize()[1];
+  const plainLayout = await measure();
+  const plainKeys = await wc.executeJavaScript(\`(() => {
+    const step = document.getElementById("step").getBoundingClientRect();
+    const hints = [...document.querySelectorAll("#step .key-hint")].map(h => { const r = h.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, right: r.right, text: h.textContent }; });
+    return { caps: [...document.querySelectorAll("#step kbd")].map(k => k.textContent), text: document.getElementById("step").textContent, stepRight: step.right, hints };
+  })()\`);
+  const allowHeld = (): Promise<string | null> => wc.executeJavaScript('document.querySelector("#actions button").getAttribute("aria-disabled")');
+  const clickAllow = async (): Promise<string[]> => {
+    const at = await wc.executeJavaScript('(() => { const r = document.querySelector("#actions button").getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()') as { x: number; y: number };
+    const from = sent.length;
+    wc.sendInputEvent({ type: "mouseDown", x: at.x, y: at.y, button: "left", clickCount: 1 });
+    await sleep(60);
+    wc.sendInputEvent({ type: "mouseUp", x: at.x, y: at.y, button: "left", clickCount: 1 });
+    await sleep(300);
+    return sent.slice(from);
+  };
+  const held = await allowHeld();
+  card.win.setContentSize(360, 200);
+  await sleep(500);
+  const squeezedHeld = await allowHeld();
+  const squeezedClick = await clickAllow();
+  card.win.setContentSize(360, plainHeight);
+  await sleep(500);
+  const freedHeld = await allowHeld();
+  const freedClick = await clickAllow();
+  const plain = { height: plainHeight, layout: plainLayout, keys: plainKeys, held, squeezedHeld, squeezedClick, freedHeld, freedClick };
+  // The same whole text where another app holds the keys, so the hint names the Shift chords (accessibility-visual-c3-1).
+  const shiftState = state(5, LONG);
+  shiftState.bubble = { ...shiftState.bubble!, step: "Ctrl+Alt+Shift+Y shows the next part \\u00b7 Ctrl+Alt+Shift+N not now" };
+  card.sendState(shiftState);
+  await sleep(1200);
+  const shiftKeys = await measureKeys();
+  // An answer opened in full ("Read all") on the card: main hears its words once its last line has been in view, not
+  // before (companion-repairs-x6-3), a short one at once, and never one that isn't opened in full.
+  const LONG_ANSWER = "Tokyo is nine hours ahead of London, so it is evening there. ".repeat(30) + "Want me to add a world clock?";
+  const SHORT_ANSWER = "Tokyo is nine hours ahead of London. Want me to add a world clock?";
+  const ended: string[] = [];
+  ipcMain.on(OVERLAY.handleAnswerEnd, (_e, words: unknown) => { ended.push(words === LONG_ANSWER ? "long" : words === SHORT_ANSWER ? "short" : "other"); });
+  const answer = (thought: string, expanded: boolean): EmberState => ({
+    emotion: "neutral", talking: false, status: null, tasks: [],
+    bubble: {
+      visible: true, mood: "idle", title: "Ember", thought, step: null, streaming: false, ...(expanded ? { expanded: true } : {}),
+      actions: expanded ? [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] : [{ id: "ui:more", label: "Read all" }],
+    },
+  });
+  card.sendState(answer(LONG_ANSWER, true));
+  await sleep(1200);
+  const answerBefore = [...ended];
+  await wc.executeJavaScript('(() => { const t = document.getElementById("thought"); t.scrollTop = t.scrollHeight; })()');
+  await sleep(400);
+  const answerScrolled = [...ended];
+  card.sendState(answer(SHORT_ANSWER, false));
+  await sleep(1000);
+  const notOpened = [...ended];
+  card.sendState(answer(SHORT_ANSWER, true));
+  await sleep(1200);
+  const opened = { before: answerBefore, scrolled: answerScrolled, notOpened, short: [...ended] };
+  process.stdout.write("RESULT " + JSON.stringify({ size, height, layout, before, scrolled, squeezed, squeezedSent, fits, plain, wholeKeys, shiftKeys, opened }) + "\\n");
   app.exit(0);
 });
 `;
@@ -130,6 +216,13 @@ describe.skipIf(!required && (!xvfb || !built))("the corner card with a question
     }));
   }
 
+  /** One run a text size, shared by the checks on it. */
+  const runs = new Map<string, Promise<Report>>();
+  const report = (size: string): Promise<Report> => {
+    if (!runs.has(size)) runs.set(size, run(size));
+    return runs.get(size)!;
+  };
+
   /** Nothing in the words runs into the buttons, the buttons into the task row, or the task row off the card. */
   function clear(l: Layout): void {
     for (const k of ["thought", "whole", "hint", "step"] as const) if (l[k].shown) expect(l[k].bottom, `${k} ends above the buttons`).toBeLessThanOrEqual(l.actions.top + 0.5);
@@ -139,7 +232,7 @@ describe.skipIf(!required && (!xvfb || !built))("the corner card with a question
 
   for (const size of ["default", "large", "larger"]) {
     it(`keeps the question's sentence whole beside the text, clear of the buttons and the task row (${size} text)`, async () => {
-      const r = await run(size);
+      const r = await report(size);
       const { thought, whole, hint, step } = r.layout;
       // The sentence: all of it in view (never squeezed to nothing by the block under it).
       expect(thought.ch, "the sentence's lines in view").toBeGreaterThanOrEqual(Math.min(thought.sh, 2 * thought.lh) - 1);
@@ -155,6 +248,65 @@ describe.skipIf(!required && (!xvfb || !built))("the corner card with a question
       expect(r.squeezedSent).not.toContain("ui:seen:2");
       // A short text that fits, once the card is fitted to it: in view at once.
       expect(r.fits).toContain("ui:seen:3");
+    }, 90_000);
+
+    it(`grows for an ordinary question until its sentence shows whole, and holds Allow on a card too small for it (accessibility-visual-1, ${size} text)`, async () => {
+      const { plain } = await report(size);
+      const { thought } = plain.layout;
+      // Held to 360 px before, the sentence showed 30 of its 156 px at Larger: now all of it, clear of the buttons.
+      expect(thought.ch, "the sentence in view whole").toBeGreaterThanOrEqual(thought.sh - 1);
+      clear(plain.layout);
+      expect(plain.held).toBeNull();
+      // Squeezed (a work area too short for the card): Allow takes no press, and a real click on it says nothing.
+      expect(plain.squeezedHeld).toBe("true");
+      expect(plain.squeezedClick).toEqual([]);
+      // Room again: Allow works.
+      expect(plain.freedHeld).toBeNull();
+      expect(plain.freedClick).toEqual(["q4:allow"]);
+    }, 90_000);
+
+    it(`shows a question's keys as keycaps beside their words, as the bubble does (accessibility-visual-r3, ${size} text)`, async () => {
+      const { plain } = await report(size);
+      // It was one grey run of text: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now".
+      expect(plain.keys.caps).toEqual(["Ctrl", "Alt", "Y", "Ctrl", "Alt", "N"]);
+      expect(plain.keys.text).toBe("CtrlAltYallowCtrlAltNnot now");
+      clear(plain.layout);
+    }, 90_000);
+
+    it(`gives each chord its own line, with no separator left alone at a line's end (accessibility-visual-r2-2, ${size} text)`, async () => {
+      const { plain } = await report(size);
+      // The two chords always wrapped in the card's column, and the first line ended "Ctrl Alt Y allow ·".
+      expect(plain.keys.text).not.toContain("\u00b7");
+      expect(plain.keys.hints.map(h => h.text)).toEqual(["CtrlAltYallow", "CtrlAltNnot now"]);
+      const [first, second] = plain.keys.hints;
+      expect(second.top, "the second chord starts on a line of its own").toBeGreaterThanOrEqual(first.bottom - 0.5);
+      for (const h of plain.keys.hints) expect(h.right, `${h.text} fits the card's column`).toBeLessThanOrEqual(plain.keys.stepRight + 0.5);
+    }, 90_000);
+
+    it(`tells main once an answer opened in full has shown its last line on the card, so the Ask box offers what answers it (companion-repairs-x6-3, ${size} text)`, async () => {
+      const { opened } = await report(size);
+      // Opened in full and running on past the card: nothing until its text is scrolled to its end (the box offered
+      // nothing after Read all, however long the user read).
+      expect(opened.before).toEqual([]);
+      expect(opened.scrolled).toEqual(["long"]);
+      // Not opened in full (Read all still offered): nothing.
+      expect(opened.notOpened).toEqual(["long"]);
+      // A short one opened in full, all of it in view: at once.
+      expect(opened.short).toEqual(["long", "short"]);
+    }, 90_000);
+
+    it(`keeps a whole text's key hint inside the card, its words wrapping under their keycaps, with the Shift chords too (accessibility-visual-c3-1, ${size} text)`, async () => {
+      const { wholeKeys, shiftKeys } = await report(size);
+      // Before, each hint was one unbroken line: at Larger with the Shift chords its words reached 401 px of a 360 px
+      // window ("Ctrl Alt Shift Y shows the nex"), at Large 374, and the plain chords' 358, into the card's padding.
+      for (const [keys, caps] of [[wholeKeys, ["CtrlAltYshows the next part", "CtrlAltNnot now"]], [shiftKeys, ["CtrlAltShiftYshows the next part", "CtrlAltShiftNnot now"]]] as const) {
+        expect(keys.hints.map(h => h.text)).toEqual(caps);
+        for (const h of keys.hints) {
+          expect(h.right, `${h.text}: its words end inside the card's column`).toBeLessThanOrEqual(keys.stepRight + 0.5);
+          expect(new Set(h.capTops).size, `${h.text}: its keycaps stay together on one line`).toBe(1);
+        }
+        expect(keys.stepRight).toBeLessThanOrEqual(keys.winWidth);
+      }
     }, 90_000);
   }
 });

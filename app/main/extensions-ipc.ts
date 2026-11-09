@@ -11,7 +11,7 @@ import type { ExtensionsApi, MarketplaceEntry } from "../shared/extensions";
 import { EXTENSIONS_IPC, type ExtensionsConnect, type ExtensionsDone, type ExtensionsEntries, type ExtensionsState } from "../shared/ipc";
 import { extensionsName, marketplaceSource, mayOpenConnectUrl } from "../shared/extensions-input";
 import {
-  EXTENSIONS_BAD_REQUEST, EXTENSIONS_LOCKDOWN, EXTENSIONS_MANAGED, EXTENSIONS_REFUSED_URL, EXTENSIONS_UNAVAILABLE, MARKETPLACE_INVALID, extensionsError,
+  EXTENSIONS_BAD_REQUEST, EXTENSIONS_FAILED, EXTENSIONS_LOCKDOWN, EXTENSIONS_MANAGED, EXTENSIONS_REFUSED_URL, EXTENSIONS_UNAVAILABLE, MARKETPLACE_INVALID, extensionsError,
 } from "../renderer/home/extensions-copy";
 
 /** The part of Electron's ipcMain these channels use. */
@@ -82,7 +82,10 @@ export function registerExtensionsIpc(
       const [installed, marketplaces] = await Promise.all([api.list(), api.marketplaces()]);
       let consented = false;
       try { consented = api.consented() === true; } catch { /* unknown: the card is shown again */ }
-      return { available: true, allowed, consented, installed: Array.isArray(installed) ? installed : [], marketplaces: Array.isArray(marketplaces) ? marketplaces : [] };
+      // Not connected: an empty list is why, not "no marketplaces" (integrations-v2).
+      let connected = true;
+      try { connected = api.connected?.() !== false; } catch { /* unknown: taken as connected, as before */ }
+      return { available: true, allowed, consented, ...(connected ? {} : { connected: false }), installed: Array.isArray(installed) ? installed : [], marketplaces: Array.isArray(marketplaces) ? marketplaces : [] };
     } catch (err) {
       return { available: true, allowed, installed: [], marketplaces: [], error: raw(EXTENSIONS_IPC.state, err).why };
     }
@@ -93,7 +96,11 @@ export function registerExtensionsIpc(
     if (why) return fail(why);
     const name = extensionsName(m);
     if (!name) return fail(EXTENSIONS_BAD_REQUEST);
-    try { return entries(await api!.browse(name)); } catch (err) { return raw(EXTENSIONS_IPC.browse, err); }
+    try {
+      const r = await api!.browse(name);
+      // Ember's own sentence for a list it couldn't fetch or read (browseFailed): said as it is, never as an empty list.
+      return Array.isArray(r) ? entries(r) : fail(typeof r?.why === "string" ? r.why : EXTENSIONS_FAILED);
+    } catch (err) { return raw(EXTENSIONS_IPC.browse, err); }
   });
 
   handle(EXTENSIONS_IPC.connectors, async (): Promise<ExtensionsEntries> => {
@@ -107,10 +114,15 @@ export function registerExtensionsIpc(
     if (why) return fail(why);
     const source = marketplaceSource(s);
     if (!source) return fail(MARKETPLACE_INVALID);
-    try { return outcome(await api!.addMarketplace(source)); } catch (err) { return raw(EXTENSIONS_IPC.addMarketplace, err); }
+    try {
+      // Ember's own sentence, with the address and what to check (integrations-r2-3: addMarketplaceFailed), said as it
+      // is, as browse's is: never cut to a generic line for its length or for naming the network.
+      const r = await api!.addMarketplace(source);
+      return r.ok ? { ok: true } : fail(typeof r.why === "string" && r.why ? r.why : EXTENSIONS_FAILED);
+    } catch (err) { return raw(EXTENSIONS_IPC.addMarketplace, err); }
   });
 
-  change(EXTENSIONS_IPC.removeMarketplace, one, name => done(api!.removeMarketplace(name)));
+  change(EXTENSIONS_IPC.removeMarketplace, one, async name => outcome(await api!.removeMarketplace(name)));
   change(EXTENSIONS_IPC.install, (m, n) => { const a = extensionsName(m), b = extensionsName(n); return a && b ? [a, b] as [string, string] : null; },
     async (m, n) => outcome(await api!.install(m, n)));
   change(EXTENSIONS_IPC.uninstall, one, id => done(api!.uninstall(id)));

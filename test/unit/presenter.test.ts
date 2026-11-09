@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
+import { keysLanding, taskStoppedWords, ASK_AFTER_MS, BubbleOwner, LONG_ANSWER, LOST_RECONNECTING, NO_REPLY, Presenter, RECONNECTED, RECONNECTED_RETRY, STILL_WAITING, noAnswer, notAnswering, stillWaiting, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 
@@ -84,6 +84,17 @@ describe("Presenter", () => {
   });
 });
 
+describe("Presenter with the user's own model server on this computer", () => {
+  it("asks whether the server is running when it can't be reached, not to check the network (integrations-1)", () => {
+    const states: Partial<EmberState>[] = [];
+    vi.useFakeTimers();
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", undefined, undefined, () => "user", { serviceOnThisComputer: () => true });
+    p.userPrompt("x");
+    p.event({ type: "session.error", data: { message: "Failed to connect: connect ECONNREFUSED 127.0.0.1:11434" } });
+    expect(states.at(-1)).toMatchObject({ bubble: { mood: "error", thought: "I can't reach the model server on this computer. Is it running? Start it, then ask again." } });
+  });
+});
+
 describe("Presenter gestures and guiding", () => {
   it("plays a gesture for each kind of tool", () => {
     const { p, last } = setup();
@@ -160,6 +171,21 @@ describe("friendlyError", () => {
     expect(friendlyError("Connection is disposed.")).toMatch(/can't reach Copilot/);
     expect(friendlyError("ECONNREFUSED 127.0.0.1:54013")).toMatch(/can't reach Copilot/);
     expect(friendlyError("Something odd {\"x\":1}")).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings (Ctrl+Alt+E).");
+  });
+
+  it("says a model service it couldn't reach through a proxy or a name that didn't resolve is out of reach, never that it reported a problem (integrations-r2-1)", async () => {
+    const { friendlyError } = await import("../../app/main/agent/presenter");
+    // The Copilot runtime's native client's own words, after its retries.
+    const lead = "Failed to get response from the AI model; retried 5 times (total retry wait time: 23.00 seconds) Last error: Failed native model HTTP request: error sending request for url";
+    const tunnel = `${lead} (https://models.example.invalid/v1/chat/completions): client error (Connect): tunnel error: unsuccessful`;
+    const dns = `${lead} (https://api.example.com/v1/chat/completions): client error (Connect): dns error: failed to lookup address information: Name or service not known`;
+    const refused = `${lead} (http://127.0.0.1:11434/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 111)`;
+    for (const raw of [tunnel, dns, refused]) {
+      expect(friendlyError(raw, "query", { provider: "user" }), raw).toBe("I can't reach your model service right now. Check the network, then ask again.");
+      expect(friendlyError(raw, "query", { provider: true }), raw).toBe("I can't reach your organisation's model service right now. Check the network, then ask again.");
+      expect(friendlyError(raw, "query", { provider: false }), raw).toBe("I can't reach Copilot right now. Check the network, then ask again.");
+    }
+    expect(friendlyError(refused, "query", { provider: "user", local: true })).toBe("I can't reach the model server on this computer. Is it running? Start it, then ask again.");
   });
 });
 
@@ -493,6 +519,62 @@ describe("Presenter: tasks and guides sharing the bubble (review round 4)", () =
     expect(friendlyError("Pending response rejected since connection got disposed")).toMatch(/can't reach Copilot/);
     expect(friendlyError("Failed to get response from the AI model; retried 5 times (total retry wait time: 54.36 seconds) Last error: 502 Bad gateway")).toBe("Copilot had a problem on its side. Try again in a moment.");
     expect(friendlyError("Last error: 503 Service Unavailable", undefined, { provider: true })).toMatch(/^Your organisation's model service had a problem/);
+  });
+});
+
+describe("Presenter: a wait that hears nothing from Copilot (accessibility-visual-2)", () => {
+  it("is said to screen readers once, with the keyboard's ways to stop, and is no longer a stall once Copilot answers", () => {
+    const { p, last } = setup();
+    p.userPrompt("what time is it in Tokyo");
+    expect(last().bubble).toMatchObject({ mood: "thinking", step: null });
+    expect(last().bubble?.stalled).toBeUndefined();
+    vi.advanceTimersByTime(THINK_SLOW_MS);
+    expect(last().bubble).toMatchObject({ mood: "thinking", title: STILL_WAITING, stalled: true, actions: [STOP_ANSWER], step: "Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops everything." });
+    p.event({ type: "user.message", data: { content: "what time is it in Tokyo" } });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Noon." } });
+    expect(last().bubble?.stalled).toBeUndefined();
+    expect(last().bubble?.step ?? null).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("names only the keys Ember holds", () => {
+    const states: Partial<EmberState>[] = [];
+    vi.useFakeTimers();
+    const p = new Presenter(s => states.push(s), undefined, undefined, undefined, undefined, undefined, { stopKey: () => null, settingsKey: () => null });
+    p.userPrompt("hello");
+    vi.advanceTimersByTime(THINK_SLOW_MS);
+    expect(states.at(-1)?.bubble).toMatchObject({ stalled: true, step: "Or use Stop response in Ember's settings, on Home." });
+    // The task's turn watch says the same, for the conversation's bubble.
+    vi.useRealTimers();
+  });
+
+  it("a stall the turn's watch reports (stalled) says so too, and gives back what the bubble showed", () => {
+    const { p, last } = setup();
+    p.userPrompt("check the disk");
+    p.event({ type: "user.message", data: { content: "check the disk" } });
+    p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Looking" } });
+    const before = last().bubble;
+    p.stalled(true);
+    expect(last().bubble).toMatchObject({ title: STILL_WAITING, stalled: true });
+    p.stalled(false);
+    expect(last().bubble?.stalled).toBeUndefined();
+    expect(last().bubble).toMatchObject({ title: before?.title, step: before?.step ?? null });
+    vi.useRealTimers();
+  });
+});
+
+describe("Settings opened from the keyboard while the conversation's turn is stalled (accessibility-visual-2)", () => {
+  it("lands on Stop response, as the bubble's step says, whatever pane Home was left on", () => {
+    expect(keysLanding("slow", null)).toBe("conversation:stop");
+    // Ahead of the way to a shortcut another app holds: the step named this key for Stop response.
+    expect(keysLanding("slow", "access:stop")).toBe("conversation:stop");
+  });
+
+  it("opens settings as before while Ember only thinks, or is idle", () => {
+    expect(keysLanding("thinking", null)).toBeNull();
+    expect(keysLanding("idle", null)).toBeNull();
+    expect(keysLanding("thinking", "access:ask")).toBe("access:ask");
+    expect(keysLanding("idle", "access:stop")).toBe("access:stop");
   });
 });
 
@@ -1001,6 +1083,33 @@ describe("a problem's buttons follow what failed (review #18)", () => {
     expect(worker).not.toContain("this.d.presenter.progress(a.text);");
   });
 
+  it("keeps offering a failed send's request when its runtime is found gone, then says Copilot is back (rp-6)", () => {
+    const { p, last } = setup();
+    p.userPrompt("Hello after the kill");
+    // The conductor's word as the send fails, then the host's as it finds the runtime gone and reconnects.
+    p.fail(friendlyError("Connection is disposed."));
+    p.fail(LOST_RECONNECTING);
+    expect(last().bubble).toMatchObject({ mood: "error", thought: LOST_RECONNECTING, actions: [TRY_AGAIN] });
+    expect(p.retryRequest).toBe("Hello after the kill");
+    // Connected again: the words say so, Try again stays, and the bubble keeps the time it had.
+    p.reconnected(LOST_RECONNECTING);
+    expect(last().bubble).toMatchObject({ visible: true, mood: "idle", title: "Connected again", thought: RECONNECTED_RETRY, actions: [TRY_AGAIN] });
+    expect(RECONNECTED_RETRY).toBe("I'm connected again. Try again?");
+    expect(p.takeRetry()).toBe("Hello after the kill");
+    vi.advanceTimersByTime(12_100);
+    expect(last().bubble?.visible).toBe(false);
+    // Without a request to offer, it says only that Copilot is back.
+    const other = setup();
+    other.p.fail(LOST_RECONNECTING);
+    other.p.reconnected(LOST_RECONNECTING);
+    expect(other.last().bubble).toMatchObject({ thought: RECONNECTED, actions: [] });
+    // Anything else on screen is left alone.
+    other.p.fail("fetch failed ECONNRESET");
+    const before = other.last().bubble;
+    other.p.reconnected(LOST_RECONNECTING);
+    expect(other.last().bubble).toEqual(before);
+  });
+
   it("offers nothing for a runtime that stopped and reconnects by itself", () => {
     const { p, last } = setup();
     p.fail("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
@@ -1199,6 +1308,52 @@ describe("a wait for Copilot says so and can be stopped (UI audit #4)", () => {
     expect(last().bubble).toMatchObject({ mood: "thinking", title: "Thinking…", actions: [] });
   });
 
+  it("names the model service that isn't answering as it stops a task, never Copilot when it isn't (integrations-v1)", () => {
+    expect(taskStoppedWords(false, "silent")).toBe("Copilot didn't answer, so I stopped this task. You can ask me again in a moment.");
+    expect(taskStoppedWords(false, "not-started")).toBe("Copilot isn't answering, so I stopped this task. You can ask me again in a moment.");
+    expect(taskStoppedWords("user", "silent")).toBe("Your model provider didn't answer, so I stopped this task. You can ask me again in a moment.");
+    expect(taskStoppedWords(true, "not-started")).toBe("The model service isn't answering, so I stopped this task. You can ask me again in a moment.");
+    // Out of file watchers: Copilot's words as they were, and under a provider never Copilot (integrations-v1).
+    expect(taskStoppedWords(false, "watchers")).toBe("Copilot can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.");
+    for (const p of ["user", true] as const) expect(taskStoppedWords(p, "watchers")).toBe("I can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.");
+    expect(new Presenter(() => undefined, undefined, undefined, undefined, undefined, "user").taskStopped("silent")).toBe(taskStoppedWords("user", "silent"));
+  });
+
+  it("names the model service in use while it waits, never Copilot when it isn't (integrations-v1, reliability-performance-v3)", () => {
+    for (const [service, words] of [["user", "Still waiting for your model provider…"], [true, "Still waiting for the model service…"], [false, STILL_WAITING]] as const) {
+      const states: Partial<EmberState>[] = [];
+      vi.useFakeTimers();
+      const p = new Presenter(s => states.push(s), undefined, undefined, undefined, undefined, service);
+      const last = () => states[states.length - 1];
+      p.userPrompt("are you there?");
+      vi.advanceTimersByTime(THINK_SLOW_MS);
+      expect(last().bubble, String(service)).toMatchObject({ mood: "thinking", title: words, actions: [STOP_ANSWER] });
+      expect(p.stillWaiting()).toBe(words);
+      p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Checking" } });
+      expect(last().bubble, String(service)).toMatchObject({ title: "Thinking…", actions: [] });
+      // A turn that goes quiet, and is heard from again: the title it had comes back.
+      p.stalled(true);
+      expect(last().bubble?.title).toBe(words);
+      p.stalled(false);
+      expect(last().bubble?.title).toBe("Thinking…");
+      vi.useRealTimers();
+    }
+    expect(stillWaiting("user")).not.toMatch(/Copilot/);
+    expect(notAnswering("user")).toBe("Your model provider isn't answering. Ask me again in a moment.");
+    expect(notAnswering(true)).toBe("The model service isn't answering. Ask me again in a moment.");
+    expect(notAnswering()).toBe("Copilot isn't answering. Ask me again in a moment.");
+    expect(problemTitle(notAnswering("user"), "user")).toBe("Your model provider isn't answering");
+    expect(problemTitle(notAnswering(true), true)).toBe("The model service isn't answering");
+    expect(problemTitle(notAnswering(), false)).toBe("Copilot isn't answering");
+    // The worker's card line and the conductor's silent turn take the same words.
+    const src = (f: string) => readFileSync(new URL(`../../app/main/agent/${f}`, import.meta.url), "utf8");
+    expect(src("worker.ts")).toContain("const waiting = d.presenter.stillWaiting();");
+    expect(src("conductor.ts")).toContain("this.deps.presenter.fail(notAnswering(this.deps.service ?? !!this.deps.provider));");
+    expect(src("conductor.ts")).toContain("this.deps.presenter.fail(noAnswer(this.deps.service ?? !!this.deps.provider));");
+    expect(noAnswer("user")).toBe("Your model provider didn't answer. Ask me again in a moment.");
+    expect(noAnswer()).toBe("Copilot didn't answer. Ask me again in a moment.");
+  });
+
   it("never says it is still waiting once Copilot has said something", () => {
     const { p, states } = setup();
     p.userPrompt("hi");
@@ -1214,6 +1369,40 @@ describe("a wait for Copilot says so and can be stopped (UI audit #4)", () => {
     p.stopped();
     expect(last()).toMatchObject({ emotion: "neutral", bubble: { visible: true, mood: "idle", title: "Stopped", thought: STOPPED_ANSWER, actions: [], streaming: false } });
     expect(p.busy).toBe(false);
+  });
+
+  it("keeps a failed turn's problem, with Try again, up for its 12 s when the turn then ends (companion-2)", () => {
+    const { p, last } = setup();
+    p.userPrompt("what's on my calendar?");
+    p.event({ type: "user.message", data: { content: "what's on my calendar?" } });
+    p.event({ type: "session.error", data: { message: "Internal Server Error", statusCode: 500 } });
+    p.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(11_900);
+    expect(last().bubble).toMatchObject({ visible: true, mood: "error", actions: [TRY_AGAIN] });
+    vi.advanceTimersByTime(200);
+    expect(last().bubble?.visible).toBe(false);
+    // With More time to read and answer: ten times that, never cut to an answer's time.
+    const states: Partial<EmberState>[] = [];
+    const slow = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { readTime: () => 10 });
+    slow.userPrompt("hi");
+    slow.event({ type: "session.error", data: { message: "Internal Server Error", statusCode: 500 } });
+    slow.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(119_000);
+    expect(states.at(-1)?.bubble).toMatchObject({ visible: true, mood: "error" });
+    vi.advanceTimersByTime(1_100);
+    expect(states.at(-1)?.bubble?.visible).toBe(false);
+  });
+
+  it("lets “Okay, I've stopped.” go after its 4 s, however long the answer it cut off had grown (companion-2)", () => {
+    const { p, last } = setup();
+    p.userPrompt("tell me everything");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "word ".repeat(96) } });
+    p.stopped();
+    p.event({ type: "session.idle", data: { aborted: true } });
+    vi.advanceTimersByTime(3_900);
+    expect(last().bubble).toMatchObject({ visible: true, title: "Stopped", thought: STOPPED_ANSWER });
+    vi.advanceTimersByTime(200);
+    expect(last().bubble?.visible).toBe(false);
   });
 
   it("offers Stop when a turn goes quiet for 30 s, but a task's bubble keeps its card's Stop", () => {
@@ -1319,5 +1508,81 @@ describe("the end of a conversation turn that said nothing (the owner's report o
     p.event({ type: "assistant.message", data: { content: "I'll close Microsoft Edge." } });
     p.event({ type: "session.idle", data: {} });
     expect(last().bubble).toMatchObject({ visible: true, mood: "idle", thought: "I'll close Microsoft Edge." });
+  });
+});
+
+describe("Presenter: the answer stays while the Ask box beside it is open (companion-c2-1)", () => {
+  function opened(readTime = 1) {
+    vi.useFakeTimers();
+    const owner = new BubbleOwner();
+    const states: { who: string; s: Partial<EmberState> }[] = [];
+    const talk = new Presenter(s => states.push({ who: "ember", s }), undefined, () => "Ember", owner, undefined, false, { readTime: () => readTime });
+    const task = new Presenter(s => states.push({ who: "task", s }), undefined, () => "Tidy up", owner, undefined, false, { task: true, readTime: () => readTime });
+    const shown = () => { const b = states.filter(x => x.s.bubble).at(-1); return b?.s.bubble?.visible ? `${b.who}:${b.s.bubble.thought}` : "(hidden)"; };
+    const answer = (text: string) => {
+      talk.userPrompt("what time is it in Tokyo");
+      talk.event({ type: "assistant.message_delta", data: { deltaContent: text } });
+      talk.event({ type: "assistant.message", data: { content: text } });
+      talk.event({ type: "session.idle", data: {} });
+    };
+    return { owner, talk, task, states, shown, answer };
+  }
+  const TOKYO = "Tokyo is 9 hours ahead. Want me to add a world clock?";
+
+  it("holds the answer being replied to while the box is open, and keeps it a moment once the box closes", () => {
+    const { owner, shown, answer } = opened();
+    answer(TOKYO);
+    // Its time is 6 s and 50 ms a character: the box opens 3 s in, and the reply takes a minute to type.
+    vi.advanceTimersByTime(3000);
+    owner.holdForAsk(true);
+    vi.advanceTimersByTime(60_000);
+    expect(shown()).toBe(`ember:${TOKYO}`);
+    // Closed without sending: what was left of its time, and never less than ASK_AFTER_MS to look back at it.
+    owner.holdForAsk(false);
+    vi.advanceTimersByTime(6000 + TOKYO.length * 50 - 3000 - 100);
+    expect(shown()).toBe(`ember:${TOKYO}`);
+    vi.advanceTimersByTime(200);
+    expect(shown()).toBe("(hidden)");
+  });
+
+  it("gives an answer whose time had nearly run out ASK_AFTER_MS (times More time to read) after the box closes", () => {
+    for (const readTime of [1, 10]) {
+      const { owner, shown, answer } = opened(readTime);
+      answer(TOKYO);
+      vi.advanceTimersByTime((6000 + TOKYO.length * 50) * readTime - 500);
+      owner.holdForAsk(true);
+      vi.advanceTimersByTime(20_000);
+      owner.holdForAsk(false);
+      vi.advanceTimersByTime(ASK_AFTER_MS * readTime - 100);
+      expect(shown(), String(readTime)).toBe(`ember:${TOKYO}`);
+      vi.advanceTimersByTime(200);
+      expect(shown(), String(readTime)).toBe("(hidden)");
+    }
+  });
+
+  it("holds what comes while the box is open too (a task's result), and lets go of nothing after a stop", () => {
+    const { owner, talk, task, states, shown, answer } = opened();
+    owner.holdForAsk(true);
+    task.taskStarted();
+    task.outcome({ title: "Done", text: "Tidied the desktop.", emotion: "happy", gesture: "thumbsUp", mood: "done" });
+    vi.advanceTimersByTime(60_000);
+    expect(shown()).toBe("task:Tidied the desktop.");
+    owner.holdForAsk(false);
+    vi.advanceTimersByTime(ASK_AFTER_MS + 6000 + 19 * 50);
+    expect(shown()).toBe("(hidden)");
+    // The kill switch's quiet: nothing held comes back when the box closes.
+    answer(TOKYO);
+    owner.holdForAsk(true);
+    talk.quiet();
+    const pushed = states.length;
+    owner.holdForAsk(false);
+    vi.advanceTimersByTime(60_000);
+    expect(states.length).toBe(pushed);
+  });
+
+  it("is held by main for as long as the box is on screen", () => {
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toMatch(/onBounds: askBox => \{[^\n]*agent\?\.holdForAsk\(askBox !== null\);/);
+    expect(readFileSync("app/main/agent/host.ts", "utf8")).toMatch(/holdForAsk\(open: boolean\): void \{\n\s+this\.owner\.holdForAsk\(open\);/);
   });
 });

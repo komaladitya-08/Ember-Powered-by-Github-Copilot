@@ -55,9 +55,13 @@ export const FACTS_SCRIPT = [
   "command -v base64 >/dev/null 2>&1 && echo base64=1",
 ].join("\n");
 
-/** §4.2's inspect script, exactly: for each path line, whether it exists (lstat) and its real path (`realpath -m`). */
+/**
+ * §4.2's inspect script: for each path line, whether it exists (lstat), whether it is a folder (`[ -d ]`, through a link
+ * as cp and mv go into one: a move into a folder is about the file inside it, commands-remote-r1 and -r3-1) and its real
+ * path (`realpath -m`), tab-separated with the real path last.
+ */
 export const INSPECT_SCRIPT =
-  "while IFS= read -r p; do if [ -e \"$p\" ] || [ -L \"$p\" ]; then e=1; else e=0; fi; r=$(realpath -m -- \"$p\" 2>/dev/null); printf '%s\\t%s\\n' \"$e\" \"$r\"; done";
+  "while IFS= read -r p; do if [ -e \"$p\" ] || [ -L \"$p\" ]; then e=1; else e=0; fi; if [ -d \"$p\" ]; then d=1; else d=0; fi; r=$(realpath -m -- \"$p\" 2>/dev/null); printf '%s\\t%s\\t%s\\n' \"$e\" \"$d\" \"$r\"; done";
 
 /** §4.2's git facts, read-only, each line prefixed and empty on failure (git's prompts and optional locks off). */
 export const GIT_SCRIPT = [
@@ -280,8 +284,12 @@ export function parseInspect(text: string, count: number): PathFact[] | null {
   return lines.map(line => {
     const tab = line.indexOf("\t");
     if (tab < 0) return { exists: null, real: null };
-    const e = line.slice(0, tab), r = line.slice(tab + 1);
-    return { exists: e === "1" ? true : e === "0" ? false : null, real: r.startsWith("/") ? r : null };
+    const e = line.slice(0, tab);
+    // The folder column, when the script printed one (a real path always starts with "/"; the rest may hold tabs).
+    const d = /^([01])\t/.exec(line.slice(tab + 1));
+    const r = d ? line.slice(tab + 3) : line.slice(tab + 1);
+    const exists = e === "1" ? true : e === "0" ? false : null;
+    return { exists, real: r.startsWith("/") ? r : null, ...(exists && d?.[1] === "1" ? { dir: true } : {}) };
   });
 }
 

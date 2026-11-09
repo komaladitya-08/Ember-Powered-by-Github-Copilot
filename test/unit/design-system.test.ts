@@ -266,6 +266,25 @@ describe("Windows contrast themes (forced colours)", () => {
     expect(forced(BUBBLE_CSS, ".ember-bubble[data-mood]")).toContain("--eb-mood: CanvasText;");
   });
 
+  it("paints every symbol drawn in a label colour in a system colour too, so none vanishes on the window's colour (accessibility-visual-5)", () => {
+    const sheets: [string, string][] = [...PAGES.map((p): [string, string] => [p, css(p)]), ["view", viewCss], ["shared", shared]];
+    const missing: string[] = [];
+    for (const [name, sheet] of sheets) {
+      const mapped = new Set(forcedRules(sheet).flatMap(([s]) => s));
+      for (const m of sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        const d = m[2];
+        if (!/fill: var\(--label/.test(d) && !(/-webkit-mask/.test(d) && /background: var\(--label/.test(d))) continue;
+        for (const sel of selectors(m[1].trim())) if (!mapped.has(sel)) missing.push(`${name}: ${sel}`);
+      }
+    }
+    expect(missing).toEqual([]);
+    expect(forced(css("ask"), ".eye")).toContain("fill: CanvasText");
+    expect(forced(viewCss, "details.vw-section > summary::before")).toMatch(/forced-color-adjust: none;.*background: CanvasText;/);
+    // A sidebar tile is a literal colour, which a contrast theme resets with the others; a token there is a system
+    // colour, which it keeps: one solid square among bare symbols.
+    for (const m of css("home").matchAll(/\.jump a\[href="#([a-z]+-h)"\] \{ --tile: ([^;]+);/g)) expect(m[2], m[1]).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+
   it("marks what is chosen by more than colour: the character, the selected tab and the section you are in (review #44, #151, #267)", () => {
     expect(forced(css("home"), '.card[aria-checked="true"]')).toMatch(/border: 3px solid Highlight/);
     expect(forced(css("command"), '.tab[aria-selected="true"]')).toMatch(/background: Highlight;/);
@@ -704,5 +723,145 @@ describe("HIG pass (Apple's Human Interface Guidelines, checked surface by surfa
 
   it("rounds an inner corner concentrically: the command card's command at 6 px inside its 14 px card (HIG concentricity)", () => {
     expect(page("command")).toMatch(/\.command \{\n {2}margin: 0; padding: 8px 10px; border-radius: var\(--r-xs\);/);
+  });
+});
+
+describe("Home's groups and disclosures (2026-11-07 product audit)", () => {
+  const page = read("app/renderer/home/index.html");
+  const css = read("app/renderer/home/styles.css");
+  const VOID = new Set(["input", "br", "img", "meta", "link", "hr", "source", "col", "wbr"]);
+  const cls = (attrs: string) => /\bclass="([^"]*)"/.exec(attrs)?.[1].split(/\s+/) ?? [];
+
+  it("fills at most one button with the accent in each group, form, disclosure or card (home-12, accessibility-visual-3)", () => {
+    const stack: { tag: string; name: string; container: boolean; filled: string[] }[] = [];
+    const over: string[] = [];
+    for (const m of page.matchAll(/<(\/?)([a-z][a-z0-9-]*)([^>]*)>/g)) {
+      const [, close, tag, attrs] = m;
+      if (close) {
+        const at = stack.map(s => s.tag).lastIndexOf(tag);
+        if (at < 0) continue;
+        for (const s of stack.splice(at)) if (s.container && s.filled.length > 1) over.push(`${s.name}: ${s.filled.join(", ")}`);
+        continue;
+      }
+      const c = cls(attrs);
+      if (tag === "button" && c.includes("btn") && !c.includes("quiet")) {
+        const id = /\bid="([^"]*)"/.exec(attrs)?.[1] ?? "?";
+        for (const s of stack) if (s.container) s.filled.push(id);
+      }
+      if (VOID.has(tag) || attrs.trimEnd().endsWith("/")) continue;
+      const container = tag === "details" || tag === "form" || c.includes("group") || c.includes("consent") || c.includes("card");
+      stack.push({ tag, name: `${tag}#${/\bid="([^"]*)"/.exec(attrs)?.[1] ?? c.join(".")}`, container, filled: [] });
+    }
+    expect(over).toEqual([]);
+  });
+
+  it("draws every disclosure's chevron, never the browser's triangle (home-12, accessibility-visual-3)", () => {
+    const folds = ["fold", "w-more", "disclose"];
+    for (const m of page.matchAll(/<details([^>]*)>/g)) expect(cls(m[1]).some(c => folds.includes(c)), m[0]).toBe(true);
+    for (const f of folds) {
+      expect(css).toContain(`.${f} > summary::-webkit-details-marker { display: none; }`);
+      expect(css).toMatch(new RegExp(`\\.${f} > summary::before \\{\\s*content: "" / "";`));
+    }
+    // In a contrast theme the chevron is the text colour.
+    expect(forced(css, ".disclose > summary::before")).toContain("background: CanvasText");
+  });
+
+  it("keeps a lone button its own size, and an empty line in a group or under one out of the way (accessibility-visual-4, integrations-14)", () => {
+    // Buttons straight in a section's grid stretch across the pane: they sit in a row of actions instead.
+    for (const id of ["reminders-refresh", "project-folder-pick"]) expect(page).toMatch(new RegExp(`<div class="agent-actions"><button type="button" (?:id="${id}"[^>]*|class="[^"]*" id="${id}"[^>]*)>`));
+    expect(css).toContain(".group > p:empty { min-height: 0; padding: 0; border-top: 0; }");
+    expect(css).toContain("section > p.hint:empty:not([role]):not([aria-live]) { display: none; }");
+    // A status or alert stays on the page while empty, so what it says next is still announced.
+    expect(css).toContain("section > p.hint:empty:is([role], [aria-live]) { position: absolute; }");
+    // Routines' footnote is under the routines switch it explains, before the lists.
+    expect(page.indexOf('id="routines-hint"')).toBeLessThan(page.indexOf('id="routines-list"'));
+  });
+
+  it("keeps every status line on the page while it says nothing, so a screen reader announces what fills it (accessibility-visual-c1-1)", () => {
+    // A polite live region hidden while empty enters the accessibility tree with its words already in, and NVDA and
+    // Orca with Chromium say nothing. An alert is announced as it shows, so role="alert" may be hidden.
+    const live = (attrs: string) => /\brole="status"/.test(attrs) || (/\baria-live="/.test(attrs) && !/\brole="alert"/.test(attrs));
+    const ids = new Set<string>(), classes = new Set<string>(), hidden: string[] = [];
+    for (const m of page.matchAll(/<[a-z][a-z0-9-]*\b([^>]*)>/g)) {
+      if (!live(m[1])) continue;
+      const id = /\bid="([^"]*)"/.exec(m[1])?.[1];
+      if (id) ids.add(id);
+      for (const c of cls(m[1])) classes.add(c);
+      if (/\shidden(?=[\s>=]|$)/.test(m[1])) hidden.push(id ?? m[0]);
+    }
+    expect(hidden).toEqual([]);
+    // Nor does the script hide one: it clears its words instead.
+    const scripts = ["main", "welcome", "extensions", "provider", "tasks"].map(f => read(`app/renderer/home/${f}.ts`)).join("\n");
+    const hides: string[] = [];
+    for (const id of ids) {
+      if (new RegExp(`\\$\\("${id}"\\)\\.hidden =`).test(scripts)) hides.push(id);
+      for (const v of scripts.matchAll(new RegExp(`const (\\w+) = \\$\\("${id}"\\);`, "g"))) {
+        const body = scripts.slice(v.index, scripts.indexOf("\n}", v.index));
+        if (new RegExp(`\\b${v[1]}\\.hidden =`).test(body)) hides.push(id);
+      }
+    }
+    expect(hides).toEqual([]);
+    // The lines the script makes, too (About you's, an Undo's, a teaching note's, a task control's).
+    for (const f of ["about-you", "learned-undo", "personal", "tasks"]) {
+      const ts = read(`app/renderer/home/${f}.ts`);
+      for (const v of ts.matchAll(/const (\w+) = [^\n]*className: "([^"]*)"[^\n]*\n(?:[^\n]*\n){0,3}?\s*\1\.setAttribute\("role", "status"\)/g)) for (const c of v[2].split(/\s+/)) classes.add(c);
+      for (const v of ts.matchAll(/const (\w+) = el\("p", "([^"]*)"\);\n(?:[^\n]*\n){0,3}?\s*\1\.setAttribute\("role", "status"\)/g)) {
+        for (const c of v[2].split(/\s+/)) classes.add(c);
+        expect(ts, f).not.toMatch(new RegExp(`\\b${v[1]}\\.hidden = `));
+      }
+    }
+    for (const c of ["hint", "managed", "error", "row-note"]) classes.delete(c);
+    expect([...classes]).toEqual(expect.arrayContaining(["about-msg", "learned-undo-note", "never-look-msg", "byok-msg", "w-status"]));
+    // No rule takes one off the page while it is empty: one rule keeps it out of the flow and out of sight instead.
+    const off: string[] = [];
+    for (const r of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/display: none/.test(r[2])) continue;
+      for (const s of selectors(r[1].trim())) {
+        if (!s.includes(":empty")) continue;
+        const names = [...s.matchAll(/([.#])([\w-]+)/g)].filter(([, k, n]) => (k === "#" ? ids : classes).has(n));
+        if (names.length) off.push(s);
+      }
+    }
+    expect(off).toEqual([]);
+    expect(css).toContain(':is([role="status"], [aria-live]):empty { position: absolute; width: 0; height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; outline: 0; box-shadow: none; }');
+  });
+
+  it("keeps the command and prompt windows' status lines on the page while they say nothing, so a refused Allow is heard (accessibility-visual-c2-1)", () => {
+    // The approval card's refusal ("That press was too soon, so it didn't count…") and hint, the command card's hint
+    // and the command window's "Starting Ubuntu…" lines were hidden until filled: they joined the accessibility tree
+    // with their words already in, and a screen reader said nothing while focus stayed on Allow.
+    const live = (attrs: string) => /\brole="status"/.test(attrs) || (/\baria-live="/.test(attrs) && !/\brole="alert"/.test(attrs));
+    for (const p of ["command", "prompt"]) {
+      const html = read(`app/renderer/${p}/index.html`);
+      expect(html, p).toMatch(/<html lang="en" class="content">/);
+      const ts = read(`app/renderer/${p}/main.ts`);
+      const ids: string[] = [], hidden: string[] = [];
+      for (const m of html.matchAll(/<[a-z][a-z0-9-]*\b([^>]*)>/g)) {
+        if (!live(m[1])) continue;
+        const id = /\bid="([^"]*)"/.exec(m[1])?.[1];
+        if (id) ids.push(id);
+        if (/\shidden(?=[\s>=]|$)/.test(m[1])) hidden.push(id ?? m[0]);
+      }
+      expect(hidden, p).toEqual([]);
+      expect(ids.length, p).toBeGreaterThan(0);
+      // Nor does its script hide one (by id, or through the name it keeps it under): it clears its words instead.
+      for (const id of ids) {
+        expect(ts, `${p} #${id}`).not.toMatch(new RegExp(`\\$\\("${id}"\\)\\.hidden =`));
+        for (const v of ts.matchAll(new RegExp(`^( *)const (\\w+) = \\$\\("${id}"\\);`, "gm"))) {
+          // Kept at the top: anywhere in the file; in a function: in that function.
+          const body = v[1] ? ts.slice(v.index, ts.indexOf("\n}", v.index)) : ts;
+          expect(body, `${p} #${id}`).not.toMatch(new RegExp(`\\b${v[2]}\\.hidden =`));
+        }
+      }
+      // Lines the script makes and marks live (the command card's hint): never hidden either.
+      for (const v of ts.matchAll(/const (\w+) = el\("p", "[^"]*"\);\n\s*\1\.setAttribute\("aria-live", "polite"\);/g)) {
+        expect(ts, `${p}: ${v[1]}`).not.toMatch(new RegExp(`\\b${v[1]}\\.hidden = `));
+        expect(ts, `${p}: ${v[1]}`).not.toMatch(new RegExp(`\\.${v[1]}\\.hidden = `));
+      }
+    }
+    expect(read("app/renderer/prompt/index.html")).toContain('<p id="notice" class="notice" role="status" aria-live="polite"></p>');
+    expect(read("app/renderer/command/main.ts")).toMatch(/const hint = el\("p", "hint"\);\n\s*hint\.setAttribute\("aria-live", "polite"\);/);
+    // One rule in the shared sheet takes an empty one out of the flow and out of sight in every content window.
+    expect(read("app/renderer/shared/ember.css")).toContain(':where(html.content) :is([role="status"], [aria-live]):empty { position: absolute; width: 0; height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; outline: 0; box-shadow: none; }');
   });
 });

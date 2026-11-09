@@ -35,8 +35,13 @@ export interface BetterRecallOptions {
   /** Starts the memory process. */
   fork: () => EmbedChild;
   download: Downloader;
-  /** Memory is on, agreed to, and allowed by the organisation. */
+  /** Memory is on, agreed to, allowed by the organisation, and open for the verified account. */
   memoryOn: () => boolean;
+  /**
+   * Memory is on, agreed to and allowed, whether or not its account is being checked again (a reconnect): a download
+   * under way finishes then, and only the model's use waits (memory-8). `memoryOn` when absent.
+   */
+  memoryWanted?: () => boolean;
   /** The status changed (Settings is told). */
   onStatus?: (s: MemoryModelStatus) => void;
   /** The model came: what is remembered gets its vectors. */
@@ -62,7 +67,7 @@ export class BetterRecall {
   }
 
   status(): MemoryModelStatus {
-    if (!this.o.memoryOn()) return { state: "off", bytes: MEMORY_MODEL_BYTES };
+    if (!this.o.memoryOn() && !this.fetching) return { state: "off", bytes: MEMORY_MODEL_BYTES };
     if (this.fetching) return { state: "downloading", bytes: MEMORY_MODEL_BYTES, done: this.done };
     if (this.present) return { state: "ready", bytes: MEMORY_MODEL_BYTES };
     return { state: "absent", bytes: MEMORY_MODEL_BYTES, ...(this.failed ? { failed: this.failed } : {}) };
@@ -115,11 +120,14 @@ export class BetterRecall {
 
   /** Memory was turned on or off, or the policy changed: Settings shows it, and turning on catches the index up. */
   settingsChanged(): void {
+    // Turned off (or not allowed): a download under way is cancelled, as nothing is fetched while memory is off. Only
+    // waiting for the account to be checked again lets it finish (memory-8).
+    if (!(this.o.memoryWanted ?? this.o.memoryOn)()) this.cancel?.abort();
     const on = this.o.memoryOn();
     if (on === this.wasOn) return;
     this.wasOn = on;
-    // Off: the model stops, and a download under way is cancelled (nothing is fetched while memory is off).
-    if (!on) { this.semantic.stop(); this.cancel?.abort(); }
+    // Not open: the model stops until it is.
+    if (!on) this.semantic.stop();
     else if (this.present) this.o.onReady?.();
     this.changed();
   }

@@ -125,7 +125,7 @@ describe("the handle window", () => {
     card.fit(999);
     expect(cardWin.bounds).toEqual({ x: 1008, y: 198, width: 360, height: 640 });
     // The question gone: back within the usual limit at once, whatever the page asks next.
-    card.sendState(asking(false));
+    card.sendState({ emotion: "neutral", talking: false, status: null, tasks: [], bubble: { visible: false, mood: "thinking", title: "", thought: "", step: null, streaming: false, actions: [] } } as never);
     expect(cardWin.bounds).toEqual({ x: 1008, y: 478, width: 360, height: 360 });
     card.fit(514);
     expect(cardWin.bounds.height).toBe(360);
@@ -140,6 +140,23 @@ describe("the handle window", () => {
       card.fit(998);
       expect(cardWin.bounds.height).toBe(360);
     } finally { Object.assign(workArea, usual); }
+  });
+
+  it("lets the card grow for an ordinary question at a large text size, so its sentence shows whole, and back once it goes (accessibility-visual-1)", () => {
+    const card = new HandleWindow(() => settings, true);
+    const cardWin = card.win as unknown as FakeWin;
+    const question = { visible: true, mood: "attention", title: "May I?", thought: "Type “Dear team, the figures…” (82 characters) into the “Message” text field in Thunderbird?\nYour task: Write to the team", step: null, streaming: false, actions: [{ id: "q1:once", label: "Allow", primary: true }, { id: "q1:deny", label: "Not now" }] };
+    card.sendState({ emotion: "curious", talking: false, status: null, tasks: [], bubble: question } as never);
+    // What the verifier measured the card needs at Larger: 486 px, where it was held to 360 and cut the sentence.
+    card.fit(486);
+    expect(cardWin.bounds).toEqual({ x: 1008, y: 352, width: 360, height: 486 });
+    card.fit(999);
+    expect(cardWin.bounds.height).toBe(640);
+    // An answer is no question: it keeps the usual limit (it scrolls), and the card is back within it at once.
+    card.sendState({ emotion: "happy", talking: false, status: null, tasks: [], bubble: { ...question, mood: "done", title: "Ember", actions: [] } } as never);
+    expect(cardWin.bounds).toEqual({ x: 1008, y: 478, width: 360, height: 360 });
+    card.fit(486);
+    expect(cardWin.bounds.height).toBe(360);
   });
 
   it("shrinks the pill to a tab with Ember's face while Ember is hidden, in the same corner, and never the card (review #75)", () => {

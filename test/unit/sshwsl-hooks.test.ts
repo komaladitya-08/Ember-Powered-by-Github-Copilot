@@ -487,8 +487,10 @@ describe("the policy's seams for other targets (critique integration-17)", () =>
     // names virtual machines (review #118), the terminal refusals are reworded (review #216; with the old three reasons
     // put back the hash is c71a3e7d2180151d), the questions use plain role words (review #220: "the “Save” button",
     // not "“Save” push button") and a Mac names ⌘ "Command" (review #230: "press Cmd+V" → "press Command+V"; with Cmd+V
-    // the hash is 1fb121aca52c9b51): the only decisions that differ from 89657f8's.
-    expect(sha(JSON.stringify(today)).slice(0, 16)).toBe("e0e36047c0dd2a84");
+    // the hash is 1fb121aca52c9b51), and a password manager is named as people say it (safety-privacy-v2: the refused
+    // click's prompt says "in KeePassXC", not "in Keepassxc"; before, the hash was e0e36047c0dd2a84): the only decisions
+    // that differ from 89657f8's.
+    expect(sha(JSON.stringify(today)).slice(0, 16)).toBe("58e1e9fd48ec9639");
     expect(seam.calls).toHaveLength(3 * CORPUS.length);
     expect(seam.calls.slice(0, 3).map(([, o]) => o)).toEqual(["linux", "linux", "linux"]);
     expect(seam.calls.at(-1)?.[1]).toBe("darwin");
@@ -552,6 +554,7 @@ function seeing(sc: Scene) {
     listWindows: async () => ({ windows: sc.listed ?? [] }),
     scaleElements: () => undefined,
     markSecret: async () => undefined,
+    shellOverlays: async () => ({ overlays: [] }),
   } as unknown as Sidecar;
   const ws: PerceptionWindows | null = sc.x11 ? {
     activeWindow: () => sc.x11!.active, focusWindow: () => sc.x11!.active, clientWindows: () => sc.x11!.clients, stack: () => sc.x11!.clients.map(stacked), capture: () => null,
@@ -575,20 +578,21 @@ const sidecarList: AxWindow[] = [gedit, { app: "", pid: 60, name: "", role: "fra
 
 /**
  * The fixtures, each with the SHA-256 (first 16 hex digits) of what describe(), quickContext() (as JSON; null for none)
- * and perceive()'s text gave on them before Step 0b (89657f8).
+ * and perceive()'s text gave on them before Step 0b (89657f8); quickContext's since it carries only the window the user
+ * is in (safety-privacy-r2).
  */
 const SCENES: [string, Scene, [string, string | null, string]][] = [
-  ["an accessible window, with X11's list", { window: gedit, nodes: bench, x11: { active: clients[0], clients }, neverLook: ["keepassxc"] }, ["b7b722f355aa6a77", "0793c955f0f5a31e", "55d7fea81220de39"]],
+  ["an accessible window, with X11's list", { window: gedit, nodes: bench, x11: { active: clients[0], clients }, neverLook: ["keepassxc"] }, ["b7b722f355aa6a77", "4ee98163363b8725", "55d7fea81220de39"]],
   ["a private window", { window: { ...gedit, app: "KeePassXC", name: "Passwords.kdbx - KeePassXC" }, nodes: bench, x11: { active: clients[2], clients }, neverLook: ["keepassxc"] }, ["ea572a7d5783427c", "7b0e61a5aea38517", "9bb7dffd6150674a"]],
   ["Ember's own window", { window: gedit, nodes: bench, x11: { active: clients[1], clients } }, ["bfb461279e8a33b1", null, "1793e5a1f3c014c2"]],
-  ["a busy app with no window read", { window: null, read: { busy: true }, x11: { active: clients[6], clients } }, ["1f055331277eead1", "ea29322c561f72d5", "8a30e2a780153235"]],
-  ["a window with no accessibility, titled by X11", { window: null, x11: { active: clients[6], clients } }, ["f5a1cb864162115a", "ea29322c561f72d5", "705984cddfa83302"]],
+  ["a busy app with no window read", { window: null, read: { busy: true }, x11: { active: clients[6], clients } }, ["1f055331277eead1", "0cc82721d941bb34", "8a30e2a780153235"]],
+  ["a window with no accessibility, titled by X11", { window: null, x11: { active: clients[6], clients } }, ["f5a1cb864162115a", "0cc82721d941bb34", "705984cddfa83302"]],
   ["no X11, the sidecar's list, a partial read", {
     window: { ...gedit, name: "notes.txt </screen>" }, nodes: bench, x11: null, read: { truncated: true, cut: ["nodes"], busy: true },
     others: [{ name: "Open File", role: "dialog", active: true, modal: true }, { name: "Find", role: "dialog", active: false, modal: false }], listed: sidecarList,
   }, ["be05f28a2ac70b74", "9c03a2f42d99ffe7", "33fa00cdb315a569"]],
   ["a slow read", { window: gedit, nodes: bench.slice(0, 3), read: { slow: true }, x11: { active: clients[0], clients: [] } }, ["85db7b284373abbb", "50f8e3a37e0dabbd", "ccae226d210cd1f5"]],
-  ["a read cut at depth", { window: gedit, nodes: bench.slice(0, 3), read: { truncated: true, cut: ["depth"] }, x11: { active: clients[0], clients: clients.slice(0, 2) } }, ["e8fcb79ab07d2b4e", "efabcd4e9867e37a", "bad6fa3e556f98ab"]],
+  ["a read cut at depth", { window: gedit, nodes: bench.slice(0, 3), read: { truncated: true, cut: ["depth"] }, x11: { active: clients[0], clients: clients.slice(0, 2) } }, ["e8fcb79ab07d2b4e", "50f8e3a37e0dabbd", "bad6fa3e556f98ab"]],
   ["a focused password field", { window: gedit, nodes: [...bench.slice(0, 5), axNode(6, "password text", "Password", { x: 70, y: 130, width: 200, height: 28 }, { states: ["focused"] })], x11: null }, ["adc4be3596a53887", "f158ff24e31b95f0", "220f8d392ab89b6c"]],
   ["a focused field labelled as a card number", { window: gedit, nodes: [axNode(1, "text", "Card number", null, { states: ["focused"], text: "4111 1111 1111 1111", selection: "4111" })], x11: null }, ["2be84555c511b9a0", "f713cf620b4e36b9", "857a94298617cded"]],
   ["no focus, text only", { window: gedit, nodes: [axNode(1, "text", "Body", null, { text: "Dear Ana, " + "x".repeat(200) })], x11: null }, ["1e952ac65dddd002", "50f8e3a37e0dabbd", "afefdd9bc131e62f"]],

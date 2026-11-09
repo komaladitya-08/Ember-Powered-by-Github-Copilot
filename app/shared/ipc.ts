@@ -3,44 +3,80 @@
 import type { EnvReport, FixId, TargetFixId } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
-import type { MemoryItem } from "../main/memory/service";
+import type { MemoryItem, MemoryTrouble } from "../main/memory/service";
 import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
-import type { MemoryOwnership } from "../main/memory/owner";
+import type { MemoryOwnerReason, MemoryOwnership } from "../main/memory/owner";
 import type { MemoryCorrection } from "./memory-correction";
 
 /** A routine as Home lists it. */
 export interface RoutineRow { id: string; name: string; steps: string[] }
 /** Whether a newer Ember is out (app/main/updates.ts): "off" until the user turned it on and agreed to its note. */
 export interface UpdateStatus { phase: "off" | "idle" | "checking" | "current" | "available" | "failed"; latest: string | null; checkedAt: string | null }
+/** How this Ember was installed (app/main/updates.ts installKind), so Updates can say how to update it. */
+export type InstallKind = "rpm" | "appimage" | "zip" | "app" | "npm";
 /** A waiting reminder and whether its exact current version is retained after quit. */
 export interface ReminderRow { id: string; text: string; at: number; created: number; kept: boolean }
 export interface ReminderChange { expected: Omit<ReminderRow, "kept">; replacement: { text: string; at: number } | null }
 export type ProjectMode = "review" | "plan" | "patch";
 export interface ProjectSelection { names: string[]; sizes?: (number | null)[]; changed?: boolean; error?: string }
-export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; canContinue: boolean } | { error: string };
+/** `withheld`: an exact patch not offered, as its patched file looks like it holds a secret at that line (integrations-c4-1). */
+export type ProjectResult = { answer: string; patch?: { name: string; diff: string }; withheld?: { name: string; line: number | null }; canContinue: boolean } | { error: string };
+/**
+ * What Check again found: a GitHub sign-in (`found`, its `source`, or a `hint` on how to get one), or, with a model
+ * provider in force (the user's own or the organisation's), that it connected to it again or not (integrations-c1-1),
+ * and when not, the status's `reason` (integrations-c2-2: "network" is the only one that means it couldn't be reached).
+ */
+export interface RetryResult { found: boolean; source: string | null; hint?: string; provider?: { host: string; ready: boolean; reason?: string } }
 export type ProjectWorkspaceAction = { action: "list" } | { action: "save" | "open" | "forget"; name: string };
 export interface ProjectWorkspaceReply {
   names?: string[];
   message?: string;
   opened?: { files: string[]; sizes?: (number | null)[]; folder: string | null; previous: { mode: ProjectMode; question: string; answer: string } | null };
 }
-export interface MemoryView { rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number }
-import type { HistoryProblemKind } from "./conversation";
+/** How long Undo can put a forgotten memory back (ms): main keeps what it removed that long, and Home offers Undo. */
+export const MEMORY_UNDO_MS = 60_000;
+/**
+ * What one Forget removed: the fact's words, how many of Ember's notes went with it, and Undo's token (memory-7); and
+ * what it had replaced, current again, when it undid what Ember kept just now (`back`: memory-12).
+ */
+export interface MemoryForgotten { text: string; derived: number; undo: string; back?: string[] }
+/**
+ * `reason`: why memory isn't open, so Home says it truthfully (memory-2); `erasesOnSignOut`: whether Sign out erases
+ * what is saved (only memory verified as this account's in this run: memory-11). Both absent from an older main.
+ */
+export interface MemoryView {
+  rows: MemoryItem[]; ownership: MemoryOwnership; epoch?: number; reason?: MemoryOwnerReason | null; erasesOnSignOut?: boolean;
+  /** memory.json couldn't be read, was set aside, or couldn't be saved this run: Settings › Memory says so (memory-r2). */
+  trouble?: MemoryTrouble | null;
+}
+import type { ConversationSent, ConversationTurn, ConversationTurnChange, HistoryProblemKind } from "./conversation";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
 import type { TargetSummary } from "./targets";
-import type { Installed, MarketplaceEntry } from "./extensions";
+import type { Installed, Marketplace, MarketplaceEntry } from "./extensions";
 import type { TaskControlAction, TaskEntry } from "./activity";
 
 /** Main pushes Home's Task activity at most this often (a task's steps can come many a second). */
 export const TASKS_PUSH_MS = 500;
 
+/**
+ * What Ember did reads the newest audit entries this many at a time, more only when Show earlier needs them, and never
+ * more than ACTIVITY_MAX_ENTRIES at once (safety-privacy-5: the rest of the 500 it was sent were thrown away).
+ */
+export const ACTIVITY_ENTRIES = 500;
+export const ACTIVITY_MAX_ENTRIES = 10_000;
+/** How many of the newest entries Home asked for (an untrusted IPC argument): whole pages up to the most, else one. */
+export function recentLimit(raw: unknown): number {
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= ACTIVITY_ENTRIES && raw <= ACTIVITY_MAX_ENTRIES && raw % ACTIVITY_ENTRIES === 0 ? raw : ACTIVITY_ENTRIES;
+}
+
 export const IPC = {
   getStatus: "ember:get-status",
   updateSettings: "ember:update-settings",
   applyFix: "ember:apply-fix",
+  recheckSetup: "ember:recheck-setup",
   settingsChanged: "ember:settings-changed",
   agentStatus: "agent:status",
   agentStatusChanged: "agent:status-changed",
@@ -50,6 +86,7 @@ export const IPC = {
   ask: "agent:ask",
   voiceStatus: "voice:status",
   voiceDownload: "voice:download",
+  voiceDownloadCancel: "voice:download-cancel",
   voiceProgress: "voice:progress",
   /** Voice Match: teach Ember the owner's voice, stop doing so, or forget the voiceprint. */
   voiceMatchEnrol: "voice:match-enrol",
@@ -64,6 +101,8 @@ export const IPC = {
   voiceForgetWords: "voice:forget-words",
   /** The natural voice's download failed: try again (Home's "Try again" under its switch). */
   voiceNaturalRetry: "voice:natural-retry",
+  /** Hear Ember: says one fixed sentence as replies are said, and which voice said it. */
+  voiceHear: "voice:hear",
   askClose: "agent:ask-close",
   /** One of Ember's suggestions chosen in the Ask box (sent as Ember's words the user chose, not typed). */
   askSuggestion: "agent:ask-suggestion",
@@ -80,6 +119,9 @@ export const IPC = {
   conversationSend: "agent:conversation-send",
   conversationStop: "agent:conversation-stop",
   conversationNew: "agent:conversation-new",
+  /** Whether the conversation is answering a request (ConversationTurn): asked by Home, and pushed to it as it changes. */
+  conversationTurn: "agent:conversation-turn",
+  conversationTurnChanged: "agent:conversation-turn-changed",
   projectPick: "project:pick",
   projectRemove: "project:remove",
   projectExport: "project:export",
@@ -90,10 +132,13 @@ export const IPC = {
   projectChooseFolder: "project:choose-folder",
   projectRunCommand: "project:run-command",
   projectWorkspace: "project:workspace",
+  projectForgot: "project:forgot",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
   memoryForget: "memory:forget",
+  /** Undo of a recent Forget, by the token Forget gave (memory-7, memory-v2). */
+  memoryRestore: "memory:restore",
   memoryForgetAll: "memory:forget-all",
   memoryCorrect: "memory:correct",
   /** "Tell Ember about you": the answers, checked whole in main (IntroSchema) and kept as the user's own facts. */
@@ -124,12 +169,23 @@ export const IPC = {
   focusSection: "ember:focus-section",
   /** The ask box: what Ember will read when you ask (shown as a chip), and your earlier questions. */
   askContext: "agent:ask-context",
+  /** Why a request would go unanswered now, as it changes while the box is open (companion-6): the word, or null. */
+  askUnavailable: "agent:ask-unavailable",
+  /**
+   * What the open box suggests now, as that changes (companion-r2-1: none while a question is up; companion-c2-2: those
+   * that follow an answer only while it shows): at most three short strings.
+   */
+  askSuggestions: "agent:ask-suggestions",
   /** What was typed while the ask box was opening (Ember held the keyboard meanwhile). */
   askTyped: "agent:ask-typed",
   /** The ask box's field needs this many lines (1 to 4) for its text: the box grows to fit. */
   askFit: "agent:ask-fit",
   /** The ask box went away: what was left in its field is selected, so typing replaces it when the box opens again. */
   askHidden: "agent:ask-hidden",
+  /** The ask box's "Set up voice in Settings…" (speech models not downloaded): Home opens at Voice. */
+  askVoiceSettings: "agent:ask-voice-settings",
+  /** Where the ask box shows something (window-local DIP): it takes clicks only there where the window system can say so. */
+  askShape: "agent:ask-shape",
   listenOnce: "voice:listen-once",
   listenOnceStatus: "voice:listen-once-status",
   /** Hide/show Ember and stay put/follow, from the settings window (the handle menu isn't keyboard-reachable). */
@@ -138,6 +194,8 @@ export const IPC = {
   presenceChanged: "ember:presence-changed",
   /** The settings file couldn't be used as it is (a hand edit that isn't valid JSON): what Ember did about it. */
   settingsNotice: "ember:settings-notice",
+  /** The administrator's policy changed while Ember ran: what is in force now (Status["admin"]), to the settings window. */
+  adminChanged: "ember:admin-changed",
   /** Main tells the settings window whether it can be seen (minimised or hidden: false), as X11 doesn't say. */
   homeVisibility: "ember:home-visibility",
   quit: "ember:quit",
@@ -162,6 +220,8 @@ export const IPC = {
   homeLevel: "ember:home-level",
   /** Copies a sign-in code or a setup command for the settings window (pages get no clipboard permission). */
   copyText: "ember:copy-text",
+  /** Shows Ember's own log file in the file manager (About this build: rp-8); it takes no path. */
+  showLogFile: "ember:show-log-file",
 } as const;
 
 export interface SignInProgress {
@@ -177,11 +237,31 @@ export interface SignInProgress {
 export interface ListenOnceStatus {
   phase: "ready" | "blocked" | "starting" | "listening" | "checking";
   detail: string;
+  /**
+   * A block that nothing in the moment lifts (companion-3): `settings`, the speech models aren't downloaded (Ask offers
+   * the way to Settings' Download instead of a control that can't work); `admin`, the organisation turned voice off
+   * (Ask leaves Listen once out).
+   */
+  fix?: "settings" | "admin";
+  /**
+   * Why it is blocked, where the fix is elsewhere in Settings: `needs-models` (the speech models' download) or
+   * `voice-error` (the voice line says what's wrong). Settings words those for itself (VoiceService listenOnceInSettings).
+   * `listening`: Ember is listening for a request already (a wake's, a conversation's, the other control's Listen once),
+   * so the line (that it is, or that a question is to be answered first while a conversation waits for that answer)
+   * isn't said to screen readers (renderer/shared/listen-once.ts): it changes as the microphone opens for a request, or
+   * while it is open, and a screen reader said it into the request (voice-listening-c3-1, voice-listening-v4-1).
+   */
+  reason?: "needs-models" | "voice-error" | "listening";
 }
+
+/** Whether the Ask box shows its Listen once row: always, but where the organisation turned voice off (companion-3). */
+export const listenOnceShown = (s: ListenOnceStatus | undefined): boolean => !(s?.phase === "blocked" && s.fix === "admin");
 
 export interface VoiceStatus {
   state: MicState;
   detail: string | null;
+  /** The microphone Ember hears through while it captures, as the system names it (kept on this computer). */
+  micLabel?: string;
   /** Listening can start: the wake word, voice activity and speech recognition models are in. */
   modelsReady: boolean;
   /** The models not in yet (or damaged), which the download fetches, and their size together. */
@@ -204,7 +284,8 @@ export interface VoiceStatus {
 /**
  * The effective local voice as Home shows it (VoiceService.naturalStatus): `off` (service stopped); `later` (selected at start:
  * decided the next time it speaks); `checking` (Ember's voice is loading to time this computer); `needs-voice` (Ember's own voice isn't downloaded yet, so nothing can be timed);
- * `downloading` (`percent` of it so far); `ready` (fetched: it speaks from the next reply); `on` (it speaks now);
+ * `downloading` (`percent` of it so far); `ready` (fetched: it speaks from the next reply); `on` (it speaks now, also while
+ * it is let go after two quiet minutes and loads again: voice-listening-c5-1);
  * `too-slow`; `failed` (the download failed: Try again); `wont-load` (downloaded, but it wouldn't load); `needs-native`
  * (Ember's faster speech didn't load on this computer, and Kokoro needs it).
  */
@@ -214,6 +295,13 @@ export type ClearHearingStatus =
   | { state: "downloading"; percent: number }
   | { state: "failed"; detail: string };
 
+/** What Hear Ember did: which voice spoke, or why none did (speaking off, the organisation's policy, the screen lock). */
+/**
+ * What Hear Ember found: the voice the sample was heard in, once it started, or why none was: "silent" when no voice
+ * spoke it, "stopped" when something else Ember said cut it off first (voice-speaking-r3).
+ */
+export type HearResult = { spoke: true; voice: "kitten" | "kokoro" | "supertonic" | "system" } | { spoke: false; why: "off" | "managed" | "locked" | "silent" | "stopped" };
+
 export type NaturalVoiceStatus = (
   | { state: "off" | "later" | "checking" | "needs-voice" | "ready" | "on" | "too-slow" | "wont-load" | "needs-native" }
   | { state: "downloading"; percent: number }
@@ -222,6 +310,8 @@ export type NaturalVoiceStatus = (
     model?: "kitten" | "kokoro" | "supertonic";
     /** Current/last usable local engine, including an explicit system-voice fallback. */
     voice?: "kitten" | "kokoro" | "supertonic" | "system";
+    /** `wont-load` after it had loaded: a reply it couldn't make, or its process ended (Home: "stopped working"). */
+    stopped?: true;
   };
 
 /** The speech models (app/voice/models.ts): wake word, voice activity, speech recognition, Ember's voice, Voice Match. */
@@ -242,8 +332,17 @@ export interface VoiceMatchStatus {
   model?: boolean;
   /** Turned on in settings with a voiceprint kept, but off for now: its model is missing or was damaged. */
   wanted?: boolean;
-  /** `got` of `of` phrases kept; `phrase`: the one to say now; `again`: the last wasn't kept, and why. */
-  enrolling: { got: number; of: number; phrase: string; again?: "short" | "unlike" | "failed" } | null;
+  /**
+   * `got` of `of` phrases kept; `phrase`: the one to say now; `again`: the last wasn't kept, and why (`over`: said while a
+   * screen reader still read the prompt).
+   */
+  enrolling: { got: number; of: number; phrase: string; again?: "short" | "unlike" | "failed" | "over" } | null;
+  /**
+   * How the last teaching ended, since this window opened: `learnt`; `cancelled` (the user's Cancel, or settings closed);
+   * `stopped` ("Ember, stop" or Stop everything); `timeout` (no phrase heard for a while, or too long in all);
+   * `gave-up` (too many phrases unlike the others); `interrupted` (Ember stopped listening: muted, locked, restarted).
+   */
+  ended?: "learnt" | "cancelled" | "stopped" | "timeout" | "gave-up" | "interrupted";
 }
 
 /**
@@ -276,6 +375,8 @@ export interface StatusPlatform {
   desk: boolean;
   /** A note under "Start Ember when I log in" (macOS waiting for approval, Windows turned off in Task Manager), or null. */
   autostartNote: string | null;
+  /** How this Ember was installed, for Updates' line on how to update it; null or absent when unknown (development). */
+  install?: InstallKind | null;
 }
 
 export interface Status {
@@ -285,6 +386,8 @@ export interface Status {
   logFile: string;
   /** Set when settings.json couldn't be used as it was (see IPC.settingsNotice). */
   settingsNotice: string | null;
+  /** The last run ended unexpectedly (its marker was left: app/main/run-marker.ts), or null. */
+  unexpectedExit?: { startedAt: string; version: string } | null;
   /** The administrator's policy in force, if any. */
   admin: {
     source: string | null;
@@ -343,6 +446,8 @@ export interface EmberHomeApi {
   onSettingsChanged(fn: (s: Settings) => void): () => void;
   /** Applies a fix offered by a setup check; returns the new report. */
   applyFix(fix: NonNullable<EnvReport["checks"][number]["fix"]>): Promise<EnvReport>;
+  /** Reads the setup check again (Check again), a probe that waits between tries included; returns the new report. */
+  recheckSetup(): Promise<EnvReport>;
   agentStatus(): Promise<AgentStatus>;
   projectPick(): Promise<ProjectSelection>;
   projectRemove(name: string): Promise<ProjectSelection>;
@@ -354,6 +459,8 @@ export interface EmberHomeApi {
   projectChooseFolder(): Promise<{ folder: string | null; message?: string }>;
   projectRunCommand(command: string): Promise<string>;
   projectWorkspace(input: ProjectWorkspaceAction): Promise<ProjectWorkspaceReply>;
+  /** Main forgot Projects' work: all of it, or only the previous request and answer as context (integrations-r1). */
+  onProjectForgot(fn: (what: "all" | "previous") => void): () => void;
   onAgentStatus(fn: (s: AgentStatus) => void): () => void;
   signIn(): Promise<void>;
   onSignInProgress(fn: (p: SignInProgress) => void): () => void;
@@ -361,8 +468,12 @@ export interface EmberHomeApi {
   voiceStatus(): Promise<VoiceStatus>;
   onVoiceStatus(fn: (s: VoiceStatus) => void): () => void;
   downloadVoice(): Promise<void>;
+  /** Stops the speech models' download under way (Cancel beside its progress). */
+  cancelVoiceDownload(): Promise<void>;
   /** Fetches the natural voice again after its download failed. */
   retryNaturalVoice(): Promise<void>;
+  /** Hear Ember (Settings › Voice): one fixed sentence, said as replies are. */
+  hearEmber(): Promise<HearResult>;
   /** Voice Match: starts teaching Ember the owner's voice (false: Ember isn't listening, so it can't), or stops; forgets the voiceprint. */
   enrolVoice(): Promise<boolean>;
   cancelEnrolVoice(): Promise<void>;
@@ -381,7 +492,10 @@ export interface EmberHomeApi {
   /** What Ember remembers (newest first), and changes to it. */
   memory(): Promise<MemoryView>;
   onMemory(fn: (view: MemoryView) => void): () => void;
-  forgetMemory(id: string): Promise<void>;
+  /** Forgets one fact: what went (its words, Ember's notes made from it) and Undo's token, or null if it wasn't there. */
+  forgetMemory(id: string): Promise<MemoryForgotten | null>;
+  /** Undo of a recent Forget: true if it was put back, false once it is too late. */
+  restoreMemory(token: string): Promise<boolean>;
   forgetAllMemory(): Promise<void>;
   /** Saves one explicit local correction without changing the fact's original source authority. */
   correctMemory(change: MemoryCorrection): Promise<MemoryItem>;
@@ -409,15 +523,17 @@ export interface EmberHomeApi {
   forgetAllRoutines(): Promise<void>;
   /** `phase` "unpacking": the last download is in, and is being checked and unpacked. */
   onVoiceProgress(fn: (p: { done: number; total: number; phase?: "unpacking" }) => void): () => void;
-  /** The newest audit entries, newest first. */
-  activity(): Promise<ActivityEntry[]>;
+  /** The newest audit entries, newest first: `limit` of them (a multiple of ACTIVITY_ENTRIES), else ACTIVITY_ENTRIES. */
+  activity(limit?: number): Promise<ActivityEntry[]>;
   /** Look for a sign-in again (e.g. after gh auth login) and reconnect; says whether one was found and where. */
-  retrySignIn(): Promise<{ found: boolean; source: string | null; hint?: string }>;
+  retrySignIn(): Promise<RetryResult>;
   /** Ember beside the cursor or hidden, following or staying put (`overlay` false: no compositor, Ember lives in the corner card). */
   presence(): Promise<Presence>;
   setPresence(p: Partial<Pick<Presence, "hidden" | "paused">>): Promise<Presence>;
   onPresence(fn: (p: Presence) => void): () => void;
   onSettingsNotice(fn: (notice: string | null) => void): () => void;
+  /** Main's word that the administrator's policy changed while Ember ran (the held lockdown): drawn as a new status's. */
+  onAdminChanged(fn: (admin: Status["admin"]) => void): () => void;
   /** Quit Ember (asks first while tasks are running). */
   quit(): Promise<void>;
   /** Opens the ask box, as the handle menu's Ask Ember… does (the keyboard's way when another app has the shortcut). */
@@ -433,6 +549,8 @@ export interface EmberHomeApi {
   onLevel(fn: (level: number | null) => void): () => void;
   /** Copies plain text, bounded by the session conversation's per-message limit. */
   copyText(text: string): Promise<void>;
+  /** Shows Ember's log file in the system's file manager (only that file: the page names none). */
+  showLogFile(): Promise<void>;
   cancelSignIn(): Promise<void>;
   /** Opens GitHub's page where the sign-in code is entered (again). */
   openSignInPage(): Promise<void>;
@@ -446,10 +564,14 @@ export interface EmberHomeApi {
   onHistoryProblem(fn: (problem: HistoryProblemKind | null) => void): () => void;
   /** This session's conversation (kept in memory only). */
   conversation(): Promise<TranscriptEntry[]>;
-  /** Explicit typed request from Home, without capturing its foreground window. */
-  conversationSend(text: string): Promise<void>;
+  /** Explicit typed request from Home, without capturing its foreground window; "stopped" when it stopped everything. */
+  conversationSend(text: string): Promise<ConversationSent>;
+  /** Whether the conversation is answering a request now, from every way one is asked, and changes to it (home-c1-1). */
+  conversationTurn(): Promise<ConversationTurn>;
+  onConversationTurn(fn: (turn: ConversationTurnChange) => void): () => void;
   /** Ends the current response and queued requests; independently running tasks continue. */
-  conversationStop(): Promise<void>;
+  /** Stop response: whether anything was under way to stop (a reply, a queued message, the answer being spoken). */
+  conversationStop(): Promise<boolean>;
   /** Starts a fresh chat: memory, reminders, running tasks and sign-in stay. */
   conversationNew(): Promise<void>;
   onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;
@@ -490,7 +612,19 @@ export interface AskContext {
    * (with `opened`: the box opens a row taller). Choosing one sends it as if typed.
    */
   suggestions?: string[];
+  /**
+   * With `opened` and no `suggestions`: an answer is still coming in, whose follow-ups ("Yes, please", "Read it out") are
+   * offered once it is whole, so the box opens with their row's room, empty and out of sight, for them to land in without
+   * moving the field (askSuggestionsComing; accessibility-visual-c4-1: they showed only on the bubble, which takes no
+   * keyboard, until the box was opened again). Only where the answer still has room by Ember (ask.ts roomForAnswer).
+   */
+  suggestionsComing?: boolean;
   listenOnce?: ListenOnceStatus;
+  /**
+   * Why a request would go unanswered now, in the handle's word (host.ts unansweredWord: "Not connected", "Offline"…);
+   * absent while Ember can answer. The box says so before the request is typed, not after it is sent (companion-6).
+   */
+  unavailable?: string;
 }
 
 export interface EmberAskApi {
@@ -501,12 +635,20 @@ export interface EmberAskApi {
   listenOnce(on: boolean): Promise<ListenOnceStatus>;
   onListenOnce(fn: (s: ListenOnceStatus) => void): void;
   onContext(fn: (c: AskContext) => void): void;
+  /** Why a request would go unanswered changed while the box is open (the handle's word; null: it would be answered). */
+  onUnavailable?(fn: (word: string | null) => void): void;
+  /** What the open box suggests changed (a question came or went, the answer they follow went): the chips follow. */
+  onSuggestions?(fn: (list: string[]) => void): void;
   /** Text typed before the box had the keyboard: it goes in the box (Enter sends it, Esc closes the box). */
   onTyped(fn: (t: { text: string; submit: boolean; cancel: boolean }) => void): void;
   /** The box went away (nothing can be typed in it now): what was left in the field is selected for the next opening. */
   onHidden(fn: () => void): void;
   /** The page needs `rows` rows (the field's 1 to 4 lines, and one for the note when a paste was cut): the box grows to fit. */
   fit?(rows: number): void;
+  /** "Set up voice in Settings…": the box closes and Home opens at Voice, where the speech models are downloaded. */
+  voiceSettings?(): void;
+  /** Where the page shows something (window-local CSS px): the box takes clicks there only, on Linux (companion-4). */
+  shape?(rects: { x: number; y: number; width: number; height: number }[]): void;
 }
 
 /**
@@ -544,9 +686,11 @@ export interface ExtensionsState {
   /** The organisation allows extensions, and Ember isn't locked down. */
   allowed: boolean;
   installed: Installed[];
-  marketplaces: { name: string; source: string }[];
+  marketplaces: Marketplace[];
   /** The user agreed to extensions' first-use card at its current version (absent without the runtime). */
   consented?: boolean;
+  /** false while Ember isn't connected (signed out, connecting): no marketplace can be listed, and nothing added runs. */
+  connected?: boolean;
   /** Set when the list couldn't be read: one plain sentence. */
   error?: string;
 }
@@ -592,7 +736,10 @@ export const PROVIDER_IPC = {
    * record (settingsFromHome drops it).
    */
   agree: "provider:agree",
-  /** One small request to the endpoint in settings (its model list), with the saved key: ProviderTest. */
+  /**
+   * One small request to the endpoint in settings (its model list), with the saved key: ProviderTest. With a
+   * ProviderDraft, the same request to details typed but not saved, which it saves nothing of (first-run-r2-1).
+   */
   test: "provider:test",
 } as const;
 
@@ -618,7 +765,33 @@ export interface ProviderState {
 export type ProviderDone = { ok: true } | { ok: false; why: string };
 
 /** "Test connection": the service answered (`models`: how many it lists, when it says), or why not in one sentence. */
-export type ProviderTest = { ok: true; host: string; models: number | null } | { ok: false; why: string };
+/**
+ * `ids`: the models it names, as suggestions for the model fields (at most 50, each a MODEL_ID). `cause`: nothing
+ * answered at all (main's TestResult), so the address or the network is what to check.
+ */
+export type ProviderTest = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
+
+/**
+ * Details typed for the user's own provider but not saved, checked before they replace the details in use (first run's
+ * provider step for a provider already in use: first-run-r2-1). `host` is the one the card named when the user agreed
+ * with the same press: main sends nothing unless the address names exactly that host. `key`: one just typed, sent only
+ * to that host and kept nowhere; without it, the saved key goes only if it was entered for that very host.
+ */
+export interface ProviderDraft { type: "openai" | "azure" | "anthropic"; baseUrl: string; key?: string; host: string }
+
+/**
+ * The details an edit of the provider in force moved to (Home's Model provider holds an edit to another host until its
+ * card is agreed and it answers: integrations-c3-1), sent with the card's yes so main writes them and the yes in one
+ * settings change and the provider never leaves force between. Only these fields: never the switch or a key.
+ */
+export interface ProviderMove {
+  type: "openai" | "azure" | "anthropic";
+  baseUrl: string;
+  conductor?: string | null;
+  worker?: string | null;
+  wireApi?: "completions" | "responses" | null;
+  azureApiVersion?: string | null;
+}
 
 /** The settings window's provider API (`window.emberProvider`, app/preload/home.ts). */
 export interface EmberProviderApi {
@@ -627,7 +800,11 @@ export interface EmberProviderApi {
   /** Saves the API key, encrypted (refused without a keyring); it is never sent back. */
   saveKey(key: string): Promise<ProviderDone>;
   removeKey(): Promise<ProviderDone>;
-  /** Records the yes to the card for `host` (the endpoint's host in settings now), and turns the provider on. */
-  agree(host: string): Promise<ProviderDone>;
-  test(): Promise<ProviderTest>;
+  /**
+   * Records the yes to the card for `host` (the endpoint's host in settings now, or that of `move`, the held edit's
+   * details, saved with it: integrations-c3-1), and turns the provider on.
+   */
+  agree(host: string, move?: ProviderMove): Promise<ProviderDone>;
+  /** The endpoint in settings, or `draft`'s details without saving any of them (first-run-r2-1). */
+  test(draft?: ProviderDraft): Promise<ProviderTest>;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { BLINK_CLOSE, BLINK_OPEN, Rig, PRESETS, VOICE_STALE_S, blinkAt, blinkGap, fidgetGap, type Emotion } from "./rig";
+import { BLINK_CLOSE, BLINK_OPEN, NEUTRAL, RESTING_FRAME_MS, Rig, PRESETS, VOICE_STALE_S, blinkAt, blinkGap, fidgetGap, frameSeconds, restingGap, type Emotion } from "./rig";
 
 function settle(rig: Rig, seconds: number) {
   let pose = rig.update(0);
@@ -364,5 +364,198 @@ describe("Rig mouth when Ember shows again (the overlay's level reset, NO_LEVEL)
     rig.setTalkLevel(null);
     // Well inside VOICE_STALE_S: a quarter of a second.
     expect(settle(rig, 0.25).talk).toBeLessThan(0.05);
+  });
+});
+
+describe("restingGap: how often a face at rest is drawn (rp-4)", () => {
+  /** A seeded Math.random, so a run of the rig is the same every time. */
+  function seeded(seed: number) {
+    let x = seed;
+    return vi.spyOn(Math, "random").mockImplementation(() => { x = (x * 1103515245 + 12345) % 2 ** 31; return x / 2 ** 31; });
+  }
+  afterEach(() => vi.restoreAllMocks());
+
+  /** A rig awake at rest, its eyes on a still pointer, settled after a few seconds. */
+  function resting() {
+    const rig = new Rig();
+    rig.sleepAfter = 180;
+    for (let i = 0; i < 60 * 3; i++) { rig.lookAt(0.3, 0.2); rig.update(1 / 60); }
+    return rig;
+  }
+
+  it("draws an awake, still Ready face about 6 times a second, not 18 (rp-4)", () => {
+    seeded(7);
+    const rig = resting();
+    // Waits for a moment when nothing passes (no blink or fidget under way).
+    for (let i = 0; i < 600 && !(rig.motion === "still" && rig.nextChange() > 0.2); i++) { rig.lookAt(0.3, 0.2); rig.update(1 / 60); }
+    expect(rig.motion).toBe("still");
+    expect(restingGap(rig, 55)).toBeGreaterThanOrEqual(150);
+    expect(restingGap(rig, 55)).toBeLessThanOrEqual(RESTING_FRAME_MS);
+  });
+
+  it("wakes in time for the next blink, fidget or doze rather than start it late (rp-4)", () => {
+    seeded(11);
+    const rig = resting();
+    for (let i = 0; i < 600 && !(rig.motion === "still" && rig.nextChange() < 0.1 && rig.nextChange() > 0.06); i++) { rig.lookAt(0.3, 0.2); rig.update(1 / 60); }
+    expect(rig.nextChange()).toBeLessThan(0.1);
+    expect(restingGap(rig, 55)).toBeLessThan(100);
+    // Never more often than the page's own resting rate.
+    expect(restingGap(rig, 55)).toBeGreaterThanOrEqual(55);
+  });
+
+  it("keeps the page's own rate for a face that talks, blinks, moves, shows an emote or isn't Ready (rp-4)", () => {
+    seeded(3);
+    const talking = resting();
+    talking.setTalking(true);
+    expect(restingGap(talking, 55)).toBe(55);
+    const thinking = resting();
+    thinking.setEmotion("thinking");
+    for (let i = 0; i < 60 * 3; i++) thinking.update(1 / 60);
+    expect(restingGap(thinking, 55)).toBe(55);
+    const pointing = resting();
+    pointing.setGesture("point");
+    for (let i = 0; i < 60; i++) pointing.update(1 / 60);
+    expect(restingGap(pointing, 55)).toBe(55);
+    const blinking = resting();
+    for (let i = 0; i < 600 && blinking.motion !== "gentle"; i++) blinking.update(1 / 60);
+    expect(restingGap(blinking, 55)).toBe(55);
+  });
+
+  /**
+   * The overlay's drawing at awake rest for two simulated minutes, the pointer still: brisk at once, gentle every 22 ms,
+   * and still every 55 ms ("before" this change) or at restingGap's gap ("now"); "every" draws each 60 fps frame.
+   */
+  function overlayAtRest(how: "every" | "before" | "now") {
+    seeded(5);
+    const rig = resting();
+    const t0 = rig.update(0).t;
+    let draws = 0, blinks = 0, wasShut = false, last = 0, planned = 0, at = 0;
+    const until = 120_000;
+    while (at < until) {
+      const now = Math.ceil(at / (1000 / 60)) * (1000 / 60);
+      const dt = how === "now" ? frameSeconds(now - last, planned) : Math.min((now - last) / 1000, 0.1);
+      last = now;
+      rig.lookAt(0.3, 0.2);
+      const shut = rig.update(dt).face.open < 0.6 * NEUTRAL.open;
+      draws++;
+      if (shut && !wasShut) blinks++;
+      wasShut = shut;
+      const m = rig.motion;
+      const rest = m !== "still" ? 0 : how === "now" ? restingGap(rig, 55) : 55;
+      planned = rest > 55 ? rest : 0;
+      at = now + (how === "every" ? 0 : m === "brisk" ? 0 : m === "gentle" ? 22 : rest) + 1;
+    }
+    return { perSecond: draws / (until / 1000), blinks, seconds: rig.update(0).t - t0 };
+  }
+
+  it("counts the eyes as still once what is left of their travel is well under a pixel, not for a quarter of a second more (rp-4)", () => {
+    seeded(13);
+    const rig = resting();
+    // A moment with nothing planned for a while (no blink, fidget or saccade due), then the eyes jump a long way.
+    for (let i = 0; i < 1200 && !(rig.motion === "still" && rig.nextChange() > 1.5); i++) { rig.lookAt(0.3, 0.2); rig.update(1 / 60); }
+    expect(rig.nextChange()).toBeGreaterThan(1.5);
+    let t = 0, at: { x: number; y: number } | null = null, stillAfter = 0;
+    for (; t < 1.2; t += 1 / 60) {
+      rig.lookAt(-0.7, -0.4);
+      const pose = rig.update(1 / 60);
+      if (!at && t > 0.05 && rig.motion === "still") { at = pose.look; stillAfter = t; }
+    }
+    const end = rig.update(0).look;
+    expect(at).not.toBeNull();
+    // Before, the soft spring's last crawl kept it "gentle" (drawn at the lively rate) until about 0.42 s.
+    expect(stillAfter).toBeLessThan(0.34);
+    // What it still moves then: under a fiftieth of a look unit, a tenth of a pixel at Ember's size.
+    expect(Math.hypot(end.x - at!.x, end.y - at!.y)).toBeLessThan(0.02);
+  });
+
+  /**
+   * The handle's drawing at awake rest past the first minute, as handle/main.ts paces it (brisk at once, gentle every
+   * 33 ms, a still face restingGap's), never seeing the pointer (it isn't over the handle).
+   */
+  function handleAtRest() {
+    seeded(5);
+    const rig = new Rig();
+    let draws = 0, blinks = 0, wasShut = false, last = 0, planned = 0, at = 0;
+    while (at < 160_000) {
+      const now = Math.ceil(at / (1000 / 60)) * (1000 / 60);
+      const dt = frameSeconds(now - last, planned);
+      last = now;
+      const shut = rig.update(dt).face.open < 0.6 * NEUTRAL.open;
+      if (now >= 70_000) { draws++; if (shut && !wasShut) blinks++; }
+      wasShut = shut;
+      const m = rig.motion;
+      const gap = m === "brisk" ? 0 : m === "gentle" ? 33 : restingGap(rig, 66);
+      planned = gap > 66 ? gap : 0;
+      at = now + gap + 1;
+    }
+    return { perSecond: draws / 90, blinks };
+  }
+
+  it("a simulated handle that can't see the pointer draws its idle glances' last crawl less often, and keeps blinking (rp-4)", () => {
+    const now = handleAtRest();
+    // 13.0 a second before (the live handle drew 13.2-15.4); 11.5 now.
+    expect(now.perSecond).toBeLessThan(12);
+    // A blink every 2.5-5 s: at least 18 in the 90 s, each drawn shut.
+    expect(now.blinks).toBeGreaterThanOrEqual(18);
+  });
+
+  it("a simulated overlay at awake rest draws at most 13 times a second, not 19, and misses no blink (rp-4)", () => {
+    const every = overlayAtRest("every"), before = overlayAtRest("before"), now = overlayAtRest("now");
+    expect(before.perSecond).toBeGreaterThan(18);
+    expect(now.perSecond).toBeLessThanOrEqual(13);
+    // Each blink a 60 fps drawing shows is drawn shut at least once.
+    expect(now.blinks).toBeGreaterThanOrEqual(every.blinks);
+    // Its clock keeps real time: blinks, the breath and falling asleep keep their pace.
+    expect(now.seconds).toBeCloseTo(120, 0);
+  });
+
+  it("draws an idle glance at the resting rate once its eyes are there, and still brings them back on time (rp-4)", () => {
+    seeded(5);
+    const rig = resting();
+    type Glance = { kind: string; age: number; dur: number; dir?: { x: number; y: number } };
+    const glance = () => { const f = (rig as unknown as { fidget: Glance | null }).fidget; return f?.kind === "glance" ? f : null; };
+    let glances = 0, during = 0, held = 0, latest = 0, endsAt = 0, wasGlancing = false, last = 0, planned = 0, at = 0;
+    // The overlay's pacing (brisk at once, gentle every 22 ms, still restingGap's), its eyes on a still pointer.
+    while (at < 120_000) {
+      const now = Math.ceil(at / (1000 / 60)) * (1000 / 60);
+      const dt = frameSeconds(now - last, planned);
+      last = now;
+      rig.lookAt(0.3, 0.2);
+      const pose = rig.update(dt);
+      const g = glance();
+      if (g) {
+        during++;
+        if (!wasGlancing) glances++;
+        endsAt = now + (g.dur - g.age) * 1000;
+        if (rig.motion === "still") {
+          held++;
+          // Held only once the eyes are where it looks, and never taken for a face a page may stop drawing.
+          expect(Math.hypot(pose.look.x - g.dir!.x, pose.look.y - g.dir!.y)).toBeLessThan(0.02);
+          expect(rig.settled).toBe(false);
+        }
+      } else if (wasGlancing) latest = Math.max(latest, now - endsAt);
+      wasGlancing = !!g;
+      const m = rig.motion;
+      const rest = m !== "still" ? 0 : restingGap(rig, 55);
+      planned = rest > 55 ? rest : 0;
+      at = now + (m === "brisk" ? 0 : m === "gentle" ? 22 : rest) + 1;
+    }
+    expect(glances).toBeGreaterThanOrEqual(4);
+    expect(held).toBeGreaterThan(0);
+    // 39 drawings for each 1.2 s glance before, all at the lively rate or faster; 21 now.
+    expect(during / glances).toBeLessThan(25);
+    // The eyes come back no more than a resting page's own gap (55 ms) and a display frame after the glance ends.
+    expect(latest).toBeLessThan(75);
+  });
+});
+
+describe("frameSeconds", () => {
+  it("lets a resting frame's time pass in full, and a stall or a page waking from rest move on 0.1 s at most (rp-4)", () => {
+    expect(frameSeconds(16, 0)).toBeCloseTo(0.016);
+    expect(frameSeconds(170, 160)).toBeCloseTo(0.17);
+    expect(frameSeconds(5000, 160)).toBeCloseTo(0.21);
+    expect(frameSeconds(5000, 0)).toBeCloseTo(0.1);
+    expect(frameSeconds(5000, 0, 50)).toBeCloseTo(0.05);
+    expect(frameSeconds(-3, 0)).toBe(0);
   });
 });

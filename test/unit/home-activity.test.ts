@@ -5,8 +5,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { describeEntry, userWords, withCommandShells } from "../../app/renderer/home/copy";
-import type { ActivityEntry } from "../../app/shared/ipc";
+import { ACTIVITY_LINES, activityLines, activityNote, activityProblemText, describeEntry, userWords, withCommandShells, withEarlier } from "../../app/renderer/home/copy";
+import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES, recentLimit, type ActivityEntry } from "../../app/shared/ipc";
 
 const t = "2026-10-27T10:00:00.000Z";
 const cmd = (e: Record<string, unknown>): ActivityEntry => ({ t, event: "command", task: "t1", target: "ssh:build-01", ...e });
@@ -91,9 +91,99 @@ describe("What Ember did: other computers", () => {
   it("asks main for every entry it keeps, so lines it can't show don't empty the list", () => {
     const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
     const audit = readFileSync(new URL("../../app/main/policy/audit.ts", import.meta.url), "utf8");
-    const asked = Number(/IPC\.activity, guard\(\(\) => audit\?\.recent\((\d+)\)/.exec(main)?.[1]);
+    expect(main).toContain("ipcMain.handle(IPC.activity, guard((limit: unknown) => audit?.recent(recentLimit(limit)) ?? []));");
     const kept = Number(/static readonly KEEP = (\d+);/.exec(audit)?.[1]);
-    expect(asked).toBeGreaterThanOrEqual(kept);
+    expect(recentLimit(undefined)).toBeGreaterThanOrEqual(kept);
+  });
+});
+
+describe("What Ember did: the whole record, a page at a time (safety-privacy-5)", () => {
+  const now = new Date(2026, 10, 7, 15, 0);
+  const at = (minutesAgo: number) => new Date(now.getTime() - minutesAgo * 60_000).toISOString();
+  const click = (minutesAgo: number, app = "gedit"): ActivityEntry => ({ t: at(minutesAgo), event: "action", kind: "click", app, ok: true, element: { role: "push button", name: "Save" } });
+
+  it("counts every line of today, not only those drawn", () => {
+    // 120 actions in the last hour, then a task from yesterday with an allowed Send.
+    const entries = [
+      ...Array.from({ length: 120 }, (_, i) => click(i * 0.5)),
+      { t: at(24 * 60), event: "confirm", kind: "click", app: "thunderbird", answer: "once", element: { role: "push button", name: "Send" } },
+      { t: at(24 * 60 + 1), event: "decision", kind: "click", app: "thunderbird", verdict: "confirm", reason: "it sends", element: { role: "push button", name: "Send" } },
+      { t: at(24 * 60 + 2), event: "task", phase: "asked", goal: "Send the report" },
+    ];
+    const lines = activityLines(entries, undefined, now);
+    expect(lines).toHaveLength(123);
+    expect(activityNote(lines, false)).toBe("120 today");
+    // The second page starts with yesterday's heading and its allowed Send.
+    expect(ACTIVITY_LINES).toBe(80);
+    const second = lines.slice(ACTIVITY_LINES * 1, ACTIVITY_LINES * 2);
+    expect(second.filter(l => l.day === "Today")).toHaveLength(40);
+    expect(second[40]).toMatchObject({ day: "Yesterday", view: { tag: "You allowed", what: "Click “Send” in Thunderbird" } });
+  });
+
+  it("says at least so many today while the record read may hold more of today", () => {
+    const lines = activityLines(Array.from({ length: 500 }, (_, i) => click(i * 0.1)), undefined, now);
+    expect(activityNote(lines, true)).toBe("At least 500 today");
+    expect(activityNote(lines, false)).toBe("500 today");
+    expect(activityNote([], true)).toBe("");
+  });
+
+  it("reads more of the record only in whole pages, and never past the most it may", () => {
+    expect(recentLimit(undefined)).toBe(ACTIVITY_ENTRIES);
+    expect(recentLimit(ACTIVITY_ENTRIES * 3)).toBe(ACTIVITY_ENTRIES * 3);
+    for (const bad of [-1, 0, 1.5, "1000", ACTIVITY_MAX_ENTRIES + 1, Number.NaN, {}]) expect(recentLimit(bad), String(bad)).toBe(ACTIVITY_ENTRIES);
+    expect(recentLimit(ACTIVITY_MAX_ENTRIES)).toBe(ACTIVITY_MAX_ENTRIES);
+  });
+
+  it("keeps what Show earlier read behind the newest page, so a refresh need read only that page (safety-privacy-r3)", () => {
+    const e = (i: number): ActivityEntry => ({ t: new Date(Date.UTC(2026, 10, 7, 12, 0, 0) - i * 1000).toISOString(), event: "action", kind: "click", ok: true, n: i });
+    const held = Array.from({ length: 1000 }, (_, i) => e(i + 2));
+    // Two new entries since: the newest page now begins with them.
+    const fresh = [e(0), e(1), ...held.slice(0, 498)];
+    expect(withEarlier(fresh, held, 500, 1000)).toEqual([e(0), e(1), ...held.slice(0, 998)]);
+    // Nothing new: what was held, as it was.
+    expect(withEarlier(held.slice(0, 500), held, 500, 1000)).toEqual(held);
+    // Nothing older held (no Show earlier yet), or the whole record fits a page: the page itself.
+    expect(withEarlier(fresh, held.slice(0, 500), 500, 500)).toEqual(fresh);
+    expect(withEarlier(held.slice(0, 20), held, 500, 1000)).toEqual(held.slice(0, 20));
+    // The held list's newest entries aren't in the page (more came than a page holds, or the record was cleared): read again.
+    expect(withEarlier(Array.from({ length: 500 }, (_, i) => e(-600 + i)), held, 500, 1000)).toBeNull();
+  });
+});
+
+describe("What Ember did: tags and names (safety-privacy-10, safety-privacy-v2)", () => {
+  it("tells a lasting grant from a one-off yes, and says what it changes", () => {
+    const send = { t, event: "confirm", kind: "click", app: "gedit", element: { role: "push button", name: "Save" } };
+    expect(describeEntry({ ...send, answer: "once" })).toEqual({ tag: "You allowed", cls: "ok", what: "Click “Save” in gedit" });
+    expect(describeEntry({ ...send, answer: "always" })).toEqual({ tag: "Always allowed", cls: "ok", what: "Click “Save” in gedit", why: "From now on Ember may act in gedit without asking first, but it still asks before anything hard to undo." });
+  });
+
+  it("says when a picture of a window went to the model, and of which app (safety-privacy-6)", () => {
+    expect(describeEntry({ t, event: "read", kind: "screenshot", app: "firefox", ok: true, bytes: 80_000 }))
+      .toEqual({ tag: "Screenshot", cls: "", what: "Sent a picture of the window in Firefox to the model" });
+    expect(describeEntry({ t, event: "read", kind: "screenshot", app: "gedit", ok: true, onDesk: true })?.what).toBe("Sent a picture of the window in gedit to the model (on Ember's desk)");
+    expect(describeEntry({ t, event: "read", kind: "something else" })).toBeNull();
+  });
+
+  it("names a password manager it refused to read as people say it", () => {
+    expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "keepassxc", reason: "this app is on the user's never-look list" }))
+      .toEqual({ tag: "Refused", cls: "no", what: "Read in KeePassXC", why: "This app is on your never-look list." });
+    expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "1password", reason: "r" })?.what).toBe("Read in 1Password");
+    expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "seahorse", reason: "r" })?.what).toBe("Read in Passwords and Keys");
+  });
+
+  it("says Ember couldn't tell, not that a password prompt was open, when the desktop couldn't be asked (safety-privacy-c1-2)", () => {
+    // The worker's two reasons, word for word (worker.ts PROMPT_REASON).
+    expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "read", app: "", window: "", tier: "never", reason: "Ember couldn't tell whether a password prompt was open" }))
+      .toEqual({ tag: "Refused", cls: "no", what: "Read", why: "Ember couldn't tell whether a password prompt was open." });
+    expect(describeEntry({ t, event: "decision", verdict: "deny", kind: "click", app: "gedit", tier: "never", reason: "an authentication prompt is open" })?.why)
+      .toBe("An authentication prompt is open.");
+  });
+});
+
+describe("What Ember did: when the record can't be read (home-10)", () => {
+  it("says the list may be old, or that nothing can show yet, and where the whole record is", () => {
+    expect(activityProblemText(true)).toBe("Ember couldn't read its record just now, so this list may be out of date. It tries again every few seconds; the whole record is in the folder below.");
+    expect(activityProblemText(false)).toBe("Ember couldn't read its record just now, so nothing can show here yet. It tries again every few seconds; the whole record is in the folder below.");
   });
 });
 
@@ -125,6 +215,9 @@ describe("What Ember did: reasons in your words (review #217)", () => {
     expect(describeEntry({ t, event: "decision", kind: "cursor_text", verdict: "confirm", batch: 2, at: 1, batchVerdict: "deny", batchReason: "the user's keyboard is in use" })?.why)
       .toBe("Your keyboard is in use.");
     expect(describeEntry({ t, event: "task", phase: "failed", goal: "Tidy up", summary: "the window closed before Ember finished" })?.why).toBe("The window closed before Ember finished.");
+    // A task whose question went unanswered says so; one the user stopped (or an older record) says it stopped (tasks-approvals-r1).
+    expect(describeEntry({ t, event: "task", phase: "cancelled", endedBy: "expired", goal: "Tidy up" })).toMatchObject({ tag: "No answer", cls: "no" });
+    for (const endedBy of ["stop", "declined", "took-over", undefined]) expect(describeEntry({ t, event: "task", phase: "cancelled", ...(endedBy ? { endedBy } : {}), goal: "Tidy up" })?.tag).toBe("Stopped");
     // decide.ts' exact reason once a task is tainted (commands-decide.test.ts pins it there).
     expect(describeEntry(cmd({ phase: "decided", shell: "bash", verdict: "ask", reason: "It asks first: commands here run as an administrator; the organisation asks for every command; the user asked to check every command; it deletes or overwrites data; it may carry text Ember read elsewhere in the task; an earlier step in the task wasn't the user's." }))?.why)
       .toBe("It asks first: commands here run as an administrator; the organisation asks for every command; you asked to check every command; it deletes or overwrites data; it may carry text Ember read elsewhere in the task; an earlier step in the task wasn't yours.");

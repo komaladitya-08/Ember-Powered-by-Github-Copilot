@@ -19,10 +19,12 @@ import type { Agreement } from "../policy/policy";
 import type { TargetId } from "../../shared/targets";
 import { friendlyError, type ServiceKind } from "./presenter";
 import type { PlanStep, TaskHand, ViewDoc } from "../../shared/view";
-import type { TaskActivity, TaskEntry } from "../../shared/activity";
+import { STATUS_WORDS, summarizeActivity, type StepGroup, type TaskActivity, type TaskEntry } from "../../shared/activity";
 import { ActivityLog, type ActivityEvent } from "./activity";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+/** Why a stopped task stopped (Task.endedBy). */
+export type StopCause = "expired" | "declined" | "took-over" | "stop";
 
 export interface Task {
   id: string;
@@ -40,6 +42,12 @@ export interface Task {
    * so a catch-up doesn't say "you stopped it".
    */
   stopReason?: string;
+  /**
+   * How a stopped task ended, from Ember's own flags (never model text): its question went unanswered ("expired"), the
+   * user said "Not now" ("declined"), took the mouse back ("took-over"), or stopped it ("stop"). Set only once it is
+   * stopped, so a catch-up says "you stopped it" only when they did (tasks-approvals-v1).
+   */
+  endedBy?: StopCause;
   mode?: "do" | "guide";
   /** The target it acts on, fixed for its life (absent: this computer). */
   targetId?: TargetId;
@@ -109,6 +117,51 @@ export interface TaskManagerDeps {
   taskWindow?: (task: Task, focus: boolean) => boolean;
   /** How long a failed card stays before it goes on its own (longer, so it can be read and closed). */
   failureCardMs?: number;
+  /**
+   * The user isn't looking (idle, or Ember hidden: main's userAway). A card kept to be read (a failure's, an unanswered
+   * question's, a view's) waits for them, and has its whole time again once they are back (tasks-approvals-4).
+   */
+  userAway?: () => boolean;
+  /**
+   * Task activity kept from the managers before this one (TaskManager.history, handed on by a reconnect): listed after
+   * this one's own, so Home's "Kept until you quit Ember" holds (tasks-approvals-c2-1).
+   */
+  earlier?: () => TaskEntry[];
+  /**
+   * Whether Try again waits now: a switch of model service waits for the work under way, and a task started meanwhile
+   * would be refused at once for it. A failed card offers Try again again once this is false (tasks-approvals-c4-1).
+   */
+  retryWaits?: () => boolean;
+  /** The finished cards the manager before this one kept (TaskManager.keptCards, handed on by a reconnect: tasks-approvals-r4-2). */
+  carried?: readonly KeptCard[];
+}
+
+/**
+ * A finished task's card handed to the next manager across a reconnect (tasks-approvals-r4-2): the task, what it was
+ * asked with (so Try again still can), what it did, and the time its card had `left` at `at` (`whole`: one kept to be
+ * read; `away`: waiting for a user who is away).
+ */
+export interface KeptCard { task: Task; spec?: { goal: string; opts: StartOptions }; log?: ActivityLog; left: number; at: number; whole?: number; away?: boolean }
+
+/** What a card handed to another model service without its Try again adds to its words (handedElsewhere). */
+export const ASK_AGAIN_ELSEWHERE = "The model service has changed: ask me again and I'll try it on the new one.";
+
+/**
+ * A finished card handed to a connection on another model service (integrations-v5-1). The conversation isn't resumed
+ * there, so nothing it wrote goes there either: never the goal the conversation's model wrote nor what that conversation
+ * read on the screen. Try again goes on only where the user's words are that task's alone (StartOptions.alone), and
+ * starts from them; a request split into several tasks, a routine's, an answer to Ember's question or a steered task's
+ * words would start all of it again under the card, or say nothing of what it was (integrations-w5-1). Any other card
+ * offers Close only, and says to ask again.
+ */
+export function handedElsewhere(c: KeptCard): KeptCard {
+  if (!c.spec) return c;
+  const opts: StartOptions = { ...c.spec.opts };
+  delete opts.screen;
+  if (opts.alone && opts.userWords !== undefined) return { ...c, spec: { goal: opts.userWords, opts } };
+  const rest: KeptCard = { ...c, task: { ...c.task, detail: [c.task.detail.trim(), ASK_AGAIN_ELSEWHERE].filter(Boolean).join(" ") } };
+  delete rest.spec;
+  return rest;
 }
 
 /** Longest task title (its card shows two lines of it). */
@@ -129,6 +182,9 @@ export const titleOf = (goal: string) => {
 /** Finished tasks whose activity is kept (in memory only, until Ember quits) for Home's "Task activity". */
 const ACTIVITY_KEPT = 20;
 
+/** How often a card waiting for a user who is away looks for them again (a cheap unref'd timer, only while one waits). */
+const AWAY_POLL_MS = 5000;
+
 /** How a task was asked for (TaskManager.start's options). */
 export interface StartOptions {
   target?: WindowTarget & { app?: string };
@@ -141,23 +197,70 @@ export interface StartOptions {
   commandWords?: string;
   /** TaskSpec.typedOnly. */
   typedOnly?: boolean;
+  /** TaskSpec.partWay: an earlier try of it stopped part-way (a retry). */
+  partWay?: boolean;
+  /**
+   * `userWords` are this task's alone (integrations-w5-1): its turn's request only (no answer to Ember's question, no
+   * earlier try's words, no routine's steps), in a turn that asked for, steered or stopped no other task (shared()
+   * takes it back), and never steered since. Only then does its card's Try again go on to another model service.
+   */
+  alone?: true;
 }
 
-/** A task the user may try again from its card: one that did work (not a guide) and failed. */
-const retryable = (t: Task) => t.status === "failed" && t.mode === "do";
+/** What a task that may be tried again was asked with (TaskManager.askedWith): the user's words, never its goal. */
+export interface RetriedWords {
+  userWords: string;
+  commandWords?: string;
+  typedOnly?: boolean;
+  /** What they agreed to for it (TaskOpts.agreed). */
+  agreed?: Agreement[];
+  /** It changed something before it ended, so a new try is told an earlier one stopped part-way (TaskSpec.partWay). */
+  partWay?: boolean;
+}
+
+/**
+ * A task the user may try again from its card: one that did work (not a guide) and failed, or whose question went
+ * unanswered while they were away (tasks-approvals-4: a timeout is no refusal, and Try again asks every question again).
+ * Never one they said "Not now" to, stopped or took the mouse back from.
+ */
+const retryable = (t: Task) => t.mode === "do" && (t.status === "failed" || (t.status === "cancelled" && t.endedBy === "expired"));
+
+/**
+ * Kinds of step that change nothing (a look, a picture of the window sent with it, a switch of window, a pointer): a
+ * try that took only these did no part of it (tasks-approvals-c3-1).
+ */
+const LOOKS_ONLY: ReadonlySet<StepGroup> = new Set(["read", "picture", "windows", "switch", "scroll", "point", "wait"]);
 
 /** A finished task's words on its card: at most 400 characters (finish_task's limit; the fallback, the worker's last answer, has none). */
 const detailOf = (summary: string) => (summary.length > 400 ? summary.slice(0, 399).trimEnd() + "…" : summary);
 
-/** How a finished task went, in the user's words: "stopped", never "cancelled". */
-export const statusWord = (s: TaskStatus) => (s === "cancelled" ? "stopped" : s);
+/**
+ * How a finished task went, in the user's words, as its card says it (STATUS_WORDS): "didn't finish", never "failed";
+ * "stopped", never "cancelled" (tasks-approvals-9).
+ */
+export const statusWord = (s: TaskStatus) =>
+  STATUS_WORDS[s === "cancelled" ? "stopped" : s === "failed" ? "failed" : s === "done" ? "done" : s === "running" ? "running" : "queued"].toLowerCase();
 
-/** One line for the conversation: "Tidy the desktop: done. Moved 3 files." or "Tidy the desktop: stopped." */
-export function taskOutcome(t: Pick<Task, "title" | "status" | "result">): string {
+/**
+ * The notification for a finished task while the user is away from the computer (main's onTaskFinished): one that
+ * finished, couldn't finish, or whose question went unanswered (tasks-approvals-4: it needed them, and they weren't
+ * there). Null for one the user stopped themselves, which needs no telling.
+ */
+export function taskNotice(t: { title: string; status: string; endedBy?: StopCause; summary: string }): { title: string; body: string } | null {
+  if (t.status === "cancelled" && t.endedBy !== "expired") return null;
+  return { title: t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, body: t.summary };
+}
+
+/**
+ * One line for the conversation (and what Ember says aloud): "Tidy the desktop: done. Moved 3 files." or "Tidy the
+ * desktop: stopped."; one whose question went unanswered says so, as its card does: nobody stopped it (tasks-approvals-r1).
+ */
+export function taskOutcome(t: Pick<Task, "title" | "status" | "result" | "endedBy">): string {
   const summary = t.result?.summary.trim() ?? "";
+  const unanswered = t.status === "cancelled" && t.endedBy === "expired";
   // "Stopped." or "Stopped before it started." says it already.
-  if (t.status === "cancelled" && /^stopped\b/i.test(summary)) return `${t.title}: ${summary.charAt(0).toLowerCase()}${summary.slice(1)}`;
-  return `${t.title}: ${statusWord(t.status)}${summary ? `. ${summary}` : "."}`;
+  if (t.status === "cancelled" && !unanswered && /^stopped\b/i.test(summary)) return `${t.title}: ${summary.charAt(0).toLowerCase()}${summary.slice(1)}`;
+  return `${t.title}: ${unanswered ? STATUS_WORDS.unanswered.toLowerCase() : statusWord(t.status)}${summary ? `. ${summary}` : "."}`;
 }
 
 export class TaskManager {
@@ -181,10 +284,59 @@ export class TaskManager {
   /** What each task was asked with, so a failed one can be tried again from its card. */
   private specs = new Map<string, { goal: string; opts: StartOptions }>();
 
-  private expiry = new Map<string, { remaining: number; since: number; timer: ReturnType<typeof setTimeout> | null }>();
+  /** Each finished card's countdown; `whole`: a card kept to be read, which waits while the user is away (`away`). */
+  private expiry = new Map<string, { remaining: number; since: number; timer: ReturnType<typeof setTimeout> | null; whole?: number; away?: boolean }>();
   private readers = new Map<string, Map<number, ReturnType<typeof setTimeout>>>();
 
-  constructor(private d: TaskManagerDeps) {}
+  constructor(private d: TaskManagerDeps) {
+    for (const c of d.carried ?? []) this.adopt(c);
+    // The cards handed on are still on screen (integrations-v5-2): this manager's list takes their place at once.
+    if (d.carried?.length) this.publish();
+  }
+
+  /**
+   * A card the manager before this one kept goes on here with the time it had left, its Try again, Close and view
+   * (tasks-approvals-r4-2); one whose time ran out meanwhile goes (one waiting for a user who is away waits on).
+   */
+  private adopt(c: KeptCard): void {
+    // (A reconnect that took longer than the card's whole time, a user away included, doesn't bring it back.)
+    const elapsed = Date.now() - c.at;
+    const left = c.away ? c.left : c.left - elapsed;
+    if (this.tasks.has(c.task.id)) return;
+    // (Its view, left on screen for this manager, goes with it: integrations-v5-2.)
+    if (left <= 0 || elapsed > Math.max(c.left, c.whole ?? 0)) { this.dropView(c.task); return; }
+    const id = c.task.id;
+    this.tasks.set(id, c.task);
+    if (c.spec) this.specs.set(id, c.spec);
+    if (c.log) this.logs.set(id, { log: c.log, task: c.task });
+    this.expiry.set(id, { remaining: left, since: Date.now(), timer: null, ...(c.whole !== undefined ? { whole: c.whole } : {}), ...(c.away ? { away: true } : {}) });
+    this.expireLater(id);
+    if (c.task.view) {
+      try { this.d.onView?.(id, c.task.view); } catch (err) { this.d.log.warn("task.view_failed", { id, err }); }
+    }
+  }
+
+  /**
+   * The finished tasks' cards, to hand to the next manager when Ember reconnects (a switch of model service made as the
+   * last task ended, a model changed): their Try again, Close and View result go on there with the time each had left,
+   * instead of going with this manager (tasks-approvals-r4-2). Tasks still at work aren't among them.
+   */
+  keptCards(): KeptCard[] {
+    if (this.closed) return [];
+    const at = Date.now();
+    return [...this.tasks.values()].filter(t => t.status !== "running" && t.status !== "queued").map(t => {
+      const e = this.expiry.get(t.id);
+      const left = !e ? 0 : e.timer ? Math.max(0, e.remaining - (at - e.since)) : e.remaining;
+      const spec = this.specs.get(t.id);
+      const log = this.logs.get(t.id)?.log;
+      return { task: t, left, at, ...(spec ? { spec } : {}), ...(log ? { log } : {}), ...(e?.whole !== undefined ? { whole: e.whole } : {}), ...(e?.away ? { away: true } : {}) };
+    });
+  }
+
+  /** The cards again: what they offer changed outside this manager (a switch of model service began or was undone). */
+  refresh(): void {
+    this.publish();
+  }
 
   /** A card stays while its visible details, pointer, or keyboard are reading it. Each renderer holds a short lease. */
   reading(id: string, reader: number, on: boolean): void {
@@ -211,6 +363,11 @@ export class TaskManager {
     }
   }
 
+  /** The user isn't looking now (TaskManagerDeps.userAway); can't tell: they are there, so nothing waits for ever. */
+  private userAway(): boolean {
+    try { return this.d.userAway?.() === true; } catch { return false; }
+  }
+
   private readScale(): number {
     const n = this.d.readTime?.() ?? 1;
     return Number.isFinite(n) ? Math.max(1, Math.min(4, n)) : 1;
@@ -229,6 +386,16 @@ export class TaskManager {
     if (!expiry || expiry.timer || this.readers.get(id)?.size || this.closed) return;
     expiry.since = Date.now();
     expiry.timer = setTimeout(() => {
+      // A card kept to be read, and nobody there: it waits for them, then has its whole time once they are back
+      // (tasks-approvals-4: an unanswered question's Try again was gone a minute after it expired, whoever was there).
+      const away = expiry.whole !== undefined && this.userAway();
+      if (away || expiry.away) {
+        expiry.timer = null;
+        expiry.remaining = away ? AWAY_POLL_MS : expiry.whole!;
+        expiry.away = away;
+        this.expireLater(id);
+        return;
+      }
       const task = this.tasks.get(id);
       this.forgetCardTime(id);
       if (!task || task.status === "running" || task.status === "queued") return;
@@ -245,7 +412,8 @@ export class TaskManager {
    */
   start(goal: string, opts: StartOptions = {}): Task {
     const id = `${++this.n}-${crypto.randomUUID().slice(0, 8)}`;
-    const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: "Waiting to start", result: null, started: Date.now(), finished: null,
+    // (Said while it waits behind others at work: one that starts at once says "Working…" at once.)
+    const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: opts.mode === "guide" ? "Starts when another guide ends" : "Starts when another task ends", result: null, started: Date.now(), finished: null,
       ...(opts.targetId ? { targetId: opts.targetId } : {}), ...(opts.where ? { where: opts.where } : {}) };
     this.tasks.set(id, task);
     const target = { ...(opts.target ?? this.d.currentWindow() ?? {}) };
@@ -256,7 +424,7 @@ export class TaskManager {
       ...(opts.agreed ? { agreed: [...opts.agreed] } : {}) } });
     this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
       ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}),
-      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}) } });
+      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}), ...(opts.partWay ? { partWay: true } : {}) } });
     // The goal and window title are the user's words and screen text: the log keeps only their size.
     this.d.log.info("task.queued", { id, chars: goal.length, mode: opts.mode ?? "do" });
     this.record({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title,
@@ -283,7 +451,7 @@ export class TaskManager {
     // A task still in line (or one whose worker couldn't be made) has no log yet: listed with an empty one, so Home
     // counts every task of the session (the status panel's "earlier" count is the audit's tasks less these).
     const unlogged = [...this.tasks.values()].filter(t => !this.logs.has(t.id)).map(t => [t.id, { log: new ActivityLog(t.started), task: t }] as const);
-    return [...unlogged.reverse(), ...[...this.logs].reverse()].map(([id, { log, task: t }]) => {
+    const own = [...unlogged.reverse(), ...[...this.logs].reverse()].map(([id, { log, task: t }]): TaskEntry => {
       const activity = log.get();
       if (t.finished !== null && activity.endedAt === undefined) activity.endedAt = t.finished;
       const status: TaskEntry["status"] = t.status === "cancelled" ? "stopped" : t.status === "running" && activity.asking ? "waiting" : t.status;
@@ -296,9 +464,25 @@ export class TaskManager {
         ...(ended && t.result?.summary ? { summary: t.result.summary } : {}),
         ...(t.view ? { view: t.view } : {}),
         controls: { stop: this.canStop(id), retry: this.canRetry(id), window: !this.closed && this.tasks.has(id) && (this.d.taskWindow?.(t, false) ?? false) },
+        ...(t.status === "cancelled" && t.endedBy === "expired" ? { unanswered: true as const } : {}),
+        ...(ended && t.ranAt === undefined ? { unstarted: true as const } : {}),
         activity,
       };
     });
+    // Those kept from before a reconnect come after, within ACTIVITY_KEPT ended tasks with no card (tasks-approvals-c2-1);
+    // a card handed on with them is listed once, as this manager's (tasks-approvals-r4-2).
+    const room = Math.max(0, ACTIVITY_KEPT - own.filter(e => !this.tasks.has(e.id)).length);
+    return [...own, ...(this.d.earlier?.() ?? []).filter(e => !this.logs.has(e.id) && !this.tasks.has(e.id)).slice(0, room)];
+  }
+
+  /**
+   * The ended tasks' activity, this manager's and what it was handed (`earlier`), newest first, at most ACTIVITY_KEPT,
+   * with nothing to press (their cards go with this manager): what the next one lists after a reconnect
+   * (tasks-approvals-c2-1).
+   */
+  history(): TaskEntry[] {
+    return this.activities().filter(e => e.status === "done" || e.status === "failed" || e.status === "stopped")
+      .slice(0, ACTIVITY_KEPT).map(e => ({ ...e, controls: { stop: false, retry: false, window: false } }));
   }
 
   /** A live task can be stopped once, even while another task is asking a question. */
@@ -309,7 +493,14 @@ export class TaskManager {
 
   canRetry(id: string): boolean {
     const t = this.tasks.get(id);
-    return !!t && this.specs.has(id) && retryable(t) && !this.cutOff && !this.closed && this.actionsAllowed();
+    return !!t && this.specs.has(id) && retryable(t) && !this.closed && this.retryOpen();
+  }
+
+  /** Try again may be offered: not cut off, acting allowed, and no switch of model service waiting (tasks-approvals-c4-1). */
+  private retryOpen(): boolean {
+    let waits: boolean;
+    try { waits = this.d.retryWaits?.() === true; } catch { waits = true; /* can't tell: no button that might do nothing */ }
+    return !this.cutOff && !waits && this.actionsAllowed();
   }
 
   openWindow(id: string): boolean {
@@ -325,12 +516,47 @@ export class TaskManager {
     const t = this.tasks.get(id);
     const spec = this.specs.get(id);
     if (!t || !spec || !this.canRetry(id)) return null;
+    // An earlier try that changed something (typed, clicked, ran a command) may have done part of it: the new worker is
+    // told so (TaskSpec.partWay: its first prompt only), never in the user's words, so every question is still asked,
+    // and its card's title stays the request's (tasks-approvals-3).
+    const changed = this.changedSomething(id);
     this.dismiss(id);
-    return this.start(spec.goal, spec.opts);
+    return this.start(spec.goal, { ...spec.opts, ...(changed ? { partWay: true } : {}) });
+  }
+
+  /** Whether task `id`'s steps changed anything (typed, clicked, ran a command…), not only looked: Ember's own counts. */
+  private changedSomething(id: string): boolean {
+    const did = this.logs.get(id)?.log.get();
+    return !!did && Object.entries(did.counts).some(([g, n]) => !LOOKS_ONLY.has(g as StepGroup) && (n ?? 0) > 0);
   }
 
   list(): Task[] {
     return [...this.tasks.values()];
+  }
+
+  /**
+   * Stop everything's sweep: the cards kept as long as a failure's (a task that didn't finish, or whose question went
+   * unanswered) go at once, the keyboard's and the screen reader's way to clear them (tasks-approvals-r1).
+   */
+  dismissFailures(): void {
+    for (const t of [...this.tasks.values()]) if (t.status === "failed" || (t.status === "cancelled" && t.endedBy === "expired")) this.dismiss(t.id);
+  }
+
+  /**
+   * The user's own words a task that may be tried again was asked with (its userWords, and those its commands hear),
+   * what they agreed to for it, and whether it did part of the work (`partWay`, as retry() tells the new worker): what
+   * a spoken or typed "try again" carries, as Try again on its card does (tasks-approvals-1, -r2, -c1-3). Never its
+   * goal, which the model wrote. Null for a task that can't be tried again.
+   */
+  askedWith(id: string): RetriedWords | null {
+    const t = this.tasks.get(id);
+    const spec = this.specs.get(id);
+    if (!t || !spec || !retryable(t) || spec.opts.userWords === undefined) return null;
+    const o = spec.opts;
+    return {
+      userWords: o.userWords!, ...(o.commandWords !== undefined ? { commandWords: o.commandWords } : {}), ...(o.typedOnly ? { typedOnly: true } : {}),
+      ...(o.agreed?.length ? { agreed: o.agreed.map(a => ({ ...a })) } : {}), ...(this.changedSomething(id) ? { partWay: true } : {}),
+    };
   }
 
   /**
@@ -349,7 +575,7 @@ export class TaskManager {
     if (q >= 0) {
       const [{ task }] = this.queue.splice(q, 1);
       if (this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
-      else this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." });
+      else this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." }, "stop");
       return;
     }
     const r = this.running.get(id);
@@ -394,10 +620,24 @@ export class TaskManager {
       opts: { ...opts, ...words, ...seen, ...yes, ...heard,
         ...provenance },
     };
+    // (Words added in another turn, which may be about other tasks too: they aren't this task's alone, integrations-w5-1.)
+    delete next.opts.alone;
     this.specs.set(id, next);
     if (q) q.spec = { ...q.spec, goal: next.goal, ...words, ...seen, ...yes, ...heard,
       ...provenance };
     return true;
+  }
+
+  /**
+   * Task `id`'s turn asked for, steered or stopped another task too: its words aren't its alone (StartOptions.alone), so
+   * its card's Try again doesn't go on to another model service (integrations-w5-1).
+   */
+  shared(id: string): void {
+    const s = this.specs.get(id);
+    if (!s?.opts.alone) return;
+    const opts = { ...s.opts };
+    delete opts.alone;
+    this.specs.set(id, { goal: s.goal, opts });
   }
 
   /** A finished card the user closed. */
@@ -420,10 +660,15 @@ export class TaskManager {
     try { this.d.onView?.(task.id, null); } catch (err) { this.d.log.warn("task.view_failed", { id: task.id, err }); }
   }
 
-  /** Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). */
-  close(): void {
+  /**
+   * Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). `keep`:
+   * the next manager was handed them (keptCards) and lists them at once, so they and their views stay on screen
+   * meanwhile, never gone while Ember reconnects (integrations-v5-2).
+   */
+  close(keep = false): void {
     this.closed = true;
     for (const id of new Set([...this.expiry.keys(), ...this.readers.keys()])) this.forgetCardTime(id);
+    if (keep) return;
     for (const t of this.tasks.values()) this.dropView(t);
     this.d.setCards([]);
   }
@@ -514,7 +759,7 @@ export class TaskManager {
       // Its worker couldn't be made: the task fails now (closable, said plainly) rather than waiting for ever with a
       // Stop that does nothing, and what queued behind it gets its turn.
       this.d.log.error("task.error", { id: task.id, err });
-      this.finish(task, "failed", { success: false, summary: task.mode === "do" ? "Ember couldn't start this task. Try again; if it keeps happening, restart Ember." : "Ember couldn't start this. Ask again; if it keeps happening, restart Ember." });
+      this.finish(task, "failed", { success: false, summary: task.mode === "do" ? "I couldn't start this task. Try again; if it keeps happening, restart Ember." : "I couldn't start this. Ask again; if it keeps happening, restart Ember." });
       this.pump();
       return;
     }
@@ -540,8 +785,10 @@ export class TaskManager {
     this.running.delete(task.id);
     try {
       if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
-      // Stopped by the user (Stop, taking the mouse back, "Not now"): calm, not a failure.
-      else this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result);
+      // Stopped by the user (Stop, taking the mouse back, "Not now"), or its question went unanswered: calm, not a
+      // failure. A Stop is a Stop whatever the worker said as it wound down.
+      else this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result,
+        abort.signal.aborted ? "stop" : result.expired ? "expired" : result.declined ? "declined" : result.tookOver ? "took-over" : "stop");
     } finally {
       // Whatever a listener did, the worker lets go and the queue moves on (review #79).
       try {
@@ -561,12 +808,19 @@ export class TaskManager {
     }
   }
 
-  private finish(task: Task, status: TaskStatus, result: WorkerResult): void {
+  private finish(task: Task, status: TaskStatus, result: WorkerResult, endedBy?: StopCause): void {
     this.stopping.delete(task.id);
-    this.logs.get(task.id)?.log.add({ type: "end", status: status === "done" ? "done" : status === "failed" ? "failed" : "stopped" }, Date.now());
-    // Only a failure can be tried again: what it was asked with goes for the rest.
-    if (status !== "failed") this.specs.delete(task.id);
+    // Stopped by its step or time limit: what it had done by then, from Ember's own count of its steps (never the
+    // model's words), so the user and the next turn know before anything is tried again (tasks-approvals-3).
+    const did = result.limit ? this.logs.get(task.id)?.log.get() : undefined;
+    const steps = did ? summarizeActivity(did.counts, did.failedSteps) : null;
+    if (steps) result = { ...result, summary: `${result.summary} Before I stopped: ${steps.charAt(0).toLowerCase()}${steps.slice(1)}.` };
+    const unanswered = status === "cancelled" && endedBy === "expired";
+    this.logs.get(task.id)?.log.add({ type: "end", status: status === "done" ? "done" : status === "failed" ? "failed" : "stopped", ...(unanswered ? { unanswered } : {}) }, Date.now());
     task.status = status;
+    if (status === "cancelled") task.endedBy = endedBy ?? "stop";
+    // Only a failure (or a question that went unanswered) can be tried again: what it was asked with goes for the rest.
+    if (!retryable(task)) this.specs.delete(task.id);
     task.result = result;
     // finish_task's view takes the live view's place (one rev on, so the card draws only what changed); without one,
     // the live view stays as the result.
@@ -579,10 +833,14 @@ export class TaskManager {
     // The card first: the screen shows how it went even when its record or a listener fails (review #79).
     this.publish();
     // Open/hovered/focused cards pause their countdown; More time applies to every result, including failures/views.
-    const duration = status === "failed" || task.view ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000;
-    this.expiry.set(task.id, { remaining: duration * this.readScale(), since: Date.now(), timer: null });
+    // (A question that went unanswered stays as long: the user was away, and comes back to read it.)
+    const kept = status === "failed" || task.endedBy === "expired" || !!task.view;
+    const duration = kept ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000;
+    // (And waits for a user who is away: userAway.)
+    this.expiry.set(task.id, { remaining: duration * this.readScale(), since: Date.now(), timer: null, ...(kept ? { whole: duration * this.readScale() } : {}) });
     this.expireLater(task.id);
-    this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
+    // A task whose question went unanswered says so in What Ember did, never "Stopped" (tasks-approvals-r1).
+    this.record({ event: "task", task: task.id, phase: status, ...(unanswered ? { endedBy: "expired" } : {}), goal: task.title, summary: result.summary.slice(0, 300) });
     this.d.onFinished?.(task);
   }
 
@@ -625,7 +883,7 @@ export class TaskManager {
         detail: stopping ? TASK_STOPPING : t.detail,
         actions: t.status === "running" || t.status === "queued"
           ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
-          : retryable(t) && this.specs.has(t.id) && !this.cutOff && this.actionsAllowed()
+          : retryable(t) && this.specs.has(t.id) && this.retryOpen()
             ? [{ id: `task:${t.id}:retry`, label: "Try again" }, { id: `task:${t.id}:dismiss`, label: "Close" }]
             : [{ id: `task:${t.id}:dismiss`, label: "Close" }],
         ...(t.where ? { where: t.where } : {}),
@@ -634,6 +892,7 @@ export class TaskManager {
         ...(t.plan?.length ? { plan: t.status === "done" ? t.plan.map(p => ({ ...p, state: "done" as const })) : t.plan } : {}),
         ...(t.view ? { viewRev: t.view.rev } : {}),
         ...(log ? { activity: log.card() } : {}),
+        ...(t.status === "cancelled" && t.endedBy === "expired" ? { unanswered: true as const } : {}),
       };
     });
     this.d.setCards(cards);

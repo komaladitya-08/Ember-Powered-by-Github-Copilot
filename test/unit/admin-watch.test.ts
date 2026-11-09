@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { AdminPolicySchema, commandMode, heldUntilRestart, lockedDown, modelServiceRefusal, parseAdminPolicy, samePolicy, type LoadedAdminPolicy } from "../../app/main/admin";
+import { AdminPolicySchema, commandMode, heldUntilRestart, homeAdmin, lockedDown, modelServiceRefusal, parseAdminPolicy, samePolicy, type LoadedAdminPolicy } from "../../app/main/admin";
 import { ADMIN_WATCH_MS, restartOptions, runningAppImage, watchAdminPolicy } from "../../app/main/policy/admin-watch";
 
 const FILE = "/etc/ember/policy.json";
@@ -38,6 +38,25 @@ describe("heldUntilRestart", () => {
     expect(heldUntilRestart(none).source).toBe("the administrator's policy");
     for (const k of ["local", "wsl", "ssh"] as const) expect(commandMode(held, k)).toBe("off");
     expect(modelServiceRefusal(held)).toMatch(/Restart Ember/);
+  });
+});
+
+describe("homeAdmin", () => {
+  it("tells the settings window the held lockdown, so it stops saying what the old policy left on (safety-privacy-w5-1)", () => {
+    const before = policy({ commands: { local: "on" } });
+    expect(homeAdmin(before)).toMatchObject({ source: FILE, error: null, managed: [], commands: { local: "on", wsl: "off", ssh: "off" }, retentionDays: 30 });
+    expect(homeAdmin(before).held).toBeUndefined();
+    const held = homeAdmin(heldUntilRestart(before));
+    expect(held).toMatchObject({ source: FILE, held: true, confirmEveryAction: true, allowGrants: false, retentionDays: null, provider: null, commands: { local: "off", wsl: "off", ssh: "off" } });
+    expect(held.error).toMatch(/changed while Ember was running/);
+    for (const key of ["autonomy", "grants", "screenImages", "memory", "wakeWord"]) expect(held.managed).toContain(key);
+  });
+
+  it("is what main answers a status read with, and what it sends the settings window once the policy changes", () => {
+    const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
+    expect(main).toContain("    admin: homeAdmin(admin),\n");
+    // Sent as soon as Ember holds itself locked down, before the stop it then pulls.
+    expect(main).toMatch(/admin = heldUntilRestart\(next\);\n\s+policy = admin\.policy;\n(\s+\/\/.*\n)*\s+sendToHome\(IPC\.adminChanged, homeAdmin\(admin\)\);/);
   });
 });
 

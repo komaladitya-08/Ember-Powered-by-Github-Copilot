@@ -5,7 +5,7 @@
  */
 
 import { PLAN_WORD, type PlanStep } from "../../shared/view";
-import { ROW_WORD, elapsedText, type ActivityRow } from "../../shared/activity";
+import { elapsedText, rowWord, type ActivityRow } from "../../shared/activity";
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLElementTagNameMap[K]> = {}): HTMLElementTagNameMap[K] =>
   Object.assign(document.createElement(tag), props);
@@ -30,7 +30,7 @@ export function activityItems(rows: readonly ActivityRow[]): HTMLLIElement[] {
     li.dataset.state = r.state;
     if (r.model) li.dataset.model = "";
     li.append(
-      el("span", { className: "sr", textContent: r.model ? "Note: " : ROW_WORD[r.state] }),
+      el("span", { className: "sr", textContent: r.model ? "Note: " : rowWord(r) }),
       el("span", { className: "at", textContent: elapsedText(r.at) }),
       el("span", { className: "words", textContent: r.words }),
     );

@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import { z } from "zod";
 import type { Settings } from "./settings";
+import type { Status } from "../shared/ipc";
 import type { TargetKind } from "../shared/targets";
 import type { CommandMode } from "./commands/types";
 import { readTextFile, stripBom } from "./text-file";
@@ -254,6 +255,8 @@ export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   // too (review of #143). Every way it starts (the switch, Try again, Ember's start) follows this setting.
   if (admin.features.voice === false || admin.features.speak === false) s.voice = { ...s.voice, natural: false };
   if (admin.features.voice === false) s.voice = { ...s.voice, clearHearing: false };
+  // No screenshots for tasks: Home's "Send screenshots for tasks" shows off (and managed).
+  if (admin.features.screenImages === false) s.screenImages = false;
   if (admin.neverLook.length) {
     const have = new Set(s.privacy.neverLook.map(x => x.toLowerCase()));
     s.privacy = { ...s.privacy, neverLook: [...s.privacy.neverLook, ...admin.neverLook.filter(x => !have.has(x.toLowerCase()))] };
@@ -284,6 +287,7 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.features.voice === false) keys.push("wakeWord");
   if (admin.features.speak === false) keys.push("speak");
   if (admin.features.voice === false || admin.features.speak === false) keys.push("naturalVoice");
+  if (admin.features.screenImages === false) keys.push("screenImages");
   if (modelsManaged(admin.models)) keys.push("models");
   if (!admin.allowGrants) keys.push("grants", "askedApps");
   if (admin.features.aiReview === false) keys.push("reviewCommands");
@@ -295,6 +299,18 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.provider) keys.push("provider");
   if (!userProviderAllowed(admin)) keys.push("userProvider");
   return keys;
+}
+
+/**
+ * What the settings window is told of the policy in force (`Status["admin"]`): with each status it reads, and pushed to
+ * it when the policy changes while Ember runs, so an open window says what a fresh one would (safety-privacy-w5-1).
+ */
+export function homeAdmin(loaded: LoadedAdminPolicy): Status["admin"] {
+  const policy = loaded.policy;
+  return { source: loaded.source, error: loaded.error ?? null, ...(loaded.held ? { held: true } : {}), managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
+    confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: auditRetentionDays(loaded),
+    neverLook: policy.neverLook, commands: { local: commandMode(loaded, "local"), wsl: commandMode(loaded, "wsl"), ssh: commandMode(loaded, "ssh") },
+    sshHostsLimited: policy.ssh?.allowedHosts !== undefined };
 }
 
 /** The API key for an admin-configured provider, read from its key file (or EMBER_PROVIDER_API_KEY). */

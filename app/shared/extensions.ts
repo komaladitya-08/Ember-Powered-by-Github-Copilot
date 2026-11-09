@@ -21,19 +21,28 @@ export interface MarketplaceEntry { marketplace: string; name: string; descripti
   readOnlyTools?: number; changingTools?: number;
   /** A trust tier the marketplace states (none of today's do). */
   trust?: string }
+/**
+ * A marketplace the runtime knows: `builtIn` is one Copilot ships with (its isDefault; it can't be removed), `managed`
+ * one the organisation's managed settings provide (it can't be removed here either).
+ */
+export interface Marketplace { name: string; source: string; builtIn?: boolean; managed?: boolean }
 /** A connector's connect result. */
 export type ConnectResult = { state: "connected" } | { state: "consent"; url: string } | { state: "pending" } | { ok: false; why: string };
 export interface ExtensionsApi {
   allowed(): boolean;                         // admin features.extensions and not LOCKDOWN
   /** The user agreed to extensions' first-use card at FEATURE_CONSENT_VERSION.extensions (settings `extensions`). */
   consented(): boolean;
+  /** Ember's model connection is up, so the runtime can list marketplaces and run what was added (absent: assumed so). */
+  connected?(): boolean;
   /** Records that agreement (and turns extensions on); Home calls it from the card's yes. */
   agree(): Promise<void>;
   list(): Promise<Installed[]>;
-  marketplaces(): Promise<{ name: string; source: string }[]>;
+  marketplaces(): Promise<Marketplace[]>;
   addMarketplace(source: string): Promise<{ ok: true } | { ok: false; why: string }>;
-  removeMarketplace(name: string): Promise<void>;
-  browse(marketplace: string): Promise<MarketplaceEntry[]>;
+  /** Refused, in one sentence, for a marketplace built into Copilot or set by the organisation. */
+  removeMarketplace(name: string): Promise<{ ok: true } | { ok: false; why: string }>;
+  /** What it offers, or why its list couldn't be fetched or read, in one sentence (never an empty list for that). */
+  browse(marketplace: string): Promise<MarketplaceEntry[] | { ok: false; why: string }>;
   install(marketplace: string, name: string): Promise<{ ok: true; id: string } | { ok: false; why: string }>; // after Home's consent card
   uninstall(id: string): Promise<void>;
   setEnabled(id: string, on: boolean): Promise<void>;

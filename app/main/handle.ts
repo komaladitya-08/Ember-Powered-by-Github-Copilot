@@ -109,7 +109,7 @@ export class HandleWindow {
     this.last = state;
     if (this.win.isDestroyed()) return;
     this.win.webContents.send(OVERLAY.state, state);
-    // Grown for a question's whole text, and that question gone: back within the usual limit at once.
+    // Grown for a question, and that question gone: back within the usual limit at once.
     if (this.fallback && this.cardHeight > this.cardMax()) { this.cardHeight = this.cardMax(); this.reposition(); }
   }
 
@@ -123,13 +123,15 @@ export class HandleWindow {
   }
 
   /**
-   * The tallest the card may be now. A question showing a whole text (a long typed text, review #116) may take more, so
-   * its sentence, the text's block, its hint, its keys, its buttons and the task row all show (640 px holds them at the
-   * largest text size), never more than the work area less a margin above and below.
+   * The tallest the card may be now. A question, or anything else that needs you (mood "attention"), may take more, so
+   * its sentence shows whole at Large and Larger text beside a live Allow (accessibility-visual-1: held to 360 px, the
+   * sentence showed 30 of its 156 px at Larger); one showing a whole text (a long typed text, review #116) also its
+   * text's block, its hint, its keys, its buttons and the task row (640 px holds them at the largest text size). Never
+   * more than the work area less a margin above and below. An answer keeps the usual limit and scrolls.
    */
   private cardMax(): number {
     const b = this.last?.bubble;
-    if (!b?.visible || !b.whole) return CARD_MAX;
+    if (!b?.visible || (!b.whole && b.mood !== "attention")) return CARD_MAX;
     return Math.max(CARD_MAX, Math.min(640, screen.getPrimaryDisplay().workArea.height - 24));
   }
 

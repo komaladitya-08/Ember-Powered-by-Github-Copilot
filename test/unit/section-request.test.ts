@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { PendingSection, sectionRequest } from "../../app/renderer/home/section-request";
+import { LATEST_ANSWER, PendingSection, sectionRequest } from "../../app/renderer/home/section-request";
 
 describe("a section request from main", () => {
   it("names the section and, for Computers, the control to focus", () => {
@@ -17,7 +17,18 @@ describe("a section request from main", () => {
     // Opened from the keyboard while another app holds the ask or stop shortcut: at that button (review #45).
     expect(sectionRequest("access:ask")).toEqual({ section: "home", control: "p-ask" });
     expect(sectionRequest("access:stop")).toEqual({ section: "home", control: "p-stop" });
-    expect(sectionRequest("memory:memory-yes")).toEqual({ section: "memory", control: "memory-yes" });
+    // Memory's note opens at its words, never its "I agree, remember", however it is asked for (memory-r7).
+    expect(sectionRequest("memory:memory-yes")).toEqual({ section: "memory", control: "memory-consent-text" });
+    expect(sectionRequest("memory:memory-consent-text")).toEqual({ section: "memory", control: "memory-consent-text" });
+    expect(sectionRequest("memory:memory-query")).toEqual({ section: "memory", control: "memory-query" });
+    // The settings key while the bubble says Ember is still waiting: at Stop response, as its step says (accessibility-visual-2).
+    expect(sectionRequest("conversation:stop")).toEqual({ section: "conversation", control: "conversation-stop" });
+  });
+
+  it("opens the conversation at its newest answer for \"Read the last answer\", not at its oldest message (home-v1)", () => {
+    expect(sectionRequest("conversation:latest")).toEqual({ section: "conversation", control: LATEST_ANSWER });
+    // Not an element's id: Home finds the newest answer's row itself.
+    expect(LATEST_ANSWER).not.toMatch(/^conversation/);
   });
 
   it("waits while its section is hidden, and is taken once it shows", () => {

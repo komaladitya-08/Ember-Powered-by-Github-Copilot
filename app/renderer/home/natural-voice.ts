@@ -1,10 +1,11 @@
 /** Voice choice keeps Kitten available as the default; an optional Kokoro download requires an explicit Use action. */
 import type { Settings, SettingsPatch } from "../../main/settings";
 import type { NaturalVoiceStatus } from "../../shared/ipc";
+import type { HeldLive } from "../shared/held-live";
 import { naturalVoiceView } from "./copy";
 import { effectiveVoiceModel, NATURAL_CHOICES, naturalModelHint, naturalUseLabel, type NaturalModel } from "./natural-copy";
 
-export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<boolean>; live(text: string): void; managed(): boolean }) {
+export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<boolean>; live: Pick<HeldLive, "say" | "drop" | "again">; managed(): boolean }) {
   const select = document.querySelector<HTMLSelectElement>("#natural-model")!;
   const use = document.querySelector<HTMLButtonElement>("#natural-use")!;
   const hint = document.querySelector<HTMLElement>("#natural-model-hint")!;
@@ -37,11 +38,18 @@ export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<bo
     downloadRow.hidden = !settings || status?.model !== undefined && status.model !== current || !(status?.state === "needs-voice" || current === "kitten" && status?.state === "failed");
     download.disabled = busy || deps.managed();
     const hadRetry = document.activeElement === retry;
-    retry.hidden = !view.retry || current === "kitten" || !allowed(current);
+    retry.hidden = !view.retry || !allowed(current);
     retry.disabled = busy || deps.managed() || !allowed(current);
     if (hadRetry && retry.hidden) select.focus();
     const state = `${current}:${status?.model ?? ""}:${status?.state ?? ""}:${status?.voice ?? ""}`;
-    if (state !== said && status?.state !== "downloading") deps.live(view.text);
+    // Only where it stands, never that it is checking (or downloading): the voice loads again at every first wake or
+    // request after two quiet minutes, and "Checking Kitten Nano on this computer…" was said over the request and
+    // into the idle wake microphone (voice-listening-c5-1). What it decides is said once it holds (main's heldLive),
+    // and a line it overtook before it was said, never (voice-listening-x6-3).
+    if (state !== said) {
+      if (status?.state === "downloading" || view.busy) deps.live.drop();
+      else deps.live.say(view.text);
+    }
     said = state;
   }
   async function save(): Promise<void> {
@@ -75,7 +83,9 @@ export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<bo
     const target = document.querySelector<HTMLButtonElement>("#voice-download");
     if (target && !target.hidden && !target.disabled) { target.scrollIntoView({ block: "center" }); target.focus(); }
   });
-  retry.addEventListener("click", () => { if (!retry.disabled) void window.ember.retryNaturalVoice(); });
+  // Its outcome is said even when it ends as before: the button goes as Ember checks, and nothing else answers the press
+  // (voice-listening-x6-2).
+  retry.addEventListener("click", () => { if (!retry.disabled) { deps.live.again(); void window.ember.retryNaturalVoice(); } });
   return {
     settings(next: Settings): void {
       if (!settings || draft === effectiveVoiceModel(settings.voice)) draft = effectiveVoiceModel(next.voice);

@@ -14,7 +14,8 @@ import { ExtensionsService, withoutUserinfo, type ExtensionsDeps } from "../../a
 import { copyPlugin, ExtensionStore } from "../../app/main/extensions/store";
 import { admittedExtensionTools, hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "../../app/main/agent/session-config";
 import { AdminPolicySchema, applyAdminPolicy, lockedDown, managedKeys } from "../../app/main/admin";
-import { DEFAULT_SETTINGS, type Settings } from "../../app/main/settings";
+import { DEFAULT_SETTINGS, withOwnExtensions, type Settings } from "../../app/main/settings";
+import { settingsFromHome } from "../../app/main/windows";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { CopilotSession } from "@github/copilot-sdk";
 import crypto from "node:crypto";
@@ -298,7 +299,21 @@ describe("the administrator's switch for extensions", () => {
 
   it("starts with extensions off and unagreed", () => {
     expect(DEFAULT_SETTINGS.extensions).toEqual({ on: false, consent: { version: 0, at: null } });
-    expect(FEATURE_CONSENT_VERSION.extensions).toBe(2);
+    expect(FEATURE_CONSENT_VERSION.extensions).toBe(3);
+  });
+
+  it("is agreed to only through its card, never with Home's general settings changes (integrations-i1)", () => {
+    const agreed = { version: FEATURE_CONSENT_VERSION.extensions, at: "2026-11-07T12:00:00Z" };
+    const sent = { size: 64, extensions: { on: true, consent: agreed } } as never;
+    const { patch, dropped } = settingsFromHome(sent);
+    expect(dropped).toEqual(["extensions.consent"]);
+    expect(patch).toEqual({ size: 64, extensions: { on: true } });
+    // Merged into the user's own: their record stays as it is, agreed or not, and the switch still turns.
+    const unagreed = DEFAULT_SETTINGS.extensions;
+    expect(withOwnExtensions(sent, unagreed).extensions).toEqual({ on: true, consent: unagreed.consent });
+    expect(withOwnExtensions(patch, { on: true, consent: agreed }).extensions).toEqual({ on: true, consent: agreed });
+    expect(withOwnExtensions({ extensions: { on: false } } as never, { on: true, consent: agreed }).extensions).toEqual({ on: false, consent: agreed });
+    expect(withOwnExtensions({ size: 64 }, unagreed)).toEqual({ size: 64 });
   });
 });
 
@@ -481,8 +496,74 @@ describe("ExtensionsService", () => {
   it("lists only plugins with a server Ember can run, and where each reaches", async () => {
     const s = new ExtensionsService(deps());
     const entries = await s.browse("local-market");
+    if (!Array.isArray(entries)) throw new Error(entries.why);
     expect(entries.map(e => e.name)).toEqual(["fake"]);
     expect(entries[0]).toMatchObject({ kind: "plugin", installed: false, publisher: "Org", source: "plugins/fake", reaches: ["Runs node server.mjs on this computer"] });
+  });
+
+  it("says it couldn't fetch or read a marketplace's list, rather than that it lists nothing (integrations-r2)", async () => {
+    const market = (browse: () => Promise<unknown>, source = `Local: ${path.join(dir, "market")}`) => deps({
+      client: () => ({ rpc: { plugins: { marketplaces: { list: async () => ({ marketplaces: [{ name: "local-market", source }] }), browse } } } }) as never,
+    });
+    // The runtime couldn't fetch it: offline, a proxy, TLS inspection.
+    expect(await new ExtensionsService(market(async () => { throw new Error("fetch failed: getaddrinfo ENOTFOUND github.com"); })).browse("local-market"))
+      .toEqual({ ok: false, why: "Ember couldn't reach “local-market”. Check the network, then press Browse again." });
+    // The runtime refused for another reason.
+    expect(await new ExtensionsService(market(async () => { throw new Error("Internal error: catalog refresh failed"); })).browse("local-market"))
+      .toEqual({ ok: false, why: "Ember couldn't fetch “local-market”'s list. Press Browse again in a moment." });
+    // Fetched, but the catalogue isn't where Ember reads it, or can't be read.
+    expect(await new ExtensionsService(market(async () => ({ plugins: [] }), `Local: ${path.join(dir, "gone")}`)).browse("local-market"))
+      .toEqual({ ok: false, why: "Ember couldn't read “local-market”'s list. Press Browse again in a moment." });
+    fs.writeFileSync(path.join(dir, "market/.claude-plugin/marketplace.json"), "{ not json");
+    expect(await new ExtensionsService(market(async () => ({ plugins: [] }))).browse("local-market"))
+      .toEqual({ ok: false, why: "Ember couldn't read “local-market”'s list. Press Browse again in a moment." });
+    // A catalogue that really lists nothing is empty.
+    writeJson("market/.claude-plugin/marketplace.json", { name: "local-market", owner: { name: "Org" }, plugins: [] });
+    expect(await new ExtensionsService(market(async () => ({ plugins: [] }))).browse("local-market")).toEqual([]);
+  });
+
+  /** The runtime's refusal when git couldn't clone a marketplace, as it passes git's own words on (integrations-r2). */
+  const gitFailed = (call: string, lead: string, fatal: string) => new Error(`Request plugins.marketplaces.${call} failed with message: ${lead}: Command failed: git clone --depth 1 --progress https://github.com/github/awesome-copilot.git /tmp/x/copilot/.cache/copilot/marketplaces/github-awesome-copilot\nCloning into '/tmp/x/copilot/.cache/copilot/marketplaces/github-awesome-copilot'...\nfatal: ${fatal}\n`);
+  const UNREACHED = [
+    "unable to access 'https://github.com/github/awesome-copilot.git/': Failed to connect to 127.0.0.1 port 9 after 0 ms: Couldn't connect to server",
+    "unable to access 'https://github.com/github/awesome-copilot.git/': Could not resolve host: github.com",
+    "unable to access 'https://github.com/github/awesome-copilot.git/': Could not resolve proxy: proxy.corp.example",
+    "unable to access 'https://github.com/github/awesome-copilot.git/': Received HTTP code 403 from proxy after CONNECT",
+    "unable to access 'https://github.com/github/awesome-copilot.git/': SSL certificate problem: unable to get local issuer certificate",
+  ];
+
+  it("points to the network when git couldn't reach a marketplace's list, as the runtime really says it (integrations-r2)", async () => {
+    const market = (browse: () => Promise<unknown>) => deps({
+      client: () => ({ rpc: { plugins: { marketplaces: { list: async () => ({ marketplaces: [{ name: "awesome-copilot", source: "GitHub: github/awesome-copilot" }] }), browse } } } }) as never,
+    });
+    for (const fatal of UNREACHED) {
+      expect(await new ExtensionsService(market(async () => { throw gitFailed("browse", "Failed to fetch GitHub marketplace github/awesome-copilot", fatal); })).browse("awesome-copilot"), fatal)
+        .toEqual({ ok: false, why: "Ember couldn't reach “awesome-copilot”. Check the network, then press Browse again." });
+    }
+    // Reached, but GitHub refused the clone: not the network.
+    expect(await new ExtensionsService(market(async () => { throw gitFailed("browse", "Failed to fetch GitHub marketplace github/awesome-copilot", "unable to access 'https://github.com/github/awesome-copilot.git/': The requested URL returned error: 500"); })).browse("awesome-copilot"))
+      .toEqual({ ok: false, why: "Ember couldn't fetch “awesome-copilot”'s list. Press Browse again in a moment." });
+  });
+
+  it("says why a marketplace couldn't be added and what to check, never only that it couldn't (integrations-r2-3)", async () => {
+    const adding = (add: () => Promise<unknown>) => new ExtensionsService(deps({
+      client: () => ({ rpc: { plugins: { marketplaces: { list: async () => ({ marketplaces: [] }), add } } } }) as never,
+    }));
+    const lead = "Failed to fetch git marketplace from the provided URL. Please verify that the URL and reference are correct. Details";
+    for (const fatal of UNREACHED) {
+      expect(await adding(async () => { throw gitFailed("add", lead, fatal); }).addMarketplace(" https://marketplace.example.invalid/ember.git "), fatal)
+        .toEqual({ ok: false, why: "Ember couldn't reach “https://marketplace.example.invalid/ember.git”. Check the address and the network, then press Add again." });
+    }
+    // Reached, but it wouldn't give a marketplace: a private repository, or not a marketplace at all.
+    expect(await adding(async () => { throw gitFailed("add", lead, "could not read Username for 'https://github.com': terminal prompts disabled"); }).addMarketplace("octo/private-tools"))
+      .toEqual({ ok: false, why: "Ember couldn't fetch a marketplace from “octo/private-tools”. Check that it's a marketplace repository you can open, then press Add again." });
+    // Said as before: one it couldn't find, one already added, and anything else.
+    expect(await adding(async () => { throw gitFailed("add", lead, "repository 'https://github.com/octo/nothing.git/' not found"); }).addMarketplace("octo/nothing"))
+      .toEqual({ ok: false, why: "Ember couldn't find that marketplace." });
+    expect(await adding(async () => { throw new Error("Marketplace octo-tools is already added"); }).addMarketplace("octo/tools"))
+      .toEqual({ ok: false, why: "That marketplace is already added." });
+    expect(await adding(async () => { throw new Error("Internal error"); }).addMarketplace("octo/tools"))
+      .toEqual({ ok: false, why: "Ember couldn't add that marketplace." });
   });
 
   it("shows every discovered tool before a second agreement permits any use", async () => {
@@ -633,6 +714,33 @@ describe("ExtensionsService", () => {
     expect(await s.list()).toEqual([]);
   });
 
+  it("marks Copilot's built-in marketplace and refuses to remove it in words, never silently (integrations-4)", async () => {
+    const removed: string[] = [];
+    const rpc = (remove: (a: { name: string }) => Promise<unknown>) => () => ({ rpc: { plugins: { marketplaces: {
+      list: async () => ({ marketplaces: [{ name: "awesome-copilot", source: "GitHub: github/awesome-copilot", isDefault: true }, { name: "corp", source: "GitHub: corp/p", managed: true }, { name: "octo", source: "GitHub: octo/tools" }] }),
+      remove,
+    } } } }) as never;
+    const s = new ExtensionsService(deps({ client: rpc(async ({ name }) => {
+      if (name === "awesome-copilot") throw new Error(`Marketplace "${name}" is a default marketplace and cannot be removed`);
+      removed.push(name); return {};
+    }) }));
+    expect(await s.marketplaces()).toEqual([
+      { name: "awesome-copilot", source: "GitHub: github/awesome-copilot", builtIn: true },
+      { name: "corp", source: "GitHub: corp/p", managed: true },
+      { name: "octo", source: "GitHub: octo/tools" },
+    ]);
+    expect(await s.removeMarketplace("awesome-copilot")).toEqual({ ok: false, why: "Copilot's built-in marketplace can't be removed. Nothing from it runs unless you add an item and agree." });
+    expect(await s.removeMarketplace("octo")).toEqual({ ok: true });
+    expect(removed).toEqual(["octo"]);
+    expect(await new ExtensionsService(deps({ client: () => null })).removeMarketplace("octo")).toEqual({ ok: false, why: "Ember isn't connected to Copilot yet." });
+  });
+
+  it("says it isn't connected while the runtime has no client, so Home can say why the list is empty (integrations-v2)", async () => {
+    expect(new ExtensionsService(deps({ client: () => null })).connected()).toBe(false);
+    expect(await new ExtensionsService(deps({ client: () => null })).marketplaces()).toEqual([]);
+    expect(new ExtensionsService(deps()).connected()).toBe(true);
+  });
+
   it("refuses to install or list marketplaces while the organisation turns extensions off", async () => {
     admin = AdminPolicySchema.parse({ features: { extensions: false } });
     const s = new ExtensionsService(deps());
@@ -657,6 +765,21 @@ describe("ExtensionsService", () => {
     expect(s.forSession()).toBeUndefined();
     settings = { ...settings, extensions: { on: false, consent: { version: 1, at: null } } };
     expect(s.forSession()).toBeUndefined();
+  });
+
+  it("stops everything and gives no session a tool when Use extensions is turned off, agreed or not (integrations-11)", async () => {
+    let fire = () => undefined as void;
+    const s = await installed({ settings: { get: () => settings, onChange: fn => { fire = fn; return () => undefined; } } });
+    expect(s.forSession()).toBeDefined();
+    const before = s.generation;
+    settings = { ...settings, extensions: { ...settings.extensions, on: false } };
+    fire();
+    expect(s.forSession()).toBeUndefined();
+    // The conversation is reconnected without the tools, and a call made meanwhile is refused.
+    expect(s.generation).not.toBe(before);
+    settings = { ...settings, extensions: { ...settings.extensions, on: true } };
+    fire();
+    expect(s.forSession()).toBeDefined();
   });
 
   it("starts each server through Ember's launcher with an allowlisted environment, never the sign-in", async () => {
@@ -753,6 +876,28 @@ describe("ExtensionsService", () => {
     const fresh = s.forSession()!;
     shown(fresh);
     expect(await call(fresh, "fake-lookup")).toEqual({ permissionDecision: "allow" });
+  });
+
+  it("leaves the conversation as it is after Stop everything when no extension was loaded: none installed, or turned off (tasks-approvals-c2-1)", async () => {
+    // On, nothing installed: the conversation has no extension tools, so nothing needs starting again.
+    const none = new ExtensionsService(deps());
+    expect(none.forSession()).toBeUndefined();
+    const idle = none.generation;
+    none.stopPart().stop();
+    expect(none.generation).toBe(idle);
+    // Installed and loaded once, then Use extensions turned off: the conversation already reloaded without them.
+    const s = await installed();
+    expect(s.forSession()).toBeDefined();
+    settings = { ...settings, extensions: { ...settings.extensions, on: false } };
+    const off = s.generation;
+    s.stopPart().stop();
+    expect(s.generation).toBe(off);
+    // Turned on again, and loaded: a stop reloads, so its servers start again (as the kill switch test above).
+    settings = { ...settings, extensions: { ...settings.extensions, on: true } };
+    expect(s.forSession()).toBeDefined();
+    const on = s.generation;
+    s.stopPart().stop();
+    expect(s.generation).not.toBe(on);
   });
 
   it("ends the extension servers the launcher recorded when the kill switch is pulled", async () => {
@@ -1070,12 +1215,13 @@ describe("ExtensionsService", () => {
 
 describe("extensions' first-use card", () => {
   it("is pinned to FEATURE_CONSENT_VERSION.extensions: change its words only with a bump of that version", () => {
-    const hash = (kind: "plugin" | "connector") => {
-      const c = consentCard({ name: "N", kind, source: "S", marketplace: "M" });
+    const hash = (kind: "plugin" | "connector", builtIn = false) => {
+      const c = consentCard({ name: "N", kind, source: "S", marketplace: "M", builtIn });
       return crypto.createHash("sha256").update([c.title, ...c.lines, c.yes, c.no].join("\n")).digest("hex");
     };
-    expect(FEATURE_CONSENT_VERSION.extensions).toBe(2);
-    expect([hash("plugin"), hash("connector")]).toEqual(["430fb53f7b9eb2c7d866ba26817bea7c32572308a22099d01d3b203cb0beccc3", "8f9a73553bd891993a365437aaf5528dceabb10802ab41b2be1c431b48885a88"]);
+    // 3: a plugin from Copilot's built-in marketplace is no longer said to come from one "you added" (integrations-4).
+    expect(FEATURE_CONSENT_VERSION.extensions).toBe(3);
+    expect([hash("plugin"), hash("connector"), hash("plugin", true)]).toEqual(["430fb53f7b9eb2c7d866ba26817bea7c32572308a22099d01d3b203cb0beccc3", "8f9a73553bd891993a365437aaf5528dceabb10802ab41b2be1c431b48885a88", "ef19526fc00c2e459955dccede9c806f0787edd608d2b8a0ff8dedc2489d619a"]);
   });
 
   it("is recorded only by agree(), from Home, and only while the organisation allows extensions", async () => {

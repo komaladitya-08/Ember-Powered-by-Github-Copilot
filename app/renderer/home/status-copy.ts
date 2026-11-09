@@ -6,7 +6,7 @@
  */
 
 import type { ActivityEntry } from "../../shared/ipc";
-import type { TaskEntry } from "../../shared/activity";
+import { STATUS_WORDS, type TaskEntry } from "../../shared/activity";
 import { dayLabel } from "./copy";
 
 /**
@@ -25,6 +25,36 @@ export interface StatusFacts {
   /** Tasks working now, and those waiting for the user's answer. */
   running: number;
   asking: number;
+  /** The model service the connection uses when it isn't Copilot (the agent's status kind). */
+  service?: string;
+  /** The organisation's policy locks Ember down (Status.admin.error), `held` until a restart reads a changed one. */
+  locked?: boolean;
+  held?: boolean;
+  /**
+   * Ember is answering a request: one sent from Home's composer (until the reply, a problem or Stop: home-7), or any
+   * the conversation answers, as main says (from the Ask box and by voice too: home-c1-1).
+   */
+  answering?: boolean;
+  /** What was asked waits, unsent, for a switch of model service (main's "held" turn: home-r4-4). */
+  switching?: boolean;
+  /** Ember's own model connection stopped: it reconnects by itself, or it stopped (runtimeState). */
+  runtime?: RuntimeState;
+}
+
+/** Ember's own model connection (its runtime) when it stopped: starting again by itself, or not (it gave up, or can't start). */
+export type RuntimeState = "reconnecting" | "stopped" | null;
+
+/**
+ * Whether the agent's status is Ember's own model connection that stopped, from its reason and words: "reconnecting"
+ * while lost() starts it again (a detail ending "Reconnecting…", as the handle's idleWord and composerRefusal read it;
+ * also when the service stopped answering a request), "stopped" when it gave up or can't start, else null. Never the
+ * provider's or Copilot's sign-in, which are fine then (accessibility-visual-c1-2: the panel said "Not connected" with
+ * "Check my provider…" while the handle and Ask said "Reconnecting…").
+ */
+export function runtimeState(a: { phase?: string | null; reason?: string; detail?: string } | null | undefined): RuntimeState {
+  if (a?.phase !== "error") return null;
+  if ((a.reason === "runtime" || a.reason === "not-answering") && a.detail?.endsWith("Reconnecting…")) return "reconnecting";
+  return a.reason === "runtime" ? "stopped" : null;
 }
 
 /** "1 task", "2 tasks". */
@@ -35,22 +65,42 @@ const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? on
  * the work under way, else Ready. `ring` is the still ring's state beside it.
  */
 export function statusWord(f: StatusFacts): { word: string; ring: RingState } {
+  // Locked down nothing connects, whatever the sign-in: never "Not connected", which connecting can't help (safety-privacy-4).
+  if (f.locked) return { word: f.held ? "Locked until a restart" : "Locked by your organisation", ring: "error" };
   if (f.failing) return { word: "Needs setting up", ring: "error" };
-  if (f.phase === "error" && f.waitingForTasks) return { word: "Waiting for Copilot", ring: "starting" };
+  if (f.phase === "error" && f.waitingForTasks) return { word: f.service ? "Waiting for the model service" : "Waiting for Copilot", ring: "starting" };
+  if (f.phase === "error" && f.runtime === "reconnecting") return { word: "Reconnecting…", ring: "starting" };
   if (f.phase === "signed-out" || f.phase === "error") return { word: "Not connected", ring: "error" };
   if (f.phase === "starting" || f.phase === null) return { word: "Connecting…", ring: "starting" };
   if (f.asking) return { word: f.asking === 1 ? "A task needs you" : `${f.asking} tasks need you`, ring: "needs" };
   if (f.running) return { word: `Working on ${count(f.running, "task")}`, ring: "acting" };
+  if (f.answering && f.switching) return { word: "Switching model service…", ring: "starting" };
+  if (f.answering) return { word: "Thinking…", ring: "acting" };
   return { word: "Ready", ring: "ready" };
 }
 
 /**
- * The link under the tagline to the setup check, when a row needs the user (the same count as the sidebar's badge and
- * the check's note, UI audit #6); null when none does. The tagline already says how many fail.
+ * The status panel's connect button while Ember isn't connected, by the service that isn't (the agent's status kind):
+ * Copilot's sign-in, the user's own provider's details, or where the organisation's service says why (first-run-r1).
+ * `waiting`: signed out while the user's own provider waits for its card, which is the way on (integrations-r3-1).
+ * `runtime`: Ember's own model connection stopped (runtimeState): where Check again is, never the provider's details or
+ * Copilot's sign-in, which are fine (accessibility-visual-c1-2).
  */
-export function setupLinkText(failing: number, look: number): string | null {
+export function connectLabel(service?: string, waiting = false, runtime: RuntimeState = null): string {
+  if (runtime) return "Models & connections…";
+  return service === "user" || waiting ? "Check my provider…" : service ? "Models & connections…" : "Connect Copilot…";
+}
+
+/**
+ * The link under the tagline to the setup check, when a row needs the user (the same count as the sidebar's badge and
+ * the check's note, UI audit #6); null when none does. The tagline already says how many fail; `held` rows hold Ember
+ * back without failing (it can't read or use apps), and are to fix, as first run says (first-run-5).
+ */
+export function setupLinkText(failing: number, look: number, held = 0): string | null {
   if (failing) return "Open the setup check";
-  return look ? `The setup check has ${look === 1 ? "1 thing" : `${look} things`} worth a look` : null;
+  const n = (k: number) => (k === 1 ? "1 thing" : `${k} things`);
+  if (held) return `The setup check has ${n(held)} to fix`;
+  return look ? `The setup check has ${n(look)} worth a look` : null;
 }
 
 /** How many tasks work now and how many wait for the user (from Task activity's list). */
@@ -71,6 +121,18 @@ export interface WhatsOn {
   /** Computers over SSH the user added. */
   computers: number;
   wsl: boolean;
+}
+
+/**
+ * Memory as Home's status line says it: on only while its owner is verified too, so memory that is on but can't be
+ * opened (connecting, a model provider in force, another account's) reads "paused", never "on" (memory-2), and so does
+ * memory whose saved file can't be read (`trouble` "unreadable": nothing new is kept, memory-r2).
+ * `notePaused`: on under an earlier note (memoryPaused).
+ */
+export function memoryWhatsOn(on: boolean, notePaused: boolean, ownership: "waiting" | "ready" | "locked", trouble?: "unreadable" | "reset" | "unsaved" | null): WhatsOn["memory"] {
+  if (notePaused) return "paused";
+  if (!on) return false;
+  return ownership === "ready" && trouble !== "unreadable" ? true : "paused";
 }
 
 /**
@@ -101,14 +163,16 @@ export function todayCounts(entries: readonly ActivityEntry[], now = new Date())
 
 /**
  * Today, from the same tasks Task activity lists, so the panel and the list below it always agree: how many need the
- * user, are at work, are done, didn't finish or stopped, and the steps the user allowed ("1 needs you · 1 done · 1
- * didn't finish · 1 approval"). Tasks of earlier runs today are only in the audit (`audit`): counted as "earlier"
- * when the audit has more than this run's list. Only the tasks begun today count.
+ * user, are at work, are done, didn't finish, stopped or got no answer in time (a question nobody answered, in its
+ * row's words: tasks-approvals-r3-1), and the steps the user allowed ("1 needs you · 1 done · 1 didn't finish ·
+ * 1 approval"). Tasks of earlier runs today are only in the audit (`audit`): counted as "earlier" when the audit has
+ * more than this run's list. Only the tasks begun today count.
  */
-export function todaySummary(tasks: readonly Pick<TaskEntry, "status" | "activity">[], audit: { tasks: number; approvals: number }, now = new Date()): string {
+export function todaySummary(tasks: readonly Pick<TaskEntry, "status" | "activity" | "unanswered">[], audit: { tasks: number; approvals: number }, now = new Date()): string {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const mine = tasks.filter(t => t.activity.startedAt >= start);
-  const by = (s: TaskEntry["status"][]) => mine.filter(t => s.includes(t.status)).length;
+  const by = (s: TaskEntry["status"][]) => mine.filter(t => s.includes(t.status) && !(t.status === "stopped" && t.unanswered)).length;
+  const unanswered = mine.filter(t => t.status === "stopped" && t.unanswered).length;
   const approvals = Math.max(audit.approvals, mine.reduce((n, t) => n + t.activity.approvals, 0));
   const earlier = Math.max(0, audit.tasks - mine.length);
   const parts = [
@@ -117,6 +181,8 @@ export function todaySummary(tasks: readonly Pick<TaskEntry, "status" | "activit
     by(["done"]) ? `${by(["done"])} done` : "",
     by(["failed"]) ? `${by(["failed"])} didn't finish` : "",
     by(["stopped"]) ? `${by(["stopped"])} stopped` : "",
+    // A count reads as a clause, as its neighbours do, in the row's own words ("2 got no answer in time"): accessibility-visual-r4-1.
+    unanswered ? `${unanswered} got ${STATUS_WORDS.unanswered.toLowerCase()}` : "",
     earlier ? `${count(earlier, "earlier task")}` : "",
     approvals ? count(approvals, "approval") : "",
   ].filter(Boolean);

@@ -16,12 +16,14 @@ import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfi
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
 import { NO_CAPS, emberSystemMessage } from "./persona";
-import { friendlyError, type Presenter, type ServiceKind } from "./presenter";
+import { friendlyError, noAnswer, notAnswering, type Presenter, type ServiceKind } from "./presenter";
+import { keyNeeded } from "../../shared/provider";
 import type { Logger } from "../logger";
 import type { ConversationContext } from "../../shared/ipc";
 import { CHARACTERS, type SettingsStore } from "../settings";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../../shared/words";
+import { terms } from "../memory/text";
 import type { PromptCaps } from "../targets/types";
 
 export interface ConductorDeps {
@@ -65,6 +67,8 @@ export interface ConductorDeps {
   onAnswerEnd?: (text: string) => void;
   /** A turn finished (for the voice follow-up window). */
   onTurnEnd?: (aborted: boolean) => void;
+  /** Whether a turn is under way or owed (turnOpen) may have changed: the host tells Home (home-c1-1). */
+  onTurnOpen?: () => void;
   /** Main drops buffered speech and acknowledgement timers when this answer is interrupted. */
   onAnswerInterrupted?: () => void;
   /**
@@ -142,6 +146,11 @@ export interface ConductorMemory {
   forRequest?(request: string, own: boolean): string | Promise<string>;
   forget(id: string): boolean;
   /**
+   * The words of the open fact `id`, or null when there is none: forget_memory forgets a fact only when the user's own
+   * words this turn ask to forget it (`asksToForget`), and refuses when this is absent (memory-v2).
+   */
+  factText?(id: string): string | null;
+  /**
    * A turn ended (not stopped): what the user said in it and Ember's answer, for memory to learn from off the hot path
    * (app/main/memory/learning.ts). `own`: the request was heard from the user (not where Ember can't tell them from its
    * speakers). Absent: nothing is learned but what remember saves.
@@ -177,7 +186,7 @@ const TARGET_ARG = z.string().min(1).max(80);
  * offer_connect are offered (§2.6); without it the tools are today's exactly.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }, reminders?: { store: Reminders; said: () => string; own?: () => string; now?: () => number }, routines?: RoutineTools): Tool<any>[] {
+export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string; own?: () => string }, reminders?: { store: Reminders; said: () => string; own?: () => string; now?: () => number }, routines?: RoutineTools): Tool<any>[] {
   const taskId = z.string().min(1).max(60).describe("The task's id, from list_tasks");
   const other = targets.caps?.targets === true;
   const noScreen = `Ember can't read the screen in this session (${words.noScreen}). Tell the user.`;
@@ -259,7 +268,17 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
         async ({ query, history }) => (await memory.store.context(query, history)) || "Nothing remembered about that."),
       checkedTool("forget_memory", "Forget a remembered fact the user asked you to forget, by its id from <memory> or recall (\"f3a9…\").",
         z.object({ id: z.string().min(1).max(40).describe("The fact's id, without brackets") }),
-        async ({ id }) => memory.store.forget(id.replace(/^\[|\]$/g, "")) ? `Forgot ${id}.` : `Nothing remembered has the id ${id}. Use recall to find it.`),
+        async ({ id }) => {
+          const clean = id.replace(/^\[|\]$/g, "");
+          const text = memory.store.factText ? memory.store.factText(clean) : undefined;
+          if (text === null) return `Nothing remembered has the id ${id}. Use recall to find it.`;
+          // Only the user's own words this turn delete what Ember keeps about them, as for routines (memory-v2): never
+          // the model's reading of a task's results or a routine's steps, and never without knowing what the fact is.
+          if (text === undefined || !asksToForget(memory.own?.() ?? "", text)) {
+            return "Not forgotten: the user didn't ask in this request to forget it. Forget a memory only when they ask, and tell them they can use Forget in Settings › Memory.";
+          }
+          return memory.store.forget(clean) ? `Forgot ${id}.` : `Nothing remembered has the id ${id}. Use recall to find it.`;
+        }),
     ] : []),
     ...(reminders ? reminderTools(reminders, !!routines) : []),
     ...(routines ? routineTools(routines) : []),
@@ -380,6 +399,26 @@ export function namesRoutine(said: string, name: string): boolean {
   return said.split("\n").some(line => whole.test(routineKey(line.replace(WAKE, ""))));
 }
 
+/**
+ * A request to forget something Ember remembers: "forget", "don't remember", "stop remembering", "unlearn", or
+ * "remove"/"delete"/"erase" with memory or what Ember knows. Never "don't forget", "never forget" or "to forget", and
+ * never "I don't remember" (the user saying they forgot).
+ */
+const FORGET_ASK = /(?<!\b(?:don'?t|do\s+not|never|not|to)\s+)\bforget\b|(?<!\b(?:i|we|they)\s+)\b(?:don'?t|do\s+not)\s+remember\b|\bstop\s+remembering\b|\bunlearn\b|\b(?:remove|delete|erase|drop|clear|wipe)\b(?=[^.?!\n]{0,60}\b(?:memory|memories|remember|remembered|know|knows)\b)/i;
+
+/**
+ * Whether what the user said this turn asks to forget the fact `fact` (memory-v2): a forget request, with a word of the
+ * fact after it ("forget that I work at Globex", "remove Priya from your memory"). "Forget about the dentist" doesn't
+ * forget "Works at Globex", and nothing but the user's own words reach here.
+ */
+export function asksToForget(said: string, fact: string): boolean {
+  const want = new Set(terms(fact));
+  return said.replace(/[\u2018\u2019]/g, "'").split("\n").some(line => {
+    const m = FORGET_ASK.exec(line);
+    return !!m && terms(line.slice(m.index)).some(t => want.has(t));
+  });
+}
+
 /** Words that ask for a routine to go. */
 const DELETE_WORDS = String.raw`(?:delete|remove|forget|erase|drop|scrap|get rid of)`;
 
@@ -478,6 +517,8 @@ export interface TurnWatchOptions {
   silentMs?: number;
   /** The turn under way has been quiet for slowMs (true), or is heard from again (false). */
   onSlow?: (slow: boolean) => void;
+  /** Something it watches may have changed (open, slow): Home is told whether the conversation answers (home-c1-1). */
+  onChange?: () => void;
 }
 
 /**
@@ -537,18 +578,18 @@ export class TurnWatch {
   get open(): boolean { return !this.over && (this.owed > 0 || this.taken || this.working || this.inTurn); }
   get isCompacting(): boolean { return this.compacting; }
   /** A request is about to be sent (its message may come before session.send returns). */
-  sending(): void { this.owed++; }
+  sending(): void { this.owed++; this.opts.onChange?.(); }
   /** session.send returned: the turn begins now, or when the one under way ends. */
   sent(): void { this.check(); }
   /** session.send failed: no turn comes for it. */
-  unsent(): void { this.owed = Math.max(0, this.owed - 1); this.check(); }
+  unsent(): void { this.owed = Math.max(0, this.owed - 1); this.check(); this.opts.onChange?.(); }
   /**
    * Stop: the runtime ends the turn under way and drops the requests waiting. From Ember's side the turn is over at once,
    * whether or not the runtime confirms it (a request held for a new model service mustn't wait for that for ever).
    */
-  clear(): void { this.owed = 0; this.taken = false; this.inTurn = false; this.working = false; this.tools.clear(); this.check(); }
+  clear(): void { this.owed = 0; this.taken = false; this.inTurn = false; this.working = false; this.tools.clear(); this.check(); this.opts.onChange?.(); }
   /** The session is let go: nothing fires any more. */
-  dispose(): void { this.over = true; this.disarm(); }
+  dispose(): void { this.over = true; this.disarm(); this.opts.onChange?.(); }
   /** The turn it gave up on has ended and the session goes on: it watches again (from what the events since say). */
   resume(): void { if (this.over) return; this.fired = false; this.check(); }
 
@@ -584,6 +625,7 @@ export class TurnWatch {
     // Heard from again after a quiet spell.
     if (this.slow) { this.slow = false; this.opts.onSlow?.(false); }
     this.check();
+    this.opts.onChange?.();
   }
 
   private check(): void {
@@ -599,7 +641,7 @@ export class TurnWatch {
     this.timer = setTimeout(() => { this.timer = null; this.fired = true; this.slow = false; this.disarm(); this.onStuck(watching); }, ms);
     this.timer.unref?.();
     if (watching === "silent" && this.slowMs < ms) {
-      this.slowTimer = setTimeout(() => { this.slowTimer = null; this.slow = true; this.opts.onSlow?.(true); }, this.slowMs);
+      this.slowTimer = setTimeout(() => { this.slowTimer = null; this.slow = true; this.opts.onSlow?.(true); this.opts.onChange?.(); }, this.slowMs);
       this.slowTimer.unref?.();
     }
   }
@@ -748,10 +790,11 @@ export class Conductor {
   }
 
   /** Memory's tools, while memory is on (deps.memory). */
-  private get memoryTools(): { store: ConductorMemory; said: () => string } | undefined {
+  private get memoryTools(): { store: ConductorMemory; said: () => string; own: () => string } | undefined {
     const store = this.deps.memory;
-    // Unchecked speech is not the owner’s evidence; saved routines retain their own provenance.
-    return store ? { store, said: () => this.saidOwn ? this.turnSaid : this.routineSaid } : undefined;
+    // Unchecked speech is not the owner’s evidence; saved routines retain their own provenance. Forgetting takes only
+    // the user's own words this turn, never a routine's steps (`own`).
+    return store ? { store, said: () => this.saidOwn ? this.turnSaid : this.routineSaid, own: () => this.saidOwn ? this.said : "" } : undefined;
   }
 
   /** The routine tools, while routines are on (deps.routines). */
@@ -864,6 +907,7 @@ export class Conductor {
     const watch = new TurnWatch(ms, why => this.stuckTurn(why, why === "silent" ? silentMs : ms), {
       slowMs: d.turnSlowMs, silentMs,
       onSlow: slow => { if (!this.stuck) d.presenter.stalled(slow); },
+      onChange: () => d.onTurnOpen?.(),
     });
     this.watch = watch;
     const session = this.session;
@@ -987,7 +1031,7 @@ export class Conductor {
       if (stopped) return;
       // The connection was replaced meanwhile: the user is asked to ask again, and the host drops it from its queue
       // as for a send that failed (it is already reconnecting).
-      this.deps.presenter.fail(NO_ANSWER);
+      this.deps.presenter.fail(noAnswer(this.deps.service ?? !!this.deps.provider));
       throw new ConnectionLost("the connection was replaced while memory was read");
     }
     const routines = this.routinesLine(text);
@@ -1019,7 +1063,7 @@ export class Conductor {
       // connection was already let go (a hung runtime replaced): Ember said so then, and is reconnecting.
       const msg = err instanceof Error ? err.message : String(err);
       this.deps.log.warn("conductor.send_failed", { err, replaced: this.session !== session });
-      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: this.deps.service ?? !!this.deps.provider, settingsKey: this.settingsKey() }));
+      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: this.deps.service ?? !!this.deps.provider, settingsKey: this.settingsKey(), local: this.deps.service === "user" && !!this.deps.provider && !keyNeeded(this.deps.provider.baseUrl) }));
       throw new ConnectionLost(msg);
     }
   }
@@ -1104,13 +1148,14 @@ export class Conductor {
       this.stops++;
       this.dispatch = Promise.resolve();
       this.unstarted = [];
-      this.deps.presenter.fail(NO_ANSWER);
+      // Named for the service in use, never Copilot when it isn't (integrations-v1).
+      this.deps.presenter.fail(noAnswer(this.deps.service ?? !!this.deps.provider));
       this.deps.onSilentTurn?.();
       this.endSilentTurn();
       return;
     }
     if (this.deps.onStuck) this.deps.onStuck(why);
-    else this.deps.presenter.fail("Copilot isn't answering. Ask me again in a moment.");
+    else this.deps.presenter.fail(notAnswering(this.deps.service ?? !!this.deps.provider));
   }
 
   /**

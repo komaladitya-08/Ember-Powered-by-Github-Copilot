@@ -55,11 +55,22 @@ const PRIVATE_PATH = new RegExp([
   String.raw`\.key\.(bak|old|orig|save)$`,
 ].join("|"), "i");
 
+/**
+ * A line of code or of a file with the lines before it, up to 2 KiB, ending at the line: a property of an object or a
+ * call opened above it reads as code there as in the whole file ("const auth = {", "  password: password"), and what
+ * is looked for at a line's end is still found at its end (memory-w5-2).
+ */
+export function withLinesBefore(lines: readonly string[], i: number): string {
+  let j = i;
+  for (let size = 0; j > 0 && size + lines[j - 1]!.length + 1 <= 2048; j--) size += lines[j - 1]!.length + 1;
+  return lines.slice(j, i + 1).join("\n");
+}
+
 /** Why an excerpt may not be shown, or null when it may (a secret in a line, or a private place). */
 export function excerptRefusal(path: string, lines: readonly string[]): string | null {
   if (PRIVATE_PATH.test(path.trim())) return "that file is in a place where passwords and keys are kept, so Ember doesn't show it";
-  for (const l of lines) {
-    const why = memoryRefusal(l);
+  for (let i = 0; i < lines.length; i++) {
+    const why = memoryRefusal(withLinesBefore(lines, i));
     if (why) return `${why}, so Ember doesn't show it`;
   }
   return memoryRefusal(lines.join("\n")) ? "it holds a password, token or key, so Ember doesn't show it" : null;
@@ -514,11 +525,11 @@ export function mimicRefusal(s: string, short = false): string | null {
 
 /**
  * Why `s` would show a secret or a place where secrets live, or null: a token, key, card number, a private key's
- * header or "password: hunter2" (memoryRefusal), or a path (anywhere in it, slashes however written) into a private
- * place.
+ * header or "password: hunter2" (memoryRefusal, read in `context`, a code line with the lines before it, where one is
+ * given), or a path (anywhere in it, slashes however written) into a private place.
  */
-export function secretRefusal(s: string): string | null {
-  const why = memoryRefusal(s);
+export function secretRefusal(s: string, context = s): string | null {
+  const why = memoryRefusal(context);
   if (why) return why;
   const n = s.normalize("NFKC").replace(/[∕⁄⧸／]/g, "/");
   if (PRIVATE_PATH.test(n.trim()) || n.split(/[\s"'`()<>[\]{},;]+/).some(t => t && PRIVATE_PATH.test(t))) return "it names a place where passwords and keys are kept";
@@ -750,11 +761,14 @@ export function checkDoc(doc: ViewDoc, ctx: ViewContext): ViewCheck {
     n = again.node;
     if (n.kind === "chart" || n.kind === "gauge") charts++;
     const strings = nodeStrings(n);
-    for (const { s, short } of strings) {
+    // A code block's or a file's lines (first and last of its strings) are each read with the lines before them.
+    const lines = n.kind === "code" ? n.lines : n.kind === "file" ? n.lines ?? [] : [];
+    const first = n.kind === "file" ? strings.length - lines.length : 0;
+    for (const [k, { s, short }] of strings.entries()) {
       chars += s.length;
       const mimic = mimicRefusal(s, short);
       if (mimic) return { ok: false, why: "mimic", error: `${id}: ${mimic}, so Ember doesn't show it. A view never asks, allows or speaks for Ember` };
-      const secret = secretRefusal(s);
+      const secret = secretRefusal(s, k >= first && k < first + lines.length ? withLinesBefore(lines, k - first) : s);
       if (secret) return { ok: false, why: "secret", error: `${id}: ${secret}, so Ember doesn't show the view. Leave it out` };
     }
     for (const t of nodeTogether(n)) {

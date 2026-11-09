@@ -160,6 +160,8 @@ export const SECRET_VAR = /(TOKEN|SECRET|PASSWORD|PASSWD|PASS|KEY|CREDENTIAL|AUT
 /** How a wrapper runs the command after it (§3.4.5). */
 export interface WrapperRule {
   shortValue?: string;
+  /** Short options whose value is only ever attached (nsenter's `-m[file]`): alone they take none. */
+  shortOptional?: string;
   longValue?: readonly string[];
   /** Positional arguments before the command (timeout's duration, taskset's mask). */
   positional?: number;
@@ -193,9 +195,11 @@ export const WRAPPERS: Readonly<Record<string, WrapperRule>> = {
   unbuffer: {},
   chronic: {},
   ifne: {},
-  fakeroot: { shortValue: "is", longValue: ["lib", "faked"] },
-  faketime: { shortValue: "m", positional: 1 },
-  numactl: { shortValue: "CNmpPiH", longValue: ["physcpubind", "cpunodebind", "membind", "preferred", "interleave"] },
+  fakeroot: { shortValue: "isl", longValue: ["lib", "faked"] },
+  // faketime's -m and -f, numactl's -H, ltrace's -L and nsenter's namespace options take no value of their own: the next
+  // word is the command (commands-remote-i5a).
+  faketime: { longValue: ["date-prog"], positional: 1 },
+  numactl: { shortValue: "CNmpPi", longValue: ["physcpubind", "cpunodebind", "membind", "preferred", "interleave", "preferred-many"] },
   cgexec: { shortValue: "g" },
   "dbus-run-session": { longValue: ["config-file", "dbus-daemon"] },
   "dbus-launch": { longValue: ["autolaunch", "config-file"] },
@@ -213,14 +217,14 @@ export const WRAPPERS: Readonly<Record<string, WrapperRule>> = {
   "systemd-inhibit": { longValue: ["what", "who", "why", "mode"] },
   "systemd-cat": { shortValue: "tp", longValue: ["identifier", "priority", "stderr-priority", "level-prefix"] },
   valgrind: {},
-  ltrace: { shortValue: "eopsuEanlLAD" },
+  ltrace: { shortValue: "aAeDFlnopsuwx" },
   strace: { shortValue: "eopsuEaIOSPXb" },
   tini: {},
   "dumb-init": {},
   chroot: { positional: 1, aloneInteractive: true, finding: { cls: "system", rule: "system.chroot", says: "Runs as an administrator (root)." } },
   sg: { positional: 1, finding: { cls: "system", rule: "system.sg", says: "Runs as another group." } },
   newgrp: { aloneInteractive: true, finding: { cls: "system", rule: "system.newgrp", says: "Runs as another group." } },
-  nsenter: { shortValue: "tSGmuinpUCTrw", finding: { cls: "system", rule: "system.nsenter", says: "Runs as an administrator (root)." }, aloneInteractive: true },
+  nsenter: { shortValue: "tSG", shortOptional: "muinpUCTrw", finding: { cls: "system", rule: "system.nsenter", says: "Runs as an administrator (root)." }, aloneInteractive: true },
   unshare: { finding: { cls: "system", rule: "system.unshare", says: "Changes how the system works." }, aloneInteractive: true },
   setpriv: { longValue: ["reuid", "regid", "groups", "inh-caps", "ambient-caps", "bounding-set", "securebits", "selinux-label", "apparmor-profile"], finding: { cls: "system", rule: "system.setpriv", says: "Runs as an administrator (root)." } },
   capsh: { finding: { cls: "system", rule: "system.capsh", says: "Runs as an administrator (root)." }, aloneInteractive: true },
@@ -243,7 +247,7 @@ export const OTHER_SHELLS = new Set(["fish", "csh", "tcsh", "nu", "xonsh", "elvi
 export const INTERPRETERS: Readonly<Record<string, { inline: readonly string[]; valueOpts?: string }>> = {
   python: { inline: ["-c"], valueOpts: "WXm" }, python2: { inline: ["-c"], valueOpts: "WXm" }, python3: { inline: ["-c"], valueOpts: "WXm" },
   pypy: { inline: ["-c"], valueOpts: "WXm" }, pypy3: { inline: ["-c"], valueOpts: "WXm" }, py: { inline: ["-c"], valueOpts: "WXm" },
-  node: { inline: ["-e", "--eval", "-p", "--print"], valueOpts: "r" }, nodejs: { inline: ["-e", "--eval", "-p", "--print"], valueOpts: "r" },
+  node: { inline: ["-e", "--eval", "-p", "--print"], valueOpts: "rC" }, nodejs: { inline: ["-e", "--eval", "-p", "--print"], valueOpts: "rC" },
   perl: { inline: ["-e", "-E"], valueOpts: "IMm" }, ruby: { inline: ["-e"], valueOpts: "Ir" }, php: { inline: ["-r", "-B", "-R", "-E", "-F"], valueOpts: "cdz" },
   lua: { inline: ["-e"], valueOpts: "l" }, luajit: { inline: ["-e"], valueOpts: "l" }, osascript: { inline: ["-e"], valueOpts: "l" },
   rscript: { inline: ["-e"] }, Rscript: { inline: ["-e"] }, r: { inline: ["-e"] }, R: { inline: ["-e"] }, julia: { inline: ["-e", "--eval", "-E", "--print"] }, tclsh: { inline: [] },

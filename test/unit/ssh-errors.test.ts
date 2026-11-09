@@ -14,6 +14,9 @@ describe("ssh's failures in Ember's words (§5.1.8, §8.7)", () => {
     // This OS's way to install SSH only, when it is known.
     expect(MESSAGES.noClient("win32")).toBe("Ember can't find SSH on this computer. Install the OpenSSH Client in Settings › Apps › Optional features, then try again.");
     expect(MESSAGES.noClient("linux")).not.toMatch(/Windows/);
+    // Every line ends as a sentence, with what to do after (commands-remote-8).
+    expect(MESSAGES.noClient("linux")).toBe("Ember can't find SSH on this computer. Install OpenSSH with sudo dnf install openssh-clients, then try again.");
+    for (const os of ["linux", "win32", "darwin", undefined] as const) expect(installSsh(os), String(os)).toMatch(/then try again\.$/);
   });
 
   it("tells an unknown host key from a changed one", () => {
@@ -28,6 +31,15 @@ describe("ssh's failures in Ember's words (§5.1.8, §8.7)", () => {
     expect(at("deploy@build-01: Permission denied (publickey,gssapi-keyex,gssapi-with-mic).")).toMatchObject({ kind: "auth", message: "build-01 didn't accept your key. Add it to the ssh-agent with ssh-add, then connect again." });
     expect(at("Received disconnect from 10.0.0.5 port 22:2: Too many authentication failures")).toMatchObject({ kind: "too-many-keys" });
     expect(at("ssh: Could not resolve hostname build-01: Name or service not known")).toMatchObject({ kind: "dns", message: "Ember can't find build-01. Check the name, or add it to your SSH config." });
+  });
+
+  it("takes a name that can't be looked up just now (no network, Wi-Fi gone) for the network, not a wrong name, so a new computer is kept (commands-remote-6)", () => {
+    for (const line of [
+      "ssh: Could not resolve hostname build-01: Temporary failure in name resolution",
+      "ssh: Could not resolve hostname build-01: This is usually a temporary error during hostname resolution and means that the local server did not receive a response from an authoritative server.",
+    ]) {
+      expect(at(line), line).toMatchObject({ kind: "network", message: "Ember can't reach build-01 (its name couldn't be looked up just now). Check you're on the right network or VPN.", retry: true });
+    }
   });
 
   it("names a network failure in a few words", () => {

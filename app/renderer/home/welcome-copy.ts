@@ -6,15 +6,22 @@
  * says the same things in fewer words and never more, so agreeing to it is agreeing to that text (CONSENT_VERSION).
  */
 
+import { CONSENT_VERSION } from "../../shared/consent";
 import { needsUser, holdsBack, type SetupRow } from "../../shared/setup-attention";
+import { onThisComputer } from "../../shared/provider";
 
 /** The essential first-run route; character and memory personalisation remain optional detours. */
 export const WELCOME_STEPS = ["hello", "consent", "sign-in", "checks", "try", "done"] as const;
 export type WelcomeStep = (typeof WELCOME_STEPS)[number] | "character" | "about" | "provider";
 
-/** Where first run opens: at the start, or at sign-in once consent was already agreed. */
-export function firstStep(consented: boolean): WelcomeStep {
-  return consented ? "sign-in" : "hello";
+/**
+ * Where first run opens, by the consent version agreed to (`agreed`): at the start for someone who never agreed (0), at
+ * sign-in once the current one was agreed in a run that didn't finish, and at the consent itself, with what changed,
+ * for someone who agreed to an earlier version (first-run-4: they have met Ember already).
+ */
+export function firstStep(agreed: number): WelcomeStep {
+  if (agreed >= CONSENT_VERSION) return "sign-in";
+  return agreed > 0 ? "consent" : "hello";
 }
 
 /** Position in the essential route; optional detours keep their originating step's indicator. */
@@ -29,11 +36,15 @@ export function stepCount(step: WelcomeStep): string {
   return `Step ${stepPosition(step) + 1} of ${WELCOME_STEPS.length}`;
 }
 
-/** The step before and after `step`, including the optional detours. */
-export function stepBefore(step: WelcomeStep): WelcomeStep | null {
+/**
+ * The step before and after `step`, including the optional detours. `own`: Ember is connected to the user's own
+ * provider, so Back from the checks returns to its step, not to a Copilot sign-in that isn't in use (first-run-1).
+ */
+export function stepBefore(step: WelcomeStep, own = false): WelcomeStep | null {
   if (step === "character") return "hello";
   if (step === "about") return "try";
   if (step === "provider") return "sign-in";
+  if (step === "checks" && own) return "provider";
   const i = stepPosition(step);
   return i > 0 ? WELCOME_STEPS[i - 1] : null;
 }
@@ -110,6 +121,13 @@ export function consentPoints(o: { service: string; kept: string; locked: boolea
   ];
 }
 
+/** The consent step for someone who agreed to an earlier version: its title, lead and the heading over what changed (first-run-4). */
+export const CONSENT_AGAIN = {
+  title: "What's changed since you last agreed",
+  lead: "I work a little differently now, so I need you to agree again. Nothing is read, heard or sent until you do.",
+  changes: "What's new",
+} as const;
+
 /** The consent step's buttons and what "Not now" says. */
 export const CONSENT_TEXT = {
   agree: "Agree and continue",
@@ -132,12 +150,44 @@ export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly str
   plug: ["The microphone stays off</b> unless you turn on", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
 };
 
-/** The sign-in step's title and lead: an organisation's own model service has nothing to sign in to. */
-export function signInText(managed: boolean): { title: string; lead: string } {
-  return managed
-    ? { title: "Connecting to your organisation's service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." }
-    : STEP_TEXT["sign-in"];
+/** Each CONSENT_CHANGES line beside the full text's words it shortens (home-welcome.test.ts checks every pair against the page). */
+export const CONSENT_CHANGE_SOURCES: Readonly<Record<number, readonly string[]>> = {
+  2: ["it keeps your voiceprint and keeps refining it from requests it is sure are yours", "it keeps the words you correct"],
+  3: ["or choose Listen once for one request"],
+  4: ["In Project work, Send selected files shares your request and the contents of those files with the connected model."],
+  5: ["If you save a project workspace, Ember encrypts its selected paths and last completed request and answer on this computer"],
+  6: ["Once you call Ember it keeps listening through the conversation, and what it hears there goes to", "as text, without its name"],
+  7: ["unless you turn on “Keep my recent conversation” under Conversation: then its latest messages stay on this computer"],
+};
+
+/**
+ * The sign-in step's title and lead: an organisation's own model service (`managed`) has nothing to sign in to, and
+ * neither has the user's own provider once Ember uses it (`own`, its host: first-run-1), whether it is connected,
+ * still connecting or failing (`ownPhase`; ready when absent), so no GitHub, Copilot or sign-in words are said then.
+ * Under the organisation's lockdown (`locked`; `held` until a restart reads a changed policy) nothing connects at all,
+ * so the step says that, never that a service runs (first-run-v1). The lead offers the user's own provider only where
+ * it is offered (`ownOffered`, first-run-7).
+ */
+export function signInText(o: { managed: boolean; locked?: boolean; held?: boolean; own?: string | null; ownPhase?: "ready" | "starting" | "error"; ownOffered?: boolean }): { title: string; lead: string } {
+  if (o.locked) {
+    return o.held
+      ? { title: "Restart me to use your organisation's new policy", lead: "Your organisation changed my policy while I was running, so I can't connect to a model service until you restart me." }
+      : { title: "Your organisation has locked me down", lead: "Your organisation's policy for me has a problem, so I can't connect to a model service for now. Ask your administrator to fix it." };
+  }
+  if (o.managed) return { title: "Connecting to your organisation's service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." };
+  if (o.own) {
+    const lead = o.ownPhase === "starting" ? `I'm connecting to the model provider you set up (${o.own}). You can change it later in Settings › Models & connections.`
+      : o.ownPhase === "error" ? `I can't connect to the model provider you set up (${o.own}) yet: the line below says why. You can check its details here, or later in Settings › Models & connections.`
+        // A host elsewhere wasn't contacted at the start: "using", as the line under it says (first-run-r3-2).
+        : `I'm ${onThisComputer(o.own) ? "connected to" : "using"} the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.`;
+    return { title: "Your own model provider", lead };
+  }
+  if (o.ownOffered === false) return { ...STEP_TEXT["sign-in"], lead: STEP_TEXT["sign-in"].lead.replace(OWN_OFFER, "") };
+  return STEP_TEXT["sign-in"];
 }
+
+/** The sign-in lead's last sentence, which offers the user's own provider (left out where it isn't offered). */
+const OWN_OFFER = " No Copilot? You can use your own model provider instead.";
 
 /** The sign-in step as the Copilot status has it: what it says, and which buttons it offers. */
 export interface SignInView {
@@ -157,23 +207,42 @@ export interface SignInView {
 /**
  * `phase`, `reason` and `login` from the agent's status (null while it hasn't come), `signingIn` while a device flow
  * runs, `managedProvider` when the organisation's own model service answers instead of Copilot (nothing to sign in
- * to), `locked` while the organisation's policy locks Ember down (nothing connects; signing in can't help).
+ * to), `locked` while the organisation's policy locks Ember down (nothing connects; signing in can't help). `service`:
+ * the model service the connection uses when it isn't Copilot (the agent's status), so the user's own provider is
+ * never called Copilot (first-run-1). `switching`: the user's own provider was switched off while Ember was busy, and
+ * Ember moves to Copilot once that is done (the agent's `switchPending`): nothing connects yet, and the way on is open
+ * (first-run-v4-1).
  */
-export function signInView(o: { phase: string | null; reason?: string; login?: string; signingIn: boolean; managedProvider: boolean; locked?: boolean }): SignInView {
+export function signInView(o: { phase: string | null; reason?: string; login?: string; signingIn: boolean; managedProvider: boolean; locked?: boolean; service?: { kind: string; host: string }; switching?: boolean }): SignInView {
   const none = { cancel: false, skip: false, retry: false };
+  const own = o.service?.kind === "user" ? `your own provider (${o.service.host})` : o.service?.kind === "test" ? o.service.host : null;
   if (o.phase === "ready") {
-    const who = o.managedProvider ? "Connected to your organisation's model service." : o.login ? `Signed in as ${o.login}.` : "Connected to Copilot.";
+    // The user's own provider elsewhere wasn't contacted at the start: "Using", as Home says (integrations-r2-6).
+    const near = o.service?.kind !== "user" || onThisComputer(o.service.host);
+    const who = o.managedProvider ? "Connected to your organisation's model service." : own ? `${near ? "Connected to" : "Using"} ${own}.` : o.login ? `Signed in as ${o.login}.` : "Connected to Copilot.";
     return { ...none, line: who, tone: "ok", primary: "continue", why: "" };
   }
   // Signing in can't help: the policy holds Ember back, so the way on is Continue (the line says why).
   if (o.locked) return { ...none, line: "Your organisation's policy locks me down, so I can't connect for now.", tone: "error", primary: "continue", why: "" };
   if (o.phase === "error" && o.reason === "policy") return { ...none, line: "", tone: "error", primary: "continue", why: "" };
   if (o.signingIn) return { ...none, line: "", tone: "", primary: "continue", why: "Waiting for you to approve the sign-in in your browser.", cancel: true };
-  const service = o.managedProvider ? "your organisation's model service" : "Copilot";
+  if (o.switching) return { ...none, line: SWITCH_WAITS, tone: "", primary: "continue", why: "" };
+  const service = o.managedProvider ? "your organisation's model service" : own ?? "Copilot";
   if (o.phase === "starting" || o.phase === null) return { ...none, line: `Connecting to ${service}…`, tone: "", primary: "continue", why: `Still connecting to ${service}.`, skip: true };
   // The organisation's service didn't answer: nothing to sign in to, so Continue (settings shows it again later).
   if (o.managedProvider) return { ...none, line: "", tone: "error", primary: "continue", why: "" };
   return { ...none, line: "", tone: "", primary: "sign-in", why: "", skip: true, retry: true };
+}
+
+/** The sign-in step's line while Ember finishes what it is doing before it moves to Copilot (first-run-v4-1). */
+export const SWITCH_WAITS = "I'll switch to Copilot once I've finished what I'm doing.";
+
+/**
+ * The line once that switch is made and the step's Continue has become its sign-in (`signInWith` as signInLabel names
+ * it): said, as the focus leaves that button, so a press meant for Continue starts nothing (first-run-c4-1).
+ */
+export function switchedLine(signInWith?: string): string {
+  return `I've switched to Copilot. ${signInWith === "github-cli" ? "Connect with GitHub CLI" : "Sign in with GitHub"} to go on, or skip for now.`;
 }
 
 /** "Check again": looks for a sign-in made elsewhere (the GitHub CLI's) and connects with it. */
@@ -181,13 +250,15 @@ export const CHECK_AGAIN = "Check again";
 
 /** What "Skip for now" leaves for later, and where. */
 export const SKIP_SIGN_IN = "You can sign in later in Settings › Models & connections. Until then I can't answer or act.";
+/** The same, while the user's own provider connects or fails: there is nothing to sign in to (first-run-1). */
+export const SKIP_OWN = "You can go on for now and check it later in Settings › Models & connections. Until I'm connected, I can't answer or act.";
 
 /**
  * A setup row in plain words: a short title, what it means for the user, how serious it is (`held`: Ember can't read,
  * see or use apps until it's fixed), its fix's buttons (from the row), and a command to copy when the fix is one the
  * user runs themselves (Linux's packages).
  */
-export interface PlainCheck { id: string; title: string; text: string; held: boolean; tone: "warn" | "fail"; fix?: string; alt?: string; command?: string }
+export interface PlainCheck { id: string; title: string; text: string; held: boolean; tone: "ok" | "warn" | "fail"; fix?: string; alt?: string; command?: string }
 
 /** The command a row's detail tells the user to run ("…: sudo dnf install python3-pyatspi"), if any. */
 export function fixCommand(detail: string): string | undefined {
@@ -211,9 +282,21 @@ const PLAIN: Readonly<Record<string, { title: string; text: string }>> = {
   os: { title: "This system isn't one I'm tested on", text: "I may still work here." },
 };
 
-/** The rows the checks step shows (only those that need the user), in plain words. */
-export function plainChecks(rows: readonly (SetupRow & { alt?: string; detail?: string })[]): PlainCheck[] {
-  return rows.filter(needsUser).map(r => {
+/**
+ * A row whose fix took but leaves the user something to do (environment.ts Check `next`): what is done and what is left,
+ * by row id (first-run-3).
+ */
+const PLAIN_NEXT: Readonly<Record<string, { title: string; text: string }>> = {
+  accessibility: { title: "Screen reading is on", text: "Restart apps that were already open, or log out and in, so I can read them." },
+};
+
+/** The row's fix took, and something is left for the user to do that first run says (`next`, with words for it). */
+const leftToDo = (r: SetupRow & { next?: boolean }) => r.status === "ok" && !!r.next && !!PLAIN_NEXT[r.id.split(":")[0]];
+
+/** The rows the checks step shows (those that need the user, and those a fix left something to do for), in plain words. */
+export function plainChecks(rows: readonly (SetupRow & { alt?: string; detail?: string; next?: boolean })[]): PlainCheck[] {
+  return rows.filter(r => needsUser(r) || leftToDo(r)).map(r => {
+    if (leftToDo(r)) return { id: r.id, ...PLAIN_NEXT[r.id.split(":")[0]], held: false, tone: "ok" as const };
     const p = PLAIN[r.id.split(":")[0]] ?? { title: r.label, text: "This needs a look before I can do everything." };
     // No button fixes it here: the command to run, or the details' advice.
     const command = r.fix ? undefined : fixCommand(r.detail ?? "");
@@ -222,10 +305,13 @@ export function plainChecks(rows: readonly (SetupRow & { alt?: string; detail?: 
   });
 }
 
-/** The checks step's headline: all good, things that hold Ember back, or only things worth a look. */
-export function checksHeadline(rows: readonly SetupRow[]): { text: string; tone: "ok" | "warn" | "fail" } {
+/** The checks step's headline: all good, things that hold Ember back, only things worth a look, or something left to do. */
+export function checksHeadline(rows: readonly (SetupRow & { next?: boolean })[]): { text: string; tone: "ok" | "warn" | "fail" } {
   const held = rows.filter(holdsBack).length;
   const look = rows.filter(needsUser).length;
+  const left = rows.filter(leftToDo).length;
+  // A fix that took but leaves a restart to the user is never "everything is ready" (first-run-3).
+  if (!look && left) return { text: left === 1 ? "Ready, with one thing left for you to do." : `Ready, with ${left} things left for you to do.`, tone: "ok" };
   if (!look) return { text: "Everything I need is ready.", tone: "ok" };
   // One severity on the step: red only when a row fails outright, the same mark on the headline and on the row.
   const tone = rows.some(r => r.status === "fail") ? "fail" : "warn";
@@ -235,8 +321,20 @@ export function checksHeadline(rows: readonly SetupRow[]): { text: string; tone:
 
 /** Under the checks: what happens if the user goes on without fixing them, and where to come back. */
 export function checksLater(rows: readonly SetupRow[]): string {
-  if (rows.some(holdsBack)) return "You can go on and fix this later in Settings › Setup check. Until then I can answer questions, but some tasks won't work.";
-  return rows.some(needsUser) ? "You can fix these later in Settings › Setup check." : "";
+  // Named as the sidebar names it (first-run-9): the setup check is in Setup & about.
+  if (rows.some(holdsBack)) return "You can go on and fix this later in Settings › Setup & about. Until then I can answer questions, but some tasks won't work.";
+  return rows.some(needsUser) ? "You can fix these later in Settings › Setup & about." : "";
+}
+
+/**
+ * What Check again found (first-run-6), for the live line: the rows that needed the user and no longer do, by name, or
+ * that nothing has changed yet. First run and Home's setup check say it alike.
+ */
+export function recheckMessage(before: readonly SetupRow[], after: readonly SetupRow[]): string {
+  const fixed = before.filter(needsUser).filter(r => !after.some(a => a.id === r.id && needsUser(a))).map(r => r.label);
+  if (!fixed.length) return "I checked again. Nothing has changed yet.";
+  const names = fixed.length === 1 ? fixed[0] : `${fixed.slice(0, -1).join(", ")} and ${fixed.at(-1)}`;
+  return `I checked again. ${names} ${fixed.length === 1 ? "is" : "are"} ready now.`;
 }
 
 /** The checks step's Continue: "Continue anyway" while something holds Ember back (it never blocks the flow). */
@@ -244,9 +342,13 @@ export function checksNext(rows: readonly SetupRow[]): string {
   return rows.some(holdsBack) ? "Continue anyway" : "Continue";
 }
 
-/** A setup row's state in the details, in words beside its symbol (never colour alone, never a code like "OK"). */
-export function checkState(status: SetupRow["status"]): string {
-  return status === "ok" ? "Ready" : status === "warn" ? "Worth a look" : "Needs fixing";
+/**
+ * A setup row's state in words beside its symbol (never colour alone, never a code like "OK"), in first run's details
+ * and Home's setup check alike (first-run-9). `held`: the row holds Ember back (holdsBack), so a warning about it needs
+ * fixing, as the counts say (first-run-5).
+ */
+export function checkState(status: SetupRow["status"], held = false): string {
+  return status === "ok" ? "Ready" : status === "warn" && !held ? "Worth a look" : "Needs fixing";
 }
 
 /** The disclosure with every row and its technical detail. */
@@ -257,13 +359,22 @@ export const TRY_TEXT = {
   stop: { title: "Stop me", fallback: "Use Stop everything from my handle or Home whenever you need me to stop. The stop shortcut is unavailable on this computer.", ask: "Press the stop shortcut now. It stops everything I'm doing, at once, anywhere.", done: "That's how you stop me." },
   voice: { title: "Say “Hey Ember”", ask: "Say “Hey Ember”, then ask something and watch the meter.", done: "I heard you." },
   ask: { title: "Ask me something", ask: "Open the ask box and type a question, such as “What can you do?”", done: "You asked me something.", open: "Open the ask box" },
-  /** The ask box can't be opened yet: why, beside its button. */
+  /** The ask box can't be opened yet: why, beside its button (askWhy() picks the one that holds). */
   askWhy: "Sign in first, then you can ask me something.",
+  /** Not connected yet to a service with nothing to sign in to (the organisation's, the user's own). */
+  askWait: "Once I'm connected, you can ask me something.",
+  /** Under the organisation's lockdown nothing connects, so signing in can't help (first-run-v1). */
+  askLocked: "While your organisation's policy locks me down, I can't answer.",
   /** Voice is off (not turned on, or not agreed to): the try isn't shown, and this says where to turn it on. */
   voiceLater: "To talk to me, turn on “Hey Ember” later in Settings › Voice. Then say, for example, “Hey Ember, what's in this window?”",
   /** Voice is on but not listening yet (models still to download, or starting). */
   voiceWaiting: "I'm not listening yet. Once I am, say “Hey Ember”.",
 } as const;
+
+/** Why the try step's ask box can't be opened yet: locked down, waiting for a service with no sign-in, or not signed in. */
+export function askWhy(o: { locked: boolean; noSignIn: boolean }): string {
+  return o.locked ? TRY_TEXT.askLocked : o.noSignIn ? TRY_TEXT.askWait : TRY_TEXT.askWhy;
+}
 
 /**
  * "Say “Hey Ember”" shows only while Ember listens for it: on, agreed to, allowed by the organisation
@@ -286,17 +397,32 @@ export function summaryRows(o: {
   character: string; size: number; signedIn: string | null; voice: "listening" | "waiting" | "off";
   /** The keys as Ember holds them ("" while another app holds one); null until the status names this OS's. */
   keys: { ask: string; stop: string; settings: string } | null;
+  /** False when the model service isn't GitHub Copilot (the user's own, the organisation's): the row isn't called Copilot (first-run-1). */
+  copilot?: boolean;
 }): SummaryRow[] {
   const rows: SummaryRow[] = [
     // The size in pixels only once the user changed it: "Default size" says as much without a number to decode.
     { label: "Character", value: o.size === DEFAULT_SIZE ? `${o.character}, default size` : `${o.character}, ${o.size} px` },
-    { label: "Copilot", value: o.signedIn ?? "Not signed in yet" },
+    { label: o.copilot === false ? "Model service" : "Copilot", value: o.signedIn ?? "Not signed in yet" },
     { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : "On" },
   ];
   if (o.keys?.ask) rows.push({ label: "Ask", value: o.keys.ask });
   if (o.keys?.stop) rows.push({ label: "Stop everything", value: o.keys.stop });
   if (o.keys?.settings) rows.push({ label: "Settings", value: o.keys.settings });
   return rows;
+}
+
+/**
+ * The card's model service row: the service Ember is connected through; while it isn't, the user's own provider
+ * (`service` kind "user") or the organisation's (`managed`, or kind "admin") by name, never "Not signed in yet" for a
+ * service with nothing to sign in to (first-run-c1-3); null while Copilot isn't signed in yet.
+ */
+export function serviceSummary(o: { ready: boolean; locked: boolean; managed: boolean; service?: { kind: string; host: string }; login?: string }): string | null {
+  const own = o.service?.kind === "user" ? `Your own provider (${o.service.host})` : null;
+  if (o.ready) return own ?? (o.managed ? "Your organisation's model service" : o.login ? `Signed in as ${o.login}` : "Connected");
+  if (o.locked) return "Locked down by your organisation";
+  if (own) return `${own}, not connected yet`;
+  return o.managed || o.service?.kind === "admin" ? "Your organisation's model service, not connected yet" : null;
 }
 
 /** Under the card: where to change it all later. */
@@ -308,7 +434,11 @@ export const START_LABEL = "Start Ember";
 /** The navigation buttons. */
 export const NAV = { back: "Back", next: "Continue", begin: "Get started", skip: "Skip for now", character: "Choose a character…", about: "Personalise memory…" } as const;
 
-/** The "about you" step's main button: it saves what was answered, or goes on without (nothing kept). */
-export function aboutNext(o: { ready: boolean; filled: boolean }): string {
+/**
+ * The "about you" step's main button: it saves what was answered, or goes on without (nothing kept); and while memory
+ * is paused, when nothing can be answered, it just goes on (memory-c1-2).
+ */
+export function aboutNext(o: { ready: boolean; filled: boolean; paused?: boolean }): string {
+  if (o.paused) return NAV.next;
   return o.ready && o.filled ? "Save and continue" : NAV.skip;
 }
