@@ -154,6 +154,76 @@ const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/g;
 const KEY_VALUE =
   /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
 
+/** The literal executable names whose arguments the existing short-option rules understand. */
+const ARGV_PROGRAM_NAMES = `${CLIENT}|curl|wget|docker|podman|nerdctl|buildah|helm|mongo(?:sh|dump|restore|export|import)?|sshpass|redis-cli|smbclient|htpasswd|openssl|net|echo|printf`;
+const ARGV_PROGRAM = new RegExp(`^(?:${ARGV_PROGRAM_NAMES})(?:\\.exe)?$`, "i");
+/** Skip ordinary source-code arrays before applying the password-bearing clients' bounded argument patterns. */
+const ARGV_CLIENT = new RegExp(`\\b(?:${ARGV_PROGRAM_NAMES})\\b`, "i");
+
+/**
+ * Exec-form arrays and subprocess tuples separate arguments with commas, not shell whitespace (memory-q6-1,
+ * memory-v7-1). Apply the existing bounded short-option rules to their literal arguments, without evaluating code.
+ * Unknown arguments occupy a placeholder so a later literal never becomes an earlier option's value by accident.
+ */
+function redactArgvPasswords(text: string): string {
+  const tokens = /[[\](){}]|(["'])((?:\\[\s\S]|(?!\1)[^\\])*)\1/g;
+  type Word = { text: string; start: number; end: number; quote: string };
+  type Frame = { words: Word[]; after: number; mysql: boolean };
+  const mysql = new RegExp(`^${CLIENT}(?:\\.exe)?$`, "i");
+  const value = new RegExp(`^${OPTION_VALUE}`);
+  const stack: Frame[] = [];
+  const hidden = new Map<number, Word>();
+  const inspect = (frame: Frame) => {
+    const ranges: { word: Word; start: number; end: number }[] = [];
+    let command = "";
+    for (const word of frame.words) {
+      if (command) command += " ";
+      const start = command.length;
+      command += word.text;
+      ranges.push({ word, start, end: command.length });
+    }
+    if (!ARGV_CLIENT.test(command)) return;
+    for (const re of OPTION_PASSWORDS) {
+      for (const m of command.matchAll(new RegExp(re.source, re.flags + "d"))) {
+        const value = m.indices?.[3];
+        if (!value) continue;
+        for (const r of ranges) if (r.word.start >= 0 && r.start < value[1] && r.end > value[0]) hidden.set(r.word.start, r.word);
+      }
+    }
+  };
+  for (const m of text.matchAll(tokens)) {
+    if (!m[1]) {
+      if ("[({".includes(m[0])) stack.push({ words: [], after: m.index + 1, mysql: false });
+      else if (stack.length) inspect(stack.pop()!);
+      continue;
+    }
+    const frame = stack.at(-1);
+    if (!frame) continue;
+    const gap = text.slice(frame.after, m.index);
+    if (!/^\s*,?\s*$/.test(gap)) frame.words.push({ text: "$ARG", start: -1, end: -1, quote: "" });
+    // Decode literal escapes only; no code, variable or substitution is executed.
+    const word = m[2].replace(/\\(?:u[\da-fA-F]{4}|x[\da-fA-F]{2}|[\s\S])/g, s =>
+      /^\\[ux]/.test(s) ? String.fromCharCode(parseInt(s.slice(2), 16)) : /^[\\][\\"'/]$/.test(s) ? s.slice(1) : s);
+    // Match known executable literals by basename and case, without making password placeholders case-insensitive.
+    // Original source spans are retained: normalising a client's name never rewrites any logged argument (memory-y7-1).
+    const base = word.replace(/\\/g, "/").split("/").at(-1) ?? word;
+    const matching = ARGV_PROGRAM.test(base) ? base.replace(/\.exe$/i, "").toLowerCase() : word;
+    const literal = { text: matching, start: m.index, end: m.index + m[0].length, quote: m[1] };
+    frame.words.push(literal);
+    if (mysql.test(base)) frame.mysql = true;
+    // Retain the first repair's direct MySQL check even beyond the shell patterns' bounded argument window.
+    if (frame.mysql && word.startsWith("-p") && value.test(word.slice(2))) hidden.set(m.index, literal);
+    frame.after = m.index + m[0].length;
+  }
+  for (const frame of stack) inspect(frame);
+  let out = "", at = 0;
+  for (const word of [...hidden.values()].sort((a, b) => a.start - b.start)) {
+    out += text.slice(at, word.start) + word.quote + SECRET_HIDDEN + word.quote;
+    at = word.end;
+  }
+  return at ? out + text.slice(at) : text;
+}
+
 /**
  * Replaces what looks like a secret in `text` with "[secret hidden]" (§3.11 step 4): GitHub, AWS, Slack, Google, npm,
  * OpenAI, Anthropic, Stripe, Hugging Face and GitLab tokens and keys, private key blocks, JWTs, Azure account keys and SAS signatures, Authorization headers, credentials in
@@ -161,6 +231,7 @@ const KEY_VALUE =
  * keys. Best effort: it can miss secrets.
  */
 export function redactSecrets(text: string): string {
+  text = redactArgvPasswords(text);
   let out = text;
   for (const re of TOKEN_PATTERNS) out = re === PRIVATE_KEY ? hidePrivateKeys(out) : out.replace(re, SECRET_HIDDEN);
   for (const re of VALUE_PATTERNS) out = out.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN);

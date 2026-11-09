@@ -2303,11 +2303,22 @@ unsupported diff formats remain available as text.
 
 Files, requests, patched files and an answer kept as the next send's context go through memory's secret guard
 (`memoryRefusal`, docs/MEMORY.md), which passes over code for a secret-named key's value, never a literal (a hash's
-entry, a mapping or a JSON section under the key, a property such as `secrets.db`). A chosen file that still
+entry, a mapping or a JSON section under the key, a property such as `secrets.db`). A recognised client's password in
+an argument array or subprocess tuple is refused too; command output and logs hide the same literal
+(`memory-q6-1`, `memory-v7-1`). These use the shell redactor's existing short-option rules, with unknown expressions
+kept as argument placeholders, preserving non-secret variable references and options such as Docker port mappings.
+Known executable basenames match mixed case and Windows `.exe` forms without changing the password-placeholder rules.
+A chosen file that still
 looks like it holds a password, token or key is named with its line (`secretLine`, `projectSecretFiles`): every such
 file at once, so the person removes only those. An exact patch whose patched file looks like it holds one isn't
 offered, and the status says which line (`readProjectPatch`'s `withheld`), never that the diff couldn't be verified; an
 answer that looks like it holds one isn't offered as context, and the status says so (`projectAnswerText`).
+
+Memory acknowledges a new or reinforced fact only after its graph write succeeds (`memory-r2`). On a full disk or
+another write failure, the old graph and recall index stay in place, no new learned line is emitted, and the
+remember tool says nothing new was kept. The spoken introduction ends with a save-failure explanation. Existing
+memory remains available; try again after correcting the storage problem. An answer that generates several facts
+stops at the first write failure, so a later successful save cannot conceal its partial failure (`memory-w7-1`).
 
 A request the model service refuses or can't finish says why in the conversation's words (`projectFailureText`): a
 refused key points at the key in settings, a usage limit says to try later, files over the model's limit say to choose
