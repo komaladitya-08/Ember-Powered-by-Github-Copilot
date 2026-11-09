@@ -86,11 +86,11 @@ describe("MemoryService", () => {
     expect(await s.context("Tell me a joke")).toBe("");
   });
 
-  it("saves soon after a change, readable by the user alone, and loads it again next time", () => {
+  it("saves before acknowledging a new fact, readable by the user alone, and loads it again next time (memory-r2)", () => {
     vi.useFakeTimers();
     const { s, dir } = service();
     s.remember("Lives in Leeds", [{ name: "User" }], "I live in Leeds");
-    expect(fs.existsSync(path.join(dir, "memory.json"))).toBe(false);
+    expect(fs.existsSync(path.join(dir, "memory.json"))).toBe(true);
     vi.advanceTimersByTime(SAVE_DELAY_MS);
     expect(memoryFile(dir).load().allFacts().map(f => f.text)).toEqual(["Lives in Leeds"]);
     if (process.platform !== "win32") expect(fs.statSync(path.join(dir, "memory.json")).mode & 0o777).toBe(0o600);

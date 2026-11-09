@@ -202,7 +202,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
   (`MemoryService.trouble`, in every `MemoryView`; one that can't be read also makes Home's status line say "Memory
-  paused"), and the remember tool tells the model while saving fails (memory-r2).
+  paused"). New and reinforced facts are staged and written before the remember tool or an “Ember learned” line
+  acknowledges them (memory-r2). A failed write refuses the new fact, leaves the previous graph and recall index
+  unchanged, and says nothing new was kept. The spoken interview stops with a save-failure explanation instead of
+  promising to remember an answer it couldn't save. Recall-use metadata and sleep-time upkeep remain batched.
 
 **Better recall** (step 8) adds matching by meaning, once the user downloads its model:
 - `embed-model.ts`: all-MiniLM-L6-v2 (int8, 23 MB, Apache-2.0) on onnxruntime-web's WebAssembly with one thread, the

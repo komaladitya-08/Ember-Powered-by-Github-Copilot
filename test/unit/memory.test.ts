@@ -1322,18 +1322,17 @@ describe("the memory file", () => {
       const changes = vi.fn();
       const file = { path: "/x/memory.json", load: () => new MemoryGraph(), erase: () => undefined, save: () => { if (fails) throw new Error("ENOSPC"); } };
       const s = new MemoryService({ dir: tmp(), log: quietLog, file, onChange: changes });
-      s.remember("Works on Atlas", [{ name: "User" }], "I work on Atlas");
-      expect(s.trouble).toBeNull();
-      vi.advanceTimersByTime(1500);
+      expect(s.remember("Works on Atlas", [{ name: "User" }], "I work on Atlas")).toMatch(/^Not remembered: memory couldn't be saved/);
       expect(s.trouble).toBe("unsaved");
       // The model is told, so it never promises what can't be kept.
-      expect(s.remember("Prefers tea", [{ name: "User" }], "I prefer tea")).toMatch(/^Remembered \[f\w+\]\. Saving memory on this computer is failing, so tell the user it may be gone when Ember closes\.$/);
+      expect(s.remember("Prefers tea", [{ name: "User" }], "I prefer tea")).toMatch(/^Not remembered: memory couldn't be saved/);
+      expect(s.list()).toEqual([]);
       expect(memoryTroubleText("unsaved")).toBe("Ember couldn't save memory on this computer, so what it keeps now may be gone when Ember closes.");
       fails = false;
       s.remember("Uses Firefox", [{ name: "User" }], "I use Firefox");
       vi.advanceTimersByTime(1500);
       expect(s.trouble).toBeNull();
-      expect(changes.mock.calls.length).toBeGreaterThanOrEqual(4);
+      expect(changes.mock.calls.length).toBeGreaterThanOrEqual(2);
       // There but out of reach: left as it was, and said so.
       const locked = tmp();
       fs.mkdirSync(path.join(locked, "memory.json"));

@@ -2291,6 +2291,11 @@ file at once, so the person removes only those. An exact patch whose patched fil
 offered, and the status says which line (`readProjectPatch`'s `withheld`), never that the diff couldn't be verified; an
 answer that looks like it holds one isn't offered as context, and the status says so (`projectAnswerText`).
 
+Memory acknowledges a new or reinforced fact only after its graph write succeeds (`memory-r2`). On a full disk or
+another write failure, the old graph and recall index stay in place, no new learned line is emitted, and the
+remember tool says nothing new was kept. The spoken introduction ends with a save-failure explanation. Existing
+memory remains available; try again after correcting the storage problem.
+
 A request the model service refuses or can't finish says why in the conversation's words (`projectFailureText`): a
 refused key points at the key in settings, a usage limit says to try later, files over the model's limit say to choose
 fewer or smaller ones, and the two-minute wait says so. "Try again" is left for a failure nothing says more about. The

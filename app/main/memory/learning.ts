@@ -338,7 +338,11 @@ export class MemoryLearning {
       if (!this.d.inForce() || (request && !this.interview.answers(text))) { this.interview = null; return null; }
       const step = this.interview.answer(text, how.own);
       this.interviewAt = now;
-      this.keepAll(step.keep);
+      const kept = this.keepAll(step.keep);
+      if (kept < step.keep.length && (this.d.memory.trouble === "unsaved" || this.d.memory.trouble === "unreadable")) {
+        this.interview = null;
+        return "I couldn't save that answer. I've stopped the questions; check Memory in settings, then try again.";
+      }
       // "Spoken or not" is Ember's real choice, not only a fact (only what the user was heard to say reaches `keep`).
       const spoken = step.keep.find(f => f.predicate === "spoken_answers");
       if (spoken && how.own) {

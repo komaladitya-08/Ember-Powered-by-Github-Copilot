@@ -174,16 +174,11 @@ export class MemoryService {
   remember(fact: string, about: AboutRef[], said: string, replaces?: string): string {
     const refs = (about.length ? about : [{ name: "User", kind: "person" }]).map(a => ({ name: a.name, kind: kindOf(a.kind) }));
     const source: Source = ownFact(fact, said) ? "user" : "conversation";
-    const r = this.g.add({ text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
+    const r = this.addSaved({ text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
     if (r.kind === "refused") return `Not remembered: ${r.reason}. Tell the user plainly if they asked you to remember it.`;
-    this.dirty();
-    this.o.semantic?.changed(this.g);
     this.o.log.info("memory.remembered", { kind: r.kind, source: r.fact.source, chars: r.fact.text.length, ...(r.kind === "added" ? { closed: r.closed.length } : {}) });
-    // Saving is failing (memory.json couldn't be saved or read this run): kept for now, and the model is told so it
-    // never promises more (memory-r2).
-    const unkept = this.problem === "unsaved" || this.problem === "unreadable" ? " Saving memory on this computer is failing, so tell the user it may be gone when Ember closes." : "";
-    if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].${unkept}`;
-    return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.${unkept}`;
+    if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].`;
+    return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.`;
   }
 
   /** The facts that bear on `query` (each counts as used); `semantic`: its matches by meaning (./embed.ts), if any. */
@@ -434,12 +429,32 @@ export class MemoryService {
    * decided its source; the graph's guard still refuses any secret whole.
    */
   learn(input: NewFact): AddResult {
-    const r = this.g.add(input);
+    const r = this.addSaved(input);
     if (r.kind === "refused") return r;
-    this.dirty();
-    // Learned, introduced and answered facts are recalled by meaning too (Better recall).
-    this.o.semantic?.changed(this.g);
     this.o.log.info("memory.learned", { kind: r.kind, source: r.fact.source, chars: r.fact.text.length, ...(r.kind === "added" ? { closed: r.closed.length } : {}) });
+    return r;
+  }
+
+  /** A success or learned line promises a saved fact, including its first write (memory-r2). */
+  private addSaved(input: NewFact): AddResult {
+    const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
+    const r = next.add(input);
+    if (r.kind === "refused") return r;
+    try { this.file.save(next); }
+    catch (err) {
+      this.o.log.warn("memory.save_failed", { err: err instanceof Error ? err.message : String(err) });
+      if (this.problem !== "unreadable" && this.problem !== "unsaved") { this.problem = "unsaved"; this.notify(); }
+      // Leave the prior graph, its vectors and any pending metadata write untouched.
+      return { kind: "refused", reason: "memory couldn't be saved on this computer. Nothing new was kept; try again" };
+    }
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+    this.cancelUpkeep();
+    this.graph = next;
+    this.changed = true;
+    if (this.problem === "unsaved") this.problem = null;
+    // The graph is durable: indexing or a view notification cannot turn success into a reported failure.
+    try { this.o.semantic?.changed(next); } catch { this.o.log.warn("memory.learn_index_failed"); }
+    this.notify();
     return r;
   }
 
