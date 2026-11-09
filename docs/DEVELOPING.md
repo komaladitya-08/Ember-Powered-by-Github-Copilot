@@ -172,7 +172,9 @@ runtime. It does not change the app's consent or speaking settings.
     clock, its steps in one line, its plan as a checklist, a row for each thing it did with the time after it started
     (steps of one kind folded, each listed when opened), its questions with how they were answered, and how it ended
     (the worker's summary and view). A finished task folds to its head. A task waiting for your answer says where it is
-    asked and with which keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
+    asked. Refusals, denied steps and sent pictures stay with the exact tool call that produced them, even when the
+    model queued another step before the first ran. A missing or stale call id never chooses between overlapping steps.
+    The waiting task also names its answer keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
     filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, through a
     reconnect (a finished task's row then offers nothing to press, its card having gone, except after a switch of model
     service that waited for the tasks: their cards go on), and gone at quit, sign-out

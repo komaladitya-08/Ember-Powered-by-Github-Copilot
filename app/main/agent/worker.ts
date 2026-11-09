@@ -1427,6 +1427,10 @@ export class Worker {
 
   /** Tells the task's activity (its card); a listener's fault never stops the task. */
   private activity(e: ActivityEvent): void {
+    if (e.type === "refused" || e.type === "denied" || e.type === "picture") {
+      // SDK tool-start events can arrive ahead of serial execution (tasks-approvals-c5-1).
+      e = { ...e, ...(this.activeToolCallId !== undefined ? { id: this.activeToolCallId } : {}) };
+    }
     try { this.d.onActivity?.(e); } catch (err) { this.d.log.warn("worker.activity_failed", { err }); }
   }
 
@@ -1488,8 +1492,11 @@ export class Worker {
     const maxSteps = this.d.limits?.maxSteps ?? 150;
     return defineTool(name, {
       description, parameters, skipPermission: true, defer: "never",
-      handler: (raw: unknown) => {
-        const run = this.toolTurn.then(() => this.runTool(name, parameters, handler, raw, maxSteps));
+      handler: (raw: unknown, invocation) => {
+        const run = this.toolTurn.then(async () => {
+          try { return await this.runTool(name, parameters, handler, raw, maxSteps, invocation?.toolCallId); }
+          finally { this.activeToolCallId = undefined; }
+        });
         this.toolTurn = run.catch(() => undefined);
         return run;
       },
@@ -1498,10 +1505,13 @@ export class Worker {
 
   /** The tool call in progress (or queued last): the next one waits for it. */
   private toolTurn: Promise<unknown> = Promise.resolve();
+  /** The invocation executing now, rather than the last tool-start event queued by the SDK. */
+  private activeToolCallId: string | undefined;
   /** The turn ended without finish_task and only its summary is asked for now. */
   private wrappingUp = false;
 
-  private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number): Promise<ToolResultObject | string> {
+  private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number, toolCallId?: string): Promise<ToolResultObject | string> {
+    this.activeToolCallId = toolCallId;
     // A step held to go ahead without asking that its own call didn't take (a password prompt, the keyboard or the desk
     // refused it) is never written by a later call's action entry, after its refusal (safety-privacy-r4-1).
     this.ahead = null;
