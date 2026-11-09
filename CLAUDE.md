@@ -36,7 +36,7 @@ npm run typecheck
 npm test                         # vitest: test/unit/** and packages/**/*.test.ts
 (cd packages/npm && npm pack --dry-run)   # the npm launcher's package files
 npm run test:sidecar             # python3 -B sidecar/atspi/test_ember_atspi.py
-node scripts/voice/prepare.mjs   # speech models (SHA-256 checked) for the voice tests
+node scripts/voice/prepare.mjs   # speech models and a test-only fixture speaker (SHA-256 checked)
 EMBER_VOICE_TEST=1 npm run test:integration
 npm run build
 EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_FIRST_RUN_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_SIGNOUT_FORGET_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1 EMBER_CHROMIUM_PATH=/usr/bin/google-chrome npm run test:integration -- <files>   # renderer journeys: the files are in ci.yml's checks job

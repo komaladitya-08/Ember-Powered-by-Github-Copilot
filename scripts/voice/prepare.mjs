@@ -1,6 +1,6 @@
-// Downloads Ember's default speech models (verified), including Kitten Nano, for the voice tests and packages.
-//   --tts-voice        also fetches a TTS voice (test-only; never shipped). With it the evaluation's missed-wakes gate
-//                      speaks enough renderings of "Hey Ember" (in memory, new ones every run) to be measured.
+// Downloads Ember's default speech models (verified), including Kitten Nano, and a pinned test-only fixture speaker.
+//   --tts-voice        accepted for compatibility: the test voice is now prepared by default, never shipped.
+//                      The evaluation's missed-wakes gate uses it to render "Hey Ember" in memory every run.
 //   --clips            also (with the TTS voice) synthesizes new test clips into <dir>/clips, a scratch folder.
 //   --voice <name>     the TTS voice: amy (the default, which the committed clips are in) or ryan, another speaker
 //                      (Voice Match's end-to-end test needs a voice that isn't the owner's); --clips then go into
@@ -46,7 +46,6 @@ const updateFixtures = args.includes("--update-fixtures");
 // The committed clips are amy's: another voice's would fail the voice tests' tuning.
 if (updateFixtures && voiceName !== "amy") { console.error(`--update-fixtures takes amy's voice only\n${USAGE}`); process.exit(2); }
 const makeClips = updateFixtures || args.includes("--clips");
-const ttsVoice = makeClips || voiceAt >= 0 || args.includes("--tts-voice");
 const require = createRequire(import.meta.url);
 fs.mkdirSync(dir, { recursive: true });
 
@@ -59,11 +58,6 @@ await ensureModels(models, httpsDownloader, (done, total) => {
   const pct = Math.floor((done / total) * 100);
   if (pct !== last && pct % 10 === 0) { last = pct; console.log(`models ${pct}%`); }
 });
-
-if (!ttsVoice) {
-  console.log(`models in ${models}`);
-  process.exit(0);
-}
 
 const TTS_VOICE = TTS_VOICES[voiceName];
 const ttsDir = path.join(dir, TTS_VOICE.target);
