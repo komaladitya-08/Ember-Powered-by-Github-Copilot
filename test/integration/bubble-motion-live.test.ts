@@ -293,9 +293,10 @@ type Stage = { spot: { x: number; y: number; w: number; h: number } | null; whol
  * as measureTasks calls it): Read all with the Ask box open, the box closed (Esc), then the box opened again where main
  * opens it (ask.ts openingBounds, over the answer shown whole, as nothing by Ember is clear of it), first a row short. On a
  * 1024 x 768 screen, where it is cut short for the box (companion-repairs-x6-1), and a 1366 x 768 one, where it is
- * narrowed into the screen's side strip (companion-repairs-x6-2).
+ * narrowed into the screen's side strip (companion-repairs-x6-2). Then Read all with the box closed, and the box opened
+ * on it the same way to reply (\`direct\`, as it shows whole; \`replied\`, the box open: companion-y6-1).
  */
-function reopenedOver(): { name: string; open: Stage; closed: Stage; reopened: Stage }[] {
+function reopenedOver(): { name: string; open: Stage; closed: Stage; reopened: Stage; direct: Stage; replied: Stage }[] {
   const html = document.documentElement;
   html.dataset.textSize = "larger";
   html.style.setProperty("--text-scale", "1.3");
@@ -335,7 +336,17 @@ function reopenedOver(): { name: string; open: Stage; closed: Stage; reopened: S
     placeFor(held);
     held = askKeepOff(reopened, askKeepOffKey(full), held, true, b.clipped(), b.rect());
     placeFor(held);
-    out.push({ name, open, closed, reopened: read(reopened) });
+    const again = read(reopened);
+    // Asked in the box (which closes on send), Read all with the box closed, then Ctrl+Alt+Space to reply.
+    held = askKeepOff(null, askKeepOffKey(cutState), { box: null, question: "" });
+    held = askKeepOff(null, askKeepOffKey(full), held, true, b.clipped(), b.rect());
+    placeFor(held);
+    const direct = read(null);
+    held = askKeepOff({ ...reopened, y: 386, height: 205 }, askKeepOffKey(full), held, true, b.clipped(), b.rect());
+    placeFor(held);
+    held = askKeepOff(reopened, askKeepOffKey(full), held, true, b.clipped(), b.rect());
+    placeFor(held);
+    out.push({ name, open, closed, reopened: again, direct, replied: read(reopened) });
     b.root.remove();
   }
   host.remove();
@@ -447,8 +458,11 @@ type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext"
   openedInFull: { spot: { x: number; y: number; w: number; h: number } | null; text: number; scroll: number; line: number; textHot: boolean; buttons: { x: number; y: number; w: number; h: number }; buttonsHot: boolean; whole: number; wholeText: number }[];
   /** An answer opened in full, cut for the open Ask box, then the box closed; and cut, then scrolled (closedAfterCut). */
   closedAfterCut: { open: Ended & { cut: boolean; cap: string; text: number; scroll: number }; closed: Ended & { cut: boolean; cap: string; text: number; scroll: number; spot: { x: number; y: number; w: number; h: number } | null }; scrolled: { cut: boolean; before: Ended; after: Ended } };
-  /** An answer opened in full with the box open, the box closed, then opened again on it, at Ember low (reopenedOver). */
-  reopenedOver: { name: string; open: Stage; closed: Stage; reopened: Stage }[];
+  /**
+   * An answer opened in full with the box open, the box closed, then opened again on it, at Ember low; then one opened in
+   * full with the box closed and the box opened on it (reopenedOver).
+   */
+  reopenedOver: { name: string; open: Stage; closed: Stage; reopened: Stage; direct: Stage; replied: Stage }[];
   /** What a screen reader reads of each hint left in the page (by its host's id). */
   axHints: Record<string, string | null>;
   /** Whether the bundled "Ember Sans" (Inter) had loaded when the hints were measured. */
@@ -639,6 +653,18 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
       // 66,176 px² of the field).
       expect(reopened.spot, name).not.toBeNull();
       expect(reopened.over, name).toBe(0);
+    }
+  });
+
+  it("keeps an answer opened in full with the box closed clear of the box opening on it to reply (companion-y6-1)", () => {
+    for (const { name, direct, replied } of result.reopenedOver) {
+      // Read all with the box closed: whole, and the box opens on it (nothing by Ember is clear of it).
+      expect(direct.whole, name).toBe(true);
+      expect(direct.spot, name).not.toBeNull();
+      // The box open: it keeps off the box, still shown (the field, Send and its hint lay over lines 9 to 11 of it,
+      // 66,176 px² of the field, whichever order Read all and the box came in).
+      expect(replied.spot, name).not.toBeNull();
+      expect(replied.over, name).toBe(0);
     }
   });
 

@@ -187,9 +187,10 @@ They share one emotion rig, so switching never changes behaviour.
   lines, and its text scrolls inside it; with no such place it goes where it always went. Once
   the box closes, one whose text didn't all show for it (cut short, or narrowed into a side strip
   with its text running on) keeps off the box's place no more and shows whole where it can (it may
-  move to do so); one that showed whole stays where it is. When the box opens again on the one that
-  moved, or grows into it as it opens, it keeps off the box again as it did with Read all, so the
-  field never lies over its lines; a box that opens clear of it never moves it.
+  move to do so); one that showed whole stays where it is. When the box opens on an answer opened in
+  full that keeps off nothing of it (the one that moved, or one opened with **Read all** while the
+  box was closed), or grows into it as it opens, the answer keeps off the box from then on as it does
+  with Read all, so the field never lies over its lines; a box that opens clear of it never moves it.
   While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
