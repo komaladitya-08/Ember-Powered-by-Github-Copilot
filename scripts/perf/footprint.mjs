@@ -23,6 +23,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { devtoolsPage } from "./devtools.mjs";
 import { LISTENING_KIND, listeningGap, listeningSeen, listeningWords, notNative } from "./listening-backend.mjs";
 
 if (process.platform !== "linux") { console.error("footprint.mjs reads /proc: Linux only."); process.exit(2); }
@@ -132,24 +133,11 @@ const kind = p => {
 /**
  * Each page's main-thread CPU over `secs`, through DevTools (Performance.getMetrics TaskDuration). A page that closes
  * meanwhile (listening starting again closes the microphone's) is left out, as a process that ended is from the rows:
- * its calls answer nothing, where they left the run waiting for ever (reliability-performance-w6-1).
+ * its calls answer nothing (devtools.mjs), where they left the run waiting for ever (reliability-performance-w6-1).
  */
 async function pages(secs) {
   const list = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).filter(t => t.type === "page");
-  const open = t => new Promise((resolve, reject) => {
-    const ws = new WebSocket(t.webSocketDebuggerUrl);
-    let id = 0;
-    const pending = new Map();
-    const call = (method, params = {}) => new Promise(r => {
-      if (ws.readyState !== WebSocket.OPEN) { r(undefined); return; }
-      pending.set(++id, r);
-      ws.send(JSON.stringify({ id, method, params }));
-    });
-    ws.onmessage = e => { const m = JSON.parse(e.data); pending.get(m.id)?.(m.result); pending.delete(m.id); };
-    ws.onclose = () => { for (const r of pending.values()) r(undefined); pending.clear(); };
-    ws.onerror = reject;
-    ws.onopen = () => resolve({ ws, call });
-  });
+  const open = t => devtoolsPage(new WebSocket(t.webSocketDebuggerUrl));
   const task = async c => (await c.call("Performance.getMetrics"))?.metrics?.find(m => m.name === "TaskDuration")?.value ?? null;
   const conns = await Promise.all(list.map(open));
   await Promise.all(conns.map(c => c.call("Performance.enable")));

@@ -133,8 +133,7 @@ describe("footprint.mjs's listening backend", () => {
     expect(script).toMatch(/native \? notNative\(seen\) \?\? unmeasured : null/);
     expect(script).toMatch(/if \(budget\) process\.exitCode = 1;/);
     expect(LISTENING_KIND).toBe("utility node Node");
-    // A page that closes during the sample (listening starting again closes the microphone's) answers nothing rather
-    // than leave the run waiting for ever.
-    expect(script).toMatch(/ws\.onclose = \(\) => \{ for \(const r of pending\.values\(\)\) r\(undefined\); pending\.clear\(\); \};/);
+    // A page that closes during the sample answers nothing rather than leave the run waiting for ever:
+    // footprint-devtools.test.ts drives that with a fake socket (reliability-y6-1).
   });
 });
