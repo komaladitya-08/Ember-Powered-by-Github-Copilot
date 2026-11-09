@@ -2524,3 +2524,5 @@ Unresolved tar extraction directories go through optionFiles and retain both the
 The xargs process-slot-var gate is unconditional: arbitrary child environment names are not assumed harmless.
 
 Link targets include protected ancestor folders in the own-file refusal, including known POSIX and PowerShell variables.
+
+Shell scripts retain questions for loops: reading a body once does not establish later passes' arguments or folders.

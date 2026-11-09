@@ -388,8 +388,8 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     expect(scriptLanguage("shebang", "\x7fELF\x02\x01\x01\x00")).toEqual({ kind: "none" });
   });
 
-  it("runs an ordinary POSIX script with if, for and while without asking; a dangerous command inside still asks (review #27)", async () => {
-    const plain = "#!/bin/sh\nif [ -f Makefile ]; then\n  make build\nelse\n  echo no Makefile\nfi\nfor t in unit lint; do echo $t; done\nwhile false; do echo; done\n";
+  it("runs an ordinary POSIX script conditional without asking; a dangerous command inside still asks (review #27)", async () => {
+    const plain = "#!/bin/sh\nif [ -f Makefile ]; then\n  make build\nelse\n  echo no Makefile\nfi\n";
     const h = scriptHarness(plain);
     expect((await call(h, { target: "this computer", command: "./build.sh" })).resultType).toBe("success");
     expect(h.asked).toEqual([]);
@@ -432,7 +432,7 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     for (const [script, command] of hidden) got.push(await judged(script, command));
     expect(got).toEqual(hidden.map(([script]) => `denied: ${script}`));
     // A plain `[[` test in a bash script is still read through.
-    const plain = "#!/bin/bash\nif [[ -d build ]]; then echo built; fi\nwhile [[ ! -f done.txt ]]; do sleep 1; done\n";
+    const plain = "#!/bin/bash\nif [[ -d build ]]; then echo built; fi\n";
     expect(await judged(plain, "./t.sh")).toBe(`success: ${plain}`);
   });
 
@@ -2912,5 +2912,21 @@ describe("an empty database option expansion", () => {
     expect((await call(h, { target: "this computer", command: "O=''; redis-cli $O FLUSHALL" })).resultType).toBe("denied");
     expect(h.asked).toHaveLength(1);
     expect(h.starts).toEqual([]);
+  });
+});
+
+describe("script loop bodies", () => {
+  it("asks before a loop can run later passes with different flags or folders (commands-remote-c7-4, i6a)", async () => {
+    setCommandJudge(null);
+    for (const script of [
+      "for f in --hard; do git reset $f; done\n",
+      "for f in -delete; do find . $f; done\n",
+      "for i in 1 2; do sed -i s/a/b/ ember/settings.json; cd ~/.config; done\n",
+    ]) {
+      const h = harness({ binding: LOCAL, answers: ["deny"], readScript: async () => script, paths: p => ({ exists: p !== "/home/ana/ember/settings.json", real: p }) });
+      expect((await call(h, { target: "this computer", command: "sh task.sh" })).resultType, script).toBe("denied");
+      expect(h.asked, script).toHaveLength(1);
+      expect(h.starts, script).toEqual([]);
+    }
   });
 });

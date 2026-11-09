@@ -212,7 +212,7 @@ judges a loop's body once, and a value from the loop's own list or a `read` can 
 judges looks at: `for f in --hard; do git reset $f; done` is `git reset --hard`. Ember's own folder named in a loop is
 still refused before anything asks (`for d in ~/.config/ember; do rm -rf "$d"; done`), the card still says what a
 dangerous command in the loop does ("Deletes a.log and b.log."), and a loop never runs with a Stop because your words
-asked for what it does. (A shell script's loops are read; below.)
+asked for what it does. A shell script's loops keep their question too.
 
 **An `if` on a command line** in bash or sh always asks, as every loop does. Ember keeps the baseline's question
 also for `if [ -f package.json ]; then npm test; fi`: judging its body once cannot establish every execution path.
@@ -231,9 +231,9 @@ start of a command: `if true; then LD_PRELOAD=./x.so ls; fi` asks, as `LD_PRELOA
 like), Ember reads the script first, on the computer that runs it, and judges its text as it judges a command: a
 script that deletes, publishes or reads secrets asks ("In t.sh: Deletes build and everything in it."), even when you
 asked for that kind of operation, and one that would touch Ember's own safety files is refused. A script also asks
-when Ember can't read all of it: an sh or bash script's `if`, `for` and `while` and a plain `[[ … ]]` test are read
-(the commands inside them are judged, a loop's body once, in the folder the script starts in, so a `cd` in a loop
-isn't followed from one pass to the next), but `case`, functions, `trap`, `{ … }` groups, a `[[` that compares numbers or
+when Ember can't read all of it: an sh or bash script's ordinary `if` and a plain `[[ … ]]` test are read.
+Every `for`, `while` or `until` keeps its question, because the flags and working folder of later passes cannot be
+established by judging the body once. `case`, functions, `trap`, `{ … }` groups, a `[[` that compares numbers or
 uses `-v`, a variable in a file name, a loop whose variable is `PATH` or the like, a `read` or a loop's list over text
 Ember can't see (as on a command line, above), more than 64 commands or more than
 8,000 characters ask, and so do zsh's `if`, `for` and `while` (also from a bash script's `zsh -c '…'`) and
