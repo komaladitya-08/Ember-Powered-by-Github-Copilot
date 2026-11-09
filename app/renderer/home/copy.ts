@@ -424,7 +424,8 @@ export function tagline(t: {
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to ${service}…`;
   // Ready, with setup rows still worth a look: said, so a warning isn't left in a closed fold (review #95).
   // An empty label: another app holds the ask shortcut and its fallback (D-45b), so settings' Ask Ember… is the way.
-  const ask = askLabel ? `Press ${askLabel} to ask anything.` : "Ask anything with the Ask button below.";
+  // Named by its place: said into the microphone, "Ask Ember…" calls Ember, and no button is "Ask" (voice-listening-x6-4).
+  const ask = askLabel ? `Press ${askLabel} to ask anything.` : "Ask anything with the button below.";
   return `${where} ${ask}${t.look ? ` The setup check has ${things(t.look)} worth a look.` : ""}`;
 }
 

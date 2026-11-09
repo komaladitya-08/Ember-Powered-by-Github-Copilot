@@ -481,7 +481,8 @@ describe("the settings window names the chord Ember holds: its fallback, or none
     expect(text).toContain("Another app has the stop shortcut: use Stop everything, here or in Ember's handle menu.");
     expect(text).toContain("Mute microphone, in Ember's handle menu, turns the microphone off and on.");
     expect(text).toContain("When Ember asks “May I?”, answer in its bubble: another app has the keys for Allow and Not now.");
-    expect(tagline(base, st.shortcuts.ask.label)).toBe("Beside your cursor. Ask anything with the Ask button below.");
+    // The button is "Ask Ember…", and naming it calls Ember: its place, not a name it doesn't have (voice-listening-x6-4).
+    expect(tagline(base, st.shortcuts.ask.label)).toBe("Beside your cursor. Ask anything with the button below.");
     expect(byId(root, "conversation").attrs["data-empty"]).toBe("No messages yet. Write to Ember below, or use Ask Ember… at the top of Home.");
     expect(micOffText(st.shortcuts.mute.label)).toBe("Microphone off");
     expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(st))?.what).toBe("Everything stopped (stop shortcut)");
