@@ -2101,3 +2101,173 @@ decisions stand as round five left them, safety's #1 to #5 among them. Still to 
 windows on GNOME 3.32 with platform-python 3.6; real screen readers for every line said without the name and for
 teaching on headphones; AppLocker's block and the start-up dialog on a real Windows PC; the resting cost on the RHEL 8
 target with the C API; and the first CI runs of el8's two footprint budgets.
+
+### Product audit fixes, seventh round (2026-11-09)
+
+**Scope and method.** Rechecked main at `36451257` after reading all six preceding records, the shipping notes and
+[#204](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/204). Every one of the 13 areas received
+an independent re-rating followed by an adversarial challenge, with six sub-dimensions and fresh first-use,
+everyday and failure journeys. Earlier finding-named tests were checked alongside the actual user-facing paths.
+The historical score table, final assessments and bounded verification evidence are in
+[the seventh-round review](docs/review-2026-11-09.md). P3s, native-only validation and recorded owner decisions do
+not hold an area below 9. A safety-constrained P2 is still reported as a P2.
+
+**Home, setup and listening (M8.8).** Home's Features line uses the targets runtime's current capability snapshot,
+including combined restrictions, host allow-lists and usability, rather than saved switches or host counts.
+Missing capabilities mean off; listening requires ready models and microphone state. Policy failure and held
+lockdown show these off without changing preferences or opening a connection (home-r6-1). The first review caught
+the initial helper still counting excluded hosts; the repair removed those renderer guesses (home-v7-1).
+
+Sending an edited request restores the draft Edit set aside, retaining words entered while sending waited.
+Edit epochs and conversation generations protect a later Edit, Cancel, Stop or privacy reset; the Stop control
+keeps returned text and the prior draft exactly once (home-c5-1). Closing Home hides its page for this run, keeping
+unsent drafts and reconnect recovery in memory. Close still ends its Listen once, voice teaching and Project work,
+pauses level forwarding and stops drawing. Sign-out, account change, lockdown and actual quit discard the relevant
+draft; nothing unsent is written to disk (home-r7-1/home-c4-1).
+
+Agree waits for a known recipient, explains why and re-arms its half-second guard when the shown recipient or
+agreement changes; the click checks again (first-run-c7-1). Start and automatic heading focus use name-free
+accessible words while visual branding stays (first-run-r6-1). Unsaved setup keys belong to their entered host:
+a different valid host or port, or reopening saved details, clears the field. Path-only edits and unfinished typing
+retain it; stored credentials remain untouched (first-run-v7-1).
+
+The composer says “Thinking… The reply will appear above.” Ask's page and window title are “Companion request” and
+its focused field says “Ask or tell me”. The self-window refusal recognises that title and every older title when
+the process id is unknown. Voice Match's focused setup controls have name-free names and state descriptions;
+the full visible help still explains spoken approvals. Failure updates the focused description and uses the first
+person, preserving retry instructions and protected teaching phrases (voice-listening-r6-1 to -r6-3, -q6-1).
+These close the shared companion and accessibility wake-ingress findings. Production C API and WebAssembly tests
+with both prepared speech fixtures produced no wake/request events for the replacement phrases. That is synthetic
+verification, not native screen-reader or real-device acceptance.
+
+**Speaking and activity (M8.8, M9).** Suggested, typed and spoken “Read it out” requests read the retained answer
+through the existing speech-policy path, without an SDK turn or a future task-result speech change
+(voice-speaking-r6-1). A held approval explains why speech waits. Review caught a refusal becoming the next answer,
+then a WeakSet-only repair losing that distinction after restart and a busy read starting another SDK turn.
+Persisted display-only notice provenance now keeps notices out of the retained answer, and the local read route
+runs before interruption. The second reviewer accepted the repaired busy/restart probes. A second failed Hear Ember
+sample now reports its own failure without a fresh 12-second wait (-r6-2, P3).
+
+Worker calls pass the SDK's tool-call identity through the serial tool runner to refusal, denial and picture
+activity. A stale or ambiguous identity cannot select another row; a missing id uses only a single unambiguous
+running step (tasks-approvals-c5-1). Two independent regression reviews accepted the package, including multiple queued SDK calls.
+
+**Memory and shared privacy (M10).** The shared guard/redactor recognises literal passwords in argument arrays,
+including MySQL, the other already-recognised password clients, native executable paths and mixed-case names.
+Projects and task views receive the same protection. References and case-sensitive placeholders keep their
+existing treatment (memory-q6-1). New memories are durably saved before “Remembered” or “Ember learned” appears;
+a failed first write leaves the live graph unchanged and says why (memory-r2). An interview stops at its first
+failed save. Review found and repaired a later successful fact hiding that failure, plus mixed-case/native clients
+missing the first array guard. Both reviewers accepted the repairs; no secret refusal was loosened.
+
+**Providers and connections (M9).** A blanket 404, 405 or 501 while checking an edit no longer replaces the working
+provider (integrations-c5-1). Home and setup use one adoption operation for a provider in use: seal and stage the
+replacement, recheck policy/consent/draft ownership, and publish its key and settings together. Failures retain the
+working pair and typed draft. Same-host edits without a replacement key keep the existing one (integrations-r7-1).
+Encrypted originals and private before/after settings state recover interrupted cross-host and same-host changes;
+Remove clears transaction remnants. Required persistence rejects an unread settings file, and compare-and-set
+after the fresh disk read preserves newer provider choices and unrelated edits.
+
+The two review stages found and repaired volatile-settings success, same-host crash ambiguity, incomplete metadata
+rollback/recovery, a revoked key being revived by a pending failure, and a newer disk choice being overwritten.
+The early metadata-only crash allegation was refuted by executing the unchanged recovery path and retained as
+coverage. A programmatic redraw could also leave B's draft key on C: redraw and submit now check its origin, and
+key saving carries a required expected host through IPC to main. A late main-side change refuses rather than
+rebinding the key (integrations-v7-4 to -v7-9). Independent service/store/crash and actual-renderer probes accepted
+the final repairs. No additional endpoint request or broader provider consent was introduced.
+
+**Commands (M12).** Restored baseline questions for ordinary command-line `if` and error-checking HOME/PWD
+expansions. Unknown URL names, attached download destinations, URLs supplied through xargs/loops, configured Git
+fetches/pulls and opaque interpreter copies retain download provenance across calls. The known CSV download followed
+by an unrelated Python analysis still runs. Empty Redis option variables, uncertain extraction destinations and
+wrapped script locations ask; scripts keep loop questions rather than judging one pass. Positional arguments and
+opaque Windows constructs retain protected-path refusals. Requests placing a folder somewhere Ember cannot
+establish ask rather than announcing a different object “as you asked”.
+
+xargs environment options and unknown/abbreviated long options ask. Creating links to protected parents is refused,
+including cp link forms and relative symbolic targets resolved beside their destination. Review found the first
+link repair using the current directory instead; the repair judges destination parent/folder candidates, preserves
+GNU relative-link semantics and keeps existing direct-source refusals. Separate unseen wrapper option values keep
+an unknown-program question rather than consuming text that can become another command.
+
+The maintained comparison bundles the classifier and the actual local `run_command` flow from pristine
+`4d64d3a` and the current tree. It preserves the four baseline corpora, contexts and sequence stages, uses a
+scripted runner and denies every question; it executes no corpus shell command. Unknown, missing, truncated or
+misidentified output fails. Baseline checks include tracked and untracked resolver inputs. Only exact written
+job counts can be exempt: literal numbers, `$(nproc)`, `$(getconf _NPROCESSORS_ONLN)`, `$(sysctl -n hw.ncpu)` and
+numeric arithmetic, with count-only prior reasons and reviewed inert operands. A broad processor-substitution
+bypass was removed; filenames, load limits, other processor commands and unsupported tool forms keep baseline
+behaviour. Comparison-tool review repaired cross-stage exception borrowing, equal truncation, baseline shadow
+inputs and a newline exception hole. The comparison runs again after every command repair and on integration.
+The default fixture also contains the portable independent review inputs: 124 unique records were added, with
+all 39 earlier records retained and 13 duplicates omitted. Both reviews verified exact fields, order, sequences
+and script readers. The default command now reproduces all 7,213 cases and 14,496 decisions without a private
+supplement, with zero probe errors or forbidden loosenings, 200 exact job-count exceptions and 2,008 stricter
+decisions. No classifier, probe, loader or allowed-exception rule changed in publishing those inputs.
+
+**Reliability and docs (M8).** Python accessibility imports, gsettings reads and screen-reader detection no longer
+run foreground subprocess waits in Linux status reads. Pending means checking, failure stays unavailable and the
+doctor awaits the bounded result (rp-1, reliability-c7-1). Review repaired the remaining synchronous reader call,
+unknown-reader enrolment and refresh temporarily unhushing speech: the speech path retains a known positive
+while the teaching path treats unknown conservatively. README now reports the measured 790–930 MB resting
+listening cost, and STATUS includes 9 November. Shipping notes replace the old ordinary-if, attached-download,
+Teach-after-Forget, argument-array and provider-adoption claims made untrue by this round.
+
+A fresh re-rating found two more foreground GNOME waits: the motion query repeats when a compositor returns,
+not just at startup (reliability-r7-2), and setup's Turn on could wait five seconds on the main thread (-r7-3).
+Both now use bounded asynchronous execution. Cursor following stays conservative while the preference is unknown;
+stopped/replaced overlays and newer live preferences invalidate old results. A fix reports success only once its
+command finishes and retains the existing failure route. Named regressions failed first; 116 related tests and
+11 independent motion/fix/Stop controls passed, with unchanged Windows/macOS boolean behaviour.
+
+**Integration and checks.** Area work ran in separate worktrees with a moderate number of parallel lanes. Each fix
+has a finding-named failure-first regression, touched documentation, signed commits, typecheck, touched-file lint
+and related checks. Two independent regression reviews examined packages and their repairs. Shared Home/Voice
+Match/provider documentation was retained deliberately. The Welcome merge keeps both draft-key origin tracking
+and adoption cancellation; its renderer harness combines recipient delays, voice consent, adoption failures and
+host-bound key saves. The merged build/typecheck/lint, 40 provider/abandon tests and six selected renderer journeys
+passed before the full integrated gate. Package test totals overlap and are not a full-suite total. Exact final
+gate commands, counts, footprint comparisons and CI/review status are recorded in the seventh-round review.
+
+The first full unit gate found three remote-gate tests still expecting the removed ordinary-if waiver and a fuse
+fixture assuming umask 022. The remote assertions now require the exact baseline conditional reasons; the fixture
+explicitly establishes its intended mode before the unchanged preservation assertion. The latter failed unchanged
+on shipping main under umask 077 and passed under 022; its repair passes under both without changing production or
+the developer's umask. Both test-only repairs passed typecheck, lint, related tests and two regression reviews.
+Timing failures in broad local runs are reported separately from assertion failures and isolated reruns; no deadline
+or safety assertion is relaxed to make the gate pass.
+
+The integrated gate also exposed independent smoke and app-launch scenarios sharing one default test deadline.
+They now have separate specifications retaining every assertion, argument, helper wait and original deadline.
+The changed suites pass 94 packaging and 30 worker-command checks, with both regression reviews accepted.
+
+The full integration gate caught a new Ask layout regression: the longer name-free placeholder wrapped at 320 px
+with Larger text, making an empty field 91 px high (companion-v7-2). A fresh build reproduced it; changing only the
+visible prompt to “Ask…” restores 61.8 px while preserving the full accessible label, title and wake protection.
+All 19 actual Ask renderer journeys and 62 related unit tests pass with unchanged geometry assertions. Live handle
+and native helper selectors now recognise the current “Companion request” window title, retaining menu words,
+focus/typing assertions and deadlines (voice-listening-v7-test-1). The desk recovery mock now supplies the existing
+ipcMain.handle API and asserts foreign-sender refusal (reliability-v7-test-1); its missing method also failed on
+unchanged shipping main. All four live handle and three desk recovery journeys pass after these fixture repairs.
+
+The required renderer gate then found six assertions still expecting the old name-bearing Thinking line.
+The finding-named case failed against the actual name-free text; all 13 literal expectations, including the negative
+check, now match that approved wording (voice-listening-v7-test-2). All 339 assertions, polls, clock/turn/Stop/scroll
+steps and deadlines are retained. The full 44-case conversation file and 151 related unit tests pass, with both
+reviews accepted. Three separate default-deadline failures passed unchanged in quiet individual runs on both the
+candidate and shipping main; they are recorded as timeouts, not silently converted into full-stage passes.
+
+**Consent and departures.** No new kind of data is read, sent or persistently kept; no consent text or version
+changes. Existing host, memory, microphone and approval boundaries remain. No §2 departure, no weaker safety or
+privacy rule, and no new exception to the command comparison. Keeping a draft in this run's existing renderer does
+not write it to disk or send it automatically.
+
+**Left.** Ordinary loops and `[[ ]]` on the command line still ask (commands-remote-r6-2, P2). Baseline asks too;
+running them would violate this task's hard rule, which permits only the exact job-count loosenings. This round
+does not call that fixed or award a 9 while it remains. P3s include awk's `NR>1` write wording, unknown-download
+build-tool wording, Windows Test-Path of Ember's folder, held-lockdown refusal guidance, not-answering status's
+wording dependency, duplicate “Request heard.”, constrained-screen polish, the recorded memory phrasings and
+over-refusals, stale comments describing delayed memory writes, launcher error wording and crash-log actions.
+Native Windows/macOS and target RHEL validation,
+real screen readers/microphones/speakers, signing/update/device checks and the recorded owner decisions remain
+explicitly excluded from scores. Local AT-SPI desktop suites need Python's gi; CI's el8 job exercises them.

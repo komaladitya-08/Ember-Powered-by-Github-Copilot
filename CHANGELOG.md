@@ -240,6 +240,10 @@ the automated tests don't stand in for them.
 
 #### First run
 
+- **Start and setup's automatic heading focus avoid the wake name.** Visible branding stays; screen readers hear
+  “Home” after Start and “Started. Ready when you are.”, including after an update with listening already on.
+- **Agree waits until the request recipient is known.** A changed recipient or agreement restarts its half-second
+  protection against a stray press, and the click checks the agreement again before saving.
 - **First run names the service Ember uses.** While your own model provider connects or isn't answering, the sign-in
   step is titled “Your own model provider” and offers **Check my provider's details**, and Your Ember says it isn't
   connected yet instead of “Not signed in yet”; once it answers, first run says “Connected to your own provider”
@@ -267,8 +271,10 @@ the automated tests don't stand in for them.
   again” where it shows no Check again: it says “press Try again” beside **Try again**, also for a refused token from
   the environment and for your organisation's service, and “Go back and press Try again” on the details of your own
   provider in use.
-- **The API key field says a key is saved only while the address typed is the one it was saved for**, and catches up
-  when Ember's key state arrives late. With no keyring, **Agree and check the models** waits with a short reason beside
+- **The API key field says a key is saved only for its own address**, and catches up when Ember's key state arrives
+  late. An unsaved key clears when a different valid host or port is entered, or setup restores saved details;
+  path-only edits and unfinished typing keep it. Address edits leave the stored provider and key untouched.
+  With no keyring, **Agree and check the models** waits with a short reason beside
   it (“I can't keep a key safely on this computer.”) instead of the status line's whole sentence again.
 - **Ember's hello names the service it can't reach**, your own model provider or your organisation's, with “Start it,
   and I'll connect in a moment.” for a model server on this computer, and Home's button reads **Check my provider…**
@@ -295,6 +301,14 @@ the automated tests don't stand in for them.
 
 #### Home
 
+- **The Features line shows what is available now.** Commands and SSH/WSL targets follow the runtime's current
+  restrictions and availability; listening requires ready speech models and microphone state. A held lockdown shows
+  these off without changing saved preferences or making a connection to check them.
+- **Sending an edited request restores the draft that Edit set aside**, retaining words typed while sending waited.
+  Later Edit, Cancel and Stop actions keep their own text exactly once.
+- **Closing Home keeps unsent conversation drafts for this run**, including requests waiting to reconnect. They
+  return when Home reopens, stay only in memory, and clear on sign-out, account change, lockdown or actual quit.
+  Closing still ends Home's Listen once, voice teaching and Project work.
 - **The composer stays in view while a reply comes.** After you send from Message Ember, the reply growing above it no
   longer pushes the box and its Send below the window; nothing moves if you scrolled away to read. The line under Send
   that says how your message is going stays in view with it, and while you're in the composer it scrolls into view
@@ -350,8 +364,9 @@ the automated tests don't stand in for them.
   and says what that changes, shows “Without asking” whole, and names password managers properly (KeePassXC,
   1Password, Passwords and Keys). In a narrow window or at a large text size, each entry's words get their own row.
 - **Projects says why a request failed** (a refused API key, a usage limit, files too long for the model) instead of
-  always “Try again”. Minimising or hiding settings no longer cancels a project request or a project command: the answer
-  is there when you come back. While Ember reconnects, and while your own provider is off or waits for you to agree to a
+  always “Try again”. Minimising settings keeps a project request or project command running, with its answer there
+  when you come back. Closing Home ends Project work while keeping unsent conversation drafts for this run. While
+  Ember reconnects, and while your own provider is off or waits for you to agree to a
   new address, Projects keeps your files, the request you're typing, the answer and its unapplied changes, and sends
   nothing until Ember is connected again (**Export answer…**, **Export diff…**, **Apply patch…** and a file's Remove
   still work, as they send nothing, and Apply patch's confirmation stays up while Ember tries to reconnect); signing
@@ -371,6 +386,9 @@ the automated tests don't stand in for them.
 
 #### Ask and the companion
 
+- **Opening Ask doesn't automatically read the wake name.** Its focused field says “Ask or tell me” and the window
+  is called “Companion request”; Ember still refuses to read or act in its own window. The short visible “Ask…”
+  prompt keeps the empty field on one line at narrow widths and Larger text.
 - **The Ask box opens beside the answer or question Ember is showing** instead of covering it, or over or under it where
   it fits beside neither (Large and Larger text, a 1024-wide screen), never on Ember, and it keeps off the task cards,
   so at Larger text it no longer covers a card's title and status (on a 1024-wide screen at Larger text there may be no
@@ -430,6 +448,13 @@ the automated tests don't stand in for them.
 
 #### Voice
 
+- **“Read it out” reads the retained answer**, from a suggestion or a typed or spoken request, without changing
+  **Read finished tasks out loud**. It stays local while another reply is under way, explains when speaking or an
+  approval holds it back, and keeps the original answer selected after that notice, including after a restart when
+  conversation history is saved.
+- **Each failed Hear Ember sample reports its own failure**, including a second attempt with no working voice.
+- **The composer's automatic progress line avoids the wake name:** “Thinking… The reply will appear above.” Voice
+  Match's focused setup controls and failure prefixes do too; intentional teaching phrases keep their existing guards.
 - **“Ember, stop” and “Hey Ember, stop” stop everything while you teach Ember your voice.** Stop everything ends the
   teaching too, and so do 45 seconds with no phrase heard, 3 minutes in all, and closing Settings; the handle and
   Settings' voice line say “Learning your voice” meanwhile, also when you start teaching during a conversation.
@@ -464,9 +489,9 @@ the automated tests don't stand in for them.
   request.”, “Stops the answer on its way, then listens for one request.”, “Checking what was said…”), Ask's “I'll see:
   …”, Home's status line, Hide's line and what the composer says of a message, Voice Match's lines as teaching ends or
   your voice is forgotten (with no “Ember, stop” in them), and the update check's (“Version 0.1.2 is out.”). After
-  **Forget my voice**, though, the keyboard moves to **Teach Ember my voice**, and a screen reader reads that button and
-  its description, both with Ember's name in them, over the line that says your voice is forgotten; through speakers,
-  that can still wake Ember and be sent as a request. The line about Ember's voice is said only once it has held: never
+  **Forget my voice**, the keyboard moves to **Set up Voice Match**, whose name and state description omit the wake
+  name. The full visible explanation still says what spoken approvals mean. Failed teaching gives its reason in the
+  first person and updates that focused description too. The line about Ember's voice is said only once it has held: never
   that the voice is being checked, nothing when Ember's voice only loads again after a quiet spell, and **Try again**'s
   outcome even when it ends as before.
 - **Teaching Ember your voice with a screen reader on speakers learns your voice, not the screen reader's.** Ember
@@ -536,6 +561,9 @@ the automated tests don't stand in for them.
 
 #### Tasks and approvals
 
+- **A refused or denied step stays on the activity row that actually ran**, even when the runtime starts a second
+  tool call before the first ends. Stale or ambiguous call identities select no row; a missing id uses only a single
+  unambiguous running step.
 - **A question that ran out of time while you were away** keeps its task's card, marked “No answer in time”, with **Try
   again** there and in Home's Task activity, and notifies you; “What did I miss?” opens with how many tasks ended (“One
   task ended.”), not finished, and says the question wasn't answered, not that you stopped it. Ember's own line in the
@@ -613,25 +641,36 @@ the automated tests don't stand in for them.
   password given to a program on its command line (`mysql -p…`, `curl -u user:…`, `docker login -p …`, `sshpass -p …`,
   `redis-cli -a …`, `htpasswd -nb user …`), a MySQL client's also in a Makefile recipe or a unit file, after a prompt
   such as `C:\xampp\mysql\bin>` or a comment mark, or run from a quoted `mysql.exe` path. A bare `-p` that prompts, and
-  a variable, are left alone; Projects, task views and memory hold back a line that holds one.
+  a variable, are left alone; Projects, task views and memory hold back a line that holds one. Literal passwords in
+  argument arrays are hidden and held back too, including compose healthchecks, subprocess lists, mixed-case client
+  names and native executable paths; credential-free references retain their existing treatment.
 - **With Ask only about dangerous commands on,** Copilot's words about a command no longer reach the system journal
   (`journalctl -t ember-audit`), only their size.
 
 #### Commands and other computers
 
+- **The command audit can be reproduced from the repository.** The developer comparison includes the portable
+  independent review inputs by default and checks both the classifier and the actual command flow against the
+  pinned baseline, with scripted runners and no corpus command executed.
+- **Unseen command state keeps a question.** Empty option variables can't hide a destructive Redis command; an
+  uncertain extraction destination or wrapped script location isn't treated as the current folder. xargs options
+  that change a child's environment, including abbreviated or unknown long options, ask first.
+- **A requested folder's place must be established before Ember says “as you asked”.** Phrases such as “at the root
+  of frontend/” or “on the desktop” don't silently approve deleting a different folder in the current directory.
+- **Configured Git fetches and pulls retain download provenance**, as do opaque interpreter copies after a download.
+  Later execution stays behind a question even when the remote URL or copied filename wasn't visible.
+- **Protected-path link forms are refused.** Parent-folder aliases, cp link forms
+  and relative symbolic targets beside the new link are checked, while ordinary relative links keep their meaning.
 - **The first command after Ember starts fits the command window** (90 columns by 12 rows at the default text size)
   instead of drawing 100 by 30, with lines cut off and the end of the output out of view. After you enlarge the
   command window and close it, the next command starts at the size of the window it opens in.
 - **A bash or sh loop on a command line (`for`, `while`, `until`) always asks first, however plain its body,** as in
   0.1.0 (“Ember can't tell exactly what this does.”): Ember judges the commands in a loop only once, so `for f in
   --hard; do git reset $f; done`, which runs `git reset --hard`, never runs without a question. Ember's own folder
-  named in a loop is still refused first, and the card says what a dangerous command in it does. **An ordinary `if`
-  runs without a question** when Ember has nothing to say about any command in it, and it sets no variable and changes
-  no folder (`if [ -f package.json ]; then npm test; fi`). Any other `if` asks as a whole: one with a command that asks
-  or writes over a file, even one that isn't there yet (`if true; then echo hi > out.txt; fi`); one with a `cd`,
-  `pushd` or `popd`; one that sets a variable or has a `[[ … ]]` test; one that reads text Ember can't see; and one with
-  a command run with PATH changed or a library preloaded (`if true; then LD_PRELOAD=./x.so ls; fi`), on this computer
-  and on an SSH computer alike. Neither a loop nor an `if` starts with only the 4-second Stop, even when your words
+  named in a loop is still refused first, and the card says what a dangerous command in it does. **An `if` on a
+  command line asks as a whole too**, including an ordinary one, preserving the earlier safety baseline. Loops inside
+  a script keep their question: judging one pass cannot establish what later passes do. Neither a loop nor an `if`
+  starts with only the 4-second Stop, even when your words
   asked for the command in it, and a download made inside either is remembered, so running it later asks. A `read`,
   `mapfile` or `getopts` of text Ember can't see asks outside them too (`read -r l < notes.txt`), and so do zsh's short
   forms run from a bash script.
@@ -649,9 +688,10 @@ the automated tests don't stand in for them.
   list names (`curl -OJ`, `wget -r`, `wget -i`, `aria2c -i`), one saved under a name or folder held in a variable (`curl
   -o "$f"`, and the same with wget, aria2c, axel, fetch, lwp-download or PowerShell's `-OutFile`) and a WebClient's
   `DownloadFile`. Afterwards running a file from the folder it saved into, or that folder's build tools and test
-  runners, asks too (anywhere, when Ember can't tell the folder). A variable attached to a short option (`curl -o"$f"`,
-  `wget -O"$f"`) still gets past this: that download runs without a question, and running it later asks nothing, as
-  before. A file fetched through `env -C` or `sudo -D` with the shell's `>` counts as downloaded where the shell put it,
+  runners, asks too (anywhere, when Ember can't tell the folder). Attached output variables (`curl -o"$f"`,
+  `wget -O"$f"`), partly unseen URL names and URLs supplied by xargs or loops retain unknown download provenance too.
+  A known data download still marks only that file, so an unrelated analysis script keeps running normally.
+  A file fetched through `env -C` or `sudo -D` with the shell's `>` counts as downloaded where the shell put it,
   and a downloaded patch applied (`patch`, `git apply`, `git am`, also with `-d` or `-C`) or code pulled from an address
   (`git pull https://…`) marks the files it changes, so the next `make`, `npm test` or build script there asks.
 - **Command questions say what really happens:** “the current folder” (“Deletes what it finds under the current
@@ -720,9 +760,11 @@ the automated tests don't stand in for them.
   they are without the flag, and `cp`, `mv` or `install` with no destination, or a container run with no image, asks. A
   file or folder an option names is judged as that file (`zstd -o`, `brotli -o`, node's `--redirect-warnings` and
   `--report-dir`, uv's and poetry's `--cache-dir`, `file -f`, `tar --listed-incremental`, `parallel --wd`, `sudo -R`). A
-  job count runs as a number, a processor count or arithmetic of numbers, attached or apart (`make -j4`, `make
-  -j$(nproc)`, `make -j $(nproc)`, `cmake --build build -j $(nproc)`, `ctest -j$(nproc)`, `pytest -n $(nproc)`, gradle's
-  `--max-workers=$(nproc)`), and so does a variable given to make's `-j` apart (`make -j "$JOBS"`, `N=4; make -j $N`),
+  recognised job count runs as a number, exactly `$(nproc)`, `$(getconf _NPROCESSORS_ONLN)` or `$(sysctl -n hw.ncpu)`,
+  or arithmetic of numbers (`make -j4`, `make -j$(nproc)`, `make -j $(nproc)`, gradle's `--max-workers=$(nproc)`).
+  Other processor substitutions, non-job options and unsupported tool forms keep their baseline treatment; counts used
+  as filenames get no exemption. A variable given to make's `-j` apart keeps its existing treatment (`make -j "$JOBS"`,
+  `N=4; make -j $N`),
   while one attached to its option asks, whatever the command set it to (`make -j$N`, `N=4; make -j$N`, `./gradlew
   --max-workers=$N`), as do a variable given apart to most other tools (`mvn --threads $N`, `cmake --build build -j $N`)
   and a count the command read from a file (`X=$(cat jobs.txt); make -j $X`); `T=deploy; make -j "$T"` and `T='4
@@ -782,10 +824,14 @@ the automated tests don't stand in for them.
 - **Changing the address of the provider you use keeps it in use until you agree to the new one.** Models & connections
   says “Ember still uses api.example.com. Agree to use new.example.com to switch.”, and **I agree, use this provider**
   checks the new address first: if it can't be reached or refuses the key, nothing has changed, and **Keep using
-  api.example.com** puts the old details back. A gateway that answers but lists no models is used once you agree, and
-  Home says it asks for your model as typed (“Agreed. new.example.com answered but lists no models, so Ember asks it for
-  llama3.2:3b as typed.”). Requests never go to Copilot in between, and turning “Use my own model provider” off
+  api.example.com** puts the old details back. An ambiguous no-model-list response keeps the working provider too:
+  a blanket 404, 405 or 501 doesn't establish that the replacement works. Settings and a replacement key are saved
+  together; a failed keyring or settings write keeps the old pair and the typed draft. Requests never go to Copilot
+  in between, and turning “Use my own model provider” off
   meanwhile keeps the provider you were using, with its address and saved key, for when you turn it on again.
+- **A newer provider choice or key removal supersedes a pending save.** A late failure cannot revive a removed key
+  or overwrite a newer settings-file choice. Drafts clear on programmatic recipient changes too, and main refuses
+  a key save if its expected host has changed. Interrupted same-host changes recover the matching settings and key.
 - **A switch of model service waits for what Ember is doing, then happens at once:** made while Ember answers or a task
   runs, it takes effect as soon as the answer ends, you press Stop or the last task finishes, so Ember's status names
   the service in force from then on, and a request you make meanwhile waits for it: Home says so under Send (“This goes
@@ -809,6 +855,9 @@ the automated tests don't stand in for them.
 
 #### Memory
 
+- **“Remembered” and “Ember learned” follow a successful save.** A failed first write reports the problem without
+  adding the fact to the live graph; an interview stops at its first failed save rather than hiding it behind a later
+  success. Existing facts remain available and a later retry can save normally.
 - **Memory asks you to agree to its note again** if you had it on. The note now says what goes to Copilot with every
   request (what you asked Ember to call you, how you like answers and a few facts that bear on the request), and that
   while you're away its tidying sends up to 40 saved facts to Copilot up to 6 times a day. Ember now uses your name
@@ -841,7 +890,7 @@ the automated tests don't stand in for them.
   subnet, a date or a router model follows another field (“Office network: CorpNet / VLAN 20 / 10.0.20.0/24”). Some
   shorthand (“The Wi-Fi is BlueSky99”), a code said with “'s” (“The gym's code is 4821”), a password after “salted” in a
   note on how it is stored (“Password: hashed, SHA-256, salted, Summer2024!”), a Wi-Fi key labelled “Key:” on the line
-  after the network's name and a MySQL password written in a list of a program's arguments still get past it, so keep
+  after the network's name still get past it, so keep
   passwords out of what you tell Ember and the files you give Projects.
 - **Passwords in code, settings and forms are held back in more of the ways a file holds them,** in memory, Projects and
   task views: a value under a key named for a secret in a Ruby or PHP hash (`:password => '…'`), a YAML mapping or list
@@ -916,6 +965,12 @@ the automated tests don't stand in for them.
 
 #### Reliability
 
+- **Linux setup and status checks don't wait on Python or gsettings in the main process.** Pending checks say they
+  are checking; failures remain unavailable, and the doctor waits for its bounded result. Screen-reader detection
+  preserves a known positive during refresh and keeps voice teaching guarded while its answer is unknown.
+- **Stop stays responsive when a compositor returns or setup's Turn on waits for GNOME.** Motion preferences and
+  accessibility fixes run in the background. Cursor following uses reduced motion while its preference is unknown;
+  a late answer cannot override a stopped, replaced or more recently updated overlay.
 - **Ember notices at once when Copilot stops mid-answer.** It used to show a half answer as “Answering” for up to 20
   seconds; now it says the connection stopped within about 3 seconds and reconnects, and a running task's card says so
   as fast.
@@ -960,6 +1015,9 @@ the automated tests don't stand in for them.
 
 #### Install and docs
 
+- **Developers can compare command decisions against the pinned safety baseline.** The maintained comparison bundles
+  both the classifier and the full command flow, preserves each sequence stage, rejects incomplete or unknown
+  results, and permits only the documented exact job-count exceptions. It executes no corpus shell commands.
 - **The README says what Ember needs before you download it, and what its first start asks:** a Copilot account (or
   your own provider), GNOME on Xorg, about 1 GB of disk and 790–930 MB of memory while idle and listening (native
   and WebAssembly listening respectively), then the welcome's six steps and the
