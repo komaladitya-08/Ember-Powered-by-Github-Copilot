@@ -193,8 +193,13 @@ Ember stops and asks before a command that:
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
-  aliases it can't see, unusual syntax, and interactive programs such as `vim`, `less`, `top` or `python` with no
-  script ("This opens an interactive program; you'd have to use it yourself in the command window.").
+  aliases it can't see, unusual syntax, interactive programs such as `vim`, `less`, `top` or `python` with no
+  script ("This opens an interactive program; you'd have to use it yourself in the command window."), a job count
+  Ember can't see all of (`make -j$JOBS`, `./gradlew --max-workers=$JOBS`, `xargs -P"$JOBS" echo`, `X=$(cat jobs.txt);
+  make -j$X`: only a number, `$(nproc)` and the like, arithmetic of numbers or a variable the command itself sets to
+  one of those is a count, so `make -j$(nproc)` and `N=$(nproc); make -j$N` run), and an option's value written
+  straight after it from a variable without quotes (`nice -n$X cmd`, `xargs -n$X cmd`), which the shell may split into
+  the command it runs.
 
 **Loops and `if` on a command line** are read as they are in a script (below): in bash or sh, `if`, `for`, `while`
 and `until` and a plain `[[ … ]]` test don't ask by themselves, because Ember judges every command inside them. So

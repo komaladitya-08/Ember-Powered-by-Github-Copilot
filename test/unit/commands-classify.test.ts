@@ -1463,7 +1463,7 @@ describe("the option tables: a flag that takes no value never takes the word aft
 
   it("runs everyday parallel builds with the processor count attached or given to cmake, ctest, pytest, sort or gradle (commands-remote-r5-3)", () => {
     for (const cmd of [
-      "make -j$(nproc)", "make -j\"$JOBS\"", "make -j`nproc`", "make -sj$(nproc)", "make --jobs=$(nproc)", "make -j$(getconf _NPROCESSORS_ONLN)", "T=deploy; make -j\"$T\"",
+      "make -j$(nproc)", "make -j`nproc`", "make -sj$(nproc)", "make --jobs=$(nproc)", "make -j$(getconf _NPROCESSORS_ONLN)",
       "cmake --build build -j $(nproc)", "cmake --build build --parallel $(nproc)", "cmake --build . -j$(nproc)", "ctest -j $(nproc)", "ctest -j$(nproc) --output-on-failure",
       "pytest -n $(nproc)", "sort --parallel=$(nproc) big.txt", "./gradlew test --max-workers=$(nproc)", "gradle build --max-workers $(nproc)",
     ]) {
@@ -1473,7 +1473,11 @@ describe("the option tables: a flag that takes no value never takes the word aft
     expect(decided("make -j$(sysctl -n hw.ncpu)", "darwin").decision.verdict).toBe("run");
     // A target after the count is judged as before, and any other substitution or value still asks.
     each([["make -j$(nproc) install", "make install"], ["gradle --max-workers deploy", "gradle deploy"], ["./gradlew --max-workers=4 publish", "./gradlew publish"]]);
-    for (const cmd of ["make -j\"$(printf deploy)\"", "make -j \"$(printf deploy)\"", "cmake --build build -j \"$JOBS\"", "pytest -n \"$N\"", "cmake --build . -j$(cat n)"]) {
+    for (const cmd of [
+      "make -j\"$(printf deploy)\"", "make -j \"$(printf deploy)\"", "cmake --build build -j \"$JOBS\"", "pytest -n \"$N\"", "cmake --build . -j$(cat n)",
+      // A variable the command doesn't set to a count is judged as the word it is, quoted or not (commands-z6-4).
+      "make -j\"$JOBS\"", "T=deploy; make -j\"$T\"",
+    ]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
   });
@@ -1514,13 +1518,17 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["T='4 -f evil.mk'; make -j$T", "T='4 -f evil.mk'; make -j $T", "J='4 SHELL=/tmp/x'; make -j$J", "T='2 -b evil.gradle'; ./gradlew --max-workers=$T"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
-    // Quoted, it is one word: attached, only the count (make takes no other there); a number, a value Ember can't see or a
-    // processor count is the count, as before.
+    // A number, a processor count or a variable the command sets to one is the count, as before; apart, make takes a
+    // variable it doesn't set as its count, as before round six.
     for (const cmd of [
-      "T='4 deploy'; make -j\"$T\"", "T=deploy; make -j\"$T\"", "J=4; make -j$J", "J=8; make -sj$J", "J=8; make --jobs=$J", "make -j$T", "make -j$(nproc)",
-      "make -j\"$(nproc)\"", "T=$(nproc); make -j$T", "W=4; ./gradlew --max-workers=$W build", "./gradlew --max-workers $W", "./gradlew --max-workers=$(nproc)", "make -j $JOBS",
+      "J=4; make -j$J", "J=8; make -sj$J", "J=8; make --jobs=$J", "make -j$(nproc)", "make -j\"$(nproc)\"", "T=$(nproc); make -j$T",
+      "W=4; ./gradlew --max-workers=$W build", "./gradlew --max-workers=$(nproc)", "make -j $JOBS",
     ]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+    // Any other value, quoted or inherited, is judged as the word it is: a target Ember can't name (commands-z6-4).
+    for (const cmd of ["T='4 deploy'; make -j\"$T\"", "T=deploy; make -j\"$T\"", "make -j$T", "./gradlew --max-workers $W"]) {
+      expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
     }
   });
 
@@ -1549,11 +1557,13 @@ describe("the option tables: a flag that takes no value never takes the word aft
     }
     // A count alone, with a space before it or not, a value Ember can't see and the processor counts run as before.
     for (const cmd of [
-      "T=' 4'; make -j$T", "J=' 8'; make -sj$J", "T=\" $(nproc)\"; make -j$T", "make -j$X", "ninja -j $X", "T=4; mvn -T $T test", "T=2C; mvn -T $T package",
+      "T=' 4'; make -j$T", "J=' 8'; make -sj$J", "T=\" $(nproc)\"; make -j$T", "ninja -j $X", "T=4; mvn -T $T test", "T=2C; mvn -T $T package",
       "T=4; ninja -j $T", "mvn -T $X package",
     ]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
     }
+    // Attached, a variable the command doesn't set is judged as the word it is (commands-z6-4).
+    expect(decided("make -j$X").decision.rules).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
   });
 
   it("asks before a job count builds what a variable the command set from a file, a read or a substitution holds, as the substitution written there does (commands-z6-4)", () => {
@@ -1569,15 +1579,51 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["X=$(cat jobs.txt); ./gradlew --max-workers=$X", "X=$(cat jobs.txt); ./gradlew --max-workers $X", "X=$(cat jobs.txt); rake --jobs=$X", "X=$(cat jobs.txt); ninja -j $X", "X=$(cat jobs.txt); mvn -T $X package"]) {
       expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
     }
-    // A number the text gives, a processor count or arithmetic, a variable it doesn't set, and one word make or Maven
-    // takes only as the count run as before.
+    // A number the text gives, a processor count or arithmetic, through a second variable too, run as before; so do make's
+    // count apart from a variable it doesn't set and one quoted word Maven takes only as the count, as before round six.
     for (const cmd of [
-      "make -j$X", "make -j $JOBS", "X=$JOBS; make -j$X", "X=4; make -j$X", "X=$(nproc); make -j$X", "X=\"$(nproc)\"; make -j $X", "X=$((2 * 4)); make -j$X",
-      "X=$(nproc); Y=$X; make -j$Y", "T=\" $(nproc)\"; make -j$T", "X=$(getconf _NPROCESSORS_ONLN); ./gradlew --max-workers=$X build", "X=$(cat jobs.txt); make -j\"$X\"",
+      "make -j $JOBS", "X=4; make -j$X", "X=$(nproc); make -j$X", "X=\"$(nproc)\"; make -j $X", "X=$((2 * 4)); make -j$X",
+      "X=$(nproc); Y=$X; make -j$Y", "T=\" $(nproc)\"; make -j$T", "X=$(getconf _NPROCESSORS_ONLN); ./gradlew --max-workers=$X build",
       "X=$(cat jobs.txt); mvn -T \"$X\" package",
     ]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
     }
+    // Attached, a variable it doesn't set, sets to another variable or reads from a file, quoted or not, asks as it did
+    // before round six (commands-z6-4).
+    for (const cmd of ["make -j$X", "X=$JOBS; make -j$X", "X=$(cat jobs.txt); make -j\"$X\""]) {
+      expect(decided(cmd).decision.rules, cmd).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+    }
+  });
+
+  it("asks before a job count Ember can't see builds or runs what it may hold, as before round six, and runs a number, a processor count or a variable the command sets to one (commands-z6-4)", () => {
+    const rules = (cmd: string) => withoutReadFlow(decided(cmd).cls, "bash").findings.map(f => f.rule);
+    // Inherited, read from a file or a substitution: the command xargs runs, or make's and Gradle's targets.
+    for (const cmd of [
+      "X=$(cat jobs.txt); xargs -P$X echo", "xargs -P$(cat jobs.txt) echo", "X=$(cat jobs.txt); xargs --max-procs=$X echo", "xargs -P\"$JOBS\" echo",
+      "parallel -j\"$JOBS\" echo", "X=$(cat f); xargs -n$X echo", "nice -n$JOBS echo",
+    ]) expect(rules(cmd), cmd).toContain("unclear.program");
+    for (const cmd of ["make -j$JOBS", "make -j${JOBS}", "X=$JOBS; make -j$X", "make -j\"$JOBS\"", "make --jobs=$JOBS", "make -l$JOBS", "make -sj$JOBS"]) {
+      expect(rules(cmd), cmd).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+    }
+    for (const cmd of ["./gradlew --max-workers=$JOBS build", "./gradlew --max-workers $JOBS build", "mvn --threads $JOBS package", "rake --jobs=$JOBS"]) {
+      expect(rules(cmd), cmd).toContain("unclear.target");
+    }
+    // Set where it may not run, or not in this shell, or changed after: the variable the shell has may be another.
+    for (const cmd of [
+      "N=4 make -j$N", "true || N=4; make -j$N", "cd x && N=4; make -j$N", "(N=4); make -j$N", "N=4 | cat; make -j$N", "N=4 & make -j$N",
+      "N=4; unset N; make -j$N", "N=4; source ./env.sh; make -j$N", "N=4; N[0]='4 deploy'; make -j$N", "N=4; getopts ab N; make -j$N",
+      "if [ -f x ]; then N=4; fi; make -j$N", "N=$(nproc); for f in a b; do make -j$N; N=$(cat f); done", "bash -c 'N=4'; make -j$N",
+    ]) expect(rules(cmd), cmd).toContain("unclear.target");
+    // A value split out of an unquoted variable is still judged where it is used: Ember's own folder is refused.
+    expect(decided("d=~/.config/ember; xargs -a$d/settings.json echo").cls.refuse?.rule).toBe("ember.path");
+    // A number, a processor count, arithmetic or a variable the command sets to one is the count, as before.
+    for (const cmd of [
+      "make -j$(nproc)", "make -j4", "make -j\"$(nproc)\"", "N=$(nproc); make -j$N", "cmake --build build -j $(nproc)", "N=4; make -j$N", "N=$((2 * 4)); make -j${N}",
+      "N=$(nproc); ./gradlew --max-workers=$N build", "{ N=4; }; make -j$N", "N=4 && make -j$N", "xargs -P$(nproc) echo", "xargs --max-procs=$(nproc) echo",
+      "N=$(nproc); xargs -P\"$N\" echo", "N=$(nproc); for f in a b; do make -j$N; done",
+    ]) expect(rules(cmd), cmd).toEqual([]);
+    // xargs -P4 rm asks as rm decides, with nothing about its count.
+    expect(rules("xargs -P4 rm")).toEqual(rules("xargs rm"));
   });
 
   it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {

@@ -110,6 +110,39 @@ export const CPU_COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|` + "
 export const COUNT_PIECE = new RegExp(String.raw`\$\(${CPU_COUNT}\)|\$\(\([^()]*\)\)|` + "`" + CPU_COUNT + "`", "g");
 
 /**
+ * Whether a POSIX word as written has an expansion outside double quotes that the shell may split into several words
+ * (a variable, a command's output, `$@`): never a processor count's substitution or arithmetic, which print one number
+ * (commands-z6-4). An unterminated quote counts as one.
+ */
+export function splitsUnquoted(raw: string): boolean {
+  const s = raw.replace(COUNT_PIECE, "0");
+  let dq = false;
+  for (let k = 0; k < s.length; k++) {
+    const c = s[k];
+    if (c === "\\") { k++; continue; }
+    if (c === "\"") { dq = !dq; continue; }
+    if (dq) continue;
+    if (c === "'") {
+      const end = s.indexOf("'", k + 1);
+      if (end < 0) return true;
+      k = end;
+      continue;
+    }
+    if (c === "`") return true;
+    if (c !== "$") continue;
+    const n = s[k + 1];
+    // `$'…'` is quoted text, and `$"…"` opens a quote at the next character.
+    if (n === "'") {
+      let end = k + 2;
+      for (; end < s.length && s[end] !== "'"; end++) if (s[end] === "\\") end++;
+      if (end >= s.length) return true;
+      k = end;
+    } else if (n !== undefined && /[A-Za-z_{(0-9@*#?$!-]/.test(n)) return true;
+  }
+  return dq;
+}
+
+/**
  * The option a word Ember can't see stands for when a count is attached to it (`-j$(nproc)`, `-j"$JOBS"`,
  * `--parallel=$(nproc)`, `--max-workers=$(nproc)`): a numeric option takes any count word, as when it is apart; an option
  * that takes a value only a processor count. Its value is unseen, its pieces kept (commands-remote-r5-3).
@@ -172,7 +205,18 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
     // (`--arg-file="$d/x"`, `-a"$d/x"`) is that option, its value unseen, so the command after it is still found and
     // the value judged by its pieces (commands-remote-w5-6).
     const attached = v === null && spec.stopAtOperand && !a.param ? attachedOption(a, spec) : null;
-    if (attached) { opts.push(...attached.map(o => ({ ...o, at: k }))); continue; }
+    if (attached) {
+      opts.push(...attached.map(o => ({ ...o, at: k })));
+      // Unquoted, the shell may split its value into more words, the first of them the command (`X='1 rm'; xargs -n$X
+      // echo` runs rm): what runs is a command Ember can't name, and the value is still judged by its pieces
+      // (commands-z6-4).
+      if (splitsUnquoted(a.raw)) {
+        restAt = k;
+        for (let j = k; j < args.length; j++) operands.push(args[j]);
+        break;
+      }
+      continue;
+    }
     const counted = v === null && !a.param ? attachedCount(a, spec) : null;
     if (counted) { opts.push(...counted.map(o => ({ ...o, at: k }))); continue; }
     if (v === null || !v.startsWith("-") || v === "-") {

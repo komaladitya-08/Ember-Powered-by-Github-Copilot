@@ -390,6 +390,18 @@ class Classifier {
   /** Variables the text sets to words Ember can't see (mayHoldWords): a command's output, a read, a loop over such words. */
   private wordVars = new Set<string>();
   /**
+   * Whether every value the text gives a variable is a job count, each given where it surely runs in the shell that
+   * reads it (countWord): only then is the variable a count (commands-z6-4).
+   */
+  private countVars = new Map<string, boolean>();
+  /**
+   * Job counts taken as counts through a variable (`N=$(nproc); make -j$N`), judged again at the end with every value
+   * the text gives it (a loop may set it again after the count), with the findings Ember gives the word otherwise.
+   */
+  private countUses: { names: string[]; at: number; program: string; asks: readonly (readonly [string, string])[] }[] = [];
+  /** How deep in an `if`, a loop or a `case` the command now judged is (their bodies may not run, or run again). */
+  flowDepth = 0;
+  /**
    * A plain variable's values, judged at the end only if a command used the variable in a word Ember didn't judge as a
    * path (`python3 -c "…$d…"`): testing or printing it isn't such a use (commands-remote-r4-5).
    */
@@ -606,12 +618,16 @@ class Classifier {
    * `declare -x`, an assignment before a command, or an environment variable's name such as XDG_CONFIG_HOME) is judged
    * when it is set, for any use: testing or printing a plain variable reads nothing (commands-remote-r4-5). Every value
    * is kept, earlier ones too, so a value set again inside a loop still counts. A name set again no longer says the
-   * loop's files on the card.
+   * loop's files on the card. `sure`: a plain assignment that surely runs in the shell that reads the variable after
+   * it, the only kind that makes it a job count (countWord).
    */
-  setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false, exported = false): void {
+  setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false, exported = false, sure = false): void {
     if (!/^([A-Za-z_]\w*|[1-9@*])$/.test(name)) return;
     if (!loop) this.loopVars.delete(name);
     if (sc.family !== "posix") return;
+    const one = values?.length === 1 ? values[0] : null;
+    const count = sure && one !== null && (one.v !== null ? /^[ \t\n]*\d+(\.\d+)?[ \t\n]*$/.test(one.v) : this.countWord(one.raw));
+    this.countVars.set(name, (this.countVars.get(name) ?? true) && count);
     const forms = values === null ? [UNSEEN] : values.flatMap(a => (a.v !== null ? [a.glob ? PATTERN + (a.pattern ?? a.v) : a.v] : a.parts ? this.formsOf(a.parts) : [UNSEEN]));
     if (values === null || values.some(a => this.mayHoldWords(a))) this.wordVars.add(name);
     if (exported || this.allExport || /^[A-Z][A-Z0-9_]*$/.test(name)) for (const f of forms) this.judgeForm(f, null, sc, exported || this.allExport);
@@ -636,6 +652,48 @@ class Classifier {
       else if (this.wordVars.has(p.name)) return true;
     }
     return hidden > counted || /\$\((?!\()|`|[<>]\(/.test(a.raw.replace(COUNT_PIECE, ""));
+  }
+
+  /**
+   * Whether a job count's value, as written, is a count (commands-z6-4): a number, a processor count's substitution, an
+   * arithmetic expansion of numbers, or a variable every value the text gives it is one of those, given where it surely
+   * runs, perhaps in double quotes or with blanks around it. Anything else (a variable the command doesn't set or sets
+   * otherwise, a file's text, a read, any other substitution) is judged as the word it is, as before round six. A
+   * variable's later values are judged again at the end (judgeCounts), with `asks`: the findings the word gets otherwise.
+   */
+  countWord(value: string, asks: readonly (readonly [string, string])[] = []): boolean {
+    const v = value.replace(/^"([^"]*)"$/, "$1").replace(/^[ \t\n]+|[ \t\n]+$/g, "");
+    if (/^\d+(\.\d+)?$/.test(v) || CPU_COUNT_WORD.test(v) || /^\$\(\([\d\s+\-*/%]*\)\)$/.test(v)) return true;
+    const name = /^\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})$/.exec(v);
+    const n = name?.[1] ?? name?.[2];
+    if (n === undefined || this.countVars.get(n) !== true) return false;
+    if (asks.length) this.countUses.push({ names: [n], at: this.at, program: this.program, asks });
+    return true;
+  }
+
+  /**
+   * A command that may set a variable without an assignment the rows judge (`unset N`, `getopts ab N`, an array's
+   * element `N[0]=…`, a sourced script): a job count's variable no longer counts (countWord).
+   */
+  forgetCounts(key: string, program: string, args: readonly Arg[]): void {
+    const element = /^([A-Za-z_]\w*)\[[^\]]*\]\+?=/.exec(program);
+    if (element) this.countVars.set(element[1], false);
+    if (key === "source" || key === "." || key === "eval") for (const k of this.countVars.keys()) this.countVars.set(k, false);
+    if (key === "unset" || key === "getopts" || key === "wait") for (const a of args) if (a.v !== null && /^[A-Za-z_]\w*$/.test(a.v)) this.countVars.set(a.v, false);
+  }
+
+  /** Job counts taken through a variable the text gave another value later (a loop's body sets it again): as the word. */
+  protected judgeCounts(): void {
+    const at = this.at;
+    const program = this.program;
+    for (const u of this.countUses) {
+      if (u.names.every(n => this.countVars.get(n) === true)) continue;
+      this.at = u.at;
+      this.program = u.program;
+      for (const [rule, says] of u.asks) this.unclear(rule, says);
+    }
+    this.at = at;
+    this.program = program;
   }
 
   /**
@@ -1657,6 +1715,12 @@ class Engine extends Classifier {
   cdTarget: string | null | undefined = undefined;
   /** The single top-level cd, for cdOnly. */
   topCd: { at: number; abs: string | null } | null = null;
+  /**
+   * Whether the command now judged surely runs, in the shell that runs what follows it: the first pipeline of its list
+   * (none after `&&` or `||`), alone, in the foreground, in no subshell or substitution. Only an assignment there sets a
+   * job count's variable (countWord).
+   */
+  private sure = true;
 
   run(text: string): ClassificationExtra {
     const sc = this.topScope();
@@ -1678,6 +1742,7 @@ class Engine extends Classifier {
     }
     this.feedReads();
     this.judgePendingSets();
+    this.judgeCounts();
     // A `read` that its loop or `if` gives a file or text to (`while read -r l; …; done < list.txt`) waits for no typing.
     const fed = readsFedByCompound(this.commands, i => this.stdinGiven.has(i));
     if (fed.size) this.findings = this.findings.filter(f => !(f.rule === "unclear.interactive" && f.program === "read" && fed.has(f.at)));
@@ -1800,10 +1865,12 @@ class Engine extends Classifier {
   // POSIX.
 
   private posixList(list: PList, sc: Scope): void {
+    const sure = this.sure;
     for (const item of list.items) {
       for (let k = 0; k < item.pipes.length; k++) {
         this.cdTarget = undefined;
         const before = sc.cwd;
+        this.sure = sure && k === 0 && !item.background && item.pipes[k].cmds.length === 1;
         const cd = this.posixPipeline(item.pipes[k], sc, item.background);
         if (cd !== undefined) {
           const next = item.ops[k];
@@ -1812,6 +1879,7 @@ class Engine extends Classifier {
         }
       }
     }
+    this.sure = sure;
   }
 
   /** Classifies a pipeline; returns the folder when it is a lone `cd` (not in the background). */
@@ -1846,7 +1914,10 @@ class Engine extends Classifier {
         if (background) this.add("escape", "escape.background", SAYS.keepsRunning);
       }
       const savedPipe = this.pipe;
+      const sure = this.sure;
+      if (isolated) this.sure = false;
       this.posixList(c.body, inner);
+      this.sure = sure;
       this.pipe = savedPipe;
       prev = this.at;
     });
@@ -1860,7 +1931,10 @@ class Engine extends Classifier {
     const savedProg = this.program;
     const savedCd = this.cdTarget;
     const before = this.commands.length;
+    const sure = this.sure;
+    this.sure = false;
     this.posixList(list, child(sc, { depth: sc.depth + 1 }, { pipedIn: null, captured: true }));
+    this.sure = sure;
     const fetch = this.commands.slice(before).some(c => FETCHERS.has(c.program.toLowerCase()));
     this.pipe = savedPipe;
     this.at = savedAt;
@@ -1886,7 +1960,7 @@ class Engine extends Classifier {
     const stdinVars = stdin === "heredoc" ? (stdinText === null ? this.hereVars(c.redirs, sc) : undefined) : piped?.vars;
     if (c.words.length === 0) {
       this.newCommand("", [], sc, redirs, o.background, o.pipedFrom);
-      this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc);
+      this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, null, false, this.sure && this.flowDepth === 0);
       this.redirects(redirs, sc);
       return null;
     }
@@ -2021,7 +2095,7 @@ class Engine extends Classifier {
    * before `read`, `mapfile` or `readarray` (`IFS= read -r l`) lasts only while that built-in splits what it reads, in
    * bash, zsh and sh alike, so it changes how nothing else runs (commands-remote-2).
    */
-  private assignments(list: { name: string; value: Arg }[], sc: Scope, program: string | null = null, beforeCommand = program !== null): void {
+  private assignments(list: { name: string; value: Arg }[], sc: Scope, program: string | null = null, beforeCommand = program !== null, sure = false): void {
     if (list.length) this.envChanged = true;
     const splitOnly = sc.family === "posix" && program !== null && READS_LINES.has(program);
     for (const a of list) {
@@ -2030,7 +2104,7 @@ class Engine extends Classifier {
         this.unclear("unclear.assignment", "It changes how commands are found or run.");
       }
       if (a.value.v !== null && commandLineSecret(`${a.name}=${a.value.v}`)) this.add("secret", "secret.token-arg", SAYS.tokenArg);
-      this.setVar(a.name, [a.value], sc, false, beforeCommand);
+      this.setVar(a.name, [a.value], sc, false, beforeCommand, sure);
     }
   }
 
@@ -2344,7 +2418,12 @@ class Engine extends Classifier {
     this.redirects(s.redirs, sc);
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
     const inner = this.commands.length;
+    if (sc.family === "posix") this.forgetCounts(key, nameArg.v, args);
+    // What a command runs (`bash -c 'N=4'`, a payload) sets no variable in this shell.
+    const sure = this.sure;
+    this.sure = false;
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
+    this.sure = sure;
     // A wrapper's own words (`sudo -D "$d" ls`, `xargs -a "$d/x" echo`; commands-remote-v5-2): the command it runs
     // (`do echo "$f"`, `sudo rm "$d"`) noted its words itself.
     // Where what it prints goes: the terminal, the next command as its input, or on to a file, a substitution or a
@@ -2549,6 +2628,7 @@ class Engine extends Classifier {
       scriptName(inner, nameArg.v);
     }
     const n = NATIVE[key];
+    if (sc.family === "posix") this.forgetCounts(key, nameArg.v, inner.args);
     if (n) n(inner);
     else generic(inner);
     optionPaths(inner, !n);
@@ -3566,6 +3646,23 @@ function secretPattern(pt: string, sc: Scope): boolean {
   return SECRET_SAMPLE_NAMES.some(n => reBase.test(n)) || secretCandidates(sc.path).some(c => re.test(c) || reBase.test(baseName(c, sc.path.flavour)));
 }
 
+/** What a wrapper's row says of a command it runs that Ember can't name. */
+const UNNAMED_PROGRAM = ["unclear.program", "It runs a program Ember can't name."] as const;
+/**
+ * A wrapper's job count attached to its option where Ember can't see all of it (`xargs -P"$JOBS" echo`, `parallel
+ * --jobs="$X" …`): unless it is a count (countWord), the word is judged as before round six, a program Ember can't name
+ * (commands-z6-4).
+ */
+function attachedJobs(h: H, p: Parsed, names: readonly string[]): void {
+  for (const o of p.opts) {
+    // One the shell may split is already the command Ember can't name (parseOpts).
+    if (o.parts === undefined || p.restAt <= o.at || !names.some(n => optIs(o.name, n))) continue;
+    const raw = h.args[o.at].raw;
+    const value = o.name.startsWith("--") ? raw.slice(raw.indexOf("=") + 1) : raw.slice(raw.indexOf(o.name[1], 1) + 1);
+    if (!h.e.countWord(value, [UNNAMED_PROGRAM])) h.e.unclear(...UNNAMED_PROGRAM);
+  }
+}
+
 // xargs and parallel: their payload is a command too (§3.4.5).
 reg(NATIVE, ["xargs"], h => {
   // GNU's -l, -i and -e (and --max-lines, --replace, --eof) take a value only attached or after =: written alone, the
@@ -3576,6 +3673,7 @@ reg(NATIVE, ["xargs"], h => {
   });
   // The file it reads its input from, a variable in it judged for Ember's own refusal (commands-remote-v5-2).
   optionFiles(h, h.args, p, { read: ["a", "arg-file"] }, false);
+  attachedJobs(h, p, ["P", "max-procs"]);
   // A bare -i or --replace replaces {}.
   const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
@@ -3619,6 +3717,7 @@ reg(NATIVE, ["parallel"], h => {
     ],
   });
   if (p.operands.length === 1 && (p.operands[0].v ?? " ").includes(" ")) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
+  attachedJobs(h, p, ["j", "jobs"]);
   if (has(p, "S", "sshlogin")) h.e.add("publish", "send.ssh", "Sends data to another computer.");
   // --wd: the folder each command runs in, judged as a cd to it is (commands-remote-v5-3); `...` is a new one.
   const wd = values(p, "wd", "workdir").filter(d => d !== "...").pop();
@@ -4301,6 +4400,9 @@ reg(NATIVE, ["eval"], h => {
 reg(NATIVE, ["trap", "alias", "unalias", "enable", "builtin", "shopt", "fc", "bind", "coproc", "select", "function", "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac", "[[", "]]", "{", "}", "in", "complete"], h => {
   const words: Record<string, string> = { alias: "It defines an alias Ember can't follow.", unalias: "It changes aliases Ember can't see.", shopt: "It changes how the shell reads commands.", fc: SAYS.interactive };
   h.e.unclear(`unclear.${h.key.replace(/[^a-z]/g, "") || "keyword"}`, words[h.key] ?? SAYS.unclear);
+  // An `if`'s, a loop's or a `case`'s body may not run, or run again: no assignment in it makes a job count (countWord).
+  if (["if", "while", "until", "for", "select", "case"].includes(h.key)) h.e.flowDepth++;
+  else if (["fi", "done", "esac"].includes(h.key)) h.e.flowDepth = Math.max(0, h.e.flowDepth - 1);
   // A loop's variable is set as an assignment is (`for PATH in /tmp/x; do ls; done` changes where ls is found).
   if (h.key === "for" || h.key === "select") {
     h.e.envChanged = true;
@@ -5792,6 +5894,9 @@ const MVN_WORDS: Readonly<Record<string, string>> = {
   "-ff": "--fail-fast", "-fn": "--fail-never", "-npr": "--no-plugin-registry", "-npu": "--no-plugin-updates", "-nsu": "--no-snapshot-updates",
   "-ntp": "--no-transfer-progress", "-up": "--update-plugins", "-llr": "--legacy-local-repository", "-itr": "--ignore-transitive-repositories",
 };
+/** What make's row says of a variable override that could run a command, and of a target it can't name. */
+const MAKE_VARIABLE = ["unclear.make-variable", "It sets a make variable to text that could run as a command."] as const;
+const UNNAMED_TARGET = ["unclear.target", "It runs a target Ember can't name."] as const;
 /** Task runners and package scripts (§3.5.9): their targets' names say what they do. */
 reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke", "inv", "ant", "sbt", "lein", "gradle", "gradlew", "mvn", "mvnw", "nox", "tox", "task", "mage", "ninja"], h => {
   // make's -j and -l take the next word only when it is a number (`make -j install` builds install); Maven's -X, nox's -r and
@@ -5829,9 +5934,20 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
     if (!anyCount && !(/make$/.test(h.key) && /^-[jl]$/.test(o.name)) && !/^--(jobs|load-average|max-workers)$/.test(o.name)) continue;
     const attached = o.parts !== undefined;
     const word: Arg | undefined = attached ? { v: null, raw: args[o.at].raw, glob: false, parts: o.parts } : o.value === null ? args[o.at + 1] : undefined;
-    // A count attached and quoted (`-j"$JOBS"`) is never a target: make takes only a number there.
-    const quoted = word !== undefined && /"$/.test(word.raw);
-    if (!word || (attached && quoted)) continue;
+    // Only a number, a processor count's substitution, arithmetic or a variable the command surely sets to one is the
+    // count (countWord). Anything else (`make -j$JOBS`, `X=$JOBS; make -j$X`, `./gradlew --max-workers $JOBS`) is
+    // judged as the word it is, as before round six: attached, a target Ember can't name; after Gradle's
+    // --max-workers or Maven's --threads, which took no value there, a target or a goal too (commands-z6-4).
+    if (!word) {
+      if (o.name === "--threads" && typeof o.value === "string" && !/^\d+$/.test(o.value)) counts.push(lit(o.value));
+      continue;
+    }
+    const value = attached ? (o.name.startsWith("--") ? word.raw.slice(word.raw.indexOf("=") + 1) : word.raw.slice(word.raw.indexOf(o.name[1], 1) + 1)) : word.raw;
+    if (h.e.countWord(value, /make$/.test(h.key) ? [MAKE_VARIABLE, UNNAMED_TARGET] : [UNNAMED_TARGET])) continue;
+    if (attached || /^--(max-workers|threads)$/.test(o.name)) counts.push({ v: null, raw: word.raw, glob: false });
+    // Quoted and attached (`-j"$T"`), it is one word make takes only as the count.
+    const quoted = /"$/.test(word.raw);
+    if (attached && quoted) continue;
     // A variable the text set to words Ember can't see (`X=$(cat jobs.txt); make -j$X`, `read X < f; make -j $X`) may
     // be a count and targets, as that substitution written there is: a target Ember can't name, unless quoted for a
     // count that takes any word (commands-z6-4).
