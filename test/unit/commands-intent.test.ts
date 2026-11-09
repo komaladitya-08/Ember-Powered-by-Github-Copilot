@@ -324,7 +324,6 @@ describe("matchIntent: only a request counts (review #28)", () => {
     ["rm -r build", "fix line 12 in main.ts and delete build/", "Deleting build, as you asked."],
     ["rm -r build", "list the files, then delete build/", "Deleting build, as you asked."],
     ["rm -r build", "how big is build/? delete build/", "Deleting build, as you asked."],
-    ["rm -r build", "on the desktop delete build/", "Deleting build, as you asked."],
     [PUSH, "push my branch to GitHub", "Pushing feature-x to origin, as you asked."],
     [PUSH, "commit and push my branch to GitHub", "Pushing feature-x to origin, as you asked."],
     [PUSH, "can you commit and push feature-x to origin?", "Pushing feature-x to origin, as you asked."],
@@ -949,5 +948,18 @@ describe("matchIntent: things kept together, and a folder named after a comma (c
     ["rm -rf build", "delete the project's build folder", "Deleting build, as you asked."],
   ])("announces `%s` after %j", (cmd, words, said) => {
     expect(announce(cmd, words, { git: FEATURE })).toBe(said);
+  });
+});
+
+describe("places the matcher cannot establish", () => {
+  it("asks when root or on-place words could name another build folder (commands-remote-r5-2, c3-1, i5b)", () => {
+    for (const words of [
+      "At the root of frontend/, delete the build folder",
+      "At the top level of frontend/, delete build/",
+      "Delete the build folder on the desktop",
+      "Delete the build folder on the NAS",
+    ]) expect(announce("rm -rf build", words), words).toBeNull();
+    expect(announce("rm -rf build", "delete build/ now")).not.toBeNull();
+    expect(announce("rm -rf frontend/build", "delete frontend/build/")).not.toBeNull();
   });
 });

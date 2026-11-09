@@ -188,25 +188,13 @@ async function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 }
 
 /**
- * The classifier reads an sh or bash script's if, then, else, for, while, until, do and done as words it can't follow,
- * though it classifies every command in them (a condition, a loop's body, a substitution in its list) and leaves a
- * variable in a file argument unresolved (which asks): inside such a script, or in an `if` on such a command line (a
- * loop there always asks: withoutReadFlow), these words alone don't make it ask (review #27, commands-remote-2;
- * readThrough). A plain `[[ … ]]` test doesn't either (plainTest). case, functions, traps, select and `{ … }` groups
- * (whose commands the classifier doesn't read) still ask, and so do zsh's flow words (its short forms run the command
- * after the condition: `if [[ -n x ]] rm -rf ~`) and PowerShell's and cmd's if and for, whose blocks the classifier
- * doesn't read inside.
+ * Only an sh or bash script's simple conditional words are read through. Repeated execution is not established by
+ * judging a body once: scripts retain loop findings just as command lines do (commands-remote-c7-4). A plain
+ * non-arithmetic `[[ … ]]` remains readable in a script. Other shell syntax keeps the classifier's question.
  */
-const SCRIPT_FLOW = new Set([
-  "unclear.if", "unclear.then", "unclear.elif", "unclear.else", "unclear.fi", "unclear.for", "unclear.while", "unclear.until",
-  "unclear.do", "unclear.done", "unclear.in",
-]);
+const SCRIPT_FLOW = new Set(["unclear.if", "unclear.then", "unclear.elif", "unclear.else", "unclear.fi"]);
 const FLOW_SHELLS: ReadonlySet<ShellId> = new Set<ShellId>(["sh", "bash"]);
-/**
- * A loop's own words (`for`, `while`, `until`, `do`, `done`; select and case ask by their own): a command line with any
- * of them keeps every flow word and asks, as on main, whatever the loop's body is (withoutReadFlow, commands-c7-1).
- */
-const LOOP_FLOW: ReadonlySet<string> = new Set(["unclear.for", "unclear.while", "unclear.until", "unclear.do", "unclear.done", "unclear.in"]);
+
 /** `[[ … ]]` operators whose operands bash evaluates as arithmetic or reads as a variable's name: a `$(…)` in a subscript runs. */
 const TEST_RUNS = new Set(["-eq", "-ne", "-lt", "-le", "-gt", "-ge", "-v", "-R"]);
 
@@ -235,28 +223,9 @@ export function readThrough(f: Finding, got: Classification, shell: ShellId): bo
   return k >= 0 && c.wrappers.slice(0, k).every(w => FLOW_WRAPPER.has(w));
 }
 
-/**
- * A command line's classification without the flow words Ember reads through (readThrough): an `if` on an sh or bash
- * command line with no other finding runs as its commands would written out (commands-remote-2). A line
- * with any loop (for, while, until; select asks by its own word) keeps them and asks, as on main, whatever its body:
- * the classifier judges a body once, and what it knows of a loop's list or a read's text serves only Ember's own
- * refusal, so a written-out list can carry a value past a program's row (`for f in --hard; do git reset $f; done`:
- * commands-c7-1). Anything else keeps them and asks as on main, where every loop and `if` asked: a command in the line
- * that has any finding (one that asks, or an overwrite whether or not the file is there; a dangerous one the user's
- * words asked for is never announced from inside an `if`: commands-b7-2), a `[[ … ]]` test (main reads one through only
- * in a script: commands-b7-4), or a line that sets a variable or changes the folder (holdsFlow), since the commands
- * are judged with the values and in the folder the line starts with (commands-b7-1, b7-3). A classification that
- * doesn't say (no holdsFlow) keeps them. Ember's own refusal is the classifier's, so it comes first either way.
- */
-export function withoutReadFlow(cls: Classification, shell: ShellId): Classification {
-  if (cls.findings.some(f => LOOP_FLOW.has(f.rule))) return cls;
-  const findings = cls.findings.filter(f => !(SCRIPT_FLOW.has(f.rule) && readThrough(f, cls, shell)));
-  const x = cls as Partial<ClassificationExtra>;
-  if (findings.length === cls.findings.length || findings.length > 0 || x.holdsFlow !== false) return cls;
-  // The words Ember read through aren't code it can't see: what the command may write is its commands' (a classification
-  // that doesn't say what else it writes keeps its answer).
-  const anywhere = typeof x.writesUnplaced === "boolean" ? x.writesUnplaced : x.writesAnywhere;
-  return { ...cls, findings, ...(typeof anywhere === "boolean" ? { writesAnywhere: anywhere } : {}) } as Classification;
+/** Keeps the baseline's question for every command-line flow construct (commands-remote-r7-1). */
+export function withoutReadFlow(cls: Classification, _shell: ShellId): Classification {
+  return cls;
 }
 
 /** The widening that names the script a finding came from (`script:build.sh`): the user's words may name it (intent.ts). */

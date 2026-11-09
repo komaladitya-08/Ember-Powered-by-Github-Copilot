@@ -2583,3 +2583,44 @@ the cache's version that runs when `ps` shows it; where `ps` isn't read, on Wind
 installed from the zip, which shares the single-instance lock, or any older one when the cache holds another version).
 Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.
+
+Command audit comparisons must check the classifier and the real `run_command` flow against the frozen audit baseline.
+Command-line `if` and error-checking HOME/PWD parameter expansions retain its questions; only the documented literal
+and processor-count job arguments may decide more loosely (commands-remote-r7-1).
+
+Download provenance also survives unknown URL filenames and downloader input from xargs or loops. Regression tests
+exercise separate tool calls so a same-line script question cannot conceal a missing download marker.
+An empty or unknown first Redis argument retains a question so shell word removal cannot expose a later deletion.
+
+A relative shell script with an unknown working folder is uncertain, including a script fed to `env -C … sh` on stdin.
+
+Unresolved tar extraction directories go through optionFiles and retain both the question and download provenance.
+
+The xargs process-slot-var gate is unconditional: arbitrary child environment names are not assumed harmless.
+
+Link targets include protected ancestor folders in the own-file refusal, including known POSIX and PowerShell variables.
+
+Shell scripts retain questions for loops: reading a body once does not establish later passes' arguments or folders.
+
+Intent matching fails closed for unestablished root-of and on-place phrases instead of announcing a different path.
+
+Opaque shell positional arguments and Windows flow retain known own-path refusals; their values are never used to
+relax the execution decision. The Windows fallback scan can refuse a protected ancestor when its later use is opaque.
+
+Cross-call provenance tests cover opaque inline copies and code pulled or fetched through configured remote names.
+
+Unknown xargs long options fail closed without altering option consumption; copy-created links share the parent guard.
+
+New processor-count recognition is limited to the exact three documented substitutions on `OptSpec.jobCounts`,
+plus literal numbers and numeric arithmetic. It never bypasses `readArgs`; other options and generic tools keep
+the baseline question. Separate processor values already consumed by the baseline retain its behaviour.
+
+Symbolic-link checks resolve relative targets from each possible destination base, including known destination
+variables. Untyped POSIX destinations are checked as a file and as a folder unless flags establish one; Windows
+symbolic links also receive the destination-parent guard. Baseline source-path refusals remain in force, and ln's
+`--relative` continues to resolve the source from the command's folder.
+
+For `stopAtOperand`, an unseen separate option value retains its parsed option for path checks and also becomes the
+first unknown operand, just as an unseen attached value does. Never consume it and classify only the later visible
+program: unquoted expansion can supply a different command. The only count exception uses an explicit job option and
+`countWord()` on the value as written, never a variable's tracked value (commands-q6-3, i6b, commands-v7-5).
