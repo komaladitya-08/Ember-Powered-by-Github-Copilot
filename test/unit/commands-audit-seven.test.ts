@@ -44,3 +44,12 @@ describe("download provenance", () => {
     expect(classifyCommand("python3 analyze.py", "bash", { ...contextOf("linux"), downloaded: new Set(data.downloads) }).findings).toEqual([]);
   });
 });
+
+describe("database command arguments", () => {
+  it("asks when an empty options variable exposes a destructive Redis command (commands-q6-1, i6b)", () => {
+    expect(decide("O=''; redis-cli $O FLUSHALL").verdict).toBe("ask");
+    expect(decide("O=''; redis-cli ${O} FLUSHALL").verdict).toBe("ask");
+    expect(decide("redis-cli INFO").verdict).toBe("run");
+    expect(decide("O='--rdb /home/ana/.config/ember/settings.json'; redis-cli $O").verdict).toBe("refuse");
+  });
+});

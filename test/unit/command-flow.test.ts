@@ -2904,3 +2904,13 @@ describe("uncertain download provenance across tool calls", () => {
     expect(data.asked).toEqual([]);
   });
 });
+
+describe("an empty database option expansion", () => {
+  it("asks before the following Redis deletion can run (commands-q6-1)", async () => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, answers: ["deny"] });
+    expect((await call(h, { target: "this computer", command: "O=''; redis-cli $O FLUSHALL" })).resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    expect(h.starts).toEqual([]);
+  });
+});

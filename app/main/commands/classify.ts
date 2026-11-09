@@ -3498,7 +3498,10 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     // and the files that options split out of it name judged as written out, never making it run (commands-z6-2).
     const [word, ...rest] = p.operands;
     if (word?.v === null) {
-      for (const f of h.e.knownForms(word)) {
+      // Even an empty expansion can expose a later destructive command (commands-q6-1).
+      const forms = h.e.knownForms(word);
+      if (forms.some(f => f === null || f.trim() === "")) h.e.unclear("unclear.unresolved-arg", "Ember can't tell which command redis-cli gets.");
+      for (const f of forms) {
         redisCommand(h, f === null ? [null] : [...f.trim().split(/\s+/), ...rest.map(a => a.v)]);
         const split = f === null ? [] : [...f.split(/\s+/).filter(w => w !== "").map(w => lit(w)), ...rest];
         if (split.length) optionFiles(h, split, parseOpts(split, spec), files);

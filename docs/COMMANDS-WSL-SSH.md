@@ -1004,3 +1004,6 @@ A URL whose filename contains unresolved shell text, and URLs handed to a downlo
 keep an unnamed-download marker. Attached unresolved output options do too. Their download asks first, and
 executing a file they might have saved asks again, across separate tool calls (commands-remote-r6-1).
 A fully named data download still marks only its own file.
+
+Redis commands whose first argument can be empty or cannot be resolved ask: shell
+word removal can expose a destructive command after it. Known variable values still protect Ember's own files.
