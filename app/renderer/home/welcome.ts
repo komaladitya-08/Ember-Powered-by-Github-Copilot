@@ -437,6 +437,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   // ───── Your own model provider (FE #2) ─────
   const provField = (id: string) => $(id) as HTMLInputElement;
   const prefilled = { done: false };
+  /** An unsaved key belongs only to the valid host it was entered for, never a later address. */
+  let typedKeyHost: string | null = null;
   function openProvider(): void {
     checkEpoch++;
     providerCheck = { phase: "idle", line: "" };
@@ -603,12 +605,19 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // The saved details come into the fields once, the first time the step opens: what is typed is never overwritten.
     if (!prefilled.done && settings) {
       prefilled.done = true;
+      provField("w-p-key").value = "";
+      typedKeyHost = null;
       ($("w-p-type") as unknown as HTMLSelectElement).value = settings.provider.type;
       provField("w-p-url").value = settings.provider.baseUrl;
       provField("w-p-conductor").value = settings.provider.conductor ?? "";
       provField("w-p-worker").value = settings.provider.worker ?? "";
     }
     const host = endpointHost(provField("w-p-url").value.trim());
+    // Retain a path edit or unfinished URL while typing; a different valid host (including a prefill) needs its own key.
+    if (host && provField("w-p-key").value && typedKeyHost !== host) {
+      provField("w-p-key").value = "";
+      typedKeyHost = null;
+    }
     // A saved key is said only for the address typed, as main's state says it now (that may come later in the visit).
     const keyHint = keyPlaceholder({ keySaved: !!ownState?.keySaved, keyHost: ownState?.host ?? null, host });
     if (provField("w-p-key").placeholder !== keyHint) provField("w-p-key").placeholder = keyHint;
@@ -971,6 +980,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   // Any edit makes an earlier check (or a check in flight) say nothing about what is now typed.
   for (const id of ["w-p-type", "w-p-url", "w-p-key", "w-p-conductor", "w-p-worker"]) {
     $(id).addEventListener("input", () => {
+      if (id === "w-p-key") typedKeyHost = endpointHost(provField("w-p-url").value.trim());
       checkEpoch++;
       edited = true;
       // A provider in use as the step opened stays on: its edit is checked before it counts (first-run-r2-1).

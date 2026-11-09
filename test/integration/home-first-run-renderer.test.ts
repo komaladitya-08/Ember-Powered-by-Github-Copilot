@@ -343,6 +343,53 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await buttons(none)).not.toContain("Use my own provider");
   });
 
+  for (const inUse of [false, true]) it(`keeps an unsaved key with its original recipient during ${inUse ? "an in-use edit" : "new setup"} (first-run-v7-1)`, async () => {
+    const provider = { on: true, baseUrl: "https://a.example.com/v1", conductor: "fixture-model", consent: { version: 1, at: "2026-11-09T12:00:00Z", host: "a.example.com" } };
+    const p = await open(inUse ? { provider, liveState: true, providerState: { keySaved: true }, agent: readyAgent({ login: undefined, service: { kind: "user", host: "a.example.com" } }) } : {});
+    const keptProvider = await p.evaluate(() => structuredClone(window.__frState.settings.provider));
+    try {
+      if (inUse) {
+        await next(p).click();
+        await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+        await p.locator("#w-back").click();
+      } else await p.getByRole("button", { name: "Use my own provider" }).click();
+      await p.fill("#w-p-url", "https://b.example.com/v1");
+      await p.fill("#w-p-conductor", "fixture-model");
+      await p.fill("#w-p-key", "fixture-key-for-b");
+      // A path edit and an unfinished address do not change a known key's recipient.
+      await p.fill("#w-p-url", "https://b.example.com/v2");
+      expect(await p.locator("#w-p-key").inputValue()).toBe("fixture-key-for-b");
+      await p.fill("#w-p-url", "https://");
+      expect(await p.locator("#w-p-key").inputValue()).toBe("fixture-key-for-b");
+      await p.fill("#w-p-url", "https://c.example.com/v1");
+      expect(await p.locator("#w-p-key").inputValue()).toBe("");
+      await next(p).click();
+      if (inUse) {
+        await expect.poll(() => calls(p)).toContain("test-draft:c.example.com");
+        expect(await calls(p)).not.toContain("test-draft:c.example.com+key");
+        expect(await p.evaluate(() => window.__frState.settings.provider)).toEqual(keptProvider);
+        expect(await p.evaluate(() => window.emberProvider!.state())).toMatchObject({ keySaved: true, host: "a.example.com", inForce: true });
+      } else {
+        expect(await focusedId(p)).toBe("w-p-key");
+        expect((await calls(p)).filter(c => c === "saveKey" || c === "test" || c.startsWith("agree:") || c.startsWith("test-draft:"))).toEqual([]);
+      }
+      // The port is part of the recipient too.
+      await p.fill("#w-p-key", "fixture-key-for-c");
+      await p.fill("#w-p-url", "https://c.example.com:8443/v1");
+      expect(await p.locator("#w-p-key").inputValue()).toBe("");
+      // Reopening prefills the saved address; that change must not carry the draft key either.
+      await p.fill("#w-p-url", "https://b.example.com/v1");
+      await p.fill("#w-p-key", "fixture-key-for-b");
+      await p.locator("#w-back").click();
+      if (inUse) {
+        await next(p).click();
+        await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+        await p.locator("#w-back").click();
+      } else await p.getByRole("button", { name: "Use my own provider" }).click();
+      expect(await p.locator("#w-p-key").inputValue()).toBe("");
+    } finally { await p.close(); }
+  }, 30_000);
+
   it("(e) a slow failed check that arrives after the user left, or edited, doesn't overwrite newer state", async () => {
     const p = await open();
     await p.getByRole("button", { name: "Use my own provider" }).click();
@@ -353,6 +400,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(async () => (await calls(p)).filter(c => c === "test").length).toBe(1);
     // Edit the address while the first check is out, and check again: that one answers first, with success.
     await p.fill("#w-p-url", "https://other.example.com/v1");
+    await p.fill("#w-p-key", "fixture-key-for-other-host");
     await next(p).click();
     await expect.poll(async () => (await calls(p)).filter(c => c === "test").length).toBe(2);
     await settle(p, "test", { ok: true, host: "other.example.com", models: 1 }, 1);
