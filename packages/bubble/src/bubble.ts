@@ -1304,6 +1304,15 @@ export class ReasoningBubble {
     return this.cut > 0;
   }
 
+  /**
+   * Its text doesn't all show where it was last placed: cut short to the room (isCut), or narrowed to fit beside what it
+   * keeps off with its text running on past its lines (companion-repairs-x6-2: an answer opened in full in a 257 px side
+   * strip held 650 px of text in a 416 px box). One narrowed with all of its text in view is whole.
+   */
+  clipped(): boolean {
+    return this.cut > 0 || (this.width > 0 && this.thoughtBox.dataset.overflow === "true");
+  }
+
   /** The parts that take the pointer (buttons; a long question's scroll area), in host coordinates. */
   interactiveRects(pad = 4): Rect[] {
     const pos = this.pos;

@@ -286,6 +286,63 @@ function closedAfterCut(): { open: Ended & { cut: boolean; cap: string; text: nu
   html.style.removeProperty("--text-scale");
   return { open, closed, scrolled };
 }
+/** Where an answer opened in full is, whether all of its text shows, and how much of the open Ask box it is under. */
+type Stage = { spot: { x: number; y: number; w: number; h: number } | null; whole: boolean; over: number };
+/**
+ * An answer opened in full (13 lines, its offer last) at Larger text with Ember low, as the overlay places it (askKeepOff,
+ * as measureTasks calls it): Read all with the Ask box open, the box closed (Esc), then the box opened again where main
+ * opens it (ask.ts openingBounds, over the answer shown whole, as nothing by Ember is clear of it), first a row short. On a
+ * 1024 x 768 screen, where it is cut short for the box (companion-repairs-x6-1), and a 1366 x 768 one, where it is
+ * narrowed into the screen's side strip (companion-repairs-x6-2).
+ */
+function reopenedOver(): { name: string; open: Stage; closed: Stage; reopened: Stage }[] {
+  const html = document.documentElement;
+  html.dataset.textSize = "larger";
+  html.style.setProperty("--text-scale", "1.3");
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;inset:0";
+  document.body.append(host);
+  const words = ["Tokyo", "is", "nine", "hours", "ahead", "of", "London,", "so", "it", "is", "evening", "there."];
+  const cutState = { visible: true, mood: "idle" as const, title: "Ember", actions: [{ id: "ui:more", label: "Read all" }] };
+  const full = { ...cutState, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+  type Box = { x: number; y: number; width: number; height: number };
+  const area = (a: Box, c: Box) => Math.max(0, Math.min(a.x + a.width, c.x + c.width) - Math.max(a.x, c.x)) * Math.max(0, Math.min(a.y + a.height, c.y + c.height) - Math.max(a.y, c.y));
+  const out = [];
+  for (const [name, width, handleX, emberX] of [["1024 x 768", 1024, 752, 559], ["1366 x 768", 1366, 1094, 730]] as const) {
+    const b = new ReasoningBubble(host);
+    b.setThought(Array.from({ length: 110 }, (_, i) => words[i % 12]).join(" ") + " Want me to add a world clock?");
+    b.setExpanded(true);
+    b.setActions([{ key: "ui:close", label: "Close", onClick: () => undefined }, { key: "ui:conversation", label: "Open conversation", onClick: () => undefined }]);
+    b.setVisible(true);
+    const screen = { width, height: 768 }, handle = { x: handleX, y: 700, width: 260, height: 56 }, anchor = { x: emberX, y: 637 };
+    const box = { x: emberX - 364, y: 226, width: 728, height: 173 }, reopened = { x: emberX - 364, y: 355, width: 728, height: 236 };
+    const t = b.root.querySelector<HTMLElement>(".eb-thought")!;
+    const placeFor = (held: { box: Box | null; grew?: true }) => b.place(anchor, screen, 60, held.box ? [handle, held.box] : [handle], [], [], held.box && held.grew ? [held.box] : []);
+    const read = (open: Box | null): Stage => {
+      const r = b.rect();
+      return { spot: r && { x: r.x, y: r.y, w: r.width, h: r.height }, whole: t.scrollHeight <= t.clientHeight + 1, over: r && open ? area(r, open) : 0 };
+    };
+    let held = askKeepOff(box, askKeepOffKey(cutState), { box: null, question: "" });
+    held = askKeepOff(box, askKeepOffKey(full), held, true, b.clipped(), b.rect());
+    placeFor(held);
+    const open = read(box);
+    // Esc: state.askBox goes null.
+    held = askKeepOff(null, askKeepOffKey(full), held, true, b.clipped(), b.rect());
+    placeFor(held);
+    const closed = read(null);
+    // Ctrl+Alt+Space: the box opens again, on it, a row short, and grows a row up into place as it lays out (as live).
+    held = askKeepOff({ ...reopened, y: 386, height: 205 }, askKeepOffKey(full), held, true, b.clipped(), b.rect());
+    placeFor(held);
+    held = askKeepOff(reopened, askKeepOffKey(full), held, true, b.clipped(), b.rect());
+    placeFor(held);
+    out.push({ name, open, closed, reopened: read(reopened) });
+    b.root.remove();
+  }
+  host.remove();
+  delete html.dataset.textSize;
+  html.style.removeProperty("--text-scale");
+  return out;
+}
 /**
  * Question hints left in the page for main to read from its accessibility tree: Linux's at the bubble's own width (the
  * two chords on one line) and a Mac's narrowed to 220 px (each chord on a line of its own). Their hosts' ids.
@@ -321,6 +378,7 @@ function axHints(): string[] {
     answerHeights: answerHeights(),
     openedInFull: openedInFull(),
     closedAfterCut: closedAfterCut(),
+    reopenedOver: reopenedOver(),
     axHints: axHints(),
     // Ember's own font, loaded: the key hints are measured in it, not in a fallback a runner happens to have.
     emberSans: [...document.fonts].some(f => f.family.replace(/"/g, "") === "Ember Sans" && f.status === "loaded"),
@@ -376,6 +434,8 @@ app.whenReady().then(async () => {
 `;
 
 type Sample = { scale: string; translate: string; opacity: number };
+/** Where an answer opened in full is, whether all of its text shows, and how much of the open Ask box it is under. */
+type Stage = { spot: { x: number; y: number; w: number; h: number } | null; whole: boolean; over: number };
 /** Whether an answer opened in full has shown its end (endShown), and how many times onEndShown was told. */
 type Ended = { endShown: boolean; told: number };
 type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext" | "answer", Sample[]> & {
@@ -387,6 +447,8 @@ type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext"
   openedInFull: { spot: { x: number; y: number; w: number; h: number } | null; text: number; scroll: number; line: number; textHot: boolean; buttons: { x: number; y: number; w: number; h: number }; buttonsHot: boolean; whole: number; wholeText: number }[];
   /** An answer opened in full, cut for the open Ask box, then the box closed; and cut, then scrolled (closedAfterCut). */
   closedAfterCut: { open: Ended & { cut: boolean; cap: string; text: number; scroll: number }; closed: Ended & { cut: boolean; cap: string; text: number; scroll: number; spot: { x: number; y: number; w: number; h: number } | null }; scrolled: { cut: boolean; before: Ended; after: Ended } };
+  /** An answer opened in full with the box open, the box closed, then opened again on it, at Ember low (reopenedOver). */
+  reopenedOver: { name: string; open: Stage; closed: Stage; reopened: Stage }[];
   /** What a screen reader reads of each hint left in the page (by its host's id). */
   axHints: Record<string, string | null>;
   /** Whether the bundled "Ember Sans" (Inter) had loaded when the hints were measured. */
@@ -555,6 +617,29 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
     expect(scrolled.cut).toBe(true);
     expect(scrolled.before).toEqual({ endShown: false, told: 0 });
     expect(scrolled.after).toEqual({ endShown: true, told: 1 });
+  });
+
+  it("shows an answer opened in full whole once the box closes though it was narrowed for the box, and keeps it clear of the box opening on it again (companion-repairs-x6-1, companion-repairs-x6-2)", () => {
+    const handleOf = (width: number) => ({ x: width === 1024 ? 752 : 1094, y: 700, w: 260, h: 56 });
+    for (const { name, open, closed, reopened } of result.reopenedOver) {
+      const width = Number(name.split(" ")[0]);
+      // With the box open: clear of it, and its text doesn't all show (cut short beside Ember at 1024, narrowed into the
+      // side strip at 1366, its offer behind the scroll bar).
+      expect(open.spot, name).not.toBeNull();
+      expect(open.over, name).toBe(0);
+      expect(open.whole, name).toBe(false);
+      // Esc: all of it shows, at its own width, on screen and clear of the handle (x6-2: the narrowed one stayed narrow,
+      // 650 px of text in a 416 px box).
+      const s = closed.spot!, h = handleOf(width);
+      expect(closed.whole, name).toBe(true);
+      expect(s.w, name).toBe(410);
+      expect(s.x >= h.x + h.w || s.x + s.w <= h.x || s.y >= h.y + h.h || s.y + s.h <= h.y, name).toBe(true);
+      expect(s.y >= 0 && s.y + s.h <= 768 && s.x >= 0 && s.x + s.w <= width, name).toBe(true);
+      // The box opens again on it: it keeps off the box again, still shown (x6-1: the field opened over its lines,
+      // 66,176 px² of the field).
+      expect(reopened.spot, name).not.toBeNull();
+      expect(reopened.over, name).toBe(0);
+    }
   });
 
   it("reads a question's key hint to a screen reader with the \" · \" only between its chords, never before the first (companion-v4-3)", () => {

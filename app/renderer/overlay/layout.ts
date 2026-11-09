@@ -96,9 +96,11 @@ export function bubbleHere(f: { ember: { x: number; y: number }; on?: number }, 
 
 /**
  * The open Ask box a bubble keeps off (global DIP), for which bubble (askKeepOffKey), and whether it grew into it
- * (`grew`, askGrownInto: it may then go above or below the box, where nothing by Ember is clear of it).
+ * (`grew`, askGrownInto: it may then go above or below the box, where nothing by Ember is clear of it). `released`: an
+ * answer opened in full that kept off the box no more once it closed, so it could show whole, and keeps off the box
+ * wherever the box comes over it from then on (askKeepOff).
  */
-export interface AskHeld { box: Rect | null; question: string; grew?: true }
+export interface AskHeld { box: Rect | null; question: string; grew?: true; released?: true }
 
 /**
  * The open Ask box for the bubble to keep off (global DIP), from main's word (`box`: state.askBox, null once it closes)
@@ -109,12 +111,22 @@ export interface AskHeld { box: Rect | null; question: string; grew?: true }
  * answer being read isn't thrown across the screen (companion-c2-4); the box keeps clear of it instead (ask.ts). One
  * that grows into the box on its own (askGrew: as its words stream in, or as it finishes) keeps off it from then on
  * (askGrownInto). So does an answer opened in full (`opened`: "Read all") while the box is open, which may go above or
- * below the box at once (`grew`; companion-c5-1: the whole answer was laid under the field). One cut short to the room
- * for it (`cut`: bubbleCut) keeps off the box no more once it closes, so it shows whole where it can (companion-v6-3:
- * its last lines stayed behind the scroll bar for as long as it showed, though all of it fitted above Ember).
+ * below the box at once (`grew`; companion-c5-1: the whole answer was laid under the field). One whose text doesn't all
+ * show for it (`clipped`: cut short to the room, bubbleCut, or narrowed with its text running on) keeps off the box no
+ * more once it closes, so it shows whole where it can (companion-v6-3: its last lines stayed behind the scroll bar for
+ * as long as it showed, though all of it fitted above Ember; companion-repairs-x6-2: narrowed into the screen's side
+ * strip, the same). From then on the box coming over it where it is (`at`: opening again on it, or growing into it as
+ * it settles) is kept off where the box is, as when Read all came with the box open (companion-repairs-x6-1: nothing
+ * by Ember was clear of it, so the field opened over its lines, and the box grew a row up into it as it opened); a box
+ * clear of it never moves it.
  */
-export function askKeepOff(box: Rect | null, question: string, held: AskHeld, opened = false, cut = false): AskHeld {
-  if (question && question === held.question) return opened && cut && !box && held.box ? { box: null, question } : held;
+export function askKeepOff(box: Rect | null, question: string, held: AskHeld, opened = false, clipped = false, at: Rect | null = null): AskHeld {
+  if (question && question === held.question) {
+    if (opened && clipped && !box && held.box) return { box: null, question, released: true };
+    const same = !!held.box && !!box && held.box.x === box.x && held.box.y === box.y && held.box.width === box.width && held.box.height === box.height;
+    if (held.released && box && !same && at && overlap(at, box) > 0) return { box, question, grew: true, released: true };
+    return held;
+  }
   return opened && box ? { box, question, grew: true } : { box, question };
 }
 
