@@ -1573,6 +1573,16 @@ describe("database clients that run what their input gives them (commands-remote
     expect(rules("printf 'GET x\\nFLUSHALL\\n' | redis-cli")).toContain("db.change");
   });
 
+  it("asks before redis-cli runs a command on its line that Ember can't see, and judges one the text gives a variable (commands-remote-x6-5)", () => {
+    for (const cmd of ["redis-cli \"$CMD\"", "redis-cli $(printf FLUSHALL)", "redis-cli -h db \"$CMD\" x", "redis-cli CONFIG \"$x\" maxmemory 1"]) {
+      expect(rules(cmd), cmd).toContain("unclear.sql");
+    }
+    for (const cmd of ["c=FLUSHALL; redis-cli $c", "c=FLUSHALL; redis-cli \"$c\"", "c='DEL users'; redis-cli -n 0 $c"]) expect(rules(cmd), cmd).toContain("db.change");
+    expect(classifyCommand("redis-cli \"$CMD\"", "bash", contextOf("linux")).findings.map(f => f.says)).toContain("It runs database commands Ember can't see.");
+    // A read, as written or through a variable, and a key Ember can't see after a command it can, run as before.
+    for (const cmd of ["c=PING; redis-cli \"$c\"", "c='GET x'; redis-cli $c", "redis-cli GET \"$k\"", "redis-cli -h \"$HOST\" PING"]) expect(rules(cmd), cmd).toEqual([]);
+  });
+
   it("judges an SQL or command file a client reads from its input by its name, as -f is, and asks for one this task downloaded", () => {
     for (const cmd of ["psql mydb < drop_users.sql", "mysql app < drop.sql", "sqlite3 app.db < drop.sql", "mongosh < drop.js", "mongosh app drop_all.js", "redis-cli < wipe-cache.txt"]) {
       expect(rules(cmd), cmd).toContain("script.destroy");

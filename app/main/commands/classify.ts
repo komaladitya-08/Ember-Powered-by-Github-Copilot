@@ -3296,8 +3296,12 @@ function stdinFile(h: H): void {
 
 /** redis-cli's commands that only read or watch (anything else changes the database). */
 const REDIS_READS = /^(get|mget|exists|keys|scan|sscan|hscan|zscan|type|ttl|pttl|strlen|hget|hgetall|hkeys|hvals|hlen|hexists|lrange|llen|lindex|smembers|scard|sismember|zrange|zrangebyscore|zcard|zscore|info|ping|dbsize|time|echo|memory|object|client|slowlog|latency|monitor|subscribe|psubscribe|pubsub|xrange|xlen|xread|bitcount|getrange|getbit|role|lastsave|command|config)$/;
-/** One redis-cli command (its words): a change to the data, or to how the server works. */
-function redisCommand(h: H, words: readonly string[]): void {
+/**
+ * One redis-cli command (its words, null for one Ember can't see): a change to the data, or to how the server works.
+ * A command, or CONFIG's word after it, that Ember can't see asks, as psql -c's does (commands-remote-x6-5).
+ */
+function redisCommand(h: H, words: readonly (string | null)[]): void {
+  if (words[0] === null || (/^config$/i.test(words[0] ?? "") && words[1] === null)) { h.e.unclear("unclear.sql", "It runs database commands Ember can't see."); return; }
   const cmd = (words[0] ?? "").toLowerCase();
   if (cmd && !REDIS_READS.test(cmd)) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(words[1] ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
@@ -3362,7 +3366,10 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     const p = opts(h, { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] });
     if (values(p, "eval").length || has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
     if (has(p, "a", "pass") || values(p, "a").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-    redisCommand(h, p.operands.map(a => a.v ?? ""));
+    // A command word Ember can't see all of (`redis-cli "$c"`): each value the text gives it, split as the shell may.
+    const [word, ...rest] = p.operands;
+    if (word?.v === null) for (const f of h.e.knownForms(word)) redisCommand(h, f === null ? [null] : [...f.trim().split(/\s+/), ...rest.map(a => a.v)]);
+    else redisCommand(h, p.operands.map(a => a.v));
     // With no command on its line it runs the commands its input gives, one a line (`redis-cli <<< FLUSHALL`, `echo
     // DEL x | redis-cli`); with -x its input is the last argument's value (commands-remote-c5-3).
     if (p.operands.length === 0 && !has(p, "x")) {
