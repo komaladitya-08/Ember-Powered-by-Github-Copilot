@@ -167,7 +167,8 @@ reported in every PR that touches it.
   same as JSON. With `--max-cpu` and `--max-pss` (docs/DEVELOPING.md records the figures) it fails only on a large
   regression, never on noise. CI's `el8` job runs it with that budget, after the desktop suites, past the first minute
   and under a compositor, so the overlay beside the cursor is counted (`--compositor`): listening on the C API the
-  Linux packages run (`--native`), then on WebAssembly, each against its own budget. It says which backend it measured.
+  Linux packages run (`--native`), then on WebAssembly, each against its own budget. It says which backend it measured,
+  and fails when the listening process wasn't there from the sample's start to its end.
 - `voice.latency` logs transcription time and the steps from transcript arrival to the first speaking report. `voice.hush_ack`
   logs how long the speaking renderer took to acknowledge cancellation. The logs contain no words (CLAUDE.md privacy).
   See the [timing fields in the development guide](DEVELOPING.md#how-speech-runs-native-synthesis-native-or-webassembly-listening).

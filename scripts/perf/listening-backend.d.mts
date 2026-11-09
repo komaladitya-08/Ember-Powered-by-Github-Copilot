@@ -8,8 +8,10 @@ export interface ListeningSeen {
   from: string | null;
   /** Why, as that line says (voice.ready's detail, voice.backend's why). */
   detail: string | null;
-  /** A voice process said what it runs (voice.ready), not only main's choice. */
+  /** A voice process said what it runs (voice.ready), not only main's choice, and hasn't stopped since. */
   ready: boolean;
+  /** The first line since then that said the voice process stopped (voice.exit, voice.restart…), and why; null once one is ready again. */
+  stopped: { line: string; why: string | null } | null;
   /** The models a native voice process made on WebAssembly (voice.model_wasm_fallback). */
   onWasm: string[];
 }
@@ -17,3 +19,7 @@ export interface ListeningSeen {
 export declare function listeningSeen(text: string): ListeningSeen;
 export declare function listeningWords(seen: Pick<ListeningSeen, "backend" | "onWasm">): string;
 export declare function notNative(seen: ListeningSeen): string | null;
+/** footprint.mjs's name for an Electron utility process: in its run, only listening's is one. */
+export declare const LISTENING_KIND: string;
+/** Why footprint.mjs's sample didn't measure one voice process listening from its start to its end, from the log then and after. */
+export declare function listeningGap(atStart: string, atEnd: string): string | null;
