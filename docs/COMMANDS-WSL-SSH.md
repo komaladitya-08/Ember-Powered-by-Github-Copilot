@@ -1023,3 +1023,7 @@ statement reach those files under another name. This applies to ln, Windows mkli
 A place Ember cannot establish keeps a command asking: “At the root of frontend/, delete the build folder” never
 announces deletion of the current folder's build, and “on the desktop” or “on the NAS” does not silently mean here.
 Use the exact path to name the intended folder.
+
+Known protected paths handed to shell code as positional arguments are refused too. Unsupported Windows blocks
+and cmd variable assignments retain a conservative own-path scan, including the known profile-folder variables,
+so foreach or a later percent-variable expansion cannot hide Ember's settings from the refusal.

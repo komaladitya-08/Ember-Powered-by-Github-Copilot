@@ -1852,30 +1852,42 @@ class Engine extends Classifier {
       if (p.fatal) this.fallbackScan(text, sc);
       else this.psStatements(p.statements, child(sc, { family: "powershell", shell: "powershell" }));
       this.psTextScan(text, sc);
+      if (!this.refuse && this.findings.some(f => f.rule.startsWith("unclear.the-keyword-"))) this.fallbackScan(text, sc, false);
       return;
     }
     const p = lexCmd(text);
     this.noteUnclear(p.unclear);
     if (p.fatal) { this.fallbackScan(text, sc); return; }
     this.cmdLine(p, child(sc, { family: "cmd", shell: "cmd" }));
+    if (!this.refuse && this.envChanged) this.fallbackScan(text, sc, false);
   }
 
   /**
    * A text that couldn't be parsed is unclear; Ember's flat refusals still apply to what it can see in it (a program
    * that synthesises input, an Ember path or an `ember:` URL anywhere in it).
    */
-  private fallbackScan(text: string, sc: Scope): void {
-    const tokens = text.split(/[\s;|&()<>'"`$={}]+/).filter(t => t !== "");
+  private fallbackScan(text: string, sc: Scope, question = true): void {
+    // Opaque Windows blocks and cmd assignments still expose known profile paths (commands-remote-c3-2).
+    const known: string[] = [];
+    const shown = sc.path.flavour !== "win32" ? text : text.replace(/\$\{?(env:[A-Za-z_]\w*|HOME|PWD)\}?|%([A-Za-z_]\w*)%/gi, (whole: string, ps: string | undefined, cmd: string | undefined, offset: number) => {
+      const value = this.psValue([{ t: "var", name: ps ?? `env:${cmd}` }], whole, sc, true).v;
+      if (value === null) return whole;
+      const suffix = /^[\\/][^\s"'`;|&()<>{}]*/.exec(text.slice(offset + whole.length))?.[0] ?? "";
+      known.push(value + suffix);
+      return value;
+    });
+    const quoted = [...shown.matchAll(/(["'])([^"'\r\n]*)\1/g)].map(m => m[2].slice(m[2].indexOf("=") + 1));
+    const tokens = [...shown.split(/[\s;|&()<>'"`$={}]+/), ...known, ...quoted].filter(t => t !== "");
     for (const t of tokens) {
       const base = (t.split(/[\\/]/).pop() ?? t).toLowerCase().replace(/\.(exe|com|bat|cmd)$/, "");
       if (INPUT_SYNTH.has(base)) this.refuseWith("ember.input", "input");
       if (/^ember:/i.test(t)) this.refuseWith("ember.url", "input");
       if (/^[~/\\]|^[A-Za-z]:[\\/]/.test(t) && (sc.home || !t.startsWith("~"))) {
         const abs = resolveTargetPath(t, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "/" });
-        if (isEmberPath(abs, sc.path)) this.refuseWith("ember.path", "safety");
+        if (isEmberPath(abs, sc.path) || (sc.path.flavour === "win32" && holdsEmberPath(abs, sc.path))) this.refuseWith("ember.path", "safety");
       }
     }
-    if (this.findings.every(f => f.cls !== "unclear")) this.unclear("unclear.syntax");
+    if (question && this.findings.every(f => f.cls !== "unclear")) this.unclear("unclear.syntax");
   }
 
   // ----------------------------------------------------------------------------------------------------------------
@@ -4218,6 +4230,12 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
       return;
     }
     if (!posixShell) { h.e.unclear("unclear.other-shell", `Ember can't read ${h.key}'s language.`); emberText(h, text.v); return; }
+    // Positional arguments handed to shell code may name protected files even though the body only says $0 or $1.
+    for (const arg of h.args.slice(cIdx + 2)) {
+      const obj = h.e.usePath(arg, "read", h.sc);
+      h.e.judgeUnseen(arg, "deleteTree", h.sc);
+      if (obj.abs !== null && holdsEmberPath(obj.abs, h.sc.path)) h.e.refuseWith("ember.path", "read");
+    }
     h.e.nested(text.v, posixShell === "bash" ? "bash" : posixShell === "zsh" ? "zsh" : "sh", h.sc, `${h.key} -c`, {}, pipedInto(h));
     return;
   }

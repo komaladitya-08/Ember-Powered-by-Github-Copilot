@@ -2528,3 +2528,6 @@ Link targets include protected ancestor folders in the own-file refusal, includi
 Shell scripts retain questions for loops: reading a body once does not establish later passes' arguments or folders.
 
 Intent matching fails closed for unestablished root-of and on-place phrases instead of announcing a different path.
+
+Opaque shell positional arguments and Windows flow retain known own-path refusals; their values are never used to
+relax the execution decision. The Windows fallback scan can refuse a protected ancestor when its later use is opaque.

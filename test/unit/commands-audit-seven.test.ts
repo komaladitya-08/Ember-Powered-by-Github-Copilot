@@ -100,3 +100,24 @@ describe("links to folders containing Ember", () => {
     }
   });
 });
+
+describe("protected paths handed to opaque shell contexts", () => {
+  it("refuses known protected arguments to positional shell code (commands-remote-v4-4, v5-2)", () => {
+    for (const command of [
+      'sh -c \'cat "$0/settings.json"\' ~/.config/ember',
+      'sh -c \'cat "$1/settings.json"\' unused ~/.config/ember',
+      'd=~/.config/ember; sh -c \'cat "$1/settings.json"\' unused "$d"',
+    ]) expect(decide(command).verdict, command).toBe("refuse");
+    expect(decide("sh -c 'echo hello' world").verdict).toBe("run");
+  });
+
+  it("refuses visible protected Windows paths when a loop or variable hides their later use (commands-remote-c3-2, i6a)", () => {
+    const win = (command: string, shell: "cmd" | "powershell") => runCase({ cmd: command, shell, context: "win32", verdict: "run" }, { shell, context: "win32" }).decision.verdict;
+    for (const command of [
+      '$d = "$env:LOCALAPPDATA\\ember"; foreach ($f in @($d)) { Remove-Item -Recurse $f }',
+      'foreach ($d in @("$env:LOCALAPPDATA\\ember")) { Get-Content "$d\\settings.json" }',
+    ]) expect(win(command, "powershell"), command).toBe("refuse");
+    expect(win('set "D=%LOCALAPPDATA%\\ember" & type "%D%\\settings.json"', "cmd")).toBe("refuse");
+    expect(win('set "D=project" & echo %D%', "cmd")).toBe("run");
+  });
+});
