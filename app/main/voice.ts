@@ -106,11 +106,17 @@ const LISTEN_ONCE_DOUBT_SETTINGS = "There was talking, but it wasn't clear it wa
  * Listen once's line while Ember talks: a press hushes it first, as "Hey Ember" does (voice-listening-7). Main's
  * `LISTEN_ONCE_STOPS_ANSWER` takes its place while an answer is on its way. Without the name: Home's status line says
  * it after each Listen once as the short spoken answer plays, into the idle wake microphone, and "Stops Ember talking,
- * …" woke Ember and was sent as a request in 23 of 40 real-model placements (voice-listening-x6-1).
+ * …" woke Ember and was sent as a request in 23 of 40 real-model placements (voice-listening-x6-1). Worded for any
+ * speech: Hear Ember's sample is no answer, and "Stops the spoken answer, …" said so for its whole length (y6-2).
  */
-export const LISTEN_ONCE_HUSH = "Stops the spoken answer, then listens for one request.";
-/** Listen once's line while an answer is on its way: a press stops it first, as a wake does (main's requestListenOnce). */
-export const LISTEN_ONCE_STOPS_ANSWER = "Stops Ember's answer, then listens for one request.";
+export const LISTEN_ONCE_HUSH = "Stops speaking first, then listens for one request.";
+/**
+ * Listen once's line while an answer is on its way: a press stops it first, as a wake does (main's requestListenOnce).
+ * No name at all, not even "Ember's", which `calledByName` leaves out: the recogniser joins the word before it to the
+ * name, and "Stops Ember's answer, …", said after each Listen once until the answer came, was heard as "Stop Timbers'
+ * answer, …" and woke Ember in 20 of 40 real-model placements (voice-listening-y6-1).
+ */
+export const LISTEN_ONCE_STOPS_ANSWER = "Stops the answer on its way, then listens for one request.";
 /** What the voice line says while the screen is locked (review #81). */
 const LOCKED_TEXT = "Not listening while the screen is locked.";
 /**
