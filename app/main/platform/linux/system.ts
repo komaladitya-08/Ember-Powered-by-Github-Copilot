@@ -116,7 +116,7 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
       ids: ["enable-accessibility"],
       apply: async fix => {
         if (fix !== "enable-accessibility") throw new Error(`unknown fix: ${fix}`);
-        exec("gsettings", ["set", "org.gnome.desktop.interface", "toolkit-accessibility", "true"], { timeout: 5000 });
+        await (io.run ?? execAsync)("gsettings", ["set", "org.gnome.desktop.interface", "toolkit-accessibility", "true"], { timeout: 5000 });
       },
       label: () => "Turn on",
     },
@@ -127,9 +127,12 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
         screenReaderOn();
         return deps.electron.app.isAccessibilitySupportEnabled() ? true : readerKnown && readerFresh && !readerLooking ? screenReader : null;
       },
-      // GNOME's "Animations" switch off counts as asking for calm mode.
-      systemReducedMotion: () => {
-        try { return exec("gsettings", ["get", "org.gnome.desktop.interface", "enable-animations"], { encoding: "utf8", timeout: 2000 }).trim() === "false"; } catch { return false; }
+      // A compositor can return while tasks run: the session bus must not hold up Stop (reliability-r7-2).
+      systemReducedMotion: async () => {
+        try {
+          const out = await (io.run ?? execAsync)("gsettings", ["get", "org.gnome.desktop.interface", "enable-animations"], { timeout: 2000 });
+          return typeof out !== "string" || out.trim() !== "true";
+        } catch { return true; /* unchecked desktop preference: stay Calm */ }
       },
     },
     voice: {

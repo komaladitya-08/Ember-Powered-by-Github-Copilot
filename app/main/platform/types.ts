@@ -471,8 +471,8 @@ export interface A11yProbes {
   screenReaderOn(): boolean;
   /** For microphone guards: null while an OS query is pending or could not be checked, never permission to speak. */
   screenReaderState?(): boolean | null;
-  /** The OS asks for less motion. linux: gsettings enable-animations false (today); win32/darwin: systemPreferences.getAnimationSettings().prefersReducedMotion. */
-  systemReducedMotion(): boolean;
+  /** The OS asks for less motion. Linux queries gsettings asynchronously; win32/darwin return their existing native preference. */
+  systemReducedMotion(): boolean | Promise<boolean>;
 }
 
 /** The OS-specific parts of voice input. */

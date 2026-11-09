@@ -167,7 +167,8 @@ while Send was waiting. An earlier acknowledgement cannot close a newer edit. No
   setup check has it too; on Linux Python bindings and the GNOME accessibility switch are checked in the background,
   at start and every 30 s, or at once with Check again. While a check is pending the row says Checking screen reading,
   never that bindings are missing or ready. Neither a first read nor a later session-bus check blocks Stop; `ember doctor`
-  waits asynchronously for the completed checks. If the GNOME switch cannot be read, the row says it could not be
+  waits asynchronously for the completed checks. **Turn on** also waits off the main thread for GNOME to apply the
+  setting, leaving Stop responsive and reporting a failed change through the existing fix error. If the GNOME switch cannot be read, the row says it could not be
   checked. Screen-reader detection also queries GNOME off the main thread, caches its answer for a minute and keeps
   using Chromium's current accessibility state. While reader detection is unknown, teaching and Listen once use
   their screen-reader guards; that uncertainty never enables speaking only meant for a detected reader. A missing pyatspi is looked for again, so Ember
@@ -384,7 +385,11 @@ while Send was waiting. An earlier acknowledgement cannot close a newer edit. No
   open instead while Ember isn't set up or the desktop session is one it can't use (the setup check says why). The macOS
   Dock menu's **Ask Ember** does the same in the running Ember.
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
-  animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the text
+  animations are off or the desktop asks for reduced motion. On Linux that preference is checked in the background,
+  including when a compositor returns: Stop stays responsive, and cursor-following starts with reduced motion while
+  that preference is unchecked. A newer live preference takes priority.
+  A result for a stopped or replaced overlay, or one superseded by a live preference change, is ignored.
+  Its **Text size** (Default, Large, Larger) changes the text
   in settings, Ember's bubble, task cards and handle, the ask box, the desk window's bar, the command window and its
   terminal, and Ember's password and consent cards. **Glass** (Clear, Regular, Solid; `settings.glass`, put on the floating pages as
   `html[data-glass]`) sets how much of the screen shows through the bubble, task cards, handle and ask box: Clear is an even,
