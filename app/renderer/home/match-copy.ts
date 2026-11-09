@@ -40,11 +40,10 @@ export const MATCH_TEXT = {
  * Ember: heard alone, "…forgotten. Anyone who talks to it is heard. Teach it your voice…" read as the person's own
  * voice (voice-listening-x6-4). Nor with more listening than the line shown says: right after Forget my voice,
  * "Everyone who talks is heard." said all talk near the computer is, where the line shown says only that anyone who
- * talks to Ember is heard (voice-listening-y6-3). Nor "Teach your voice again, …", which said no more than "Teach it
- * your voice" of who learns it, beside a button with no "again": the button is named by its place (voice-listening-z6-1).
+ * talks to Ember is heard (voice-listening-y6-3). `none` is said only after teaching or forgetting, so "again".
  */
 export const MATCH_SAID = {
-  none: "Requests from any voice are heard. Once your voice is learnt with the button below, you can answer questions out loud; other voices can't.",
+  none: "Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.",
   on: "On: your voice can answer questions out loud, and other voices can't. Everyone is still heard. Your voiceprint stays on this computer.",
   off: "Off: answer questions by clicking. Your voiceprint is kept until you forget it.",
   noModel: "Voice Match's model is missing or was damaged. Download it above to put that right.",
