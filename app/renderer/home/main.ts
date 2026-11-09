@@ -2742,7 +2742,7 @@ $("consent-no").addEventListener("click", () => { consentClosed(); $("consent").
  */
 const naturalLive = heldLive($("natural-live"));
 /** The voice choice discloses the optional Kokoro download before switching. */
-const naturalUI = mountNaturalVoice({ save, live: text => naturalLive.say(text), managed: () => managed.has("naturalVoice") });
+const naturalUI = mountNaturalVoice({ save, live: naturalLive, managed: () => managed.has("naturalVoice") });
 /**
  * Hear me more clearly's line, said through its own status line as the voice line is: once it has held, only when its
  * words change, and never while the microphone opens or is open for a request (`micHeld`). Written on every voice push,

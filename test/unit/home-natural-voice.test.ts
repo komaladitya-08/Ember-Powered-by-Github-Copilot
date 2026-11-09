@@ -103,12 +103,10 @@ describe("effective voice status", () => {
       const words = line.split(/\s+/);
       for (let i = 0; i < words.length; i++) expect(calledByName(words.slice(i).join(" ")), `${line} from “${words[i]}”`).toBe(false);
     }
-    // Said through its own held line, only where it stands: never that it is checking or downloading.
+    // Said through its own held line, only where it stands: never that it is checking or downloading
+    // (home-natural-voice-renderer.test.ts, voice-listening-c5-1, x6-2, x6-3).
     const html = fs.readFileSync(path.resolve("app/renderer/home/index.html"), "utf8");
     expect(html).toContain('<p class="sr" id="natural-live" role="status"></p>');
-    const ui = fs.readFileSync(path.resolve("app/renderer/home/natural-voice.ts"), "utf8");
-    expect(ui).toContain('if (state !== said && status?.state !== "downloading" && !view.busy) deps.live(view.text);');
-    expect(fs.readFileSync(path.resolve("app/renderer/home/main.ts"), "utf8")).toContain("live: text => naturalLive.say(text)");
   });
 
   it("never relabels a stale previous model's status as the new selection", () => {

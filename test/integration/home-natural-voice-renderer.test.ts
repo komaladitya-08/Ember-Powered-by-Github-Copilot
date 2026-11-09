@@ -50,7 +50,7 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("uses the baseline voice and 
       window.ember = { retryNaturalVoice: async () => { test.retries++; } };
       const view = mountNaturalVoice({
         save: async patch => { test.patches.push(patch); if (test.fail) return false; settings = { ...settings, ...patch }; view.settings(settings); return true; },
-        live: text => { document.getElementById("voice-live").textContent = text; }, managed: () => test.managed,
+        live: { say: text => { document.getElementById("voice-live").textContent = text; }, drop: () => undefined, again: () => undefined }, managed: () => test.managed,
       });
       for (const section of document.querySelectorAll("main > section[data-pane]")) section.classList.toggle("off-pane", section.dataset.pane !== "voice");
       document.body.classList.remove("loading", "first-run");
@@ -545,6 +545,92 @@ it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("tells screen readers nothing
     await expect.poll(said, { timeout: 3000 }).toEqual([`natural-live: ${spoken}`]);
     await page.waitForTimeout(1300);
     expect(await said()).toEqual([`natural-live: ${spoken}`]);
+    expect(errors).toEqual([]);
+  } finally { await browser.close(); await server.close(); }
+}, 60_000);
+
+it.skipIf(process.env.EMBER_VOICE_UI_TEST !== "1")("says where Ember's voice stands after Try again, even when it ends the same way, and never a line its loading overtook before it was said (voice-listening-x6-2, x6-3)", async () => {
+  // Try again on a voice too slow again said nothing at all: its line had the same words as before. And the line from
+  // before Ember's voice began loading, held while Listen once listened, was said as the window closed while the row
+  // showed "Checking Kitten Nano on this computer…".
+  const { DEFAULT_SETTINGS } = await import("../../app/main/settings");
+  const { CONSENT_VERSION } = await import("../../app/shared/consent");
+  const { SHORTCUTS, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts } = await import("../../app/shared/shortcuts");
+  const status: Status = {
+    appVersion: "test", settings: { ...DEFAULT_SETTINGS, onboarded: true, wakeWord: true, consent: { version: CONSENT_VERSION, at: "2026-11-04T00:00:00.000Z" }, voice: { ...DEFAULT_SETTINGS.voice, consent: true } },
+    environment: { os: "Linux", sessionType: "x11", desktop: "GNOME", display: ":0", glibc: "2.28", versions: { node: "24" }, checks: [] },
+    logFile: "/tmp/ember-test.log", settingsNotice: null,
+    admin: { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] },
+    platform: { os: "linux", shortcuts: shownShortcuts(SHORTCUTS.linux, heldShortcuts(SHORTCUTS.linux, FALLBACK_SHORTCUTS.linux, [])),
+      dataDir: "~/.config/ember", settingsFile: "~/.config/ember/settings.json", auditCopy: null, micIndicator: "", permissionsNote: "", speakerRejection: false, outputLevel: false,
+      fixLabels: {}, desk: true, autostartNote: null },
+  };
+  const later = { state: "later", model: "kitten", voice: "system" } as const;
+  const checking = { state: "checking", model: "kitten", voice: "system" } as const;
+  const tooSlow = { state: "too-slow", model: "kitten", voice: "system" } as const;
+  const waiting: VoiceStatus = { state: "waiting", detail: null, micLabel: "Built-in Microphone", modelsReady: true, modelsMissing: [], modelsBytes: 0,
+    natural: later, naturalModels: ["kitten"], listenOnce: { phase: "ready", detail: "" },
+    match: { enrolled: false, on: false, model: true, wanted: false, enrolling: null, learnt: 0 } };
+  const server = await serve(path.resolve("dist"));
+  const browser = await chromium.launch(browserOptions());
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.addInitScript(seed => {
+      const listeners: Record<string, Set<(value: unknown) => void>> = {};
+      const emit = (name: string, value: unknown) => { for (const listener of listeners[name] ?? []) listener(value); };
+      window.__fullNaturalTest = { patches: [], retries: 0, downloads: 0, hears: 0, status: (voice: VoiceStatus) => emit("onVoiceStatus", voice), heard: () => undefined };
+      window.ember = new Proxy({}, { get: (_target, name: string) => {
+        if (name.startsWith("on")) return (fn: (value: unknown) => void) => { (listeners[name] ??= new Set()).add(fn); return () => { listeners[name]?.delete(fn); }; };
+        if (name === "getStatus") return async () => seed.status;
+        if (name === "voiceStatus") return async () => seed.voice;
+        if (name === "retryNaturalVoice") return async () => { window.__fullNaturalTest.retries++; };
+        return () => new Promise(() => undefined);
+      } }) as EmberHomeApi;
+    }, { status, voice: waiting });
+    await page.goto(server.url);
+    await page.evaluate(() => {
+      const out: string[] = (window as unknown as { __said: string[] }).__said = [];
+      const regions = [...document.querySelectorAll("section[data-pane='voice'] :is([role='status'], [aria-live], [role='alert'])")];
+      // (An emptied line says nothing.)
+      for (const r of regions) new MutationObserver(() => { if (r.textContent) out.push(`${r.id}: ${r.textContent}`); }).observe(r, { subtree: true, childList: true, characterData: true });
+    });
+    const said = () => page.evaluate(() => (window as unknown as { __said: string[] }).__said.filter(line => line.startsWith("natural-live: ")));
+    const forget = () => page.evaluate(() => { (window as unknown as { __said: string[] }).__said.length = 0; });
+    const send = (v: VoiceStatus) => page.evaluate(s => window.__fullNaturalTest.status(s), v);
+    // The first request of a session, by Listen once, before the row's first line has held: then Ember's voice loads.
+    await send({ ...waiting, listenOnce: { phase: "listening", detail: "Listening for one request…" } });
+    await page.waitForTimeout(1500);
+    await send({ ...waiting, natural: checking });
+    expect(await page.locator("#natural-text").innerText()).toBe("Checking Kitten Nano on this computer…");
+    await page.waitForTimeout(1500);
+    expect(await said()).toEqual([]);
+    expect(await page.locator("#natural-live").textContent()).toBe("");
+    // What it decides is said, once it holds.
+    const slow = "Kitten Nano was too slow just now, perhaps because this computer was busy, so replies use this computer's system voice when available. Try again when it's less busy.";
+    await send({ ...waiting, natural: tooSlow });
+    await expect.poll(said, { timeout: 3000 }).toEqual([`natural-live: ${slow}`]);
+    // Ember's voice loading again and ending the same way, unasked, says nothing.
+    await forget();
+    await send({ ...waiting, natural: checking });
+    await page.waitForTimeout(400);
+    await send({ ...waiting, natural: tooSlow });
+    await page.waitForTimeout(1500);
+    expect(await said()).toEqual([]);
+    // Try again, ending the same way: its outcome is said, once.
+    await page.locator('a[href="#voice-h"]').click();
+    await page.locator("#natural-retry").focus();
+    await page.keyboard.press("Enter");
+    expect(await page.evaluate(() => window.__fullNaturalTest.retries)).toBe(1);
+    await send({ ...waiting, natural: checking });
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("natural-model");
+    await page.waitForTimeout(1500);
+    expect(await said()).toEqual([]);
+    await send({ ...waiting, natural: tooSlow });
+    await expect.poll(said, { timeout: 3000 }).toEqual([`natural-live: ${slow}`]);
+    await page.waitForTimeout(1300);
+    expect(await said()).toEqual([`natural-live: ${slow}`]);
     expect(errors).toEqual([]);
   } finally { await browser.close(); await server.close(); }
 }, 60_000);
