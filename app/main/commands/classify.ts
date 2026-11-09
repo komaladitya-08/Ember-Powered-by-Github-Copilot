@@ -1243,8 +1243,9 @@ interface H {
   /** The program word's lookup facts (its extension, whether it is reached through WSL interop). */
   pn: ReturnType<typeof programName>;
   /**
-   * The scope the shell opens the command's redirections in, when `sc` is a folder the program moves into itself
-   * (`git -C sub`, `patch -d src`): `< x.patch` is the shell's file there (commands-remote-x6-4).
+   * The scope the shell opens the command's redirections in, when `sc` is a folder the program or a wrapper moves into
+   * (`git -C sub`, `patch -d src`, `env -C src`): `< x.patch` is the shell's file there (commands-remote-x6-4,
+   * commands-y6-4).
    */
   shellSc?: Scope;
 }
@@ -2516,7 +2517,9 @@ class Engine extends Classifier {
         this.unclear("unclear.interop-args", "Windows would get different arguments than this shows.");
       }
     }
-    const inner: H = { e: this, sc, s: { ...h.s, ps: undefined }, key, prog, nameArg, args: words.slice(1), pn };
+    // The shell's scope stays the one the command's redirections are opened in, whatever folder the wrapper moves
+    // into (`env -C src patch -p1 < x.patch`, `sudo -D src …`: commands-y6-4).
+    const inner: H = { e: this, sc, s: { ...h.s, ps: undefined }, key, prog, nameArg, args: words.slice(1), pn, shellSc: h.shellSc ?? h.sc };
     // Native rows only: a wrapper runs a program, never a cmdlet or a cmd built-in.
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
