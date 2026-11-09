@@ -89,7 +89,9 @@ describe("gate 2 for commands (§3.16)", () => {
       gateCommand(input({ spec: spec({}, { command, shell }), classify: classifyCommand, facts: facts({ shells: ["bash", "zsh"], shellPaths: { bash: "/usr/bin/bash", zsh: "/usr/bin/zsh" } }) }));
     expect((await real("for i in 1 2 3; do echo $i; done")).status).toBe("ok");
     expect((await real("if [ -f package.json ]; then npm test; fi")).status).toBe("ok");
-    expect((await real("while read -r l; do echo \"$l\"; done < list.txt")).status).toBe("ok");
+    expect((await real("while read -r l; do echo \"$l\"; done <<< 'a b'")).status).toBe("ok");
+    // A read over a file is text Ember can't see, on both machines (commands-a7-2).
+    expect(await real("while read -r l; do echo \"$l\"; done < list.txt")).toMatchObject({ status: "needs_confirm", rules: ["unclear.read-text"] });
     expect(await real("for i in 1 2; do echo $i; done", "zsh")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
     expect(await real("zsh -c 'while true { rm -rf ~ }'")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
   });
@@ -122,7 +124,7 @@ describe("gate 2 for commands (§3.16)", () => {
       "for i in 1; do PATH=/tmp/evil:/usr/bin; done; git status",
       "time LD_PRELOAD=./x.so ls",
     ]) expect(await real(command), command).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["unclear.assignment"] });
-    expect((await real("while IFS= read -r l; do echo \"$l\"; done < list.txt")).status).toBe("ok");
+    expect((await real("while IFS= read -r l; do echo \"$l\"; done <<< 'a b'")).status).toBe("ok");
   });
 
   it("counts an approval 120 s old or older as none", async () => {

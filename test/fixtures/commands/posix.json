@@ -9984,7 +9984,13 @@
   },
   {
    "cmd": "read -r first rest <<< \"$line\"",
-   "verdict": "run"
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.read-text"
+   ]
   },
   {
    "cmd": "unset FOO BAR",
@@ -15654,7 +15660,13 @@
   },
   {
    "cmd": "d=~/.config/ember; read -r f <<< \"$d\"; echo \"$f\"",
-   "verdict": "run"
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.read-text"
+   ]
   },
   {
    "cmd": "d=emberx; rm -rf ~/.config/\"${d%x}\"",

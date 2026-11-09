@@ -985,8 +985,9 @@ describe("the card's words from the classifier (review #214)", () => {
   });
 
   it("says a loop's variable as the files the loop names, never as shell text like \"$f\" (commands-remote-c2-3)", () => {
-    // As the flow judges a loop: by the commands in it.
-    const says = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.map(f => f.says);
+    // As the flow judges a loop: by the commands in it (a list or a read over text Ember can't see also says so,
+    // commands-a7-2, left out here).
+    const says = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.filter(f => f.rule !== "unclear.read-text").map(f => f.says);
     expect(says("for f in *.log; do rm \"$f\"; done")).toEqual(["Deletes each file the loop names."]);
     expect(says("for f in a b; do rm -r ${f}; done")).toEqual(["Deletes a and b and everything in them."]);
     // A list of names is said by its names, so a loop over folders never reads as harmless (commands-remote-c2-3).
@@ -1086,6 +1087,40 @@ describe("loops and ifs (commands-remote-2)", () => {
       "done < list.txt; read -r l",
       "bash -c 'while read -r l; do echo; done' < list.txt",
     ]) expect(rules(bare), bare).toContain("unclear.interactive");
+  });
+
+  it("asks before a read, mapfile, select, getopts or for loop works on text Ember can't see, and reads one over written-out text through (commands-a7-2)", () => {
+    const flow = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash");
+    // Text from a file, a pipe, another descriptor, a substitution or a variable: whatever the variable is used for.
+    for (const cmd of [
+      "printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do tar -C \"$d\" -xf /tmp/x.tar; done",
+      "printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do curl -o\"$f\" http://x; done",
+      "cat list | while IFS= read -r d; do echo \"$d\"; done", "while read -r l; do echo \"$l\"; done < list.txt",
+      "while IFS= read -r -d '' d; do git -C \"$d\" init; done < <(printf '%s\\0' ~/.config/ember)",
+      "while read -r -u 3 d; do mkdir -p \"$d/x\"; done 3< list <<< build", "while read -r d <&3; do mkdir -p \"$d/x\"; done 3< list <<< build",
+      "while read -r d < list; do mkdir -p \"$d/x\"; break; done <<< build", "IFS= read -r -d '' d < <(printf '%s\\0' ~/.config/ember); tar -C \"$d\" -xf x.tar",
+      "read x < f; echo \"$x\"", "mapfile -t a < f", "readarray -t a < f", "cat f | read x", "echo a | read x", "getopts ab N", "read x 2>/dev/null <<< a",
+      "printf 'build\\n' | while read -r d; do touch \"$d/x\"; done", "while read -r l; do echo \"$l\"; done <<< \"$x\"", "read -r x <<< \"$(cat f)\"",
+      "while IFS= read -r l; do echo \"$l\"; done <<EOF\n$X\nEOF", "select x in a b; do echo $x; done",
+      "for f in *.txt; do echo \"$f\"; done", "for f in $(cat list); do echo \"$f\"; done", "for f in \"$@\"; do echo \"$f\"; done", "for f; do echo \"$f\"; done",
+      "for f in a \"$X\"; do echo \"$f\"; done", "for i in {1..3}; do echo $i; done", "for d in ~/a; do ls \"$d\"; done",
+      // A here-string Ember follows the value of is no text written out.
+      "while read d; do tar -C \"$d\" -xf /tmp/x.tar; done <<< \"$HOME\"", "while read d; do echo \"$d\"; done <<< ~/x",
+    ]) expect(flow(cmd).findings.map(f => f.rule), cmd).toContain("unclear.read-text");
+    expect(flow("cat list | while read -r d; do echo \"$d\"; done").findings.map(f => f.says)).toContain("It works on text Ember can't see.");
+    // A loop or if that sets no variable from text Ember can't see is read through: written-out words, a here-string or
+    // here-document of written-out text on the read's own input, or no variable at all.
+    for (const cmd of [
+      "for i in 1 2 3; do echo $i; done", "for n in 'a b' \"c\" d-e; do echo \"$n\"; done", "if [ -f package.json ]; then npm test; fi",
+      "while read -r l; do echo \"$l\"; done <<< 'a b'", "while IFS= read -r l; do echo \"$l\"; done <<EOF\na\nb\nEOF", "until false; do break; done",
+      "while true; do sleep 1; break; done", "read -r a b <<< 'x y'; echo \"$a\"", "mapfile -t a <<< 'x'", "if IFS= read -r l <<< 'a'; then echo \"$l\"; fi",
+      "while true; do while read -r b; do echo \"$b\"; done; done <<< 'x'",
+    ]) expect(flow(cmd).findings, cmd).toEqual([]);
+    // Ember's own folder named in sight is still refused, through a loop's list, a here-string or printed text.
+    for (const cmd of [
+      "while read f; do rm -rf \"$f\"; done <<< ~/.config/ember", "for d in ~/.config/ember; do rm -rf \"$d\"; done",
+      "printf '%s\\n' ~/.config/ember | while read -r d; do rm -rf \"$d\"; done",
+    ]) expect(flow(cmd).refuse?.rule, cmd).toBe("ember.path");
   });
 
   it("reads a for loop's variable as an assignment: one that changes how commands are found or run is unclear", () => {
@@ -1317,14 +1352,18 @@ describe("loops and ifs (commands-remote-2)", () => {
     }
   });
 
-  it("reads IFS in front of read as only how that read splits, so the usual line loop is no assignment (commands-remote-2)", () => {
-    for (const fine of ["IFS= read -r l < list.txt", "while IFS= read -r l; do echo \"$l\"; done < list.txt", "IFS=: read -r a b <<< \"x:y\"", "time IFS= read -r l < list.txt"]) {
+  it("reads IFS in front of a loop's or an if's read as only how that read splits, so the usual line loop is no assignment (commands-remote-2)", () => {
+    for (const fine of ["while IFS= read -r l; do echo \"$l\"; done < list.txt", "while IFS= read -r l; do echo \"$l\"; done <<< 'a b'", "if IFS=: read -r a b <<< \"x:y\"; then echo \"$a\"; fi"]) {
       expect(rules(fine), fine).not.toContain("unclear.assignment");
       expect(rules(fine), fine).not.toContain("unclear.interactive");
       expect(rules(fine), fine).not.toContain("unclear.hidden-command");
     }
-    // IFS anywhere else changes how every later command's words split; a read by path is a program of its own.
-    for (const risky of ["IFS=/ ls", "IFS=/; ls", "if true; then IFS=/; fi; ls", "IFS= ./read -r l < list.txt", "PATH=/tmp/x read -r l < list.txt"]) {
+    // Outside a loop or an if it asks as it did before loops were read through (commands-a7-2); IFS anywhere else changes
+    // how every later command's words split; a read by path is a program of its own.
+    for (const risky of [
+      "IFS= read -r l < list.txt", "IFS=: read -r a b <<< \"x:y\"", "time IFS= read -r l < list.txt",
+      "IFS=/ ls", "IFS=/; ls", "if true; then IFS=/; fi; ls", "IFS= ./read -r l < list.txt", "PATH=/tmp/x read -r l < list.txt",
+    ]) {
       expect(rules(risky), risky).toContain("unclear.assignment");
     }
   });
