@@ -122,7 +122,14 @@ export function statusReply(kind: "name" | "status", tasks: readonly Task[], now
 /** Asking to keep results on screen only: "just show me", "stop telling me", "leave it on the screen". */
 const QUIET_RE = new RegExp(String.raw`^${LEAD}(?:(?:just|only) show (?:me|it|them)|stop telling me|(?:just )?leave (?:it|them) on (?:the )?screen|stop reading (?:them|it|the results?|results)(?: out| aloud)?|don't read (?:them|it|the results?|results) (?:out|aloud))${TAIL}$`, "i");
 /** Asking for them to be read out again: "read them out again", "tell me when it's done". */
-const LOUD_RE = new RegExp(String.raw`^${LEAD}(?:read (?:them|it|the results?|results) (?:out|aloud)(?: again)?|tell me (?:again|when (?:it's|it is|they're|they are) (?:done|finished))|you can (?:talk|tell me) again)${TAIL}$`, "i");
+const LOUD_RE = new RegExp(String.raw`^${LEAD}(?:read (?:them|the results?|results) (?:out|aloud)(?: again)?|tell me (?:again|when (?:it's|it is|they're|they are) (?:done|finished))|you can (?:talk|tell me) again)${TAIL}$`, "i");
+const READ_ANSWER_RE = new RegExp(String.raw`^${LEAD}read (?:it|that|(?:the |your |this )?(?:last )?answer) (?:out|aloud)(?: again)?${TAIL}$`, "i");
+
+/** Reading this answer is a one-off request, never a change to future task-result speech (voice-speaking-r6-1). */
+export function readAnswerRequest(text: string): boolean {
+  const t = norm(text);
+  return t.length <= 80 && READ_ANSWER_RE.test(t);
+}
 
 /** Whether `text` asks Ember to keep task results on screen only ("quiet") or to read them out again ("loud"). */
 export function resultsRequest(text: string): "quiet" | "loud" | null {

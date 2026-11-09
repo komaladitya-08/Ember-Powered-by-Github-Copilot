@@ -61,7 +61,7 @@ import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
 import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, readAnswerRequest, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
 
@@ -3050,6 +3050,14 @@ export class AgentHost {
     }
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
     // works offline and costs no request). Only between turns: a request waiting for its turn is the conductor's.
+    // A retained answer is read through the usual speaking gate, never by switching a preference on (voice-speaking-r6-1).
+    if (readAnswerRequest(text) && this.betweenTurns()) {
+      const answer = this.lastAnswer();
+      const reply = !answer ? "There isn't an answer to read yet." : !this.o.health?.().speaks
+        ? "I'm not speaking replies right now. Speaking is under Voice in settings." : answer;
+      this.answerLocally(text, reply, how);
+      return true;
+    }
     // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).
     const results = resultsRequest(text);
     if (results && this.betweenTurns()) {
