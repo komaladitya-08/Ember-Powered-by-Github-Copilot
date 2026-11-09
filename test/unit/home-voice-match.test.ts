@@ -25,7 +25,15 @@ describe("Voice Match's states", () => {
   it("not taught: the switch is off, Teach is offered, Forget and Cancel are not", () => {
     const v = matchView(none, shown);
     expect(v).toMatchObject({ hidden: false, busy: false, checked: false, disabled: false, text: MATCH_TEXT.none, prompt: "", progress: null, cancelHidden: true, forgetHidden: true });
-    expect(v.teach).toEqual({ hidden: false, label: "Teach Ember my voice" });
+    expect(v.teach).toEqual({ hidden: false, label: "Set up Voice Match" });
+  });
+
+  it("explains automatically focused controls without speaking the wake name (voice-listening-r6-2, voice-listening-q6-1)", () => {
+    for (const m of [none, onNow, offNow, enrolling(1), { ...none, model: false }, { ...none, ended: "interrupted" as const }]) {
+      const view = matchView(m, shown);
+      expect(`${view.teach.label} ${view.description}`).not.toMatch(/\bEmber\b/i);
+      expect(view.description).toMatch(/voice|questions|listening/i);
+    }
   });
 
   it("while learning: the switch shows on but can't be changed, the phrase and the count show, Cancel replaces Teach", () => {
@@ -37,10 +45,17 @@ describe("Voice Match's states", () => {
     expect(v.progress).toEqual({ value: 1, max: 4, text: "1 of 4 heard" });
   });
 
+  it("says failures in the first person without adding an unintended wake cue (voice-listening-r6-3)", () => {
+    expect(MATCH_TEXT.notListening).not.toMatch(/\bEmber\b/i);
+    expect(MATCH_TEXT.notListening).toMatch(/not listening.*can't learn your voice.*Try again/);
+    expect(MATCH_TEXT.again.failed).not.toMatch(/\bEmber\b/i);
+    expect(MATCH_TEXT.again.failed).toMatch(/couldn't hear.*Say it again/);
+  });
+
   it("asks again with the reason when a phrase wasn't kept", () => {
     expect(matchView(enrolling(2, "short"), shown).prompt).toBe("That was too short. Say it again: “Ember, what's the weather like”");
     expect(matchView(enrolling(2, "unlike"), shown).prompt).toBe("That didn't sound like the others (another voice, or noise). Say it again: “Ember, what's the weather like”");
-    expect(matchView(enrolling(0, "failed"), shown).prompt).toBe("Ember couldn't hear that clearly. Say it again: “Ember, what's the weather like”");
+    expect(matchView(enrolling(0, "failed"), shown).prompt).toBe("I couldn't hear that clearly. Say it again: “Ember, what's the weather like”");
     // Said while a screen reader still read the prompt, the two came as one (voice-listening-r4-1).
     expect(matchView(enrolling(1, "over"), shown).prompt).toBe("Your screen reader was still reading. Wait for it to finish, then say: “Ember, what's the weather like”");
   });
@@ -59,7 +74,7 @@ describe("Voice Match's states", () => {
   it("taught and on, or taught and off: Teach again and Forget are offered", () => {
     const on = matchView(onNow, shown);
     expect(on).toMatchObject({ checked: true, disabled: false, text: MATCH_TEXT.on, forgetHidden: false, cancelHidden: true });
-    expect(on.teach).toEqual({ hidden: false, label: "Teach Ember my voice again" });
+    expect(on.teach).toEqual({ hidden: false, label: "Set up Voice Match again" });
     const off = matchView(offNow, shown);
     expect(off).toMatchObject({ checked: false, text: MATCH_TEXT.off, forgetHidden: false });
     expect(off.text).toMatch(/keeps your voiceprint until you forget it/);
@@ -172,11 +187,11 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
 });
 
 describe("Voice Match's markup", () => {
-  it("names the group by its switch, describes the switch and Teach by the state line, and labels the bar", () => {
+  it("names the group by its switch, describes the switch and Teach by their focus-safe state line, and labels the bar", () => {
     expect(page).toContain('<div id="match" class="match" role="group" aria-labelledby="match-label" hidden>');
-    expect(page).toContain(`<input type="checkbox" id="match-on" role="switch" aria-describedby="match-text"><span id="match-label">${MATCH_TEXT.label}</span>`);
+    expect(page).toContain(`<input type="checkbox" id="match-on" role="switch" aria-describedby="match-focus-text"><span id="match-label">${MATCH_TEXT.label}</span>`);
     expect(page).toContain(`<progress id="match-progress" max="4" value="0" aria-label="${MATCH_TEXT.progressLabel}" hidden></progress>`);
-    expect(page).toContain(`<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">${MATCH_TEXT.teach}</button>`);
+    expect(page).toContain(`<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-focus-text">${MATCH_TEXT.teach}</button>`);
     expect(page).toContain(`<button type="button" id="match-cancel" class="btn quiet" hidden>${MATCH_TEXT.cancel}</button>`);
     // Forget my voice deletes the words learnt too: the button says so before it is pressed (voice-listening-9).
     expect(page).toContain(`<button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="${MATCH_TEXT.forgetHint}" hidden>${MATCH_TEXT.forget}</button><span id="match-forget-hint" hidden>${MATCH_TEXT.forgetHint}</span>`);

@@ -163,6 +163,37 @@ it.skipIf(gate)("does not count saved SSH hosts excluded by the organisation's h
   }
 }, 30_000);
 
+it.skipIf(gate)("focuses a name-free, explained Voice Match control after Forget my voice (voice-listening-r6-2, voice-listening-q6-1)", async () => {
+  const page = await open("voice", { settings: { wakeWord: true, voice: { ...DEFAULT_SETTINGS.voice, consent: true } } });
+  try {
+    const voice = { state: "waiting", detail: "Listening.", modelsReady: true, modelsMissing: [], modelsBytes: 0, match: { enrolled: true, on: true, wanted: true, model: true, enrolling: null, learnt: 0 } };
+    await page.evaluate(v => window.__pane.emit("onVoiceStatus", v), voice);
+    await page.locator("#match-forget").click();
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("match-teach");
+    const client = await page.context().newCDPSession(page);
+    type AX = { role?: { value?: string }; name?: { value?: string }; description?: { value?: string }; properties?: { name: string; value?: { value?: unknown } }[] };
+    const focused = async () => ((await client.send("Accessibility.getFullAXTree")).nodes as AX[]).find(n => n.role?.value === "button" && n.properties?.some(p => p.name === "focused" && p.value?.value === true));
+    for (const enrolled of [true, false]) {
+      await page.evaluate(v => window.__pane.emit("onVoiceStatus", v), { ...voice, match: { ...voice.match, enrolled, on: enrolled } });
+      const control = await focused();
+      expect(control?.name?.value).not.toMatch(/\bEmber\b/i);
+      expect(control?.description?.value).not.toMatch(/\bEmber\b/i);
+      expect(control?.description?.value).toMatch(/voice|questions|requests/i);
+    }
+    // A failed attempt must replace the focused description as well as the visible line.
+    await page.evaluate(() => {
+      const original = window.ember;
+      window.ember = new Proxy(original, { get: (target, name) => name === "enrolVoice" ? async () => false : Reflect.get(target, name) });
+    });
+    await page.locator("#match-teach").click();
+    await page.waitForFunction(() => document.querySelector("#match-text")?.textContent?.includes("listening just now"));
+    const failed = await focused();
+    expect(failed?.description?.value).toBe(await page.locator("#match-text").innerText());
+    expect(failed?.description?.value).not.toMatch(/\bEmber\b/i);
+    await client.detach();
+  } finally { await page.close(); }
+}, 30_000);
+
 describe.skipIf(gate)("Home's Task activity, while a task works (2026-11-07 product audit)", () => {
   it("keeps keyboard focus on a running task's control when the task does its next step (home-2)", async () => {
     const page = await open("home");

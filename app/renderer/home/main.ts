@@ -2658,6 +2658,7 @@ function renderMatch(): string | null {
   sw.checked = view.checked;
   sw.disabled = view.disabled;
   $("match-text").textContent = view.text;
+  $("match-focus-text").textContent = view.description;
   const prompt = $("match-prompt");
   prompt.hidden = !view.prompt;
   prompt.textContent = view.prompt;
@@ -2680,7 +2681,7 @@ function renderMatch(): string | null {
 const startEnrol = () => {
   // Ember not listening just now: said where the switch's description is, and to screen readers. Otherwise focus
   // moves to Cancel once the first phrase is shown (renderMatch).
-  void window.ember.enrolVoice().then(ok => { if (!ok) { $("match-text").textContent = MATCH_TEXT.notListening; voiceLive(MATCH_TEXT.notListening); } });
+  void window.ember.enrolVoice().then(ok => { if (!ok) { $("match-text").textContent = MATCH_TEXT.notListening; $("match-focus-text").textContent = MATCH_TEXT.notListening; voiceLive(MATCH_TEXT.notListening); } });
 };
 $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;

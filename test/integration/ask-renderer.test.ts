@@ -94,6 +94,18 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     }
   }
 
+  it("opens a name-free request window and focused field without losing its accessible context (voice-listening-r6-2)", async () => {
+    const page = await pageAt();
+    try {
+      expect(await page.title()).toBe("Companion request");
+      const input = page.locator("#q");
+      expect(await input.evaluate(e => e === document.activeElement)).toBe(true);
+      expect(await input.ariaSnapshot()).not.toMatch(/\bEmber\b/i);
+      expect(await input.getAttribute("placeholder")).not.toMatch(/\bEmber\b/i);
+      expect(await input.ariaSnapshot()).toMatch(/Ask or tell me/);
+    } finally { await page.close(); }
+  });
+
   it("sends once by pointer or keyboard, leaves composition alone and keeps Shift+Enter's newline", async () => {
     const page = await pageAt();
     try {
