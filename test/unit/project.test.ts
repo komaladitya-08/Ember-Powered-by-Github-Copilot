@@ -205,6 +205,17 @@ it("sends a login form, a getpass CLI and an OAuth client, and takes a request t
   await expect(prompt([table])).rejects.toThrow(new Error("users.html appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
 });
 
+it("holds back a pretty-printed welcome page and a prompt whose comment gives the password, and sends the login form beside them (memory-x6-1)", async () => {
+  const welcome = await file("welcome.html", "<!doctype html>\n<html>\n  <body>\n    <h1>Welcome to the office</h1>\n    <p>\n      <strong>Wi-Fi password:</strong>\n    </p>\n    <p>\n      BlueSky99!\n    </p>\n  </body>\n</html>\n");
+  await expect(prompt([welcome])).rejects.toThrow(new Error("welcome.html appears to contain a password, token or key on line 9. Remove that file or the value, then send again."));
+  const door = await file("door.html", "<dl>\n  <dt>Door PIN:</dt>\n  <dd>\n    4821\n  </dd>\n</dl>\n");
+  await expect(prompt([door])).rejects.toThrow(new Error("door.html appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const login = await file("login.py", 'import getpass\n\ndef ask():\n    return input("Password: ")  # default on the test box: Summer2024!\n');
+  await expect(prompt([login])).rejects.toThrow(new Error("login.py appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const form = await file("form.html", '<form>\n  <label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n  <button type="submit">Sign in</button>\n</form>\n');
+  expect(await prompt([form])).toContain("Sign in");
+});
+
 it("takes a request about user scripts passing a check and sends a path built into root, beside a user's name and password (memory-w5-4, memory-w5-5)", async () => {
   const app = await file("app.py", "print(1)\n");
   for (const q of ["Why don't the user scripts pass linting?", "How do I make user uploads pass scanning?", "Do the user queries pass sanitisation?"]) {

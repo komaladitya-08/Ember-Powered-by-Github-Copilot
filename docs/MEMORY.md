@@ -142,11 +142,13 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   password too ("username bob pass hunter", never "the user should pass validation": memory-v5-4), but never a
   lowercase plural straight after "user" nor a word for a check after "pass" ("Why don't the user scripts pass
   linting?", "Ensure user inputs pass sanitisation.": memory-w5-4). A prompt's or a label's words are no value
-  (memory-r4-2): a string that ends after "Password:" with code after it (`getpass.getpass("Password: ")`, `read -s
-  -p "Password: " PASS`), an element's text that ends there with only markup after it, on its line and the next
-  (`<label for="password">Password:</label>`; never `<td>Password:</td><td>hunter2</td>` or `print("Password:",
-  "hunter2")`), and `$PWD`. Nor is a quoted label ("Password:"), a sentence about a secret ("Forgot your
-  password?"), an address with no credentials and no part shaped like a token ('TOKEN_URL =
+  (memory-r4-2): a string that ends after "Password:" with code after it and no word shaped like a password in that
+  code or a comment after it (`getpass.getpass("Password: ")`, `read -s -p "Password: " PASS`; never
+  `input("Password: ")  # Summer2024!`), an element's text that ends there with only markup after it up to the field
+  it labels, past blank and markup-only lines, at most 400 characters (`<label for="password">Password:</label>` before
+  its `<input>`; never `<td>Password:</td><td>hunter2</td>`, `<p>Your PIN:</p>\n\n<p>4821</p>`, an `<input>` with a
+  `value` or `print("Password:", "hunter2")`: memory-x6-1), and `$PWD`. Nor is a quoted label ("Password:"), a sentence
+  about a secret ("Forgot your password?"), an address with no credentials and no part shaped like a token ('TOKEN_URL =
   "https://oauth2.googleapis.com/token"'), what a key that names where a secret is holds ("PASSWORD_FIELD",
   "API_KEY_HEADER", "secretName", "tokenType"; never one shaped like a password), a tokenizer's setting, or, in a
   request, a type, null or an environment read with words after it and no digit or symbol in the sentence ("Add a

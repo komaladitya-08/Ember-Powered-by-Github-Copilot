@@ -349,6 +349,27 @@ describe("what memory never keeps", () => {
   ])("still refuses %j, a value after a prompt or a label, or in an address (memory-r4-2, integrations-r4-1)", text => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
+  // A label's value past a blank or markup-only line, as pretty-printed HTML puts it, an input's own value, and a
+  // password in a comment or a bare word after a prompt's string: round six's labels kept them (memory-x6-1).
+  it.each([
+    ["<p>Your PIN:</p>\n\n<p>4821</p>"], ["<h3>Wi-Fi password:</h3>\n\n<p>BlueSky99</p>"], ["<dt>Password:</dt>\n<dd>\n  Summer2024!\n</dd>"],
+    ['<label for="pw">Password:</label>\n<input type="password" value="Summer2024!">'], ['<label>Password:</label> <input type="password" value="Summer2024!">'],
+    ["<p>\n  <strong>Wi-Fi password:</strong>\n</p>\n<p>\n  BlueSky99!\n</p>"], ["<dl>\n  <dt>Door PIN:</dt>\n  <dd>\n    4821\n  </dd>\n</dl>"],
+    ["<label>Password:</label>\n<br>\n<span>Summer2024!</span>"], ["<strong>Password:</strong>\n\nSummer2024!"], ["<td>PIN:</td>\n<td>\n4821\n</td>"],
+    ['input("Password: ")  # default on the test box: Summer2024!'], ['console.log("Password: ") // Summer2024!'], ['("Password:", Summer2024!)'],
+    ['print("Password:", Summer2024)'], ['"Password: ".concat(Summer2024)'],
+  ])("refuses %j, a value after a label past the markup between, or after a prompt (memory-x6-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  it.each([
+    ['<label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n  <button type="submit">Sign in</button>'],
+    ['<label htmlFor="password">Password:</label>\n<input\n  type="password"\n  value={password}\n  onChange={e => setPassword(e.target.value)}\n/>'],
+    ['<label>Password:</label>\n<input type="password" name="password" value="">'], ['<label>Password:</label>\n\n<input type="password" value="{{ form.password }}">'],
+    ["<dt>Password:</dt>\n\n<dt>Username:</dt>"], ["<li>Username:</li>\n<li>Password:</li>"], ['input("Password: ")  # asked once, never stored'],
+    ['pw = getpass.getpass("Password: ")  # read from the terminal'], ['msg = "Password: " + pw'],
+  ])("keeps %j, a label for a field or a prompt with code after it (memory-x6-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
 
   // A version, an issue, a setting or a user at a computer said as a login, a disk's size and a formula: round four's
   // login and admin rules refused them (safety-privacy-c4-3, memory-c4-2).
