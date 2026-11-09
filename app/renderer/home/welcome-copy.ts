@@ -106,6 +106,9 @@ export function stepFocusLabel(step: WelcomeStep, title: string): string {
   return step === "hello" ? "Welcome" : step === "done" ? "Your companion" : title;
 }
 
+/** General consent waits for the real recipient; time spent unknown never arms Agree (first-run-c7-1). */
+export const CONSENT_WAITING = "Checking where your requests go… Wait a moment.";
+
 /** A bullet of the consent summary: its symbol (the full text's own) and words. */
 export interface ConsentPoint { icon: "eye" | "send" | "hand" | "lock" | "plug"; text: string }
 

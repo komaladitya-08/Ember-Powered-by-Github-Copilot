@@ -126,6 +126,9 @@ runtime. It does not change the app's consent or speaking settings.
 
 ### Using Ember
 
+First run's Agree waits until Ember knows where requests will go. If the recipient or the shown agreement changes,
+the half-second protection against a stray press starts again; nothing is read, heard or sent while it waits.
+
 Setup's automatic heading focus and Start announcement use words without the wake name, including when returning
 with voice already agreed. Visible headings keep Ember's name; screen readers hear “Home” after Start.
 

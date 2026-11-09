@@ -34,7 +34,7 @@ const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], 
  * does (in force while on and agreed for the address's host; a saved key kept only for its own host), and the card's
  * yes is saved and broadcast.
  */
-interface Seed { voiceAgreed?: boolean; consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
+interface Seed { holdProvider?: boolean; voiceAgreed?: boolean; consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -68,7 +68,7 @@ async function open(seed: Seed = {}): Promise<Page> {
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
-  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState }) => {
+  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState, holdProvider }) => {
     window.__frFailOff = failOff;
     window.__frCalls = []; window.__frPend = {};
     window.__frState = { settings, agent };
@@ -106,13 +106,14 @@ async function open(seed: Seed = {}): Promise<Page> {
     if (!noBridge) {
       window.emberProvider = {
         state: async () => {
+          if (holdProvider) return await defer("providerState") as never;
           const p = window.__frState.settings.provider as { on: boolean; baseUrl: string; consent?: { host?: string } };
           const host = hostOf(p.baseUrl);
           const agreed = !!host && p.consent?.host === host;
           const live = liveState ? { inForce: p.on && agreed, host, agreed, keySaved: !!host && keyHost === host } : {};
           return { allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false, ...providerState, ...live };
         },
-        onChanged: () => () => undefined,
+        onChanged: fn => { (subs.providerChanged ??= []).push(fn); return () => undefined; },
         saveKey: () => { window.__frCalls.push("saveKey"); keyHost = hostOf(window.__frState.settings.provider.baseUrl); return Promise.resolve({ ok: true }); },
         removeKey: async () => ({ ok: true }),
         agree: (host: string, move?: object) => {
@@ -129,7 +130,7 @@ async function open(seed: Seed = {}): Promise<Page> {
         test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState, holdProvider: !!seed.holdProvider });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
@@ -160,6 +161,34 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
       expect(await p.locator("#home-h").innerText()).toBe("Ember");
       expect(await p.locator("#home-h").getAttribute("aria-label")).toBe("Home");
       expect(await p.locator("#home-live").innerText()).not.toMatch(/\bEmber\b/i);
+    } finally { await p.close(); }
+  }, 30_000);
+
+  it("waits for a known recipient and re-arms Agree when the shown recipient changes (first-run-c7-1)", async () => {
+    const p = await open({ consent: CONSENT_VERSION - 1, holdProvider: true });
+    try {
+      await p.waitForTimeout(AGREE_ARM_MS + 50);
+      expect(await p.locator("#w-points").innerText()).toContain("a model service I can't tell yet");
+      expect(await next(p).getAttribute("aria-disabled")).toBe("true");
+      await next(p).evaluate(e => (e as HTMLButtonElement).click());
+      expect((await calls(p)).some(c => c.startsWith('save:{"consent"'))).toBe(false);
+      const state = { allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false };
+      await p.evaluate(state => { for (const q of window.__frPend.providerState ?? []) q.resolve(state); }, state);
+      await expect.poll(() => p.locator("#w-points").innerText()).toContain("GitHub Copilot");
+      // Knowing the recipient must not consume the time spent waiting for it as the arming interval.
+      await next(p).evaluate(e => (e as HTMLButtonElement).click());
+      expect((await calls(p)).some(c => c.startsWith('save:{"consent"'))).toBe(false);
+      await p.waitForTimeout(AGREE_ARM_MS + 50);
+      // Main's provider-state change invalidates the old recipient until its fresh state is known.
+      await p.evaluate(() => window.__frEmit("providerChanged", undefined));
+      await expect.poll(() => p.locator("#w-points").innerText()).toContain("a model service I can't tell yet");
+      await p.evaluate(state => { for (const q of window.__frPend.providerState ?? []) q.resolve(state); }, { ...state, inForce: true, host: "new.example.com", agreed: true });
+      await expect.poll(() => p.locator("#w-points").innerText()).toContain("new.example.com");
+      await next(p).evaluate(e => (e as HTMLButtonElement).click());
+      expect((await calls(p)).some(c => c.startsWith('save:{"consent"'))).toBe(false);
+      await p.waitForTimeout(AGREE_ARM_MS + 50);
+      await next(p).click();
+      await expect.poll(async () => (await calls(p)).some(c => c.startsWith('save:{"consent"'))).toBe(true);
     } finally { await p.close(); }
   }, 30_000);
 
