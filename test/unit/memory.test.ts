@@ -630,6 +630,24 @@ describe("what memory never keeps", () => {
   ])("keeps %j, which names no secret (safety-privacy-c4-2, memory-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A Wi-Fi key's state words said of any secret, or with a value later in the sentence, which round six took for no
+  // value everywhere (memory-x6-2).
+  it.each([
+    ["The admin password is rotated monthly, currently Summer2024!"], ["The admin password is rotated monthly; this month it's Summer2024!"],
+    ["The VPN pre-shared key is configured to Tr0ub4dor&3"], ["The Wi-Fi password is configured as BlueSky99!"], ["PIN: active 4821"],
+    ["The PIN is unset, use 4821"], ["Wi-Fi password: see the fridge, it's BlueSky99"], ["The Wi-Fi password is WPA2 BlueSky99"],
+    ["Password: inactive (old one was Summer2024!)"], ["The PSK is configured as BlueSky99"], ["Network key: see sticker (BlueSky99)"],
+    ["Network key: WPA2 BlueSky99"], ["PSK: rotated monthly, now BlueSky99"], ["Network key: see below\nBlueSky99"], ["password: disabled hunter2"],
+  ])("refuses %j and saves nothing, a password after a state word (memory-x6-2)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["The PSK is enabled on both routers"], ["Network key: WPA2-PSK"], ["The pre-shared key is rotated every 90 days"], ["The WEP key is disabled"],
+    ["The wireless key is configured on the 5GHz band"],
+  ])("keeps %j, a Wi-Fi key's state with no value in its sentence (memory-x6-2)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
 
   // A secret said as changed, current or to be, the way people most often say one, and a service, a router's label or a
   // capitals setting with its value (memory-r5-1, safety-privacy-1, safety-privacy-c4-2, memory-1).

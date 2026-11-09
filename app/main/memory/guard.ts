@@ -24,9 +24,8 @@ const BEFORE_WORDS = String.raw`its(?=${CLAUSE_WORD}[ \t,]*${CLAUSE_WORD}${CLAUS
   + String.raw`|(?:typed|entered|hashed|masked)(?=${CLAUSE_WORD}${CLAUSE_END}|${STATE_END})`;
 /**
  * Words that follow a secret's name without being its value ("the password is required", "PIN: the tab is pinned",
- * "Password: changed yesterday"): a value is anything else ("hunter2", "correct-horse"). A Wi-Fi key's state, where to
- * look and its mode too ("PSK is enabled on the router", "Network key: see sticker", "PSK: rotated monthly", "The
- * network key is WPA2"): memory-r5-2.
+ * "Password: changed yesterday"): a value is anything else ("hunter2", "correct-horse"). A Wi-Fi key's state is no
+ * value only after a Wi-Fi key's name (withoutKeyStates).
  */
 const NOT_A_VALUE = [
   "the", "a", "an", "my", "your", "our", "their", "his", "her", "this", "that", "it", "not", "no", "now", "being", "been", "changed",
@@ -35,8 +34,7 @@ const NOT_A_VALUE = [
   "different", "unchanged", "missing", "incorrect", "invalid", "valid", "too", "very", "also", "still", "fine", "empty", "blank", "none",
   "shown", "visible", "encrypted", "optional", "case-sensitive", "long", "short", "below", "above", "here", "there",
   "done", "due", "expiring", "broken", "working", "ok", "okay", "complete", "temporary", "known", "unknown", "shared", "sent",
-  "printed", "written", "listed", "attached", "included", "strict", "changing", "same", "enabled", "disabled", "configured", "see",
-  "rotated", "supported", "active", "inactive", "unset", "wpa", "wpa2", "wpa3", "wep", "tkip", BEFORE_WORDS,
+  "printed", "written", "listed", "attached", "included", "strict", "changing", "same", BEFORE_WORDS,
 ].join("|");
 
 /**
@@ -788,6 +786,25 @@ const TOLD_SECRET = new RegExp(
   "i",
 );
 /**
+ * A Wi-Fi key's state, where to look for it or its mode, after a router's name for the key, with no value in the rest
+ * of its sentence ("PSK is enabled on the router", "Network key: see sticker", "PSK: rotated monthly", "The network key
+ * is WPA2"): memory-r5-2. Only after these names, never a password's or a PIN's ("The admin password is rotated monthly,
+ * currently Summer2024!", "PIN: active 4821"), and never with a word shaped like a value later in the sentence or on
+ * the next line ("The VPN pre-shared key is configured to Tr0ub4dor&3", "Network key: see below\nBlueSky99"), but a
+ * mode, a standard, a band, a size or a count ("WPA2-PSK", "802.11ac", "5GHz", "AES-256", "90 days"): memory-x6-2.
+ */
+const WIFI_KEY_NAMES = String.raw`network (?:security )?key|wpa[23]? (?:key|passphrase)|pre-?shared key|psk|wireless (?:network )?key|wlan key|wep key`;
+const KEY_STATE = String.raw`enabled|disabled|configured|see|rotated|supported|active|inactive|unset|(?:wpa[23]?|wep|tkip)(?:[-/](?:psk|personal|enterprise|sae|aes|ccmp|tkip|wpa[23]?))*`;
+const KEY_STATE_SAID = new RegExp(String.raw`\b(?:${WIFI_KEY_NAMES})s?\b(?=${FOR_WHAT}${SAYS}${NOW}(?:${KEY_STATE})(?![\w-])((?:[^.;!?]|[.;!?](?![\s"'”)]|$)){0,200}))`, "gi");
+/** A Wi-Fi key's mode, standard, band or cipher, a size or a count, which are never its value. */
+const NOT_A_KEY = /^(?:(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*|802\.11[a-z]*|\d+(?:\.\d+)?(?:ghz|mhz|[kmg]bps)|\d+(?:-\d+)?-?(?:characters?|chars?|digits?|letters?|bits?|days?|weeks?|months?|hours?|minutes?)|\d{1,3}[dhwm])$/i;
+/** `text` with each Wi-Fi key's name written out as "_" where only its state follows (KEY_STATE_SAID). */
+function withoutKeyStates(text: string): string {
+  return text.replace(KEY_STATE_SAID, (m: string, rest: string) => rest.split(/\s+/)
+    .map(w => w.replace(/^[(["'“<]+|[)\]"'”>,:]+$/g, ""))
+    .some(w => w.length >= 4 && /[0-9!@#$%^&*]/.test(w) && !NOT_A_KEY.test(w)) ? m : "_".repeat(m.length));
+}
+/**
  * A secret said as changed or to be ("I changed my password to Summer2024!", "The user's password was changed to …",
  * "The Netflix password changed to hunter2", "my password: changed it to hunter22", "remember I set my PIN to 4821",
  * "I updated the alarm code to 4821", "The password will be hunter2", "My password used to be hunter2"): memory-r5-1,
@@ -1137,7 +1154,7 @@ function luhn(digits: string): boolean {
 export function memoryRefusal(text: string): string | null {
   // Code where a value would be names no secret (memory-r4-1, memory-r4-2): its names are written out first, its values kept.
   const found = { held: false };
-  const said = withoutCodeKeys(withoutLabels(text.replace(AUTH_REFERENCE, "_").replace(SHELL_PWD, "_")), found);
+  const said = withoutKeyStates(withoutCodeKeys(withoutLabels(text.replace(AUTH_REFERENCE, "_").replace(SHELL_PWD, "_")), found));
   const probe = said.replace(NAMED_NO_VALUE, " ");
   if (found.held || redactSecrets(probe) !== probe || secretPair(text) || promptThen(text)) return "it holds a password, token or key";
   // The redactor hides a key only with its END line too: a key's first line alone is still a key's start (audit).
