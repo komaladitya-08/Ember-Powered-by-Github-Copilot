@@ -154,31 +154,59 @@ const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/g;
 const KEY_VALUE =
   /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
 
+/** Skip ordinary source-code arrays before applying the password-bearing clients' bounded argument patterns. */
+const ARGV_CLIENT = new RegExp(`\\b(?:${CLIENT}|curl|wget|docker|podman|nerdctl|buildah|helm|mongo(?:sh|dump|restore|export|import)?|sshpass|redis-cli|smbclient|htpasswd|openssl|net|echo|printf)\\b`, "i");
+
 /**
- * Exec-form arrays and subprocess tuples separate arguments with commas, not shell whitespace (memory-q6-1).
- * Track literal clients inside each bracket pair without evaluating expressions between their arguments. This only
- * adds redaction: the shell patterns still judge every ordinary command and every other secret shape afterwards.
+ * Exec-form arrays and subprocess tuples separate arguments with commas, not shell whitespace (memory-q6-1,
+ * memory-v7-1). Apply the existing bounded short-option rules to their literal arguments, without evaluating code.
+ * Unknown arguments occupy a placeholder so a later literal never becomes an earlier option's value by accident.
  */
 function redactArgvPasswords(text: string): string {
   const tokens = /[[\](){}]|(["'])((?:\\[\s\S]|(?!\1)[^\\])*)\1/g;
-  const clients = new RegExp(`^${CLIENT}(?:\\.exe)?$`, "i");
-  const value = new RegExp(`^${OPTION_VALUE}`);
-  const stack: boolean[] = [];
-  let out = "", at = 0;
+  type Word = { text: string; start: number; end: number; quote: string };
+  type Frame = { words: Word[]; after: number };
+  const stack: Frame[] = [];
+  const hidden = new Map<number, Word>();
+  const inspect = (frame: Frame) => {
+    const ranges: { word: Word; start: number; end: number }[] = [];
+    let command = "";
+    for (const word of frame.words) {
+      if (command) command += " ";
+      const start = command.length;
+      command += word.text;
+      ranges.push({ word, start, end: command.length });
+    }
+    if (!ARGV_CLIENT.test(command)) return;
+    for (const re of OPTION_PASSWORDS) {
+      for (const m of command.matchAll(new RegExp(re.source, re.flags + "d"))) {
+        const value = m.indices?.[3];
+        if (!value) continue;
+        for (const r of ranges) if (r.word.start >= 0 && r.start < value[1] && r.end > value[0]) hidden.set(r.word.start, r.word);
+      }
+    }
+  };
   for (const m of text.matchAll(tokens)) {
     if (!m[1]) {
-      if ("[({".includes(m[0])) stack.push(false);
-      else stack.pop();
+      if ("[({".includes(m[0])) stack.push({ words: [], after: m.index + 1 });
+      else if (stack.length) inspect(stack.pop()!);
       continue;
     }
-    if (!stack.length) continue;
+    const frame = stack.at(-1);
+    if (!frame) continue;
+    const gap = text.slice(frame.after, m.index);
+    if (!/^\s*,?\s*$/.test(gap)) frame.words.push({ text: "$ARG", start: -1, end: -1, quote: "" });
     // Decode literal escapes only; no code, variable or substitution is executed.
     const word = m[2].replace(/\\(?:u[\da-fA-F]{4}|x[\da-fA-F]{2}|[\s\S])/g, s =>
       /^\\[ux]/.test(s) ? String.fromCharCode(parseInt(s.slice(2), 16)) : /^[\\][\\"'/]$/.test(s) ? s.slice(1) : s);
-    if (clients.test(word.replace(/\\/g, "/").split("/").at(-1) ?? "")) stack[stack.length - 1] = true;
-    if (!stack[stack.length - 1] || !word.startsWith("-p") || !value.test(word.slice(2))) continue;
-    out += text.slice(at, m.index) + m[1] + "-p" + SECRET_HIDDEN + m[1];
-    at = m.index + m[0].length;
+    frame.words.push({ text: word, start: m.index, end: m.index + m[0].length, quote: m[1] });
+    frame.after = m.index + m[0].length;
+  }
+  for (const frame of stack) inspect(frame);
+  let out = "", at = 0;
+  for (const word of [...hidden.values()].sort((a, b) => a.start - b.start)) {
+    out += text.slice(at, word.start) + word.quote + SECRET_HIDDEN + word.quote;
+    at = word.end;
   }
   return at ? out + text.slice(at) : text;
 }

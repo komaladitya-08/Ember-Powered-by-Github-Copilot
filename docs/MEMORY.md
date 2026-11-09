@@ -195,9 +195,11 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   attributes, never a reference, a template's field or a sentence ("<password>${env.PW}</password>"). Memory runs a fact's lines
   together first, so a password under another label is refused on one line too ("credentials: admin: Wint3r!Sh0p",
   never a setting's label or a size: "Wi-Fi: SSID: Home5G"). Secrets are refused
-  whole, never stored redacted. MySQL and MariaDB passwords in quoted argument arrays or subprocess tuples are
-  hidden by the shared redactor and refused too (memory-q6-1), including a literal after intervening variable
-  arguments. A bare `-p`, a variable reference and a placeholder still name no literal password.
+  whole, never stored redacted. Passwords in quoted argument arrays or subprocess tuples use the same short-option
+  rules as shell text (memory-q6-1, memory-v7-1): MySQL and MariaDB, curl's user credentials, Docker login, Redis,
+  MongoDB and the other recognised password-bearing clients. Intervening expressions occupy unknown arguments;
+  they are never executed or silently dropped. Bare prompt options, references, placeholders and Docker's port
+  mappings still name no literal password.
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory

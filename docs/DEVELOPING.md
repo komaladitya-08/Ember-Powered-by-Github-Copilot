@@ -2283,8 +2283,10 @@ unsupported diff formats remain available as text.
 
 Files, requests, patched files and an answer kept as the next send's context go through memory's secret guard
 (`memoryRefusal`, docs/MEMORY.md), which passes over code for a secret-named key's value, never a literal (a hash's
-entry, a mapping or a JSON section under the key, a property such as `secrets.db`). A MySQL or MariaDB password in an
-argument array or subprocess tuple is refused too; command output and logs hide the same literal (`memory-q6-1`).
+entry, a mapping or a JSON section under the key, a property such as `secrets.db`). A recognised client's password in
+an argument array or subprocess tuple is refused too; command output and logs hide the same literal
+(`memory-q6-1`, `memory-v7-1`). These use the shell redactor's existing short-option rules, with unknown expressions
+kept as argument placeholders, preserving non-secret variable references and options such as Docker port mappings.
 A chosen file that still
 looks like it holds a password, token or key is named with its line (`secretLine`, `projectSecretFiles`): every such
 file at once, so the person removes only those. An exact patch whose patched file looks like it holds one isn't

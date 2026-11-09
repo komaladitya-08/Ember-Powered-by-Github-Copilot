@@ -28,3 +28,31 @@ describe("credentials in argument arrays", () => {
     expect(redactSecrets(text)).toBe(text);
   });
 });
+
+it.each([
+  `["redis-cli", "-a", "${PASSWORD}", "PING"]`,
+  `["curl", "-u", "ada:${PASSWORD}", "https://example.com"]`,
+  `["docker", "login", "-p", "${PASSWORD}"]`,
+  `["mongosh", "-p", "${PASSWORD}"]`,
+  `["sshpass", "-p", "${PASSWORD}", "ssh", "host"]`,
+  `["smbclient", "-U", "ada%${PASSWORD}", "//host/share"]`,
+  `["htpasswd", "-nb", "ada", "${PASSWORD}"]`,
+  `["openssl", "enc", "-k", "${PASSWORD}"]`,
+  JSON.stringify(["net", "use", String.raw`\\host\share`, PASSWORD]),
+])("hides and refuses each recognised client's literal argv password in %s (memory-v7-1)", text => {
+  expect(redactSecrets(text)).not.toContain(PASSWORD);
+  expect(memoryRefusal(text)).not.toBeNull();
+});
+
+it.each([
+  `["redis-cli", "-a", process.env.REDIS_PASSWORD, "ping"]`,
+  `["redis-cli", "-a", "$REDIS_PASSWORD", "ping"]`,
+  `["redis-cli", "-a"]`,
+  `["curl", "-u", "$USER:$PASSWORD"]`,
+  `["docker", "run", "-p", "8080:80", "image"]`,
+  `["docker", "login", "-p", "$PASSWORD"]`,
+  `["htpasswd", "-n", "ada"]`,
+  `["openssl", "enc", "-pass", "env:PW"]`,
+])("keeps non-literal or non-password argv arguments %s (memory-v7-1)", text => {
+  expect(redactSecrets(text)).toBe(text);
+});
