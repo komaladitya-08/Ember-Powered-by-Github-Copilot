@@ -246,13 +246,13 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
       const cls = decided(cmd);
       expect(cls.refuse?.rule, cmd).toBe("ember.path");
       expect(cls.refuse?.says, cmd).toBe(decided(apart).refuse?.says);
-      expect(cls.findings.map(f => f.rule), cmd).not.toContain("unclear.program");
     }
-    // Another value is the file it reads, and the command after it is still the one named.
+    // Another value is the file it reads, and the word, a value Ember can't see, is the command Ember can't name, as on
+    // main (commands-a7-1).
     const other = classifyCommand("f=notes.txt; xargs --arg-file=\"$f\" echo", "bash", contextOf("linux"));
     expect(other.refuse?.rule).toBeUndefined();
-    expect(other.findings.map(f => f.rule)).not.toContain("unclear.program");
-    expect(classifyCommand("f=list.txt; xargs -a\"$f\" rm -rf", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("posix.rm");
+    expect(other.findings.map(f => f.rule)).toContain("unclear.program");
+    expect(classifyCommand("f=list.txt; xargs -a\"$f\" rm -rf", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("unclear.program");
     // A word whose option Ember can't tell is still the command it may be.
     expect(classifyCommand("xargs -$X echo", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("unclear.program");
   });
@@ -1495,36 +1495,42 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["make -j \"$(printf deploy)\"", "make -j `echo deploy`", "T=-f/tmp/x.mk; make -j \"$T\"", "T='SHELL=/tmp/x'; make -j \"$T\""]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
-    // A number, a value Ember can't see and the processor counts are the job count, as before.
-    for (const cmd of ["make -j $(nproc)", "make -j \"$JOBS\"", "T=4; make -j \"$T\"", "T=$(nproc); make -j \"$T\"", "make -j $(nproc --all)", "make -j $(getconf _NPROCESSORS_ONLN)", "T=build; make -j \"$T\""]) {
+    // A number, a value Ember can't see and the processor counts are the job count, as before; a variable set to a
+    // command's output may hold more than a count, whatever the command (commands-a7-1).
+    for (const cmd of ["make -j $(nproc)", "make -j \"$JOBS\"", "T=4; make -j \"$T\"", "make -j $(nproc --all)", "make -j $(getconf _NPROCESSORS_ONLN)", "T=build; make -j \"$T\""]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
     }
+    expect(decided("T=$(nproc); make -j \"$T\"").decision.rules).toContain("unclear.target");
     expect(decided("make -j $(sysctl -n hw.logicalcpu)", "darwin").decision.verdict).toBe("run");
   });
 
-  it("builds what an unquoted job count's variable holds after the count, attached or apart, as the shell splits it (commands-remote-x6-1)", () => {
+  it("builds what an unquoted job count's variable holds after the count apart, as the shell splits it, and asks for one attached as main does (commands-remote-x6-1)", () => {
     for (const [cmd, plain] of [
-      ["T='4 deploy'; make -j$T", "make -j4 deploy"], ["T='4 deploy'; make -j $T", "make -j 4 deploy"], ["J='8 deploy'; make -sj$J", "make -sj8 deploy"],
-      ["T='4 install'; make --jobs=$T", "make --jobs=4 install"], ["T='4 deploy'; make -j${T}", "make -j4 deploy"], ["J='4 CC=evil'; make -j$J", "make -j4 CC=evil"],
-      ["T='2 publish'; ./gradlew --max-workers=$T", "./gradlew --max-workers=2 publish"], ["T='2 publish'; ./gradlew --max-workers $T", "./gradlew --max-workers 2 publish"],
-      ["T='4 publish'; gradle --max-workers=$T", "gradle --max-workers=4 publish"], ["T='4 publish'; rake --jobs=$T", "rake --jobs=4 publish"],
+      ["T='4 deploy'; make -j $T", "make -j 4 deploy"], ["T='2 publish'; ./gradlew --max-workers $T", "./gradlew --max-workers 2 publish"],
       ["T='4 publish'; rake --jobs $T", "rake --jobs 4 publish"],
     ] as const) {
       expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
     }
-    expect(decided("T='4 deploy'; make -j$T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    expect(decided("T='4 deploy'; make -j $T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    // Attached, a variable is a target Ember can't name and for make a variable override, as on main (commands-a7-1).
+    for (const cmd of [
+      "T='4 deploy'; make -j$T", "J='8 deploy'; make -sj$J", "T='4 install'; make --jobs=$T", "T='4 deploy'; make -j${T}", "J='4 CC=evil'; make -j$J",
+    ]) expect(decided(cmd).decision.rules, cmd).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+    for (const cmd of ["T='2 publish'; ./gradlew --max-workers=$T", "T='4 publish'; gradle --max-workers=$T", "T='4 publish'; rake --jobs=$T"]) {
+      expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
+    }
     expect(decided("T='2 publish'; ./gradlew --max-workers $T").decision.says).toContain("Runs gradlew publish, whose name says it publishes.");
     // An option split out of it asks, as one there does (commands-remote-w5-2), and a make variable that could run a command.
     for (const cmd of ["T='4 -f evil.mk'; make -j$T", "T='4 -f evil.mk'; make -j $T", "J='4 SHELL=/tmp/x'; make -j$J", "T='2 -b evil.gradle'; ./gradlew --max-workers=$T"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
-    // A number, a processor count or a variable the command sets to one is the count, as before; apart, make takes a
-    // variable it doesn't set as its count, as before round six.
-    for (const cmd of [
-      "J=4; make -j$J", "J=8; make -sj$J", "J=8; make --jobs=$J", "make -j$(nproc)", "make -j\"$(nproc)\"", "T=$(nproc); make -j$T",
-      "W=4; ./gradlew --max-workers=$W build", "./gradlew --max-workers=$(nproc)", "make -j $JOBS",
-    ]) {
+    // A number or a processor count is the count; apart, make takes a variable as its count, as on main. A variable
+    // attached is no count, whatever the command set it to (commands-a7-1).
+    for (const cmd of ["make -j$(nproc)", "make -j\"$(nproc)\"", "./gradlew --max-workers=$(nproc)", "make -j $JOBS", "J=4; make -j $J"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+    for (const cmd of ["J=4; make -j$J", "J=8; make -sj$J", "J=8; make --jobs=$J", "T=$(nproc); make -j$T", "W=4; ./gradlew --max-workers=$W build"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
     // Any other value, quoted or inherited, is judged as the word it is: a target Ember can't name (commands-z6-4).
     for (const cmd of ["T='4 deploy'; make -j\"$T\"", "T=deploy; make -j\"$T\"", "make -j$T", "./gradlew --max-workers $W"]) {
@@ -1532,16 +1538,18 @@ describe("the option tables: a flag that takes no value never takes the word aft
     }
   });
 
-  it("builds what a job count's variable holds when it starts with a space or has a part Ember can't see, and Maven's and ninja's counts too (commands-y6-2)", () => {
-    // A value that starts with a space, a tab or a line break leaves the option on its own, as the shell splits it.
+  it("builds what a job count's variable holds when it has a part Ember can't see, and Maven's and ninja's counts too (commands-y6-2)", () => {
+    // Attached, a value that starts with a space, a tab or a line break is a variable like any other: a target and a
+    // make variable Ember can't name, as on main (commands-a7-1).
+    for (const cmd of [
+      "T=' deploy'; make -j$T", "T=$'\\tdeploy'; make -j$T", "T=$'\\ndeploy'; make -j$T", "T=' deploy'; make -sj$T", "T=' deploy'; make -l$T",
+      "T=' deploy'; make --jobs=$T", "T=' 4 deploy'; make -j$T", "for T in 4 ' deploy'; do make -j$T; done", "T=\"$(nproc) deploy\"; make -j$T",
+      "T=\"$JOBS deploy\"; make -j$T", "T=\"4 $X\"; make -j$T",
+    ]) expect(decided(cmd).decision.rules, cmd).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+    for (const cmd of ["T=' publish'; rake --jobs=$T", "T=' publish'; ./gradlew --max-workers=$T"]) expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
     for (const [cmd, plain] of [
-      ["T=' deploy'; make -j$T", "make -j deploy"], ["T=$'\\tdeploy'; make -j$T", "make -j deploy"], ["T=$'\\ndeploy'; make -j$T", "make -j deploy"],
-      ["T=' deploy'; make -sj$T", "make -sj deploy"], ["T=' deploy'; make -l$T", "make -l deploy"], ["T=' deploy'; make --jobs=$T", "make deploy"],
-      ["T=' publish'; rake --jobs=$T", "rake publish"], ["T=' publish'; ./gradlew --max-workers=$T", "./gradlew publish"], ["T=' 4 deploy'; make -j$T", "make -j 4 deploy"],
-      ["for T in 4 ' deploy'; do make -j$T; done", "make -j deploy"],
-      // A part Ember can't see is one word of it: the first the count, as before, and the words after it built.
-      ["T=\"$(nproc) deploy\"; make -j$T", "make -j4 deploy"], ["T=\"$(nproc) deploy\"; make -j $T", "make -j 4 deploy"], ["T=\"$JOBS deploy\"; make -j$T", "make -j4 deploy"],
-      ["T=\"4 $X\"; make -j$T", "make -j4 $X"],
+      // Apart, a part Ember can't see is one word of it: the first the count, as before, and the words after it built.
+      ["T=' deploy'; make -j $T", "make -j deploy"], ["T=\"$(nproc) deploy\"; make -j $T", "make -j 4 deploy"],
       // Maven's -T and ninja's -j take the word after them whatever it is, so the next one is a goal or a target.
       ["T='2 deploy'; mvn -T $T", "mvn -T 2 deploy"], ["T='2 deploy'; mvn --threads $T", "mvn --threads 2 deploy"], ["T='2 deploy'; ./mvnw -T $T", "./mvnw -T 2 deploy"],
       ["T='2 deploy'; ninja -j $T", "ninja -j 2 deploy"], ["T='2 publish'; ninja -l $T", "ninja -l 2 publish"],
@@ -1549,19 +1557,18 @@ describe("the option tables: a flag that takes no value never takes the word aft
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
       expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
     }
-    expect(decided("T=' deploy'; make -j$T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    expect(decided("T=' deploy'; make -j $T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
     expect(decided("T='2 deploy'; mvn -T $T").decision.rules).toContain("mvn.deploy");
     // An option or a make variable split out of it asks.
     for (const cmd of ["T=' -f evil.mk'; make -j$T", "T=' SHELL=/bin/echo'; make -sj$T", "T=\"$X -f evil.mk\"; make -j$T", "T='2 deploy'; mvn -T$T"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
-    // A count alone, with a space before it or not, a value Ember can't see and the processor counts run as before.
-    for (const cmd of [
-      "T=' 4'; make -j$T", "J=' 8'; make -sj$J", "T=\" $(nproc)\"; make -j$T", "ninja -j $X", "T=4; mvn -T $T test", "T=2C; mvn -T $T package",
-      "T=4; ninja -j $T", "mvn -T $X package",
-    ]) {
+    // Apart, a count alone, a value Ember can't see and the processor counts run as before; attached, a variable holding a
+    // count asks, as on main (commands-a7-1).
+    for (const cmd of ["T=' 4'; make -j $T", "ninja -j $X", "T=4; mvn -T $T test", "T=2C; mvn -T $T package", "T=4; ninja -j $T", "mvn -T $X package"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
     }
+    for (const cmd of ["T=' 4'; make -j$T", "J=' 8'; make -sj$J", "T=\" $(nproc)\"; make -j$T"]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     // Attached, a variable the command doesn't set is judged as the word it is (commands-z6-4).
     expect(decided("make -j$X").decision.rules).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
   });
@@ -1579,15 +1586,13 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["X=$(cat jobs.txt); ./gradlew --max-workers=$X", "X=$(cat jobs.txt); ./gradlew --max-workers $X", "X=$(cat jobs.txt); rake --jobs=$X", "X=$(cat jobs.txt); ninja -j $X", "X=$(cat jobs.txt); mvn -T $X package"]) {
       expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
     }
-    // A number the text gives, a processor count or arithmetic, through a second variable too, run as before; so do make's
-    // count apart from a variable it doesn't set and one quoted word Maven takes only as the count, as before round six.
+    // make's count apart from a variable it doesn't set and one quoted word Maven takes only as the count run, as before
+    // round six; a variable the command set to a count, a processor count's output or arithmetic is no count (commands-a7-1).
+    for (const cmd of ["make -j $JOBS", "X=4; make -j $X", "X=$(cat jobs.txt); mvn -T \"$X\" package"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
     for (const cmd of [
-      "make -j $JOBS", "X=4; make -j$X", "X=$(nproc); make -j$X", "X=\"$(nproc)\"; make -j $X", "X=$((2 * 4)); make -j$X",
-      "X=$(nproc); Y=$X; make -j$Y", "T=\" $(nproc)\"; make -j$T", "X=$(getconf _NPROCESSORS_ONLN); ./gradlew --max-workers=$X build",
-      "X=$(cat jobs.txt); mvn -T \"$X\" package",
-    ]) {
-      expect(decided(cmd).decision.verdict, cmd).toBe("run");
-    }
+      "X=4; make -j$X", "X=$(nproc); make -j$X", "X=\"$(nproc)\"; make -j $X", "X=$((2 * 4)); make -j$X", "X=$(nproc); Y=$X; make -j$Y",
+      "T=\" $(nproc)\"; make -j$T", "X=$(getconf _NPROCESSORS_ONLN); ./gradlew --max-workers=$X build",
+    ]) expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
     // Attached, a variable it doesn't set, sets to another variable or reads from a file, quoted or not, asks as it did
     // before round six (commands-z6-4).
     for (const cmd of ["make -j$X", "X=$JOBS; make -j$X", "X=$(cat jobs.txt); make -j\"$X\""]) {
@@ -1595,7 +1600,7 @@ describe("the option tables: a flag that takes no value never takes the word aft
     }
   });
 
-  it("asks before a job count Ember can't see builds or runs what it may hold, as before round six, and runs a number, a processor count or a variable the command sets to one (commands-z6-4)", () => {
+  it("asks before a job count Ember can't see builds or runs what it may hold, as before round six, and runs a number or a processor count (commands-z6-4)", () => {
     const rules = (cmd: string) => withoutReadFlow(decided(cmd).cls, "bash").findings.map(f => f.rule);
     // Inherited, read from a file or a substitution: the command xargs runs, or make's and Gradle's targets.
     for (const cmd of [
@@ -1608,22 +1613,58 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["./gradlew --max-workers=$JOBS build", "./gradlew --max-workers $JOBS build", "mvn --threads $JOBS package", "rake --jobs=$JOBS"]) {
       expect(rules(cmd), cmd).toContain("unclear.target");
     }
-    // Set where it may not run, or not in this shell, or changed after: the variable the shell has may be another.
+    // However and wherever the command sets it, a variable attached to a count is no count (commands-a7-1).
     for (const cmd of [
+      "N=4; make -j$N", "N=$(nproc); make -j$N", "N=$((2 * 4)); make -j${N}", "N=$(nproc); ./gradlew --max-workers=$N build", "{ N=4; }; make -j$N",
+      "N=4 && make -j$N", "N=$(nproc); for f in a b; do make -j$N; done",
       "N=4 make -j$N", "true || N=4; make -j$N", "cd x && N=4; make -j$N", "(N=4); make -j$N", "N=4 | cat; make -j$N", "N=4 & make -j$N",
       "N=4; unset N; make -j$N", "N=4; source ./env.sh; make -j$N", "N=4; N[0]='4 deploy'; make -j$N", "N=4; getopts ab N; make -j$N",
       "if [ -f x ]; then N=4; fi; make -j$N", "N=$(nproc); for f in a b; do make -j$N; N=$(cat f); done", "bash -c 'N=4'; make -j$N",
     ]) expect(rules(cmd), cmd).toContain("unclear.target");
     // A value split out of an unquoted variable is still judged where it is used: Ember's own folder is refused.
     expect(decided("d=~/.config/ember; xargs -a$d/settings.json echo").cls.refuse?.rule).toBe("ember.path");
-    // A number, a processor count, arithmetic or a variable the command sets to one is the count, as before.
-    for (const cmd of [
-      "make -j$(nproc)", "make -j4", "make -j\"$(nproc)\"", "N=$(nproc); make -j$N", "cmake --build build -j $(nproc)", "N=4; make -j$N", "N=$((2 * 4)); make -j${N}",
-      "N=$(nproc); ./gradlew --max-workers=$N build", "{ N=4; }; make -j$N", "N=4 && make -j$N", "xargs -P$(nproc) echo", "xargs --max-procs=$(nproc) echo",
-      "N=$(nproc); xargs -P\"$N\" echo", "N=$(nproc); for f in a b; do make -j$N; done",
-    ]) expect(rules(cmd), cmd).toEqual([]);
+    expect(rules("N=$(nproc); xargs -P\"$N\" echo")).toContain("unclear.program");
+    // A number, a processor count or arithmetic of numbers is the count, as before.
+    for (const cmd of ["make -j$(nproc)", "make -j4", "make -j\"$(nproc)\"", "cmake --build build -j $(nproc)", "make -j$((2 * 4))", "xargs -P$(nproc) echo", "xargs --max-procs=$(nproc) echo"]) {
+      expect(rules(cmd), cmd).toEqual([]);
+    }
     // xargs -P4 rm asks as rm decides, with nothing about its count.
     expect(rules("xargs -P4 rm")).toEqual(rules("xargs rm"));
+  });
+
+  it("takes only a number, a processor count or arithmetic of numbers as a job count, and judges any variable as main does (commands-a7-1)", () => {
+    const rules = (cmd: string) => withoutReadFlow(decided(cmd).cls, "bash").findings.map(f => f.rule);
+    // Whatever the command set the variable to, attached to make's count it is a target and a make variable Ember can't
+    // name, as on main: the review's forms that left N a count ran a deploy.
+    for (const cmd of [
+      "N=4; make -j$N", "N=$(nproc); make -j$N", "N=4; make -j\"$N\"", "N=4; make -sj${N}", "N=4; make --jobs=$N", "N=4; make -l$N",
+      "N=4; read -r 'N[0]' <<< '4 deploy'; make -j$N", "N=4; readarray -t -- N <<< '4 deploy'; make -j$N", "N=4; declare \"N=$(cat f)\"; make -j$N",
+      "N=4; N+=' 4'; make -j$N", "N=4; printf -v 'N[0]' '4 deploy'; make -j$N",
+    ]) expect(rules(cmd), cmd).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+    // Gradle's --max-workers and Maven's --threads took no value on main, so the variable is a target or a goal.
+    for (const cmd of [
+      "N=4; printf -v 'N[0]' '4 deploy'; mvn --threads $N package", "N=4; mvn --threads $N package", "N=4; ./gradlew --max-workers $N build",
+      "N=4; ./gradlew --max-workers=$N build", "N=4; rake --jobs=$N",
+    ]) expect(rules(cmd), cmd).toContain("unclear.target");
+    // A wrapper's option with a variable attached is the program Ember can't name, quoted or not, as on main.
+    for (const cmd of [
+      "N=4; xargs -P\"$N\" echo", "N=4; xargs --max-procs=\"$N\" echo", "N=4; parallel -j\"$N\" echo", "N=4; xargs -n\"$N\" echo",
+      "REPLY=4; read -r <<< '4 deploy'; xargs -P\"$REPLY\" echo", "OPTARG=4; getopts j: o -j '4 deploy'; xargs -P\"$OPTARG\" echo",
+      "nice -n\"$JOBS\" echo", "env -C\"$JOBS\" echo", "xargs -a\"$JOBS\" echo", "xargs -P$N echo",
+      // A count attached to an option that isn't a job count is no exception: main asks for it too.
+      "xargs -n$(nproc) echo", "nice -n$(nproc) echo",
+    ]) expect(rules(cmd), cmd).toContain("unclear.program");
+    // Ember's own folder through such a value is still refused.
+    expect(decided("d=~/.config/ember; xargs -a\"$d/settings.json\" echo").cls.refuse?.rule).toBe("ember.path");
+    // A number, a processor count's substitution or arithmetic of numbers, quoted or not, is the count.
+    for (const cmd of [
+      "make -j4", "make -j 4", "make -j$(nproc)", "make -j \"$(nproc)\"", "make -j\" $(nproc) \"", "make -j$((2*4))", "make --jobs=$(nproc)", "make -sj`nproc`",
+      "cmake --build build -j $(nproc)", "xargs -P$(nproc) echo", "xargs -P\"$(nproc)\" echo", "parallel -j$(nproc) echo", "./gradlew --max-workers=$(nproc) build",
+      "mvn -T 4 package", "mvn -T$(nproc) package", "ctest -j$(nproc)", "xargs -P4 -n1 echo",
+    ]) expect(rules(cmd), cmd).toEqual([]);
+    expect(decided("make -j$(sysctl -n hw.ncpu)", "darwin").decision.verdict).toBe("run");
+    // Apart, after make's -j and Maven's -T, which take the next word, a variable is the count, as on main.
+    for (const cmd of ["make -j $JOBS", "make -j \"$JOBS\"", "mvn -T $X package", "ninja -j $X"]) expect(rules(cmd), cmd).toEqual([]);
   });
 
   it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {

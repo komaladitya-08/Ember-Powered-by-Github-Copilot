@@ -2679,3 +2679,26 @@ describe("a read loop over text Ember can't see, as the flow reads it through (c
     }
   });
 });
+
+describe("a job count, as the flow judges it (commands-a7-1)", () => {
+  /** CL's own judge on this computer, the user saying no to any question. */
+  const judged = async (command: string) => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: true, real: p }) });
+    const r = await call(h, { target: "this computer", command });
+    return { result: r.resultType, asked: h.asked.length, rules: h0rules(h) };
+  };
+
+  it("asks before a job count held in a variable runs, whatever the command set the variable to, as main does", async () => {
+    for (const command of [
+      "N=4; make -j$N", "N=$(nproc); make -j$N", "N=4; printf -v 'N[0]' '4 deploy'; mvn --threads $N package", "N=4; N+=' 4'; make -j$N",
+      "N=4; ./gradlew --max-workers=$N build", "N=4; xargs -P\"$N\" echo", "N=4; xargs -n\"$N\" echo",
+    ]) expect(await judged(command), command).toMatchObject({ result: "denied", asked: 1 });
+  });
+
+  it("runs a job count written as a number, a processor count or arithmetic of numbers", async () => {
+    for (const command of ["make -j4", "make -j$(nproc)", "make -j \"$(nproc)\"", "cmake --build build -j $(nproc)", "xargs -P$(nproc) echo", "make -j$((2*4))"]) {
+      expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
+    }
+  });
+});

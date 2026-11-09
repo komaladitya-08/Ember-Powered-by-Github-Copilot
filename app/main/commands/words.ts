@@ -57,15 +57,21 @@ export interface OptSpec {
    */
   shortOptional?: string;
   /**
-   * Short options that take the next word as their value only when it is a number, or a processor count's substitution
-   * or a variable Ember can't see (make's `-j 4` and `-j $(nproc)`, but `-j install`); the variable's values the text
-   * gives it are the row's to judge.
+   * Short options that take the next word as their value only when it is a number, a processor count's substitution,
+   * an arithmetic expansion or a variable (make's `-j 4`, `-j $(nproc)` and `-j $JOBS`, as make took them before round
+   * six, but `-j install`); attached, only a count (countWord) is their value (commands-a7-1).
    */
   shortNumeric?: string;
-  /** Long options that take the next word only when it is a number (make's `--jobs 4`). */
+  /** Long options that take the next word as shortNumeric's do (make's `--jobs 4`). */
   longNumeric?: readonly string[];
   /** Stop at the first operand (the rest belongs to a command it runs: sudo, env, xargs, ssh). */
   stopAtOperand?: boolean;
+  /**
+   * With stopAtOperand: the job-count options (`P`, `max-procs`) whose value attached as a count (countWord) leaves the
+   * command after it found (`xargs -P$(nproc) echo`); any other value attached from text Ember can't see may hold the
+   * command (commands-a7-1).
+   */
+  jobCounts?: readonly string[];
   /** Single-dash long options (`-name`, `-exec`: find, Java-style tools) are not split into letters. */
   singleDashLong?: boolean;
 }
@@ -95,9 +101,9 @@ export interface Parsed {
 /** A command that prints the number of processors (`nproc`, `getconf _NPROCESSORS_ONLN`, `sysctl -n hw.ncpu`). */
 const CPU_COUNT = String.raw`\s*(nproc(\s+--(all|ignore=\d+))*|getconf\s+_?NPROCESSORS_ONLN|sysctl\s+-n\s+hw\.(ncpu|logicalcpu|physicalcpu|activecpu))\s*`;
 /**
- * A word that is only a processor count's substitution, an arithmetic expansion or a variable, quoted or not: any
- * other substitution may print a target (`make -j "$(printf deploy)"`), and a variable's value is the caller's to judge
- * (commands-remote-w5-2).
+ * A word that is only a processor count's substitution, an arithmetic expansion or a variable, quoted or not: the word
+ * make's `-j` takes apart, as it did before round six; any other substitution may print a target (`make -j
+ * "$(printf deploy)"`), and the row judges whatever is not a count (commands-remote-w5-2, commands-a7-1).
  */
 const COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|\$\(\([^()]*\)\)|` + "`" + CPU_COUNT + "`" + String.raw`|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"?$`);
 /**
@@ -106,46 +112,27 @@ const COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|\$\(\([^()]*\)\)
  * (commands-remote-r5-3).
  */
 export const CPU_COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|` + "`" + CPU_COUNT + "`" + String.raw`)"?$`);
-/** A processor count's substitution or an arithmetic expansion anywhere in a word: what it prints is a number (commands-z6-4). */
-export const COUNT_PIECE = new RegExp(String.raw`\$\(${CPU_COUNT}\)|\$\(\([^()]*\)\)|` + "`" + CPU_COUNT + "`", "g");
 
 /**
- * Whether a POSIX word as written has an expansion outside double quotes that the shell may split into several words
- * (a variable, a command's output, `$@`): never a processor count's substitution or arithmetic, which print one number
- * (commands-z6-4). An unterminated quote counts as one.
+ * Whether a job count as written is only a count (commands-a7-1): a number, a processor count's substitution or
+ * arithmetic of numbers, quoted or not, with blanks round it or not. Never a variable, whatever the command set it to:
+ * Ember doesn't follow what a variable holds to loosen a judgement, so one is judged as the word it is.
  */
-export function splitsUnquoted(raw: string): boolean {
-  const s = raw.replace(COUNT_PIECE, "0");
-  let dq = false;
-  for (let k = 0; k < s.length; k++) {
-    const c = s[k];
-    if (c === "\\") { k++; continue; }
-    if (c === "\"") { dq = !dq; continue; }
-    if (dq) continue;
-    if (c === "'") {
-      const end = s.indexOf("'", k + 1);
-      if (end < 0) return true;
-      k = end;
-      continue;
-    }
-    if (c === "`") return true;
-    if (c !== "$") continue;
-    const n = s[k + 1];
-    // `$'…'` is quoted text, and `$"…"` opens a quote at the next character.
-    if (n === "'") {
-      let end = k + 2;
-      for (; end < s.length && s[end] !== "'"; end++) if (s[end] === "\\") end++;
-      if (end >= s.length) return true;
-      k = end;
-    } else if (n !== undefined && /[A-Za-z_{(0-9@*#?$!-]/.test(n)) return true;
-  }
-  return dq;
+export function countWord(raw: string): boolean {
+  const v = raw.replace(/^"([^"]*)"$/, "$1").replace(/^[ \t\n]+|[ \t\n]+$/g, "");
+  return /^\d+(\.\d+)?$/.test(v) || CPU_COUNT_WORD.test(v) || /^\$\(\([\d\s+\-*/%]*\)\)$/.test(v);
+}
+
+/** The text of an option's value attached to it as written (`-P"$N"` → `"$N"`, `--jobs=$X` → `$X`). */
+function attachedRaw(raw: string, name: string): string {
+  return name.startsWith("--") ? raw.slice(raw.indexOf("=") + 1) : raw.slice(raw.indexOf(name[1], 1) + 1);
 }
 
 /**
- * The option a word Ember can't see stands for when a count is attached to it (`-j$(nproc)`, `-j"$JOBS"`,
- * `--parallel=$(nproc)`, `--max-workers=$(nproc)`): a numeric option takes any count word, as when it is apart; an option
- * that takes a value only a processor count. Its value is unseen, its pieces kept (commands-remote-r5-3).
+ * The option a word Ember can't see stands for when a count is attached to it (`-j$(nproc)`, `-j"$((2*4))"`,
+ * `--parallel=$(nproc)`, `--max-workers=$(nproc)`): a numeric option takes any count (countWord), an option that takes
+ * a value only a processor count. Its value is unseen, its pieces kept (commands-remote-r5-3). A variable there is no
+ * count, so the word is an operand, as it was on main (commands-a7-1).
  */
 function attachedCount(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
   const long = /^--([A-Za-z][A-Za-z0-9-]*)=(.+)$/s.exec(a.raw);
@@ -156,7 +143,7 @@ function attachedCount(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
   };
   if (long) {
     const numeric = (spec.longNumeric ?? []).includes(long[1]);
-    if (!(numeric ? COUNT_WORD : CPU_COUNT_WORD).test(long[2]) || !(numeric || (spec.longValue ?? []).includes(long[1]))) return null;
+    if (!(numeric ? countWord(long[2]) : CPU_COUNT_WORD.test(long[2])) || !(numeric || (spec.longValue ?? []).includes(long[1]))) return null;
     return [{ name: `--${long[1]}`, value: null, parts: cut(long[1].length + 3) }];
   }
   const short = /^-([A-Za-z0-9]+)(.+)$/s.exec(a.raw);
@@ -168,7 +155,7 @@ function attachedCount(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
     if (numeric || (spec.shortValue ?? "").includes(c)) {
       // The count must be all that follows the letter.
       const rest = short[1].slice(j + 1) + short[2];
-      return (numeric ? COUNT_WORD : CPU_COUNT_WORD).test(rest) ? [...out, { name: `-${c}`, value: null, parts: cut(j + 2) }] : null;
+      return (numeric ? countWord(rest) : CPU_COUNT_WORD.test(rest)) ? [...out, { name: `-${c}`, value: null, parts: cut(j + 2) }] : null;
     }
     if ((spec.shortOptional ?? "").includes(c)) return null;
     out.push({ name: `-${c}` });
@@ -207,10 +194,12 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
     const attached = v === null && spec.stopAtOperand && !a.param ? attachedOption(a, spec) : null;
     if (attached) {
       opts.push(...attached.map(o => ({ ...o, at: k })));
-      // Unquoted, the shell may split its value into more words, the first of them the command (`X='1 rm'; xargs -n$X
-      // echo` runs rm): what runs is a command Ember can't name, and the value is still judged by its pieces
-      // (commands-z6-4).
-      if (splitsUnquoted(a.raw)) {
+      // Unless the value is only a job count (`-P$(nproc)`, `-P"$((2*4))"`), it is text Ember can't see, which the shell
+      // may split into more words, the first of them the command (`X='1 rm'; xargs -n$X echo` runs rm): what runs is a
+      // command Ember can't name, as on main, quoted or not, and the value is still judged by its pieces for Ember's own
+      // refusal (commands-z6-4, commands-a7-1).
+      const last = attached[attached.length - 1].name;
+      if (!((spec.jobCounts ?? []).includes(last.replace(/^--?/, "")) && countWord(attachedRaw(a.raw, last)))) {
         restAt = k;
         for (let j = k; j < args.length; j++) operands.push(args[j]);
         break;
