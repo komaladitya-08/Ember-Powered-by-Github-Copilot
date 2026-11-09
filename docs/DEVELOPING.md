@@ -2533,3 +2533,5 @@ Opaque shell positional arguments and Windows flow retain known own-path refusal
 relax the execution decision. The Windows fallback scan can refuse a protected ancestor when its later use is opaque.
 
 Cross-call provenance tests cover opaque inline copies and code pulled or fetched through configured remote names.
+
+Unknown xargs long options fail closed without altering option consumption; copy-created links share the parent guard.

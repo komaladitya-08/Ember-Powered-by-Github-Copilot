@@ -3681,10 +3681,14 @@ function secretPattern(pt: string, sc: Scope): boolean {
 reg(NATIVE, ["xargs"], h => {
   // GNU's -l, -i and -e (and --max-lines, --replace, --eof) take a value only attached or after =: written alone, the
   // next word is the command (commands-remote-c4-1). BSD's -J, -R and -S take one.
-  const p = parseOpts(h.args, {
+  const spec: OptSpec = {
     shortValue: "adEILnPsJRS", shortOptional: "lie", longValue: ["arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"],
     longOptional: ["eof", "replace", "max-lines"], stopAtOperand: true, jobCounts: ["P", "max-procs"],
-  });
+  };
+  const p = parseOpts(h.args, spec);
+  // GNU accepts short long-option prefixes. Unknown names keep a question without changing how operands are read.
+  const knownLong = new Set([...(spec.longValue ?? []), ...(spec.longOptional ?? []), "null", "no-run-if-empty", "verbose", "interactive", "exit", "help", "version", "show-limits"]);
+  if (p.opts.some(o => o.name.startsWith("--") && !knownLong.has(o.name.slice(2)))) h.e.unclear("unclear.xargs-option", "Ember can't tell which xargs options apply.");
   // A child may treat any assigned name as code or an executable location (commands-remote-c7-3).
   if (has(p, "process-slot-var")) h.e.unclear("unclear.assignment", "It changes the environment of the commands it runs.");
   // The file it reads its input from, a variable in it judged for Ember's own refusal (commands-remote-v5-2).
@@ -3801,7 +3805,10 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   if (target !== undefined) dest = target === null ? { v: null, raw: "?", glob: false } : lit(target);
   else if (sources.length >= 2) { dest = sources[sources.length - 1]; sources = sources.slice(0, -1); }
   else if (kind === "ln" && sources.length === 1) { dest = lit("."); }
-  if (kind === "ln") for (const source of sources) linkTarget(h, source);
+  // Copy's link forms can create the same alias as ln, including GNU's abbreviated long flags.
+  const links = kind === "ln" || (kind === "cp" && (has(p, "s", "l", "symbolic-link", "link")
+    || p.opts.some(o => o.name.startsWith("--") && ["--symbolic-link", "--link"].some(name => name.startsWith(o.name)))));
+  if (links) for (const source of sources) linkTarget(h, source);
   objsOf(h, sources, srcUse);
   if (!dest) {
     // With no destination it can't run as it is; it is asked about rather than judged as nothing (commands-remote-i5a).

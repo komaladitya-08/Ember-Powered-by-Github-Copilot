@@ -1031,3 +1031,7 @@ so foreach or a later percent-variable expansion cannot hide Ember's settings fr
 Inline interpreter code run after a download keeps unknown provenance, since it may copy that file under any name.
 Git fetch and pull keep provenance for configured remote names too, including one added in an earlier tool call.
 Named data downloads followed by an unrelated Python script still run.
+
+An unrecognised xargs long option, including an abbreviation such as `--p` or `--pr`, keeps a question: GNU may
+interpret it as an option that changes the child environment. Copy-created symbolic or hard links follow the same
+protected-parent refusal as ln, including shortened long flags.

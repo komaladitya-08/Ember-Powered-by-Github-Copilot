@@ -121,3 +121,19 @@ describe("protected paths handed to opaque shell contexts", () => {
     expect(win('set "D=project" & echo %D%', "cmd")).toBe("run");
   });
 });
+
+describe("long options the wrapper does not recognise", () => {
+  it("asks before abbreviated xargs options can set the child environment (commands-v7-1)", () => {
+    for (const option of ["--p=BASH_ENV", "--pr=BASH_ENV", "--p BASH_ENV", "--not-an-option=value"]) {
+      expect(decide(`xargs ${option} bash -c 'echo okay' < urls.txt`).verdict, option).toBe("ask");
+    }
+    expect(decide("xargs --max-procs=4 echo < words.txt").verdict).toBe("run");
+  });
+
+  it("refuses copy-created links to protected parent folders too (commands-remote-c7-1, commands-v7-2)", () => {
+    for (const option of ["--symbolic-link", "--sy", "-s", "-as", "--link", "--l"]) {
+      expect(decide(`cp ${option} ~/.config config-link; cat config-link/ember/settings.json`).verdict, option).toBe("refuse");
+    }
+    expect(decide("cp --symbolic-link notes.txt notes-link").verdict).toBe("ask");
+  });
+});
