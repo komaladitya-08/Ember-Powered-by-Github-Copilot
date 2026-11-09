@@ -100,6 +100,16 @@ describe("release.mjs", () => {
     expect(notes).not.toMatch(/^## /m);
     expect(notes).not.toMatch(/\]\((?!https:|#)/);
   });
+
+  it("keeps this version's notes, as releaseNotes builds them, under GitHub's 125,000-character limit for a release body", () => {
+    // GitHub refuses a release body longer than this, so the release job's `gh release create` would fail at the tag.
+    // The notes are measured as the job writes them: links made absolute for the repository Ember's releases come from.
+    const GITHUB_RELEASE_BODY_LIMIT = 125_000;
+    const repo = /const REPO = "([^"]+)"/.exec(read("app/main/updates.ts"))?.[1] ?? "";
+    expect(repo).toMatch(/^[\w.-]+\/[\w.-]+$/);
+    const notes = releaseNotes(read("CHANGELOG.md"), version, { repo, ref: `v${version}` });
+    expect(notes.length).toBeLessThan(GITHUB_RELEASE_BODY_LIMIT);
+  });
 });
 
 describe("ci.yml's release job", () => {
