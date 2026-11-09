@@ -116,11 +116,13 @@ describe("the fuse wire", () => {
     expect(fatArchCount(Buffer.from([0xca, 0xfe]))).toBe(0);
   });
 
-  it("flips a file in place, keeping its mode", () => {
+  it("flips a file in place, keeping its mode under a private umask (install-docs-v7-2)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-fuses-"));
     try {
       const file = path.join(dir, "ember");
       fs.writeFileSync(file, fake(), { mode: 0o755 });
+      // The fixture needs this starting mode even when the developer's private umask strips group/other bits.
+      fs.chmodSync(file, 0o755);
       expect(fuseMismatches(flipFuses(file, LINUX), LINUX)).toEqual([]);
       expect(fuseMismatches(readFuses(fs.readFileSync(file)), LINUX)).toEqual([]);
       // Windows has no POSIX modes to keep (stat reports 0o666 for any writable file).
