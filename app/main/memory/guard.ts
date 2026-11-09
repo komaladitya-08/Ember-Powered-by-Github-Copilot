@@ -226,8 +226,12 @@ interface CodeKey { name: string; count: boolean; pin: boolean; compared: boolea
 const NAME_OF = /^(?:field|fields|header|headers|name|names|param|params|label|labels|id|ids|attr|attribute|env|var|variable|prop|property|column|cookie|slot|input|selector|path|url|uri|endpoint|file|type|kind|ref|prefix|placeholder|message|msg|error|hint)$/i;
 /** The end of a value in code: the line's end, a comma, a semicolon, a closing bracket or a comment. */
 const CODE_AFTER_END = /^\s*(?:$|[,;)\]}]|\/\/|#)/;
-/** A label's words, a colon at their end ("Password:", "PIN :"), letters only. */
-const label = (s: string) => /^[\p{L}_][\p{L}_ '’-]{0,40}:\s*$/u.test(s);
+/**
+ * A label's words, a colon at their end ("Password:", "PIN :"), letters only, among them a secret's name or a field's
+ * ("Username:", "E-mail:"), never another word ("hunter:", "Summer:"): memory-x6-3.
+ */
+const label = (s: string) => /^[\p{L}_][\p{L}_ '’-]{0,40}:\s*$/u.test(s)
+  && s.split(/[\s_:'’-]+/).some(w => SENTENCE_WORD.test(w) || /^(?:user(?:name)?|name|mail|account|id|code|phrase|answer|otp)$/i.test(w));
 /**
  * An address with no credentials in it, and none of its parts shaped like a token ("https://oauth2.googleapis.com/token",
  * never "https://user:pass@host" or a webhook's "https://hooks.slack.com/services/T0/B0/x8Kq…"): memory-r4-2.
@@ -411,12 +415,27 @@ const STRONG_SECRET = new Set(["password", "passwords", "passwd", "pwd", "pw", "
   "credential", "credentials", "creds", "apikey", "psk", "wifi"]);
 /**
  * Whether `s`, a literal, is a sentence about a secret, not one: three or more words, one of them naming a secret
- * ("Forgot your password?", "Passwords don't match", "Mot de passe oublié"), never a passphrase of words alone.
+ * ("Forgot your password?", "Passwords don't match", "Mot de passe oublié"), never a passphrase of words alone. An
+ * English word for one is a noun as a UI's text uses it, after a word like "your", "the", "enter" or "of", or before
+ * one like "is", "don't" or "required" ("Sign in", "logged out"), and no word is shaped like a password or is a run of
+ * four digits, so "sign of four 1887", "Key Lime Pie 2024!", "login now 4821" and "pass the salt please" are values
+ * (memory-x6-3).
  */
 const SENTENCE_WORD = /^(?:pass(?:word|words|phrase|code)?|passe|passwort|kennwort|contrase[ñn]a|senha|wachtwoord|parola|hasło|pins?|tokens?|secrets?|keys?|credentials?|login|sign|logged|api)$/i;
+const SENTENCE_BEFORE = /^(?:your|the|a|an|my|our|their|his|her|its|this|that|no|new|current|old|temporary|confirm|enter|re-?enter|retype|repeat|type|forgot|forgotten|reset|change|choose|create|set|update|show|hide|invalid|incorrect|wrong|of|for|with|by|to|without)$/i;
+const SENTENCE_AFTER = /^(?:is|are|was|were|be|been|has|have|had|must|should|will|can|cannot|can['’]t|could|do|does|did|don['’]t|doesn['’]t|didn['’]t|isn['’]t|aren['’]t|wasn['’]t|not|required|needed|incorrect|invalid|expired|expires|mismatch|match|matches|too|field|reset|changed|updated|saved|sent|strength|hint|failed|succeeded|successful)$/i;
 function sentence(s: string): boolean {
   const ws = s.trim().split(/\s+/);
-  return ws.length >= 3 && ws.some(w => SENTENCE_WORD.test(w.replace(/[^\p{L}]+/gu, "")));
+  if (ws.length < 3 || ws.some(w => secretShaped(w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")) || /\d{4}/.test(w))) return false;
+  const bare = ws.map(w => w.replace(/^[^\p{L}'’]+|[^\p{L}'’]+$/gu, ""));
+  return bare.some((w, i) => {
+    const n = w.replace(/[^\p{L}]+/gu, "");
+    if (!SENTENCE_WORD.test(n)) return false;
+    // The other languages' words name only a password ("Mot de passe oublié", "Passwort vergessen?").
+    if (!/^(?:pass(?:word|words|phrase|code)?|pins?|tokens?|secrets?|keys?|credentials?|login|sign|logged|api)$/i.test(n)) return true;
+    const next = bare[i + 1] ?? "";
+    return SENTENCE_BEFORE.test(bare[i - 1] ?? "") || SENTENCE_AFTER.test(next) || (/^(?:sign|login|logged)$/i.test(n) && /^(?:in|up|out|on|off)$/i.test(next));
+  });
 }
 /** Whether `s`, a literal under a name for tokens, could be one: shaped like a secret, or a run of 12 or more letters and digits. */
 const tokenShaped = (s: string) => secretShaped(s) || (!/[\s\\/]|:\/\//.test(s) && s.length >= 12 && /\d/.test(s) && /[A-Za-z]/.test(s));
@@ -500,8 +519,9 @@ function holdsValue(value: string, name: string, op: string | undefined, own: st
   if (/^-?[*&][A-Za-z_][\w.-]*$/.test(value)) return false;
   const literal = /^(["'`])(.*)\1$/.exec(value)?.[2];
   // A literal that names a secret ("'projects.secrets'", "\"api_key\"") or says something about one in a sentence
-  // ("base64 encoded json representation of credentials."): its words are read by the other rules all the same.
-  if (literal !== undefined && (namesSecret(literal.replace(/[.\s/:-]+/g, "_")) || sentence(literal))) return false;
+  // ("base64 encoded json representation of credentials."): its words are read by the other rules all the same. A
+  // name has no spaces, so "pass the salt please" is a passphrase (memory-x6-3).
+  if (literal !== undefined && ((!/\s/.test(literal.trim()) && namesSecret(literal.replace(/[.\s/:-]+/g, "_"))) || sentence(literal))) return false;
   // A bare name that names a secret, as a list of them does ("secrets:\n  - db_password").
   if (literal === undefined && /^[a-z][a-z0-9]*(?:[_.-][a-z0-9]+)*$/.test(value) && !/\d/.test(value) && namesSecret(value.replace(/[.-]/g, "_"))) return false;
   // Under a name for tokens, only one token, alone: never an expression or a lexer's rule ("(r'\\d+', Number)").

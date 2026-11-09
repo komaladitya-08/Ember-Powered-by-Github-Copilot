@@ -370,6 +370,27 @@ describe("what memory never keeps", () => {
   ])("keeps %j, a label for a field or a prompt with code after it (memory-x6-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A passphrase that happens to hold a secret's word, and a word before a colon, read as UI text under a key named
+  // for a secret (memory-x6-3).
+  it.each([
+    ['network={\n    ssid="HomeNet"\n    psk="sign of four 1887"\n}'], ['ADMIN_PASSWORD="Key Lime Pie 2024!"'], ['const PASSWORD = "login now 4821";'],
+    ['wifi_password = "sign of the times"'], ['password: "Open Sesame Key"'], ['WIFI_PASSWORD="open sesame key"'], ["define('DB_PASSWORD', 'Open Sesame Key 1');"],
+    ['passwords:\n  wifi: "pass the salt please"'], ['password = "hunter:"'], ['password: "Summer:"'],
+  ])("refuses %j, a passphrase or a word with a colon under a key named for a secret (memory-x6-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  it("saves nothing for a Wi-Fi password said as a quoted passphrase with a secret's word in it (memory-x6-3)", () => {
+    for (const text of ['The Wi-Fi password: "pass the salt please"', `The user's Wi-Fi password: "sign of four 1887"`]) {
+      expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind, text).toBe("refused");
+    }
+  });
+  it.each([
+    ['"forgotPassword": "Forgot your password?"'], ['"passwordMismatch": "Passwords don\'t match"'], ['"pinPrompt": "Enter your PIN"'],
+    ['"tokenExpired": "Your session token has expired."'], ['"loginButton": "Sign in to continue"'], ['"forgotPassword": "Mot de passe oublié ?"'],
+    ['"passwordLabel": "Password:",'], ['"passwordHint": "New password:"'], ["define('DB_PASSWORD_HELP', 'Enter the database password here');"],
+  ])("keeps %j, UI text about a secret under a key named for one (memory-x6-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
 
   // A version, an issue, a setting or a user at a computer said as a login, a disk's size and a formula: round four's
   // login and admin rules refused them (safety-privacy-c4-3, memory-c4-2).

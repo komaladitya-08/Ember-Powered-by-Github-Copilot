@@ -147,8 +147,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   `input("Password: ")  # Summer2024!`), an element's text that ends there with only markup after it up to the field
   it labels, past blank and markup-only lines, at most 400 characters (`<label for="password">Password:</label>` before
   its `<input>`; never `<td>Password:</td><td>hunter2</td>`, `<p>Your PIN:</p>\n\n<p>4821</p>`, an `<input>` with a
-  `value` or `print("Password:", "hunter2")`: memory-x6-1), and `$PWD`. Nor is a quoted label ("Password:"), a sentence
-  about a secret ("Forgot your password?"), an address with no credentials and no part shaped like a token ('TOKEN_URL =
+  `value` or `print("Password:", "hunter2")`: memory-x6-1), and `$PWD`. Nor is a quoted label with a secret's or a
+  field's name ("Password:", never "hunter:"), a sentence about a secret, its word used as UI text uses it and no word
+  shaped like a password or four digits in it ("Forgot your password?", "Passwords don't match"; never "sign of four
+  1887" or "pass the salt please": memory-x6-3), an address with no credentials and no part shaped like a token ('TOKEN_URL =
   "https://oauth2.googleapis.com/token"'), what a key that names where a secret is holds ("PASSWORD_FIELD",
   "API_KEY_HEADER", "secretName", "tokenType"; never one shaped like a password), a tokenizer's setting, or, in a
   request, a type, null or an environment read with words after it and no digit or symbol in the sentence ("Add a
