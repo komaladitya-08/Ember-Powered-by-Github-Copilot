@@ -27,11 +27,18 @@ function numericArithmetic(value) {
   return expression() && at === text.length;
 }
 
-/** A count is exempt only as the sole job-count option of a known tool; no appended target, pipeline or variable. */
+/** A sole job option, with only reviewed inert operands; no extra target, pipeline or variable. */
 export function isAllowedJobCount(command) {
-  const match = /^(?:(?:make|gmake|ctest) -j\s*|cmake --build build -j\s*|pytest -n\s*|sort --parallel=|\.\/gradlew --max-workers=)(.+)$/.exec(command);
-  if (!match) return false;
-  let value = match[1];
+  if (/[\r\n]/.test(command)) return false;
+  const match = /^(?:(?:make|gmake|ctest|ninja) -j[ \t]*|(?:make|rake) --jobs=|cmake --build build -j[ \t]*|pytest -n[ \t]*|sort --parallel=|\.\/gradlew --max-workers=)(.+)$/.exec(command);
+  const inert = [
+    /^sort --parallel=(.+) notes\.txt$/,
+    /^(?:xargs -P|parallel -j)[ \t]*(.+) echo$/,
+    /^(?:mvn -T[ \t]*|mvn --threads=)(.+) package$/,
+    /^\.\/gradlew --max-workers=(.+) build$/,
+  ].map(pattern => pattern.exec(command)).find(Boolean);
+  let value = inert?.[1] ?? match?.[1];
+  if (!value) return false;
   if (value.startsWith("'")) return /^'\d+'$/.test(value);
   if (value.startsWith('"')) {
     if (!value.endsWith('"')) return false;
@@ -57,8 +64,11 @@ export function compareResults(cases, before, after) {
     const asked = kind === "classifier" ? b === "ask" : b === "ASKED";
     const runs = kind === "classifier" ? n === "run" : n === "RAN";
     const rules = beforeRow?.rules;
-    const countOnly = Array.isArray(rules) && rules.length > 0 && rules.every(r => ["unclear.unresolved-arg", "unclear.make-variable", "unclear.target"].includes(r));
-    const allowed = direction === "looser" && asked && runs && countOnly && isAllowedJobCount(command);
+    const jobCount = isAllowedJobCount(command);
+    // Main mistook the substituted option for a program only in these reviewed xargs/parallel echo shapes.
+    const countOnly = Array.isArray(rules) && rules.length > 0 && rules.every(r => ["unclear.unresolved-arg", "unclear.make-variable", "unclear.target"].includes(r)
+      || (r === "unclear.program" && jobCount && /^(?:xargs -P|parallel -j)/.test(command)));
+    const allowed = direction === "looser" && asked && runs && countOnly && jobCount;
     changes.push({ index, kind, ...(stage === undefined ? {} : { stage, command }), direction, allowed, case: c, before: b, after: n });
   };
   for (let index = 0; index < cases.length; index++) {

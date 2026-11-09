@@ -43,6 +43,35 @@ describe("the audit command comparison", () => {
     }
   });
 
+  it("recognises only count changes for the reviewed inert operands and job options (commands-comparison-r7-2)", async () => {
+    const { isAllowedJobCount, compareResults } = await api();
+    for (const count of ["4", "$(nproc)", "$(getconf _NPROCESSORS_ONLN)", "$(sysctl -n hw.ncpu)", "$((2+2))"]) {
+      for (const cmd of [`sort --parallel=${count} notes.txt`, `xargs -P${count} echo`, `make --jobs=${count}`, `ninja -j${count}`, `mvn -T${count} package`, `mvn --threads=${count} package`, `rake --jobs=${count}`, `./gradlew --max-workers=${count} build`, `parallel -j${count} echo`]) {
+        expect(isAllowedJobCount(cmd), cmd).toBe(true);
+        // Main calls xargs/parallel's substituted option an unknown program; only these exact inert commands are exempt.
+        const rules = [/^(xargs|parallel) /.test(cmd) ? "unclear.program" : "unclear.unresolved-arg"];
+        const report = compareResults([{ cmd }], [result("ask", ["ASKED"], rules, [cmd])], [result("run", ["RAN"], [], [cmd])]);
+        expect(report.errors).toEqual([]);
+        expect(report.changes).toHaveLength(2);
+        expect(report.changes.every(c => c.allowed), cmd).toBe(true);
+        const security = compareResults([{ cmd }], [result("ask", ["ASKED"], ["unclear.unresolved-arg", "escape.run-downloaded"], [cmd])], [result("run", ["RAN"], [], [cmd])]);
+        expect(security.summary.forbiddenLooser, cmd).toBe(2);
+        if (!/^(xargs|parallel) /.test(cmd)) {
+          const unknownProgram = compareResults([{ cmd }], [result("ask", ["ASKED"], ["unclear.program"], [cmd])], [result("run", ["RAN"], [], [cmd])]);
+          expect(unknownProgram.summary.forbiddenLooser, cmd).toBe(2);
+        }
+      }
+    }
+    for (const cmd of ["sort --parallel=$(nproc) private.txt", "sort --parallel=$(nproc) notes.txt extra.txt", "sort --parallel=$(nproc) notes.txt; echo done", "xargs -P$(nproc) echo extra", "xargs -P$(nproc) sh", "xargs -P$(nproc) --process-slot-var=PATH echo", "xargs -n$(nproc) echo", "head -n$(nproc) notes.txt", "xargs -P\n$(nproc) echo", "make -j\n$(nproc)", 'sort --parallel="$(nproc)\n" notes.txt']) expect(isAllowedJobCount(cmd), cmd).toBe(false);
+    for (const count of ["`nproc`", "$(nproc --all)", "$(sysctl -n hw.logicalcpu)", "$(cat jobs.txt)", "$N"]) {
+      expect(isAllowedJobCount(`sort --parallel=${count} notes.txt`), count).toBe(false);
+      expect(isAllowedJobCount(`xargs -P${count} echo`), count).toBe(false);
+      expect(isAllowedJobCount(`mvn -T${count} package`), count).toBe(false);
+      expect(isAllowedJobCount(`parallel -j${count} echo`), count).toBe(false);
+    }
+    for (const cmd of ["make --jobs=$(nproc) deploy", "ninja -j$(nproc) install", "mvn -T$(nproc) package deploy", "./gradlew --max-workers=$(nproc) build publish", "parallel -j$(nproc) sh", "parallel -j$(nproc) echo extra", "make -l$(nproc)", "make -I$(nproc)", "ninja -l$(nproc)"]) expect(isAllowedJobCount(cmd), cmd).toBe(false);
+  });
+
   it("binds an exception to the actual stage and rejects a stage with a different command (compare-v7-1)", async () => {
     const { compareResults } = await api();
     const cmd = 'cat "${HOME:?}/notes.txt"';

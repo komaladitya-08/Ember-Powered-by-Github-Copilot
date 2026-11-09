@@ -2210,6 +2210,11 @@ results are kept alongside them. A missing or unknown result fails the compariso
 are asks becoming runs for the known tools' sole job-count option: literal numbers, the named `nproc`, `getconf
 _NPROCESSORS_ONLN` or `sysctl -n hw.ncpu` substitutions, or arithmetic of numbers. The baseline question must contain only the count-related uncertainty rules; other security rules and former
 refusals are never exempt.
+Reviewed extra job options are `make --jobs=`, `ninja -j` and `rake --jobs=`. Reviewed operand forms are
+`sort --parallel=<count> notes.txt`, `xargs -P<count> echo`, `parallel -j<count> echo`, `mvn -T<count> package`,
+`mvn --threads=<count> package` and `./gradlew --max-workers=<count> build`; extra targets, commands, options or
+line breaks are not exempt. Only those exact xargs/parallel forms may have main's `unclear.program` parser finding
+treated as count uncertainty. Generated variants also check variables, non-job uses, other options and count spellings.
 Exit 1 means a forbidden loosening or incomplete/unknown probe; a probe/build error also exits unsuccessfully.
 These fake-runner results do not replace the native command suites below.
 

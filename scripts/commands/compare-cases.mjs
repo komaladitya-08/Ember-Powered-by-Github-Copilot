@@ -43,6 +43,16 @@ function generatedCases() {
     add(cmd);
   }
   for (const [tool, opt] of jobOptions) for (const value of ["4", "deploy", "4 deploy", "$(cat jobs.txt)"]) for (const sep of ["", " "]) add(`N='${value}'; ${tool} ${opt}${sep}$N`);
+  // CPU counts used as file names, load limits or program options are not the audit's job-count exception.
+  const countVariants = [...jobCounts, '"$(nproc)"', '" $(nproc) "', "$( nproc )", "$(nproc --all)", "$(nproc --ignore=1)", "$(getconf NPROCESSORS_ONLN)", "$(sysctl -n hw.logicalcpu)", "$(sysctl -n hw.physicalcpu)", "$(sysctl -n hw.activecpu)", "`nproc`", "`getconf _NPROCESSORS_ONLN`", "1.5"];
+  const countOperands = [
+    ["cat ", ""], ["printf %s ", ""], ["head -n", " notes.txt"], ["grep -m", " text notes.txt"], ["sleep ", ""], ["xargs -n", " echo"], ["nice -n", " echo"],
+    ["make -j", ""], ["make -l", ""], ["make --jobs=", ""], ["make --load-average=", ""], ["make -I", ""], ["make -C", ""], ["make -f", ""],
+    ["ninja -j", ""], ["ninja -l", ""], ["mvn -T", " package"], ["mvn --threads=", " package"], ["rake -j", ""], ["rake --jobs=", ""],
+    ["./gradlew --max-workers=", " build"], ["ctest -j", ""], ["pytest -n", ""], ["cmake --build build -j", ""], ["sort --parallel=", " notes.txt"], ["xargs -P", " echo"], ["parallel -j", " echo"],
+  ];
+  for (const [prefix, suffix] of countOperands) for (const count of countVariants) add(`${prefix}${count}${suffix}`);
+  for (const [prefix, suffix] of countOperands) for (const value of ["4", "$(nproc)", "deploy"]) add(`J='${value}'; ${prefix}$J${suffix}`);
   for (const tail of ["bash run.sh", "npm test", "make", "python3 analyze.py", "tar -xf tool-1.tar.gz; ./tool"]) {
     const cmd = `curl -LO https://example.com/data.csv; ${tail}`;
     add(cmd, { sequence: ["curl -LO https://example.com/data.csv", tail], missing: ["data.csv", "run.sh", "tool-1.tar.gz", "analyze.py"] });
