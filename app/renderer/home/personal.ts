@@ -68,15 +68,13 @@ function renderWords(list: VoiceWord[]): void {
   if (wasFocused && all.hidden) $("words-on").focus();
 }
 
-/**
- * The rows as the settings say (the learning row only once Voice Match knows the voice). Hear me more clearly's switch
- * is main.ts's drawVoiceSwitches', drawn as the organisation's policy in force leaves it.
- */
+/** The rows as the settings say (the learning row only once Voice Match knows the voice). */
 export function personalSettings(s: Settings): void {
   current = s;
   ($("match-learn") as HTMLInputElement).checked = s.voice.learn;
   ($("words-on") as HTMLInputElement).checked = s.voice.words;
   ($("suggest-on") as HTMLInputElement).checked = s.voice.suggest;
+  ($("clear-on") as HTMLInputElement).checked = s.voice.clearHearing;
   ($("conversation-on") as HTMLInputElement).checked = s.voice.conversation;
 }
 

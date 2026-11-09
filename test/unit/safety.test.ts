@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { applyAdminPolicy, loadAdminPolicy, lockedDown, managedKeys, providerApiKey, AdminPolicySchema } from "../../app/main/admin";
+import { applyAdminPolicy, loadAdminPolicy, managedKeys, providerApiKey, AdminPolicySchema } from "../../app/main/admin";
 import { SettingsStore, DEFAULT_SETTINGS, CONSENT_VERSION } from "../../app/main/settings";
 import { PolicyEngine, alignedWithGoal, isSecurityWindow, type ActionRequest } from "../../app/main/policy/policy";
 import { AuditLog } from "../../app/main/policy/audit";
@@ -47,25 +47,10 @@ describe("admin policy file", () => {
     expect(s.privacy.neverLook).toContain("Thunderbird");
     expect(s.privacy.neverLook.filter(x => x.toLowerCase() === "keepassxc")).toHaveLength(1);
     // Without grants nobody may let Ember work without asking either (policy/autonomy.ts).
-    expect(managedKeys(admin)).toEqual(["wakeWord", "speak", "naturalVoice", "clearHearing", "models", "grants", "askedApps", "autonomy"]);
+    expect(managedKeys(admin)).toEqual(["wakeWord", "speak", "naturalVoice", "models", "grants", "askedApps", "autonomy"]);
     expect(s.trust).toEqual({ askedApps: false, reviewCommands: false });
     // An admin can't turn on what the user turned off.
     expect(applyAdminPolicy({ ...DEFAULT_SETTINGS, wakeWord: false }, AdminPolicySchema.parse({ features: { voice: true } })).wakeWord).toBe(false);
-  });
-
-  it("shows Hear me more clearly as managed wherever the organisation's policy turns it off, a lockdown too (safety-privacy-v6-1)", () => {
-    // Home draws the switch off and locked from this key, also while Ember holds itself locked down after a policy change
-    // and the settings still hold it on; without it the switch showed on and could be pressed.
-    const user = { ...DEFAULT_SETTINGS, voice: { ...DEFAULT_SETTINGS.voice, clearHearing: true } };
-    for (const admin of [AdminPolicySchema.parse({ features: { voice: false } }), lockedDown("/etc/ember/policy.json", "Unexpected token").policy]) {
-      expect(applyAdminPolicy(user, admin).voice.clearHearing).toBe(false);
-      expect(managedKeys(admin)).toContain("clearHearing");
-    }
-    // Only where it is turned off: speech off alone leaves it to the person.
-    for (const admin of [AdminPolicySchema.parse({}), AdminPolicySchema.parse({ features: { speak: false } })]) {
-      expect(applyAdminPolicy(user, admin).voice.clearHearing).toBe(true);
-      expect(managedKeys(admin)).not.toContain("clearHearing");
-    }
   });
 
   it("turns off AI review of commands, managed, where the organisation says so (features.aiReview)", () => {

@@ -413,8 +413,8 @@ first run's "Before Ember starts" again, word for word as it reads now (Search f
 without asking is on (ordinary steps are said instead of asked) or apps were let in without asking (each as the policy
 in force allows it: while Ember holds itself locked down after a policy change, it says screenshots are off and Ember
 asks before acting in an app, and every switch the lockdown turns off shows off, there and in the other panes:
-screenshots, Work without asking, working in an app you asked for help with, listening for the name, Hear me more
-clearly, memory, routines and update notices, and the voice shows Kitten Nano), and which of other
+screenshots, Work without asking, working in an app you asked for help with, listening for the name, memory, routines
+and update notices), and which of other
 computers, WSL and commands you turned on or your organisation turned off; while open it follows where requests go, the
 policy and those settings, and isn't drawn again for an unrelated change.
 **What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80
@@ -743,7 +743,7 @@ Supertonic 3 (int8, about 129 MB, `SUPERTONIC_VOICE`) is the other optional voic
 list. It runs only on the native addon (Windows and macOS: the C API binding can't pass its generation config), and its
 weights are under the BigScience Open RAIL-M licence, whose use restrictions pass on to users.
 
-**Hear me more clearly** (`voice.clearHearing`, Settings › Voice) fetches `CLEAR_SPEECH` (Parakeet TDT 0.6B v2, 482 MB) on Windows, macOS and Linux's C API, and starts the voice process again with it; the log says `voice.clear_wanted`, `voice.clear_ready`, and `clear: true` on `voice.ready`. An organisation's `features.voice: false` turns it off, shown as managed.
+**Hear me more clearly** (`voice.clearHearing`, Settings › Voice) fetches `CLEAR_SPEECH` (Parakeet TDT 0.6B v2, 482 MB) on Windows, macOS and Linux's C API, and starts the voice process again with it; the log says `voice.clear_wanted`, `voice.clear_ready`, and `clear: true` on `voice.ready`. An organisation's `features.voice: false` turns it off.
 
 Kokoro, Supertonic and Parakeet come from sherpa-onnx's GitHub releases (served from
 `release-assets.githubusercontent.com`) only when the user turns them on; no package or models zip carries them.
@@ -1224,7 +1224,7 @@ the lockdown turns off), and the restart reads the new policy whole. Every key i
 
 | Key | Effect |
 |---|---|
-| `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the optional native voice off and its model download from starting, and `voice` keeps Hear me more clearly off, shown as managed |
+| `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the optional native voice off and its model download from starting, shown as managed |
 | `features.actions` | Ember answers and guides ("show me") but never acts in apps |
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
 | `features.screenImages` | Accessibility text only; no screenshots go to the model ("Send screenshots for tasks" off, managed) |

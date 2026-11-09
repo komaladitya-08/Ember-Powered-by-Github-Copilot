@@ -22,20 +22,17 @@ export function mountNaturalVoice(deps: { save(patch: SettingsPatch): Promise<bo
   let said = "";
   const allowed = (model: NaturalModel) => model === "kitten" || available.includes(model);
   function draw(): void {
-    // As in force: where the organisation turns the natural voice off, Kitten Nano is the voice, also while Ember holds
-    // itself locked down after a policy change and the settings still hold Kokoro (safety-privacy-v6-1). The draft stays.
-    const current = deps.managed() ? "kitten" : effectiveVoiceModel(settings?.voice);
-    const shown = deps.managed() ? current : draft;
-    const changed = shown !== current;
+    const current = effectiveVoiceModel(settings?.voice);
+    const changed = draft !== current;
     const view = naturalVoiceView(status, current);
     select.disabled = busy || deps.managed() || !settings;
     for (const option of select.options) option.disabled = !allowed(option.value as NaturalModel);
-    select.value = shown;
-    hint.textContent = allowed(shown) ? naturalModelHint(shown) : `${NATURAL_CHOICES[shown].name} isn't available on this computer. Choose Kitten Nano to use the default voice, with the system voice as its fallback.`;
+    select.value = draft;
+    hint.textContent = allowed(draft) ? naturalModelHint(draft) : `${NATURAL_CHOICES[draft].name} isn't available on this computer. Choose Kitten Nano to use the default voice, with the system voice as its fallback.`;
     choiceStatus.textContent = busy ? "Saving voice choice…" : failure || (changed ? `Not saved. Current choice: ${NATURAL_CHOICES[current].name}.` : "");
     use.hidden = !changed;
-    use.disabled = busy || deps.managed() || !settings || !allowed(shown);
-    use.textContent = naturalUseLabel(shown);
+    use.disabled = busy || deps.managed() || !settings || !allowed(draft);
+    use.textContent = naturalUseLabel(draft);
     text.textContent = view.text;
     downloadRow.hidden = !settings || status?.model !== undefined && status.model !== current || !(status?.state === "needs-voice" || current === "kitten" && status?.state === "failed");
     download.disabled = busy || deps.managed();
