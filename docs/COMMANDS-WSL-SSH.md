@@ -209,7 +209,10 @@ typing (`IFS` in front of `read` changes only how that `read` splits the line). 
 `for` still ask, and so do a loop in a shell the command starts (`bash -c '…'`), a loop whose variable is `PATH` or
 another that changes how commands are found, `case`, functions and `{ … }` groups. A variable set after `then`, `do`,
 `else`, `!` or `time` is judged as one set at the start of a command: `if true; then LD_PRELOAD=./x.so ls; fi` asks, as
-`LD_PRELOAD=./x.so ls` does.
+`LD_PRELOAD=./x.so ls` does. A loop whose variable holds text Ember can't see (what `read` reads from a file or another
+command, printed text with a NUL in it, `for f in $(cat list)`) asks before a command uses it as a file or folder ("It
+uses a file or folder named by text Ember can't see.": `cat list | while read -r d; do mkdir -p "$d/x"; done`), unless
+that command already asks for what it does to each one, as a delete does; one that only prints or tests it runs.
 
 **Shell scripts are read first.** When a command runs a shell script (`sh deploy.sh`, `bash t.sh`, `source env.sh`,
 `./t.sh`, `powershell -File t.ps1`, `& .\t.ps1`, `cmd /c t.bat`, and the same behind `env`, `nice`, `timeout` and the

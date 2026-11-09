@@ -402,6 +402,14 @@ class Classifier {
   /** How deep in an `if`, a loop or a `case` the command now judged is (their bodies may not run, or run again). */
   flowDepth = 0;
   /**
+   * Variables a `read`, `mapfile` or a loop set to text Ember can't see (`printf '%s\0' … | while read -r -d '' d`,
+   * `while read -r f; …; done < list`, `for f in $(cat list)`), until a loop's closer gives its reads text Ember sees
+   * (feedReads): a path named through one is a file Ember can't name (commands-y6-1).
+   */
+  private unseenLoopVars = new Set<string>();
+  /** Words a command used as a path that hold a variable, by the command, for unseenLoopVars at the end. */
+  private loopPathUses: { names: string[]; at: number; program: string }[] = [];
+  /**
    * A plain variable's values, judged at the end only if a command used the variable in a word Ember didn't judge as a
    * path (`python3 -c "…$d…"`): testing or printing it isn't such a use (commands-remote-r4-5).
    */
@@ -628,6 +636,9 @@ class Classifier {
     const one = values?.length === 1 ? values[0] : null;
     const count = sure && one !== null && (one.v !== null ? /^[ \t\n]*\d+(\.\d+)?[ \t\n]*$/.test(one.v) : this.countWord(one.raw));
     this.countVars.set(name, (this.countVars.get(name) ?? true) && count);
+    // A loop's or a read's words Ember can't see (commands-y6-1), by the command that set them, so a loop's closer that
+    // gives its read text Ember sees takes that one back (feedReads).
+    if (loop && (values === null || values.some(a => this.knownForms(a).includes(null)))) this.unseenLoopVars.add(`${name}\n${this.at}`);
     const forms = values === null ? [UNSEEN] : values.flatMap(a => (a.v !== null ? [a.glob ? PATTERN + (a.pattern ?? a.v) : a.v] : a.parts ? this.formsOf(a.parts) : [UNSEEN]));
     if (values === null || values.some(a => this.mayHoldWords(a))) this.wordVars.add(name);
     if (exported || this.allExport || /^[A-Z][A-Z0-9_]*$/.test(name)) for (const f of forms) this.judgeForm(f, null, sc, exported || this.allExport);
@@ -682,6 +693,27 @@ class Classifier {
     if (key === "unset" || key === "getopts" || key === "wait") for (const a of args) if (a.v !== null && /^[A-Za-z_]\w*$/.test(a.v)) this.countVars.set(a.v, false);
   }
 
+  /**
+   * A path a command reads, writes or enters through a variable a read or a loop set to text Ember can't see
+   * (`printf '%s\0' ~/.config/ember | while IFS= read -r -d '' d; do find "$d"; done`): a file Ember can't name, so it
+   * asks, as before reading through loops (commands-y6-1), unless the command's own danger already says what it does
+   * to each one ("Deletes each file listed in its input.").
+   */
+  protected judgeLoopPaths(): void {
+    const unseen = new Set([...this.unseenLoopVars].map(k => k.slice(0, k.indexOf("\n"))));
+    if (unseen.size === 0) return;
+    const at = this.at;
+    const program = this.program;
+    for (const u of this.loopPathUses) {
+      if (!u.names.some(n => unseen.has(n)) || this.findings.some(f => f.at === u.at && f.cls !== "unclear")) continue;
+      this.at = u.at;
+      this.program = u.program;
+      this.unclear("unclear.loop-path", "It uses a file or folder named by text Ember can't see.");
+    }
+    this.at = at;
+    this.program = program;
+  }
+
   /** Job counts taken through a variable the text gave another value later (a loop's body sets it again): as the word. */
   protected judgeCounts(): void {
     const at = this.at;
@@ -703,7 +735,11 @@ class Classifier {
   judgeUnseen(a: Arg, use: PathUse, sc: Scope, asPath = true): void {
     // An option with its value attached (`--dir="$d"`) isn't a path, whatever was asked of it; nor is a program word
     // (`env X="$d" make`'s first word may be an assignment), which stays a use Ember didn't judge (noteVarUses).
-    if (asPath && (typeof a.parts?.[0] !== "string" || !a.parts[0].startsWith("-"))) this.judgedWords.add(a);
+    if (asPath && (typeof a.parts?.[0] !== "string" || !a.parts[0].startsWith("-"))) {
+      this.judgedWords.add(a);
+      const names = (a.parts ?? []).flatMap(p => (typeof p !== "string" && p.name !== null ? [p.name] : []));
+      if (names.length) this.loopPathUses.push({ names, at: this.at, program: this.program });
+    }
     if (a.v === null && a.parts && sc.path.flavour === "posix") {
       for (const form of this.formsOf(a.parts)) this.judgeForm(form, use, sc);
       this.unseenUses.push({ parts: a.parts, use, sc });
@@ -824,6 +860,8 @@ class Classifier {
       if ((typeof text !== "string" && !word) || !set) continue;
       fedClosers.add(closer);
       for (const name of set.names) {
+        // What the closer gives it is what it reads: text Ember sees takes back the read's own unseen text.
+        this.unseenLoopVars.delete(`${name}\n${r}`);
         this.setVar(name, typeof text === "string" ? textValues(text) : [word as Arg], set.sc, true);
         for (const u of this.unseenUses) {
           if (!u.parts.some(p => typeof p !== "string" && p.name === name)) continue;
@@ -1743,6 +1781,7 @@ class Engine extends Classifier {
     this.feedReads();
     this.judgePendingSets();
     this.judgeCounts();
+    this.judgeLoopPaths();
     // A `read` that its loop or `if` gives a file or text to (`while read -r l; …; done < list.txt`) waits for no typing.
     const fed = readsFedByCompound(this.commands, i => this.stdinGiven.has(i));
     if (fed.size) this.findings = this.findings.filter(f => !(f.rule === "unclear.interactive" && f.program === "read" && fed.has(f.at)));
@@ -4431,7 +4470,13 @@ reg(NATIVE, ["read", "mapfile", "readarray"], h => {
     for (let k = 0; k < h.args.length; k++) {
       const v = h.args[k].v;
       if (v === null) continue;
-      if (/^-[a-zA-Z]+$/.test(v)) { if (/[adnNptui]$/.test(v)) k++; continue; }
+      if (/^-[a-zA-Z]+$/.test(v)) {
+        // `-a arr` sets the array arr to the words it reads, as a name after the options is set (commands-y6-1).
+        const arr = /a$/.test(v) ? h.args[k + 1]?.v : undefined;
+        if (arr && /^[A-Za-z_]\w*$/.test(arr)) { h.e.setVar(arr, given, h.sc, true); names.push(arr); }
+        if (/[adnNptui]$/.test(v)) k++;
+        continue;
+      }
       if (/^[A-Za-z_]\w*$/.test(v)) { h.e.setVar(v, given, h.sc, true); h.e.loopVars.set(v, "read"); names.push(v); }
     }
     h.e.noteRead(names, h.sc);

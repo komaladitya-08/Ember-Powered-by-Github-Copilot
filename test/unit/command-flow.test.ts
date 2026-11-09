@@ -2643,3 +2643,39 @@ describe("revocation during consent and path checks", () => {
     expect(h.starts).toHaveLength(0);
   });
 });
+
+describe("a read loop over text Ember can't see, as the flow reads it through (commands-y6-1)", () => {
+  /** CL's own judge on this computer, the user saying no to any question. */
+  const local = () => {
+    setCommandJudge(null);
+    return harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: true, real: p }) });
+  };
+
+  it("asks before a NUL-separated read loop over Ember's folder finds, touches, makes or links what it names", async () => {
+    for (const body of ["find \"$d\"", "touch -d 2000-01-01 \"$d/audit.jsonl\"", "mkdir -p \"$d/x\"", "ln -s \"$d\" e"]) {
+      for (const command of [
+        `printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do ${body}; done`,
+        `while IFS= read -r -d '' d; do ${body}; done < <(printf '%s\\0' ~/.config/ember)`,
+        `cat list | while IFS= read -r d; do ${body}; done`,
+        `printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' -a a; do ${body.replace(/\$d/g, "${a[0]}")}; done`,
+      ]) {
+        const h = local();
+        expect((await call(h, { target: "this computer", command })).resultType, command).toBe("denied");
+        expect(h.starts, command).toEqual([]);
+        expect(h.asked, command).toHaveLength(1);
+        expect(h0rules(h), command).toContain("unclear.loop-path");
+      }
+    }
+  });
+
+  it("still runs a read loop that only prints or tests what it reads, or one over text Ember sees", async () => {
+    for (const command of [
+      "printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do echo \"$d\"; done", "ls | while read -r f; do test -f \"$f\"; done",
+      "printf 'build\\n' | while read -r d; do touch \"$d/x\"; done", "while read -r d; do mkdir -p \"$d/x\"; done <<< build",
+    ]) {
+      const h = local();
+      expect((await call(h, { target: "this computer", command })).resultType, command).toBe("success");
+      expect(h.asked, command).toEqual([]);
+    }
+  });
+});
