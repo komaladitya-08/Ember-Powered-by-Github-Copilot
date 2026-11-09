@@ -565,13 +565,24 @@ describe("the open Ask box, for a bubble that comes up while it is open (compani
     expect(bubbleFit(topAnchor, { width: 410, height: 307 }, screen, 60, [handle, top], () => 307, [top])).toEqual({ x: 537, y: 381, width: 410, height: 307 });
     // Where three lines don't fit anywhere clear, it isn't cut (it goes where it always went).
     expect(bubbleCut(midAnchor, own, screen, 60, [handle, mid], [mid], 26, 300)).toBeNull();
-    // Opened in full before the box opened: it keeps off nothing of the box, and a box that opens clear of it never
-    // moves it (companion-c2-4; one that opens on it is companion-y6-1's).
+    // Opened in full before the box opened: whole beside Ember, it keeps off nothing of the box. A box that opens clear
+    // of it, where it is (above it, three rows tall), never moves it (companion-c2-4); `mid` lies over it, and it keeps
+    // off that one from then on (companion-y6-1). Told where it is (`at`): without it nothing can ever move it, so
+    // "never moves it" pinned nothing (companion-z6-2).
     const before = askKeepOff(null, askKeepOffKey(full), none, true);
     expect(before).toEqual({ box: null, question: askKeepOffKey(full) });
-    expect(askKeepOff(mid, askKeepOffKey(full), before, true)).toBe(before);
-    // And one that grew while the box was open keeps what it held (it is the same bubble).
-    expect(askKeepOff({ ...mid, y: 100 }, askKeepOffKey(full), opened, true)).toBe(opened);
+    const shownWhole = bubbleFit(midAnchor, own, screen, 60, [handle], () => 489, [])!;
+    expect(shownWhole).toEqual({ x: 98, y: 192.5, width: 410, height: 489 });
+    const above = openingBounds({ x: 559, y: 437, size: 60 }, { x: 0, y: 0, ...screen }, handle, 1.3, 3, shownWhole).bounds;
+    expect(above).toEqual({ x: 195, y: 12, width: 728, height: 173 });
+    expect(area(above, shownWhole)).toBe(0);
+    expect(askKeepOff(above, askKeepOffKey(full), before, true, false, shownWhole)).toBe(before);
+    expect(area(mid, shownWhole)).toBe(54_149);
+    expect(askKeepOff(mid, askKeepOffKey(full), before, true, false, shownWhole).box).toEqual(mid);
+    // And one opened while the box was open keeps what it held as the box moves clear of it, where it is (it is the same
+    // bubble); a box that comes over it is companion-z6-1's.
+    expect(area({ ...mid, y: 100 }, under!)).toBe(0);
+    expect(askKeepOff({ ...mid, y: 100 }, askKeepOffKey(full), opened, true, true, under)).toBe(opened);
   });
 
   it("shows an answer cut short for the open Ask box whole once the box closes, where all of it fits (companion-v6-3)", () => {
