@@ -148,7 +148,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     // Its overlay (one per display) and handle up: what a start shows.
     await waitFor(async () => `Ember's overlay and handle (${JSON.stringify(await emberWindows())})`, async () => {
       const w = await emberWindows();
-      return w.some(x => x.title === "Ember overlay" && x.visible) && w.some(x => x.title === "Ember" && x.visible);
+      return w.some(x => x.title === "Ember overlay" && x.visible) && w.some(x => x.title === "Companion home" && x.visible);
     }, 30_000);
     console.log(`ember-darwin: Ember ${emberPid} up beside ${user.name} ${user.pid}: ${JSON.stringify(await emberWindows())}`);
   }, 240_000);

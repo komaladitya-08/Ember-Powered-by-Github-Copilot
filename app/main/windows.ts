@@ -34,7 +34,7 @@ export function createHomeWindow(os: OS): BrowserWindow {
     height: 640,
     minWidth: 420,
     minHeight: 420,
-    title: "Ember",
+    title: "Companion home",
     show: false,
     backgroundColor: contentBackground(),
     // Linux: GTK's variant, so GNOME's title bar matches the page (review #245). nativeTheme (setUpAppChrome) doesn't

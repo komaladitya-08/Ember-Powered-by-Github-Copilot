@@ -174,6 +174,23 @@ const next = (p: Page) => p.locator("#w-next");
 const seen = (p: Page, sel: string) => p.locator(sel).evaluate(e => { const r = e.getBoundingClientRect(); return r.width > 20 && r.height > 8 && getComputedStyle(e).clipPath === "none"; });
 
 describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#6)", () => {
+  it("exposes a name-free focused Home document while retaining the visible brand (listening-refresh-1)", async () => {
+    const p = await open({ home: true, agent: readyAgent(), voiceAgreed: true });
+    try {
+      const cdp = await p.context().newCDPSession(p);
+      for (let i = 0; i < 2; i++) {
+        await p.bringToFront();
+        expect(await p.title()).toBe("Companion home");
+        const tree = await cdp.send("Accessibility.getFullAXTree");
+        const root = tree.nodes.find(n => n.role?.value === "RootWebArea")!;
+        expect(root.name?.value).toBe("Companion home");
+        expect(root.properties).toContainEqual({ name: "focused", value: { type: "booleanOrUndefined", value: true } });
+        expect(await p.locator("#home-h").innerText()).toBe("Ember");
+        expect(await p.locator("#home-h").getAttribute("aria-label")).toBe("Home");
+      }
+    } finally { await p.close(); }
+  });
+
   it("starts with name-free focus and announcements after voice was already agreed (first-run-r6-1)", async () => {
     const p = await open({ agent: readyAgent(), voiceAgreed: true, consent: CONSENT_VERSION - 1 });
     try {

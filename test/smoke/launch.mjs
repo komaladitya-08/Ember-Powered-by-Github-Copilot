@@ -159,12 +159,12 @@ try {
     const port = /DevTools listening on ws:\/\/[^:]+:(\d+)\//.exec(first.said.stderr)[1];
     let title = null;
     const t0 = Date.now();
-    while (title !== "Ember" && Date.now() - t0 < 10_000) {
+    while (title !== "Companion home" && Date.now() - t0 < 10_000) {
       const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json().catch(() => []);
       title = pages.find(p => /\/renderer\/home\/index\.html/.test(p.url))?.title ?? null;
-      if (title !== "Ember") await new Promise(r => setTimeout(r, 250));
+      if (title !== "Companion home") await new Promise(r => setTimeout(r, 250));
     }
-    if (title !== "Ember") throw new Error(`the settings window's page didn't load from a folder named "${folder}" (its title is ${JSON.stringify(title)})`);
+    if (title !== "Companion home") throw new Error(`the settings window's page didn't load from a folder named "${folder}" (its title is ${JSON.stringify(title)})`);
     console.log(`ok   the settings window's page loaded from a folder named "${folder}"`);
   }
 
