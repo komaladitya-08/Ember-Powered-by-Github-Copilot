@@ -126,6 +126,18 @@ runtime. It does not change the app's consent or speaking settings.
 
 ### Using Ember
 
+Closing Home keeps its unsent conversation draft and waiting-message recovery in memory for this run; reopening
+Home brings them back. It still ends Home's Listen once, Voice Match teaching and Project work. No draft is written
+to disk or sent automatically. Signing out or changing account clears the conversation and draft; a policy lockdown
+clears the draft too, including while Home is hidden. Quitting Ember destroys the page and discards unsent drafts.
+
+Home's Features line follows the targets runtime's existing capability updates, including a remote's stricter policy.
+SSH counts only working connections; missing or old capability snapshots show nothing enabled. Listening shows on only while the speech models and microphone are ready. Saved preferences
+remain available after a policy restriction is lifted or missing models are downloaded.
+
+Home keeps the draft set aside by **Edit** and restores it after the edited request is sent, above any words typed
+while Send was waiting. An earlier acknowledgement cannot close a newer edit. No draft is sent automatically.
+
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
   lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model

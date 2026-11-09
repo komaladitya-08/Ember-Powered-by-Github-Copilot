@@ -12,6 +12,7 @@ import { AdminPolicySchema, auditRetentionDays, commandMode, heldUntilRestart, h
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
+import type { TargetSummary } from "../../app/shared/targets";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
 import type { ActivityEntry, StatusPlatform, UpdateStatus } from "../../app/shared/ipc";
 import { FALLBACK_SHORTCUTS, heldShortcuts, SHORTCUTS, shownShortcuts } from "../../app/shared/shortcuts";
@@ -33,7 +34,7 @@ declare global {
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
-interface Seed { settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean }
+interface Seed { targets?: TargetSummary[]; settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -64,7 +65,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
   const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
-  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider }) => {
+  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider, targets }) => {
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     // Main's list as last pushed: what a read after a task control gets.
     let tasks: unknown = [];
@@ -79,6 +80,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
     // Main's provider bridge, as in Electron: each state read answers when the test says (home-mic-recipient's pattern).
     if (provider) (window as unknown as { emberProvider: unknown }).emberProvider = { state: () => new Promise(resolve => { h.providerReads.push(resolve); }), onChanged: () => () => undefined };
     const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}) });
+    if (targets) window.emberTargets = { list: async () => targets, onChanged: fn => { (subs.onTargets ??= []).push(fn as (v: unknown) => void); return () => undefined; }, act: async () => ({ ok: true }) };
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return async () => status();
@@ -91,7 +93,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "activity") return async (limit?: number) => { h.reads++; h.limits.push(limit ?? 500); if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
-  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false });
+  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false, targets: seed.targets });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   await page.waitForSelector(`a[href='#${pane}-h']`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
@@ -128,6 +130,38 @@ const task = (id: string, title: string, items: ActivityItem[], status: TaskEntr
   id, title, status, controls: { stop: status === "running" || status === "waiting", retry: status === "failed", window: true },
   activity: { startedAt: Date.now() - 5000, items, dropped: 0, steps: items.length, failedSteps: 0, counts: {}, questions: 0, approvals: 0, asking: status === "waiting", retry: 0, slow: false, nearLimit: false, live: "Working in Text Editor" },
 });
+
+it.skipIf(gate)("shows only capabilities permitted now, and listening only with a working microphone (home-r6-1)", async () => {
+  const consent = { version: 99, at: "2026-11-09T12:00:00Z" };
+  const settings = { wakeWord: true, voice: { ...DEFAULT_SETTINGS.voice, consent: true }, commands: { local: { on: true, askEvery: false, consent } }, targets: { ...DEFAULT_SETTINGS.targets, hosts: [{ id: "work", dest: "work", resolved: { user: "demo", hostname: "work.example", port: 22, jump: [] }, consent }] } };
+  const policy = AdminPolicySchema.parse({ features: { ssh: false }, commands: { local: "off", ssh: "off", wsl: "off" } });
+  const admin = homeAdmin({ source: "/etc/ember/policy.json", policy });
+  const page = await open("home", { settings, admin, targets: [] });
+  try {
+    await page.evaluate(() => window.__pane.emit("onVoiceStatus", { state: "needs-models", modelsReady: false, detail: "Download speech models.", modelsMissing: [], modelsBytes: 0 }));
+    expect(await page.locator("#whats-on").innerText()).toBe("Listening off · Memory off · Commands off");
+    await page.evaluate(a => window.__pane.emit("onAdminChanged", a), homeAdmin({ source: null, policy: AdminPolicySchema.parse({}) }));
+    await page.evaluate(() => window.__pane.emit("onVoiceStatus", { state: "waiting", modelsReady: true, detail: "Listening.", modelsMissing: [], modelsBytes: 0 }));
+    await page.evaluate(() => window.__pane.emit("onTargets", [
+      { id: "local", kind: "local", label: "Here", state: "ready", can: "apps and commands", active: true, capabilities: { work: true, commands: true } },
+      { id: "ssh:work", kind: "ssh", label: "Work", state: "ready", can: "apps", active: false, capabilities: { work: true, commands: false } },
+    ]));
+    expect(await page.locator("#whats-on").innerText()).toBe("Listening on · Memory off · Commands on · 1 computer over SSH");
+    await page.evaluate(a => window.__pane.emit("onAdminChanged", a), homeAdmin(heldUntilRestart({ source: null, policy: AdminPolicySchema.parse({}) })));
+    expect(await page.locator("#whats-on").innerText()).toBe("Listening off · Memory off · Commands off");
+  } finally { await page.close(); }
+}, 30_000);
+
+it.skipIf(gate)("does not count saved SSH hosts excluded by the organisation's host list (home-v7-1)", async () => {
+  const consent = { version: 99, at: "2026-11-09T12:00:00Z" };
+  const settings = { commands: { "ssh:work": { on: true, askEvery: false, consent } }, targets: { ...DEFAULT_SETTINGS.targets, hosts: [{ id: "work", dest: "work", resolved: { user: "demo", hostname: "work.example", port: 22, jump: [] }, consent }] } };
+  for (const allowedHosts of [[], ["other.example"]]) {
+    const admin = homeAdmin({ source: "/etc/ember/policy.json", policy: AdminPolicySchema.parse({ ssh: { allowedHosts }, commands: { local: "off", wsl: "off", ssh: "on" } }) });
+    const page = await open("home", { settings, admin, targets: [] });
+    try { expect(await page.locator("#whats-on").innerText()).toBe("Listening off · Memory off · Commands off"); }
+    finally { await page.close(); }
+  }
+}, 30_000);
 
 describe.skipIf(gate)("Home's Task activity, while a task works (2026-11-07 product audit)", () => {
   it("keeps keyboard focus on a running task's control when the task does its next step (home-2)", async () => {

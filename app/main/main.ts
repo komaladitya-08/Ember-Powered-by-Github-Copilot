@@ -462,6 +462,9 @@ function start(): void {
   app.on("will-quit", () => { endThisRun("quit"); unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
+  // Normal Home close preserves volatile drafts; an actual app quit must still destroy its windows (home-r7-1).
+  let homeQuitting = false;
+  app.on("before-quit", () => { homeQuitting = true; });
   let projectFiles: string[] = [];
   let projectPicking = false;
   let projectJob: AbortController | null = null;
@@ -531,6 +534,22 @@ function start(): void {
     // screen lock, the policy and Stop everything still end it.
     const hidden = () => { shown(false)(); cancelHomeListenOnce(); };
     win.on("minimize", hidden); win.on("hide", hidden); win.on("restore", shown(true)); win.on("show", shown(true));
+    let levelWhenClosed = false;
+    win.on("show", () => { if (levelWhenClosed) { homeWantsLevel = true; levelWhenClosed = false; } });
+    win.on("close", e => {
+      if (homeQuitting || sessionEnding) return;
+      // Retain only this running session's page: account/sign-out/policy erasure events still clear it while hidden.
+      // Closing still ends teaching, microphone capture and project work, just as destroying Home did (home-r7-1).
+      e.preventDefault();
+      levelWhenClosed = homeWantsLevel;
+      homeWantsLevel = false;
+      win.hide();
+      cancelHomeListenOnce();
+      enrolEnded = undefined;
+      forgetProject("all");
+      stepAside();
+      if (greetOnClose) { greetOnClose = false; setTimeout(() => greet(), 300); }
+    });
     home.on("closed", () => {
       cancelHomeListenOnce();
       enrolEnded = undefined;

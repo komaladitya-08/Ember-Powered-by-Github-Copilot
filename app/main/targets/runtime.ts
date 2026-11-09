@@ -655,7 +655,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     const a = activeId();
     return entries.map(e => {
       const problem = e.kind === "ssh" && e.host && (e.state === "off" || e.state === "lost") ? conns.get(e.host.id)?.problem : undefined;
-      return { ...summaryOf(e, a), ...(problem ? { problem } : {}) };
+      return { ...summaryOf(e, a), capabilities: { commands: e.usable && safeState(commandsOf(e.id)) === "on", work: e.usable && !e.listedOnly }, ...(problem ? { problem } : {}) };
     });
   };
   const ipc = registerTargetsIpc({

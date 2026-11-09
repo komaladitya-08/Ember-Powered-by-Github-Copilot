@@ -5,7 +5,9 @@
  * recent entries), and reads nothing new.
  */
 
-import type { ActivityEntry } from "../../shared/ipc";
+import type { ActivityEntry, Status, VoiceStatus } from "../../shared/ipc";
+import type { Settings } from "../../main/settings";
+import type { TargetSummary } from "../../shared/targets";
 import { STATUS_WORDS, type TaskEntry } from "../../shared/activity";
 import { dayLabel } from "./copy";
 
@@ -121,6 +123,19 @@ export interface WhatsOn {
   /** Computers over SSH the user added. */
   computers: number;
   wsl: boolean;
+}
+
+/**
+ * Capabilities in force now, not the saved preferences (home-r6-1, home-v7-1). The targets runtime already knows
+ * each connection's combined policy and consent. Missing snapshots or speech readiness never claim a working feature.
+ */
+export function availableStatus(settings: Settings | null, admin: Status["admin"] | null, voice: VoiceStatus | null, targets: readonly TargetSummary[]): Pick<WhatsOn, "voice" | "commands" | "computers" | "wsl"> {
+  const off = { voice: "off" as const, commands: 0, computers: 0, wsl: false };
+  if (!settings || !admin || admin.error !== null || admin.held) return off;
+  const working = targets.filter(t => t.capabilities?.work === true);
+  const commands = working.filter(t => t.capabilities?.commands === true).length;
+  const listening = settings.wakeWord && settings.voice.consent && admin.features.voice !== false && voice?.modelsReady;
+  return { voice: !listening ? "off" : voice.state === "muted" ? "muted" : voice.state === "waiting" || voice.state === "active" ? "listening" : "off", commands, computers: working.filter(t => t.kind === "ssh").length, wsl: working.some(t => t.kind === "wsl") };
 }
 
 /**

@@ -7,10 +7,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
+import { availableStatus, connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage, shownText, type ShownNode } from "../../app/renderer/home/search-copy";
 import { checksNote, COMPOSER_HELD, COMPOSER_THINKING, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import { formatDoctor } from "../../app/main/doctor";
+import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { AdminPolicySchema, homeAdmin, heldUntilRestart } from "../../app/main/admin";
+import type { VoiceStatus } from "../../app/shared/ipc";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
 import { IPC, TASKS_PUSH_MS } from "../../app/shared/ipc";
 
@@ -22,6 +25,25 @@ const task = (status: TaskEntry["status"], o: Partial<TaskActivity> = {}): TaskE
 const NOW = new Date(2026, 10, 2, 15, 0);
 
 describe("Home's status panel", () => {
+  it("uses current runtime capabilities, including remote restrictions, and follows actual voice readiness (home-r6-1, home-v7-1)", () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.voice.consent = true;
+    const admin = homeAdmin({ source: null, policy: AdminPolicySchema.parse({}) });
+    const voice: VoiceStatus = { state: "waiting", detail: null, modelsReady: true, modelsMissing: [], modelsBytes: 0 };
+    const local = { id: "local" as const, kind: "local" as const, label: "Here", state: "ready" as const, can: "apps and commands", active: true, capabilities: { commands: true, work: true } };
+    const remote = { ...local, id: "ssh:work" as const, kind: "ssh" as const, label: "Work", capabilities: { commands: false, work: true } };
+    expect(availableStatus(settings, admin, voice, [local, remote])).toEqual({ voice: "listening", commands: 1, computers: 1, wsl: false });
+    expect(availableStatus(settings, admin, voice, [{ ...remote, capabilities: { commands: false, work: false } }])).toEqual({ voice: "listening", commands: 0, computers: 0, wsl: false });
+    for (const state of ["off", "needs-models", "downloading", "starting", "error"] as const) expect(availableStatus(settings, admin, { ...voice, state }, [local]).voice).toBe("off");
+    expect(availableStatus(settings, admin, { ...voice, state: "active" }, [local]).voice).toBe("listening");
+    expect(availableStatus(settings, admin, { ...voice, state: "muted" }, [local]).voice).toBe("muted");
+    expect(availableStatus(settings, admin, { ...voice, modelsReady: false }, [local]).voice).toBe("off");
+    expect(availableStatus(settings, null, voice, [local])).toEqual({ voice: "off", commands: 0, computers: 0, wsl: false });
+    expect(availableStatus(settings, homeAdmin(heldUntilRestart({ source: null, policy: AdminPolicySchema.parse({}) })), voice, [local])).toEqual({ voice: "off", commands: 0, computers: 0, wsl: false });
+    expect(availableStatus(settings, admin, voice, []).commands).toBe(0);
+    expect(availableStatus(settings, admin, voice, [{ ...local, capabilities: undefined }]).commands).toBe(0);
+  });
+
   it("names the most urgent state first: setup, Copilot, a task that needs you, the work, then Ready", () => {
     const base = { phase: "ready", failing: 0, running: 0, asking: 0 };
     expect(statusWord(base)).toEqual({ word: "Ready", ring: "ready" });
