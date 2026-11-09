@@ -160,8 +160,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   its `<input>`; never `<td>Password:</td><td>hunter2</td>`, `<p>Your PIN:</p>\n\n<p>4821</p>`, an `<input>` with a
   `value` or `print("Password:", "hunter2")`: memory-x6-1; nor a word shaped like a password, or a PIN's digits, on
   the line after a field with no value, `<input type="password"> <small>(demo: Demo1234!)</small>`, nor a `<select>`'s
-  option: memory-y6-4), and `$PWD`. Nor is a quoted label with a secret's or a
-  field's name ("Password:", never "hunter:"), a sentence about a secret, its word used as UI text uses it and no word
+  option: memory-y6-4; a ticket, a to-do or a version in a prompt's comment, "# see PROJ-1234", "TODO(bob2)",
+  "Python3.8+", and a check box's or a button's value are none either: memory-y6-5), and `$PWD`. Nor is a quoted label
+  with a secret's or a field's name in a common language ("Password:", "Пароль:", "Lösenord:", "Código:", "New:",
+  "Confirm password:", never "hunter:": memory-y6-5), a sentence about a secret, its word used as UI text uses it and no word
   shaped like a password or four digits in it ("Forgot your password?", "Passwords don't match"; never "sign of four
   1887" or "pass the salt please": memory-x6-3), an address with no credentials and no part shaped like a token ('TOKEN_URL =
   "https://oauth2.googleapis.com/token"'), what a key that names where a secret is holds ("PASSWORD_FIELD",

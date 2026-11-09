@@ -258,6 +258,16 @@ it("holds back a demo login form that gives the password beside its field, and s
   expect(await prompt([login])).toContain("Sign in");
 });
 
+it("sends locale files, a prompt with a ticket in its comment and a form with a Remember password checkbox (memory-y6-5)", async () => {
+  const en = await file("en.yml", 'en:\n  login:\n    username: "Username:"\n    password: "Password:"\n');
+  const ru = await file("ru.json", '{\n  "password": "Пароль:",\n  "pin": "PIN:"\n}\n');
+  const sv = await file("sv.json", '{\n  "currentPassword": "Nuvarande lösenord:",\n  "password": "Lösenord:",\n  "newPassword": "New:"\n}\n');
+  const cli = await file("cli.py", 'import getpass\n\npw = getpass.getpass("Password: ")  # see PROJ-1234\n');
+  const form = await file("form.html", '<label>Remember password:</label><input type="checkbox" value="1">\n');
+  const result = await prompt([en, ru, sv, cli, form]);
+  for (const line of ['password: \\"Password:\\"', "Пароль:", "Lösenord:", "# see PROJ-1234", "Remember password:"]) expect(result).toContain(line);
+});
+
 it("takes a request to point the API key at an environment read or another stage, beside one that gives a key (memory-x6-5)", async () => {
   const app = await file("app.py", "print(1)\n");
   for (const q of ["Set the API key to process.env.API_KEY", "Change the API key to staging", "Switch the API key to read-only"]) {

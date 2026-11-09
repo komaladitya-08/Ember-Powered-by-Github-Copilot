@@ -410,6 +410,27 @@ describe("what memory never keeps", () => {
   ])("keeps %j, UI text about a secret under a key named for one (memory-x6-3)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A label in a locale file, in any language, a prompt with a ticket, a to-do or a version in its comment, and a
+  // checkbox's or a template's value, which round six's label and prompt rules refused (memory-y6-5).
+  it.each([
+    ['password: "Password:"'], ['"password": "Пароль:"'], ['"password": "Lösenord:"'], ['"currentPassword": "Current password:"'], ['"newPassword": "New:"'],
+    ['"pin": "PIN:"'], ['"token": "Access token:"'], ['"secret": "Client secret:"'], ['PASSWORD_PROMPT = "Enter password:"'], ['"password": "Passord:"'],
+    ['"password": "Salasana:"'], ['"password": "Heslo:"'], ['"password": "Jelszó:"'], ['"password": "Şifre:"'], ['"password": "Κωδικός:"'],
+    ['"password": "Adgangskode:"'], ['"pin": "Código:"'], ['"confirmPassword": "Confirm password:"'], ['"passwordStrength": "Strength:"'], ['"repeatPassword": "Repeat:"'],
+    ['"password": "パスワード:"'], ['getpass.getpass("Password: ")  # see PROJ-1234'], ['Console.Write("Password: "); // see JIRA-4521'],
+    ['pw = input("Password: ")  # Python3.8+'], ['pw = input("Password: ")  # TODO(bob2): mask it'],
+    ['<label>Remember password:</label><input type="checkbox" value="1">'], ['<label>Show password:</label><input type="checkbox" value="on">'],
+    ['<label>Password:</label><input type="password" value="@Model.Password">'],
+  ])("keeps %j, a label, a prompt or a field with no password in it (memory-y6-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ['password = "hunter:"'], ['password: "Summer:"'], ['"password": "Hunter2:"'], ['"password": "Password"'], ['getpass.getpass("Password: ")  # Summer2024!'],
+    ['<label>Password:</label><input type="text" value="Summer2024!">'], ['<label>Password:</label><input type="hidden" value="Summer2024!">'],
+    ['<label>Password:</label><input type="checkbox"> Summer2024!'], ['<label>Password:</label><input type="password" value="@dmin2024">'],
+  ])("still refuses %j, a password beside them (memory-y6-5)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
 
   // A version, an issue, a setting or a user at a computer said as a login, a disk's size and a formula: round four's
   // login and admin rules refused them (safety-privacy-c4-3, memory-c4-2).

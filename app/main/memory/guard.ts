@@ -226,10 +226,13 @@ const NAME_OF = /^(?:field|fields|header|headers|name|names|param|params|label|l
 const CODE_AFTER_END = /^\s*(?:$|[,;)\]}]|\/\/|#)/;
 /**
  * A label's words, a colon at their end ("Password:", "PIN :"), letters only, among them a secret's name or a field's
- * ("Username:", "E-mail:"), never another word ("hunter:", "Summer:"): memory-x6-3.
+ * ("Username:", "E-mail:"), never another word ("hunter:", "Summer:"): memory-x6-3. A secret's name in another language
+ * ("Пароль:", "Lösenord:", "Código:"), a field's word ("New:", "Confirm password:", "Strength:") and a name withoutLabels
+ * wrote out as "_" (`password: "Password:"` reaches here as `"________:"`) are one too: memory-y6-5.
  */
+const LABEL_WORD = /^(?:user(?:name)?|name|mail|account|id|code|phrase|answer|otp|new|current|old|confirm|confirmation|repeat|again|retype|verify|strength|пароль|пин|код|lösenord|losenord|passord|kodeord|adgangskode|salasana|tunnusluku|koodi|heslo|jelszó|şifre|sifre|κωδικός|συνθηματικό|clave|código|codigo|kód|kod|kode|pinkod|パスワード|暗証番号|密码|密碼|비밀번호|סיסמה)$/iu;
 const label = (s: string) => /^[\p{L}_][\p{L}_ '’-]{0,40}:\s*$/u.test(s)
-  && s.split(/[\s_:'’-]+/).some(w => SENTENCE_WORD.test(w) || /^(?:user(?:name)?|name|mail|account|id|code|phrase|answer|otp)$/i.test(w));
+  && (s.split(/[\s:'’-]+/).some(w => /^_{3,}$/.test(w)) || s.split(/[\s_:'’-]+/).some(w => SENTENCE_WORD.test(w) || LABEL_WORD.test(w)));
 /**
  * An address with no credentials in it, and none of its parts shaped like a token ("https://oauth2.googleapis.com/token",
  * never "https://user:pass@host" or a webhook's "https://hooks.slack.com/services/T0/B0/x8Kq…"): memory-r4-2.
@@ -673,13 +676,21 @@ function withoutCodeKeys(text: string, found?: { held: boolean }): string {
 const LABEL = /\b(?:pass(?:word|phrase|code)?|passwd|pwd|pin|passcode|token|secret|api[ _-]?key)s?[ \t]*:[ \t]*(?=["'`<])/gi;
 /** An HTML element's tag where a label's text ends, never a word in angle brackets ("<hunter>", "<your password>"). */
 const HTML_TAG = /^<\/?(?:label|input|td|th|tr|span|div|p|b|strong|i|em|u|small|dt|dd|li|a|button|select|option|br|code|font|legend|fieldset|form|h[1-6])(?:\s[^<>]*)?\/?>/i;
-/** A field's own value attribute, or "". */
+/**
+ * A field's own value attribute, or "": never a check box's, a radio button's or a button's, whose value is the form's
+ * ("1", "on", "Log in"): memory-y6-5.
+ */
 const valueOf = (tag: string) => {
+  if (/\stype\s*=\s*["']?(?:checkbox|radio|submit|button|reset|image)\b/i.test(tag)) return "";
   const v = /\svalue\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
   return (v?.[1] ?? v?.[2] ?? v?.[3] ?? "").trim();
 };
-/** Whether a field's value or an option's is one: set, never empty, a reference or an expression. */
-const heldValue = (value: string) => value !== "" && !REFERENCE.test(value) && !PLACEHOLDER.test(value) && !/^\{[^"'`]*\}$/.test(value);
+/**
+ * Whether a field's value or an option's is one: set, never empty, a reference or an expression, nor a Razor model's
+ * member ('value="@Model.Password"': memory-y6-5).
+ */
+const heldValue = (value: string) => value !== "" && !REFERENCE.test(value) && !PLACEHOLDER.test(value) && !/^\{[^"'`]*\}$/.test(value)
+  && !/^@(?:Model|ViewBag|ViewData|TempData)\.[A-Za-z_][\w.]*$/.test(value);
 /**
  * Whether a label's value follows it at `from` (memory-x6-1): the first text past blank and markup-only lines, as
  * pretty-printed HTML puts it ("<p>Your PIN:</p>\n\n<p>4821</p>"), unless it is another label ("Username:"), or a
@@ -725,13 +736,15 @@ function valueAfterLabel(text: string, from: number, pin: boolean): boolean {
 }
 /**
  * Whether code after a prompt's string holds a word shaped like a password, or a comment after it does ('("Password:",
- * Summer2024!)', 'input("Password: ")  # Summer2024!'): memory-x6-1. A variable's name in the code is passed over.
+ * Summer2024!)', 'input("Password: ")  # Summer2024!'): memory-x6-1. A variable's name in the code is passed over, and
+ * an issue's key, a to-do's owner and a version in the comment ("PROJ-1234", "TODO(bob2)", "Python3.8+"): memory-y6-5.
  */
+const NOTE_WORD = /^(?:[A-Z][A-Z0-9]*-\d+|(?:TODO|FIXME|XXX|HACK|NOTE|BUG)\([^()\s]*\)|[A-Za-z]*-?v?\d+(?:\.\d+)+\+?)$/;
 function valueAfterPrompt(after: string): boolean {
   const mark = after.search(/#|\/\//);
   const code = mark < 0 ? after : after.slice(0, mark);
   return code.split(/[\s,;()[\]{}+.]+/).some(w => secretShaped(w) && !codeLineName(w))
-    || (mark >= 0 && after.slice(mark).split(/\s+/).some(w => secretShaped(w.replace(/[,.;:]+$/, ""))));
+    || (mark >= 0 && after.slice(mark).split(/\s+/).some(w => secretShaped(w.replace(/[,.;:]+$/, "")) && !NOTE_WORD.test(w.replace(/[,.;:]+$/, ""))));
 }
 /** `text` with each prompt's or label's secret name (LABEL) written out as "_". */
 function withoutLabels(text: string): string {
