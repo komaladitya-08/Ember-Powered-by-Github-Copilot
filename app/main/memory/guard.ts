@@ -698,17 +698,22 @@ const heldValue = (value: string) => value !== "" && !REFERENCE.test(value) && !
  * ('value=""', 'value="{{ form.password }}"', "value={password}"); a select's is its options' text or value. Past a
  * field with no value the rest of its line is read, a table's next cells on it too, and a word there shaped like a
  * password, or a PIN's digits after a PIN's label, is the label's ('<input type="password"> <small>(demo: Demo1234!)</small>'),
- * never the form's own words ("Sign in", "Remember me"): memory-y6-4. At most 400 characters are read, and markup
- * before the field that runs past them is taken to hold a value (fail closed).
+ * never the form's own words ("Sign in", "Remember me"): memory-y6-4. With no text on the field's line, the next line
+ * with text is read, past blank and markup-only lines, as a pretty-printed form or table puts its next cell or its hint
+ * ("<td><input type=\"password\"></td>\n<td>Demo1234!</td>"), up to the end of its row or form: memory-z6-3. At most
+ * 400 characters are read, and markup before the field that runs past them is taken to hold a value (fail closed).
  */
 function valueAfterLabel(text: string, from: number, pin: boolean): boolean {
   const end = Math.min(text.length, from + 400);
   let beside = false;
+  let seen = false;
+  let pastLine = false;
   for (const m of text.slice(from, end).matchAll(/<[^<>]*>|<[^<>]*$|[^<]+|</g)) {
     const s = m[0];
     // A tag cut off or never closed, or a "<" in the text.
     if (s.startsWith("<") && !s.endsWith(">")) return !beside;
     if (s.startsWith("<")) {
+      if (beside && pastLine && /^<\/(?:tr|table|form|fieldset)\b/i.test(s)) return false;
       if (beside || !/^<(?:input|select)\b/i.test(s)) continue;
       if (heldValue(valueOf(s))) return true;
       if (/^<select\b/i.test(s)) {
@@ -722,11 +727,17 @@ function valueAfterLabel(text: string, from: number, pin: boolean): boolean {
       continue;
     }
     if (beside) {
-      const nl = s.indexOf("\n");
-      const words = (nl < 0 ? s : s.slice(0, nl)).replace(/&(?:[a-z]+|#\d+|#x[0-9a-f]+);/gi, " ").split(/\s+/)
-        .map(w => w.replace(/^[("'“[<]+|[)"'”\],.;:>]+$/g, ""));
-      if (words.some(w => secretShaped(w) || (pin && /^\d{4,12}$/.test(w)))) return true;
-      if (nl >= 0) return false;
+      const lines = s.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!.replace(/&(?:[a-z]+|#\d+|#x[0-9a-f]+);/gi, " ");
+        const words = line.split(/\s+/).map(w => w.replace(/^[("'“[<]+|[)"'”\],.;:>]+$/g, ""));
+        if (words.some(w => secretShaped(w) || (pin && /^\d{4,12}$/.test(w)))) return true;
+        if (line.trim()) seen = true;
+        if (i < lines.length - 1) {
+          if (seen) return false;
+          pastLine = true;
+        }
+      }
       continue;
     }
     const t = s.trim();
@@ -738,13 +749,21 @@ function valueAfterLabel(text: string, from: number, pin: boolean): boolean {
  * Whether code after a prompt's string holds a word shaped like a password, or a comment after it does ('("Password:",
  * Summer2024!)', 'input("Password: ")  # Summer2024!'): memory-x6-1. A variable's name in the code is passed over, and
  * an issue's key, a to-do's owner and a version in the comment ("PROJ-1234", "TODO(bob2)", "Python3.8+"): memory-y6-5.
+ * Only an issue's key after a word that says it is one ("see", "fixes", "refs"), a to-do's owner that is a plain name
+ * and a version alone or a language's or a tool's, never a password shaped like them ("# P4SS-2024", "# Winter2024.1",
+ * "# TODO(Summer2024!)"): memory-z6-4.
  */
-const NOTE_WORD = /^(?:[A-Z][A-Z0-9]*-\d+|(?:TODO|FIXME|XXX|HACK|NOTE|BUG)\([^()\s]*\)|[A-Za-z]*-?v?\d+(?:\.\d+)+\+?)$/;
+const NOTE_ISSUE = /^[A-Z][A-Z0-9]*-\d+$/;
+const NOTE_ISSUE_SAID = /^(?:see|fix(?:es|ed)?|refs?|re|ticket|issue|bug|close[sd]?|resolve[sd]?|per|cf)$/i;
+const NOTE_TODO = /^(?:TODO|FIXME|XXX|HACK|NOTE|BUG)\([a-z][\w.-]*\)$/;
+const NOTE_VERSION = /^(?:(?:python|py|node|nodejs|java|jdk|php|ruby|perl|go|rust|gcc|clang|qt|gtk|electron|npm|pip|bash|ubuntu|debian|rhel|el|centos|fedora|macos|ios|android|windows|win)-?)?v?\d+(?:\.\d+)+\+?$/i;
+const noteWord = (w: string, before: string | undefined) => NOTE_VERSION.test(w) || NOTE_TODO.test(w)
+  || (NOTE_ISSUE.test(w) && NOTE_ISSUE_SAID.test((before ?? "").replace(/^\W+|\W+$/g, "")));
 function valueAfterPrompt(after: string): boolean {
   const mark = after.search(/#|\/\//);
   const code = mark < 0 ? after : after.slice(0, mark);
   return code.split(/[\s,;()[\]{}+.]+/).some(w => secretShaped(w) && !codeLineName(w))
-    || (mark >= 0 && after.slice(mark).split(/\s+/).some(w => secretShaped(w.replace(/[,.;:]+$/, "")) && !NOTE_WORD.test(w.replace(/[,.;:]+$/, ""))));
+    || (mark >= 0 && after.slice(mark).split(/\s+/).some((w, i, all) => secretShaped(w.replace(/[,.;:]+$/, "")) && !noteWord(w.replace(/[,.;:]+$/, ""), all[i - 1])));
 }
 /** `text` with each prompt's or label's secret name (LABEL) written out as "_". */
 function withoutLabels(text: string): string {
@@ -859,9 +878,12 @@ function withoutKeyStates(text: string): string {
  * every 90 days" stay facts.
  */
 const NOT_A_CHANGE = String.raw`(?:${NOT_A_VALUE}|something|anything|nothing|one|whatever|mine|yours|default|expire|a\s+new)`;
-const LENGTH_SAID = String.raw`\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b`;
+const LENGTH_SAID = String.raw`\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|minutes?|hours?)\b(?:[ \t]+long\b)?`;
 const LENGTH = String.raw`(?!${LENGTH_SAID})`;
-/** A length said before what it will be, which is read past ("The door PIN will be 4-digit 4821"): memory-y6-3. */
+/**
+ * A length said before what it will be, which is read past ("The door PIN will be 4-digit 4821"): memory-y6-3, also
+ * when it says "long" ("12 characters long: Summer2024!"): memory-z6-5.
+ */
 const LENGTH_FIRST = String.raw`(?:${LENGTH_SAID}[ \t]*[,;:]?[ \t]*(?:(?:it|that)(?:['’]s|\s+is)\s+)?)?`;
 const CHANGE_VALUE = String.raw`["'“]?(?!${NOT_A_CHANGE}(?:[\s.,;!?"'”]|$))${LENGTH}(?:(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}|[^\s"'”.,;!?]{3,}(?=["'”]?\s*(?:$|[.,;!?])))`;
 const LATER_VALUE = String.raw`["'“]?(?!${NOT_A_VALUE}(?:[\s.,;!?"'”]|$))${LENGTH}(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{3,}`;
@@ -1050,14 +1072,17 @@ const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[
  * SHA-256", "Password: hashed, argon2id": memory-x6-5), so "Passwords are hashed. Tokens are rotated." and "Password:
  * masked, PIN: entered" stay. A length or an algorithm is read past to what follows it ("The PIN is required, 4-digit,
  * 4821", "Password: hashed, SHA-256, but it's Summer2024!"), and an algorithm's or an encoding's name ends a word
- * ("SHA-256,", "base64-encoded"), so "Rs2024!" is a value: memory-y6-3.
+ * ("SHA-256,", "base64-encoded"), so "Rs2024!" is a value: memory-y6-3. Up to three are read past, an algorithm's
+ * participle may follow a space ("SHA-256 salted"), a length may say "long" or "min" and end in a full stop, and the
+ * value may be said as one ("Password: hashed, SHA-256, 12 characters, Summer2024!", "value Summer2024!", "The PIN is
+ * required. 4 digits. 4821"): memory-z6-5.
  */
-const STATE_LENGTH = String.raw`\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b`;
-const STATE_ALGORITHM = String.raw`(?:(?:sha|aes|rsa|des|md|hs|rs|es|ps|blake|crc)-?\d+|argon2(?:id|i|d)?|bcrypt\w*|pbkdf2\w*|base(?:16|32|58|64)(?:url)?|utf-?(?:8|16))`
-  + String.raw`(?:-(?:hashed|encoded|encrypted|signed|salted|based))?(?![^\s"'”,.;:)])`;
+const STATE_LENGTH = String.raw`(?:(?:min(?:imum)?|max(?:imum)?|at\s+least|up\s+to)\s+)?\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b(?:[ \t]+long\b)?`;
+const STATE_ALGORITHM = String.raw`(?:(?:sha|aes|rsa|des|md|hs|rs|es|ps|blake|crc)-?\d+|argon2(?:id|i|d)?|bcrypt\w*|scrypt|pbkdf2\w*|base(?:16|32|58|64)(?:url)?|utf-?(?:8|16))`
+  + String.raw`(?:[- ](?:hashed|encoded|encrypted|signed|salted|based))?(?![^\s"'”,.;:)])`;
 const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}${NOW}[A-Za-z][A-Za-z'’-]*[ \t]*[,;.][ \t]*`
-  + String.raw`(?:(?:${STATE_LENGTH}|${STATE_ALGORITHM})[ \t]*[,;:]?[ \t]*)?(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
-  + String.raw`(?:(?:it|that)(?:['’]s|\s+is|\s+was)\s+|(?:the\s+)?(?:password|pin|code|value|real\s+one)\s+is\s+)?["'“]?`
+  + String.raw`(?:(?:${STATE_LENGTH}|${STATE_ALGORITHM})[ \t]*[,;:.]?[ \t]*){0,3}(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
+  + String.raw`(?:(?:it|that)(?:['’]s|\s+is|\s+was)\s+|(?:the\s+)?(?:password|pin|code|value|real\s+one)\s+is\s+|(?:value|password|pin|code)(?:[ \t]*[:=][ \t]*|[ \t]+))?["'“]?`
   + String.raw`(?!${STATE_LENGTH})(?!${STATE_ALGORITHM})(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
 /**
  * A network and its key said together ("Guest Wi-Fi: BlueSky / BlueSky99", "Home network: BlueSky, key BlueSky99"),
@@ -1065,12 +1090,15 @@ const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}
  * ("Home network: HomeNet / 192.168.1.1", "Wi-Fi: HomeNet, 802.11ac", "Wi-Fi: HomeNet / WPA2-PSK"), which may come before
  * the key ("Wi-Fi: HomeNet / WPA2-PSK, key BlueSky99"): memory-x6-5. Up to six of them may ("Wi-Fi: HomeNet / WPA2-PSK /
  * 5GHz / BlueSky99!"), and after the router's address its user ("Home network: HomeNet / 192.168.1.1 / admin /
- * Summer2024!"): memory-y6-3.
+ * Summer2024!"): memory-y6-3. Any other field before the key, up to its "/" or "," ("channel 36 / BlueSky99!",
+ * "band: 5GHz / …"; a ":" only after its first word, so a field never runs into the next line's network), a
+ * label with ":", "=" or a dash ("key: BlueSky99!", "pass - BlueSky99!"), and a user before a space ("192.168.1.1 /
+ * admin admin123"): memory-z6-2.
  */
 const NETWORK_SETTING = String.raw`(?:\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?|802\.11[a-z]*|(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*|\d+(?:\.\d+)?\s?(?:ghz|mhz|[kmg]bps))`;
-const NETWORK_PAIR = new RegExp(String.raw`\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:${NETWORK_SETTING}\s*[,/]?\s*){0,6}`
-  + String.raw`(?:(?<=\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\s*[,/]?\s*)[A-Za-z][\w.-]{0,31}\s*[,/]\s*)?`
-  + String.raw`(?:(?:key|password|pass|pw|passphrase|psk)\s+)?["'“]?(?!${NETWORK_SETTING}(?:[\s.,;!?)"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}`, "i");
+const NETWORK_PAIR = new RegExp(String.raw`\b(?:wi-?fi|wlan|wireless|(?:home|guest|office|work)\s+network)\b\s*[:=]\s*\S+\s*(?:\/|,)\s*(?:${NETWORK_SETTING}\s*[,/]?\s*|(?:[A-Za-z]{1,12}:\s*)?[^\s,/:](?:[^,/:\n]{0,40}?[^\s,/:])?\s*[,/]\s*){0,6}`
+  + String.raw`(?:(?<=\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\s*[,/]?\s*)[A-Za-z][\w.-]{0,31}(?:\s*[,/]\s*|\s+))?`
+  + String.raw`(?:(?:key|password|pass|pw|passphrase|psk)(?:\s*[:=–—-]\s*|\s+))?["'“]?(?!${NETWORK_SETTING}(?:[\s.,;!?)"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}`, "i");
 /**
  * A service a person signs in to and a value shaped like a password straight after its name ("Netflix: hunter2", "The
  * user's Gmail: Tr0ub4dor&3", "The user's Netflix account: hunter2", "Netflix login hunter2"): safety-privacy-1. Never a

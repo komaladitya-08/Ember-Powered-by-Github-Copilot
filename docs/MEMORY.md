@@ -87,7 +87,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   Portal2" is refused too), a router's label names and a network with its key ("WLAN key: …", "Guest Wi-Fi: BlueSky /
   BlueSky99": safety-privacy-c4-2; never its address, standard, mode or band, "Home network: HomeNet / 192.168.1.1",
   "Wi-Fi: HomeNet / WPA2-PSK", memory-x6-5, though a key or the router's login after them is refused, "Wi-Fi: HomeNet /
-  WPA2-PSK / 5GHz / BlueSky99!", "Home network: HomeNet / 192.168.1.1 / admin / Summer2024!", memory-y6-3), a capitals setting for a password ("DB_PASS=Tr0ub4dor&3", never a
+  WPA2-PSK / 5GHz / BlueSky99!", "Home network: HomeNet / 192.168.1.1 / admin / Summer2024!", memory-y6-3, also labelled
+  or past any other field, "Wi-Fi: HomeNet / WPA2-PSK / key: BlueSky99!", "… / channel 36 / BlueSky99!", "… /
+  192.168.1.1 / admin admin123", memory-z6-2), a capitals setting for a password ("DB_PASS=Tr0ub4dor&3", never a
   filter's "LOW_PASS=8000"), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
@@ -97,7 +99,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   in brackets, "PIN: entered (4821)", memory-w5-3, nor before one after a comma or a full stop, "PIN: entered, 4821",
   "Password: hidden, it's hunter2", memory-r5-3, though how it is hashed or how long it is may follow, "Passwords are
   hashed, SHA-256", "The PIN is required, 4-digit", memory-x6-5, but not before a value, "The PIN is required, 4-digit,
-  4821", "Password: hashed, SHA-256, but it's Summer2024!", "The door PIN will be 4-digit 4821", memory-y6-3; after a Wi-Fi key's router name, its state, where to look and its
+  4821", "Password: hashed, SHA-256, but it's Summer2024!", "The door PIN will be 4-digit 4821", memory-y6-3, even
+  after several of them, "Password: hashed, SHA-256, 12 characters, Summer2024!", "SHA-256 salted, Summer2024!", "The
+  PIN is required, 4 digits long, 4821", memory-z6-5; after a Wi-Fi key's router name, its state, where to look and its
   mode aren't a value either when nothing shaped like one follows in the sentence, "PSK is enabled on the router",
   "Network key: see sticker", "The network key is WPA2", memory-r5-2, but never after a password's or a PIN's name,
   "The admin password is rotated monthly, currently Summer2024!", "PIN: active 4821", nor before a value, "The VPN
@@ -160,8 +164,11 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   its `<input>`; never `<td>Password:</td><td>hunter2</td>`, `<p>Your PIN:</p>\n\n<p>4821</p>`, an `<input>` with a
   `value` or `print("Password:", "hunter2")`: memory-x6-1; nor a word shaped like a password, or a PIN's digits, on
   the line after a field with no value, `<input type="password"> <small>(demo: Demo1234!)</small>`, nor a `<select>`'s
-  option: memory-y6-4; a ticket, a to-do or a version in a prompt's comment, "# see PROJ-1234", "TODO(bob2)",
-  "Python3.8+", and a check box's or a button's value are none either: memory-y6-5), and `$PWD`. Nor is a quoted label
+  option: memory-y6-4, nor on the next line with text past markup-only lines, up to the row's or the form's end, as a
+  pretty-printed table or form puts it: memory-z6-3; a ticket, a to-do or a version in a prompt's comment, "# see
+  PROJ-1234", "TODO(bob2)", "Python3.8+", and a check box's or a button's value are none either: memory-y6-5, though
+  only a ticket after "see", "fixes" or "refs", a version alone or a language's or a tool's and a plain owner, never
+  "# P4SS-2024", "# Winter2024.1" or "TODO(Summer2024!)": memory-z6-4), and `$PWD`. Nor is a quoted label
   with a secret's or a field's name in a common language ("Password:", "Пароль:", "Lösenord:", "Código:", "New:",
   "Confirm password:", never "hunter:": memory-y6-5), a sentence about a secret, its word used as UI text uses it and no word
   shaped like a password or four digits in it ("Forgot your password?", "Passwords don't match"; never "sign of four

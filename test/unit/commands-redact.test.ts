@@ -137,6 +137,43 @@ describe("redactSecrets", () => {
   ])("leaves %j alone: an include or library folder, an option's value or a host, never a client (memory-y6-1)", text => {
     expect(redactSecrets(text)).toBe(text);
   });
+  // A client after a prompt, a comment mark, markup, curly quotes, a Makefile variable or a setting's "=" anywhere on
+  // the line, run from a quoted folder, a share or a variable's folder, or named by a variable or an .exe in any case
+  // (memory-z6-1).
+  it.each([
+    ["C:\\xampp\\mysql\\bin>mysql -u root -pWint3r!Sh0p", `C:\\xampp\\mysql\\bin>mysql -u root -p${SECRET_HIDDEN}`],
+    ["C:\\Users\\me>mysqldump -u root -pWint3r!Sh0p shop", `C:\\Users\\me>mysqldump -u root -p${SECRET_HIDDEN} shop`],
+    ["C:\\>mysql -u root -pWint3r!Sh0p", `C:\\>mysql -u root -p${SECRET_HIDDEN}`], ["~$mysql -u root -pWint3r!Sh0p", `~$mysql -u root -p${SECRET_HIDDEN}`],
+    ["[root@db ~]#mysql -u root -pWint3r!Sh0p", `[root@db ~]#mysql -u root -p${SECRET_HIDDEN}`],
+    ['"C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe" -u root -pWint3r!Sh0p', `"C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe" -u root -p${SECRET_HIDDEN}`],
+    ['& "$env:ProgramFiles\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe" -u root -pWint3r!Sh0p', `& "$env:ProgramFiles\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe" -u root -p${SECRET_HIDDEN}`],
+    ["& $env:ProgramFiles\\MySQL\\bin\\mysql.exe -u root -pWint3r!Sh0p", `& $env:ProgramFiles\\MySQL\\bin\\mysql.exe -u root -p${SECRET_HIDDEN}`],
+    ["C:\\Program Files (x86)\\MySQL\\bin\\mysql.exe -u root -pWint3r!Sh0p", `C:\\Program Files (x86)\\MySQL\\bin\\mysql.exe -u root -p${SECRET_HIDDEN}`],
+    ["%MYSQL_HOME%\\bin\\mysql.exe -u root -pWint3r!Sh0p", `%MYSQL_HOME%\\bin\\mysql.exe -u root -p${SECRET_HIDDEN}`],
+    ['"%MYSQL_HOME%\\bin\\mysql" -u root -pWint3r!Sh0p', `"%MYSQL_HOME%\\bin\\mysql" -u root -p${SECRET_HIDDEN}`],
+    ["\\\\db01\\tools\\mysql.exe -u root -pWint3r!Sh0p", `\\\\db01\\tools\\mysql.exe -u root -p${SECRET_HIDDEN}`],
+    ["MYSQL.EXE -u root -pWint3r!Sh0p", `MYSQL.EXE -u root -p${SECRET_HIDDEN}`], ["MySQL.exe -u root -pWint3r!Sh0p", `MySQL.exe -u root -p${SECRET_HIDDEN}`],
+    ["Mysql -u root -pWint3r!Sh0p", `Mysql -u root -p${SECRET_HIDDEN}`],
+    ["#mysqldump -u root -pWint3r!Sh0p shop > backup.sql", `#mysqldump -u root -p${SECRET_HIDDEN} shop > backup.sql`],
+    ["//mysql -u root -pWint3r!Sh0p", `//mysql -u root -p${SECRET_HIDDEN}`], ["<!--mysql -u root -pWint3r!Sh0p -->", `<!--mysql -u root -p${SECRET_HIDDEN} -->`],
+    ["<code>mysql -u root -pWint3r!Sh0p</code>", `<code>mysql -u root -p${SECRET_HIDDEN}`],
+    ["Run \u201cmysql -u root -pWint3r!Sh0p\u201d to log in", `Run \u201cmysql -u root -p${SECRET_HIDDEN} to log in`],
+    ["\t$(Q)mysql -u root -pWint3r!Sh0p shop", `\t$(Q)mysql -u root -p${SECRET_HIDDEN} shop`],
+    ["\t$(MYSQL) -u root -pWint3r!Sh0p shop", `\t$(MYSQL) -u root -p${SECRET_HIDDEN} shop`], ["${MYSQLDUMP} -pWint3r!Sh0p shop", `\${MYSQLDUMP} -p${SECRET_HIDDEN} shop`],
+    ["  - DB_CMD=mysql -u root -pWint3r!Sh0p", `  - DB_CMD=mysql -u root -p${SECRET_HIDDEN}`],
+    ["export MYSQL_CMD=mysql -u root -pWint3r!Sh0p", `export MYSQL_CMD=mysql -u root -p${SECRET_HIDDEN}`],
+    ["run )mysql -u root -pWint3r!Sh0p", `run )mysql -u root -p${SECRET_HIDDEN}`], ["$/usr/bin/mysql -u root -pWint3r!Sh0p", `$/usr/bin/mysql -u root -p${SECRET_HIDDEN}`],
+  ])("hides the password in %j (memory-z6-1)", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+  it.each([
+    ["gcc -I./include/mysql -pthread"], ["gcc -I${PREFIX}/include/mysql -pthread"],
+    ["CFLAGS += $(MYSQL_CFLAGS) -pthread"], ["docker run -v mysql:/var/lib/mysql -p3306:3306 mysql:8"], ["curl file:///var/lib/mysql -pthread"],
+    ["cmake -DMYSQL_DIR=/usr/local/mysql -pthread"], ["apt install php-mysql -y && make -pj4"], ["ssh deploy@mysql -p2222"],
+    ["Run `mysqld_safe --user=mysql -pid-file=/run/mysqld.pid` once"],
+  ])("leaves %j alone: a folder, a variable or a name that is no client (memory-z6-1)", text => {
+    expect(redactSecrets(text)).toBe(text);
+  });
 
   it("leaves ordinary text alone", () => {
     for (const text of ["sk-learn is scikit-learn", "risk-assessment-for-the-quarterly-planning-2026", "task-1234567890abcdefghijklmnopqrstuvwxyz", "hf_short", "sk_live_short", "build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value", "--compass=north", "--max-passes=3"]) {
@@ -218,6 +255,8 @@ describe("redactSecrets on long output (review #26)", () => {
     ["URL-like runs", repeat("://a:")],
     ["a line of recipe and unit prefixes (memory-y6-1)", repeat("@-+!:")], ["a run of dashes (memory-y6-1)", repeat("-")],
     ["a run of folders (memory-y6-1)", repeat("a/(b\\${c}/")], ["a run of settings (memory-y6-1)", repeat("a=")],
+    ["a run of prompts and clients (memory-z6-1)", repeat(">mysql $(Q)MYSQL ")], ["a run of quoted clients (memory-z6-1)", repeat('"MySQL.exe" ')],
+    ["a run of Windows folders (memory-z6-1)", repeat("(x86)\\%a%\\$env:a\\")], ["a run of options' values (memory-z6-1)", repeat("--a=mysql ")],
   ])("takes linear time on %s (1 MiB)", (_name, text) => {
     const t0 = performance.now();
     redactSecrets(text);

@@ -71,30 +71,47 @@ const OPTION_VALUE = String.raw`(?![$%{<*[])(?!(?<!["'])>)(?![A-Z][A-Z_]*(?![^\s
 /** What may stand between a program and its option on one line: other words, at most 200 characters, never a pipe or `;`. */
 const ARGS = String.raw`(?:[ \t]+[^\s|;&]+){0,12}?`;
 /**
- * A folder a program is run from: absolute, relative, the home folder's, a variable's or a drive's (`/usr/bin/`, `bin/`,
- * `bin\`, `~/mysql/bin/`, `$HOME/opt/`, `${MYSQL_HOME}/`, `$(MYSQL_DIR)/`, `C:\xampp\`), never an option (`-I/usr/…`):
- * memory-y6-1.
+ * A folder a program is run from: absolute, relative, the home folder's, a variable's, a drive's or a share's (`/usr/bin/`,
+ * `bin/`, `bin\`, `~/mysql/bin/`, `$HOME/opt/`, `${MYSQL_HOME}/`, `$(MYSQL_DIR)/`, `%MYSQL_HOME%\`, `$env:ProgramFiles\`,
+ * `(x86)\`, `C:\xampp\`, `\\db01\tools\`), never an option (`-I/usr/…`): memory-y6-1, memory-z6-1.
  */
-const FOLDER_PART = String.raw`(?:[A-Za-z]:|\$\{\w+\}|\$\(\w+\)|\$?[\w.~-]+)`;
-const FOLDER = String.raw`(?!-)${FOLDER_PART}?[\/\\](?:${FOLDER_PART}[\/\\])*`;
+const FOLDER_PART = String.raw`(?:[A-Za-z]:|\$\{\w+\}|\$?\(\w+\)|%\w+%|\$env:\w+|\$?[\w.~-]+)`;
+const FOLDER = String.raw`(?!-)${FOLDER_PART}?[\/\\]+(?:${FOLDER_PART}[\/\\]+)*`;
 /**
- * Where a command word starts: after a space, a quote, a shell's separator, `*`, `[` or `{`; at a line's start after a
- * Makefile recipe's or a unit's prefix (`\t@mysql`, `\t-mysql`) or a setting's "=" (`ExecStart=/usr/bin/mysqldump`,
- * `command=mysqldump`, `ExecStartPre=-/usr/bin/mysql`), a "-" only before a folder or the program, never an option
- * (`\t-I/usr/include/mysql`, `CFLAGS=-I…`); never an include or a library folder (`-I /usr/include/mysql`, `-L …`,
+ * Where a command word starts. The program's name after anything but a letter, a digit, `_`, a folder's `/` or `\`, a
+ * `-` (an option or another name: `--with-mysql`, `php-mysql`) or a host's `@` (`admin@mysql`): a space, a quote, a
+ * shell's separator, a prompt or a tag (`C:\xampp\mysql\bin>mysql`, `<code>mysql`, `#mysql`), a comment's mark
+ * (`#mysqldump`, `//mysql`, `<!--mysql`), a variable (`$(Q)mysql`) or a setting's "=" (`DB_CMD=mysql`). Its folder after
+ * anything but what a folder holds or a URL's or a volume's ":" (`/data:/var/lib/mysql`). At a line's start after a
+ * Makefile recipe's or a unit's prefix (`\t@mysql`, `\t-mysql`, `ExecStartPre=-/usr/bin/mysql`), a "-" only before a
+ * folder or the program, never an option (`\t-I/usr/include/mysql`). Never an option's value (`--user=mysql`,
+ * `--with-mysql=/usr/local/mysql`) or an include or a library folder (`-I /usr/include/mysql`, `-L …`,
  * `-isystem …`). A run of these characters is looked back over once, at its end, so a long one stays linear:
- * memory-y6-1.
+ * memory-y6-1, memory-z6-1.
  */
 const LINE_HEAD = String.raw`(?:^|\n)[ \t]*(?:[A-Za-z_][\w.-]*[ \t]*=)?`;
-const COMMAND_START = String.raw`(?=[\w.~$\/\\])(?:(?<![^\s;&|(\`"'*[{])|(?<=${LINE_HEAD}(?:[-@+!:]*[@+!:])?)|(?=[\/~$.\\]|m)(?<=${LINE_HEAD}[-@+!:]*-))`
-  + String.raw`(?<!(?:^|\s)-(?:I|L|isystem|iquote|idirafter)[ \t]*)`;
+const LINE_START = String.raw`(?<=${LINE_HEAD}(?:[-@+!:]*[@+!:])?)|(?=[\/~$.\\]|m)(?<=${LINE_HEAD}[-@+!:]*-)|(?<=<!--)`;
+const NOT_AN_OPTION = String.raw`(?<!(?<![\w.-])--?[\w.-]*=)(?<!(?:^|\s)-(?:I|L|isystem|iquote|idirafter)[ \t]*)`;
+const FOLDER_START = String.raw`(?:(?=[\/\\])(?<![\w.~\/\\:-])(?<!\$?\(\w+\)|\$\{\w+\}|%\w+%)|(?![\/\\])(?<![\w.~$\/\\:-])|${LINE_START})${NOT_AN_OPTION}`;
+const NAME_START = String.raw`(?:(?<![\w\/\\-])(?<!\S@)|${LINE_START})${NOT_AN_OPTION}`;
+const COMMAND_START = String.raw`(?=[\w.~$%(\/\\])(?:${FOLDER_START}${FOLDER}|${NAME_START})`;
+/**
+ * The clients' names, in lower case, capitalised as a sentence's first word (`Mysql -u …`) or in a variable's capitals;
+ * on Windows, whose names have no case, an .exe in any case.
+ */
+const CLIENT = String.raw`(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mysqlshow|mysqlslap|mysqlpump|mysqlbinlog|mysqlsh|mysql_upgrade|mysql_secure_installation|mariadb(?:-(?:dump|admin|import|check|show|slap|binlog|upgrade|backup|secure-installation))?|mariabackup)`;
+const CLIENT_NAME = String.raw`(?:${CLIENT}|${CLIENT.replace(/(?<=^\(\?:|\|)m/g, "M")}|${CLIENT.toUpperCase()})`;
+const ANY_CASE = CLIENT.replace(/[a-z]/g, c => `[${c}${c.toUpperCase()}]`);
 /**
  * MySQL's and MariaDB's clients, whose `-p` is a password, as a command word: alone or with its folder (COMMAND_START,
- * FOLDER), as `sudo mysql`, `docker exec db mysql`, `$(mysql …)`, `bin/mysql` or a Makefile's `\t@mysql`, never a
- * library, a folder or another program in a build line (`-I/usr/include/mysql -pthread`, `mysqlclient -pthread`,
- * `mysql_config --cflags -pipe`, `--user=mysql -pid-file=…`): memory-x6-4, memory-y6-1.
+ * FOLDER), as `sudo mysql`, `docker exec db mysql`, `$(mysql …)`, `bin/mysql` or a Makefile's `\t@mysql`, by a
+ * variable's capitals (`$(MYSQL)`, `%MYSQLDUMP%`), and before a closing quote or bracket (`"C:\…\mysql.exe" -u`,
+ * `“mysql -u …”`); never a library, a folder or another program in a build line (`-I/usr/include/mysql -pthread`,
+ * `mysqlclient -pthread`, `mysql_config --cflags -pipe`, `$(MYSQL_CFLAGS) -pthread`, `--user=mysql -pid-file=…`):
+ * memory-x6-4, memory-y6-1, memory-z6-1.
  */
-const MYSQL_CLIENT = String.raw`${COMMAND_START}(?:${FOLDER})?(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mysqlshow|mysqlslap|mysqlpump|mysqlbinlog|mysqlsh|mysql_upgrade|mysql_secure_installation|mariadb(?:-(?:dump|admin|import|check|show|slap|binlog|upgrade|backup|secure-installation))?|mariabackup)(?:\.exe)?(?=[ \t])`;
+const MYSQL_CLIENT = String.raw`${COMMAND_START}(?:${CLIENT_NAME}(?:\.[eE][xX][eE])?|${ANY_CASE}\.[eE][xX][eE])`
+  + String.raw`["'\`\u2019\u201d)\]}%*]{0,3}(?=[ \t])`;
 /** htpasswd's options and the numbers some take (`-nbB -C 10`), one of them with `b` (the password on the line). */
 const HTPASSWD_OPTIONS = String.raw`(?=(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)*?[ \t]+-[A-Za-z]*b)(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)+`;
 /** A word that is no shell operator (`>`, `<`, `|`). */

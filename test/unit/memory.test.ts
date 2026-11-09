@@ -389,6 +389,41 @@ describe("what memory never keeps", () => {
   ])("keeps %j, a field with no value and words of the form's own beside it (memory-y6-4)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // A password in the next cell or on the next line after a field with no value, as a pretty-printed form or table
+  // puts it (memory-z6-3).
+  it.each([
+    ['<table>\n  <tr>\n    <td>Password:</td>\n    <td><input type="password" name="pw"></td>\n    <td><small>(demo: Demo1234!)</small></td>\n  </tr>\n</table>'],
+    ['<td>Password:</td><td><input type="password"></td>\n<td>Demo1234!</td>'], ['<label>PIN:</label> <input type="text" readonly>\n<p>4821</p>'],
+    ['<form>\n  <label for="pw">Password:</label>\n  <input type="password" id="pw" name="pw">\n  <span class="hint">Demo1234!</span>\n</form>'],
+    ['<div class="row">\n  <label>PIN:</label>\n  <input type="text" readonly>\n\n  <span>4821</span>\n</div>'],
+  ])("refuses %j and saves nothing, a value on the line after a field (memory-z6-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ['<label>Password:</label>\n<input type="password">\n<button>Sign in</button>\n<p>Build 2024-rc1!</p>'],
+    ['<label>Password:</label>\n<input type="password">\n<label>Confirm:</label>\n<input type="password">\n<small>Admin2024!</small>'],
+    ['<tr>\n  <td>Password:</td>\n  <td><input type="password"></td>\n</tr>\n<tr><td>Build v2024rc1!</td></tr>'],
+    ['<form>\n  <label>PIN:</label>\n  <input type="password" maxlength="4">\n</form>\n<p>Call 4821 for help</p>'],
+    ['<label>Password:</label>\n<input type="password">\n<small>(demo: see the wiki)</small>'],
+  ])("keeps %j, the form's own words or what follows its row (memory-z6-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A password in a prompt's comment shaped like a ticket, a version or a to-do, which only a ticket after "see", a
+  // version of a language or a tool and a plain owner are not (memory-z6-4).
+  it.each([
+    ['pw = getpass("Password: ")  # Winter2024.1'], ['pw = getpass("Password: ")  # P4SS-2024'], ['pw = getpass("Password: ")  # use QWERTY-123 for the demo'],
+    ['pw = getpass("Password: ")  // Admin1.0'], ['pw = getpass("Password: ")  # test with Spring-2024.05'], ['pw = getpass("Password: ")  # TODO(Summer2024!)'],
+    ['pin = input("PIN: ")  # PIN-4821'],
+  ])("refuses %j, a password shaped like a ticket, a version or a to-do (memory-z6-4)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  it.each([
+    ['pw = getpass("Password: ")  # fixes PROJ-1234'], ['pw = getpass("Password: ")  # refs JIRA-4521'], ['pw = getpass("Password: ")  # needs python3.8+'],
+    ['pw = getpass("Password: ")  # since v2.4.1'], ['pw = getpass("Password: ")  # TODO(jsmith-2): mask it'],
+  ])("keeps %j, a ticket, a version or a to-do's owner (memory-z6-4)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
   // A passphrase that happens to hold a secret's word, and a word before a colon, read as UI text under a key named
   // for a secret (memory-x6-3).
   it.each([
@@ -768,6 +803,56 @@ describe("what memory never keeps", () => {
     ["The PIN will be 6 digits long"], ["The password must be 12+ characters"], ["Passwords: hashed, SHA-512, base64-encoded"], ["Password: hashed, SHA-256-hashed"],
     ["Home network: HomeNet / 192.168.1.1 / gateway / 10.0.0.1"],
   ])("keeps %j, settings, a length or an algorithm with no secret after them (memory-y6-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A Wi-Fi key labelled "key:", "pass:" or "key -" after the network's settings or straight after its name, past a
+  // field that is no value ("channel 36"), and a router's user and password with only a space between (memory-z6-2).
+  it.each([
+    ["Wi-Fi: HomeNet / WPA2-PSK / key: BlueSky99!"], ["Wi-Fi: HomeNet / WPA2-PSK / Key: BlueSky99!"], ["Wi-Fi: HomeNet / WPA2-PSK / pass: BlueSky99!"],
+    ["Wi-Fi: HomeNet / WPA2-PSK / key - BlueSky99!"], ["Wi-Fi: HomeNet / key: BlueSky99!"], ["Wi-Fi: HomeNet, WPA2, key: BlueSky99!"],
+    ["Guest Wi-Fi: Guest / WPA2 / key: Welcome2024"], ["Wi-Fi: HomeNet / WPA2-PSK / 5GHz / channel 36 / BlueSky99!"],
+    ["Home network: HomeNet / 192.168.1.1 / admin admin123"], ["Home network: HomeNet / 192.168.1.1 admin Summer2024!"],
+  ])("refuses %j and saves nothing, a network's key after its label or its settings (memory-z6-2)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["Wi-Fi: HomeNet / WPA2-PSK / key: see sticker"], ["Wi-Fi: HomeNet / WPA2-PSK / channel 36"], ["Wi-Fi: HomeNet / WPA2-PSK / channel 36 / 2.4GHz"],
+    ["Wi-Fi: HomeNet / key: on the router's sticker"], ["Home network: HomeNet / 192.168.1.1 / gateway 10.0.0.1"], ["Wi-Fi: HomeNet / band: 5GHz"],
+  ])("keeps %j, a network's settings and where its key is (memory-z6-2)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A password after more than one length or algorithm, an algorithm with its participle after a space, a length that
+  // says "long" and a value said as one (memory-z6-5).
+  it.each([
+    ["Password: hashed, SHA-256, 12 characters, Summer2024!"], ["Password: hashed, SHA-256 salted, Summer2024!"], ["Password: hashed, SHA-256, value Summer2024!"],
+    ["The PIN is required, 4 digits long, 4821"], ["Password: hashed, scrypt, Summer2024!"], ["Password: stored, AES-256 encrypted, base64, Summer2024!"],
+    ["The password will be 12 characters long: Summer2024!"], ["Password: required, min 12 characters, Summer2024!"], ["The PIN is required. 4 digits. 4821"],
+  ])("refuses %j and saves nothing, a password after how it is stored (memory-z6-5)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["Password: hashed, SHA-256 salted"], ["The PIN is required, 4 digits long"], ["Password: hashed, SHA-256, 12 characters, salted"],
+    ["Password: hashed, SHA-256, value hidden"], ["Passwords are hashed, scrypt, then stored."], ["The password will be 12 characters long"],
+    ["Password: required, min 12 characters"], ["The PIN is required. 4 digits. Ask the office for it."],
+  ])("keeps %j, how a password is stored with no value after it (memory-z6-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A MySQL client's password after a prompt, a comment mark, markup, curly quotes, a Makefile variable or a setting,
+  // or from a quoted Windows folder, which memory can't keep hidden (memory-z6-1).
+  it.each([
+    ["C:\\xampp\\mysql\\bin>mysql -u root -pWint3r!Sh0p"], ["C:\\Users\\me>mysqldump -u root -pWint3r!Sh0p shop"],
+    ['"C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe" -u root -pWint3r!Sh0p'], ["#mysqldump -u root -pWint3r!Sh0p shop > backup.sql"],
+    ["<code>mysql -u root -pWint3r!Sh0p</code>"], ["Run \u201cmysql -u root -pWint3r!Sh0p\u201d to log in"], ["\t$(Q)mysql -u root -pWint3r!Sh0p shop"],
+    ["  - DB_CMD=mysql -u root -pWint3r!Sh0p"], ["remember C:\\xampp\\mysql\\bin>mysql -u root -pWint3r!Sh0p"],
+  ])("refuses %j and saves nothing, a client's password however its name is wrapped (memory-z6-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["The reporting tool builds with gcc -I./include/mysql -pthread"], ["CFLAGS += $(MYSQL_CFLAGS) -pthread"], ["C:\\xampp\\mysql\\bin>mysql -u root -p"],
+  ])("keeps %j, a build line or a client that prompts for its password (memory-z6-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
 
