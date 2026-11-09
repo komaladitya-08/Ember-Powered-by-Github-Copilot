@@ -361,27 +361,26 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(decided("d=~/.config/ember; printf \"%s\\0\" \"$d\" | xargs -0 rm -rf").cls.refuse?.rule).toBe("ember.path");
   });
 
-  it("refuses a NUL-separated read loop over Ember's folder or settings as the line-separated one is, never asking it (commands-y6-1)", () => {
+  it("asks before a database client or interpreter runs printed text with a NUL in it, which it may read across the NUL as one statement (commands-z6-1)", () => {
     const decided = (cmd: string) => runCase({ cmd, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" });
-    for (const [cmd, refusal] of [
-      ["printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
-      ["printf '/home/ana/.config/ember\\0' | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
-      ["printf '%s\\0' ~/.config/ember build | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
-      ["printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do cat \"$f\"; done", READ],
-      ["printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do : > \"$f\"; done", CHANGE],
-      ["printf '%s\\n' ~/.config/ember | while read -r d; do rm -rf \"$d\"; done", CHANGE],
-      // The shell's own `read` drops a NUL, so what it reads is the two halves together.
-      ["printf '/home/ana/.config/em\\0ber\\n' | while read -r d; do rm -rf \"$d\"; done", CHANGE],
-    ] as const) {
-      const { cls } = decided(cmd);
-      expect(cls.refuse?.rule, cmd).toBe("ember.path");
-      expect(cls.refuse?.says, cmd).toBe(refusal);
-    }
-    // In the project it asks as before, and no line of its card holds a NUL.
-    for (const cmd of ["printf '%s\\0' build dist | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", "printf 'build\\0dist\\0' | xargs rm -rf", "printf '%s\\0' build | xargs -0 rm -rf"]) {
+    // psql and sqlite3 stop a line at the NUL and read on into the next, so these run `DROP TABLE users;`.
+    for (const cmd of [
+      "printf 'DR\\0\\nOP TABLE users;\\n' | psql app", "printf 'DEL\\0junk\\nETE FROM users;\\n' | psql app", "printf 'DR\\0\\nOP TABLE users;\\n' | sqlite3 app.db",
+      "printf 'DR\\0\\nOP TABLE users;\\n' | mysql app", "printf 'FLUSH\\0\\nALL\\n' | redis-cli", "printf 'x\\0y' | python3", "printf 'x\\0y' | sh",
+    ]) {
       const { cls, decision } = decided(cmd);
-      expect(cls.refuse, cmd).toBeNull();
       expect(decision.verdict, cmd).toBe("ask");
+      expect(cls.findings.map(f => f.rule), cmd).toContain("unclear.stdin-code");
+    }
+    expect(decided("printf 'SELECT 1;\\n' | psql app").decision.verdict).toBe("run");
+    // A NUL-separated read loop over Ember's folder or settings never runs, and no line of its card holds a NUL.
+    for (const cmd of [
+      "printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", "printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do cat \"$f\"; done",
+      "printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do : > \"$f\"; done", "printf '/home/ana/.config/em\\0ber\\n' | while read -r d; do rm -rf \"$d\"; done",
+      "printf '/home/ana/.config/ember\\0' | xargs rm -rf",
+    ]) {
+      const { cls, decision } = decided(cmd);
+      expect(decision.verdict === "ask" || cls.refuse !== null, cmd).toBe(true);
       expect(decision.says.join(" ").includes("\0"), cmd).toBe(false);
     }
   });

@@ -252,8 +252,6 @@ interface Simple {
    * here-string's word, so Ember's own refusal follows a variable into the program's input (commands-remote-v5-2).
    */
   stdinVars?: HereVars;
-  /** What echo or printf piped in, as the shell's `read` takes it, when that differs from stdinText (Printed.joined). */
-  stdinJoined?: string;
   /** An earlier command in its pipeline fetches from the network or decodes hidden text. */
   fetchBefore: boolean;
   background: boolean;
@@ -272,18 +270,8 @@ interface HereVars { names: string[]; word: Arg | null }
 /**
  * What echo or printf prints into the next command of its pipeline, as that command's input (commands-remote-c5-1):
  * the text when Ember sees all of it, else null with the variables its words use (and the word, when it prints one).
- * A NUL in it stands as a line break, and `joined` is the text without them, as the shell's `read` takes it (withNuls).
  */
-interface Printed { text: string | null; vars?: HereVars; joined?: string }
-
-/**
- * Printed text with a NUL in it (commands-y6-1): `read -d ''`, `xargs -0` and `mapfile -d ''` end a name there, so
- * it stands as a line break, never as a NUL in a card's line or the mark of a part Ember can't see (UNSEEN); and the
- * shell's `read` drops a NUL, so what that reads is the text without them.
- */
-function withNuls(text: string): Printed {
-  return text.includes("\0") ? { text: text.replace(/\0/g, "\n"), joined: text.replace(/\0/g, "") } : { text };
-}
+interface Printed { text: string | null; vars?: HereVars }
 
 /** The variables a word uses (Arg.parts), by name. */
 const varNames = (a: Arg): string[] => (a.parts ?? []).flatMap(p => (typeof p !== "string" && p.name !== null ? [p.name] : []));
@@ -314,14 +302,18 @@ function printedBy(words: readonly Arg[]): Printed | null {
     // Only `\n`, `\t` and a lone `\0`: any other escape printf reads (`\056`, `\0056`, `\x2e`, `\u002e`, `\e`, `\\`) is
     // text Ember doesn't see, never its backslash text (commands-remote-x6-2).
     const unescape = (s: string): string => s.replace(/\\([nt0])/g, (_m, c: string) => (c === "n" ? "\n" : c === "t" ? "\t" : "\0"));
-    if (format !== null && /^([^%\\]|\\([nt]|0(?![0-7])))*$/.test(format) && rest.length === 1) return withNuls(unescape(format));
+    if (format !== null && /^([^%\\]|\\([nt]|0(?![0-7])))*$/.test(format) && rest.length === 1) {
+      // Printed text with a NUL in it is no name Ember can judge or show in a card's line: text it doesn't see.
+      const text = unescape(format);
+      return { text: text.includes("\0") ? null : text };
+    }
     const each = format !== null && /^(%s|\\([nt]|0(?![0-7]))|[ \t])+$/.test(format) && (format.match(/%s/g) ?? []).length === 1 && rest.length > 1;
     shown = each ? rest.slice(1) : rest;
     render = each && format !== null ? vs => vs.map(v => unescape(format).replace("%s", () => v)).join("") : null;
   }
   const names = [...new Set(shown.flatMap(varNames))];
   const text = render && shown.every(a => a.v !== null && !a.glob && !a.v.includes("\\")) ? render(shown.map(a => a.v ?? "")) : null;
-  if (text !== null) return withNuls(text);
+  if (text !== null && !text.includes("\0")) return { text };
   return names.length ? { text: null, vars: { names, word: render && shown.length === 1 ? shown[0] : null } } : { text: null };
 }
 
@@ -1875,7 +1867,7 @@ class Engine extends Classifier {
     }
     // What it prints reaches the next command only without a redirection of its output.
     const carried = o.pipedOn === true && o.carriedOn === true && !redirs.some(r => r.kind !== "none" && r.kind !== "read" && !r.op.startsWith("2"));
-    this.simple({ words, redirs, stdin, stdinText, stdinVars, stdinJoined: piped?.joined, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried }, sc, () => {
+    this.simple({ words, redirs, stdin, stdinText, stdinVars, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried }, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
     return carried ? printedBy(words) : null;
@@ -4294,10 +4286,8 @@ reg(NATIVE, ["read", "mapfile", "readarray"], h => {
   if (h.s.stdin === null && h.key === "read") h.e.unclear("unclear.interactive", SAYS.interactive);
   // The names it sets from each line it reads (`read -r l`; -a, -d, -n, -N, -p, -t, -u, -i take a value).
   if (h.key === "read") {
-    // Text it is given itself (`read d <<< ~/.config/ember`): its lines and words (commands-remote-v4-4), with a NUL
-    // ending a name (`-d ''`) or dropped (commands-y6-1).
-    const text = typeof h.s.stdinText === "string" && h.s.stdinJoined !== undefined ? `${h.s.stdinText}\n${h.s.stdinJoined}` : h.s.stdinText;
-    const given = typeof text === "string" ? textValues(text) : h.s.stdinVars?.word ? [h.s.stdinVars.word] : null;
+    // Text it is given itself (`read d <<< ~/.config/ember`): its lines and words (commands-remote-v4-4).
+    const given = typeof h.s.stdinText === "string" ? textValues(h.s.stdinText) : h.s.stdinVars?.word ? [h.s.stdinVars.word] : null;
     const names: string[] = [];
     for (let k = 0; k < h.args.length; k++) {
       const v = h.args[k].v;
