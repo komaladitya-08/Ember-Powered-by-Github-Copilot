@@ -134,7 +134,8 @@ Ember stops and asks before a command that:
   that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), changing or deleting what
   a database holds (`psql -c 'DROP TABLE x'`, `redis-cli FLUSHALL`, and the same given on the client's input:
   `redis-cli <<< FLUSHALL`, `echo 'db.dropDatabase()' | mongosh`; commands or code on its input or its line that
-  Ember can't see or follow ask too, such as `redis-cli "$CMD"`), and package scripts, make targets and SQL or command files named clean, wipe, purge,
+  Ember can't see or follow ask too, such as `redis-cli "$CMD"`, while its options in a variable are read as options,
+  so `O='-h db'; redis-cli $O INFO` runs), and package scripts, make targets and SQL or command files named clean, wipe, purge,
   reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`);
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,

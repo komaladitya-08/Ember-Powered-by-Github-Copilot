@@ -3372,16 +3372,22 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     for (const a of h.args) if (a.v !== null && !isOption(a) && /\.(c|m)?js$/i.test(a.v)) runScript(h, a);
   } else if (k === "redis-cli") {
     // -c (cluster mode), -x, -e and --tls take no value (commands-remote-c4-3).
-    const p = opts(h, { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] });
-    if (values(p, "eval").length || has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
-    if (has(p, "a", "pass") || values(p, "a").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-    // A command word Ember can't see all of (`redis-cli "$c"`): each value the text gives it, split as the shell may.
+    const spec: OptSpec = { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] };
+    const p = opts(h, spec);
+    // A command word Ember can't see all of (`redis-cli "$c"`): each value the text gives it, split as the shell may,
+    // and read again with the words after it, so options split out of it are redis-cli's own (`O='-h db'; redis-cli $O
+    // INFO` reads: commands-y6-3).
     const [word, ...rest] = p.operands;
-    if (word?.v === null) for (const f of h.e.knownForms(word)) redisCommand(h, f === null ? [null] : [...f.trim().split(/\s+/), ...rest.map(a => a.v)]);
-    else redisCommand(h, p.operands.map(a => a.v));
+    const lines = word?.v === null ? h.e.knownForms(word).map(f => (f === null ? null : parseOpts([...f.split(/\s+/).filter(w => w !== "").map(w => lit(w)), ...rest], spec))) : [p];
+    for (const q of [p, ...lines]) {
+      if (q === null) continue;
+      if (values(q, "eval").length || has(q, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
+      if (has(q, "a", "pass") || values(q, "a").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
+    }
+    for (const q of lines) redisCommand(h, q === null ? [null] : q.operands.map(a => a.v));
     // With no command on its line it runs the commands its input gives, one a line (`redis-cli <<< FLUSHALL`, `echo
     // DEL x | redis-cli`); with -x its input is the last argument's value (commands-remote-c5-3).
-    if (p.operands.length === 0 && !has(p, "x")) {
+    if (lines.some(q => q !== null && q.operands.length === 0 && !has(p, "x") && !has(q, "x"))) {
       if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => { for (const l of t.split("\n")) redisCommand(h, l.trim().split(/\s+/)); });
       else if (h.s.stdin === "file") stdinFile(h);
     }

@@ -1640,6 +1640,26 @@ describe("database clients that run what their input gives them (commands-remote
     for (const cmd of ["c=PING; redis-cli \"$c\"", "c='GET x'; redis-cli $c", "redis-cli GET \"$k\"", "redis-cli -h \"$HOST\" PING"]) expect(rules(cmd), cmd).toEqual([]);
   });
 
+  it("reads redis-cli's options a variable holds as the options they are, never as a command that changes data (commands-y6-3)", () => {
+    const plain = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux")).findings.map(f => `${f.rule}: ${f.says}`);
+    // A read with its options in a variable runs, as it does with them written out.
+    for (const cmd of [
+      "REDIS_OPTS='-h db -p 6380'; redis-cli $REDIS_OPTS INFO", "O='-h db'; redis-cli $O PING", "O='-n 2'; redis-cli $O GET k", "O='--no-auth-warning'; redis-cli $O PING",
+      "O='-h db -p 6380 INFO'; redis-cli $O", "redis-cli -h db -p 6380 INFO",
+    ]) expect(rules(cmd), cmd).toEqual([]);
+    // A change, after them or in them, or given on its input, asks as written out; a password among them is on its line.
+    for (const [cmd, as] of [
+      ["O='-h db'; redis-cli $O FLUSHALL", "redis-cli -h db FLUSHALL"], ["O='-h db FLUSHALL'; redis-cli $O", "redis-cli -h db FLUSHALL"],
+      ["O='-n 2'; redis-cli $O DEL users", "redis-cli -n 2 DEL users"], ["O='-h db'; echo FLUSHALL | redis-cli $O", "echo FLUSHALL | redis-cli -h db"],
+      ["O='-a hunter2'; redis-cli $O PING", "redis-cli -a hunter2 PING"], ["O='--eval x.lua'; redis-cli $O", "redis-cli --eval x.lua"],
+    ] as const) {
+      expect(plain(as), as).not.toEqual([]);
+      expect(plain(cmd), cmd).toEqual(plain(as));
+    }
+    // Options Ember can't see still ask.
+    expect(rules("redis-cli $REDIS_OPTS INFO")).toContain("unclear.sql");
+  });
+
   it("judges an SQL or command file a client reads from its input by its name, as -f is, and asks for one this task downloaded", () => {
     for (const cmd of ["psql mydb < drop_users.sql", "mysql app < drop.sql", "sqlite3 app.db < drop.sql", "mongosh < drop.js", "mongosh app drop_all.js", "redis-cli < wipe-cache.txt"]) {
       expect(rules(cmd), cmd).toContain("script.destroy");
