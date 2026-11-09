@@ -205,6 +205,15 @@ it("sends a build guide's Makefile lines, a build script and a CMakeLists that l
   await expect(prompt([auth])).rejects.toThrow(new Error("auth.sh appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
 });
 
+it("holds back a Makefile recipe, a unit file and an upgrade script that give a MySQL client its password (memory-y6-1)", async () => {
+  const db = await file("DB.md", "# Database\n\n```make\ndb-reset:\n\t@mysql -u root -pWint3r!Sh0p shop < schema.sql\n```\n");
+  await expect(prompt([db])).rejects.toThrow(new Error("DB.md appears to contain a password, token or key on line 5. Remove that file or the value, then send again."));
+  const unit = await file("BACKUP.md", "[Service]\nType=oneshot\nExecStart=/usr/bin/mysqldump -u backup -pWint3r!Sh0p --all-databases\n");
+  await expect(prompt([unit])).rejects.toThrow(new Error("BACKUP.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const upgrade = await file("upgrade.sh", "#!/bin/sh\ncd /opt/lampp\nbin/mysql_upgrade -u root -pWint3r!Sh0p\n");
+  await expect(prompt([upgrade])).rejects.toThrow(new Error("upgrade.sh appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+});
+
 it("sends a login form, a getpass CLI and an OAuth client, and takes a request that names a type, which hold no password (memory-r4-2, integrations-r4-1)", async () => {
   const form = await file("login.html", '<form method="post" action="/login">\n  <label for="username">Username:</label>\n  <input type="text" id="username" name="username">\n  <label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n</form>\n');
   const cli = await file("cli.py", 'import getpass\n\ndef main():\n    user = input("Username: ")\n    password = getpass.getpass("Password: ")\n    return user, password\n');

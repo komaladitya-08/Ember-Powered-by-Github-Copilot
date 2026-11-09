@@ -71,12 +71,30 @@ const OPTION_VALUE = String.raw`(?![$%{<*[])(?!(?<!["'])>)(?![A-Z][A-Z_]*(?![^\s
 /** What may stand between a program and its option on one line: other words, at most 200 characters, never a pipe or `;`. */
 const ARGS = String.raw`(?:[ \t]+[^\s|;&]+){0,12}?`;
 /**
- * MySQL's and MariaDB's clients, whose `-p` is a password, as a command word: alone or with its folder, after a space,
- * a quote or a shell's separator (`sudo mysql`, `docker exec db mysql`, `$(mysql …)`), never a library, a folder or
- * another program in a build line (`-I/usr/include/mysql -pthread`, `mysqlclient -pthread`, `mysql_config --cflags
- * -pipe`, `--user=mysql -pid-file=…`): memory-x6-4.
+ * A folder a program is run from: absolute, relative, the home folder's, a variable's or a drive's (`/usr/bin/`, `bin/`,
+ * `bin\`, `~/mysql/bin/`, `$HOME/opt/`, `${MYSQL_HOME}/`, `$(MYSQL_DIR)/`, `C:\xampp\`), never an option (`-I/usr/…`):
+ * memory-y6-1.
  */
-const MYSQL_CLIENT = String.raw`(?<![^\s;&|(\`"'])(?:\.{0,2}\/(?:[\w.-]+\/)*)?(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mysqlshow|mysqlslap|mysqlpump|mysqlbinlog|mysqlsh|mariadb(?:-(?:dump|admin|import|check|show|slap|binlog))?)(?:\.exe)?(?=[ \t])`;
+const FOLDER_PART = String.raw`(?:[A-Za-z]:|\$\{\w+\}|\$\(\w+\)|\$?[\w.~-]+)`;
+const FOLDER = String.raw`(?!-)${FOLDER_PART}?[\/\\](?:${FOLDER_PART}[\/\\])*`;
+/**
+ * Where a command word starts: after a space, a quote, a shell's separator, `*`, `[` or `{`; at a line's start after a
+ * Makefile recipe's or a unit's prefix (`\t@mysql`, `\t-mysql`) or a setting's "=" (`ExecStart=/usr/bin/mysqldump`,
+ * `command=mysqldump`, `ExecStartPre=-/usr/bin/mysql`), a "-" only before a folder or the program, never an option
+ * (`\t-I/usr/include/mysql`, `CFLAGS=-I…`); never an include or a library folder (`-I /usr/include/mysql`, `-L …`,
+ * `-isystem …`). A run of these characters is looked back over once, at its end, so a long one stays linear:
+ * memory-y6-1.
+ */
+const LINE_HEAD = String.raw`(?:^|\n)[ \t]*(?:[A-Za-z_][\w.-]*[ \t]*=)?`;
+const COMMAND_START = String.raw`(?=[\w.~$\/\\])(?:(?<![^\s;&|(\`"'*[{])|(?<=${LINE_HEAD}(?:[-@+!:]*[@+!:])?)|(?=[\/~$.\\]|m)(?<=${LINE_HEAD}[-@+!:]*-))`
+  + String.raw`(?<!(?:^|\s)-(?:I|L|isystem|iquote|idirafter)[ \t]*)`;
+/**
+ * MySQL's and MariaDB's clients, whose `-p` is a password, as a command word: alone or with its folder (COMMAND_START,
+ * FOLDER), as `sudo mysql`, `docker exec db mysql`, `$(mysql …)`, `bin/mysql` or a Makefile's `\t@mysql`, never a
+ * library, a folder or another program in a build line (`-I/usr/include/mysql -pthread`, `mysqlclient -pthread`,
+ * `mysql_config --cflags -pipe`, `--user=mysql -pid-file=…`): memory-x6-4, memory-y6-1.
+ */
+const MYSQL_CLIENT = String.raw`${COMMAND_START}(?:${FOLDER})?(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mysqlshow|mysqlslap|mysqlpump|mysqlbinlog|mysqlsh|mysql_upgrade|mysql_secure_installation|mariadb(?:-(?:dump|admin|import|check|show|slap|binlog|upgrade|backup|secure-installation))?|mariabackup)(?:\.exe)?(?=[ \t])`;
 /** htpasswd's options and the numbers some take (`-nbB -C 10`), one of them with `b` (the password on the line). */
 const HTPASSWD_OPTIONS = String.raw`(?=(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)*?[ \t]+-[A-Za-z]*b)(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)+`;
 /** A word that is no shell operator (`>`, `<`, `|`). */

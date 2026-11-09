@@ -106,6 +106,37 @@ describe("redactSecrets", () => {
   ])("leaves %j alone: a build line or a prompt, which names a MySQL library, never a client's password (memory-x6-4)", text => {
     expect(redactSecrets(text)).toBe(text);
   });
+  // A client after a Makefile recipe's prefix, a unit's or a supervisor's "=", in any folder, and MySQL's and MariaDB's
+  // other clients that take -p (memory-y6-1).
+  it.each([
+    ["\t@mysql -u root -pWint3r!Sh0p shop < schema.sql", `\t@mysql -u root -p${SECRET_HIDDEN} shop < schema.sql`],
+    ["db-reset:\n\t-mysql -u root -pWint3r!Sh0p shop", `db-reset:\n\t-mysql -u root -p${SECRET_HIDDEN} shop`],
+    ["ExecStart=/usr/bin/mysqldump -u b -pWint3r!Sh0p --all-databases", `ExecStart=/usr/bin/mysqldump -u b -p${SECRET_HIDDEN} --all-databases`],
+    ["ExecStartPre=-/usr/bin/mysql -u b -pWint3r!Sh0p", `ExecStartPre=-/usr/bin/mysql -u b -p${SECRET_HIDDEN}`],
+    ["command=mysqldump -pWint3r!Sh0p shop", `command=mysqldump -p${SECRET_HIDDEN} shop`],
+    ["cd /opt/lampp && bin/mysql -u root -pWint3r!Sh0p", `cd /opt/lampp && bin/mysql -u root -p${SECRET_HIDDEN}`],
+    ["bin\\mysql -u root -pWint3r!Sh0p", `bin\\mysql -u root -p${SECRET_HIDDEN}`],
+    ["C:\\xampp\\mysql\\bin\\mysql.exe -u root -pWint3r!Sh0p", `C:\\xampp\\mysql\\bin\\mysql.exe -u root -p${SECRET_HIDDEN}`],
+    ["~/mysql/bin/mysql -pWint3r!Sh0p", `~/mysql/bin/mysql -p${SECRET_HIDDEN}`],
+    ["$HOME/mysql/bin/mysql -pWint3r!Sh0p", `$HOME/mysql/bin/mysql -p${SECRET_HIDDEN}`],
+    ["${MYSQL_HOME}/bin/mysql -pWint3r!Sh0p", `\${MYSQL_HOME}/bin/mysql -p${SECRET_HIDDEN}`],
+    ["\t@$(MYSQL_DIR)/bin/mysql -pWint3r!Sh0p", `\t@$(MYSQL_DIR)/bin/mysql -p${SECRET_HIDDEN}`],
+    ["mysql_upgrade -u root -pWint3r!Sh0p", `mysql_upgrade -u root -p${SECRET_HIDDEN}`],
+    ["mysql_secure_installation -u root -pWint3r!Sh0p", `mysql_secure_installation -u root -p${SECRET_HIDDEN}`],
+    ["mariadb-upgrade -pWint3r!Sh0p", `mariadb-upgrade -p${SECRET_HIDDEN}`], ["mariabackup --backup -pWint3r!Sh0p", `mariabackup --backup -p${SECRET_HIDDEN}`],
+    ["mariadb-backup --backup -pWint3r!Sh0p", `mariadb-backup --backup -p${SECRET_HIDDEN}`],
+    ["[mysql -pWint3r!Sh0p]", `[mysql -p${SECRET_HIDDEN}`], ["*mysql -pWint3r!Sh0p*", `*mysql -p${SECRET_HIDDEN}`],
+  ])("hides the password in %j (memory-y6-1)", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+  it.each([
+    ["CFLAGS += -I /usr/include/mysql -pthread"], ["CFLAGS=-I/usr/include/mysql -pthread"], ["gcc -isystem /usr/include/mysql -pthread -o app main.c"],
+    ["gcc -L /usr/lib64/mysql -lmysqlclient -pthread"], ["CFLAGS = -Wall \\\n\t-I/usr/include/mysql -pthread"], ["\t@gcc -I /usr/include/mysql -pthread -o app main.c"],
+    ["gcc -I$(PREFIX)/include/mysql -pthread"], ["gcc -Ivendor/mysql -pthread"], ["mysqld_safe --user=mysql -pid-file=/run/mysqld.pid"],
+    ["ssh admin@mysql -p2222"], ["docker run -v /data/mysql:/var/lib/mysql -p3306:3306 mysql:8"], ["./configure --with-mysql=/usr/local/mysql -prefix=/opt"],
+  ])("leaves %j alone: an include or library folder, an option's value or a host, never a client (memory-y6-1)", text => {
+    expect(redactSecrets(text)).toBe(text);
+  });
 
   it("leaves ordinary text alone", () => {
     for (const text of ["sk-learn is scikit-learn", "risk-assessment-for-the-quarterly-planning-2026", "task-1234567890abcdefghijklmnopqrstuvwxyz", "hf_short", "sk_live_short", "build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value", "--compass=north", "--max-passes=3"]) {
@@ -185,6 +216,8 @@ describe("redactSecrets on long output (review #26)", () => {
     ["sk- keys one short of long enough", repeat(`sk-${"a1".repeat(9)} `)],
     ["a run of hf_ and glpat-", repeat("hf_glpat-")],
     ["URL-like runs", repeat("://a:")],
+    ["a line of recipe and unit prefixes (memory-y6-1)", repeat("@-+!:")], ["a run of dashes (memory-y6-1)", repeat("-")],
+    ["a run of folders (memory-y6-1)", repeat("a/(b\\${c}/")], ["a run of settings (memory-y6-1)", repeat("a=")],
   ])("takes linear time on %s (1 MiB)", (_name, text) => {
     const t0 = performance.now();
     redactSecrets(text);
