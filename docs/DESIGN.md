@@ -354,6 +354,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   available), Extensions, Setup & about. The current pane's link carries `aria-current`, a fill that glides between
   rows on a click (`--spring-smooth-0`), and in a contrast theme an outline. The window reopens on the last pane. Below
   640 px the links are one row of capsules, the search field first.
+- **Setup focus** uses name-free accessible headings, while visible headings keep Ember's name. The Start result
+  says “Started. Ready when you are.” so automatic screen-reader speech does not read the wake name into the microphone (first-run-r6-1).
 - **Closing Home** hides its page for this running session, preserving unsent drafts and waiting-message recovery;
   it still ends Home's Listen once, teaching and Project work. Hidden Home draws no characters. Privacy erasure on
   sign-out or account change reaches the hidden page too; a policy lockdown clears the draft, and actual quit destroys

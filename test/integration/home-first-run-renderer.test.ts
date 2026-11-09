@@ -9,6 +9,7 @@ import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { CONSENT_VERSION } from "../../app/shared/consent";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
 
 declare global {
@@ -33,7 +34,7 @@ const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], 
  * does (in force while on and agreed for the address's host; a saved key kept only for its own host), and the card's
  * yes is saved and broadcast.
  */
-interface Seed { consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
+interface Seed { voiceAgreed?: boolean; consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -58,6 +59,7 @@ afterAll(async () => { if (gate) return; await browser.close(); server.close(); 
 async function open(seed: Seed = {}): Promise<Page> {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.onboarded = !!seed.home;
+  if (seed.voiceAgreed) { settings.wakeWord = true; settings.voice.consent = true; }
   if (seed.provider) settings.provider = { ...settings.provider, ...seed.provider } as typeof settings.provider;
   settings.consent = { version: seed.consent ?? 99, at: "2026-11-04T12:00:00Z" };
   const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [], ...seed.admin };
@@ -145,6 +147,22 @@ const next = (p: Page) => p.locator("#w-next");
 const seen = (p: Page, sel: string) => p.locator(sel).evaluate(e => { const r = e.getBoundingClientRect(); return r.width > 20 && r.height > 8 && getComputedStyle(e).clipPath === "none"; });
 
 describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#6)", () => {
+  it("starts with name-free focus and announcements after voice was already agreed (first-run-r6-1)", async () => {
+    const p = await open({ agent: readyAgent(), voiceAgreed: true, consent: CONSENT_VERSION - 1 });
+    try {
+      await p.waitForTimeout(AGREE_ARM_MS + 30);
+      await next(p).click();
+      for (let i = 0; i < 3; i++) await next(p).click();
+      expect(await p.locator("#w-title").innerText()).toBe("Your Ember");
+      expect(await p.locator("#w-title").getAttribute("aria-label")).toBe("Your companion");
+      await next(p).click();
+      await expect.poll(() => focusedId(p)).toBe("home-h");
+      expect(await p.locator("#home-h").innerText()).toBe("Ember");
+      expect(await p.locator("#home-h").getAttribute("aria-label")).toBe("Home");
+      expect(await p.locator("#home-live").innerText()).not.toMatch(/\bEmber\b/i);
+    } finally { await p.close(); }
+  }, 30_000);
+
   it("(a) Copilot: a failed sign-in is visible, retry works, the models are reviewed, then the first answer", async () => {
     const p = await open();
     expect(await p.locator("#w-title").innerText()).toBe("Sign in to GitHub");

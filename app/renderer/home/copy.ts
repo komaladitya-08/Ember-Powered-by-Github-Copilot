@@ -484,7 +484,7 @@ export function setupView(rows: readonly SetupRow[], before: { opened: boolean; 
 }
 
 /** What a screen reader hears when Start has done its work and gone (review #50). */
-export const STARTED_TEXT = "Ember has started.";
+export const STARTED_TEXT = "Started. Ready when you are.";
 
 /** "Today", "Yesterday", else the weekday and date. */
 export function dayLabel(t: string, now = new Date()): string {

@@ -10,6 +10,7 @@
 
 import type { AgentStatus } from "../../main/agent/host";
 import type { Settings, SettingsPatch } from "../../main/settings";
+import { stepFocusLabel } from "./welcome-copy";
 import { CONSENT_VERSION, consentChangesSince } from "../../shared/consent";
 import type { ProviderState, ProviderTest, Status, VoiceStatus } from "../../shared/ipc";
 import { AGREE_ARM_MS, endpointHost, endpointProblem, keyNeeded, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
@@ -221,6 +222,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       own: ownInUse() ? agent?.service?.host : null, ownPhase: agent?.phase === "ready" || agent?.phase === "error" ? agent.phase : "starting", ownOffered: ownOffer().offered,
     }) : step === "consent" && changes().length ? CONSENT_AGAIN : using ? providerInUse(using) : STEP_TEXT[step];
     $("w-title").textContent = text.title;
+    $("w-title").setAttribute("aria-label", stepFocusLabel(step, text.title));
     $("w-lead").textContent = text.lead;
     for (const pane of root.querySelectorAll<HTMLElement>(".w-pane")) pane.hidden = pane.dataset.pane !== step;
     back.hidden = !stepBefore(step, ownInUse());
