@@ -152,7 +152,7 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   });
   // The second pass judges the real paths too (§3.8.3 step 5); never a third.
   if ([...real].some(([p, r]) => p !== r)) cls = i.classify(spec.command, spec.shell, { ...ctx, real });
-  // An sh or bash loop or `if` is judged by its commands, as on the PC (commands-remote-2).
+  // An sh or bash `if` is judged by its commands and a loop asks, as on the PC (commands-remote-2, commands-c7-1).
   cls = withoutReadFlow(cls, spec.shell);
   // The scripts it runs, read here (L8): their refusals refuse, their findings join (the stamp never covers them).
   const read = i.readScript;

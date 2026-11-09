@@ -139,8 +139,9 @@ export interface ClassificationExtra extends Classification {
   writesUnplaced?: boolean;
   /**
    * The line sets a variable (but a `for` list's or a read's own, judged apart), changes the folder, its options or
-   * positional words, or sources or execs (shellStateChanged): a loop's body is judged once, in the folder and with the
-   * values the line starts with, so withoutReadFlow keeps its loop's or if's own words, as main did (commands-b7-1, b7-3).
+   * positional words, or sources or execs (shellStateChanged): its commands are judged in the folder and with the values
+   * the line starts with, so withoutReadFlow keeps an if's own words, as main did (commands-b7-1, b7-3). A loop's words it
+   * keeps whatever this says (commands-c7-1).
    */
   holdsFlow?: boolean;
   /**
@@ -411,7 +412,7 @@ class Classifier {
   protected closerInput = new Map<number, Simple["ownInput"]>();
   /**
    * The text sets a variable other than a `for` list's or a read's (setVar's `loop`), or assigns one in an expansion
-   * (`${x:=…}`), from text Ember sees or not: its loops and ifs keep their own words (holdsFlow, commands-b7-3).
+   * (`${x:=…}`), from text Ember sees or not: its ifs keep their own words (holdsFlow, commands-b7-3), as its loops always do.
    */
   protected setsVars = false;
   /**

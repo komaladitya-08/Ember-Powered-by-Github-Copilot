@@ -246,12 +246,17 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(w.audit.find(e => e.phase === "decided")).toMatchObject({ verdict: "run", command: "ls build && echo zq9-$((40+2))" });
   }, 20_000);
 
-  it("runs an ordinary loop and if without asking, reads written-out text through its loop and asks before reading a file (commands-remote-2, commands-a7-2)", async () => {
-    const { result } = await run("for i in 1 2 3; do echo zq$i; done; if [ -d build ]; then echo built; fi; while read -r l; do echo got-$l; done <<'EOF'\na\nb\nEOF", "");
+  it("runs an ordinary if and a read of written-out text without asking, asks before any loop as main does, and before reading a file (commands-remote-2, commands-a7-2, commands-c7-1)", async () => {
+    const { result } = await run("if [ -d build ]; then echo built; fi; read -r a b <<'EOF'\nzq3 got-b\nEOF\necho \"$a $b\"", "");
     expect(w.cards).toEqual([]);
     expect(result.resultType).toBe("success");
     for (const want of ["zq3", "built", "got-b"]) expect(result.textResultForLlm).toContain(want);
     w.verdicts = () => "deny";
+    const loop = await run("for i in 1 2 3; do echo zq$i; done", "");
+    expect(w.cards).toHaveLength(1);
+    expect(w.cards[0].says).toContain("Ember can't tell exactly what this does.");
+    expect(loop.result.resultType).toBe("denied");
+    w.cards.length = 0;
     fs.writeFileSync(path.join(w.work, "list.txt"), "a\nb\n");
     const file = await run("while read -r l; do echo got-$l; done < list.txt", "");
     expect(w.cards).toHaveLength(1);
@@ -259,14 +264,14 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(file.result.resultType).toBe("denied");
   }, 20_000);
 
-  it("asks before an if runs a command with a library preloaded, and reads written-out text with IFS= read without asking (commands-remote-c1-1)", async () => {
+  it("asks before an if runs a command with a library preloaded, and reads written-out text with an if's IFS= read without asking (commands-remote-c1-1)", async () => {
     w.verdicts = () => "deny";
     const preload = await run("if true; then LD_PRELOAD=./x.so ls; fi", "");
     expect(w.cards).toHaveLength(1);
     expect(w.cards[0].says).toContain("It changes how commands are found or run.");
     expect(preload.result.resultType).toBe("denied");
     w.cards.length = 0;
-    const { result } = await run("while IFS= read -r l; do echo \"got-[$l]\"; done <<'EOF'\n a \nb\nEOF", "");
+    const { result } = await run("if IFS= read -r l <<< ' a '; then echo \"got-[$l]\"; fi", "");
     expect(w.cards).toEqual([]);
     expect(result.resultType).toBe("success");
     expect(result.textResultForLlm).toContain("got-[ a ]");
