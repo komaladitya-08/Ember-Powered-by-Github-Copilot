@@ -164,6 +164,47 @@ it("sends an object's last property, a multi-line signature, a Python block's bo
   await expect(projectPrompt([literal], "review", "Review this.", new AbortController().signal, privateDir)).rejects.toThrow("contain a password");
 });
 
+it("holds back a mailer's hash, a pretty-printed config, a dict of passwords, a WordPress define and a Maven server with the password's line, and sends a schema and a lexer's table (safety-privacy-r5-1, safety-privacy-c5-1)", async () => {
+  const mailer = await file("mailer.rb", "class Mailer\n  SMTP = {\n    :address => 'smtp.example.com',\n    :user_name => 'noreply',\n    :password => 'Kx7#pQ2!mz',\n  }\nend\n");
+  await expect(prompt([mailer])).rejects.toThrow(new Error("mailer.rb appears to contain a password, token or key on line 5. Remove that file or the value, then send again."));
+  const settings = await file("appsettings.json", '{\n  "Logging": { "LogLevel": "Warning" },\n  "Secrets": {\n    "Database": "Wint3r!Sh0p"\n  }\n}\n');
+  await expect(prompt([settings])).rejects.toThrow(new Error("appsettings.json appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const py = await file("settings.py", "DEBUG = False\nPASSWORDS = {\n    'prod': 'Wint3r!Sh0p',\n}\n");
+  await expect(prompt([py])).rejects.toThrow(new Error("settings.py appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+  const vars = await file("vars.yml", "db:\n  host: db1\npasswords:\n  db: Summer2024!\n");
+  await expect(prompt([vars])).rejects.toThrow(new Error("vars.yml appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const wp = await file("INSTALL.md", "# Install\n\n```php\ndefine( 'DB_PASSWORD', 'Wint3r!Sh0p' );\n```\n");
+  await expect(prompt([wp])).rejects.toThrow(new Error("INSTALL.md appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const maven = await file("MAVEN.md", "```xml\n<server>\n  <username>deploy</username>\n  <password>Wint3r!Sh0p</password>\n</server>\n```\n");
+  await expect(prompt([maven])).rejects.toThrow(new Error("MAVEN.md appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const setup = await file("SETUP.md", "# Setup\n\n```php\n'password' => 'Wint3r!Sh0p',\n```\n");
+  await expect(prompt([setup])).rejects.toThrow(new Error("SETUP.md appears to contain a password, token or key on line 4. Remove that file or the value, then send again."));
+  const schema = await file("user.js", "const User = new Schema({\n  password: {\n    type: String,\n    required: true,\n    minlength: 8\n  }\n});\n");
+  const lexer = await file("lexer.py", "tokens = {\n    'root': [\n        (r'\\s+', Text),\n        (r'(if|else)\\b', Keyword),\n    ],\n}\n");
+  const k8s = await file("deploy.yaml", "env:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: db-credentials\n        key: password\n");
+  const result = await prompt([schema, lexer, k8s]);
+  for (const line of ["minlength: 8", "(if|else)", "key: password"]) expect(result).toContain(line);
+});
+
+it("holds back a deploy script and a README that give a password to a program's short option, and sends one that reads it from a variable (safety-privacy-c5-2)", async () => {
+  const deploy = await file("deploy.sh", "#!/bin/sh\nmysqldump -u root -pWint3r!Sh0p shop > shop.sql\ncurl -u admin:Wint3r!Sh0p https://nexus.example.com/upload -T shop.sql\n");
+  await expect(prompt([deploy])).rejects.toThrow(new Error("deploy.sh appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+  const readme = await file("README.md", "# Shop\n\nLog in to the registry first:\n\n    docker login registry.example.com -u deploy -p Wint3r!Sh0p\n");
+  await expect(prompt([readme])).rejects.toThrow(new Error("README.md appears to contain a password, token or key on line 5. Remove that file or the value, then send again."));
+  const safe = await file("backup.sh", "#!/bin/sh\nmysqldump -u root -p\"$DB_PASS\" shop > shop.sql\ncurl -u \"$USER:$PASS\" https://nexus.example.com/upload\n");
+  expect(await prompt([safe])).toContain("mysqldump -u root -p");
+});
+
+it("sends a login form, a getpass CLI and an OAuth client, and takes a request that names a type, which hold no password (memory-r4-2, integrations-r4-1)", async () => {
+  const form = await file("login.html", '<form method="post" action="/login">\n  <label for="username">Username:</label>\n  <input type="text" id="username" name="username">\n  <label for="password">Password:</label>\n  <input type="password" id="password" name="password">\n</form>\n');
+  const cli = await file("cli.py", 'import getpass\n\ndef main():\n    user = input("Username: ")\n    password = getpass.getpass("Password: ")\n    return user, password\n');
+  const oauth = await file("oauth.py", 'TOKEN_URL = "https://oauth2.googleapis.com/token"\nAUTH_URL = "https://accounts.google.com/o/oauth2/auth"\n');
+  const result = await projectPrompt([form, cli, oauth], "review", "Add a token: string field to the Session interface", new AbortController().signal, privateDir);
+  for (const line of ["Password:", "getpass.getpass", "oauth2.googleapis.com/token", "Add a token: string field"]) expect(result).toContain(line);
+  const table = await file("users.html", "<table>\n  <tr><td>Password:</td><td>Summer2024!</td></tr>\n</table>\n");
+  await expect(prompt([table])).rejects.toThrow(new Error("users.html appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+});
+
 it("takes a request about user scripts passing a check and sends a path built into root, beside a user's name and password (memory-w5-4, memory-w5-5)", async () => {
   const app = await file("app.py", "print(1)\n");
   for (const q of ["Why don't the user scripts pass linting?", "How do I make user uploads pass scanning?", "Do the user queries pass sanitisation?"]) {

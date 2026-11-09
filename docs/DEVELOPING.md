@@ -2252,7 +2252,8 @@ LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file addition
 unsupported diff formats remain available as text.
 
 Files, requests, patched files and an answer kept as the next send's context go through memory's secret guard
-(`memoryRefusal`, docs/MEMORY.md), which passes over code for a secret-named key's value. A chosen file that still
+(`memoryRefusal`, docs/MEMORY.md), which passes over code for a secret-named key's value, never a literal (a hash's
+entry, a mapping or a JSON section under the key, a property such as `secrets.db`). A chosen file that still
 looks like it holds a password, token or key is named with its line (`secretLine`, `projectSecretFiles`): every such
 file at once, so the person removes only those. An exact patch whose patched file looks like it holds one isn't
 offered, and the status says which line (`readProjectPatch`'s `withheld`), never that the diff couldn't be verified; an

@@ -326,17 +326,43 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
 
+  // A prompt's or a label's words, a sentence, an address and what a key that names where a secret is holds, which
+  // still refused whole auth files, and a type named in a request (memory-r4-2, integrations-r4-1).
+  it.each([
+    ['pw = input("Password:")'], ['password = getpass.getpass("Password: ")'], ['<label for="password">Password:</label>'], ["<td>Password:</td>"],
+    ['<span>Password:</span> <input type="password">'], ['<label for="password">Password:</label>\n  <input type="password" id="password" name="password">'],
+    ['read -s -p "Password: " PASS'], ['echo "Password:"'], ['Console.Write("Password: ");'], ['"passwordLabel": "Password:",'],
+    ['Password: <input type="password" name="pw">'], ['"forgotPassword": "Forgot your password?"'], ['TOKEN_URL = "https://oauth2.googleapis.com/token"'],
+    ['TOKEN_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/token"'], ['const PASSWORD_FIELD = "password";'], ['const API_KEY_HEADER = "x-api-key";'],
+    ["secretName: db-credentials"], ['tokenType: "Bearer",'], ['  tokenizer: "cl100k_base",'], ['docker run -v "$PWD":/app node:22'],
+    ["Make apiKey: process.env.KEY optional"], ["Rename password: string to secret: string in types.ts"], ["Fix the bug where token: undefined is logged"],
+    ["Why does pin: string fail validation?"], ["Add a token: string field to the Session interface"], ["Make password: string optional in the LoginForm type"],
+    ["Why does token: null break the header?"], ["Replace apiKey: config.key with apiKey: process.env.KEY"], ["Where is the session token: string set?"],
+  ])("keeps %j, a prompt, a label, an address or a type where a secret's value would be (memory-r4-2, integrations-r4-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["<td>Password:</td><td>hunter2</td>"], ["<dt>Password:</dt>\n<dd>hunter2</dd>"], ['echo "Password:" hunter2'], ['print("Password:", "hunter2")'],
+    ['input("Password: hunter2")'], ['TOKEN_URL = "https://user:pass@host/token"'], ["password: <hunter>"], ["<b>Password:</b> hunter2"],
+    ['WEBHOOK_TOKEN_URL = "https://hooks.slack.com/services/T0000/B0000/x8KqR2mN7pL4tW9vZ3cY6b1D"'], ['PASSWORD_FIELD = "Summer2024!"'],
+    ["PIN: number 4821"], ["Password: string cheese"], ["My PIN: number is 4821"], ['"passwordLabel": "hunter2",'], ['"password": "Password"'],
+  ])("still refuses %j, a value after a prompt or a label, or in an address (memory-r4-2, integrations-r4-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+
   // A version, an issue, a setting or a user at a computer said as a login, a disk's size and a formula: round four's
   // login and admin rules refused them (safety-privacy-c4-3, memory-c4-2).
   it.each([
     ["Credentials: AWS_PROFILE=dev2"], ["The login is v2.0"], ["Login was v1.4.2 and is now v2."], ["Login was #142 in the issue tracker."],
+    ["Login is localhost:3000/login"], ["The login is app.example.com:8443/sign-in"],
     ["My work login is jsmith@corp"], ["The login is user@host:2222"], ["The login is admin@nas1:22"],
     ["Root: 45G / 100G (45%)"], ["Disk usage: root: 45GB / 100GB"], ["root - 12GB / 50GB used"], ["const root = -b / (2*a);"], ["root = width / 2000"],
-  ])("keeps %j, which names no password (safety-privacy-c4-3, memory-c4-2)", text => {
+  ])("keeps %j, which names no password (safety-privacy-c4-3, memory-c4-2, safety-privacy-v4-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
   it.each([
     ["The login is admin@nas1"], ["The login is P@ssword"], ["The login is p@ss.word1"], ["Jenkins admin: admin / j3nkins!"], ["Admin: admin / P@ssw0rd"],
+    ["The login is localhost:3000/hunter2!"],
   ])("still refuses %j as a login or an admin's password (safety-privacy-c4-3, memory-c4-2)", text => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
@@ -364,6 +390,20 @@ describe("what memory never keeps", () => {
   ])("keeps %j, a password's state where its value would be (memory-w5-3)", text => {
     expect(memoryRefusal(text)).toBeNull();
     expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).not.toBe("refused");
+  });
+  // A value after the state and a comma or a full stop, which round five's state words passed with it (memory-r5-3).
+  it.each([
+    ["PIN: entered, 4821"], ["Password: entered, BlueSky99"], ["password: typed. BlueSky99"], ["Password: masked, but it's hunter2"],
+    ["The password is masked, but it's hunter2"], ["PIN: masked. 4821"], ["Password: hidden, it's hunter2"], ["Password: saved, it's hunter2"],
+  ])("refuses %j and saves nothing, a value after a password's state (memory-r5-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["Password: masked, PIN: entered"], ["The password is masked, as usual"], ["Password: hashed, then stored in the vault"], ["Passwords are hashed. Tokens are rotated."],
+    ["The password is required, 12 characters"], ["Password: changed, 3 times"],
+  ])("keeps %j, a state with no value after it (memory-r5-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
   });
   it.each([["password: hashed hunter2"], ["PIN: entered (4821)"], ["Password: typed (hunter2)"], ["Passwords are hashed hunter2."]])(
     "still refuses %j, a value after a password's state (memory-w5-3)", text => {
@@ -442,6 +482,59 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
 
+  // A literal under a key named for a secret is the secret, wherever the key sits: a hash's entry, a property that
+  // names one of several, a mapping or a list under it, a bracket opened on its line. Round five read all of these as
+  // code (safety-privacy-r5-1, safety-privacy-c5-1).
+  const PHP_CONFIG = "<?php\n\nreturn [\n    'connections' => [\n        'mysql' => [\n            'host' => '10.0.0.12',\n"
+    + "            'username' => 'shop_app',\n            'password' => 'Wint3r!Sh0p',\n        ],\n    ],\n];\n";
+  it.each([
+    ["'password' => 'Summer2024!',"], [":password => 'Kx7#pQ2!mz'"], ['"password" => "hunter2"'], ["my %h = (password => 'Summer2024!');"],
+    ["'api_key' => 'Zx9vQ2mK7pL4rT8w',"], ["'db_password' => env('DB_PASSWORD', 'Summer2024!'),"], ["password => Summer2024!"], [PHP_CONFIG],
+    ["SMTP = {\n  :address => 'smtp.example.com',\n  :password => 'Kx7#pQ2!mz',\n}"], ["my %db = (\n    user     => 'report',\n    password => 'Rep0rt$2026',\n);"],
+    ["secrets.db: Summer2024!"], ["passwords.home = BlueSky99"], ["password.old: Summer2024!"], ['password.new = "Summer2024!"'],
+    ['token.prod = "ghx_abcdefghijklmnop1234"'], ["database.password.prod = Wint3r!Sh0p"], ["app.secrets.db=Summer2024!"], ["password.type: hunter2"],
+    ["passwords:\n  db: Summer2024!"], ["password:\n  production: Wint3r!Sh0p\n  staging: hunter22"], ["secrets:\n  admin: Summer2024!"],
+    ["credentials:\n  admin: Wint3r!Sh0p"], ["tokens:\n  github: ghx_abcdefghijklmnop1234"], ["api_keys:\n  openai: sk-proj-abcdef1234567890abcdef"],
+    ["password:\n  value: Wint3r!Sh0p"], ["wifi:\n  home: BlueSky99"], ["database:\n  host: db1\n  password:\n    production: Wint3r!Sh0p\n"],
+    ["passwords:\n  - name: db\n    value: Wint3r!Sh0p"], ["passwords:\n  - Wint3r!Sh0p\n  - hunter22"], ['{\n  "secrets": {\n    "db": "Wint3r!Sh0p"\n  }\n}'], ["PASSWORDS = {\n    'prod': 'Wint3r!Sh0p',\n}"],
+    ['PASSWORDS = [\n    "Wint3r!Sh0p",\n]'], ['password = {\n  prod = "Wint3r!Sh0p"\n}'], ["passwords = {\n  db: 'Summer2024!'\n}"],
+    ["type Password = 'Summer2024!'"], ["if password:\n    return 'Summer2024!'"], ["class Password:\n    value = 'Summer2024!'"],
+    ['print("password: {0}".format("Summer2024!"))'], ["print(f'password: {pw}')  # Summer2024!"],
+    ["define( 'DB_PASSWORD', 'Wint3r!Sh0p' );"], ["<password>Wint3r!Sh0p</password>"], ['<add key="Password" value="Wint3r!Sh0p" />'],
+    ["$config['password'] = 'Wint3r!Sh0p';"], ["os.environ['PASSWORD'] = 'Wint3r!Sh0p'"], ['map.put("password", "Wint3r!Sh0p");'],
+    ['props.setProperty("db.password", "hunter2");'],
+  ])("refuses %j, a literal under a key named for a secret (safety-privacy-r5-1, safety-privacy-c5-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  // Memory runs a fact's lines together before it looks, so a mapping is read on one line there.
+  it.each([
+    ["Remember my passwords:\n  bank: Wint3r!Sh0p\n  email: Summer2024!"], ["credentials:\n  admin: Wint3r!Sh0p"], ["Wi-Fi password:\n    home: BlueSky99"],
+    ["wifi:\n  home: BlueSky99"], ["Netflix password => hunter2!"], ["pin => 4821"], ["The router login: admin: P@ssw0rd"],
+  ])("saves nothing for %j, a password under another label (safety-privacy-r5-1)", text => {
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([["Wi-Fi: SSID: Home5G"], ["Wi-Fi: speed: 300Mbps"], ["Credentials: username: admin"]])(
+    "keeps %j, a setting under a secret's name (safety-privacy-r5-1)", text => {
+      expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).not.toBe("refused");
+    });
+  it.each([
+    ["token => token.trim()"], ["tokens.filter(token => !!token)"], ["'password' => $password,"], ["'password' => env('DB_PASSWORD'),"],
+    [":password => ENV['SMTP_PASSWORD'],"], ['token.type = "bearer";'], ["token.start = 1024;"], ["    token.line = line"], ["self.token.refresh = refresh"],
+    ["if (tokenBefore.loc.end.line ===\n    comment.loc.start.line - 1) {"], ["com.sun.management.jmxremote.password.file=filepath"],
+    ["password:\n  min_length: 12\n  require_symbols: true"], ["secretKeyRef:\n  name: db-credentials\n  key: password"],
+    ["password:\n  secure: fN5b3I7B9Kma75TXOQuU4MTdkzAQ"], ["wifi:\n  ssid: HomeNet\n  enabled: true"], ['tokens:\n  primary: "#ff0000"\n  spacing: 8px'],
+    ["secrets:\n  - db_password\n  - api_key"], ["password: {\n  type: String,\n  required: true,\n  minlength: 8\n}"], ['const tokens = [\n  "if",\n  "else",\n];'],
+    ['"tokens": {\n  "input": 1200,\n  "output": 340\n}'], ['PASSWORD_MESSAGES = {\n  tooShort: "Password is too short",\n}'],
+    ['"credentials": {\n  "key": "base64 encoded json representation of credentials."\n}'], ["PROJECTS_SECRETS = [\n  'projects.secrets',\n]"],
+    ["const secrets = {\n  db: process.env.DB_PASSWORD,\n  api: getKey(),\n};"], ["class Token:\n    name: str\n    text: str"],
+    ["if node.type == token.SEMI: # *sigh*\n    break"], ["for ttype, value in tokensource:\n    color = self.colorscheme.get(ttype)\n    while color is None:"],
+    ["Create a new access token from a refresh_token.\n\n:param request: OAuthlib request."], ["PROJECTS_SECRETS = (\n    'projects.secrets',\n)"],
+    ["<password>${env.PW}</password>"], ["<password>{password}</password>"], ["define('DB_PASSWORD', getenv('DB_PASSWORD'));"], ['map.put("password", password);'],
+    ["$config['password'] = '';"], ["<passwordPolicy>strict</passwordPolicy>"], ["define('AUTH_KEY', 'put your unique phrase here');"],
+  ])("keeps %j, code or settings under a key named for a secret (safety-privacy-r5-1, safety-privacy-c5-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   // A login's password written with "@", a setting that names a password, an admin's pair after "=" and a letters-only
   // "pass" after a user name, which round five's login and admin rules kept (memory-v5-4).
   it.each([
@@ -478,7 +571,7 @@ describe("what memory never keeps", () => {
   it.each([
     ["The user's Wi-Fi network key is BlueSky99"], ["The user's network security key is BlueSky99"], ["Network security key: BlueSky99"],
     ["The WPA key is BlueSky99"], ["The user's WPA2 key is BlueSky99"], ["The router's pre-shared key is BlueSky99"], ["The VPN pre-shared key is Tr0ub4dor&3"],
-    ["The PSK is BlueSky99"], ["Wi-Fi BlueSky, passphrase BlueSky99"], ["The answer to the user's security question is Fluffy"],
+    ["The PSK is BlueSky99"], ["PSK: BlueSky99"], ["The network key is BlueSky99"], ["Wi-Fi BlueSky, passphrase BlueSky99"], ["The answer to the user's security question is Fluffy"],
     ["Seed: abandon ability able about above absent"], ["The Airbnb code is 4821"], ["Our Airbnb check-in code is 4821"],
     ["The code for the Airbnb is 4821"], ["The gym code is 4821"], ["The cabin code is 4821"], ["The shed code is 4821"], ["The storage unit code is 4821"],
     ["The mailbox code is 4821"], ["The lift code is 4821"],
@@ -489,7 +582,38 @@ describe("what memory never keeps", () => {
     ["Click the network key icon"], ["WPA2 is enabled"], ["The PSK field is empty"], ["The network key is on the router's label"], ["Seed: Use The Fixtures In Tests First"],
     ["The Airbnb booking code is 4821"], ["The discount code for the gym is 4821"], ["The gym class code is 101"], ["The lift error code is 4821"],
     ["The passphrase field is required"],
+    // A Wi-Fi key's state, where to look and its mode, which round five's Wi-Fi names refused (memory-r5-2).
+    ["PSK is enabled on the router"], ["The PSK is disabled"], ["The pre-shared key is configured on both ends"], ["The PSK is configured on both ends"],
+    ["Network key: see sticker"], ["The network key is WPA2"], ["PSK: rotated monthly"], ["PSK: see the router label"],
   ])("keeps %j, which names no secret (safety-privacy-c4-2, memory-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  // A secret said as changed, current or to be, the way people most often say one, and a service, a router's label or a
+  // capitals setting with its value (memory-r5-1, safety-privacy-1, safety-privacy-c4-2, memory-1).
+  it.each([
+    ["My Wi-Fi password is now BlueSky99"], ["My password is still hunter2"], ["The password is also hunter2"], ["My bank PIN is now 4821"],
+    ["The door code is now 4821"], ["The keypad code is now 4821"], ["The user's password is now Summer2024!"], ["I changed my password to Summer2024!"],
+    ["I changed my PIN to 4821"], ["I changed my Netflix password to hunter2"], ["The user's Netflix password changed to hunter2"],
+    ["The user's password was changed to Summer2024!"], ["The user's password has been reset to Summer2024!"], ["The user set their password to Summer2024!"],
+    ["The Wi-Fi password was updated to BlueSky99"], ["remember I set my PIN to 4821"], ["I updated the alarm code to 4821"],
+    ["my password: changed it to hunter22"], ["The password will be hunter2"], ["My password used to be hunter2"], ["I changed my password to fluffy."],
+    ['"pin": "4821"'], ["Netflix: hunter2"], ["The user's Gmail: Tr0ub4dor&3"], ["The user's Netflix account: hunter2"], ["Netflix login hunter2"],
+    ["The wireless key is BlueSky99"], ["WLAN key: BlueSky99"], ["WEP key: 1234567890"], ["Guest Wi-Fi: BlueSky / BlueSky99"],
+    ["Home network: BlueSky, key BlueSky99"], ["DB_PASS=Tr0ub4dor&3"],
+  ])("refuses %j and saves nothing, a secret said as changed, current or with its service (memory-r5-1, safety-privacy-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ["The password is now required"], ["The password changed to the new policy last week"], ["The PIN is now 6 digits"], ["The door code changes on Monday"],
+    ["My password manager is now Bitwarden"], ["I changed my password manager to 1Password"], ["The password should be easy to remember"],
+    ["Set the password to expire every 90 days"], ["Change your password to something memorable"], ["The password will be reset in 30 days"],
+    ["The PIN changed to 6 digits"], ["Reset the password to the default"], ["The password is still required"], ["The password must be 12+ characters"],
+    ["I set my password manager to lock after 5 minutes"], ["Gmail: priya2@gmail.com"], ["Netflix: 4K plan"], ["Spotify: Premium family plan"],
+    ["The user's GitHub: octocat2"], ["Amazon: order 123-4567"], ["Steam: 250 games"], ["DB_PASS=$DB_PASSWORD"], ["Wi-Fi: BlueSky / 5GHz"],
+    ["The wireless keyboard is broken"], ["Netflix login is via Google"],
+  ])("keeps %j, which says no secret (memory-r5-1, safety-privacy-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
 

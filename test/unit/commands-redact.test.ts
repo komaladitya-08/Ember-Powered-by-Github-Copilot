@@ -59,6 +59,32 @@ describe("redactSecrets", () => {
     expect(commandLineSecret(key)).toBe(true);
   });
 
+  // A password given to a program's short option, which only the option's program says is one (safety-privacy-c5-2).
+  it.each([
+    ["mysql -u root -pWint3r!Sh0p", `mysql -u root -p${SECRET_HIDDEN}`],
+    ["mysqldump -u root -p'Wint3r!Sh0p' shop > shop.sql", `mysqldump -u root -p'${SECRET_HIDDEN}' shop > shop.sql`],
+    ["curl -u admin:Wint3r!Sh0p https://x", `curl -u admin:${SECRET_HIDDEN} https://x`],
+    ["curl --user=admin:Wint3r!Sh0p https://x", `curl --user=admin:${SECRET_HIDDEN} https://x`],
+    ["docker login registry.example.com -u deploy -p Wint3r!Sh0p", `docker login registry.example.com -u deploy -p ${SECRET_HIDDEN}`],
+    ["mongo -u admin -p Wint3r!Sh0p", `mongo -u admin -p ${SECRET_HIDDEN}`],
+    ["sshpass -p 'Wint3r!Sh0p' ssh host", `sshpass -p '${SECRET_HIDDEN}' ssh host`],
+    ["redis-cli -a Wint3r!Sh0p", `redis-cli -a ${SECRET_HIDDEN}`],
+    ["smbclient //srv/share -U admin%Wint3r!Sh0p", `smbclient //srv/share -U admin%${SECRET_HIDDEN}`],
+    ["htpasswd -b .htpasswd admin Wint3r!Sh0p", `htpasswd -b .htpasswd admin ${SECRET_HIDDEN}`],
+    ["openssl enc -k Wint3r!Sh0p -in a", `openssl enc -k ${SECRET_HIDDEN} -in a`],
+    ["net use Z: \\\\srv\\share Wint3r!Sh0p /user:admin", `net use Z: \\\\srv\\share ${SECRET_HIDDEN} /user:admin`],
+    ["echo 'Wint3r!Sh0p' | sudo -S apt update", `echo '${SECRET_HIDDEN}' | sudo -S apt update`],
+  ])("hides the password in %j (safety-privacy-c5-2)", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+  it.each([
+    ["mysql -u root -p"], ["mysql -u root -p shop"], ['mysql -u root -p"$DB_PASS"'], ["mysql -u root -pPASSWORD"], ['curl -u "$USER:$PASS" https://x'],
+    ["curl -u admin: https://x"], ["docker run -p 8080:80 nginx"], ['docker login -u me -p "$TOKEN"'], ["docker login --password-stdin"], ['sshpass -p "$PW" ssh host'],
+    ["ps -p 1234"], ["grep -p foo"], ['git commit -am "fix mysql -p handling"'],
+  ])("leaves %j alone: a prompt, a variable, a placeholder or another program's option (safety-privacy-c5-2)", text => {
+    expect(redactSecrets(text)).toBe(text);
+  });
+
   it("leaves ordinary text alone", () => {
     for (const text of ["sk-learn is scikit-learn", "risk-assessment-for-the-quarterly-planning-2026", "task-1234567890abcdefghijklmnopqrstuvwxyz", "hf_short", "sk_live_short", "build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value", "--compass=north", "--max-passes=3"]) {
       expect(redactSecrets(text)).toBe(text);
