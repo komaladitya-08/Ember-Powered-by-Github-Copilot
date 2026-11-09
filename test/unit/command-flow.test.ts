@@ -2818,7 +2818,7 @@ describe("a loop or an if that changes the folder, sets a variable or asks, as t
 describe("patch -d and cd -- in Ember's folder, as the flow judges them (commands-a7-3, commands-a7-4)", () => {
   it("refuses to patch, unpack into or edit Ember's folder named after patch -d or cd --", async () => {
     for (const command of [
-      "patch -d ~/.config/ember -p0 < /tmp/p", "patch --directory=$HOME/.config/ember -p0 -i /tmp/p",
+      "patch -d ~/.config/ember -p0 < /tmp/p", "patch --directory=$HOME/.config/ember -p0 -i /tmp/p", "patch --di=/home/ana/.config/ember -p1 < p.diff",
       "cd -- ~/.config/ember && sed -i s/false/true/ settings.json", "pushd -- ~/.config/ember && tar -xf /tmp/x.tar", "cd -- /etc/ember && cat policy.json",
     ]) {
       setCommandJudge(null);

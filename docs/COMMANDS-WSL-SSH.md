@@ -435,9 +435,9 @@ keys and click in Ember's windows (`xdotool`, `SendKeys`, `osascript` keystrokes
 it would change Ember's own safety settings, records or programs." ("it would read …" for a command that only reads
 them, such as `cat` or `Get-Content`) or "Ember won't run this: it could press keys or click in Ember's own windows."
 The same goes for the folder a command works in, named after `cd --` or `pushd --` (`cd -- ~/.config/ember && sed -i …
-settings.json`) or given to `patch -d` or `--directory`, which changes the files the patch names there (`patch -d
-~/.config/ember -p0 < x.patch`; a folder Ember can't see there asks), and when a shell loop's list or a variable the
-command sets names them (`for f in ~/.config/ember/*; do …`,
+settings.json`) or given to `patch -d` or `--directory` (also shortened, down to `--di`), which changes the files the
+patch names there (`patch -d ~/.config/ember -p0 < x.patch`; a folder Ember can't see there asks), and when a shell
+loop's list or a variable the command sets names them (`for f in ~/.config/ember/*; do …`,
 `d=~/.config/ember; rm -rf "$d"`, `d=~/.config; rm -rf "$d"/emb*`), in PowerShell too (`$d = "$env:LOCALAPPDATA\ember";
 Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do `set --` (`"$1"`, `"$@"`),
 `printf -v` and the text a here-string or here-document gives `read` or `xargs` (`while read f; do rm -rf "$f"; done <<<

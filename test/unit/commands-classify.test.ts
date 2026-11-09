@@ -1755,8 +1755,13 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["patch -d \"$d\" -p0 < /tmp/p", "patch --directory=\"$d\" -p1 -i fix.patch", "patch -d\"$d\" -p0 < p", "patch -Rd\"$d\" < p"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
+    // GNU patch takes `--di`, the shortest unambiguous --directory, as it (commands-b7-5).
+    for (const cmd of ["patch --di=/home/ana/.config/ember -p1 < p.diff", "patch --di=$HOME/.config/ember -p0 -i /tmp/p", "patch --di /home/ana/.config/ember -p1 < p.diff"]) {
+      expect(decided(cmd).cls.refuse?.rule, cmd).toBe("ember.path");
+    }
+    expect(decided("patch --di=\"$d\" -p1 < p").decision.verdict).toBe("ask");
     // A folder of the project is patched as before.
-    for (const cmd of ["patch -d src -p1 < fix.patch", "patch -dsrc -p1 < fix.patch", "patch --directory=src -p1 -i fix.patch", "patch -p1 < fix.patch"]) {
+    for (const cmd of ["patch -d src -p1 < fix.patch", "patch -dsrc -p1 < fix.patch", "patch --directory=src -p1 -i fix.patch", "patch --di=src -p1 < fix.patch", "patch -p1 < fix.patch"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
     }
   });

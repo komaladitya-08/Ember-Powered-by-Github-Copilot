@@ -6739,13 +6739,15 @@ reg(NATIVE, ["patch", "gpatch"], h => {
   // --merge takes a style only after = (commands-remote-i5a).
   const p = opts(h, { shortValue: "pioDdBFrVYzg", longValue: ["strip", "input", "output", "directory", "ifdef", "prefix", "fuzz", "reject-file", "version-control", "basename-prefix", "suffix", "get", "quoting-style", "reject-format"], longOptional: ["merge"] });
   let sc = h.sc;
-  const dir = values(p, "d", "directory")[0];
+  // GNU patch takes `--di`, the shortest unambiguous --directory, as it; optIs matches three letters or more
+  // (commands-b7-5).
+  const dir = values(p, "d", "di", "directory")[0];
   if (dir !== undefined) sc = child(h.sc, { cwd: dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) });
   const ph: H = { ...h, sc, shellSc: h.shellSc ?? h.sc };
   // The folder it changes files in, which the patch's own text names: judged as a folder written into, so Ember's own is
   // refused and one Ember can't see asks (commands-a7-3).
-  optionFiles(h, h.args, p, { into: ["d", "directory"] });
-  if (h.args.some(a => a.v === null && /^(-[A-Za-z]*d|--dir(e(c(t(o(ry?)?)?)?)?)?=)/.test(a.raw))) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
+  optionFiles(h, h.args, p, { into: ["d", "di", "directory"] });
+  if (h.args.some(a => a.v === null && /^(-[A-Za-z]*d|--di(r(e(c(t(o(ry?)?)?)?)?)?)?=)/.test(a.raw))) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   for (const f of values(p, "i", "input")) if (f) h.e.usePath(lit(f), "read", sc);
   for (const f of values(p, "o", "output", "r", "reject-file")) overwrites(ph, f === null ? { v: null, raw: "?", glob: false } : lit(f));
   const [file, patchFile] = p.operands;
