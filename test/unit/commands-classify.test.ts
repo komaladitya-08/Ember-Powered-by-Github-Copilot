@@ -985,9 +985,10 @@ describe("the card's words from the classifier (review #214)", () => {
   });
 
   it("says a loop's variable as the files the loop names, never as shell text like \"$f\" (commands-remote-c2-3)", () => {
-    // As the flow judges a loop: by the commands in it (a list or a read over text Ember can't see also says so,
-    // commands-a7-2, left out here).
-    const says = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.filter(f => f.rule !== "unclear.read-text").map(f => f.says);
+    // As the flow judges a loop, by the commands in it: the loop's own words, which a loop whose commands ask keeps as on
+    // main (commands-b7-2), and a list or a read over text Ember can't see (commands-a7-2) say so too, left out here.
+    const flowWord = /^unclear\.(for|while|until|do|done|in)$/;
+    const says = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.filter(f => f.rule !== "unclear.read-text" && !flowWord.test(f.rule)).map(f => f.says);
     expect(says("for f in *.log; do rm \"$f\"; done")).toEqual(["Deletes each file the loop names."]);
     expect(says("for f in a b; do rm -r ${f}; done")).toEqual(["Deletes a and b and everything in them."]);
     // A list of names is said by its names, so a loop over folders never reads as harmless (commands-remote-c2-3).
@@ -1121,6 +1122,43 @@ describe("loops and ifs (commands-remote-2)", () => {
       "while read f; do rm -rf \"$f\"; done <<< ~/.config/ember", "for d in ~/.config/ember; do rm -rf \"$d\"; done",
       "printf '%s\\n' ~/.config/ember | while read -r d; do rm -rf \"$d\"; done",
     ]) expect(flow(cmd).refuse?.rule, cmd).toBe("ember.path");
+  });
+
+  it("keeps a loop's or an if's own words, as main did, when it changes the folder, sets a variable or anything in the line asks (commands-b7-1, b7-2, b7-3)", () => {
+    const flow = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash");
+    const loopWords = (cmd: string) => flow(cmd).findings.map(f => f.rule).filter(r => /^unclear\.(for|while|until|if|do|done|then|fi)$/.test(r));
+    for (const cmd of [
+      // The body is judged once, in the folder the line starts in: a folder change makes the next pass another folder's
+      // (commands-b7-1).
+      "for i in 1 2; do sed -i s/a/b/ ember/settings.json; cd ~/.config; done", "for i in 1 2 3; do cat .config/ember/settings.json; cd ..; done",
+      "for i in 1 2; do cat credentials; cd ~/.aws; done", "for i in 1 2; do ls -la .config/ember; cd; done", "for i in 1 2; do ls -la .config/ember; cd -; done",
+      "for i in 1 2; do cat ember/settings.json; pushd ~/.config; done", "for i in 1 2; do cat ember/settings.json; popd; done",
+      "for d in /home/ana/.config proj; do ls ember; cd $d; done", "for i in 1 2; do cat ember/settings.json && cd ~/.config; done",
+      "for i in 1 2; do cat ember/settings.json; for j in 1; do cd ~/.config; done; done", "for i in 1 2; do cat ember/settings.json; if true; then cd ~/.config; fi; done",
+      "while cat ember/settings.json; do cd ~/.config; done", "while true; do cat ember/settings.json; command cd ~/.config; done",
+      "for i in 1 2; do ls; time cd ..; done", "for i in 1 2; do ls; chdir ..; done", "if [ -d x ]; then cd x; fi",
+      // A dangerous command the user's words could announce (commands-b7-2).
+      "while true; do rm -rf build; done", "for i in 1 2; do rm -rf build; done", "if [ -d build ]; then rm -rf build; fi", "for i in 1 2; do echo $i; done; rm -rf build",
+      // A variable set, from text Ember can't see or not, or a file sourced (commands-b7-3).
+      "for i in 1; do x=$(cat f); echo $x; done", "if x=$(cat f); then echo $x; fi", "if true; then x=$(cat f); fi; echo \"$x\"",
+      "for i in 1; do local x=$(cat f); echo $x; done", "for i in 1; do export X=$(cat f); echo $X; done", "for i in 1; do typeset x=$(cat f); echo $x; done",
+      "for i in 1; do readonly x=$(cat f); echo $x; done", "for i in 1; do declare x=$(cat f); echo $x; done", "for i in 1; do set -- $(cat f); echo $1; done",
+      "for i in 1; do printf -v x '%s' \"$(cat f)\"; echo $x; done", "for i in 1; do wait -p x; echo $x; done", "for i in 1; do exec {fd}< f; echo $fd; done",
+      "for i in 1 2; do ls {fd}< f; done", "for i in 1 2; do ls; x=1; done", "for i in 1 2; do x=$i; done; echo $x", "if [ -f x ]; then y=1; fi",
+      "for i in 1; do : ${x:=a}; done", "for i in 1 2; do ls; unset x; done", "for i in 1 2; do ls \"$i\"; shift; done", "for i in 1 2; do ls; set -f; done",
+      "for i in 1 2; do ls; source x; done", "for i in 1 2; do ls; . x; done", "for i in 1 2; do ls; exec 3< f; done", "x=$(cat f); for i in 1 2; do echo $i; done",
+    ]) expect(loopWords(cmd), cmd).not.toEqual([]);
+    // A `[[ … ]]` test on a command line asks as on main, in a loop or an if or not: main reads one through only in a
+    // script (commands-b7-4).
+    for (const cmd of ["[[ -d build ]] && make", "[[ -f x ]] || touch x", "if [[ -d build ]]; then make; fi", "while [[ ! -f done.txt ]]; do sleep 1; done"]) {
+      expect(flow(cmd).findings.map(f => f.rule), cmd).toContain("unclear.keyword");
+    }
+    // A loop or if that does none of that is still read through, as its commands written out would run.
+    for (const cmd of [
+      "for i in 1 2 3; do echo $i; done", "if [ -f package.json ]; then npm test; fi", "while read -r l; do echo \"$l\"; done <<< 'a b'",
+      "while IFS= read -r l; do echo \"$l\"; done <<EOF\na\nb\nEOF", "until [ -f x ]; do sleep 1; done", "while true; do echo x; break; done",
+      "for f in a b; do echo \"$f\"; done | cat", "if git diff --quiet; then echo clean; else echo dirty; fi", "for i in 1 2; do ls; umask 022; done",
+    ]) expect(flow(cmd).findings, cmd).toEqual([]);
   });
 
   it("reads a for loop's variable as an assignment: one that changes how commands are found or run is unclear", () => {

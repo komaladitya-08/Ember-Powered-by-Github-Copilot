@@ -138,6 +138,12 @@ export interface ClassificationExtra extends Classification {
   /** Of those, the writes Ember can't place that no finding stands for (a checkout's work tree, an archive unpacked). */
   writesUnplaced?: boolean;
   /**
+   * The line sets a variable (but a `for` list's or a read's own, judged apart), changes the folder, its options or
+   * positional words, or sources or execs (shellStateChanged): a loop's body is judged once, in the folder and with the
+   * values the line starts with, so withoutReadFlow keeps its loop's or if's own words, as main did (commands-b7-1, b7-3).
+   */
+  holdsFlow?: boolean;
+  /**
    * Downloads that are the download only while the target doesn't say they are a folder: a download moved or copied
    * to a name that may be one (`mv x.py tools`), whose file is then tools/x.py, also in `downloads`. Until the target
    * says so (withRealPaths) the name counts too, so a path that skips the check stays on the safe side.
@@ -404,6 +410,11 @@ class Classifier {
   /** What a loop's or an `if`'s closer (`done`, `fi`) gives the commands in it on their input (Simple.ownInput), by index. */
   protected closerInput = new Map<number, Simple["ownInput"]>();
   /**
+   * The text sets a variable other than a `for` list's or a read's (setVar's `loop`), or assigns one in an expansion
+   * (`${x:=…}`), from text Ember sees or not: its loops and ifs keep their own words (holdsFlow, commands-b7-3).
+   */
+  protected setsVars = false;
+  /**
    * A plain variable's values, judged at the end only if a command used the variable in a word Ember didn't judge as a
    * path (`python3 -c "…$d…"`): testing or printing it isn't such a use (commands-remote-r4-5).
    */
@@ -623,6 +634,7 @@ class Classifier {
    * loop's files on the card.
    */
   setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false, exported = false): void {
+    if (!loop) this.setsVars = true;
     if (!/^([A-Za-z_]\w*|[1-9@*])$/.test(name)) return;
     if (!loop) this.loopVars.delete(name);
     if (sc.family !== "posix") return;
@@ -1585,6 +1597,20 @@ const ASSIGNS_AFTER: ReadonlySet<string> = new Set([...FLOW_WRAPPER, "time"]);
 const READS_LINES: ReadonlySet<string> = new Set(["read", "mapfile", "readarray"]);
 /** The flow words a command may stand after in a loop or an `if` (`while IFS= read -r l`, `do read -r l`). */
 const LOOP_OR_IF: ReadonlySet<string> = new Set(["if", "then", "elif", "else", "while", "until", "do"]);
+/**
+ * Built-ins that change what the rest of the line runs with: its folder (cd and friends), its options or positional
+ * words (set, shift), its variables (unset), or anything a sourced file or exec does (commands-b7-1, b7-3).
+ */
+const SHELL_STATE: ReadonlySet<string> = new Set(["cd", "chdir", "pushd", "popd", "set", "unset", "shift", "source", ".", "exec"]);
+/**
+ * Whether a POSIX command changes the shell's state for what follows it (holdsFlow): a SHELL_STATE built-in, one run
+ * through exec, `wait -p` (a variable), or a `{name}` word (`exec {fd}< f` sets fd).
+ */
+function changesShellState(c: ParsedCommand): boolean {
+  if (c.family !== "posix") return false;
+  return SHELL_STATE.has(c.program) || c.wrappers.includes("exec") || [c.program, ...c.args].some(a => a !== null && /^\{[A-Za-z_]\w*\}$/.test(a))
+    || (c.program === "wait" && c.args.some(a => a === null || /^-\w*p/.test(a)));
+}
 /** An unquoted `NAME=value` or `NAME+=value` word, as the parser takes one at the start of a command. */
 const ASSIGNMENT_WORD = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
 
@@ -1750,6 +1776,7 @@ class Engine extends Classifier {
       // command), writes where it likes once the user says yes.
       writesAnywhere: this.unnamedAnywhere || this.findings.some(f => f.cls === "unclear" || f.cls === "escape"),
       writesUnplaced: this.unnamedAnywhere,
+      holdsFlow: this.setsVars || this.commands.some(changesShellState),
       ...(this.downloadsIfFile.length ? { downloadsIfFile: this.downloadsIfFile } : {}),
     };
     // A variable set anywhere in the text may redirect a command (GH_REPO, NPM_CONFIG_REGISTRY, P4PORT): no intent
@@ -1993,6 +2020,8 @@ class Engine extends Classifier {
     let unresolved = false;
     // A word whose only substitution is a plain `$(pwd)` or `` `pwd` `` gives the folder, as `$PWD` does (review #170).
     const cwdSub = w.subs.length === 1 && w.segs.filter(seg => seg.t === "unres" && seg.why === "command substitution").length === 1 && lonePwd(w.subs[0]);
+    // `${x:=…}` and `${x=…}` set x as they expand (holdsFlow, commands-b7-3).
+    if (/\$\{[A-Za-z_]\w*(\[[^\]]*\])?:?=/.test(w.raw)) this.setsVars = true;
     // The word as pieces, for Ember's own refusal through variables the text sets (commands-remote-c3-2).
     const parts: Part[] = [];
     // Which parts are unquoted text, where `*`, `?` and `[` match names (commands-remote-v4-4).
