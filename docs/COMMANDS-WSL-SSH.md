@@ -187,8 +187,8 @@ Ember stops and asks before a command that:
   read never does; a download a program run through `env -C` or `sudo -D` writes with the shell's `>` is the file in
   the shell's own folder, so `env -C src curl -s … > x.py` and then `python3 x.py` asks; and a patch this task downloaded or fetched applied with `patch`,
   `git apply` or `git am`, in whichever folder it is applied in (`patch -d src -p1 < x.patch`, `env -C src patch -p1 <
-  x.patch`, `git -C sub am < x.patch`), or code pulled or fetched from an address rather than the repository's own
-  remote (`git pull https://…`), marks the files it changes the same way, so the next `make`, `npm test` or `bash
+  x.patch`, `git -C sub am < x.patch`), or code pulled or fetched from any source, including a remote configured in an earlier command
+  (`git pull extra-source`), marks the files it changes the same way, so the next `make`, `npm test` or `bash
   build.sh` asks),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
@@ -1027,3 +1027,7 @@ Use the exact path to name the intended folder.
 Known protected paths handed to shell code as positional arguments are refused too. Unsupported Windows blocks
 and cmd variable assignments retain a conservative own-path scan, including the known profile-folder variables,
 so foreach or a later percent-variable expansion cannot hide Ember's settings from the refusal.
+
+Inline interpreter code run after a download keeps unknown provenance, since it may copy that file under any name.
+Git fetch and pull keep provenance for configured remote names too, including one added in an earlier tool call.
+Named data downloads followed by an unrelated Python script still run.

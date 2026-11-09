@@ -4331,6 +4331,8 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
         return;
       }
       h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
+      // Opaque code can copy any earlier download under another name; never infer that it left provenance intact.
+      if (h.e.ctx.downloaded.size || h.e.downloads.length) h.e.markUnnamed(null, h.sc);
       if (code !== null) emberText(h, code);
       if (h.args[k + 1]?.fetch) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
       if (h.key === "osascript" && code !== null && /keystroke|key code|\bclick\b|system events/i.test(code)) h.e.refuseWith("ember.input", "input");
@@ -4875,11 +4877,10 @@ git(["push"], (h, widen) => {
 const gitFetch = (fetches: boolean): GitFn => h => {
   if (h.args.some(a => /^--(upload-pack|exec)(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.git-receive-pack", "It runs a program Ember can't see.");
   h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
-  // Code fetched from an address rather than a remote the repository names (`git pull https://…`, `git fetch <url> &&
-  // git merge FETCH_HEAD`) can change any file of the work tree, as a clone's are its (commands-remote-c5-4).
-  // Only the repository word is an scp-style address: a refspec after it (`main:main`) looks like one.
-  const ops = h.args.filter(a => !isOption(a));
-  if (fetches && (ops.some(a => URL_LIKE.test(a.v ?? "")) || SCP_LIKE.test(ops[0]?.v ?? ""))) h.e.markUnnamed(".", h.sc);
+  // Fetched code can change any file after a pull, checkout or merge, even when the address lives in git config.
+  // Keep provenance for every source spelling (commands-remote-c5-4, i6a).
+  // A named remote may have been configured by an earlier tool call; its spelling is no trust boundary (i6a).
+  if (fetches) h.e.markUnnamed(".", h.sc);
 };
 git(["fetch", "pull"], gitFetch(true));
 git(["ls-remote"], gitFetch(false));

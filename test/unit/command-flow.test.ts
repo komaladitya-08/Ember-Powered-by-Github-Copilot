@@ -754,7 +754,7 @@ describe("a script of the task's own that can't be read in full (L8's padding by
 
   it("counts every script once a command wrote where Ember can't tell (a checkout), or ran code it couldn't see", async () => {
     const h = own();
-    expect((await local(h, "git pull")).resultType).toBe("success");
+    expect((await local(h, "git checkout other")).resultType).toBe("success");
     expect(h.ctx.state.written!.anywhere).toBe(true);
     // Nothing there (PowerShell's `.\\t` names t.bat and t.cmd too): nothing to read, nothing to ask.
     expect((await local(h, "sh missing.sh")).resultType).toBe("success");
@@ -764,8 +764,8 @@ describe("a script of the task's own that can't be read in full (L8's padding by
   });
 
   it("never takes a program in a folder only root changes for the task's own after a checkout: `#!/usr/bin/python3` runs", async () => {
-    const h = own({ "/home/ana/proj/x.py": "#!/usr/bin/python3\nprint('hi')\n", "/home/ana/proj/y": "#!/usr/local/bin/i\necho hi\n" }, { exists: () => true });
-    expect((await local(h, "git pull")).resultType).toBe("success");
+    const h = own({ "/home/ana/proj/x.py": "#!/usr/bin/python3\nprint('hi')\n", "/home/ana/proj/y": "#!/usr/local/bin/i\necho hi\n" }, { exists: p => p !== "/home/ana/proj/other" });
+    expect((await local(h, "git checkout other")).resultType).toBe("success");
     expect(h.ctx.state.written!.anywhere).toBe(true);
     expect((await local(h, "./x.py")).resultType).toBe("success");
     expect(h.reads).toContain("/usr/bin/python3");
@@ -2927,6 +2927,29 @@ describe("script loop bodies", () => {
       expect((await call(h, { target: "this computer", command: "sh task.sh" })).resultType, script).toBe("denied");
       expect(h.asked, script).toHaveLength(1);
       expect(h.starts, script).toEqual([]);
+    }
+  });
+});
+
+describe("download provenance through opaque code and configured remotes", () => {
+  it("keeps an inline copy marked across separate calls (commands-remote-c2-2, i6a)", async () => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, answers: ["once", "deny"], paths: p => ({ exists: false, real: p }), readScript: async () => "echo harmless\n" });
+    expect((await call(h, { target: "this computer", command: "curl -o original.py https://example.com/original.py" })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: 'python3 -c \'import shutil; shutil.copy("original.py", "copied.sh")\'' })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: "bash copied.sh" })).resultType).toBe("denied");
+    expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says).toContain("Runs a file downloaded in this task.");
+  });
+
+  it("keeps code fetched from a previously configured remote marked across calls (commands-remote-c5-4, i6a)", async () => {
+    setCommandJudge(null);
+    for (const fetch of ["git pull extra-source", "git fetch extra-source"]) {
+      const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: false, real: p }) });
+      expect((await call(h, { target: "this computer", command: "git remote add extra-source https://example.com/project.git" })).resultType).toBe("success");
+      expect((await call(h, { target: "this computer", command: fetch })).resultType, fetch).toBe("success");
+      expect(h.ctx.state.downloaded.size, fetch).toBeGreaterThan(0);
+      expect((await call(h, { target: "this computer", command: "make" })).resultType, fetch).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says).toContain("Runs a file downloaded in this task.");
     }
   });
 });
