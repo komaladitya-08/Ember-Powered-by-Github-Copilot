@@ -191,7 +191,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
 
   it("takes typed keys in the ask box while the user's app stays the active one, and hides it when the user clicks back (M2)", async () => {
     await inEmber(() => (globalThis as unknown as { __ember: { showAsk(): void } }).__ember.showAsk(), null);
-    const ask = await waitFor(async () => `the ask box shown with the keyboard (${JSON.stringify(await emberWindows())})`, async () => (await emberWindows()).find(w => w.title === "Ask Ember" && w.visible && w.focused), 10_000);
+    const ask = await waitFor(async () => `the ask box shown with the keyboard (${JSON.stringify(await emberWindows())})`, async () => (await emberWindows()).find(w => w.title === "Companion request" && w.visible && w.focused), 10_000);
     // AX's focused application may be Ember's now (its panel has the keyboard); the active app, whose menu bar shows,
     // must still be the user's.
     console.log(`ember-darwin: with the ask box up the active app is ${activePid()}, AX's focused app ${frontmostPid()} (Ember ${emberPid}, ${user.name} ${user.pid})`);
@@ -202,7 +202,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
       await sleep(25);
     }
     const typed = () => inEmber(async ({ BrowserWindow }) => {
-      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember");
+      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Companion request");
       return w ? String(await w.webContents.executeJavaScript(`document.querySelector("#q")?.value ?? ""`)) : null;
     }, null);
     await waitFor(async () => `"${TYPED}" in the ask box (it holds ${JSON.stringify(await typed())})`, async () => (await typed()) === TYPED, 5_000);
@@ -219,7 +219,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     input!.button(1, true);
     await sleep(60);
     input!.button(1, false);
-    await waitFor(async () => `the ask box to hide after a click at ${at.x},${at.y} (${JSON.stringify(await emberWindows())})`, async () => !(await emberWindows()).some(w => w.title === "Ask Ember" && w.visible), 5_000);
+    await waitFor(async () => `the ask box to hide after a click at ${at.x},${at.y} (${JSON.stringify(await emberWindows())})`, async () => !(await emberWindows()).some(w => w.title === "Companion request" && w.visible), 5_000);
     expect(activePid()).toBe(user.pid);
     expect(frontmostPid()).toBe(user.pid);
   });
@@ -232,10 +232,10 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     }
     // The box empty (M2 left its words in it; M2 also put it away), the user's app in front.
     await inEmber(async ({ BrowserWindow }) => {
-      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember");
+      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Companion request");
       if (w) await w.webContents.executeJavaScript(`document.querySelector("#q").value = ""`);
     }, null);
-    expect((await emberWindows()).some(w => w.title === "Ask Ember" && w.visible), "the ask box is away before the chord").toBe(false);
+    expect((await emberWindows()).some(w => w.title === "Companion request" && w.visible), "the ask box is away before the chord").toBe(false);
     await waitFor(() => `${user.name} in front (active: ${activePid()})`, () => activePid() === user.pid, 5_000);
     // ⌃⇧⌘Space with CGEvents (what a person's keyboard posts), let go, then the letters at once.
     const x = input!;
@@ -253,10 +253,10 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
       x.textKey(ch, false);
       await sleep(PROBE_PACE_MS);
     }
-    await waitFor(async () => `the ask box from the real chord (${JSON.stringify(await emberWindows())})`, async () => (await emberWindows()).some(w => w.title === "Ask Ember" && w.visible), 5_000);
+    await waitFor(async () => `the ask box from the real chord (${JSON.stringify(await emberWindows())})`, async () => (await emberWindows()).some(w => w.title === "Companion request" && w.visible), 5_000);
     await sleep(800);
     const { held, tip } = await inEmber(async ({ BrowserWindow }) => {
-      const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Ask Ember");
+      const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Companion request");
       return w ? await w.webContents.executeJavaScript(`({ held: document.querySelector("#q")?.value ?? "", tip: document.getElementById("tip")?.hidden === false ? document.getElementById("tip").textContent : null })`) as { held: string; tip: string | null } : { held: "", tip: null };
     }, null);
     const verdict = probeVerdict("macOS", PROBE_TEXT, held);
@@ -271,7 +271,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     expect(tip, "the box's tip to wait for it on its first openings").toBe("Wait for this box before you type: letters typed sooner go to the app underneath.");
     // Put away as Esc does (the page's own close).
     await inEmber(async ({ BrowserWindow }) => {
-      await BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")?.webContents.executeJavaScript("window.emberAsk.close()");
+      await BrowserWindow.getAllWindows().find(w => w.getTitle() === "Companion request")?.webContents.executeJavaScript("window.emberAsk.close()");
     }, null);
   });
 

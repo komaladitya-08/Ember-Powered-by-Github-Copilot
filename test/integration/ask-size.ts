@@ -51,7 +51,7 @@ export function askWant(size: TextSize, tip: boolean): Pick<AskSeen, "visible" |
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-const askVisible = (inEmber: InEmber) => inEmber(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(w => w.getTitle() === "Ask Ember" && w.isVisible()), null);
+const askVisible = (inEmber: InEmber) => inEmber(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(w => w.getTitle() === "Companion request" && w.isVisible()), null);
 
 /** Sets Text size as Settings does (every page follows it; the box from its next opening). */
 export async function setTextSize(inEmber: InEmber, size: TextSize): Promise<void> {
@@ -72,7 +72,7 @@ export async function openAskAt(inEmber: InEmber, size: TextSize, text = ""): Pr
   }
   await sleep(800);
   return inEmber(async ({ BrowserWindow, screen }, t: string): Promise<AskSeen> => {
-    const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember")!;
+    const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Companion request")!;
     await w.webContents.executeJavaScript(`{ const q = document.getElementById("q"); q.value = ${JSON.stringify(t)}; q.dispatchEvent(new Event("input")); }`);
     await new Promise(r => setTimeout(r, 400));
     const page = await w.webContents.executeJavaScript(`(() => {
@@ -95,11 +95,11 @@ export async function openAskAt(inEmber: InEmber, size: TextSize, text = ""): Pr
 export async function closeAsk(inEmber: InEmber): Promise<void> {
   try {
     await inEmber(async ({ BrowserWindow }) => {
-      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember");
+      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Companion request");
       if (w?.isVisible()) await w.webContents.executeJavaScript("window.emberAsk.close()");
     }, null);
     for (let t = 0; t < 20 && (await askVisible(inEmber)); t++) await sleep(100);
-    await inEmber(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) if (w.getTitle() === "Ask Ember" && w.isVisible()) w.hide(); }, null);
+    await inEmber(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) if (w.getTitle() === "Companion request" && w.isVisible()) w.hide(); }, null);
   } catch {
     // Ember is gone or never started: nothing to put away
   }
