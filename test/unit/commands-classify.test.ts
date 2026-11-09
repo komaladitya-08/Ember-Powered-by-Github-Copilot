@@ -246,13 +246,13 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
       const cls = decided(cmd);
       expect(cls.refuse?.rule, cmd).toBe("ember.path");
       expect(cls.refuse?.says, cmd).toBe(decided(apart).refuse?.says);
-      expect(cls.findings.map(f => f.rule), cmd).not.toContain("unclear.program");
     }
-    // Another value is the file it reads, and the command after it is still the one named.
+    // Another value is the file it reads, and the word, a value Ember can't see, is the command Ember can't name, as on
+    // main (commands-a7-1).
     const other = classifyCommand("f=notes.txt; xargs --arg-file=\"$f\" echo", "bash", contextOf("linux"));
     expect(other.refuse?.rule).toBeUndefined();
-    expect(other.findings.map(f => f.rule)).not.toContain("unclear.program");
-    expect(classifyCommand("f=list.txt; xargs -a\"$f\" rm -rf", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("posix.rm");
+    expect(other.findings.map(f => f.rule)).toContain("unclear.program");
+    expect(classifyCommand("f=list.txt; xargs -a\"$f\" rm -rf", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("unclear.program");
     // A word whose option Ember can't tell is still the command it may be.
     expect(classifyCommand("xargs -$X echo", "bash", contextOf("linux")).findings.map(f => f.rule)).toContain("unclear.program");
   });
@@ -361,27 +361,26 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(decided("d=~/.config/ember; printf \"%s\\0\" \"$d\" | xargs -0 rm -rf").cls.refuse?.rule).toBe("ember.path");
   });
 
-  it("refuses a NUL-separated read loop over Ember's folder or settings as the line-separated one is, never asking it (commands-y6-1)", () => {
+  it("asks before a database client or interpreter runs printed text with a NUL in it, which it may read across the NUL as one statement (commands-z6-1)", () => {
     const decided = (cmd: string) => runCase({ cmd, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" });
-    for (const [cmd, refusal] of [
-      ["printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
-      ["printf '/home/ana/.config/ember\\0' | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
-      ["printf '%s\\0' ~/.config/ember build | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", CHANGE],
-      ["printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do cat \"$f\"; done", READ],
-      ["printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do : > \"$f\"; done", CHANGE],
-      ["printf '%s\\n' ~/.config/ember | while read -r d; do rm -rf \"$d\"; done", CHANGE],
-      // The shell's own `read` drops a NUL, so what it reads is the two halves together.
-      ["printf '/home/ana/.config/em\\0ber\\n' | while read -r d; do rm -rf \"$d\"; done", CHANGE],
-    ] as const) {
-      const { cls } = decided(cmd);
-      expect(cls.refuse?.rule, cmd).toBe("ember.path");
-      expect(cls.refuse?.says, cmd).toBe(refusal);
-    }
-    // In the project it asks as before, and no line of its card holds a NUL.
-    for (const cmd of ["printf '%s\\0' build dist | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", "printf 'build\\0dist\\0' | xargs rm -rf", "printf '%s\\0' build | xargs -0 rm -rf"]) {
+    // psql and sqlite3 stop a line at the NUL and read on into the next, so these run `DROP TABLE users;`.
+    for (const cmd of [
+      "printf 'DR\\0\\nOP TABLE users;\\n' | psql app", "printf 'DEL\\0junk\\nETE FROM users;\\n' | psql app", "printf 'DR\\0\\nOP TABLE users;\\n' | sqlite3 app.db",
+      "printf 'DR\\0\\nOP TABLE users;\\n' | mysql app", "printf 'FLUSH\\0\\nALL\\n' | redis-cli", "printf 'x\\0y' | python3", "printf 'x\\0y' | sh",
+    ]) {
       const { cls, decision } = decided(cmd);
-      expect(cls.refuse, cmd).toBeNull();
       expect(decision.verdict, cmd).toBe("ask");
+      expect(cls.findings.map(f => f.rule), cmd).toContain("unclear.stdin-code");
+    }
+    expect(decided("printf 'SELECT 1;\\n' | psql app").decision.verdict).toBe("run");
+    // A NUL-separated read loop over Ember's folder or settings never runs, and no line of its card holds a NUL.
+    for (const cmd of [
+      "printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", "printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do cat \"$f\"; done",
+      "printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do : > \"$f\"; done", "printf '/home/ana/.config/em\\0ber\\n' | while read -r d; do rm -rf \"$d\"; done",
+      "printf '/home/ana/.config/ember\\0' | xargs rm -rf",
+    ]) {
+      const { cls, decision } = decided(cmd);
+      expect(decision.verdict === "ask" || cls.refuse !== null, cmd).toBe(true);
       expect(decision.says.join(" ").includes("\0"), cmd).toBe(false);
     }
   });
@@ -415,6 +414,21 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     ]) expect(refused(cmd), cmd).toBe("ember.path");
     // A check is the value itself: only that value is judged.
     for (const cmd of ["d=build; rm -rf ~/.config/\"${d:?}\"", "d=build; rm -rf \"${d%/}\"", "d=/tmp/x/; rm -rf \"${d%/}\""]) expect(refused(cmd), cmd).toBeUndefined();
+  });
+
+  it("records a fetch a wrapper's program writes through the shell's redirection in the shell's folder, and one in a folder Ember can't tell as anywhere (commands-z6-3)", () => {
+    const downloads = (cmd: string) => (classifyCommand(cmd, "bash", contextOf("linux")) as ClassificationExtra).downloads;
+    for (const cmd of [
+      "env -C src curl -s https://e.example/x.py > x.py", "env --chdir=src wget -qO- https://e.example/x.py > x.py", "env -C /tmp curl -s https://e.example/x.py > x.py",
+      "sudo -D src curl -s https://e.example/x.py > x.py", "sudo -D /tmp curl -s https://e.example/x.py > x.py", "nice env -C src curl -s https://e.example/x.py >> x.py",
+    ]) expect(downloads(cmd), cmd).toEqual(["/home/ana/proj/x.py"]);
+    // Saved by name where Ember can't tell the folder: no name of the project's, but a file of unknown name anywhere.
+    for (const cmd of ["env -C src curl -so x.py https://e.example/x.py", "cd \"$D\" && curl -s https://e.example/x.py > x.py"]) {
+      const got = downloads(cmd);
+      expect(got.length, cmd).toBe(1);
+      expect(got[0].startsWith("/home/"), cmd).toBe(false);
+    }
+    expect(downloads("env -C src curl -so /tmp/x.py https://e.example/x.py")).toEqual(["/tmp/x.py"]);
   });
 
   it("asks before a download whose saved name Ember can't tell, and marks where it went so running from there asks (commands-remote-r5-1, c5-2)", () => {
@@ -971,8 +985,10 @@ describe("the card's words from the classifier (review #214)", () => {
   });
 
   it("says a loop's variable as the files the loop names, never as shell text like \"$f\" (commands-remote-c2-3)", () => {
-    // As the flow judges a loop: by the commands in it.
-    const says = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.map(f => f.says);
+    // As the flow judges a loop, by the commands in it: the loop's own words, which a loop whose commands ask keeps as on
+    // main (commands-b7-2), and a list or a read over text Ember can't see (commands-a7-2) say so too, left out here.
+    const flowWord = /^unclear\.(for|while|until|do|done|in)$/;
+    const says = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.filter(f => f.rule !== "unclear.read-text" && !flowWord.test(f.rule)).map(f => f.says);
     expect(says("for f in *.log; do rm \"$f\"; done")).toEqual(["Deletes each file the loop names."]);
     expect(says("for f in a b; do rm -r ${f}; done")).toEqual(["Deletes a and b and everything in them."]);
     // A list of names is said by its names, so a loop over folders never reads as harmless (commands-remote-c2-3).
@@ -1072,6 +1088,77 @@ describe("loops and ifs (commands-remote-2)", () => {
       "done < list.txt; read -r l",
       "bash -c 'while read -r l; do echo; done' < list.txt",
     ]) expect(rules(bare), bare).toContain("unclear.interactive");
+  });
+
+  it("asks before a read, mapfile, select, getopts or for loop works on text Ember can't see, and reads one over written-out text through (commands-a7-2)", () => {
+    const flow = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash");
+    // Text from a file, a pipe, another descriptor, a substitution or a variable: whatever the variable is used for.
+    for (const cmd of [
+      "printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do tar -C \"$d\" -xf /tmp/x.tar; done",
+      "printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do curl -o\"$f\" http://x; done",
+      "cat list | while IFS= read -r d; do echo \"$d\"; done", "while read -r l; do echo \"$l\"; done < list.txt",
+      "while IFS= read -r -d '' d; do git -C \"$d\" init; done < <(printf '%s\\0' ~/.config/ember)",
+      "while read -r -u 3 d; do mkdir -p \"$d/x\"; done 3< list <<< build", "while read -r d <&3; do mkdir -p \"$d/x\"; done 3< list <<< build",
+      "while read -r d < list; do mkdir -p \"$d/x\"; break; done <<< build", "IFS= read -r -d '' d < <(printf '%s\\0' ~/.config/ember); tar -C \"$d\" -xf x.tar",
+      "read x < f; echo \"$x\"", "mapfile -t a < f", "readarray -t a < f", "cat f | read x", "echo a | read x", "getopts ab N", "read x 2>/dev/null <<< a",
+      "printf 'build\\n' | while read -r d; do touch \"$d/x\"; done", "while read -r l; do echo \"$l\"; done <<< \"$x\"", "read -r x <<< \"$(cat f)\"",
+      "while IFS= read -r l; do echo \"$l\"; done <<EOF\n$X\nEOF", "select x in a b; do echo $x; done",
+      "for f in *.txt; do echo \"$f\"; done", "for f in $(cat list); do echo \"$f\"; done", "for f in \"$@\"; do echo \"$f\"; done", "for f; do echo \"$f\"; done",
+      "for f in a \"$X\"; do echo \"$f\"; done", "for i in {1..3}; do echo $i; done", "for d in ~/a; do ls \"$d\"; done",
+      // A here-string Ember follows the value of is no text written out.
+      "while read d; do tar -C \"$d\" -xf /tmp/x.tar; done <<< \"$HOME\"", "while read d; do echo \"$d\"; done <<< ~/x",
+    ]) expect(flow(cmd).findings.map(f => f.rule), cmd).toContain("unclear.read-text");
+    expect(flow("cat list | while read -r d; do echo \"$d\"; done").findings.map(f => f.says)).toContain("It works on text Ember can't see.");
+    // A loop or if that sets no variable from text Ember can't see is read through: written-out words, a here-string or
+    // here-document of written-out text on the read's own input, or no variable at all.
+    for (const cmd of [
+      "for i in 1 2 3; do echo $i; done", "for n in 'a b' \"c\" d-e; do echo \"$n\"; done", "if [ -f package.json ]; then npm test; fi",
+      "while read -r l; do echo \"$l\"; done <<< 'a b'", "while IFS= read -r l; do echo \"$l\"; done <<EOF\na\nb\nEOF", "until false; do break; done",
+      "while true; do sleep 1; break; done", "read -r a b <<< 'x y'; echo \"$a\"", "mapfile -t a <<< 'x'", "if IFS= read -r l <<< 'a'; then echo \"$l\"; fi",
+      "while true; do while read -r b; do echo \"$b\"; done; done <<< 'x'",
+    ]) expect(flow(cmd).findings, cmd).toEqual([]);
+    // Ember's own folder named in sight is still refused, through a loop's list, a here-string or printed text.
+    for (const cmd of [
+      "while read f; do rm -rf \"$f\"; done <<< ~/.config/ember", "for d in ~/.config/ember; do rm -rf \"$d\"; done",
+      "printf '%s\\n' ~/.config/ember | while read -r d; do rm -rf \"$d\"; done",
+    ]) expect(flow(cmd).refuse?.rule, cmd).toBe("ember.path");
+  });
+
+  it("keeps a loop's or an if's own words, as main did, when it changes the folder, sets a variable or anything in the line asks (commands-b7-1, b7-2, b7-3)", () => {
+    const flow = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash");
+    const loopWords = (cmd: string) => flow(cmd).findings.map(f => f.rule).filter(r => /^unclear\.(for|while|until|if|do|done|then|fi)$/.test(r));
+    for (const cmd of [
+      // The body is judged once, in the folder the line starts in: a folder change makes the next pass another folder's
+      // (commands-b7-1).
+      "for i in 1 2; do sed -i s/a/b/ ember/settings.json; cd ~/.config; done", "for i in 1 2 3; do cat .config/ember/settings.json; cd ..; done",
+      "for i in 1 2; do cat credentials; cd ~/.aws; done", "for i in 1 2; do ls -la .config/ember; cd; done", "for i in 1 2; do ls -la .config/ember; cd -; done",
+      "for i in 1 2; do cat ember/settings.json; pushd ~/.config; done", "for i in 1 2; do cat ember/settings.json; popd; done",
+      "for d in /home/ana/.config proj; do ls ember; cd $d; done", "for i in 1 2; do cat ember/settings.json && cd ~/.config; done",
+      "for i in 1 2; do cat ember/settings.json; for j in 1; do cd ~/.config; done; done", "for i in 1 2; do cat ember/settings.json; if true; then cd ~/.config; fi; done",
+      "while cat ember/settings.json; do cd ~/.config; done", "while true; do cat ember/settings.json; command cd ~/.config; done",
+      "for i in 1 2; do ls; time cd ..; done", "for i in 1 2; do ls; chdir ..; done", "if [ -d x ]; then cd x; fi",
+      // A dangerous command the user's words could announce (commands-b7-2).
+      "while true; do rm -rf build; done", "for i in 1 2; do rm -rf build; done", "if [ -d build ]; then rm -rf build; fi", "for i in 1 2; do echo $i; done; rm -rf build",
+      // A variable set, from text Ember can't see or not, or a file sourced (commands-b7-3).
+      "for i in 1; do x=$(cat f); echo $x; done", "if x=$(cat f); then echo $x; fi", "if true; then x=$(cat f); fi; echo \"$x\"",
+      "for i in 1; do local x=$(cat f); echo $x; done", "for i in 1; do export X=$(cat f); echo $X; done", "for i in 1; do typeset x=$(cat f); echo $x; done",
+      "for i in 1; do readonly x=$(cat f); echo $x; done", "for i in 1; do declare x=$(cat f); echo $x; done", "for i in 1; do set -- $(cat f); echo $1; done",
+      "for i in 1; do printf -v x '%s' \"$(cat f)\"; echo $x; done", "for i in 1; do wait -p x; echo $x; done", "for i in 1; do exec {fd}< f; echo $fd; done",
+      "for i in 1 2; do ls {fd}< f; done", "for i in 1 2; do ls; x=1; done", "for i in 1 2; do x=$i; done; echo $x", "if [ -f x ]; then y=1; fi",
+      "for i in 1; do : ${x:=a}; done", "for i in 1 2; do ls; unset x; done", "for i in 1 2; do ls \"$i\"; shift; done", "for i in 1 2; do ls; set -f; done",
+      "for i in 1 2; do ls; source x; done", "for i in 1 2; do ls; . x; done", "for i in 1 2; do ls; exec 3< f; done", "x=$(cat f); for i in 1 2; do echo $i; done",
+    ]) expect(loopWords(cmd), cmd).not.toEqual([]);
+    // A `[[ … ]]` test on a command line asks as on main, in a loop or an if or not: main reads one through only in a
+    // script (commands-b7-4).
+    for (const cmd of ["[[ -d build ]] && make", "[[ -f x ]] || touch x", "if [[ -d build ]]; then make; fi", "while [[ ! -f done.txt ]]; do sleep 1; done"]) {
+      expect(flow(cmd).findings.map(f => f.rule), cmd).toContain("unclear.keyword");
+    }
+    // A loop or if that does none of that is still read through, as its commands written out would run.
+    for (const cmd of [
+      "for i in 1 2 3; do echo $i; done", "if [ -f package.json ]; then npm test; fi", "while read -r l; do echo \"$l\"; done <<< 'a b'",
+      "while IFS= read -r l; do echo \"$l\"; done <<EOF\na\nb\nEOF", "until [ -f x ]; do sleep 1; done", "while true; do echo x; break; done",
+      "for f in a b; do echo \"$f\"; done | cat", "if git diff --quiet; then echo clean; else echo dirty; fi", "for i in 1 2; do ls; umask 022; done",
+    ]) expect(flow(cmd).findings, cmd).toEqual([]);
   });
 
   it("reads a for loop's variable as an assignment: one that changes how commands are found or run is unclear", () => {
@@ -1303,14 +1390,18 @@ describe("loops and ifs (commands-remote-2)", () => {
     }
   });
 
-  it("reads IFS in front of read as only how that read splits, so the usual line loop is no assignment (commands-remote-2)", () => {
-    for (const fine of ["IFS= read -r l < list.txt", "while IFS= read -r l; do echo \"$l\"; done < list.txt", "IFS=: read -r a b <<< \"x:y\"", "time IFS= read -r l < list.txt"]) {
+  it("reads IFS in front of a loop's or an if's read as only how that read splits, so the usual line loop is no assignment (commands-remote-2)", () => {
+    for (const fine of ["while IFS= read -r l; do echo \"$l\"; done < list.txt", "while IFS= read -r l; do echo \"$l\"; done <<< 'a b'", "if IFS=: read -r a b <<< \"x:y\"; then echo \"$a\"; fi"]) {
       expect(rules(fine), fine).not.toContain("unclear.assignment");
       expect(rules(fine), fine).not.toContain("unclear.interactive");
       expect(rules(fine), fine).not.toContain("unclear.hidden-command");
     }
-    // IFS anywhere else changes how every later command's words split; a read by path is a program of its own.
-    for (const risky of ["IFS=/ ls", "IFS=/; ls", "if true; then IFS=/; fi; ls", "IFS= ./read -r l < list.txt", "PATH=/tmp/x read -r l < list.txt"]) {
+    // Outside a loop or an if it asks as it did before loops were read through (commands-a7-2); IFS anywhere else changes
+    // how every later command's words split; a read by path is a program of its own.
+    for (const risky of [
+      "IFS= read -r l < list.txt", "IFS=: read -r a b <<< \"x:y\"", "time IFS= read -r l < list.txt",
+      "IFS=/ ls", "IFS=/; ls", "if true; then IFS=/; fi; ls", "IFS= ./read -r l < list.txt", "PATH=/tmp/x read -r l < list.txt",
+    ]) {
       expect(rules(risky), risky).toContain("unclear.assignment");
     }
   });
@@ -1449,7 +1540,7 @@ describe("the option tables: a flag that takes no value never takes the word aft
 
   it("runs everyday parallel builds with the processor count attached or given to cmake, ctest, pytest, sort or gradle (commands-remote-r5-3)", () => {
     for (const cmd of [
-      "make -j$(nproc)", "make -j\"$JOBS\"", "make -j`nproc`", "make -sj$(nproc)", "make --jobs=$(nproc)", "make -j$(getconf _NPROCESSORS_ONLN)", "T=deploy; make -j\"$T\"",
+      "make -j$(nproc)", "make -j`nproc`", "make -sj$(nproc)", "make --jobs=$(nproc)", "make -j$(getconf _NPROCESSORS_ONLN)",
       "cmake --build build -j $(nproc)", "cmake --build build --parallel $(nproc)", "cmake --build . -j$(nproc)", "ctest -j $(nproc)", "ctest -j$(nproc) --output-on-failure",
       "pytest -n $(nproc)", "sort --parallel=$(nproc) big.txt", "./gradlew test --max-workers=$(nproc)", "gradle build --max-workers $(nproc)",
     ]) {
@@ -1459,7 +1550,11 @@ describe("the option tables: a flag that takes no value never takes the word aft
     expect(decided("make -j$(sysctl -n hw.ncpu)", "darwin").decision.verdict).toBe("run");
     // A target after the count is judged as before, and any other substitution or value still asks.
     each([["make -j$(nproc) install", "make install"], ["gradle --max-workers deploy", "gradle deploy"], ["./gradlew --max-workers=4 publish", "./gradlew publish"]]);
-    for (const cmd of ["make -j\"$(printf deploy)\"", "make -j \"$(printf deploy)\"", "cmake --build build -j \"$JOBS\"", "pytest -n \"$N\"", "cmake --build . -j$(cat n)"]) {
+    for (const cmd of [
+      "make -j\"$(printf deploy)\"", "make -j \"$(printf deploy)\"", "cmake --build build -j \"$JOBS\"", "pytest -n \"$N\"", "cmake --build . -j$(cat n)",
+      // A variable the command doesn't set to a count is judged as the word it is, quoted or not (commands-z6-4).
+      "make -j\"$JOBS\"", "T=deploy; make -j\"$T\"",
+    ]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
   });
@@ -1477,49 +1572,61 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["make -j \"$(printf deploy)\"", "make -j `echo deploy`", "T=-f/tmp/x.mk; make -j \"$T\"", "T='SHELL=/tmp/x'; make -j \"$T\""]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
-    // A number, a value Ember can't see and the processor counts are the job count, as before.
-    for (const cmd of ["make -j $(nproc)", "make -j \"$JOBS\"", "T=4; make -j \"$T\"", "T=$(nproc); make -j \"$T\"", "make -j $(nproc --all)", "make -j $(getconf _NPROCESSORS_ONLN)", "T=build; make -j \"$T\""]) {
+    // A number, a value Ember can't see and the processor counts are the job count, as before; a variable set to a
+    // command's output may hold more than a count, whatever the command (commands-a7-1).
+    for (const cmd of ["make -j $(nproc)", "make -j \"$JOBS\"", "T=4; make -j \"$T\"", "make -j $(nproc --all)", "make -j $(getconf _NPROCESSORS_ONLN)", "T=build; make -j \"$T\""]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
     }
+    expect(decided("T=$(nproc); make -j \"$T\"").decision.rules).toContain("unclear.target");
     expect(decided("make -j $(sysctl -n hw.logicalcpu)", "darwin").decision.verdict).toBe("run");
   });
 
-  it("builds what an unquoted job count's variable holds after the count, attached or apart, as the shell splits it (commands-remote-x6-1)", () => {
+  it("builds what an unquoted job count's variable holds after the count apart, as the shell splits it, and asks for one attached as main does (commands-remote-x6-1)", () => {
     for (const [cmd, plain] of [
-      ["T='4 deploy'; make -j$T", "make -j4 deploy"], ["T='4 deploy'; make -j $T", "make -j 4 deploy"], ["J='8 deploy'; make -sj$J", "make -sj8 deploy"],
-      ["T='4 install'; make --jobs=$T", "make --jobs=4 install"], ["T='4 deploy'; make -j${T}", "make -j4 deploy"], ["J='4 CC=evil'; make -j$J", "make -j4 CC=evil"],
-      ["T='2 publish'; ./gradlew --max-workers=$T", "./gradlew --max-workers=2 publish"], ["T='2 publish'; ./gradlew --max-workers $T", "./gradlew --max-workers 2 publish"],
-      ["T='4 publish'; gradle --max-workers=$T", "gradle --max-workers=4 publish"], ["T='4 publish'; rake --jobs=$T", "rake --jobs=4 publish"],
+      ["T='4 deploy'; make -j $T", "make -j 4 deploy"], ["T='2 publish'; ./gradlew --max-workers $T", "./gradlew --max-workers 2 publish"],
       ["T='4 publish'; rake --jobs $T", "rake --jobs 4 publish"],
     ] as const) {
       expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
     }
-    expect(decided("T='4 deploy'; make -j$T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    expect(decided("T='4 deploy'; make -j $T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    // Attached, a variable is a target Ember can't name and for make a variable override, as on main (commands-a7-1).
+    for (const cmd of [
+      "T='4 deploy'; make -j$T", "J='8 deploy'; make -sj$J", "T='4 install'; make --jobs=$T", "T='4 deploy'; make -j${T}", "J='4 CC=evil'; make -j$J",
+    ]) expect(decided(cmd).decision.rules, cmd).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+    for (const cmd of ["T='2 publish'; ./gradlew --max-workers=$T", "T='4 publish'; gradle --max-workers=$T", "T='4 publish'; rake --jobs=$T"]) {
+      expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
+    }
     expect(decided("T='2 publish'; ./gradlew --max-workers $T").decision.says).toContain("Runs gradlew publish, whose name says it publishes.");
     // An option split out of it asks, as one there does (commands-remote-w5-2), and a make variable that could run a command.
     for (const cmd of ["T='4 -f evil.mk'; make -j$T", "T='4 -f evil.mk'; make -j $T", "J='4 SHELL=/tmp/x'; make -j$J", "T='2 -b evil.gradle'; ./gradlew --max-workers=$T"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
-    // Quoted, it is one word: attached, only the count (make takes no other there); a number, a value Ember can't see or a
-    // processor count is the count, as before.
-    for (const cmd of [
-      "T='4 deploy'; make -j\"$T\"", "T=deploy; make -j\"$T\"", "J=4; make -j$J", "J=8; make -sj$J", "J=8; make --jobs=$J", "make -j$T", "make -j$(nproc)",
-      "make -j\"$(nproc)\"", "T=$(nproc); make -j$T", "W=4; ./gradlew --max-workers=$W build", "./gradlew --max-workers $W", "./gradlew --max-workers=$(nproc)", "make -j $JOBS",
-    ]) {
+    // A number or a processor count is the count; apart, make takes a variable as its count, as on main. A variable
+    // attached is no count, whatever the command set it to (commands-a7-1).
+    for (const cmd of ["make -j$(nproc)", "make -j\"$(nproc)\"", "./gradlew --max-workers=$(nproc)", "make -j $JOBS", "J=4; make -j $J"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+    for (const cmd of ["J=4; make -j$J", "J=8; make -sj$J", "J=8; make --jobs=$J", "T=$(nproc); make -j$T", "W=4; ./gradlew --max-workers=$W build"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    // Any other value, quoted or inherited, is judged as the word it is: a target Ember can't name (commands-z6-4).
+    for (const cmd of ["T='4 deploy'; make -j\"$T\"", "T=deploy; make -j\"$T\"", "make -j$T", "./gradlew --max-workers $W"]) {
+      expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
     }
   });
 
-  it("builds what a job count's variable holds when it starts with a space or has a part Ember can't see, and Maven's and ninja's counts too (commands-y6-2)", () => {
-    // A value that starts with a space, a tab or a line break leaves the option on its own, as the shell splits it.
+  it("builds what a job count's variable holds when it has a part Ember can't see, and Maven's and ninja's counts too (commands-y6-2)", () => {
+    // Attached, a value that starts with a space, a tab or a line break is a variable like any other: a target and a
+    // make variable Ember can't name, as on main (commands-a7-1).
+    for (const cmd of [
+      "T=' deploy'; make -j$T", "T=$'\\tdeploy'; make -j$T", "T=$'\\ndeploy'; make -j$T", "T=' deploy'; make -sj$T", "T=' deploy'; make -l$T",
+      "T=' deploy'; make --jobs=$T", "T=' 4 deploy'; make -j$T", "for T in 4 ' deploy'; do make -j$T; done", "T=\"$(nproc) deploy\"; make -j$T",
+      "T=\"$JOBS deploy\"; make -j$T", "T=\"4 $X\"; make -j$T",
+    ]) expect(decided(cmd).decision.rules, cmd).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+    for (const cmd of ["T=' publish'; rake --jobs=$T", "T=' publish'; ./gradlew --max-workers=$T"]) expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
     for (const [cmd, plain] of [
-      ["T=' deploy'; make -j$T", "make -j deploy"], ["T=$'\\tdeploy'; make -j$T", "make -j deploy"], ["T=$'\\ndeploy'; make -j$T", "make -j deploy"],
-      ["T=' deploy'; make -sj$T", "make -sj deploy"], ["T=' deploy'; make -l$T", "make -l deploy"], ["T=' deploy'; make --jobs=$T", "make deploy"],
-      ["T=' publish'; rake --jobs=$T", "rake publish"], ["T=' publish'; ./gradlew --max-workers=$T", "./gradlew publish"], ["T=' 4 deploy'; make -j$T", "make -j 4 deploy"],
-      ["for T in 4 ' deploy'; do make -j$T; done", "make -j deploy"],
-      // A part Ember can't see is one word of it: the first the count, as before, and the words after it built.
-      ["T=\"$(nproc) deploy\"; make -j$T", "make -j4 deploy"], ["T=\"$(nproc) deploy\"; make -j $T", "make -j 4 deploy"], ["T=\"$JOBS deploy\"; make -j$T", "make -j4 deploy"],
-      ["T=\"4 $X\"; make -j$T", "make -j4 $X"],
+      // Apart, a part Ember can't see is one word of it: the first the count, as before, and the words after it built.
+      ["T=' deploy'; make -j $T", "make -j deploy"], ["T=\"$(nproc) deploy\"; make -j $T", "make -j 4 deploy"],
       // Maven's -T and ninja's -j take the word after them whatever it is, so the next one is a goal or a target.
       ["T='2 deploy'; mvn -T $T", "mvn -T 2 deploy"], ["T='2 deploy'; mvn --threads $T", "mvn --threads 2 deploy"], ["T='2 deploy'; ./mvnw -T $T", "./mvnw -T 2 deploy"],
       ["T='2 deploy'; ninja -j $T", "ninja -j 2 deploy"], ["T='2 publish'; ninja -l $T", "ninja -l 2 publish"],
@@ -1527,19 +1634,153 @@ describe("the option tables: a flag that takes no value never takes the word aft
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
       expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
     }
-    expect(decided("T=' deploy'; make -j$T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    expect(decided("T=' deploy'; make -j $T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
     expect(decided("T='2 deploy'; mvn -T $T").decision.rules).toContain("mvn.deploy");
     // An option or a make variable split out of it asks.
     for (const cmd of ["T=' -f evil.mk'; make -j$T", "T=' SHELL=/bin/echo'; make -sj$T", "T=\"$X -f evil.mk\"; make -j$T", "T='2 deploy'; mvn -T$T"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     }
-    // A count alone, with a space before it or not, a value Ember can't see and the processor counts run as before.
-    for (const cmd of [
-      "T=' 4'; make -j$T", "J=' 8'; make -sj$J", "T=\" $(nproc)\"; make -j$T", "make -j$X", "ninja -j $X", "T=4; mvn -T $T test", "T=2C; mvn -T $T package",
-      "T=4; ninja -j $T", "mvn -T $X package",
-    ]) {
+    // Apart, a count alone, a value Ember can't see and the processor counts run as before; attached, a variable holding a
+    // count asks, as on main (commands-a7-1).
+    for (const cmd of ["T=' 4'; make -j $T", "ninja -j $X", "T=4; mvn -T $T test", "T=2C; mvn -T $T package", "T=4; ninja -j $T", "mvn -T $X package"]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
     }
+    for (const cmd of ["T=' 4'; make -j$T", "J=' 8'; make -sj$J", "T=\" $(nproc)\"; make -j$T"]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    // Attached, a variable the command doesn't set is judged as the word it is (commands-z6-4).
+    expect(decided("make -j$X").decision.rules).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+  });
+
+  it("asks before a job count builds what a variable the command set from a file, a read or a substitution holds, as the substitution written there does (commands-z6-4)", () => {
+    // `echo '4 deploy' > jobs.txt` first: the shell splits the value into the count and the deploy target.
+    for (const [cmd, plain] of [
+      ["X=$(cat jobs.txt); make -j$X", "make -j$(cat jobs.txt)"], ["read X < jobs.txt; make -j$X", "make -j$(cat jobs.txt)"], ["read X < jobs.txt; make -j $X", "make -j $(cat jobs.txt)"],
+      ["X=$(cat jobs.txt); make -j $X", "make -j $(cat jobs.txt)"], ["X=`cat jobs.txt`; make -sj$X", "make -j$(cat jobs.txt)"], ["X=$(cat jobs.txt); make --jobs=$X", "make -j$(cat jobs.txt)"],
+      ["X=$(cat jobs.txt); Y=$X; make -j$Y", "make -j$(cat jobs.txt)"], ["set -- $(cat jobs.txt); make -j$1", "make -j$(cat jobs.txt)"], ["X=$(cat jobs.txt); make -j \"$X\"", "make -j \"$(cat jobs.txt)\""],
+    ] as const) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+      expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
+    }
+    for (const cmd of ["X=$(cat jobs.txt); ./gradlew --max-workers=$X", "X=$(cat jobs.txt); ./gradlew --max-workers $X", "X=$(cat jobs.txt); rake --jobs=$X", "X=$(cat jobs.txt); ninja -j $X", "X=$(cat jobs.txt); mvn -T $X package"]) {
+      expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
+    }
+    // make's count apart from a variable it doesn't set and one quoted word Maven takes only as the count run, as before
+    // round six; a variable the command set to a count, a processor count's output or arithmetic is no count (commands-a7-1).
+    for (const cmd of ["make -j $JOBS", "X=4; make -j $X", "X=$(cat jobs.txt); mvn -T \"$X\" package"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    for (const cmd of [
+      "X=4; make -j$X", "X=$(nproc); make -j$X", "X=\"$(nproc)\"; make -j $X", "X=$((2 * 4)); make -j$X", "X=$(nproc); Y=$X; make -j$Y",
+      "T=\" $(nproc)\"; make -j$T", "X=$(getconf _NPROCESSORS_ONLN); ./gradlew --max-workers=$X build",
+    ]) expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
+    // Attached, a variable it doesn't set, sets to another variable or reads from a file, quoted or not, asks as it did
+    // before round six (commands-z6-4).
+    for (const cmd of ["make -j$X", "X=$JOBS; make -j$X", "X=$(cat jobs.txt); make -j\"$X\""]) {
+      expect(decided(cmd).decision.rules, cmd).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+    }
+  });
+
+  it("asks before a job count Ember can't see builds or runs what it may hold, as before round six, and runs a number or a processor count (commands-z6-4)", () => {
+    const rules = (cmd: string) => withoutReadFlow(decided(cmd).cls, "bash").findings.map(f => f.rule);
+    // Inherited, read from a file or a substitution: the command xargs runs, or make's and Gradle's targets.
+    for (const cmd of [
+      "X=$(cat jobs.txt); xargs -P$X echo", "xargs -P$(cat jobs.txt) echo", "X=$(cat jobs.txt); xargs --max-procs=$X echo", "xargs -P\"$JOBS\" echo",
+      "parallel -j\"$JOBS\" echo", "X=$(cat f); xargs -n$X echo", "nice -n$JOBS echo",
+    ]) expect(rules(cmd), cmd).toContain("unclear.program");
+    for (const cmd of ["make -j$JOBS", "make -j${JOBS}", "X=$JOBS; make -j$X", "make -j\"$JOBS\"", "make --jobs=$JOBS", "make -l$JOBS", "make -sj$JOBS"]) {
+      expect(rules(cmd), cmd).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+    }
+    for (const cmd of ["./gradlew --max-workers=$JOBS build", "./gradlew --max-workers $JOBS build", "mvn --threads $JOBS package", "rake --jobs=$JOBS"]) {
+      expect(rules(cmd), cmd).toContain("unclear.target");
+    }
+    // However and wherever the command sets it, a variable attached to a count is no count (commands-a7-1).
+    for (const cmd of [
+      "N=4; make -j$N", "N=$(nproc); make -j$N", "N=$((2 * 4)); make -j${N}", "N=$(nproc); ./gradlew --max-workers=$N build", "{ N=4; }; make -j$N",
+      "N=4 && make -j$N", "N=$(nproc); for f in a b; do make -j$N; done",
+      "N=4 make -j$N", "true || N=4; make -j$N", "cd x && N=4; make -j$N", "(N=4); make -j$N", "N=4 | cat; make -j$N", "N=4 & make -j$N",
+      "N=4; unset N; make -j$N", "N=4; source ./env.sh; make -j$N", "N=4; N[0]='4 deploy'; make -j$N", "N=4; getopts ab N; make -j$N",
+      "if [ -f x ]; then N=4; fi; make -j$N", "N=$(nproc); for f in a b; do make -j$N; N=$(cat f); done", "bash -c 'N=4'; make -j$N",
+    ]) expect(rules(cmd), cmd).toContain("unclear.target");
+    // A value split out of an unquoted variable is still judged where it is used: Ember's own folder is refused.
+    expect(decided("d=~/.config/ember; xargs -a$d/settings.json echo").cls.refuse?.rule).toBe("ember.path");
+    expect(rules("N=$(nproc); xargs -P\"$N\" echo")).toContain("unclear.program");
+    // A number, a processor count or arithmetic of numbers is the count, as before.
+    for (const cmd of ["make -j$(nproc)", "make -j4", "make -j\"$(nproc)\"", "cmake --build build -j $(nproc)", "make -j$((2 * 4))", "xargs -P$(nproc) echo", "xargs --max-procs=$(nproc) echo"]) {
+      expect(rules(cmd), cmd).toEqual([]);
+    }
+    // xargs -P4 rm asks as rm decides, with nothing about its count.
+    expect(rules("xargs -P4 rm")).toEqual(rules("xargs rm"));
+  });
+
+  it("takes only a number, a processor count or arithmetic of numbers as a job count, and judges any variable as main does (commands-a7-1)", () => {
+    const rules = (cmd: string) => withoutReadFlow(decided(cmd).cls, "bash").findings.map(f => f.rule);
+    // Whatever the command set the variable to, attached to make's count it is a target and a make variable Ember can't
+    // name, as on main: the review's forms that left N a count ran a deploy.
+    for (const cmd of [
+      "N=4; make -j$N", "N=$(nproc); make -j$N", "N=4; make -j\"$N\"", "N=4; make -sj${N}", "N=4; make --jobs=$N", "N=4; make -l$N",
+      "N=4; read -r 'N[0]' <<< '4 deploy'; make -j$N", "N=4; readarray -t -- N <<< '4 deploy'; make -j$N", "N=4; declare \"N=$(cat f)\"; make -j$N",
+      "N=4; N+=' 4'; make -j$N", "N=4; printf -v 'N[0]' '4 deploy'; make -j$N",
+    ]) expect(rules(cmd), cmd).toEqual(expect.arrayContaining(["unclear.make-variable", "unclear.target"]));
+    // Gradle's --max-workers and Maven's --threads took no value on main, so the variable is a target or a goal.
+    for (const cmd of [
+      "N=4; printf -v 'N[0]' '4 deploy'; mvn --threads $N package", "N=4; mvn --threads $N package", "N=4; ./gradlew --max-workers $N build",
+      "N=4; ./gradlew --max-workers=$N build", "N=4; rake --jobs=$N",
+    ]) expect(rules(cmd), cmd).toContain("unclear.target");
+    // A wrapper's option with a variable attached is the program Ember can't name, quoted or not, as on main.
+    for (const cmd of [
+      "N=4; xargs -P\"$N\" echo", "N=4; xargs --max-procs=\"$N\" echo", "N=4; parallel -j\"$N\" echo", "N=4; xargs -n\"$N\" echo",
+      "REPLY=4; read -r <<< '4 deploy'; xargs -P\"$REPLY\" echo", "OPTARG=4; getopts j: o -j '4 deploy'; xargs -P\"$OPTARG\" echo",
+      "nice -n\"$JOBS\" echo", "env -C\"$JOBS\" echo", "xargs -a\"$JOBS\" echo", "xargs -P$N echo",
+      // A count attached to an option that isn't a job count is no exception: main asks for it too.
+      "xargs -n$(nproc) echo", "nice -n$(nproc) echo",
+    ]) expect(rules(cmd), cmd).toContain("unclear.program");
+    // Ember's own folder through such a value is still refused.
+    expect(decided("d=~/.config/ember; xargs -a\"$d/settings.json\" echo").cls.refuse?.rule).toBe("ember.path");
+    // A number, a processor count's substitution or arithmetic of numbers, quoted or not, is the count.
+    for (const cmd of [
+      "make -j4", "make -j 4", "make -j$(nproc)", "make -j \"$(nproc)\"", "make -j\" $(nproc) \"", "make -j$((2*4))", "make --jobs=$(nproc)", "make -sj`nproc`",
+      "cmake --build build -j $(nproc)", "xargs -P$(nproc) echo", "xargs -P\"$(nproc)\" echo", "parallel -j$(nproc) echo", "./gradlew --max-workers=$(nproc) build",
+      "mvn -T 4 package", "mvn -T$(nproc) package", "ctest -j$(nproc)", "xargs -P4 -n1 echo",
+    ]) expect(rules(cmd), cmd).toEqual([]);
+    expect(decided("make -j$(sysctl -n hw.ncpu)", "darwin").decision.verdict).toBe("run");
+    // Apart, after make's -j and Maven's -T, which take the next word, a variable is the count, as on main.
+    for (const cmd of ["make -j $JOBS", "make -j \"$JOBS\"", "mvn -T $X package", "ninja -j $X"]) expect(rules(cmd), cmd).toEqual([]);
+  });
+
+  it("judges patch's -d and --directory as the folder it writes in: Ember's own refused, one Ember can't see asked about (commands-a7-3)", () => {
+    for (const cmd of [
+      "patch -d ~/.config/ember -p0 < /tmp/p", "patch --directory=$HOME/.config/ember -p0 -i /tmp/p", "patch --directory ~/.config/ember < /tmp/p",
+      "patch -d ~/.config/ember -p0 <<'EOF'\n--- settings.json\n+++ settings.json\n@@ -1 +1 @@\n-{}\n+{\"autonomy\":true}\nEOF", "patch -d /etc/ember -p0 < p",
+    ]) {
+      expect(decided(cmd).cls.refuse?.rule, cmd).toBe("ember.path");
+      expect(decided(cmd).cls.refuse?.says, cmd).toBe("Ember won't run this: it would change Ember's own safety settings, records or programs.");
+    }
+    for (const cmd of ["patch -d \"$d\" -p0 < /tmp/p", "patch --directory=\"$d\" -p1 -i fix.patch", "patch -d\"$d\" -p0 < p", "patch -Rd\"$d\" < p"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    // GNU patch takes `--di`, the shortest unambiguous --directory, as it (commands-b7-5).
+    for (const cmd of ["patch --di=/home/ana/.config/ember -p1 < p.diff", "patch --di=$HOME/.config/ember -p0 -i /tmp/p", "patch --di /home/ana/.config/ember -p1 < p.diff"]) {
+      expect(decided(cmd).cls.refuse?.rule, cmd).toBe("ember.path");
+    }
+    expect(decided("patch --di=\"$d\" -p1 < p").decision.verdict).toBe("ask");
+    // A folder of the project is patched as before.
+    for (const cmd of ["patch -d src -p1 < fix.patch", "patch -dsrc -p1 < fix.patch", "patch --directory=src -p1 -i fix.patch", "patch --di=src -p1 < fix.patch", "patch -p1 < fix.patch"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+  });
+
+  it("takes -- as the end of cd's and pushd's options, so the folder after it is the one judged (commands-a7-4)", () => {
+    for (const [cmd, plain] of [
+      ["cd -- ~/.config/ember && sed -i s/false/true/ settings.json", "cd ~/.config/ember && sed -i s/false/true/ settings.json"],
+      ["pushd -- ~/.config/ember && tar -xf /tmp/x.tar", "pushd ~/.config/ember && tar -xf /tmp/x.tar"],
+      ["cd -- /etc/ember && cat policy.json", "cd /etc/ember && cat policy.json"],
+      ["cd -L -- ~/.config/ember && rm -f settings.json", "cd -L ~/.config/ember && rm -f settings.json"],
+    ] as const) {
+      expect(decided(cmd).cls.refuse?.rule, cmd).toBe("ember.path");
+      expect(decided(cmd).cls.refuse?.says, cmd).toBe(decided(plain).cls.refuse?.says);
+    }
+    // cd -P lands where the folder really is: after --, the folder is still the one named.
+    expect(decided("cd -P -- ~/.config/ember && rm -f x").cls.refuse?.rule).toBe(decided("cd -P ~/.config/ember && rm -f x").cls.refuse?.rule);
+    // Anywhere else it changes nothing: a project folder, home with no folder after it.
+    for (const cmd of ["cd -- src && ls", "cd -- && ls", "pushd -- src && make"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    expect(decided("cd -- src && rm -f x").cls.probe).toEqual(decided("cd src && rm -f x").cls.probe);
   });
 
   it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {
@@ -1594,6 +1835,25 @@ describe("the option tables: a flag that takes no value never takes the word aft
     for (const cmd of ["node --test-reporter-destination stdout --test", "node --redirect-warnings warn.log app.js", "uv run --cache-dir .cache pytest", "file -f list.txt"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
   });
 
+  it("judges the file redis-cli's --rdb writes its dump to and the files its TLS options and --eval read, written out or in a variable (commands-z6-2)", () => {
+    for (const f of ["/home/ana/.config/ember/settings.json", "/home/ana/.bashrc", "/home/ana/.ssh/authorized_keys", "/etc/passwd"]) {
+      each([
+        [`redis-cli --rdb ${f}`, `touch ${f}`], [`redis-cli --functions-rdb ${f}`, `touch ${f}`], [`redis-cli -h db --rdb=${f}`, `touch ${f}`], [`redis-cli --rdb ${f} -h db`, `touch ${f}`],
+        [`O='--rdb ${f}'; redis-cli $O`, `touch ${f}`], [`O='-h db'; redis-cli $O --rdb ${f}`, `touch ${f}`], [`O='--functions-rdb ${f}'; redis-cli $O`, `touch ${f}`],
+      ]);
+    }
+    for (const f of ["/home/ana/.config/ember/audit.jsonl", "/home/ana/.ssh/id_rsa", "/home/ana/.netrc"]) {
+      each([
+        [`redis-cli --key ${f} PING`, `cat ${f}`], [`redis-cli --tls --cert ${f} PING`, `cat ${f}`], [`redis-cli --cacert ${f} PING`, `cat ${f}`], [`redis-cli --eval ${f}`, `cat ${f}`],
+        [`O='--key ${f}'; redis-cli $O PING`, `cat ${f}`], [`O='--cacert ${f}'; redis-cli $O PING`, `cat ${f}`],
+      ]);
+    }
+    for (const d of ["/home/ana/.config/ember", "/home/ana/.ssh"]) each([[`redis-cli --cacertdir ${d} PING`, `ls ${d}`], [`O='--cacertdir ${d}'; redis-cli $O PING`, `ls ${d}`]]);
+    // A dump to the project or the terminal, and a read, run as before; options in a variable still ask.
+    for (const cmd of ["redis-cli --rdb dump.rdb", "redis-cli --rdb -", "redis-cli -h db --rdb backup/dump.rdb", "redis-cli --tls --cacertdir certs PING", "redis-cli -h db PING"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    expect(decided("O='--rdb dump.rdb'; redis-cli $O").decision.verdict).toBe("ask");
+  });
+
   it("keeps GNU grep's --ignore (its --ignore-case), rg's --ignore and lsd's -L and -t switches, so the file after them is judged (commands-remote-v5-5)", () => {
     each([
       ["grep -i --ignore pass ~/.netrc", "grep pass ~/.netrc"], ["grep -r --ignore pass ~/.config/ember", "grep -r pass ~/.config/ember"], ["egrep --ignore pass ~/.netrc", "egrep pass ~/.netrc"],
@@ -1640,24 +1900,16 @@ describe("database clients that run what their input gives them (commands-remote
     for (const cmd of ["c=PING; redis-cli \"$c\"", "c='GET x'; redis-cli $c", "redis-cli GET \"$k\"", "redis-cli -h \"$HOST\" PING"]) expect(rules(cmd), cmd).toEqual([]);
   });
 
-  it("reads redis-cli's options a variable holds as the options they are, never as a command that changes data (commands-y6-3)", () => {
-    const plain = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux")).findings.map(f => `${f.rule}: ${f.says}`);
-    // A read with its options in a variable runs, as it does with them written out.
+  it("never runs redis-cli with options a variable holds, which may write its dump over a file or read a key (commands-z6-2)", () => {
+    const decided = (cmd: string) => runCase({ cmd, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" });
     for (const cmd of [
-      "REDIS_OPTS='-h db -p 6380'; redis-cli $REDIS_OPTS INFO", "O='-h db'; redis-cli $O PING", "O='-n 2'; redis-cli $O GET k", "O='--no-auth-warning'; redis-cli $O PING",
-      "O='-h db -p 6380 INFO'; redis-cli $O", "redis-cli -h db -p 6380 INFO",
-    ]) expect(rules(cmd), cmd).toEqual([]);
-    // A change, after them or in them, or given on its input, asks as written out; a password among them is on its line.
-    for (const [cmd, as] of [
-      ["O='-h db'; redis-cli $O FLUSHALL", "redis-cli -h db FLUSHALL"], ["O='-h db FLUSHALL'; redis-cli $O", "redis-cli -h db FLUSHALL"],
-      ["O='-n 2'; redis-cli $O DEL users", "redis-cli -n 2 DEL users"], ["O='-h db'; echo FLUSHALL | redis-cli $O", "echo FLUSHALL | redis-cli -h db"],
-      ["O='-a hunter2'; redis-cli $O PING", "redis-cli -a hunter2 PING"], ["O='--eval x.lua'; redis-cli $O", "redis-cli --eval x.lua"],
-    ] as const) {
-      expect(plain(as), as).not.toEqual([]);
-      expect(plain(cmd), cmd).toEqual(plain(as));
+      "O='--rdb /home/ana/.config/ember/settings.json'; redis-cli $O", "O='--rdb /home/ana/.bashrc'; redis-cli $O", "O='-h db'; redis-cli $O --rdb /home/ana/.bashrc",
+      "O='--functions-rdb /home/ana/.bashrc'; redis-cli $O", "O='--key /home/ana/.ssh/id_rsa'; redis-cli $O PING", "O='--cacert /home/ana/.config/ember/settings.json'; redis-cli $O PING",
+      "O='-h db'; redis-cli $O FLUSHALL", "O='-h db'; echo FLUSHALL | redis-cli $O", "O='-a hunter2'; redis-cli $O PING",
+    ]) {
+      const { cls, decision } = decided(cmd);
+      expect(decision.verdict === "ask" || cls.refuse !== null, cmd).toBe(true);
     }
-    // Options Ember can't see still ask.
-    expect(rules("redis-cli $REDIS_OPTS INFO")).toContain("unclear.sql");
   });
 
   it("judges an SQL or command file a client reads from its input by its name, as -f is, and asks for one this task downloaded", () => {

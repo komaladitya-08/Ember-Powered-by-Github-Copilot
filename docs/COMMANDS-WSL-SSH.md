@@ -134,8 +134,9 @@ Ember stops and asks before a command that:
   that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), changing or deleting what
   a database holds (`psql -c 'DROP TABLE x'`, `redis-cli FLUSHALL`, and the same given on the client's input:
   `redis-cli <<< FLUSHALL`, `echo 'db.dropDatabase()' | mongosh`; commands or code on its input or its line that
-  Ember can't see or follow ask too, such as `redis-cli "$CMD"`, while its options in a variable are read as options,
-  so `O='-h db'; redis-cli $O INFO` runs), and package scripts, make targets and SQL or command files named clean, wipe, purge,
+  Ember can't see or follow ask too, such as `redis-cli "$CMD"` and options held in a variable, `redis-cli $OPTS`;
+  a file redis-cli's options name is judged as that file, so `redis-cli --rdb ~/.bashrc`, which writes a dump over
+  it, asks), and package scripts, make targets and SQL or command files named clean, wipe, purge,
   reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`);
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
@@ -182,7 +183,9 @@ Ember stops and asks before a command that:
   `aria2c -o "$f"` or `-d "$d"`, `axel -o "$f"`, `fetch -o "$f"`, `lwp-download … "$f"`, `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
   `DownloadFile`) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
   saved into or below, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the
-  folder either); a listing or a read never does; and a patch this task downloaded or fetched applied with `patch`,
+  folder either, as for a file saved by name in a folder Ember can't tell: `cd "$d" && curl … > x.py`); a listing or a
+  read never does; a download a program run through `env -C` or `sudo -D` writes with the shell's `>` is the file in
+  the shell's own folder, so `env -C src curl -s … > x.py` and then `python3 x.py` asks; and a patch this task downloaded or fetched applied with `patch`,
   `git apply` or `git am`, in whichever folder it is applied in (`patch -d src -p1 < x.patch`, `env -C src patch -p1 <
   x.patch`, `git -C sub am < x.patch`), or code pulled or fetched from an address rather than the repository's own
   remote (`git pull https://…`), marks the files it changes the same way, so the next `make`, `npm test` or `bash
@@ -190,18 +193,48 @@ Ember stops and asks before a command that:
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
-  aliases it can't see, unusual syntax, and interactive programs such as `vim`, `less`, `top` or `python` with no
-  script ("This opens an interactive program; you'd have to use it yourself in the command window.").
+  aliases it can't see, unusual syntax, interactive programs such as `vim`, `less`, `top` or `python` with no
+  script ("This opens an interactive program; you'd have to use it yourself in the command window."), a job count
+  held in a variable, whatever the command set the variable to (`make -j$N`, `N=4; make -j$N`, `./gradlew
+  --max-workers=$N`, `mvn --threads $N`, `xargs -P"$N" echo`: only a number, `$(nproc)` and the like, or arithmetic of
+  numbers such as `$((2*4))`, quoted or not, is a count, so `make -j4`, `make -j$(nproc)` and `cmake --build build -j
+  $(nproc)` run; a variable apart after make's `-j` or `--jobs`, Maven's `-T` or ninja's `-j` is taken as before, so
+  `make -j $JOBS` runs, unless the command set it from a command's output, `X=$(cat jobs.txt); make -j $X`, or to
+  words after the count that are targets, `T='4 deploy'; make -j $T`), and a value Ember can't see written straight
+  after an option of a program that runs another one, quoted or not (`nice -n"$X" cmd`, `xargs -n$X cmd`, `env
+  -C"$d" cmd`), which may hold the command it runs; only `xargs -P` and `parallel -j` take a count there (`xargs
+  -P$(nproc) cmd`).
 
-**Loops and `if` on a command line** are read as they are in a script (below): in bash or sh, `if`, `for`, `while`
-and `until` and a plain `[[ … ]]` test don't ask by themselves, because Ember judges every command inside them. So
-`for i in 1 2 3; do echo $i; done` and `if [ -f package.json ]; then npm test; fi` run, `if [ -f x ]; then rm x; fi`
-asks only to delete x, and `while IFS= read -r l; do …; done < list.txt` isn't taken for a command waiting for your
-typing (`IFS` in front of `read` changes only how that `read` splits the line). zsh's, PowerShell's and cmd's `if` and
-`for` still ask, and so do a loop in a shell the command starts (`bash -c '…'`), a loop whose variable is `PATH` or
-another that changes how commands are found, `case`, functions and `{ … }` groups. A variable set after `then`, `do`,
-`else`, `!` or `time` is judged as one set at the start of a command: `if true; then LD_PRELOAD=./x.so ls; fi` asks, as
-`LD_PRELOAD=./x.so ls` does.
+**Loops and `if` on a command line** in bash or sh run without a question only when the whole line is plain: then
+`if`, `then`, `else`, `fi`, `for`, `while`, `until`, `do` and `done` don't ask by themselves, and Ember judges every
+command inside them as if it were written out once, in the folder the line starts in. So `for i in 1 2 3; do echo
+$i; done`, `if [ -f package.json ]; then npm test; fi`, `until [ -f done.txt ]; do sleep 1; done` and `while read -r
+l; do echo "$l"; done <<< 'a b'` run. Anything else asks with the loop's own words ("Ember can't tell exactly what
+this does."), whatever it does:
+- **a command in the line that asks.** `if [ -f x ]; then rm x; fi` asks, and a loop never runs with a Stop because
+  your words asked for what it does: with "delete the build folder", `while true; do rm -rf build; cd ..; done` asks.
+- **a folder change** (`cd`, `pushd`, `popd`) anywhere in the line, because the next pass would run somewhere Ember
+  didn't judge: `for i in 1 2; do cat .config/ember/settings.json; cd ..; done` asks.
+- **a variable set** anywhere in the line, from text Ember sees or not (`x=…`, also in front of a command, `export`,
+  `declare`, `typeset`, `local`, `readonly`, `printf -v`, `set`, `unset`, `shift`, `wait -p`, `exec`, `${x:=…}`), or a
+  file sourced (`source`, `.`): `for i in 1; do x=$(cat f); echo $x; done` and `if [ -f x ]; then y=1; fi` ask. A
+  `for` loop's own variable over written-out words and a `read` of written-out text (below) are the exceptions.
+- **a `[[ … ]]` test**, in a loop or an `if` or not: `if [[ -d build ]]; then make; fi` asks. (In a script, a plain
+  one is read; below.)
+- **text Ember can't see.** A `read`, `mapfile`, `readarray`, `select` or `getopts`, in a loop or not, asks ("It works
+  on text Ember can't see.") whatever its variables are used for afterwards, unless it reads its own input and that is
+  a here-string or here-document of written-out text (`read -r a b <<< 'x y'`, or its loop's `done <<< 'a b'` or
+  `done <<'EOF'`): a file (`done < list.txt`, `read -r l < f`), a pipe (`cat list | while read -r d`), another
+  descriptor (`read -u 3`, `read <&3`), a substitution or a variable (`<<< "$d"`, `<<< "$HOME"`) all ask, and so does
+  a `for` loop whose list has any word that isn't written out (a pattern such as `*.log`, a variable, `~`, `{1..3}`, a
+  substitution, `"$@"`). `IFS` in front of a loop's or an `if`'s `read` changes only how that `read` splits the line
+  (`while IFS= read -r l`); in front of any other command it asks.
+
+Ember's own folder named in sight is refused before any of this (`for d in ~/.config/ember; do rm -rf "$d"; done`).
+zsh's, PowerShell's and cmd's `if` and `for` always ask, and so do a loop in a shell the command starts (`bash -c
+'…'`), a loop whose variable is `PATH` or another that changes how commands are found, `case`, functions and `{ … }`
+groups. A variable set after `then`, `do`, `else`, `!` or `time` is judged as one set at the start of a command: `if
+true; then LD_PRELOAD=./x.so ls; fi` asks, as `LD_PRELOAD=./x.so ls` does.
 
 **Shell scripts are read first.** When a command runs a shell script (`sh deploy.sh`, `bash t.sh`, `source env.sh`,
 `./t.sh`, `powershell -File t.ps1`, `& .\t.ps1`, `cmd /c t.bat`, and the same behind `env`, `nice`, `timeout` and the
@@ -209,8 +242,10 @@ like), Ember reads the script first, on the computer that runs it, and judges it
 script that deletes, publishes or reads secrets asks ("In t.sh: Deletes build and everything in it."), even when you
 asked for that kind of operation, and one that would touch Ember's own safety files is refused. A script also asks
 when Ember can't read all of it: an sh or bash script's `if`, `for` and `while` and a plain `[[ … ]]` test are read
-(the commands inside them are judged), but `case`, functions, `trap`, `{ … }` groups, a `[[` that compares numbers or
-uses `-v`, a variable in a file name, a loop whose variable is `PATH` or the like, more than 64 commands or more than
+(the commands inside them are judged, a loop's body once, in the folder the script starts in, so a `cd` in a loop
+isn't followed from one pass to the next), but `case`, functions, `trap`, `{ … }` groups, a `[[` that compares numbers or
+uses `-v`, a variable in a file name, a loop whose variable is `PATH` or the like, a `read` or a loop's list over text
+Ember can't see (as on a command line, above), more than 64 commands or more than
 8,000 characters ask, and so do zsh's `if`, `for` and `while` (also from a bash script's `zsh -c '…'`) and
 PowerShell's and cmd's `if` and `for`; the card then says why ("Ember can't read all of
 build.sh (it has more commands than Ember can check one by one).", "In build.sh: Ember can't tell what cat is
@@ -399,7 +434,10 @@ log, sign-in, settings or install folder, here or on the other computer), stop o
 keys and click in Ember's windows (`xdotool`, `SendKeys`, `osascript` keystrokes). Ember says: "Ember won't run this:
 it would change Ember's own safety settings, records or programs." ("it would read …" for a command that only reads
 them, such as `cat` or `Get-Content`) or "Ember won't run this: it could press keys or click in Ember's own windows."
-The same goes when a shell loop's list or a variable the command sets names them (`for f in ~/.config/ember/*; do …`,
+The same goes for the folder a command works in, named after `cd --` or `pushd --` (`cd -- ~/.config/ember && sed -i …
+settings.json`) or given to `patch -d` or `--directory` (also shortened, down to `--di`), which changes the files the
+patch names there (`patch -d ~/.config/ember -p0 < x.patch`; a folder Ember can't see there asks), and when a shell
+loop's list or a variable the command sets names them (`for f in ~/.config/ember/*; do …`,
 `d=~/.config/ember; rm -rf "$d"`, `d=~/.config; rm -rf "$d"/emb*`), in PowerShell too (`$d = "$env:LOCALAPPDATA\ember";
 Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do `set --` (`"$1"`, `"$@"`),
 `printf -v` and the text a here-string or here-document gives `read` or `xargs` (`while read f; do rm -rf "$f"; done <<<
@@ -418,10 +456,8 @@ wrapper's option (`xargs -a "$p/settings.json"`, `xargs --arg-file="$p/settings.
 `echo "$p" > list.txt; xargs rm -rf < list.txt`, a loop or group whose output goes on, and in PowerShell `$p |
 Remove-Item -Recurse` or `Write-Output $p | Remove-Item`) or through `${p:?}`, `${p:-…}` or `${p%/}`. What echo or
 printf prints into the next command is that command's input, as a here-string's text is (`echo ~/.config/ember | xargs
-rm -rf` is refused too), and a `\0` ends a name there, as `read -d ''` reads it (`printf '%s\0' ~/.config/ember | while
-IFS= read -r -d '' d; do rm -rf "$d"; done` is refused); printf's escapes other than a line break, a tab and `\0`
-(`\056`, `\x2e`, `\u002e`) are text Ember can't see, so the command after it asks (`printf '\056\056\057\056netrc' | xargs
-cat`). Handed to a program that
+rm -rf` is refused too); printf's escapes other than a line break, a tab and `\0` (`\056`, `\x2e`, `\u002e`) are text
+Ember can't see, so the command after it asks (`printf '\056\056\057\056netrc' | xargs cat`). Handed to a program that
 may change what it names (an export, the input of a program Ember can't follow), Ember says it would change its files. A value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
 does.
 

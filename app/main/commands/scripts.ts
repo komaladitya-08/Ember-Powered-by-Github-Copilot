@@ -230,16 +230,21 @@ export function readThrough(f: Finding, got: Classification, shell: ShellId): bo
 }
 
 /**
- * A command line's classification without the flow words and plain tests Ember reads through (readThrough): a loop or
- * an `if` on an sh or bash command line asks only for what its commands do, as in a script (commands-remote-2).
+ * A command line's classification without the flow words Ember reads through (readThrough): a loop or an `if` on an
+ * sh or bash command line whose commands all run without a question runs as they would written out
+ * (commands-remote-2). Anything else keeps them and asks as on main, where every loop and `if` asked: a command in the
+ * line that asks (a dangerous one the user's words asked for is never announced from inside a loop: commands-b7-2),
+ * a `[[ … ]]` test (main reads one through only in a script: commands-b7-4), or a line that sets a variable or changes
+ * the folder (holdsFlow), since a body is judged once, in the folder and with the values the line starts with
+ * (commands-b7-1, b7-3). A classification that doesn't say (no holdsFlow) keeps them.
  */
 export function withoutReadFlow(cls: Classification, shell: ShellId): Classification {
-  const findings = cls.findings.filter(f => !readThrough(f, cls, shell));
-  if (findings.length === cls.findings.length) return cls;
+  const findings = cls.findings.filter(f => !(SCRIPT_FLOW.has(f.rule) && readThrough(f, cls, shell)));
+  const x = cls as Partial<ClassificationExtra>;
+  if (findings.length === cls.findings.length || findings.length > 0 || x.holdsFlow !== false) return cls;
   // The words Ember read through aren't code it can't see: what the command may write is its commands' (a classification
   // that doesn't say what else it writes keeps its answer).
-  const x = cls as Partial<ClassificationExtra>;
-  const anywhere = typeof x.writesUnplaced === "boolean" ? x.writesUnplaced || findings.some(f => f.cls === "unclear" || f.cls === "escape") : x.writesAnywhere;
+  const anywhere = typeof x.writesUnplaced === "boolean" ? x.writesUnplaced : x.writesAnywhere;
   return { ...cls, findings, ...(typeof anywhere === "boolean" ? { writesAnywhere: anywhere } : {}) } as Classification;
 }
 
