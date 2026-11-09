@@ -1233,6 +1233,11 @@ interface H {
   args: Arg[];
   /** The program word's lookup facts (its extension, whether it is reached through WSL interop). */
   pn: ReturnType<typeof programName>;
+  /**
+   * The scope the shell opens the command's redirections in, when `sc` is a folder the program moves into itself
+   * (`git -C sub`, `patch -d src`): `< x.patch` is the shell's file there (commands-remote-x6-4).
+   */
+  shellSc?: Scope;
 }
 type Handler = (h: H) => void;
 
@@ -4614,7 +4619,7 @@ reg(NATIVE, ["git"], h => {
   // An `ext::` remote runs the command it names.
   if (h.args.some(a => /^ext::/i.test(a.v ?? ""))) h.e.unclear("unclear.git-ext", "It runs a program named in a git address.");
   const rest = h.args.slice(g.verbAt + 1);
-  const gh: H = { ...h, sc, args: rest };
+  const gh: H = { ...h, sc, args: rest, shellSc: h.shellSc ?? h.sc };
   const fn = GIT[verb];
   if (fn) { fn(gh, widen); return; }
   if (!GIT_READ.has(verb)) { h.e.unclear("unclear.git-verb", "Ember can't tell which git command this runs (an alias or an add-on)."); return; }
@@ -6558,7 +6563,7 @@ reg(NATIVE, ["patch", "gpatch"], h => {
   let sc = h.sc;
   const dir = values(p, "d", "directory")[0];
   if (dir !== undefined) sc = child(h.sc, { cwd: dir === null ? null : resolveTargetPath(dir, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }) });
-  const ph: H = { ...h, sc };
+  const ph: H = { ...h, sc, shellSc: h.shellSc ?? h.sc };
   for (const f of values(p, "i", "input")) if (f) h.e.usePath(lit(f), "read", sc);
   for (const f of values(p, "o", "output", "r", "reject-file")) overwrites(ph, f === null ? { v: null, raw: "?", glob: false } : lit(f));
   const [file, patchFile] = p.operands;
@@ -6579,7 +6584,8 @@ reg(NATIVE, ["patch", "gpatch"], h => {
 function appliesDownload(h: H, patches: readonly Arg[]): boolean {
   if (patches.some(f => h.e.isDownloaded(f, h.sc))) return true;
   if ((h.s.stdin === "pipe" || h.s.stdin === "heredoc") && patches.length === 0 && (h.s.fetchBefore || h.e.pipe.carried === true)) return true;
-  return h.s.redirs.some(r => r.kind === "read" && r.target !== null && h.e.isDownloaded(r.target, h.sc));
+  // A redirection is the shell's, opened in its folder, not the one `-d` or `-C` moves into (commands-remote-x6-4).
+  return h.s.redirs.some(r => r.kind === "read" && r.target !== null && h.e.isDownloaded(r.target, h.shellSc ?? h.sc));
 }
 reg(NATIVE, ["certutil"], h => {
   // NSS's certutil (Linux, macOS): a capital letter names its command; adding, changing or deleting a certificate or
