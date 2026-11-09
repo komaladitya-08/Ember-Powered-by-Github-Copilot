@@ -766,13 +766,14 @@ class Classifier {
   }
 
   /**
-   * The values the text gives a word (formsOf): null for one with a part Ember can't see, a resolved word its own value
-   * (`T=deploy; make -j "$T"`: commands-remote-w5-2).
+   * The values the text gives a word (formsOf): null for one with a part Ember can't see (with `unseen`, the form with
+   * UNSEEN where that part stands: commands-y6-2), a resolved word its own value (`T=deploy; make -j "$T"`:
+   * commands-remote-w5-2).
    */
-  knownForms(a: Arg): (string | null)[] {
+  knownForms(a: Arg, unseen = false): (string | null)[] {
     if (a.v !== null) return [a.v];
-    if (!a.parts) return [null];
-    return this.formsOf(a.parts).map(f => (f.includes(UNSEEN) ? null : f.replace(PATTERN, "")));
+    if (!a.parts) return [unseen ? UNSEEN : null];
+    return this.formsOf(a.parts).map(f => (f.includes(UNSEEN) && !unseen ? null : f.replace(PATTERN, "")));
   }
 
   /** The forms a word may take with the values the text gave its variables (UNSEEN for any other part). */
@@ -5790,21 +5791,28 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   // one is a target or a variable, as written there (`T=deploy; make -j "$T"`), and an option-like one asks
   // (commands-remote-w5-2). Unquoted, the shell splits that value into words, each after the count an argument of its
   // own, attached or apart and for any task runner's job count (`T='4 deploy'; make -j$T`, `./gradlew --max-workers $T`:
-  // commands-remote-x6-1).
+  // commands-remote-x6-1), Maven's and ninja's included (commands-y6-2).
   const counts: Arg[] = [];
   for (const o of p.opts) {
-    if (!(/make$/.test(h.key) && /^-[jl]$/.test(o.name)) && !/^--(jobs|load-average|max-workers)$/.test(o.name)) continue;
+    // Maven's -T and ninja's -j and -l take the word after them whatever it is.
+    const anyCount = (mvn && /^(-T|--threads)$/.test(o.name)) || (h.key === "ninja" && /^-[jl]$/.test(o.name));
+    if (!anyCount && !(/make$/.test(h.key) && /^-[jl]$/.test(o.name)) && !/^--(jobs|load-average|max-workers)$/.test(o.name)) continue;
     const attached = o.parts !== undefined;
     const word: Arg | undefined = attached ? { v: null, raw: args[o.at].raw, glob: false, parts: o.parts } : o.value === null ? args[o.at + 1] : undefined;
     // A count attached and quoted (`-j"$JOBS"`) is never a target: make takes only a number there.
     const quoted = word !== undefined && /"$/.test(word.raw);
     if (!word || (attached && quoted)) continue;
-    for (const f of h.e.knownForms(word)) {
+    for (const f of h.e.knownForms(word, true)) {
       if (f === null) continue;
+      // A value that starts with a space, a tab or a line break leaves the option on its own (`T=' deploy'; make -j$T`
+      // builds deploy), and a part Ember can't see is one word of it (`T="$(nproc) deploy"`): commands-y6-2.
+      const apart = !attached || /^[ \t\n]/.test(f);
       for (const [k, w] of (quoted ? [f] : f.split(/[ \t\n]+/).filter(x => x !== "")).entries()) {
-        // Attached, the first word is the count whatever it is; apart, only a number is.
-        if (k === 0 && (attached || /^\d+(\.\d+)?$/.test(w))) continue;
-        if (w.startsWith("-")) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
+        // Attached, or for an option that takes any word, the first word is the count whatever it is; apart, only a
+        // number or one Ember can't see is.
+        if (k === 0 && (anyCount || !apart || /^\d+(\.\d+)?$/.test(w) || w.includes(UNSEEN))) continue;
+        if (w.includes(UNSEEN)) counts.push({ v: null, raw: word.raw, glob: false });
+        else if (w.startsWith("-")) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
         else counts.push(lit(w));
       }
     }

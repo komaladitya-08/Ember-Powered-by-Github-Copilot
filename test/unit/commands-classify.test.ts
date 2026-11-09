@@ -1510,6 +1510,38 @@ describe("the option tables: a flag that takes no value never takes the word aft
     }
   });
 
+  it("builds what a job count's variable holds when it starts with a space or has a part Ember can't see, and Maven's and ninja's counts too (commands-y6-2)", () => {
+    // A value that starts with a space, a tab or a line break leaves the option on its own, as the shell splits it.
+    for (const [cmd, plain] of [
+      ["T=' deploy'; make -j$T", "make -j deploy"], ["T=$'\\tdeploy'; make -j$T", "make -j deploy"], ["T=$'\\ndeploy'; make -j$T", "make -j deploy"],
+      ["T=' deploy'; make -sj$T", "make -sj deploy"], ["T=' deploy'; make -l$T", "make -l deploy"], ["T=' deploy'; make --jobs=$T", "make deploy"],
+      ["T=' publish'; rake --jobs=$T", "rake publish"], ["T=' publish'; ./gradlew --max-workers=$T", "./gradlew publish"], ["T=' 4 deploy'; make -j$T", "make -j 4 deploy"],
+      ["for T in 4 ' deploy'; do make -j$T; done", "make -j deploy"],
+      // A part Ember can't see is one word of it: the first the count, as before, and the words after it built.
+      ["T=\"$(nproc) deploy\"; make -j$T", "make -j4 deploy"], ["T=\"$(nproc) deploy\"; make -j $T", "make -j 4 deploy"], ["T=\"$JOBS deploy\"; make -j$T", "make -j4 deploy"],
+      ["T=\"4 $X\"; make -j$T", "make -j4 $X"],
+      // Maven's -T and ninja's -j take the word after them whatever it is, so the next one is a goal or a target.
+      ["T='2 deploy'; mvn -T $T", "mvn -T 2 deploy"], ["T='2 deploy'; mvn --threads $T", "mvn --threads 2 deploy"], ["T='2 deploy'; ./mvnw -T $T", "./mvnw -T 2 deploy"],
+      ["T='2 deploy'; ninja -j $T", "ninja -j 2 deploy"], ["T='2 publish'; ninja -l $T", "ninja -l 2 publish"],
+    ] as const) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+      expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
+    }
+    expect(decided("T=' deploy'; make -j$T").decision.says).toContain("Runs make deploy, whose name says it publishes.");
+    expect(decided("T='2 deploy'; mvn -T $T").decision.rules).toContain("mvn.deploy");
+    // An option or a make variable split out of it asks.
+    for (const cmd of ["T=' -f evil.mk'; make -j$T", "T=' SHELL=/bin/echo'; make -sj$T", "T=\"$X -f evil.mk\"; make -j$T", "T='2 deploy'; mvn -T$T"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    // A count alone, with a space before it or not, a value Ember can't see and the processor counts run as before.
+    for (const cmd of [
+      "T=' 4'; make -j$T", "J=' 8'; make -sj$J", "T=\" $(nproc)\"; make -j$T", "make -j$X", "ninja -j $X", "T=4; mvn -T $T test", "T=2C; mvn -T $T package",
+      "T=4; ninja -j $T", "mvn -T $X package",
+    ]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+  });
+
   it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {
     for (const cmd of ["cp notes.txt", "mv notes.txt", "install x.sh", "docker run --rm", "podman run -P"]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     for (const cmd of ["cp --help", "mv --version", "rsync -a src", "rsync src/"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
