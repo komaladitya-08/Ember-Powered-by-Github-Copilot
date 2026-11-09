@@ -2190,6 +2190,29 @@ command or file after it), and a value that names a file is judged as that file 
 commands-classify.test.ts's option-table test runs each switch in front of a dangerous operand and each such value as a
 dangerous path, so add a row when you change a table.
 
+**The audit baseline comparison** bundles the classifier and real `run_command` flow from both worktrees with esbuild.
+Run it after every commands change (commands-comparison-r7-1):
+
+```bash
+git worktree add --detach ../ember-audit-baseline 4d64d3aff1798d51fdd3bbe19cb212cace028424
+node scripts/commands/compare.mjs --baseline ../ember-audit-baseline --current . --output /tmp/ember-command-comparison
+```
+
+Only the current checkout needs `npm ci`. The baseline must be that exact commit with all tracked files unchanged. Untracked and ignored files are refused
+outside the intentional `node_modules` and `.cache` roots, since source or build configuration could shadow imports.
+The tool reads all four baseline corpora, current additions, generated adversarial forms and the script/sequence
+regressions in `test/fixtures/commands/comparison.json`; `--extra-cases <json>` adds review probes. It never runs a
+corpus command: the local flow uses a scripted runner and denies every approval. Ordinary runs, task-directory
+changes, questions and refusals are recorded separately, and each expected stage of a multi-call sequence is compared, including its exact input command. Truncated or
+mislabelled sequences fail rather than borrowing the combined command's job-count exception.
+`summary.json` gives counts, `comparison.json` gives differences and unknown outcomes, and the two bundles and full
+results are kept alongside them. A missing or unknown result fails the comparison. The only tolerated loosenings
+are asks becoming runs for the known tools' sole job-count option: literal numbers, the named `nproc`, `getconf
+_NPROCESSORS_ONLN` or `sysctl -n hw.ncpu` substitutions, or arithmetic of numbers. The baseline question must contain only the count-related uncertainty rules; other security rules and former
+refusals are never exempt.
+Exit 1 means a forbidden loosening or incomplete/unknown probe; a probe/build error also exits unsuccessfully.
+These fake-runner results do not replace the native command suites below.
+
 **Integration suites** that need a real `script`, sshd, WSL or desktop are in `test/integration/`, skip without their
 variable, and fail when it is 1 and what they need is missing. `.github/workflows/remote.yml` runs them; `ci.yml` is
 unchanged. remote.yml runs on pull requests and on pushes to `main` and the `ember-improve/20261022-sshwsl-*` branches
