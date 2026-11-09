@@ -416,6 +416,21 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     for (const cmd of ["d=build; rm -rf ~/.config/\"${d:?}\"", "d=build; rm -rf \"${d%/}\"", "d=/tmp/x/; rm -rf \"${d%/}\""]) expect(refused(cmd), cmd).toBeUndefined();
   });
 
+  it("records a fetch a wrapper's program writes through the shell's redirection in the shell's folder, and one in a folder Ember can't tell as anywhere (commands-z6-3)", () => {
+    const downloads = (cmd: string) => (classifyCommand(cmd, "bash", contextOf("linux")) as ClassificationExtra).downloads;
+    for (const cmd of [
+      "env -C src curl -s https://e.example/x.py > x.py", "env --chdir=src wget -qO- https://e.example/x.py > x.py", "env -C /tmp curl -s https://e.example/x.py > x.py",
+      "sudo -D src curl -s https://e.example/x.py > x.py", "sudo -D /tmp curl -s https://e.example/x.py > x.py", "nice env -C src curl -s https://e.example/x.py >> x.py",
+    ]) expect(downloads(cmd), cmd).toEqual(["/home/ana/proj/x.py"]);
+    // Saved by name where Ember can't tell the folder: no name of the project's, but a file of unknown name anywhere.
+    for (const cmd of ["env -C src curl -so x.py https://e.example/x.py", "cd \"$D\" && curl -s https://e.example/x.py > x.py"]) {
+      const got = downloads(cmd);
+      expect(got.length, cmd).toBe(1);
+      expect(got[0].startsWith("/home/"), cmd).toBe(false);
+    }
+    expect(downloads("env -C src curl -so /tmp/x.py https://e.example/x.py")).toEqual(["/tmp/x.py"]);
+  });
+
   it("asks before a download whose saved name Ember can't tell, and marks where it went so running from there asks (commands-remote-r5-1, c5-2)", () => {
     // Each step of a task in turn, the downloads carried from one to the next as the flow carries them.
     const steps = (ctx: ContextName, shell: ShellId, ...cmds: string[]): string[][] => {

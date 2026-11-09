@@ -1019,10 +1019,14 @@ class Classifier {
     else for (const p of at) if (!this.unnamedAt.includes(p)) this.unnamedAt.push(p);
   }
 
-  /** Records a file this command downloads (§3.4.7), resolved against the scope's folder. */
+  /**
+   * Records a file this command downloads (§3.4.7), resolved against the scope's folder. In a folder Ember can't tell
+   * (`env -C src`, `sudo -D "$d"`), a name it can't place is a file of unknown name anywhere (commands-z6-3).
+   */
   download(p: string | null, sc: Scope): void {
-    if (!p || !sc.cwd) return;
-    const abs = resolveTargetPath(p, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
+    if (!p) return;
+    if (!sc.cwd && !isAbsolute(p, sc.path.flavour) && !(p.startsWith("~") && sc.home)) { this.markUnnamed(null, sc); return; }
+    const abs = resolveTargetPath(p, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     // Where it really lands too (§3.6): through a link (`-o link/x`) or `..` after one (`-o sub/../x`), so running it
     // later by that name (`sh /data/x`) is running the download.
     const phys = this.physical(p, "write", sc);
@@ -2531,7 +2535,7 @@ class Engine extends Classifier {
     this.afterArgs(inner.args);
     // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
     // there is a download, and a pipe after it carries what it fetched (commands-remote-c1-1).
-    this.afterRun(key, inner.args, h.s, sc);
+    this.afterRun(key, inner.args, h.s, sc, h.shellSc ?? h.sc);
     if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
     // `command printf -v …` and `time unset …` run the same built-ins.
     this.hiddenNames(key, inner.args, sc);
@@ -2583,14 +2587,15 @@ class Engine extends Classifier {
    * (`curl URL > x.sh`, `curl URL | tee x.sh`), and a build tool, test runner or package manager working in a folder
    * this task downloaded runs that folder's code (a cloned repository's Makefile or package scripts).
    */
-  afterRun(key: string, args: Arg[], s: Simple, sc: Scope): void {
+  afterRun(key: string, args: Arg[], s: Simple, sc: Scope, shellSc: Scope = sc): void {
     // What reads a download writes it out again (`cat x.py > y.py`, `sed … x.py > y.py`, `cat x.py | tee y.py`): the
-    // new file is the download too (commands-remote-c2-2).
+    // new file is the download too (commands-remote-c2-2). Its redirections are the shell's, opened in its folder
+    // whatever folder a wrapper moves the program into (`env -C src curl … > x.py`: commands-z6-3).
     const known = this.ctx.downloaded.size > 0 || this.downloads.length > 0;
-    const carried = known && (this.pipe.carried === true || args.some(a => !isOption(a) && this.isDownloaded(a, sc)) || s.redirs.some(r => r.kind === "read" && r.target !== null && this.isDownloaded(r.target, sc)));
+    const carried = known && (this.pipe.carried === true || args.some(a => !isOption(a) && this.isDownloaded(a, sc)) || s.redirs.some(r => r.kind === "read" && r.target !== null && this.isDownloaded(r.target, shellSc)));
     if (carried) this.pipe.carried = true;
     if (s.fetchBefore || FETCHERS.has(key) || carried) {
-      for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, sc);
+      for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
       if (/^(tee|tee-object|out-file|set-content|add-content)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
       }
