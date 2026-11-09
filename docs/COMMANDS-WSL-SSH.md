@@ -999,3 +999,8 @@ Each item says what Ember can't do in this release and what happens instead.
 | L27 | On Windows and macOS, tools that work by capturing the screen can't show the command window or Ember's small cards (host key, password, consent) | They are left out of screen captures there, so no other app records a command's output or a card: TeamViewer, AnyDesk, Quick Assist, VNC and magnifiers that capture the screen show a blank space where they are. Remote Desktop shows them, and so may Mac apps built on ScreenCaptureKit. Approve commands and type passwords at the computer itself, or over Remote Desktop |
 
 (L13 is a rule for Ember's code, in [DEVELOPING.md](DEVELOPING.md) §14.3.)
+
+A URL whose filename contains unresolved shell text, and URLs handed to a downloader by `xargs` or a loop,
+keep an unnamed-download marker. Attached unresolved output options do too. Their download asks first, and
+executing a file they might have saved asks again, across separate tool calls (commands-remote-r6-1).
+A fully named data download still marks only its own file.

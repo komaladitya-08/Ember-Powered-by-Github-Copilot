@@ -6205,6 +6205,8 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
   else if (values(p, "d", "data", "data-raw", "data-binary", "data-urlencode", "data-ascii", "json", "F", "form", "form-string").length || /^(POST|PUT|PATCH|DELETE)$/.test(method) || values(p, "mail-rcpt").length) {
     h.e.add("publish", "send.http", `Sends data to ${host}.`, { objects, program: "curl" });
   }
+  // An attached output whose value is unresolved must not disappear with its option (commands-remote-r6-1).
+  if (h.args.some(a => a.v === null && /^-(?:[^-]*o|--?output=)/.test(a.raw))) h.e.downloadUnnamed(null, h.sc);
   const outDir = values(p, "output-dir")[0] ?? null;
   // A folder Ember can't see (`--output-dir "$d"`): whatever it saves there is a download of no name Ember knows.
   if (values(p, "output-dir").some(d => d === null)) h.e.downloadUnnamed(null, h.sc);
@@ -6223,6 +6225,7 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
   // -J saves under the name the server sends, when it sends one (commands-remote-c5-2).
   if (has(p, "O", "remote-name", "remote-name-all") && has(p, "J", "remote-header-name")) h.e.downloadUnnamed(outDir ?? ".", h.sc);
   if (has(p, "O", "remote-name", "remote-name-all")) {
+    if (p.operands.some(a => a.v === null) || urls.length === 0) h.e.downloadUnnamed(outDir ?? ".", h.sc);
     for (const u of urls) {
       const name = u.replace(/[?#].*$/, "").split("/").pop();
       if (!name) continue;
@@ -6253,6 +6256,7 @@ reg(NATIVE, ["wget", "wget2"], h => {
   if (values(p, "config").length) h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see.");
   const dir = values(p, "P", "directory-prefix")[0];
   const out = values(p, "O", "output-document")[0];
+  if (h.args.some(a => a.v === null && /^-(?:[^-]*O|--?output-document=)/.test(a.raw))) h.e.downloadUnnamed(null, h.sc);
   if (out !== undefined) {
     if (out === null) h.e.downloadTo(optionWords(h.args, p, "O", "output-document")[0] ?? { v: null, raw: "", glob: false }, h.sc);
     else if (out !== "-") {
@@ -6265,6 +6269,7 @@ reg(NATIVE, ["wget", "wget2"], h => {
     // included (review #169); wget may pick another name (a redirect, -r's folders), so the folder is judged too.
     if (dir === null) h.e.downloadUnnamed(null, h.sc);
     else if (dir !== undefined) writeInto(h, dir);
+    if (p.operands.some(a => a.v === null) || urls.length === 0) h.e.downloadUnnamed(dir ?? ".", h.sc);
     for (const u of urls) {
       const name = u.replace(/[?#].*$/, "").split("/").pop() || "index.html";
       saveAs(h, dir ? `${dir}/${name}` : name);

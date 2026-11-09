@@ -2512,3 +2512,6 @@ Tests in
 Command audit comparisons must check the classifier and the real `run_command` flow against the frozen audit baseline.
 Command-line `if` and error-checking HOME/PWD parameter expansions retain its questions; only the documented literal
 and processor-count job arguments may decide more loosely (commands-remote-r7-1).
+
+Download provenance also survives unknown URL filenames and downloader input from xargs or loops. Regression tests
+exercise separate tool calls so a same-line script question cannot conceal a missing download marker.

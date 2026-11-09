@@ -24,3 +24,23 @@ describe("the baseline's shell questions", () => {
     expect(decide('cat "$HOME/notes.txt"').verdict).toBe("run");
   });
 });
+
+describe("download provenance", () => {
+  it("asks and keeps provenance for an unresolved URL, an attached output, or xargs input (commands-remote-r6-1, i6a)", () => {
+    for (const command of [
+      'V=1; curl -LO https://example.com/tool-$V.tar.gz',
+      'V=1; curl -LO "https://example.com/tool-${V}.tar.gz"',
+      'xargs -n1 curl -sO < urls.txt',
+      'for u in https://example.com/run.sh; do curl -sO "$u"; done',
+      'f=run.sh; curl -o"$f" https://example.com/run.sh',
+      'f=run.sh; wget -O"$f" https://example.com/run.sh',
+    ]) {
+      const result = classify(command);
+      expect(result.downloads.length, command).toBeGreaterThan(0);
+      expect(result.findings.map(f => f.rule), command).toContain("download.unnamed");
+    }
+    const data = classify('curl -LO https://example.com/data.csv');
+    expect(data.downloads).toEqual(["/home/ana/proj/data.csv"]);
+    expect(classifyCommand("python3 analyze.py", "bash", { ...contextOf("linux"), downloaded: new Set(data.downloads) }).findings).toEqual([]);
+  });
+});

@@ -2886,3 +2886,21 @@ describe("patch -d and cd -- in Ember's folder, as the flow judges them (command
     }
   });
 });
+
+describe("uncertain download provenance across tool calls", () => {
+  it("asks again before executing what an unresolved URL or xargs fetched, and keeps known data separate (commands-remote-r6-1)", async () => {
+    setCommandJudge(null);
+    for (const command of ['V=1; curl -LO https://example.com/run-$V.sh', 'xargs -n1 curl -sO < urls.txt', 'for u in https://example.com/run.sh; do curl -sO "$u"; done']) {
+      const h = harness({ binding: LOCAL, answers: ["once", "deny"], paths: p => ({ exists: false, real: p }), readScript: async () => "echo harmless\n" });
+      expect((await call(h, { target: "this computer", command })).resultType, command).toBe("success");
+      expect(h.asked.length, command).toBe(1);
+      expect(h.ctx.state.downloaded.size, command).toBeGreaterThan(0);
+      expect((await call(h, { target: "this computer", command: "bash run-1.sh" })).resultType, command).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says).toContain("Runs a file downloaded in this task.");
+    }
+    const data = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: false, real: p }), readScript: async () => "print('report')\n" });
+    expect((await call(data, { target: "this computer", command: "curl -LO https://example.com/data.csv" })).resultType).toBe("success");
+    expect((await call(data, { target: "this computer", command: "python3 analyze.py" })).resultType).toBe("success");
+    expect(data.asked).toEqual([]);
+  });
+});
