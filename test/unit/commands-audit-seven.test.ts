@@ -137,3 +137,20 @@ describe("long options the wrapper does not recognise", () => {
     expect(decide("cp --symbolic-link notes.txt notes-link").verdict).toBe("ask");
   });
 });
+
+
+describe("processor substitutions outside the permitted job-count exception", () => {
+  it("keeps the baseline question for other processor commands and non-job arguments (commands-v7-3)", () => {
+    for (const command of [
+      "make -j$(nproc --all)", "make -j$(nproc --ignore=1)", "make -j$(getconf NPROCESSORS_ONLN)",
+      "make -j$(sysctl -n hw.logicalcpu)", "make -j$(sysctl -n hw.physicalcpu)", "make -j$(sysctl -n hw.activecpu)",
+      "make -j`nproc`", "make -j`getconf _NPROCESSORS_ONLN`", "make -sj`nproc`",
+      "cat $(nproc)", "cat $(nproc --all)", "head -n$(nproc) notes.txt", "head -n`nproc` notes.txt",
+      'make -j" $(nproc) "', "make -l$(nproc)", "make --load-average=$(nproc)", "make -I$(nproc)", "make -C$(nproc)", "ninja -l$(nproc)",
+      "cmake --build build -j $(nproc)", "cmake --build . -j$(nproc)", "ctest -j$(nproc)", "pytest -n $(nproc)",
+    ]) expect(decide(command).verdict, command).toBe("ask");
+    for (const command of ["make -j4", "make -j$(nproc)", "make -j$(getconf _NPROCESSORS_ONLN)", "make -j$(sysctl -n hw.ncpu)", "make -j$((2+2))"]) {
+      expect(decide(command).verdict, command).toBe("run");
+    }
+  });
+});

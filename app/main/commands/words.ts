@@ -67,9 +67,8 @@ export interface OptSpec {
   /** Stop at the first operand (the rest belongs to a command it runs: sudo, env, xargs, ssh). */
   stopAtOperand?: boolean;
   /**
-   * With stopAtOperand: the job-count options (`P`, `max-procs`) whose value attached as a count (countWord) leaves the
-   * command after it found (`xargs -P$(nproc) echo`); any other value attached from text Ember can't see may hold the
-   * command (commands-a7-1).
+   * The job-count options (`j`, `jobs`, `P`, `max-procs`) permitted to take an attached count (countWord). Other options
+   * retain the baseline's uncertainty, including file names and load averages (commands-a7-1, commands-v7-3).
    */
   jobCounts?: readonly string[];
   /** Single-dash long options (`-name`, `-exec`: find, Java-style tools) are not split into letters. */
@@ -106,21 +105,19 @@ const CPU_COUNT = String.raw`\s*(nproc(\s+--(all|ignore=\d+))*|getconf\s+_?NPROC
  * "$(printf deploy)"`), and the row judges whatever is not a count (commands-remote-w5-2, commands-a7-1).
  */
 const COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|\$\(\([^()]*\)\)|` + "`" + CPU_COUNT + "`" + String.raw`|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"?$`);
-/**
- * A word that is only a processor count's substitution, quoted or not (`$(nproc)`, `` `getconf _NPROCESSORS_ONLN` ``):
- * a plain number, whatever option it is given to or stands alone, so no file or command hides in it
- * (commands-remote-r5-3).
- */
-export const CPU_COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|` + "`" + CPU_COUNT + "`" + String.raw`)"?$`);
+const BASELINE_CPU_COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|` + "`" + CPU_COUNT + "`" + String.raw`)"?$`);
+/** The exact processor substitutions permitted for new job-count recognition (commands-v7-3). */
+const CPU_COUNT_WORD = /^"?\$\((nproc|getconf _NPROCESSORS_ONLN|sysctl -n hw\.ncpu)\)"?$/;
 
 /**
- * Whether a job count as written is only a count (commands-a7-1): a number, a processor count's substitution or
- * arithmetic of numbers, quoted or not, with blanks round it or not. Never a variable, whatever the command set it to:
- * Ember doesn't follow what a variable holds to loosen a judgement, so one is judged as the word it is.
+ * Whether a job count as written is only a count (commands-a7-1, commands-v7-3): a number, one of the three exact
+ * processor substitutions or arithmetic of numbers, quoted or not. baselineApart preserves processor forms only for
+ * options that already consumed the separate word on the baseline. Never follow a variable to loosen a judgement.
  */
-export function countWord(raw: string): boolean {
-  const v = raw.replace(/^"([^"]*)"$/, "$1").replace(/^[ \t\n]+|[ \t\n]+$/g, "");
-  return /^\d+(\.\d+)?$/.test(v) || CPU_COUNT_WORD.test(v) || /^\$\(\([\d\s+\-*/%]*\)\)$/.test(v);
+export function countWord(raw: string, baselineApart = false): boolean {
+  const v = raw.replace(/^"([^"]*)"$/, "$1");
+  return /^\d+(\.\d+)?$/.test(v) || CPU_COUNT_WORD.test(v) || /^\$\(\([\d\s+\-*/%]*\)\)$/.test(v)
+    || (baselineApart && BASELINE_CPU_COUNT_WORD.test(v));
 }
 
 /** The text of an option's value attached to it as written (`-P"$N"` → `"$N"`, `--jobs=$X` → `$X`). */
@@ -130,9 +127,9 @@ function attachedRaw(raw: string, name: string): string {
 
 /**
  * The option a word Ember can't see stands for when a count is attached to it (`-j$(nproc)`, `-j"$((2*4))"`,
- * `--parallel=$(nproc)`, `--max-workers=$(nproc)`): a numeric option takes any count (countWord), an option that takes
- * a value only a processor count. Its value is unseen, its pieces kept (commands-remote-r5-3). A variable there is no
- * count, so the word is an operand, as it was on main (commands-a7-1).
+ * `--parallel=$(nproc)`, `--max-workers=$(nproc)`): only a named jobCounts option takes a count (countWord). Its value
+ * is unseen, its pieces kept (commands-remote-r5-3, commands-v7-3). A variable there is no count, so the word is an
+ * operand, as it was on main (commands-a7-1).
  */
 function attachedCount(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
   const long = /^--([A-Za-z][A-Za-z0-9-]*)=(.+)$/s.exec(a.raw);
@@ -142,8 +139,7 @@ function attachedCount(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
     return [...(first ? [first] : []), ...parts.slice(typeof parts[0] === "string" ? 1 : 0)];
   };
   if (long) {
-    const numeric = (spec.longNumeric ?? []).includes(long[1]);
-    if (!(numeric ? countWord(long[2]) : CPU_COUNT_WORD.test(long[2])) || !(numeric || (spec.longValue ?? []).includes(long[1]))) return null;
+    if (!(spec.jobCounts ?? []).includes(long[1]) || !countWord(long[2])) return null;
     return [{ name: `--${long[1]}`, value: null, parts: cut(long[1].length + 3) }];
   }
   const short = /^-([A-Za-z0-9]+)(.+)$/s.exec(a.raw);
@@ -155,7 +151,7 @@ function attachedCount(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
     if (numeric || (spec.shortValue ?? "").includes(c)) {
       // The count must be all that follows the letter.
       const rest = short[1].slice(j + 1) + short[2];
-      return (numeric ? countWord(rest) : CPU_COUNT_WORD.test(rest)) ? [...out, { name: `-${c}`, value: null, parts: cut(j + 2) }] : null;
+      return (spec.jobCounts ?? []).includes(c) && countWord(rest) ? [...out, { name: `-${c}`, value: null, parts: cut(j + 2) }] : null;
     }
     if ((spec.shortOptional ?? "").includes(c)) return null;
     out.push({ name: `-${c}` });

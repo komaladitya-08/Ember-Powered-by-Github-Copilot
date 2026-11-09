@@ -2535,3 +2535,7 @@ relax the execution decision. The Windows fallback scan can refuse a protected a
 Cross-call provenance tests cover opaque inline copies and code pulled or fetched through configured remote names.
 
 Unknown xargs long options fail closed without altering option consumption; copy-created links share the parent guard.
+
+New processor-count recognition is limited to the exact three documented substitutions on `OptSpec.jobCounts`,
+plus literal numbers and numeric arithmetic. It never bypasses `readArgs`; other options and generic tools keep
+the baseline question. Separate processor values already consumed by the baseline retain its behaviour.

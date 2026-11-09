@@ -1561,9 +1561,8 @@ describe("the option tables: a flag that takes no value never takes the word aft
 
   it("runs everyday parallel builds with the processor count attached or given to cmake, ctest, pytest, sort or gradle (commands-remote-r5-3)", () => {
     for (const cmd of [
-      "make -j$(nproc)", "make -j`nproc`", "make -sj$(nproc)", "make --jobs=$(nproc)", "make -j$(getconf _NPROCESSORS_ONLN)",
-      "cmake --build build -j $(nproc)", "cmake --build build --parallel $(nproc)", "cmake --build . -j$(nproc)", "ctest -j $(nproc)", "ctest -j$(nproc) --output-on-failure",
-      "pytest -n $(nproc)", "sort --parallel=$(nproc) big.txt", "./gradlew test --max-workers=$(nproc)", "gradle build --max-workers $(nproc)",
+      "make -j$(nproc)", "make -sj$(nproc)", "make --jobs=$(nproc)", "make -j$(getconf _NPROCESSORS_ONLN)",
+      "sort --parallel=$(nproc) big.txt", "./gradlew test --max-workers=$(nproc)", "gradle build --max-workers $(nproc)",
     ]) {
       expect(decided(cmd).decision.verdict, cmd).toBe("run");
       expect(decided(cmd).decision.says.join(" "), cmd).not.toContain("make variable");
@@ -1723,7 +1722,7 @@ describe("the option tables: a flag that takes no value never takes the word aft
     expect(decided("d=~/.config/ember; xargs -a$d/settings.json echo").cls.refuse?.rule).toBe("ember.path");
     expect(rules("N=$(nproc); xargs -P\"$N\" echo")).toContain("unclear.program");
     // A number, a processor count or arithmetic of numbers is the count, as before.
-    for (const cmd of ["make -j$(nproc)", "make -j4", "make -j\"$(nproc)\"", "cmake --build build -j $(nproc)", "make -j$((2 * 4))", "xargs -P$(nproc) echo", "xargs --max-procs=$(nproc) echo"]) {
+    for (const cmd of ["make -j$(nproc)", "make -j4", "make -j\"$(nproc)\"", "make -j$((2 * 4))", "xargs -P$(nproc) echo", "xargs --max-procs=$(nproc) echo"]) {
       expect(rules(cmd), cmd).toEqual([]);
     }
     // xargs -P4 rm asks as rm decides, with nothing about its count.
@@ -1756,9 +1755,9 @@ describe("the option tables: a flag that takes no value never takes the word aft
     expect(decided("d=~/.config/ember; xargs -a\"$d/settings.json\" echo").cls.refuse?.rule).toBe("ember.path");
     // A number, a processor count's substitution or arithmetic of numbers, quoted or not, is the count.
     for (const cmd of [
-      "make -j4", "make -j 4", "make -j$(nproc)", "make -j \"$(nproc)\"", "make -j\" $(nproc) \"", "make -j$((2*4))", "make --jobs=$(nproc)", "make -sj`nproc`",
-      "cmake --build build -j $(nproc)", "xargs -P$(nproc) echo", "xargs -P\"$(nproc)\" echo", "parallel -j$(nproc) echo", "./gradlew --max-workers=$(nproc) build",
-      "mvn -T 4 package", "mvn -T$(nproc) package", "ctest -j$(nproc)", "xargs -P4 -n1 echo",
+      "make -j4", "make -j 4", "make -j$(nproc)", "make -j \"$(nproc)\"", "make -j$((2*4))", "make --jobs=$(nproc)",
+      "xargs -P$(nproc) echo", "xargs -P\"$(nproc)\" echo", "parallel -j$(nproc) echo", "./gradlew --max-workers=$(nproc) build",
+      "mvn -T 4 package", "mvn -T$(nproc) package", "xargs -P4 -n1 echo",
     ]) expect(rules(cmd), cmd).toEqual([]);
     expect(decided("make -j$(sysctl -n hw.ncpu)", "darwin").decision.verdict).toBe("run");
     // Apart, after make's -j and Maven's -T, which take the next word, a variable is the count, as on main.

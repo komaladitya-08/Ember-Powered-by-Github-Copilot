@@ -16,7 +16,7 @@ import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Uncle
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
 import {
-  type Arg, type OptSpec, type Parsed, CPU_COUNT_WORD, countWord, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, shownPath, values,
+  type Arg, type OptSpec, type Parsed, countWord, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, shownPath, values,
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
@@ -2521,8 +2521,6 @@ class Engine extends Classifier {
   readArgs(args: Arg[], sc: Scope, o: { unresolvedUnclear?: boolean } = {}): void {
     for (const a of args) {
       if (a.param !== undefined) continue;
-      // A processor count, apart or attached to an option (`-j $(nproc)`, `--parallel=$(nproc)`): a number, no file.
-      if (a.v === null && (CPU_COUNT_WORD.test(a.raw) || CPU_COUNT_WORD.test(a.raw.replace(/^(--[A-Za-z][A-Za-z0-9-]*=|-[A-Za-z])/, "")))) continue;
       if (a.v === null) {
         this.judgeUnseen(a, "read", sc);
         if (o.unresolvedUnclear) this.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${this.program || "the program"} gets.`);
@@ -5962,6 +5960,7 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   const args = mvn ? h.args.map(a => (a.v !== null && MVN_WORDS[a.v] ? { ...a, v: MVN_WORDS[a.v] } : a)) : h.args;
   const p = parseOpts(args, {
     shortValue: valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])],
+    jobCounts: /make$/.test(h.key) ? ["j", "jobs"] : h.key === "ninja" ? ["j"] : mvn ? ["T", "threads"] : /^gradlew?$/.test(h.key) ? ["max-workers"] : h.key === "rake" ? ["jobs"] : [],
     longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "global-toolchains", "toolchains", "encrypt-master-password", "encrypt-password", "builder", "log-file", "activate-profiles", "threads", "define"],
   });
   // A makefile read from stdin, /dev/stdin or a process substitution is a build program Ember can't vouch for: its
@@ -6001,7 +6000,8 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
     // Maven's --threads, which took no value there, a target or a goal; after make's -j and -l, Maven's -T and ninja's
     // -j and -l, which took the next word there, the count, with what the text set the variable to built as targets
     // (commands-a7-1).
-    if (countWord(word.raw)) continue;
+    const baselineApart = anyCount || (/make$/.test(h.key) && /^(-[jl]|--(jobs|load-average))$/.test(o.name));
+    if (countWord(word.raw, baselineApart)) continue;
     if (/^--(max-workers|threads)$/.test(o.name)) counts.push({ v: null, raw: word.raw, glob: false });
     const quoted = /"$/.test(word.raw);
     // A variable the text set to words Ember can't see (`X=$(cat jobs.txt); make -j $X`) may be a count and targets, as
@@ -6743,7 +6743,7 @@ function overwrites(h: H, f: Arg, rule = "redirect.overwrite"): void {
 
 // Text tools that also write a file: sort -o, uniq's second operand, xxd's second operand, iconv -o, patch's file.
 reg(NATIVE, ["sort", "gsort"], h => {
-  const p = opts(h, { shortValue: "ktoSTy", longValue: ["key", "field-separator", "output", "buffer-size", "temporary-directory", "parallel", "files0-from", "batch-size", "compress-program", "random-source", "sort"] });
+  const p = opts(h, { shortValue: "ktoSTy", longValue: ["key", "field-separator", "output", "buffer-size", "temporary-directory", "parallel", "files0-from", "batch-size", "compress-program", "random-source", "sort"], jobCounts: ["parallel"] });
   if (values(p, "compress-program").length || h.args.some(a => /^--compress-prog/.test(a.v ?? ""))) h.e.unclear("unclear.sort-program", "It runs a program Ember can't see.");
   for (const o of values(p, "o", "output")) overwrites(h, o === null ? { v: null, raw: "?", glob: false } : lit(o));
   for (const f of values(p, "files0-from")) if (f) h.e.usePath(lit(f), "read", h.sc);

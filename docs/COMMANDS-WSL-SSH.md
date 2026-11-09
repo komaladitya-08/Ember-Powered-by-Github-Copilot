@@ -196,9 +196,10 @@ Ember stops and asks before a command that:
   aliases it can't see, unusual syntax, interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window."), a job count
   held in a variable, whatever the command set the variable to (`make -j$N`, `N=4; make -j$N`, `./gradlew
-  --max-workers=$N`, `mvn --threads $N`, `xargs -P"$N" echo`: only a number, `$(nproc)` and the like, or arithmetic of
-  numbers such as `$((2*4))`, quoted or not, is a count, so `make -j4`, `make -j$(nproc)` and `cmake --build build -j
-  $(nproc)` run; a variable apart after make's `-j` or `--jobs`, Maven's `-T` or ninja's `-j` is taken as before, so
+  --max-workers=$N`, `mvn --threads $N`, `xargs -P"$N" echo`: only a number, exactly `$(nproc)`, `$(getconf _NPROCESSORS_ONLN)` or `$(sysctl -n hw.ncpu)`,
+  or arithmetic of numbers such as `$((2*4))`, quoted or not, is recognised as a new job count, so `make -j4` and
+  `make -j$(nproc)` run; other processor-command forms and unresolved arguments to tools without a job-count rule
+  (`ctest -j$(nproc)`, `cmake --build build -j $(nproc)`) ask as before the audit; a variable apart after make's `-j` or `--jobs`, Maven's `-T` or ninja's `-j` is taken as before, so
   `make -j $JOBS` runs, unless the command set it from a command's output, `X=$(cat jobs.txt); make -j $X`, or to
   words after the count that are targets, `T='4 deploy'; make -j $T`), and a value Ember can't see written straight
   after an option of a program that runs another one, quoted or not (`nice -n"$X" cmd`, `xargs -n$X cmd`, `env
@@ -1035,3 +1036,7 @@ Named data downloads followed by an unrelated Python script still run.
 An unrecognised xargs long option, including an abbreviation such as `--p` or `--pr`, keeps a question: GNU may
 interpret it as an option that changes the child environment. Copy-created symbolic or hard links follow the same
 protected-parent refusal as ln, including shortened long flags.
+
+Processor substitutions retain a question when used as file names, include folders or load averages, rather than
+job counts. A new attached count only applies to an option explicitly listed as a job count; `cat $(nproc)`,
+`make -I$(nproc)` and `make -l$(nproc)` ask. Processor forms consumed as separate values before the audit still work.
