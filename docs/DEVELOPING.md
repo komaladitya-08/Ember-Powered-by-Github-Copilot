@@ -126,6 +126,12 @@ runtime. It does not change the app's consent or speaking settings.
 
 ### Using Ember
 
+First run's Agree waits until Ember knows where requests will go. If the recipient or the shown agreement changes,
+the half-second protection against a stray press starts again; nothing is read, heard or sent while it waits.
+
+Setup's automatic heading focus and Start announcement use words without the wake name, including when returning
+with voice already agreed. Visible headings keep Ember's name; screen readers hear “Home” after Start.
+
 Closing Home keeps its unsent conversation draft and waiting-message recovery in memory for this run; reopening
 Home brings them back. It still ends Home's Listen once, Voice Match teaching and Project work. No draft is written
 to disk or sent automatically. Signing out or changing account clears the conversation and draft; a policy lockdown

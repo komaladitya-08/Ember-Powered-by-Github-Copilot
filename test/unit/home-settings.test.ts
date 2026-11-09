@@ -39,7 +39,7 @@ describe("the sidebar says what the sections are called (review #162)", () => {
     // Home opens the window's own page (its title is Ember's name); "Setup & about" the pane of the setup check and
     // About this build. Every other link says its pane's heading.
     expect(links[0]).toEqual(["home-h", "Home"]);
-    expect(page).toContain('<h1 id="home-h" tabindex="-1">Ember</h1>');
+    expect(page).toContain('<h1 id="home-h" tabindex="-1" aria-label="Home">Ember</h1>');
     expect(links.at(-1)).toEqual(["checks-h", "Setup & about"]);
     for (const id of ["checks-h", "about-h"]) expect(page).toMatch(new RegExp(`data-pane="checks"[^>]*>\\s*<details[^>]*>\\s*<summary><h2 id="${id}"`));
     for (const [id, text] of links.slice(1, -1)) {
@@ -69,7 +69,7 @@ describe("the Size slider says its value once (review #56)", () => {
 
 describe("Start hands focus on when it goes (review #50)", () => {
   it("has a status line that says Ember started, there from the start", () => {
-    expect(STARTED_TEXT).toBe("Ember has started.");
+    expect(STARTED_TEXT).toBe("Started. Ready when you are.");
     expect(page).toMatch(/<p id="tagline" role="status">Starting…<\/p>\s*<p class="sr" id="home-live" role="status"><\/p>/);
   });
 });

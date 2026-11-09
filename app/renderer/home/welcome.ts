@@ -10,6 +10,7 @@
 
 import type { AgentStatus } from "../../main/agent/host";
 import type { Settings, SettingsPatch } from "../../main/settings";
+import { stepFocusLabel } from "./welcome-copy";
 import { CONSENT_VERSION, consentChangesSince } from "../../shared/consent";
 import type { ProviderState, ProviderTest, Status, VoiceStatus } from "../../shared/ipc";
 import { AGREE_ARM_MS, endpointHost, endpointProblem, keyNeeded, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
@@ -24,7 +25,7 @@ import {
   ACTION_LABEL, failureView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
-  CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
+  CONSENT_WAITING, CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
   DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
@@ -99,6 +100,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
    * AGREE_ARM_MS is dropped, so a double click on Get started or Not now lands on neither (first-run-c1-1).
    */
   const shownAt = { agree: -Infinity, quit: -Infinity };
+  /** The actual agreement shown, including recipient and retention, bound to its arming interval. */
+  let shownConsent: string | null = null;
   const armed = (at: number) => performance.now() - at >= AGREE_ARM_MS;
   /** What the sign-in step's main button does: an action on the connection, or just go on. */
   let signInPrimary: FailureAction | "continue" = "continue";
@@ -221,6 +224,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       own: ownInUse() ? agent?.service?.host : null, ownPhase: agent?.phase === "ready" || agent?.phase === "error" ? agent.phase : "starting", ownOffered: ownOffer().offered,
     }) : step === "consent" && changes().length ? CONSENT_AGAIN : using ? providerInUse(using) : STEP_TEXT[step];
     $("w-title").textContent = text.title;
+    $("w-title").setAttribute("aria-label", stepFocusLabel(step, text.title));
     $("w-lead").textContent = text.lead;
     for (const pane of root.querySelectorAll<HTMLElement>(".w-pane")) pane.hidden = pane.dataset.pane !== step;
     back.hidden = !stepBefore(step, ownInUse());
@@ -261,11 +265,14 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const a = status?.admin;
     // Named as the full text under it names it: the organisation's service, the user's own provider while it is in
     // force, otherwise GitHub Copilot; never Copilot while another service would answer (first-run-r2-2).
-    const service = recipientWords(deps.destination(), true);
+    const destination = deps.destination();
+    const service = recipientWords(destination, true);
     const points = consentPoints({ service, kept: a ? keptWords(a) : "kept 30 days", locked: !!a && a.error !== null });
     $("w-points").replaceChildren(...points.map(p => { const li = el("li", { textContent: p.text }); li.dataset.icon = p.icon; return li; }));
     // Agreed to an earlier version: what changed since, above the usual points (first-run-4).
     const changed = changes();
+    const consentKey = JSON.stringify([destination, points, changed]);
+    if (!consented() && consentKey !== shownConsent) { shownConsent = consentKey; shownAt.agree = performance.now(); }
     $("w-changes").hidden = !changed.length;
     $("w-changes-h").textContent = CONSENT_AGAIN.changes;
     if (JSON.stringify(changed) !== JSON.stringify([...$("w-changes-list").children].map(li => li.textContent))) {
@@ -274,7 +281,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const note = consented() ? CONSENT_TEXT.agreed : declined ? CONSENT_TEXT.declined : "";
     if ($("w-consent-note").textContent !== note) $("w-consent-note").textContent = note;
     if (consented()) return { label: NAV.next, why: "", alt: "" };
-    return { label: CONSENT_TEXT.agree, why: "", alt: declined ? CONSENT_TEXT.quit : CONSENT_TEXT.notNow };
+    return { label: CONSENT_TEXT.agree, why: destination.kind === "unknown" ? CONSENT_WAITING : "", alt: declined ? CONSENT_TEXT.quit : CONSENT_TEXT.notNow };
   }
 
   /** Asks main for the microphone's level, or stops, only when that changes. */
@@ -836,7 +843,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (next.getAttribute("aria-disabled") === "true") return;
     if (step === "consent" && !consented()) {
       // Drawn just now where Get started was: a double click's second press agrees to nothing (first-run-c1-1).
-      if (!armed(shownAt.agree)) return;
+      // Re-read what is being agreed to at the press, so a changed or unknown recipient cannot inherit an old arm.
+      render();
+      if (next.getAttribute("aria-disabled") === "true" || !armed(shownAt.agree)) return;
       declined = false;
       // Not saved: the notice at the top says why (review #84), so it is brought into view.
       void saveStep(() => deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), "sign-in");
