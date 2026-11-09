@@ -1556,6 +1556,30 @@ describe("the option tables: a flag that takes no value never takes the word aft
     }
   });
 
+  it("asks before a job count builds what a variable the command set from a file, a read or a substitution holds, as the substitution written there does (commands-z6-4)", () => {
+    // `echo '4 deploy' > jobs.txt` first: the shell splits the value into the count and the deploy target.
+    for (const [cmd, plain] of [
+      ["X=$(cat jobs.txt); make -j$X", "make -j$(cat jobs.txt)"], ["read X < jobs.txt; make -j$X", "make -j$(cat jobs.txt)"], ["read X < jobs.txt; make -j $X", "make -j $(cat jobs.txt)"],
+      ["X=$(cat jobs.txt); make -j $X", "make -j $(cat jobs.txt)"], ["X=`cat jobs.txt`; make -sj$X", "make -j$(cat jobs.txt)"], ["X=$(cat jobs.txt); make --jobs=$X", "make -j$(cat jobs.txt)"],
+      ["X=$(cat jobs.txt); Y=$X; make -j$Y", "make -j$(cat jobs.txt)"], ["set -- $(cat jobs.txt); make -j$1", "make -j$(cat jobs.txt)"], ["X=$(cat jobs.txt); make -j \"$X\"", "make -j \"$(cat jobs.txt)\""],
+    ] as const) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+      expect(asPlain(cmd, plain), `${cmd} (as ${plain})`).toEqual([]);
+    }
+    for (const cmd of ["X=$(cat jobs.txt); ./gradlew --max-workers=$X", "X=$(cat jobs.txt); ./gradlew --max-workers $X", "X=$(cat jobs.txt); rake --jobs=$X", "X=$(cat jobs.txt); ninja -j $X", "X=$(cat jobs.txt); mvn -T $X package"]) {
+      expect(decided(cmd).decision.rules, cmd).toContain("unclear.target");
+    }
+    // A number the text gives, a processor count or arithmetic, a variable it doesn't set, and one word make or Maven
+    // takes only as the count run as before.
+    for (const cmd of [
+      "make -j$X", "make -j $JOBS", "X=$JOBS; make -j$X", "X=4; make -j$X", "X=$(nproc); make -j$X", "X=\"$(nproc)\"; make -j $X", "X=$((2 * 4)); make -j$X",
+      "X=$(nproc); Y=$X; make -j$Y", "T=\" $(nproc)\"; make -j$T", "X=$(getconf _NPROCESSORS_ONLN); ./gradlew --max-workers=$X build", "X=$(cat jobs.txt); make -j\"$X\"",
+      "X=$(cat jobs.txt); mvn -T \"$X\" package",
+    ]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    }
+  });
+
   it("asks when cp, mv or install is left with no destination, or a container run with no image (commands-remote-i5a)", () => {
     for (const cmd of ["cp notes.txt", "mv notes.txt", "install x.sh", "docker run --rm", "podman run -P"]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
     for (const cmd of ["cp --help", "mv --version", "rsync -a src", "rsync src/"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");

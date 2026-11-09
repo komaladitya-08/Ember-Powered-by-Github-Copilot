@@ -106,6 +106,8 @@ const COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|\$\(\([^()]*\)\)
  * (commands-remote-r5-3).
  */
 export const CPU_COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|` + "`" + CPU_COUNT + "`" + String.raw`)"?$`);
+/** A processor count's substitution or an arithmetic expansion anywhere in a word: what it prints is a number (commands-z6-4). */
+export const COUNT_PIECE = new RegExp(String.raw`\$\(${CPU_COUNT}\)|\$\(\([^()]*\)\)|` + "`" + CPU_COUNT + "`", "g");
 
 /**
  * The option a word Ember can't see stands for when a count is attached to it (`-j$(nproc)`, `-j"$JOBS"`,

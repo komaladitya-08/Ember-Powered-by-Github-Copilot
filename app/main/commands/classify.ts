@@ -16,7 +16,7 @@ import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Uncle
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
 import {
-  type Arg, type OptSpec, type Parsed, CPU_COUNT_WORD, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, shownPath, values,
+  type Arg, type OptSpec, type Parsed, COUNT_PIECE, CPU_COUNT_WORD, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, shownPath, values,
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
@@ -387,6 +387,8 @@ class Classifier {
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
    */
   private varValues = new Map<string, string[]>();
+  /** Variables the text sets to words Ember can't see (mayHoldWords): a command's output, a read, a loop over such words. */
+  private wordVars = new Set<string>();
   /**
    * A plain variable's values, judged at the end only if a command used the variable in a word Ember didn't judge as a
    * path (`python3 -c "…$d…"`): testing or printing it isn't such a use (commands-remote-r4-5).
@@ -611,10 +613,29 @@ class Classifier {
     if (!loop) this.loopVars.delete(name);
     if (sc.family !== "posix") return;
     const forms = values === null ? [UNSEEN] : values.flatMap(a => (a.v !== null ? [a.glob ? PATTERN + (a.pattern ?? a.v) : a.v] : a.parts ? this.formsOf(a.parts) : [UNSEEN]));
+    if (values === null || values.some(a => this.mayHoldWords(a))) this.wordVars.add(name);
     if (exported || this.allExport || /^[A-Z][A-Z0-9_]*$/.test(name)) for (const f of forms) this.judgeForm(f, null, sc, exported || this.allExport);
     else this.pendingSets.push({ name, forms, sc });
     const all = [...new Set([...(this.varValues.get(name) ?? []), ...forms])];
     this.varValues.set(name, all.length > MAX_FORMS ? [UNSEEN] : all);
+  }
+
+  /**
+   * Whether a word Ember can't see all of may hold any words the shell could split it into: a command's output, or a
+   * variable the text set to one, a read or a loop over such words; never a processor count's substitution or an
+   * arithmetic expansion (COUNT_PIECE), nor a variable the text doesn't set (commands-z6-4).
+   */
+  mayHoldWords(a: Arg): boolean {
+    if (a.v !== null) return false;
+    if (!a.parts) return true;
+    const counted = (a.raw.match(COUNT_PIECE) ?? []).length;
+    let hidden = 0;
+    for (const p of a.parts) {
+      if (typeof p === "string" || p.value !== undefined) continue;
+      if (p.name === null) hidden++;
+      else if (this.wordVars.has(p.name)) return true;
+    }
+    return hidden > counted || /\$\((?!\()|`|[<>]\(/.test(a.raw.replace(COUNT_PIECE, ""));
   }
 
   /**
@@ -5811,6 +5832,10 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
     // A count attached and quoted (`-j"$JOBS"`) is never a target: make takes only a number there.
     const quoted = word !== undefined && /"$/.test(word.raw);
     if (!word || (attached && quoted)) continue;
+    // A variable the text set to words Ember can't see (`X=$(cat jobs.txt); make -j$X`, `read X < f; make -j $X`) may
+    // be a count and targets, as that substitution written there is: a target Ember can't name, unless quoted for a
+    // count that takes any word (commands-z6-4).
+    if (!(quoted && anyCount) && h.e.mayHoldWords(word)) counts.push({ v: null, raw: word.raw, glob: false });
     for (const f of h.e.knownForms(word, true)) {
       if (f === null) continue;
       // A value that starts with a space, a tab or a line break leaves the option on its own (`T=' deploy'; make -j$T`
