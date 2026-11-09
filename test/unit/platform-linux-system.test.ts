@@ -22,6 +22,7 @@ import { CLIPBOARD_FORMATS } from "../../app/main/agent/clipboard-formats";
 import { NEVER_LOOK_DEFAULTS } from "../../app/shared/never-look";
 import { KEYS, SHORTCUTS } from "../../app/shared/shortcuts";
 import { PLATFORM_WORDS } from "../../app/shared/words";
+import { KillSwitch } from "../../app/main/agent/killswitch";
 
 /** Electron's screen throws on any property access before ready; app.getPath must not be called while composing. */
 const throwing = new Proxy({}, { get: (_t, key) => { throw new Error(`screen.${String(key)} touched while composing`); } });
@@ -343,9 +344,28 @@ describe("the setup-check inputs", () => {
 });
 
 describe("fixes", () => {
+  it("lets Stop finish while Turn on is waiting for the session bus (reliability-r7-3)", async () => {
+    let finish!: () => void;
+    const waiting = new Promise<void>(resolve => { finish = resolve; });
+    const sync = vi.fn(() => { throw new Error("the fix must not block the main loop"); });
+    const run: ExecAsync = async (_cmd, args) => args[0] === "set" ? waiting : "true\n";
+    let fixed = false;
+    const fixing = linuxSystem(deps(), { exec: sync, run }).fixes.apply("enable-accessibility").then(() => { fixed = true; });
+    // Observe the result even on the failing synchronous baseline, so it cannot leave an unhandled rejection.
+    void fixing.catch(() => undefined);
+    expect(sync).not.toHaveBeenCalled();
+    const stop = vi.fn();
+    await new KillSwitch(() => [{ name: "agent", stop }], { info() {}, warn() {} } as never).pull("hotkey");
+    expect(stop).toHaveBeenCalledOnce();
+    expect(fixed).toBe(false);
+    finish();
+    await fixing;
+    expect(fixed).toBe(true);
+  });
   it("offer only turning accessibility on, with today's gsettings command", async () => {
     const fake = execFake({ "gsettings set org.gnome.desktop.interface toolkit-accessibility true": "" });
-    const f = linuxSystem(deps(), { exec: fake.exec }).fixes;
+    const run: ExecAsync = async (cmd, args, opts) => args[0] === "set" ? fake.exec(cmd, args, opts) : "true\n";
+    const f = linuxSystem(deps(), { run }).fixes;
     expect(f.ids).toEqual(["enable-accessibility"]);
     expect(f.label("enable-accessibility")).toBe("Turn on");
     await f.apply("enable-accessibility");
@@ -355,7 +375,8 @@ describe("fixes", () => {
 
   it("let a failed gsettings reach the caller", async () => {
     const fake = execFake({ "gsettings set org.gnome.desktop.interface toolkit-accessibility true": new Error("gsettings: not found") });
-    await expect(linuxSystem(deps(), { exec: fake.exec }).fixes.apply("enable-accessibility")).rejects.toThrow("gsettings: not found");
+    const run: ExecAsync = async (cmd, args, opts) => args[0] === "set" ? fake.exec(cmd, args, opts) : "true\n";
+    await expect(linuxSystem(deps(), { run }).fixes.apply("enable-accessibility")).rejects.toThrow("gsettings: not found");
   });
 });
 
@@ -435,12 +456,32 @@ describe("accessibility probes", () => {
     expect(linuxSystem(deps({}, false), { run, setTimeout: () => ({}) }).a11y.screenReaderOn()).toBe(false);
   });
 
-  it("count GNOME's Animations switch off as reduced motion", () => {
-    const off = execFake({ "gsettings get org.gnome.desktop.interface enable-animations": "false\n" });
-    expect(linuxSystem(deps(), { exec: off.exec }).a11y.systemReducedMotion()).toBe(true);
-    expect(off.calls[0].opts).toEqual({ encoding: "utf8", timeout: 2000 });
-    expect(linuxSystem(deps(), { exec: execFake({ "gsettings get org.gnome.desktop.interface enable-animations": "true\n" }).exec }).a11y.systemReducedMotion()).toBe(false);
-    expect(linuxSystem(deps(), { exec: execFake({}).exec }).a11y.systemReducedMotion()).toBe(false);
+  it("lets Stop finish while the desktop motion query is still pending (reliability-r7-2)", async () => {
+    let finish!: (out: string) => void;
+    const waiting = new Promise<string>(resolve => { finish = resolve; });
+    const sync = vi.fn(() => { throw new Error("a motion read must not block the main loop"); });
+    const run: ExecAsync = async (_cmd, args) => args.includes("enable-animations") ? waiting : "true\n";
+    const s = linuxSystem(deps(), { exec: sync, run });
+    let checked = false;
+    const motion = Promise.resolve(s.a11y.systemReducedMotion()).then(on => { checked = true; return on; });
+    const stop = vi.fn();
+    const kill = new KillSwitch(() => [{ name: "agent", stop }], { info() {}, warn() {} } as never);
+    expect(sync).not.toHaveBeenCalled();
+    expect(checked).toBe(false);
+    await kill.pull("hotkey");
+    expect(stop).toHaveBeenCalledOnce();
+    expect(checked).toBe(false);
+    finish("false\n");
+    expect(await motion).toBe(true);
+  });
+
+  it("counts GNOME's Animations switch off and unchecked motion as Calm (reliability-r7-2)", async () => {
+    for (const [out, calm] of [["false\n", true], ["true\n", false], ["", true], [undefined, true]] as const) {
+      const run: ExecAsync = async () => out;
+      expect(await linuxSystem(deps(), { run }).a11y.systemReducedMotion(), String(out)).toBe(calm);
+    }
+    const run: ExecAsync = async () => { throw new Error("session bus unavailable"); };
+    expect(await linuxSystem(deps(), { run }).a11y.systemReducedMotion()).toBe(true);
   });
 });
 

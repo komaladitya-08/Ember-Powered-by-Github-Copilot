@@ -3041,8 +3041,8 @@ function start(): void {
 
     const makeOverlay = (hidden = false) => {
       const o = new OverlayManager(() => settings.get(), log.child("overlay"), cursor, platform.overlay);
-      // The system asking for less motion (GNOME's "Animations" switch off) counts as asking for calm mode.
-      try { o.systemReducedMotion = sys.a11y.systemReducedMotion(); } catch { /* not known: Ember's own setting only */ }
+      // A restored compositor must not wait on GNOME's session bus while Stop and tasks are active (reliability-r7-2).
+      o.checkSystemMotion(() => sys.a11y.systemReducedMotion(), () => overlay === o);
       o.avoid = () => handle?.bounds ?? null;
       o.setState(lastState);
       o.setHidden(hidden);

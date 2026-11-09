@@ -114,6 +114,7 @@ export class OverlayManager {
   }
 
   stop(): void {
+    ++this.motionCheck;
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
@@ -168,9 +169,20 @@ export class OverlayManager {
    */
   avoid: (() => Rect | null) | null = null;
   systemReducedMotion = false;
+  private motionCheck = 0;
 
-  /** Called by IPC when an overlay's page sees the desktop's reduce-motion preference change. */
+  /** Reduces cursor-following motion while the OS answers; replaced overlays and newer live preferences win. */
+  checkSystemMotion(read: () => boolean | Promise<boolean>, current: () => boolean): void {
+    const check = ++this.motionCheck;
+    this.systemReducedMotion = true;
+    void Promise.resolve().then(read).then(on => {
+      if (check === this.motionCheck && current()) this.reducedMotionChanged(on !== false);
+    }, () => { /* an unchecked preference stays Calm */ });
+  }
+
+  /** Applies the desktop preference; live page updates supersede older OS queries even if the value is unchanged. */
   reducedMotionChanged(on: boolean): void {
+    ++this.motionCheck;
     if (on === this.systemReducedMotion) return;
     this.systemReducedMotion = on;
     this.log.info("overlay.reduced_motion", { on });
