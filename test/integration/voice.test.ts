@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
-import { STARTED_TEXT } from "../../app/renderer/home/copy";
+import { COMPOSER_THINKING, STARTED_TEXT } from "../../app/renderer/home/copy";
 import { VoiceEngine, type VoiceEvent } from "../../app/voice/engine";
 import { ModelLoadError, sherpaBackend } from "../../app/voice/sherpa";
 import { DEFAULT_VOICE, modelPaths, modelReady, modelsReady } from "../../app/voice/models";
@@ -102,7 +102,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     } finally { voice.free(); }
   });
 
-  it("does not wake on the setup-complete announcement or focused Home heading (first-run-r6-1)", () => {
+  it("does not wake on setup, Home focus or the thinking announcement (first-run-r6-1, voice-listening-r6-1)", () => {
     if (capiDir) expect(backend.info.backend).toBe("native");
     // The standard fixture voice is prepared by CI; the second fixture voice is checked when present too.
     let checked = 0;
@@ -111,7 +111,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
       if (!fs.existsSync(path.join(reader, `en_US-${name}-low.onnx`))) continue;
       checked++;
       const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(reader, `en_US-${name}-low.onnx`), tokens: path.join(reader, "tokens.txt"), dataDir: path.join(reader, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
-      for (const text of [STARTED_TEXT, "Home"]) {
+      for (const text of [STARTED_TEXT, "Home", COMPOSER_THINKING]) {
         const raw: Float32Array = tts.generate({ text, sid: 0, speed: 1 }).samples;
         const samples = new Float32Array(16_000 + raw.length);
         samples.set(raw, 16_000);

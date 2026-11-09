@@ -24,6 +24,10 @@ const calledFrom = (line: string): string | null => {
 const named = (lines: Iterable<string>) => [...new Set(lines)].filter(l => l && calledFrom(l) !== null).map(l => `${l} (from “${calledFrom(l)}”)`);
 
 describe("what Home tells a screen reader", () => {
+  it("keeps the composer's automatic thinking line free of the wake name, including possessives (voice-listening-r6-1)", () => {
+    expect(COMPOSER_THINKING).not.toMatch(/\bEmber\b/i);
+  });
+
   it("never calls Ember by name in the status panel's line, in any state Ember can listen in (voice-listening-r5-1)", () => {
     // "Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.", said into an idle wake microphone in the
     // test-only Ryan voice, woke Ember and was sent as a request in 39 of 40 placements, "… Reconnecting to Copilot…"

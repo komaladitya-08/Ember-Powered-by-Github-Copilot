@@ -356,6 +356,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   640 px the links are one row of capsules, the search field first.
 - **General consent** holds Agree with “Checking where your requests go… Wait a moment.” until the recipient is
   known. Any change to the recipient or the shown agreement re-arms its half-second stray-press guard (first-run-c7-1).
+- **Composer progress** says “Thinking… The reply will appear above.” to avoid reading the wake name, including its
+  possessive, into an idle microphone (voice-listening-r6-1).
 - **Setup focus** uses name-free accessible headings, while visible headings keep Ember's name. The Start result
   says “Started. Ready when you are.” so automatic screen-reader speech does not read the wake name into the microphone (first-run-r6-1).
 - **Closing Home** hides its page for this running session, preserving unsent drafts and waiting-message recovery;
