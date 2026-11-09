@@ -13,7 +13,7 @@ import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { noteProviderChoice } from "./provider-choice";
-import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, providerHint, providerTestText, providerTestWaits } from "./copy";
+import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedText, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, providerHint, providerTestText, providerTestWaits } from "./copy";
 import { providerFailField, providerKeepLabel } from "./first-run-copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
@@ -51,6 +51,19 @@ let held: { from: string; fields: Details } | null = null;
 let heldRun = 0;
 /** The host a held edit's check is asking now (its "I agree" waits meanwhile). */
 let checkingFor: string | null = null;
+let adoptionId: string | null = null;
+/** A draft key belongs to the host it was typed for, even while another host's edit is held. */
+let keyHost: string | null = null;
+function bindDraftKey(host: string | null): void {
+  if (!host) return;
+  if (input("byok-key").value && keyHost !== host) input("byok-key").value = "";
+  keyHost = host;
+}
+/** A newer edit revokes a keyring operation before it can publish the old draft. */
+function cancelAdoption(): void {
+  if (adoptionId) void api()?.cancelAdoption(adoptionId).catch(() => undefined);
+  adoptionId = null;
+}
 /** Ember has no GitHub sign-in (the agent's phase): with the card waiting, nothing answers until it is agreed. */
 let signedOut = false;
 
@@ -70,7 +83,7 @@ const agreedFor = (p: Own, host: string | null) => !!host && p.consent.version >
  */
 function change(patch: Partial<Omit<Own, "consent">>): Promise<boolean> {
   // An edit held for another host takes the rest of the details with it, saved together (integrations-c3-1).
-  if (held && !("on" in patch)) { held = { ...held, fields: { ...held.fields, ...patch } }; draw(); return Promise.resolve(true); }
+  if (held && !("on" in patch)) { cancelAdoption(); heldRun++; checkingFor = null; held = { ...held, fields: { ...held.fields, ...patch } }; draw(); return Promise.resolve(true); }
   noteProviderChoice();
   return save({ provider: patch } as SettingsPatch);
 }
@@ -87,6 +100,7 @@ function inForceHost(): string | null {
  * with whatever was held, as any edit of that host is.
  */
 function enter(address: string): void {
+  cancelAdoption();
   announceFor = address ? endpointHost(address) : null;
   const from = held?.from ?? inForceHost();
   if (from && endpointHost(address) !== from) {
@@ -104,6 +118,7 @@ function enter(address: string): void {
 /** The held edit put away: the details in force come back into the fields, and nothing was saved (integrations-c3-1). */
 function keepInForce(): void {
   if (!held) return;
+  cancelAdoption();
   const from = held.from;
   held = null;
   heldRun++;
@@ -125,6 +140,7 @@ async function adopt(host: string): Promise<void> {
   if (!a || !own || !was) return;
   const run = heldRun;
   const keyField = input("byok-key");
+  if (keyField.value && keyHost !== host) { bindDraftKey(host); say(PROVIDER_WORDS.pasteKey, true); keyField.focus(); return; }
   const key = keyField.value.trim() ? keyField.value : "";
   const d = { ...own, ...was.fields };
   checkingFor = host;
@@ -134,10 +150,8 @@ async function adopt(host: string): Promise<void> {
   // Put away or readdressed meanwhile: this check says nothing about what the fields hold now.
   if (run !== heldRun || !held || !own) return;
   checkingFor = null;
-  // An answer with no model list there (a gateway that answers chat only) is still an answer: adopted as typed, as the
-  // first agreement to a host is (integrations-r4-2). Nothing answering, a refused key or another error changes nothing.
-  const unlisted = !tried.ok && "cause" in tried && tried.cause === "no-list";
-  if (!tried.ok && !unlisted) {
+  // A blanket404 does not establish that the replacement works; keep the working provider (integrations-c5-1).
+  if (!tried.ok) {
     draw();
     say(providerHeldKept(held.from, tried.why), true);
     input(providerFailField(tried) === "key" ? "byok-key" : "byok-url").focus();
@@ -148,17 +162,24 @@ async function adopt(host: string): Promise<void> {
   const move: ProviderMove = { type: now.type, baseUrl: now.baseUrl, conductor: now.conductor, worker: now.worker, wireApi: now.wireApi, azureApiVersion: now.azureApiVersion };
   noteProviderChoice();
   const keep = held;
+  const id = crypto.randomUUID();
+  adoptionId = id;
+  checkingFor = host;
+  draw();
+  const done = await a.adopt({ id, from: keep.from, host, move, ...(key ? { key } : {}) }).catch(() => ({ ok: false as const, why: PROVIDER_WORDS.testFailed }));
+  if (run !== heldRun || adoptionId !== id) return;
+  adoptionId = null;
+  checkingFor = null;
+  // Not recorded (the settings changed meanwhile): still held, if the provider it began from is still in force.
+  if (!done.ok) {
+    const kept = inForceHost() === keep.from;
+    if (!held && kept) held = keep;
+    draw(); say(kept ? providerHeldKept(keep.from, done.why) : done.why, true); return;
+  }
   held = null;
   heldRun++;
-  const done = await a.agree(host, move);
-  // Not recorded (the settings changed meanwhile): still held, if the provider it began from is still in force.
-  if (!done.ok) { if (!held && inForceHost() === keep.from) held = keep; draw(); say(done.why, true); return; }
-  if (key) {
-    const k = await a.saveKey(key);
-    if (!k.ok) { say(k.why, true); void reread(); return; }
-    keyField.value = "";
-  }
-  say(unlisted ? providerAgreedUnlisted(host, now.conductor ?? null) : providerAgreedText(host));
+  if (key && keyField.value === key) keyField.value = "";
+  say(providerAgreedText(host));
   if (tried.ok && tried.ids) suggestModels(tried.ids);
   input("byok-url").focus();
   void reread();
@@ -211,6 +232,7 @@ function draw(): void {
   const fill = (id: string, v: string) => { const el = input(id); if (document.activeElement !== el) el.value = v; };
   if (document.activeElement !== select("byok-type")) select("byok-type").value = p.type;
   fill("byok-url", p.baseUrl);
+  bindDraftKey(endpointHost(input("byok-url").value));
   fill("byok-conductor", p.conductor ?? "");
   fill("byok-worker", p.worker ?? "");
   fill("byok-azure", p.azureApiVersion ?? "");
@@ -301,7 +323,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     say("");
     // Off with an edit held: the edit is put away unsaved, as Keep using does, and only the switch is saved, so the
     // address in use and its key stay for when it is turned on again (integrations-v4-1).
-    if (held) { held = null; heldRun++; checkingFor = null; input("byok-key").value = ""; }
+    if (held) { cancelAdoption(); held = null; heldRun++; checkingFor = null; input("byok-key").value = ""; }
     void change({ on });
     if (on && own && endpointHost(own.baseUrl) && !agreedFor(own, endpointHost(own.baseUrl))) queueMicrotask(() => $("byok-yes").focus());
   });
@@ -365,10 +387,12 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     const field = input("byok-key");
     const key = field.value;
     if (!key.trim()) { say(PROVIDER_WORDS.pasteKey, true); field.focus(); return; }
+    const host = endpointHost(held?.fields.baseUrl ?? own?.baseUrl ?? "");
+    if (!host || keyHost !== host) { bindDraftKey(host); say(PROVIDER_WORDS.pasteKey, true); field.focus(); return; }
     // Saved now it would be for the host still in force: it waits in the field for the held edit's yes (integrations-c3-1).
     if (held) { say(providerHeldKey(endpointHost(held.fields.baseUrl ?? ""))); return; }
     noteProviderChoice();
-    void a.saveKey(key).then(r => {
+    void a.saveKey(key, host).then(r => {
       if (r.ok) { field.value = ""; replacing = false; say(PROVIDER_WORDS.keySaved); } else say(r.why, true);
       return reread();
     }).then(() => { if (!replacing) ($("byok-key-replace") as HTMLButtonElement).focus(); });
@@ -378,6 +402,16 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     noteProviderChoice();
     void a.removeKey().then(r => { say(r.ok ? PROVIDER_WORDS.keyRemoved : r.why, !r.ok); replacing = false; return reread(); }).then(() => input("byok-key").focus());
   });
+  for (const id of ["byok-url", "byok-key", "byok-type", "byok-conductor", "byok-worker", "byok-wire", "byok-azure"]) {
+    $(id).addEventListener("input", () => {
+      const host = endpointHost(input("byok-url").value);
+      if (id === "byok-key") keyHost = host;
+      // Keep a key through path edits and incomplete typing, but never send it to a different authority.
+      if (id === "byok-url") bindDraftKey(host);
+      if (!held || checkingFor === null) return;
+      cancelAdoption(); heldRun++; checkingFor = null; draw();
+    });
+  }
   $("byok-test").addEventListener("click", () => {
     const btn = $("byok-test") as HTMLButtonElement;
     btn.disabled = true;

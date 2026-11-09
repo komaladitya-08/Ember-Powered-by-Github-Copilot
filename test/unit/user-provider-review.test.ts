@@ -70,7 +70,7 @@ describe("Test connection and a host the card wasn't agreed for (B1)", () => {
   it("refuses through main's channel too: agreed to a.example with a key saved, the endpoint moved to b.example, Test sends nothing", async () => {
     const { s, settings, fetch } = service({ settings: { baseUrl: "https://a.example/v1" } });
     expect(s.api.agree("a.example")).toEqual({ ok: true });
-    expect(await s.api.saveKey(KEY)).toEqual({ ok: true });
+    expect(await s.api.saveKey(KEY, "a.example")).toEqual({ ok: true });
     settings.update(withOwnProvider({ provider: { baseUrl: "https://b.example/v1" } as Settings["provider"] }, settings.own().provider));
     s.settingsChanged();
     const r = await s.api.test();
@@ -89,7 +89,7 @@ describe("Test connection and a host the card wasn't agreed for (B1)", () => {
   it("checks typed details without saving any of them: their host only, a key just typed only there, the saved key only for its own host (first-run-r2-1)", async () => {
     const { s, settings, keys, fetch } = service({ settings: { baseUrl: "https://a.example/v1" } });
     expect(s.api.agree("a.example")).toEqual({ ok: true });
-    expect(await s.api.saveKey(KEY)).toEqual({ ok: true });
+    expect(await s.api.saveKey(KEY, "a.example")).toEqual({ ok: true });
     const before = JSON.stringify(settings.get().provider);
     const NEW = "sk-" + "n".repeat(40); // not a real key
     // Another host with a key just typed: that key goes there, the saved one never does, and nothing is kept.
@@ -140,7 +140,7 @@ describe("the card's yes (S1, S4)", () => {
   it("comes with the details an edit of the provider in force moved to, all written in one change only for the host they name, so it never leaves force between (integrations-c3-1)", async () => {
     const { s, settings, keys } = service({ settings: { baseUrl: "https://a.example/v1" } });
     expect(s.api.agree("a.example")).toEqual({ ok: true });
-    expect(await s.api.saveKey(KEY)).toEqual({ ok: true });
+    expect(await s.api.saveKey(KEY, "a.example")).toEqual({ ok: true });
     const inForce: (string | null)[] = [];
     settings.onChange(next => inForce.push(next.provider.on && next.provider.consent.host === new URL(next.provider.baseUrl).host ? next.provider.consent.host : null));
     // Details that name another host than the one agreed to: nothing is written.
@@ -184,7 +184,7 @@ describe("the key and its host (S2)", () => {
   it("is deleted when the endpoint moves to another host, so it is never inherited", async () => {
     const { s, settings, keys, changed } = service({ settings: { baseUrl: "https://a.example/v1" } });
     s.api.agree("a.example");
-    await s.api.saveKey(KEY);
+    await s.api.saveKey(KEY, "a.example");
     expect(keys.savedHost()).toBe("a.example");
     settings.update(withOwnProvider({ provider: { baseUrl: "https://b.example/v1" } as Settings["provider"] }, settings.own().provider));
     s.settingsChanged();
@@ -328,8 +328,8 @@ describe("the re-review's nits (#136)", () => {
     const { s } = service({ settings: { baseUrl: "https://a.example/v1" } });
     s.api.agree("a.example");
     const first = "sk-" + "1".repeat(40), second = "sk-" + "2".repeat(40);
-    await s.api.saveKey(first);
-    await s.api.saveKey(second);
+    await s.api.saveKey(first, "a.example");
+    await s.api.saveKey(second, "a.example");
     expect(s.secrets()).toEqual([second, first]);
     s.api.removeKey();
     expect([...s.secrets()].sort()).toEqual([first, second].sort());
@@ -447,7 +447,7 @@ describe("provider key lifecycle races", () => {
     const save = keys.save.bind(keys);
     let release!: () => void;
     keys.save = async (key, host) => { await new Promise<void>(r => { release = r; }); return save(key, host); };
-    const pending = s.api.saveKey(KEY);
+    const pending = s.api.saveKey(KEY, "a.example");
     await Promise.resolve();
     if (action === "remove") s.api.removeKey();
     if (action === "forget") s.forget();
@@ -483,10 +483,10 @@ describe("overlapping provider operations", () => {
       if (first) { first = false; await new Promise<void>(r => { release = r; }); }
       return save(key, host);
     };
-    const old = s.api.saveKey(KEY);
+    const old = s.api.saveKey(KEY, "a.example");
     await Promise.resolve();
     s.api.removeKey();
-    const newer = s.api.saveKey(KEY + "new");
+    const newer = s.api.saveKey(KEY + "new", "a.example");
     release();
     expect((await old).ok).toBe(false);
     expect((await newer).ok).toBe(true);
@@ -529,7 +529,7 @@ describe("the key id of a key just saved (PR #188 re-review 3)", () => {
   it("the live key carries the same id that was sealed with it, so history can be owned at once", async () => {
     const { s, keys, settings } = service({ settings: { baseUrl: "https://a.example/v1" } });
     s.api.agree("a.example");
-    expect(await s.api.saveKey(KEY)).toEqual({ ok: true }); // (the id never goes to the page)
+    expect(await s.api.saveKey(KEY, "a.example")).toEqual({ ok: true }); // (the id never goes to the page)
     const sealed = await keys.load();
     expect(sealed?.keyId).toMatch(/^[0-9a-f-]{36}$/);
     expect(s.key()).toEqual({ key: KEY, host: "a.example", keyId: sealed?.keyId });
@@ -539,9 +539,9 @@ describe("the key id of a key just saved (PR #188 re-review 3)", () => {
   it("saving the same key again makes a new id, and the live key follows it", async () => {
     const { s, keys } = service({ settings: { baseUrl: "https://a.example/v1" } });
     s.api.agree("a.example");
-    await s.api.saveKey(KEY);
+    await s.api.saveKey(KEY, "a.example");
     const first = s.key()?.keyId;
-    await s.api.saveKey(KEY);
+    await s.api.saveKey(KEY, "a.example");
     const second = s.key()?.keyId;
     expect(second).toBeTruthy();
     expect(second).not.toBe(first);

@@ -34,7 +34,7 @@ import { AgentHost } from "../../app/main/agent/host";
 
 const src = fs.readFileSync("app/renderer/home/welcome.ts", "utf8");
 const fragment = (from: string, to: string) => src.slice(src.indexOf(from), src.indexOf(to, src.indexOf(from)));
-const code = fragment("  const checkProvider = latestOnly", "  function startCheck()") + fragment("  function go(to:", "  // ───── Drawing the step");
+const code = fragment("  function cancelProviderAdoption():", "  /** Setup fixes") + fragment("  const checkProvider = latestOnly", "  function startCheck()") + fragment("  function go(to:", "  // ───── Drawing the step");
 const compile = (ctx: object) => new Function("ctx", `with(ctx) { ${ts.transpile(code, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None })}; return ({checkProvider,go,turnOwnOff}); }`)(ctx) as { checkProvider(): Promise<void>; go(to: string): void; turnOwnOff(force?: boolean): Promise<void> };
 
 const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>(a => { resolve = a; }); return { promise, resolve }; };
@@ -61,9 +61,11 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   settings.onChange(() => { service.settingsChanged(); void host.providerChanged(); });
   // Each agree call waits for its own gate (the test opens them); the other calls go straight to the service.
   const agreeGates: ReturnType<typeof deferred<void>>[] = [];
-  let agrees = 0;
+  let agrees = 0, adoptions = 0;
   const api = {
-    saveKey: (k: string) => service.api.saveKey(k),
+    adopt: (request: Parameters<typeof service.api.adopt>[0]) => { adoptions++; return service.api.adopt(request); },
+    cancelAdoption: async (id: string) => { service.api.cancelAdoption(id); },
+    saveKey: (k: string, host: string) => service.api.saveKey(k, host),
     agree: async (h: string, move?: never) => { const gate = agreeGates[agrees++]; if (gate) await gate.promise; return service.api.agree(h, move); },
     test: (draft?: never) => service.api.test(draft),
   };
@@ -71,7 +73,7 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   let failOff = o.failOff;
   const fields = { type: "openai", baseUrl: "https://a.example/v1", conductor: "model-a", worker: "", key: "sk-test-only" };
   const ctx: Record<string, unknown> = {
-    active: true, step: "provider", checkEpoch: 0, checkRun: 0, providerCheck: { phase: "checking", line: "Checking" }, navigation: 0, heardBefore: -1,
+    active: true, step: "provider", checkEpoch: 0, checkRun: 0, providerAdoption: null, providerCheck: { phase: "checking", line: "Checking" }, navigation: 0, heardBefore: -1,
     // The visit set the provider up (it wasn't in use as the step opened): Back to Copilot puts it away (first-run-c1-2).
     visitInUse: false, checkSaves: true, edited: false, ownInForce: () => false, inUseHost: () => null, offPending: 0, see() {}, switchMade: false, switchedSaid: false,
     get settings() { return settings.get(); },
@@ -89,7 +91,7 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   const disk = () => JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8")).provider.on as boolean;
   return { ctx, f, fields, nodes, service, requests, mend: () => { failOff = undefined; },
     /** What Home does when the switch is turned on: a deliberate choice, then the write. */
-    homeTurnsOn: () => { noteProviderChoice(); settings.update(withOwnProvider({ provider: { on: true } } as never, settings.own().provider)); }, settings, host, sealed, http, agreeGates, agrees: () => agrees, tested: () => tested, disk, edit: () => { (ctx.checkEpoch as number)++; ctx.providerCheck = { phase: "idle", line: "" }; } };
+    homeTurnsOn: () => { noteProviderChoice(); settings.update(withOwnProvider({ provider: { on: true } } as never, settings.own().provider)); }, settings, host, sealed, http, agreeGates, agrees: () => agrees, adoptions: () => adoptions, tested: () => tested, disk, edit: () => { (ctx.checkEpoch as number)++; ctx.providerCheck = { phase: "idle", line: "" }; } };
 }
 type H = Awaited<ReturnType<typeof harness>>;
 /** Nothing points at the abandoned host: the file says off and the runtime is not connected to it. */
@@ -221,7 +223,7 @@ describe("first run's check of an edit to the provider in use (first-run-r2-1)",
     const h = await harness();
     h.settings.update(withOwnProvider({ provider: { type: "openai", baseUrl: "https://a.example/v1", conductor: "model-a" } } as never, h.settings.own().provider));
     expect(h.service.api.agree("a.example")).toEqual({ ok: true });
-    expect(await h.service.api.saveKey(OLD)).toEqual({ ok: true });
+    expect(await h.service.api.saveKey(OLD, "a.example")).toEqual({ ok: true });
     await vi.waitFor(() => expect(h.host.getStatus().service?.host).toBe("a.example"));
     Object.assign(h.ctx, { visitInUse: true, checkSaves: false, ownInForce: () => true, inUseHost: () => "a.example", providerCheck: { phase: "checking", line: "Checking" } });
     Object.assign(h.fields, { baseUrl: "https://b.example/v1", key: NEW });
@@ -273,7 +275,7 @@ describe("first run's check of an edit to the provider in use (first-run-r2-1)",
     await unchanged(h);
   });
 
-  it("an edit that answers is written with its yes in one change, so Copilot is never in force between, and its key saved after (first-run-r4-3)", async () => {
+  it("an edit that answers is saved with its key and yes in one adoption, so Copilot is never in force between (first-run-r4-3)", async () => {
     const h = await inUse();
     const kinds: (string | null)[] = [];
     h.settings.onChange(() => kinds.push(activeProvider({ fixed: null, settings: h.settings.get(), admin, key: h.service.key() })?.kind ?? null));
@@ -283,7 +285,8 @@ describe("first run's check of an edit to the provider in use (first-run-r2-1)",
     await done;
     expect(kinds.length).toBeGreaterThan(0);
     expect(kinds).not.toContain(null);
-    expect(h.agrees()).toBe(1);
+    expect(h.agrees()).toBe(0);
+    expect(h.adoptions()).toBe(1);
     expect(h.service.key()).toMatchObject({ key: NEW, host: "b.example" });
     await vi.waitFor(() => expect(h.host.getStatus().service?.host).toBe("b.example"));
     await h.host.stop();

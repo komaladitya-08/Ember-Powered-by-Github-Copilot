@@ -1126,9 +1126,9 @@ First run's provider step, opened for a provider already in use, checks edited d
 details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the
 card's yes for exactly its host given by the same press, with a key just typed (refused, unsent, where it couldn't be
 kept) or, without one, the saved key only when it was entered for that very host. Nothing is saved or recorded until it
-answers; then the details are written with the card's yes for their host in one change (`agree(host, move)`, as Home's
-held edit is), so the provider in use never leaves force for Copilot between, and a typed key is saved after
-(first-run-r4-3).
+answers; then its key and the details agreed for that host are adopted together through `provider:adopt`, as Home's
+held edit is (first-run-r4-3, integrations-r7-1). A storage failure or an abandoned or edited draft leaves the working
+provider and its saved key in place; a same-host detail edit without a new key keeps that key's identity.
 Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
 held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
 answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
@@ -1137,13 +1137,30 @@ up for the new host, the status line says "Read the note above: Ember still uses
 quiet button reads "Keep using <host in force>" (it puts the details in force back, saving nothing), and a key typed for
 the new host waits in its field. "I agree" checks the held details with the same GET ("Checking <new host>…"); one that
 fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
-names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
-main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
-A host that answers but has no model list at that address (404, 405 or 501 on GET /models, as some gateways that answer
-chat only do: the test's `cause: "no-list"`, which the start probe doesn't count as down either) is adopted the same
-way, and the line says "Agreed. <new host> answered but lists no models, so Ember asks it for <model> as typed."
-(integrations-r4-2); one that can't be reached, times out, has a certificate Ember can't verify, refuses the key or
-answers with another error changes nothing.
+names. One that answers is adopted through `provider:adopt`: main stages its optional key with the OS keyring,
+then publishes the sealed key and the agreed settings together (integrations-r7-1). A keyring, file or settings-write
+failure retains the old endpoint and key; the new key stays in its field to retry. Editing or abandoning a pending
+draft sends `provider:cancel-adoption`, and policy, consent or settings changes invalidate it too. No key returns
+through either channel. Same-host key replacement uses the same staged storage transaction (integrations-v7-1).
+Adoption requires a durable settings write: a file that can't yet be read refuses it rather than holding only a
+runtime change and discarding the old key (integrations-v7-4).
+A key typed into Home's replacement draft is cleared when the address changes to another valid host or port;
+path-only edits and incomplete address typing keep it, and the saved key in use stays untouched (integrations-v7-2).
+This includes a newer provider drawn from main. Saving sends the field's expected host through IPC; main refuses a
+host that changed before the save arrives, rather than binding the typed key to it (integrations-v7-9).
+A host that has no model list at that address (404, 405 or 501 on GET /models) leaves the working provider in place
+(integrations-c5-1): that response could be a chat-only gateway or simply the wrong address, so it is not evidence
+that the replacement can answer. The typed details remain available to correct. One that can't be reached, times
+out, has a certificate Ember can't verify, refuses the key or answers with another error also changes nothing.
+This uses only the card's existing GET; no chat request or additional network probe is added.
+Private transaction files hold sealed bytes, host metadata or the provider settings before and after, at mode0600.
+A failed rollback retains its encrypted original for recovery against the endpoint still in settings; the settings
+record distinguishes old and new keys even for a path edit on the same host (integrations-v7-5). Successful matching
+key loads clean interrupted remnants.
+Remove and sign-out erase owned transaction remnants as well as the primary key, including after a restart.
+They also revoke any pending adoption: its late keyring result cannot restore the removed active key (integrations-v7-7).
+A provider edited in settings.json while a key is being sealed takes precedence over the pending draft; unrelated
+hand edits are retained when adoption succeeds (integrations-v7-8).
 An edit back to the host in force, or of the same host, is saved at once as before. The held card's text has no
 sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
 provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so

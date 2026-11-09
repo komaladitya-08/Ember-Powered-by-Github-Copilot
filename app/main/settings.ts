@@ -756,15 +756,24 @@ export class SettingsStore {
    * Validates and applies a patch to the user's settings; throws on invalid values (or if it can't
    * be saved). `soon`: applied now and saved a moment later, for changes that come many times a
    * second (a slider being dragged); any other change, or flush(), saves it at once.
+   * `requirePersist` refuses a change that would only be held in memory while the file can't be read.
+   * `expectedProvider` prevents a pending key transaction from replacing a newer provider edited on disk.
    */
-  update(patch: SettingsPatch, opts: { soon?: boolean } = {}): Settings {
+  update(patch: SettingsPatch, opts: { soon?: boolean; requirePersist?: boolean; expectedProvider?: Settings["provider"] } = {}): Settings {
     // A hand edit since Ember last looked comes first (or the file that couldn't be read): the patch goes on top of it.
     // (A repairable edit is repaired now, not waited on: Ember saves anyway.)
     if (this.unread || this.mtime() !== this.seen) { try { this.read(true, false); } catch { /* keep what is in memory */ } }
+    if (opts.expectedProvider && JSON.stringify(this.current.provider) !== JSON.stringify(opts.expectedProvider)) {
+      // The fresh disk choice remains in force even though the stale transaction is refused.
+      this.apply(this.current);
+      for (const fn of this.listeners) fn(this.effective);
+      throw new Error("provider settings changed");
+    }
     // A change not saved yet (held while the file couldn't be read, or a slider's) goes on top of what was just read,
     // as reloadIfChanged() does it, and is saved with this one (review #83).
     const next = SettingsSchema.parse({ ...this.current, ...this.pending, ...patch });
     if (next.onboarded && !hasConsent(next)) throw new Error("onboarding can't finish before the user gives consent");
+    if (opts.requirePersist && (this.unread || opts.soon)) throw new Error("settings can't be saved yet");
     if (this.unread) {
       // Saving would replace the user's unreadable file with defaults: the change is used now and saved on top of
       // their settings once the file reads again (review #83).

@@ -244,6 +244,8 @@ describe("Home's provider channels", () => {
     const logs: unknown[] = [];
     const calls: string[] = [];
     const full: ProviderApi = {
+      adopt: async () => { calls.push("adopt"); return { ok: true }; },
+      cancelAdoption: () => { calls.push("cancel-adoption"); },
       state: () => ({ allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false }),
       agree: () => { calls.push("agree"); return { ok: true }; },
       saveKey: async () => { calls.push("save"); return { ok: true }; },
@@ -264,9 +266,15 @@ describe("Home's provider channels", () => {
     expect(calls).toEqual([]);
   });
 
-  it("takes one string of key-like size for saveKey, and nothing for the others", async () => {
+  it("refuses a key without its expected host (integrations-v7-9)", async () => {
     const { call, calls } = wire();
-    for (const bad of [[], [42], [""], ["k".repeat(9000)], [KEY, "extra"], [{ key: KEY }]]) {
+    expect(await call(PROVIDER_IPC.saveKey, HOME, KEY)).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    expect(calls).toEqual([]);
+  });
+
+  it("takes a key of bounded size and its host for saveKey, and nothing for the others", async () => {
+    const { call, calls } = wire();
+    for (const bad of [[], [42], [""], ["k".repeat(9000)], [KEY, 42], [KEY, "BAD HOST"], [KEY, "a.example", "extra"], [{ key: KEY }]]) {
       expect(await call(PROVIDER_IPC.saveKey, HOME, ...bad)).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
     }
     expect(await call(PROVIDER_IPC.removeKey, HOME, "x")).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
@@ -278,7 +286,7 @@ describe("Home's provider channels", () => {
     }
     expect(await call(PROVIDER_IPC.state, HOME, 1)).toBeNull();
     expect(calls).toEqual([]);
-    expect(await call(PROVIDER_IPC.saveKey, HOME, KEY)).toEqual({ ok: true });
+    expect(await call(PROVIDER_IPC.saveKey, HOME, KEY, "a.example")).toEqual({ ok: true });
     expect(await call(PROVIDER_IPC.removeKey, HOME)).toEqual({ ok: true });
     expect(calls).toEqual(["save", "remove"]);
   });
@@ -298,6 +306,23 @@ describe("Home's provider channels", () => {
     expect(seen).toEqual([["b.example", undefined], ["b.example", move], ["b.example", { type: "azure", baseUrl: "https://b.example/v1" }]]);
   });
 
+  it("validates bound adoption and cancellation payloads without returning or logging the key (integrations-r7-1)", async () => {
+    const seen: unknown[] = [];
+    const { call, logs } = wire({ adopt: async r => { seen.push(r); return { ok: true }; }, cancelAdoption: id => { seen.push(id); } });
+    const request = { id: "draft-1", from: "a.example", host: "b.example", move: { type: "openai", baseUrl: "https://b.example/v1" }, key: KEY };
+    for (const bad of [{ ...request, id: "" }, { ...request, from: "BAD HOST" }, { ...request, key: "x".repeat(9000) }, { ...request, extra: true },
+      { ...request, move: { ...request.move, consent: { host: "b.example" } } }]) {
+      expect(await call(PROVIDER_IPC.adopt, HOME, bad)).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    }
+    expect(seen).toEqual([]);
+    const result = await call(PROVIDER_IPC.adopt, HOME, request);
+    expect(result).toEqual({ ok: true });
+    expect(JSON.stringify([result, logs])).not.toContain(KEY);
+    expect(await call(PROVIDER_IPC.cancelAdoption, HOME, "")).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    await call(PROVIDER_IPC.cancelAdoption, HOME, "draft-1");
+    expect(seen).toEqual([request, "draft-1"]);
+  });
+
   it("passes a draft of typed details to the check, and none when there is none (first-run-r2-1)", async () => {
     const seen: unknown[] = [];
     const { call } = wire({ test: async d => { seen.push(d); return { ok: true, host: "b.example", models: 1 }; } });
@@ -309,7 +334,7 @@ describe("Home's provider channels", () => {
 
   it("never sends the key back, and never logs it, even when saving it fails", async () => {
     const { call, logs } = wire({ saveKey: async k => { throw new Error(`keyring refused ${k}`); } });
-    const r = await call(PROVIDER_IPC.saveKey, HOME, KEY);
+    const r = await call(PROVIDER_IPC.saveKey, HOME, KEY, "a.example");
     expect(r).toEqual({ ok: false, why: PROVIDER_FAILED });
     expect(JSON.stringify(logs)).not.toContain(KEY);
     expect(JSON.stringify(logs)).toContain("provider.ipc_failed");
