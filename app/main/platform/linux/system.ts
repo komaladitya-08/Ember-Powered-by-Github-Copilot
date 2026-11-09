@@ -24,7 +24,7 @@ import { watchDisplayGone } from "../../x11";
 /** The machine's state as the adapters read it; tests pass fakes, Ember the real thing. */
 export interface LinuxSystemIO {
   exec?: ExecSync;
-  /** The setup check's background look for pyatspi; default the real one, but only with the real `exec`. */
+  /** The setup check's asynchronous Python and GNOME probes (default: execAsync). */
   run?: ExecAsync;
   exists?: (file: string) => boolean;
   /** For the screen-reader cache (60 s, as before). */
@@ -39,14 +39,22 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
   const exec = io.exec ?? execSync;
   const later = io.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const whichLinux = (cmd: string) => which(cmd, { os: "linux", env: deps.env });
-  const environment = linuxEnvironment({ env: deps.env, exec, run: io.run ?? (io.exec ? undefined : execAsync) });
+  const environment = linuxEnvironment({ env: deps.env, exec, run: io.run ?? execAsync });
 
-  let screenReader: boolean | null = null;
-  /** Orca running (GNOME's screen-reader switch, asked at most once a minute), or anything else using Chromium's accessibility. */
+  let screenReader = false;
+  let readerFresh = false;
+  let readerLooking = false;
+  /** GNOME's cached switch, refreshed off the main thread, plus Chromium's current accessibility state. */
   const screenReaderOn = (): boolean => {
-    if (screenReader === null) {
-      try { screenReader = exec("gsettings", ["get", "org.gnome.desktop.a11y.applications", "screen-reader-enabled"], { encoding: "utf8", timeout: 2000 }).trim() === "true"; } catch { screenReader = false; }
-      later(() => { screenReader = null; }, 60_000).unref?.();
+    if (!readerFresh && !readerLooking) {
+      readerLooking = true;
+      void Promise.resolve().then(() => (io.run ?? execAsync)("gsettings", ["get", "org.gnome.desktop.a11y.applications", "screen-reader-enabled"], { timeout: 2000 }))
+        .then(out => { screenReader = typeof out === "string" && out.trim() === "true"; }, () => { screenReader = false; })
+        .finally(() => {
+          readerLooking = false;
+          readerFresh = true;
+          later(() => { readerFresh = false; }, 60_000).unref?.();
+        });
     }
     return screenReader || deps.electron.app.isAccessibilitySupportEnabled();
   };

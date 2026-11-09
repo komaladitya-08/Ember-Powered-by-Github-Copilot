@@ -372,6 +372,8 @@ async function runDoctor(): Promise<void> {
     await app.whenReady();
     ws = wsState = platform.openWindows(log);
     helper = await doctorHelper();
+    // The doctor reports completed checks; Home can show their pending state without blocking Stop.
+    await sys.lookAgain?.();
     const env = readEnvironment();
     // The doctor never logged xtest.unavailable: no logger.
     input = platform.openInput(ws, null);

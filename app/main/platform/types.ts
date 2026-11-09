@@ -467,7 +467,7 @@ export interface PlatformDoctorProbes {
 
 /** Accessibility preferences the OS reports. */
 export interface A11yProbes {
-  /** A real screen reader runs. linux: GNOME screen-reader-enabled (cached 60 s) || app.isAccessibilitySupportEnabled() (today); win32: SPI_GETSCREENREADER; darwin: VoiceOver. */
+  /** A real screen reader runs. linux: asynchronous GNOME screen-reader-enabled (cached 60 s) || app.isAccessibilitySupportEnabled() (today); win32: SPI_GETSCREENREADER; darwin: VoiceOver. */
   screenReaderOn(): boolean;
   /** The OS asks for less motion. linux: gsettings enable-animations false (today); win32/darwin: systemPreferences.getAnimationSettings().prefersReducedMotion. */
   systemReducedMotion(): boolean;
@@ -598,7 +598,7 @@ export interface SystemPlatform {
   environment(ctx: EnvContext): EnvInputs;
   /**
    * Check again (first-run-6): a probe that waits between tries looks now, off the main thread, and this resolves once
-   * it has its answer (reliability-performance-r2). linux: pyatspi's import, in the background; absent elsewhere.
+   * it has its answer (reliability-performance-r2). Linux checks Python and the GNOME switch asynchronously; absent elsewhere.
    */
   lookAgain?(): Promise<void>;
   readonly fixes: { readonly ids: readonly FixId[]; apply(fix: FixId): Promise<void>; label(fix: FixId): string };

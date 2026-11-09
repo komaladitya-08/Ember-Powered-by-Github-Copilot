@@ -1,8 +1,7 @@
 /**
  * The Linux setup-check inputs (SystemPlatform.environment): main.ts's readEnvironment and probeAccessibility,
- * moved here unchanged, so environment.ts sees exactly the inputs it always did. It runs on every settings-window
- * status request, so the slow probe (importing pyatspi) is asked again at most every 30 s while it is missing, and
- * then in the background (rp-1: a hung import froze every status read, the kill switch included, for 5 s).
+ * gathered off the main thread: a status read never waits for Python or the session bus (rp-1, reliability-c7-1).
+ * A pending look is shown as checking, never as missing or ready; Check again and the doctor can await it.
  */
 
 import { execFile, execFileSync } from "node:child_process";
@@ -18,11 +17,11 @@ export type ExecSync = (cmd: string, args: string[], opts: { encoding?: "utf8"; 
 export const execSync: ExecSync = (cmd, args, opts) => String(execFileSync(cmd, args, opts));
 
 /** A command run off the main thread: resolves when it exits with 0, rejects otherwise (injected in tests). */
-export type ExecAsync = (cmd: string, args: string[], opts: { timeout: number }) => Promise<void>;
+export type ExecAsync = (cmd: string, args: string[], opts: { timeout: number }) => Promise<string | void>;
 
-/** The real execFile, its output ignored. */
+/** The real execFile, returning stdout for the GNOME switch and discarding it for the Python import. */
 export const execAsync: ExecAsync = (cmd, args, opts) => new Promise((resolve, reject) => {
-  execFile(cmd, args, { timeout: opts.timeout }, err => (err ? reject(err) : resolve()));
+  execFile(cmd, args, { timeout: opts.timeout, encoding: "utf8" }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
 });
 
 /** What the setup-check inputs are read from (tests pass fakes; Ember passes this process's environment). */
@@ -33,7 +32,7 @@ export interface LinuxEnvironmentDeps {
   arch?: string;
   versions?: EnvInputs["versions"];
   exec?: ExecSync;
-  /** Looks for pyatspi in the background (accessibilityProbe); without one, every look waits, as before. */
+  /** Runs the accessibility checks off the main thread; defaults to execAsync. */
   run?: ExecAsync;
   readFile?: (file: string) => string;
   /** process.report.getReport() (glibc's version). */
@@ -41,65 +40,42 @@ export interface LinuxEnvironmentDeps {
   now?: () => number;
 }
 
-/** The setup check's accessibility read, and Check again's look for pyatspi (accessibilityProbe). */
+/** The cached setup-check inputs, and an awaitable fresh look for Check again and the doctor. */
 export interface AccessibilityProbe {
-  (fresh?: boolean): { enabled: boolean | null; pyatspi: boolean };
-  /**
-   * Check again (first-run-6): a missing pyatspi is looked for now, in the background, not only every 30 s; resolves
-   * once the look under way has its answer (at once when pyatspi is there or there is no background look), so the
-   * caller waits off the main thread (reliability-performance-r2: the import, waited for in the read, froze Ember).
-   */
+  (fresh?: boolean): { enabled: boolean | null; pyatspi: boolean | null; checking?: boolean };
+  /** Joins an outstanding look, or starts a fresh one, without blocking the main event loop. */
   again(): Promise<void>;
 }
 
 /**
- * Is the GNOME accessibility switch on, and can the sidecar's Python import pyatspi? (One instance remembers pyatspi.)
- * With `run`, pyatspi is looked for in the background (rp-1): once as the probe is made (Ember starting, so the first
- * read usually has the answer), and again every 30 s while it is missing, or at once on `again()`, a read returning
- * what is known meanwhile. Only a first read that comes before that answer imports it itself, as before, so the setup
- * check (and `ember doctor`) never shows a guess. `fresh`: the user asked to check again; without `run` a missing
- * pyatspi is then looked for now, and waited for (with `run`, `again()` looks and is waited for instead).
+ * GNOME's accessibility switch and Python's bindings, checked on start and at most every 30 seconds thereafter.
+ * Known bindings need no repeat import. Reads only return cached facts; a look still under way is explicitly checking.
  */
 export function accessibilityProbe(d: { env: NodeJS.ProcessEnv; exec?: ExecSync; run?: ExecAsync; now?: () => number }): AccessibilityProbe {
-  const exec = d.exec ?? execSync;
-  const now = d.now ?? Date.now;
+  const run = d.run ?? execAsync;
+  const now = d.now ?? (() => performance.now());
   let pyatspiPresent: boolean | null = null;
-  let pyatspiProbed = 0;
+  let enabled: boolean | null = null;
+  let checkedAt = 0;
   let looking: Promise<void> | null = null;
-  const lookLater = (run: ExecAsync) => {
-    pyatspiProbed = now();
-    const look = looking = run(pickPython(d.env), ["-c", "import pyatspi"], { timeout: 5000 }).then(() => true, () => false).then(found => {
-      if (looking === look) looking = null;
-      // A first read's own import may have found it meanwhile: a background look that timed out doesn't undo that.
-      if (found || pyatspiPresent !== true) pyatspiPresent = found;
-    });
+  const look = (): Promise<void> => {
+    if (looking) return looking;
+    checkedAt = now();
+    // Defer even an injected runner: synchronous spawn failures are a failed check, never an exception from a read.
+    const switchLook = Promise.resolve().then(() => run("gsettings", ["get", "org.gnome.desktop.interface", "toolkit-accessibility"], { timeout: 2000 }))
+      .then(out => { enabled = typeof out === "string" && /^(true|false)$/.test(out.trim()) ? out.trim() === "true" : null; }, () => { enabled = null; });
+    const pythonLook = pyatspiPresent === true ? Promise.resolve() : Promise.resolve()
+      .then(() => run(pickPython(d.env), ["-c", "import pyatspi"], { timeout: 5000 }))
+      .then(() => { pyatspiPresent = true; }, () => { pyatspiPresent = false; });
+    looking = Promise.all([switchLook, pythonLook]).then(() => { looking = null; });
+    return looking;
   };
-  if (d.run) lookLater(d.run);
-  const read = (fresh = false) => {
-    let enabled: boolean | null = null;
-    try {
-      const out = exec("gsettings", ["get", "org.gnome.desktop.interface", "toolkit-accessibility"], { encoding: "utf8", timeout: 2000 });
-      enabled = out.trim() === "true";
-    } catch { /* no gsettings (not GNOME) */ }
-    // Asked again (at most every 30 s) while it is missing: the user may have just installed it.
-    if (d.run && pyatspiPresent === false && !looking && now() - pyatspiProbed > 30_000) lookLater(d.run);
-    else if (pyatspiPresent === null || (!pyatspiPresent && !d.run && (fresh || now() - pyatspiProbed > 30_000))) {
-      pyatspiProbed = now();
-      try {
-        exec(pickPython(d.env), ["-c", "import pyatspi"], { stdio: "ignore", timeout: 5000 });
-        pyatspiPresent = true;
-      } catch {
-        pyatspiPresent = false;
-      }
-    }
-    return { enabled, pyatspi: pyatspiPresent };
+  void look();
+  const read = () => {
+    if (!looking && now() - checkedAt > 30_000) void look();
+    return { enabled, pyatspi: pyatspiPresent, ...(looking ? { checking: true } : {}) };
   };
-  return Object.assign(read, {
-    again(): Promise<void> {
-      if (d.run && pyatspiPresent !== true && !looking) lookLater(d.run);
-      return looking ?? Promise.resolve();
-    },
-  });
+  return Object.assign(read, { again: look });
 }
 
 /**
