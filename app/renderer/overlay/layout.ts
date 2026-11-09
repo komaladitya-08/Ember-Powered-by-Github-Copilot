@@ -98,7 +98,8 @@ export function bubbleHere(f: { ember: { x: number; y: number }; on?: number }, 
  * The open Ask box a bubble keeps off (global DIP), for which bubble (askKeepOffKey), and whether it grew into it
  * (`grew`, askGrownInto: it may then go above or below the box, where nothing by Ember is clear of it). `released`: an
  * answer opened in full that kept off the box no more once it closed, so it could show whole, or that the box came over
- * though it never kept off it, and keeps off the box wherever the box comes over it from then on (askKeepOff).
+ * where it is (it kept off the box elsewhere, or never), and keeps off the box wherever the box comes over it from then
+ * on (askKeepOff).
  */
 export interface AskHeld { box: Rect | null; question: string; grew?: true; released?: true }
 
@@ -118,15 +119,17 @@ export interface AskHeld { box: Rect | null; question: string; grew?: true; rele
  * strip, the same). From then on the box coming over it where it is (`at`: opening again on it, or growing into it as
  * it settles) is kept off where the box is, as when Read all came with the box open (companion-repairs-x6-1: nothing
  * by Ember was clear of it, so the field opened over its lines, and the box grew a row up into it as it opened); so is
- * the box coming over one opened in full while the box was closed, which never kept off it (companion-y6-1: Read all
- * with the box closed, then Ctrl+Alt+Space to reply, laid the field over its lines the same way). A box clear of it
- * never moves it.
+ * the box coming over any other answer opened in full, whatever it kept off before: one opened while the box was closed,
+ * which never kept off it (companion-y6-1: Read all with the box closed, then Ctrl+Alt+Space to reply, laid the field
+ * over its lines the same way), and one opened while the box was open that showed whole, so the box closing never let
+ * it go (companion-z6-1: Esc and Ctrl+Alt+Space to reply opened the box a row taller on its last lines, and the box grew
+ * a row into it as the chips came). A box clear of it never moves it.
  */
 export function askKeepOff(box: Rect | null, question: string, held: AskHeld, opened = false, clipped = false, at: Rect | null = null): AskHeld {
   if (question && question === held.question) {
     if (opened && clipped && !box && held.box) return { box: null, question, released: true };
     const same = !!held.box && !!box && held.box.x === box.x && held.box.y === box.y && held.box.width === box.width && held.box.height === box.height;
-    if ((held.released || (opened && !held.box)) && box && !same && at && overlap(at, box) > 0) return { box, question, grew: true, released: true };
+    if ((held.released || opened) && box && !same && at && overlap(at, box) > 0) return { box, question, grew: true, released: true };
     return held;
   }
   return opened && box ? { box, question, grew: true } : { box, question };

@@ -170,12 +170,14 @@ They share one emotion rig, so switching never changes behaviour.
   step starts, and a finished card's tick settles in once on the reward spring; a failure just shows
   its mark (no shake, no flash). The Ask box grows out of Ember beneath it, and opens beside the
   bubble, or over or under it where it fits beside neither (larger text, a 1024-wide screen), never
-  on it nor on Ember (the bubble never moves for it). A bubble that comes up while the box is open
+  on it nor on Ember (the bubble never moves for it, but for an answer opened in full with **Read
+  all**, below). A bubble that comes up while the box is open
   keeps off it where it can (never hiding for it); a question, or its own Listen once's
   "Listening…" (never a wake's), that finds no room moves the box aside once (again only once it
   has grown under the field: a spoken yes that wasn't taken adds its note), and a bubble already
-  shown, a question or an answer being read, never moves for the box: where the box can't keep
-  clear of it whole (a small screen at Larger text), the box may come against it. An answer that
+  shown, a question or an answer being read, never moves for the box (but for an answer opened in
+  full, below): where the box can't keep clear of it whole (a small screen at Larger text), the box
+  may come against it. An answer that
   grows into the box on its own, as its words come in or as it finishes (its Read all, its hint
   and Ember's suggestions come only then), keeps off it from there, going above or below the box
   where nothing by Ember is clear of it, so the field never covers its last lines or its Read all;
@@ -188,9 +190,11 @@ They share one emotion rig, so switching never changes behaviour.
   the box closes, one whose text didn't all show for it (cut short, or narrowed into a side strip
   with its text running on) keeps off the box's place no more and shows whole where it can (it may
   move to do so); one that showed whole stays where it is. When the box opens on an answer opened in
-  full that keeps off nothing of it (the one that moved, or one opened with **Read all** while the
-  box was closed), or grows into it as it opens, the answer keeps off the box from then on as it does
-  with Read all, so the field never lies over its lines; a box that opens clear of it never moves it.
+  full that doesn't keep off it where it is now (the one that moved; one opened with **Read all**
+  while the box was closed; one opened while it was open that showed whole, so stayed put once it
+  closed), or grows into it as it opens or as Ember's suggestions come, the answer keeps off the box
+  there from then on as it does with Read all, so the field never lies over its lines; a box that
+  opens or grows clear of it never moves it.
   While the box is
   open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
   closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
