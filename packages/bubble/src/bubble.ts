@@ -818,6 +818,13 @@ export class ReasoningBubble {
    * each new state that doesn't yet say main knows (the page sends wholeSeenAction).
    */
   onWholeSeen: ((n: number) => void) | null = null;
+  /**
+   * Told when an answer opened in full first shows its last line (endShown): its overlay tells main, whose Ask box then
+   * offers what answers those words (companion-v6-2).
+   */
+  onEndShown: (() => void) | null = null;
+  /** An answer opened in full has shown its last line (all of it, or its text scrolled to its end) since it changed. */
+  private endSeen = false;
   private mood: BubbleMood = "idle";
   /** The thought as given (a question's is drawn in parts: questionParts), and the step's words as given (keycaps drawn). */
   private thoughtRaw = "";
@@ -891,6 +898,8 @@ export class ReasoningBubble {
     this.wholeHint = this.root.querySelector(".eb-whole-hint")!;
     // Scrolled (by the wheel, or a page on by the approve key): judged again.
     this.wholeBox.addEventListener("scroll", () => this.wholeMeasured(), { passive: true });
+    // An answer opened in full, scrolled: has its last line come into view?
+    this.thoughtBox.addEventListener("scroll", () => this.judgeEnd(), { passive: true });
     this.live = document.createElement("div");
     this.live.className = "eb-live";
     this.live.setAttribute("role", "status");
@@ -962,12 +971,14 @@ export class ReasoningBubble {
   setThought(text: string): void {
     if (this.thoughtRaw === text) return;
     this.thoughtRaw = text;
+    this.endSeen = false;
     this.drawThought();
   }
 
   /** Append streamed reasoning text (e.g. from assistant.reasoning_delta). */
   appendThought(delta: string): void {
     this.thoughtRaw += delta;
+    this.endSeen = false;
     this.drawThought();
   }
 
@@ -1035,6 +1046,7 @@ export class ReasoningBubble {
   setExpanded(on: boolean): void {
     if (on === this.expanded) return;
     this.expanded = on;
+    this.endSeen = false;
     this.root.dataset.expanded = String(on);
     this.changed();
   }
@@ -1253,11 +1265,31 @@ export class ReasoningBubble {
     const shown = this.setCrowded(false);
     this.box = m.box;
     this.hot = m.hot;
-    if (!resized && !shown && this.pos?.x === x && this.pos.y === y) { this.wholeMeasured(); return false; }
+    if (!resized && !shown && this.pos?.x === x && this.pos.y === y) { this.wholeMeasured(); this.judgeEnd(); return false; }
     this.pos = { x, y };
     this.mount.style.transform = `translate(${x}px, ${y}px)`;
     this.wholeMeasured();
+    this.judgeEnd();
     return true;
+  }
+
+  /**
+   * An answer opened in full whose last line is in view on screen now (a layout read, only until it first is): from then
+   * on endShown() says so, and onEndShown is told. Cut short to the room (bubbleCut) or longer than its sixteen lines,
+   * that is once its text has been scrolled to its end.
+   */
+  private judgeEnd(): void {
+    if (!this.expanded || this.endSeen || this.streaming || !this.visible || this.crowded || !this.pos || !this.thoughtRaw) return;
+    if (typeof document.fonts !== "undefined" && document.fonts.status !== "loaded") return;
+    const t = this.thoughtBox, r = t.getBoundingClientRect();
+    if (t.scrollTop + t.clientHeight < t.scrollHeight - 1 || r.top < 0 || r.bottom > window.innerHeight) return;
+    this.endSeen = true;
+    this.onEndShown?.();
+  }
+
+  /** An answer opened in full ("Read all") has shown its last line since its text last changed (judgeEnd). */
+  endShown(): boolean {
+    return this.expanded && this.endSeen;
   }
 
   /** Where the bubble is and its size, in host coordinates, or null while it isn't shown. */

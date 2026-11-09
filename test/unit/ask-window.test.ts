@@ -370,14 +370,86 @@ describe("the ask box", () => {
     const thought = "Tokyo is nine hours ahead of London, so it is evening there. ".repeat(6) + "Want me to add a world clock?";
     const cut = { ...IDLE_BUBBLE, visible: true, thought, step: "Or press Ctrl+Alt+E and go to Conversation.", actions: [{ id: "ui:more", label: "Read all" }] };
     const s = { bubble: cut, suggest: { thought, items: ["Yes, please", "No, thanks", "Remind me in an hour"] } };
-    const items = [{ text: "Yes, please", follows: true }, { text: "No, thanks", follows: true }, { text: "Remind me in an hour" }];
+    const items = [{ text: "Yes, please", follows: true, answers: true }, { text: "No, thanks", follows: true, answers: true }, { text: "Remind me in an hour" }];
     // Only the one that stands on its own.
     expect(askSuggestions(s, items, false)).toEqual(["Remind me in an hour"]);
-    // Read all: the whole answer, its offer with it, shows, and so do the chips that answer it.
+    // Read all: the whole answer, its offer with it, shows (the overlay says its end has), and so do the chips that
+    // answer it.
     const full = { ...cut, step: null, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
-    expect(askSuggestions({ ...s, bubble: full }, items, false)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
+    expect(askSuggestions({ ...s, bubble: full }, items, false, true)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
     // An answer short enough to show whole offers them as before.
     expect(askSuggestions({ ...s, bubble: { ...cut, step: null, actions: [] } }, items, false)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
+  });
+
+  it("offers what answers a long answer's offer once Read all has shown its end, however long the answer (companion-v6-1)", async () => {
+    const { predictNext } = await import("../../app/main/personal/predict");
+    const { expandedBubble, expandedSuggest } = await import("../../app/main/agent/presenter");
+    // As the bubble shows an answer (presenter.ts clip: its first 600 characters).
+    const clip = (t: string) => (t.length > 600 ? `${t.slice(0, 599).trimEnd()}…` : t);
+    const close = [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }];
+    for (const n of [300, 650, 1200]) {
+      const full = "Tokyo is nine hours ahead of London in winter and eight in summer. ".repeat(40).slice(0, n - 30).trimEnd() + " Want me to add a world clock?";
+      const items = predictNext({ lastRequest: "What time is it in Tokyo?", lastRequestOwn: true, lastReply: full, spoken: false, task: null, history: [], hour: 14, people: [] }, () => false);
+      expect(items, String(n)).toEqual([{ text: "Yes, please", follows: true, answers: true }, { text: "No, thanks", follows: true, answers: true }]);
+      const cut = { ...IDLE_BUBBLE, visible: true, title: "Ember", thought: clip(full), step: "Or press Ctrl+Alt+E and go to Conversation.", actions: [{ id: "ui:more", label: "Read all" }] };
+      const s = { bubble: cut, suggest: { thought: cut.thought, items: items.map(i => i.text) } };
+      // Cut short, its offer out of sight: nothing that answers it.
+      expect(askSuggestions(s, items, false), String(n)).toEqual([]);
+      // Read all (main's expandAnswer): the suggestions follow the whole answer. At 650 and 1200 characters they were
+      // made for its first 600, matched it no more, and "Yes, please" never came back.
+      const opened = { bubble: expandedBubble(cut, full), suggest: expandedSuggest(s.suggest, cut, full) };
+      expect(opened.bubble).toMatchObject({ expanded: true, thought: full, actions: close });
+      expect(opened.suggest, String(n)).toEqual({ thought: full, items: ["Yes, please", "No, thanks"] });
+      // Offered once its end has shown (the overlay's word: all of it, or scrolled to it), not before.
+      expect(askSuggestions(opened, items, false), String(n)).toEqual([]);
+      expect(askSuggestions(opened, items, false, true), String(n)).toEqual(["Yes, please", "No, thanks"]);
+    }
+    // Never for another answer than the one they were made for, nor for one the conversation kept only in part.
+    const other = { ...IDLE_BUBBLE, visible: true, thought: "Night light is on." };
+    const made = { thought: "Tokyo is 9 hours ahead. Want me to add a world clock?", items: ["Yes, please"] };
+    expect(expandedSuggest(made, other, "Night light is on.")).toBe(made);
+    const kept = { ...IDLE_BUBBLE, visible: true, thought: made.thought };
+    expect(expandedSuggest(made, kept, "Something else entirely.")).toBe(made);
+    const huge = "x".repeat(128 * 1024), part = { thought: clip(huge), items: ["Yes, please"] };
+    expect(expandedSuggest(part, { ...kept, thought: clip(huge) }, huge)).toBe(part);
+    expect(expandedSuggest(null, kept, made.thought)).toBeNull();
+  });
+
+  it("keeps what doesn't answer an answer's last words for one cut short, which the keyboard can't open: Read it out, Close it (companion-v6-1)", async () => {
+    const { predictNext } = await import("../../app/main/personal/predict");
+    const { expandedBubble, expandedSuggest } = await import("../../app/main/agent/presenter");
+    // A 1,049-character summary, not said aloud: "Read it out" is for exactly such an answer, and agrees to nothing.
+    const full = "Here is a summary of the document. ".repeat(30).trim();
+    const items = predictNext({ lastRequest: "Summarise this document", lastRequestOwn: true, lastReply: full, spoken: false, task: null, history: [], hour: 14, people: [] }, () => false);
+    expect(items[0]).toEqual({ text: "Read it out", follows: true });
+    const cut = { ...IDLE_BUBBLE, visible: true, title: "Ember", thought: `${full.slice(0, 599).trimEnd()}…`, actions: [{ id: "ui:more", label: "Read all" }] };
+    const s = { bubble: cut, suggest: { thought: cut.thought, items: items.map(i => i.text) } };
+    // Under Read all (mouse only) and opened in full, before its end has shown: still offered.
+    expect(askSuggestions(s, items, false)).toContain("Read it out");
+    expect(askSuggestions({ bubble: expandedBubble(cut, full), suggest: expandedSuggest(s.suggest, cut, full) }, items, false)).toContain("Read it out");
+    // "Close it" after something was opened, and "What went wrong?" after a task failed, stay too.
+    const opened = predictNext({ lastRequest: "Open my notes", lastRequestOwn: true, lastReply: full, spoken: false, task: null, history: [], hour: 14, people: [] }, () => false);
+    expect(askSuggestions({ ...s, suggest: { thought: cut.thought, items: opened.map(i => i.text) } }, opened, false)).toEqual(expect.arrayContaining(["Close it", "Read it out"]));
+    const failed = predictNext({ lastRequest: "Tidy my desktop", lastRequestOwn: true, lastReply: full, spoken: false, task: { status: "failed" }, history: [], hour: 14, people: [] }, () => false);
+    expect(askSuggestions({ ...s, suggest: { thought: cut.thought, items: failed.map(i => i.text) } }, failed, false)).toContain("What went wrong?");
+  });
+
+  it("offers nothing that agrees to an answer opened in full until its end has shown: cut short to the room, its offer is out of view (companion-v6-2)", () => {
+    // As measured live at 1024 x 768, Larger text, Ember mid-screen: Read all with the box open cut the answer to seven
+    // of its nine lines, its last, "Want me to add a world clock?", scrolled out of view under a line that ends a
+    // sentence; the box opened again with "Yes, please" and "No, thanks", which Tab and Enter agreed with.
+    const thought = "Tokyo is nine hours ahead of London, so it is evening there. ".repeat(6) + "Want me to add a world clock?";
+    const full = { ...IDLE_BUBBLE, visible: true, title: "Ember", thought, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+    const s = { bubble: full, suggest: { thought, items: ["Yes, please", "No, thanks", "Remind me in an hour"] } };
+    const items = [{ text: "Yes, please", follows: true, answers: true }, { text: "No, thanks", follows: true, answers: true }, { text: "Remind me in an hour" }];
+    // Cut short (the overlay doesn't say its end has shown): only what stands on its own.
+    expect(askSuggestions(s, items, false)).toEqual(["Remind me in an hour"]);
+    expect(askSuggestions(s, items, false, false)).toEqual(["Remind me in an hour"]);
+    // Scrolled to its end, or shown whole (once the box closed: companion-v6-3): offered.
+    expect(askSuggestions(s, items, false, true)).toEqual(["Yes, please", "No, thanks", "Remind me in an hour"]);
+    // The overlay's word never stands for an answer cut short under Read all, nor through a question.
+    expect(askSuggestions({ ...s, bubble: { ...full, expanded: false, actions: [{ id: "ui:more", label: "Read all" }] } }, items, false, true)).toEqual(["Remind me in an hour"]);
+    expect(askSuggestions(s, items, true, true)).toEqual([]);
   });
 
   it("opens with room for an answer's follow-ups while the answer still comes in, so they land where the keyboard reaches them (accessibility-visual-c4-1)", async () => {
@@ -478,7 +550,12 @@ describe("the ask box", () => {
     // Main offers in the box only what askSuggestions offers now, and takes a chip back only if it is offered now.
     const { readFileSync } = await import("node:fs");
     const main = readFileSync("app/main/main.ts", "utf8");
-    expect(main).toMatch(/const askOffers = \(\) => askSuggestions\(lastState, personalRef\?\.current\(\) \?\? \[\], !!confirmer\?\.waiting\);/);
+    expect(main).toMatch(/const askOffers = \(\) => askSuggestions\(lastState, personalRef\?\.current\(\) \?\? \[\], !!confirmer\?\.waiting, overlay\?\.bubbleRect\(\)\?\.endShown === true\);/);
+    // Read all carries the suggestions over to the whole answer (companion-v6-1), and the overlay's word that its end
+    // has shown changes what the box offers (companion-v6-2).
+    expect(main).toMatch(/const suggest = expandedSuggest\(lastState\.suggest, lastState\.bubble, full\);\n\s+setState\(\{ talking: false, bubble: expandedBubble\(lastState\.bubble, full\), \.\.\.\(suggest !== lastState\.suggest \? \{ suggest \} : \{\}\) \}\);/);
+    const reported = main.slice(main.indexOf("ipcMain.on(OVERLAY.bubble,"));
+    expect(reported.slice(0, reported.indexOf("\n  });"))).toMatch(/if \(endShown !== null && endShown !== undefined && endShown !== true\) return;[\s\S]+if \(\(overlay\.bubbleRect\(\)\?\.endShown === true\) !== ended\) askOffersChanged\(\);/);
     const open = main.slice(main.indexOf("const openAsk = "), main.indexOf("let audit: AuditLog"));
     expect(open).toMatch(/suggestions: askOffers\(\)/);
     expect(open).not.toMatch(/personalRef\.current\(\)/);

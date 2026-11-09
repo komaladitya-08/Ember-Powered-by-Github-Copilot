@@ -609,7 +609,7 @@ describe("the open Ask box, for a bubble that comes up while it is open (compani
     expect(overlayPage).toMatch(/reportBubble\(showBubble \? bubble\.rect\(\) : null\);\n(\s+\/\/[^\n]*\n)\s+askSeen = \{ key: askKeepOffKey\(state\?\.bubble \?\? IDLE_BUBBLE\), at: showBubble \? bubbleAt\(\) : null \};\n\}/);
     const main = readFileSync("app/main/main.ts", "utf8");
     expect(main).toMatch(/onBounds: askBox => \{ if \(JSON\.stringify\(lastState\.askBox \?\? null\) !== JSON\.stringify\(askBox\)\) showState\(\{ askBox \}\); agent\?\.holdForAsk\(askBox !== null\); \},/);
-    expect(main).toMatch(/overlay\.setBubble\(event\.sender, rect\);\n(\s+\/\/[^\n]*\n)+\s+askWindow\.bubbleChanged\(stepsAsideFor\(lastState\.bubble, manualCall\?\.source === "ask"\)\);/);
+    expect(main).toMatch(/overlay\.setBubble\(event\.sender, rect && \{ x: rect\.x, y: rect\.y, width: rect\.width, height: rect\.height, \.\.\.\(endShown \? \{ endShown \} : \{\}\) \}\);\n(\s+\/\/[^\n]*\n)+\s+if \(\(overlay\.bubbleRect\(\)\?\.endShown === true\) !== ended\) askOffersChanged\(\);\n(\s+\/\/[^\n]*\n)+\s+askWindow\.bubbleChanged\(stepsAsideFor\(lastState\.bubble, manualCall\?\.source === "ask"\)\);/);
     // Without a compositor, the corner card grows for a question: the open box moves off it.
     expect(main).toMatch(/handle\.fit\(height\); deskViewRef\?\.handleMoved\(\); askWindow\.keepClear\(\);/);
   });

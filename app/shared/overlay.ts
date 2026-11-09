@@ -41,6 +41,14 @@ export const TASK_READING_LEASE_MS = 15_000;
 
 export interface Rect { x: number; y: number; width: number; height: number }
 
+/**
+ * Where the bubble is (global DIP), as its overlay reports it (OVERLAY.bubble). `endShown`: it is an answer opened in
+ * full ("Read all") whose last line has been in view (all of it showed, or its text was scrolled to its end), so the
+ * Ask box may offer what answers its last words (askSuggestions; companion-v6-2: one cut short to the room hid its
+ * offer, and the box offered "Yes, please" to it all the same).
+ */
+export interface BubbleBox extends Rect { endShown?: true }
+
 export interface OverlayInit {
   displayId: number;
   /** This overlay's display bounds in global DIP. */
@@ -212,15 +220,18 @@ export function suggestionsShown(s: Pick<EmberState, "bubble" | "suggest">): str
  * none while a question is up (`questionUp`: the Confirmer waits, or answers show on the bubble), which "Yes, please"
  * would only seem to answer (companion-r2-1); and those that follow the answer they were made for (`follows`: "Yes,
  * please" to its offer, "Close it", "Read it out") only while that answer shows, so a chip never agrees to an offer that
- * has left the screen (companion-c2-2), nor to one the bubble cuts short under Read all, until it is opened in full
- * (companion-c5-2: its last line, the offer, didn't show). The others (a request said twice, the time of day's) stand on
- * their own.
+ * has left the screen (companion-c2-2). Those that answer its last words (`answers`: "Yes, please", "No, thanks") also
+ * need those words in view: not while the bubble cuts it short under Read all (companion-c5-2: its last line, the offer,
+ * didn't show), and opened in full only once its end has shown (`endShown`: the overlay's word, BubbleBox; companion-v6-2:
+ * cut short to the room, its offer was out of view). The rest stay for a cut answer ("Read it out" is for a long one:
+ * companion-v6-1), and the others (a request said twice, the time of day's) stand on their own.
  */
-export function askSuggestions(s: Pick<EmberState, "bubble" | "suggest">, items: readonly { text: string; follows?: boolean }[], questionUp: boolean): string[] {
+export function askSuggestions(s: Pick<EmberState, "bubble" | "suggest">, items: readonly { text: string; follows?: boolean; answers?: boolean }[], questionUp: boolean, endShown = false): string[] {
   const b = s.bubble;
   if (questionUp || (b.visible && b.actions.some(a => !a.id.startsWith("ui:")))) return [];
-  const answerShown = !!s.suggest && b.visible && b.thought === s.suggest.thought && !b.actions.some(a => a.id === "ui:more");
-  return items.filter(i => !i.follows || answerShown).map(i => i.text).slice(0, 3);
+  const answerShown = !!s.suggest && b.visible && b.thought === s.suggest.thought;
+  const lastWordsShown = answerShown && !b.actions.some(a => a.id === "ui:more") && (!b.expanded || endShown);
+  return items.filter(i => (i.answers ? lastWordsShown : !i.follows || answerShown)).map(i => i.text).slice(0, 3);
 }
 
 /**
@@ -250,8 +261,8 @@ export interface OverlayApi {
   pointerHeld(held: boolean): void;
   /** The task cards' area in global DIP (null: no cards on this display). */
   setCards(rect: Rect | null): void;
-  /** The bubble's box in global DIP (null: not shown on this display). */
-  setBubble?(rect: Rect | null): void;
+  /** The bubble's box in global DIP (null: not shown on this display), and whether an answer opened in full showed its end. */
+  setBubble?(rect: BubbleBox | null): void;
   /** The desktop's reduce-motion preference changed while Ember runs (true: less motion). */
   setReducedMotion?(on: boolean): void;
   /** The sound's level for the presence ring (the microphone's while Ember hears) and the voice meter (its own voice). */

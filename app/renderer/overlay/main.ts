@@ -18,7 +18,7 @@ import { Rig, FACTORIES, PRESETS, frameSeconds, restingGap, type Character, type
 import { ReasoningBubble, onPress, plainStream, snapToDevice } from "@ember/bubble";
 import { canvasSize, watchPixels } from "../shared/pixels";
 import { LEVEL_STEPS } from "../../shared/level";
-import { IDLE_BUBBLE, TASK_READING_LEASE_MS, TASK_STOPPING, suggestAction, suggestionsShown, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
+import { IDLE_BUBBLE, TASK_READING_LEASE_MS, TASK_STOPPING, suggestAction, suggestionsShown, waitsForWhole, wholeSeenAction, type BubbleBox, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 import { STOP_ACK_MS, cardLines, cardStateWord, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { ArmClock, TASK_ARM_MS } from "../handle/arm";
@@ -57,6 +57,9 @@ const bubble = new ReasoningBubble(document.getElementById("bubble-host")!);
 bubble.setVisible(false);
 // All of a question's whole text has been in view here (review #116): main lets its Allow work from then on.
 bubble.onWholeSeen = n => api.bubbleAction(wholeSeenAction(n));
+// An answer opened in full showed its last line here (scrolled to its end, or all of it showed): main's Ask box may
+// offer what answers it (companion-v6-2). Said with the bubble's box (reportBubble), whether or not Ember is drawn.
+bubble.onEndShown = () => reportBubble(bubble.rect());
 const statusEl = document.getElementById("status")!;
 const tasksEl = document.getElementById("tasks")!;
 const focusEl = document.getElementById("focus")!;
@@ -938,14 +941,14 @@ function draw(now: number): void {
 
 /** What main last heard of the bubble's box, the box to tell it next, and the timer that will. */
 let bubbleSent = "null";
-let bubbleNext: Rect | null = null;
+let bubbleNext: BubbleBox | null = null;
 let bubbleTimer: ReturnType<typeof setTimeout> | null = null;
 /**
  * Tells main where the bubble is (global DIP), so the Ask box opens clear of it (companion-1): at once when it shows or
  * goes, at most every 100 ms while it moves with Ember (a frame's move would be an IPC message a frame).
  */
 function reportBubble(r: Rect | null): void {
-  bubbleNext = r ? { x: Math.round(r.x + bounds.x), y: Math.round(r.y + bounds.y), width: Math.round(r.width), height: Math.round(r.height) } : null;
+  bubbleNext = r ? { x: Math.round(r.x + bounds.x), y: Math.round(r.y + bounds.y), width: Math.round(r.width), height: Math.round(r.height), ...(bubble.endShown() ? { endShown: true as const } : {}) } : null;
   const send = () => {
     const key = JSON.stringify(bubbleNext);
     if (key !== bubbleSent) { bubbleSent = key; api.setBubble?.(bubbleNext); }

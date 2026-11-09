@@ -29,6 +29,7 @@ const PAGE = `
 import { ReasoningBubble } from "./packages/bubble/src/bubble";
 import { askKeepOff, askKeepOffKey } from "./app/renderer/overlay/layout";
 type Sample = { scale: string; translate: string; opacity: number };
+type Ended = { endShown: boolean; told: number };
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const look = (b: ReasoningBubble): Sample => { const cs = getComputedStyle(b.root); return { scale: cs.scale, translate: cs.translate, opacity: Number(cs.opacity) }; };
 /** Its look every 20 ms of its first ms after the style that starts its transitions, on their own clock. */
@@ -228,27 +229,35 @@ function openedInFull(): { spot: { x: number; y: number; w: number; h: number } 
 /**
  * An answer opened in full with the Ask box open at Larger text, Ember mid-screen on a 1024 x 768 screen (nine lines,
  * its offer last), as the overlay places it while the box is open and after the box closes (askKeepOff, as
- * measureTasks calls it): whether it was cut, its text's cap, height and scroll height each time, and where it went.
+ * measureTasks calls it): whether it was cut, its text's cap, height and scroll height each time, whether its end has
+ * shown (endShown, and how often onEndShown was told), and where it went. Then the same answer cut again, scrolled to
+ * its end.
  */
-function closedAfterCut(): { open: { cut: boolean; cap: string; text: number; scroll: number }; closed: { cut: boolean; cap: string; text: number; scroll: number; spot: { x: number; y: number; w: number; h: number } | null } } {
+function closedAfterCut(): { open: Ended & { cut: boolean; cap: string; text: number; scroll: number }; closed: Ended & { cut: boolean; cap: string; text: number; scroll: number; spot: { x: number; y: number; w: number; h: number } | null }; scrolled: { cut: boolean; before: Ended; after: Ended } } {
   const html = document.documentElement;
   html.dataset.textSize = "larger";
   html.style.setProperty("--text-scale", "1.3");
   const host = document.createElement("div");
   host.style.cssText = "position:absolute;inset:0";
   document.body.append(host);
-  const b = new ReasoningBubble(host);
   const words = ["Tokyo", "is", "nine", "hours", "ahead", "of", "London,", "so", "it", "is", "evening", "there."];
-  b.setThought(Array.from({ length: 70 }, (_, i) => words[i % 12]).join(" ") + " Want me to add a world clock?");
-  b.setExpanded(true);
-  b.setActions([{ key: "ui:close", label: "Close", onClick: () => undefined }, { key: "ui:conversation", label: "Open conversation", onClick: () => undefined }]);
-  b.setVisible(true);
+  let told = 0;
+  const opened = () => {
+    const o = new ReasoningBubble(host);
+    o.onEndShown = () => { told++; };
+    o.setThought(Array.from({ length: 70 }, (_, i) => words[i % 12]).join(" ") + " Want me to add a world clock?");
+    o.setExpanded(true);
+    o.setActions([{ key: "ui:close", label: "Close", onClick: () => undefined }, { key: "ui:conversation", label: "Open conversation", onClick: () => undefined }]);
+    o.setVisible(true);
+    return o;
+  };
+  const b = opened();
   const screen = { width: 1024, height: 768 }, handle = { x: 752, y: 700, width: 260, height: 56 };
   const box = { x: 195, y: 242, width: 728, height: 173 }, anchor = { x: 559, y: 461 };
   const cutState = { visible: true, mood: "idle" as const, title: "Ember", actions: [{ id: "ui:more", label: "Read all" }] };
   const full = { ...cutState, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
   const t = b.root.querySelector<HTMLElement>(".eb-thought")!;
-  const read = () => ({ cut: b.isCut(), cap: t.style.maxHeight, text: t.clientHeight, scroll: t.scrollHeight });
+  const read = () => ({ cut: b.isCut(), cap: t.style.maxHeight, text: t.clientHeight, scroll: t.scrollHeight, endShown: b.endShown(), told });
   const placeFor = (held: { box: typeof box | null; grew?: true }) => b.place(anchor, screen, 60, held.box ? [handle, held.box] : [handle], [], [], held.box && held.grew ? [held.box] : []);
   let held = askKeepOff(box, askKeepOffKey(cutState), { box: null, question: "" });
   held = askKeepOff(box, askKeepOffKey(full), held, true, b.isCut());
@@ -259,10 +268,23 @@ function closedAfterCut(): { open: { cut: boolean; cap: string; text: number; sc
   placeFor(held);
   const r = b.rect();
   const closed = { ...read(), spot: r && { x: r.x, y: r.y, w: r.width, h: r.height } };
+  b.root.remove();
+  // The same answer cut short again with the box open, then its text scrolled to its end (the wheel, or a screen reader),
+  // on a screen the size of this page's window (its last line must be on screen to count).
+  told = 0;
+  const c = opened();
+  const page = { width: window.innerWidth, height: window.innerHeight };
+  const pageBox = { x: 150, y: 120, width: 700, height: 250 };
+  c.place({ x: 500, y: 420 }, page, 60, [{ x: page.width - 272, y: page.height - 68, width: 260, height: 56 }, pageBox], [], [], [pageBox]);
+  const ct = c.root.querySelector<HTMLElement>(".eb-thought")!;
+  const cutBefore = c.isCut(), before = { endShown: c.endShown(), told };
+  ct.scrollTop = ct.scrollHeight;
+  ct.dispatchEvent(new Event("scroll"));
+  const scrolled = { cut: cutBefore, before, after: { endShown: c.endShown(), told } };
   host.remove();
   delete html.dataset.textSize;
   html.style.removeProperty("--text-scale");
-  return { open, closed };
+  return { open, closed, scrolled };
 }
 /**
  * Question hints left in the page for main to read from its accessibility tree: Linux's at the bubble's own width (the
@@ -354,6 +376,8 @@ app.whenReady().then(async () => {
 `;
 
 type Sample = { scale: string; translate: string; opacity: number };
+/** Whether an answer opened in full has shown its end (endShown), and how many times onEndShown was told. */
+type Ended = { endShown: boolean; told: number };
 type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext" | "answer", Sample[]> & {
   chips: { row: { x: number; y: number; w: number; h: number } | null; covered: boolean; buttons: number; labelledBy: string };
   keyHints: { name: string; over: number; textOver: number; seps: { shown: boolean; sameLine: boolean }[] }[];
@@ -361,8 +385,8 @@ type Result = Record<"thinkingSame" | "thinkingNext" | "actingSame" | "idleNext"
   answerHeights: { name: string; scale: number; height: number }[];
   /** An answer opened in full beside the open Ask box, Ember mid-screen and low (openedInFull). */
   openedInFull: { spot: { x: number; y: number; w: number; h: number } | null; text: number; scroll: number; line: number; textHot: boolean; buttons: { x: number; y: number; w: number; h: number }; buttonsHot: boolean; whole: number; wholeText: number }[];
-  /** An answer opened in full, cut for the open Ask box, then the box closed (closedAfterCut). */
-  closedAfterCut: { open: { cut: boolean; cap: string; text: number; scroll: number }; closed: { cut: boolean; cap: string; text: number; scroll: number; spot: { x: number; y: number; w: number; h: number } | null } };
+  /** An answer opened in full, cut for the open Ask box, then the box closed; and cut, then scrolled (closedAfterCut). */
+  closedAfterCut: { open: Ended & { cut: boolean; cap: string; text: number; scroll: number }; closed: Ended & { cut: boolean; cap: string; text: number; scroll: number; spot: { x: number; y: number; w: number; h: number } | null }; scrolled: { cut: boolean; before: Ended; after: Ended } };
   /** What a screen reader reads of each hint left in the page (by its host's id). */
   axHints: Record<string, string | null>;
   /** Whether the bundled "Ember Sans" (Inter) had loaded when the hints were measured. */
@@ -518,6 +542,19 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
     expect(s.x >= handle.x + handle.width || s.x + s.w <= handle.x || s.y >= handle.y + handle.height || s.y + s.h <= handle.y).toBe(true);
     expect(s.y).toBeGreaterThanOrEqual(0);
     expect(s.y + s.h).toBeLessThanOrEqual(768);
+  });
+
+  it("says an answer opened in full has shown its end only once its last line has been in view: whole, or scrolled to it (companion-v6-2)", () => {
+    const { open, closed, scrolled } = result.closedAfterCut;
+    // Cut short for the open box, its offer out of view: not shown, and the overlay isn't told (the Ask box offered
+    // "Yes, please" to it all the same).
+    expect(open).toMatchObject({ endShown: false, told: 0 });
+    // Whole once the box closed: shown, told once.
+    expect(closed).toMatchObject({ endShown: true, told: 1 });
+    // Cut again and scrolled to its end: shown from then on, told once.
+    expect(scrolled.cut).toBe(true);
+    expect(scrolled.before).toEqual({ endShown: false, told: 0 });
+    expect(scrolled.after).toEqual({ endShown: true, told: 1 });
   });
 
   it("reads a question's key hint to a screen reader with the \" · \" only between its chords, never before the first (companion-v4-3)", () => {

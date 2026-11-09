@@ -5,7 +5,7 @@
  */
 
 import type { BubbleState, EmberState } from "../../shared/overlay";
-import type { ConversationTurn } from "../../shared/conversation";
+import { CONVERSATION_TEXT_LIMIT, type ConversationTurn } from "../../shared/conversation";
 import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
@@ -578,6 +578,18 @@ export function expandedBubble(b: BubbleState, full: string): BubbleState {
     ...b, visible: true, mood: "idle", title: b.title || "Ember", thought: full, step: null, streaming: false, expanded: true,
     actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }],
   };
+}
+
+/**
+ * What the user might say next (EmberState.suggest) once "Read all" opens `b` in full with `full` (expandedBubble): made
+ * for the answer as the bubble showed it (its first KEEP_CHARS), they follow all of it now, so the Ask box still offers
+ * them under it (companion-v6-1: one over 600 characters never matched them again once opened). Only for that very
+ * answer, kept whole by the conversation (CONVERSATION_TEXT_LIMIT: one cut there no longer ends as it did); anything
+ * else is left as it is.
+ */
+export function expandedSuggest(suggest: EmberState["suggest"], b: BubbleState, full: string): EmberState["suggest"] {
+  if (!suggest || suggest.thought !== b.thought || clip(full) !== b.thought || full.length >= CONVERSATION_TEXT_LIMIT) return suggest;
+  return { ...suggest, thought: full };
 }
 
 /** What the conversation says when a turn of it ended without an answer or a step. */

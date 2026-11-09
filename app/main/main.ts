@@ -75,7 +75,7 @@ import { applyProjectPatch, readProjectPatch, type ProjectPatch } from "./agent/
 import { ProjectWorkspaceStore, workspaceAction, type ProjectExchange } from "./agent/project-workspaces";
 import { memoryRefusal } from "./memory/guard";
 import { correctMemoryRequest } from "./memory/correction";
-import { expandedBubble, keysLanding, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
+import { expandedBubble, expandedSuggest, keysLanding, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
@@ -993,7 +993,9 @@ function start(): void {
     const full = agent?.lastAnswer();
     if (!full) { readLastAnswer(); return; }
     agent?.claimBubble({ pin: true });
-    setState({ talking: false, bubble: expandedBubble(lastState.bubble, full) });
+    // Its suggestions follow all of it now, also past the 600 characters the bubble showed (companion-v6-1).
+    const suggest = expandedSuggest(lastState.suggest, lastState.bubble, full);
+    setState({ talking: false, bubble: expandedBubble(lastState.bubble, full), ...(suggest !== lastState.suggest ? { suggest } : {}) });
   };
   const closeExpanded = () => {
     if (!lastState.bubble.expanded) return;
@@ -1320,10 +1322,11 @@ function start(): void {
    */
   let personalRef: PersonalVoice | null = null;
   /**
-   * What the Ask box suggests now (askSuggestions): none while a question is up, and those that follow the answer only
-   * while it shows (companion-r2-1, companion-c2-2).
+   * What the Ask box suggests now (askSuggestions): none while a question is up, those that follow the answer only
+   * while it shows, and those that answer its last words only while those show: opened in full, once the overlay says
+   * its end has (companion-r2-1, companion-c2-2, companion-v6-2).
    */
-  const askOffers = () => askSuggestions(lastState, personalRef?.current() ?? [], !!confirmer?.waiting);
+  const askOffers = () => askSuggestions(lastState, personalRef?.current() ?? [], !!confirmer?.waiting, overlay?.bubbleRect()?.endShown === true);
   askOffersChanged = () => askWindow.setSuggestions(askOffers());
   /** When the latest request went (for the task it may have started), and the latest reply's words. */
   let askedAt = 0;
@@ -2747,7 +2750,12 @@ function start(): void {
   });
   ipcMain.on(OVERLAY.bubble, (event, rect: unknown) => {
     if (!overlay?.owns(event.sender) || !(rect === null || isRect(rect))) return;
-    overlay.setBubble(event.sender, rect);
+    const endShown = rect && (rect as { endShown?: unknown }).endShown;
+    if (endShown !== null && endShown !== undefined && endShown !== true) return;
+    const ended = overlay.bubbleRect()?.endShown === true;
+    overlay.setBubble(event.sender, rect && { x: rect.x, y: rect.y, width: rect.width, height: rect.height, ...(endShown ? { endShown } : {}) });
+    // An answer opened in full showed its end, or another bubble came: what answers it is offered or goes (companion-v6-2).
+    if ((overlay.bubbleRect()?.endShown === true) !== ended) askOffersChanged();
     // A question (or the box's own Listen once's "Listening…", never a wake's: companion-c2-3) that found no room clear
     // of the open Ask box: the box steps aside, once (companion-c1-1).
     askWindow.bubbleChanged(stepsAsideFor(lastState.bubble, manualCall?.source === "ask"));

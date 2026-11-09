@@ -118,10 +118,12 @@ They share one emotion rig, so switching never changes behaviour.
   three quiet 24 px capsules (never the accent, never under a question), in its clickable area; the Ask box shows the
   same as a row of 20 px capsules under its hint line while the field is empty (docs/ASSISTANT.md §7); a typed letter
   puts them out of sight but keeps their room, so the box and its field don't move. Neither shows any while a question
-  is up, and the box shows the ones that answer or follow the answer ("Yes, please", "Close it", "Read it out") only
-  while that answer shows, and shows whole: not while the bubble cuts it short under **Read all**, whose last line is
-  usually the offer, until it is opened in full (`askSuggestions`; a change while a reply is typed waits until the
-  field is cleared). While
+  is up, and the box shows the ones that follow the answer ("Close it", "Read it out") only while that answer shows,
+  and the ones that answer its last words, usually an offer ("Yes, please", "No, thanks"), only while those show too:
+  not while the bubble cuts it short under **Read all**, and opened in full only once its last line has been in view,
+  all of it at once or scrolled to (the overlay says so: `endShown`), as one cut short to the room or longer than
+  its sixteen lines isn't at first (`askSuggestions`; a change while a reply is typed waits until the field is
+  cleared). While
   the box is open its row keeps the room it opened with, rows and all: none to offer puts the row out of sight, fewer
   keep its height, ones that would need more rows than it opened with wait for its next opening (those it shows that are
   still offered stay), and ones that come into a box that opened with none wait too, so a question coming or going never
