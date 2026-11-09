@@ -3776,12 +3776,29 @@ reg(NATIVE, ["diskutil"], h => {
 });
 
 /** A link must not make a protected parent reachable before a later statement's realpath probe (commands-remote-c7-1). */
-function linkTarget(h: H, target: Arg): void {
-  const obj = h.e.usePath(target, "read", h.sc);
+function linkTarget(h: H, target: Arg, sc = h.sc): void {
+  const obj = h.e.usePath(target, "read", sc);
   // Reuse ancestor refusal for known variable values, on POSIX and Windows alike; this does not record a write.
-  h.e.judgeUnseen(target, "deleteTree", h.sc);
-  if (obj.abs !== null && holdsEmberPath(obj.abs, h.sc.path)) h.e.refuseWith("ember.path", "read");
+  h.e.judgeUnseen(target, "deleteTree", sc);
+  if (obj.abs !== null && holdsEmberPath(obj.abs, sc.path)) h.e.refuseWith("ember.path", "read");
   if (target.v === null || target.glob) h.e.unclear("unclear.link-target", "Ember can't tell which folder the link makes reachable.");
+}
+
+/** A relative symbolic target is based beside the link; an untyped destination may itself be a folder (commands-v7-4). */
+function relativeLinkTargets(h: H, targets: Arg[], dest: Arg, intoFolder: boolean, asIs: boolean): void {
+  const mod = h.sc.path.flavour === "win32" ? win32 : posix;
+  for (const form of h.e.knownForms(dest, true)) {
+    if (form === null || form.includes(UNSEEN) || dest.glob || (!h.sc.cwd && !isAbsolute(form, h.sc.path.flavour))) {
+      h.e.unclear("unclear.link-target", "Ember can't tell which folder the link makes reachable.");
+      continue;
+    }
+    const abs = resolveTargetPath(form, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" });
+    const bases = asIs ? [mod.dirname(abs)] : intoFolder ? [abs] : [mod.dirname(abs), abs];
+    for (const base of bases) {
+      const sc = child(h.sc, { cwd: base }, more(h.sc));
+      for (const target of targets) linkTarget(h, target, sc);
+    }
+  }
 }
 
 // cp, mv, install, ln, rsync (local): the destination may exist (§3.5.1).
@@ -3806,7 +3823,12 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   // Copy's link forms can create the same alias as ln, including GNU's abbreviated long flags.
   const links = kind === "ln" || (kind === "cp" && (has(p, "s", "l", "symbolic-link", "link")
     || p.opts.some(o => o.name.startsWith("--") && ["--symbolic-link", "--link"].some(name => name.startsWith(o.name)))));
-  if (links) for (const source of sources) linkTarget(h, source);
+  const symbolic = links && (has(p, "s", "symbolic", "symbolic-link") || p.opts.some(o => o.name.startsWith("--")
+    && (kind === "ln" ? "--symbolic" : "--symbolic-link").startsWith(o.name)));
+  const relative = kind === "ln" && (has(p, "r", "relative") || p.opts.some(o => o.name.startsWith("--") && "--relative".startsWith(o.name)));
+  if (links) for (const source of sources) {
+    if (!symbolic || relative || source.v === null || isAbsolute(source.v, h.sc.path.flavour)) linkTarget(h, source);
+  }
   objsOf(h, sources, srcUse);
   if (!dest) {
     // With no destination it can't run as it is; it is asked about rather than judged as nothing (commands-remote-i5a).
@@ -3822,6 +3844,7 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   const bsdContents = (s: Arg): boolean => h.key === "cp" && h.sc.os === "darwin" && /[\\/]$/.test(s.v ?? "");
   // -T, and ln's -n, take the name as it is.
   const asIs = has(p, "T", "no-target-directory") || (kind === "ln" && has(p, "n", "no-dereference"));
+  if (symbolic && !relative) relativeLinkTargets(h, sources, dest, intoFolder, has(p, "T", "no-target-directory"));
   /** The file a source becomes in the folder (`cp a dir` makes dir/a), probed once; null for files Ember can't name. */
   const insides = new Map<Arg, Obj | null>();
   const inside = (s: Arg): Obj | null => {
@@ -7813,6 +7836,7 @@ reg(CMDLETS, ["new-item"], h => {
   if (/symboliclink|junction|hardlink/.test(type)) {
     const targets = b.named.get("Value") ?? [];
     for (const t of targets) linkTarget(h, t);
+    if (type === "symboliclink") for (const f of files) relativeLinkTargets(h, targets, f, false, true);
     // A link to a download runs the download (commands-remote-c2-2).
     for (const o of objs) h.e.carryCopies(targets, o, h.sc, true);
   }
@@ -8113,6 +8137,7 @@ reg(CMD_BUILTINS, ["type", "dir", "tree", "more", "find", "findstr", "fc", "comp
   if (h.key === "mklink") {
     const link = ops[0] ? h.e.usePath(ops[0], "write", h.sc) : null;
     if (ops[1]) linkTarget(h, ops[1]);
+    if (ops[0] && ops[1] && !sw.has("h") && !sw.has("j")) relativeLinkTargets(h, [ops[1]], ops[0], false, true);
     // A link to a download runs the download (commands-remote-c2-2).
     if (link && ops[1]) h.e.carryCopies([ops[1]], link, h.sc, true);
     return;

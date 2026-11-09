@@ -1040,3 +1040,7 @@ protected-parent refusal as ln, including shortened long flags.
 Processor substitutions retain a question when used as file names, include folders or load averages, rather than
 job counts. A new attached count only applies to an option explicitly listed as a job count; `cat $(nproc)`,
 `make -I$(nproc)` and `make -l$(nproc)` ask. Processor forms consumed as separate values before the audit still work.
+
+A relative symbolic-link target is checked beside the destination as well. When the destination could be a folder,
+Ember checks both places the link could be created, and asks if it cannot establish that base. Known destination
+variables retain the own-file refusal. GNU ln's `--relative` keeps its source-folder meaning.

@@ -2539,3 +2539,8 @@ Unknown xargs long options fail closed without altering option consumption; copy
 New processor-count recognition is limited to the exact three documented substitutions on `OptSpec.jobCounts`,
 plus literal numbers and numeric arithmetic. It never bypasses `readArgs`; other options and generic tools keep
 the baseline question. Separate processor values already consumed by the baseline retain its behaviour.
+
+Symbolic-link checks resolve relative targets from each possible destination base, including known destination
+variables. Untyped POSIX destinations are checked as a file and as a folder unless flags establish one; Windows
+symbolic links also receive the destination-parent guard. Baseline source-path refusals remain in force, and ln's
+`--relative` continues to resolve the source from the command's folder.
