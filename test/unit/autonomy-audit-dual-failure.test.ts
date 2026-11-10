@@ -96,3 +96,17 @@ describe("the hold", () => {
     expect(autonomyInForce(ON)).not.toBeNull();
   });
 });
+
+describe("SettingsStore.reloadIfChanged", () => {
+  it("sees a hand edit that leaves the modified time exactly as it was (a coarse filesystem clock)", () => {
+    const c = setup(false);
+    const T = 1_700_000_000; // seconds: the same on both sides, set explicitly so the test never depends on the clock
+    fs.utimesSync(c.file, T, T);
+    c.settings.reloadIfChanged(); // Ember has seen the file at T
+    fs.writeFileSync(c.file, JSON.stringify({ ...DEFAULT_SETTINGS, consent: { version: 99, at: "t" }, onboarded: true, autonomy: ON }));
+    fs.utimesSync(c.file, T, T); // the edit lands in the same tick
+    expect(fs.statSync(c.file).mtimeMs).toBe(T * 1000);
+    expect(c.settings.reloadIfChanged()).toBe(true);
+    expect(c.settings.get().autonomy.on).toBe(true);
+  });
+});
