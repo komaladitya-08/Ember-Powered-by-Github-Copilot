@@ -22,6 +22,7 @@ import { CLIPBOARD_FORMATS } from "../../app/main/agent/clipboard-formats";
 import { NEVER_LOOK_DEFAULTS } from "../../app/shared/never-look";
 import { KEYS, SHORTCUTS } from "../../app/shared/shortcuts";
 import { PLATFORM_WORDS } from "../../app/shared/words";
+import { KillSwitch } from "../../app/main/agent/killswitch";
 
 /** Electron's screen throws on any property access before ready; app.getPath must not be called while composing. */
 const throwing = new Proxy({}, { get: (_t, key) => { throw new Error(`screen.${String(key)} touched while composing`); } });
@@ -130,7 +131,7 @@ describe("settings", () => {
     });
     expect(await s.change("night_light", "on")).toEqual({ before: "false", after: "true" });
     // (The setup check's background look for pyatspi, started as the platform is made, is its own test's: rp-1.)
-    expect(fakes.execFile.mock.calls.filter(c => c[0] === "gsettings").map(c => [c[0], ...c[1]].join(" "))).toEqual([
+    expect(fakes.execFile.mock.calls.filter(c => c[0] === "gsettings" && !c[1].includes("toolkit-accessibility")).map(c => [c[0], ...c[1]].join(" "))).toEqual([
       "gsettings writable org.gnome.settings-daemon.plugins.color night-light-enabled",
       "gsettings get org.gnome.settings-daemon.plugins.color night-light-enabled",
       "gsettings set org.gnome.settings-daemon.plugins.color night-light-enabled true",
@@ -204,15 +205,16 @@ describe("the setup-check inputs", () => {
   const env = { DISPLAY: ":0", XDG_SESSION_TYPE: "x11", PATH: "/usr/bin", EMBER_PYTHON: "python3" };
   const versions = { electron: "44.5.0", chrome: "152", node: "24.21.0" };
 
-  it("are main.ts's readEnvironment construction, field by field", () => {
+  it("are main.ts's readEnvironment construction, field by field", async () => {
     const { exec } = execFake({ "gsettings get org.gnome.desktop.interface toolkit-accessibility": "true\n", "python3 -c import pyatspi": "" });
-    const read = linuxEnvironment({ env, platform: "linux", arch: "x64", versions, exec, readFile: () => RELEASE, report: () => ({ header: { glibcVersionRuntime: "2.28" } }), now: () => 0 });
+    const read = linuxEnvironment({ env, platform: "linux", arch: "x64", versions, exec, run: async (cmd, args, opts) => exec(cmd, args, opts), readFile: () => RELEASE, report: () => ({ header: { glibcVersionRuntime: "2.28" } }), now: () => 0 });
     const windows = {} as never;
     // Today's construction (main.ts:141-156), with the same inputs.
     const today = {
       env, osRelease: RELEASE, glibc: "2.28", versions, platform: "linux", arch: "x64",
       accessibility: { enabled: true, pyatspi: true }, x11: true, shortcutsTaken: ["Control+Alt+X"],
     };
+    await read.again();
     expect(read({ windows, shortcutsTaken: ["Control+Alt+X"] })).toEqual(today);
   });
 
@@ -227,38 +229,35 @@ describe("the setup-check inputs", () => {
     expect(read(env)({ windows: null }).glibc).toBeNull();
   });
 
-  it("probe accessibility with today's commands, and look for pyatspi again only while it is missing, every 30 s", () => {
+  it("checks accessibility asynchronously and retries missing bindings every 30 seconds or on Check again (rp-1)", async () => {
     let t = 0;
     const fake = execFake({ "gsettings get org.gnome.desktop.interface toolkit-accessibility": "false\n" });
-    const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, now: () => t });
+    const run: ExecAsync = async (cmd, args, opts) => fake.exec(cmd, args, opts);
+    const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run, now: () => t });
+    expect(probe()).toEqual({ enabled: null, pyatspi: null, checking: true });
+    await probe.again();
     expect(probe()).toEqual({ enabled: false, pyatspi: false });
     expect(fake.calls).toEqual([
-      { cmd: "gsettings", args: ["get", "org.gnome.desktop.interface", "toolkit-accessibility"], opts: { encoding: "utf8", timeout: 2000 } },
-      { cmd: "/opt/py", args: ["-c", "import pyatspi"], opts: { stdio: "ignore", timeout: 5000 } },
+      { cmd: "gsettings", args: ["get", "org.gnome.desktop.interface", "toolkit-accessibility"], opts: { timeout: 2000 } },
+      { cmd: "/opt/py", args: ["-c", "import pyatspi"], opts: { timeout: 5000 } },
     ]);
     t = 20_000;
     probe();
     expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(1);
     t = 30_001;
     probe();
+    await probe.again();
     expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(2);
-    // Check again (first-run-6): looked for at once, however soon after the last try.
     t = 30_002;
-    probe(true);
+    await probe.again();
     expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(3);
-    // And the setup check's own read passes Check again's `fresh` through to it.
-    const viaEnv = execFake({});
-    const read = linuxEnvironment({ env: { EMBER_PYTHON: "/opt/py" }, platform: "linux", exec: viaEnv.exec, readFile: () => "", report: () => undefined, now: () => 0 });
-    read({ windows: null });
-    read({ windows: null });
-    expect(viaEnv.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(1);
-    read({ windows: null, fresh: true });
-    expect(viaEnv.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(2);
     const found = execFake({ "python3 -c import pyatspi": "" });
-    const once = accessibilityProbe({ env: { EMBER_PYTHON: "python3" }, exec: found.exec, now: () => t });
+    const once = accessibilityProbe({ env: { EMBER_PYTHON: "python3" }, run: async (cmd, args, opts) => found.exec(cmd, args, opts), now: () => t });
+    await once.again();
     expect(once()).toEqual({ enabled: null, pyatspi: true });
     t += 100_000;
     once();
+    await once.again();
     expect(found.calls.filter(c => c.cmd === "python3")).toHaveLength(1);
   });
 
@@ -268,18 +267,22 @@ describe("the setup-check inputs", () => {
     const asked: string[] = [];
     const settles: ((found: boolean) => void)[] = [];
     const run: ExecAsync = (cmd, args) => {
+      if (cmd === "gsettings") return Promise.resolve("true\n");
       asked.push([cmd, ...args].join(" "));
       return new Promise<void>((resolve, reject) => { settles.push(found => (found ? resolve() : reject(new Error("No module named 'pyatspi'")))); });
     };
     const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run, now: () => t });
     // Asked as Ember starts, in the background: usually answered before the first read.
+    await Promise.resolve();
     expect(asked).toEqual(["/opt/py -c import pyatspi"]);
+    await Promise.resolve();
     settles[0](false);
-    await Promise.resolve(); await Promise.resolve();
+    for (let i = 0; i < 8; i++) await Promise.resolve();
     expect(probe()).toEqual({ enabled: true, pyatspi: false });
     // While it is missing it is asked again every 30 s, never on the main thread: a read returns what is known now.
     t = 30_001;
     expect(probe().pyatspi).toBe(false);
+    await Promise.resolve();
     expect(asked).toHaveLength(2);
     t = 60_002;
     // (Still hanging: not asked a third time meanwhile.)
@@ -287,7 +290,7 @@ describe("the setup-check inputs", () => {
     expect(asked).toHaveLength(2);
     expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(0);
     settles[1](true);
-    await Promise.resolve(); await Promise.resolve();
+    await probe.again();
     expect(probe().pyatspi).toBe(true);
   });
 
@@ -296,12 +299,14 @@ describe("the setup-check inputs", () => {
     const asked: string[] = [];
     const settles: ((found: boolean) => void)[] = [];
     const run: ExecAsync = (cmd, args) => {
+      if (cmd === "gsettings") return Promise.resolve("true\n");
       asked.push([cmd, ...args].join(" "));
       return new Promise<void>((resolve, reject) => { settles.push(found => (found ? resolve() : reject(new Error("No module named 'pyatspi'")))); });
     };
     const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run, now: () => 1000 });
+    await Promise.resolve();
     settles[0](false);
-    await Promise.resolve(); await Promise.resolve();
+    for (let i = 0; i < 8; i++) await Promise.resolve();
     // Check again's own read returns at once with what is known: no import on the main thread (it hung for 5 s).
     expect(probe(true)).toEqual({ enabled: true, pyatspi: false });
     expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(0);
@@ -309,6 +314,7 @@ describe("the setup-check inputs", () => {
     let answered = false;
     const looked = probe.again().then(() => { answered = true; });
     void probe.again();
+    await Promise.resolve();
     expect(asked).toEqual(["/opt/py -c import pyatspi", "/opt/py -c import pyatspi"]);
     await Promise.resolve();
     expect(answered).toBe(false);
@@ -324,11 +330,11 @@ describe("the setup-check inputs", () => {
     expect(sys.lookAgain).toBeTypeOf("function");
   });
 
-  it("answers the first read itself when the background look hasn't yet, as before (rp-1)", () => {
+  it("leaves the first read checking until the background look answers (rp-1)", () => {
     const fake = execFake({ "/opt/py -c import pyatspi": "" });
     const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run: () => new Promise<void>(() => undefined), now: () => 0 });
-    expect(probe()).toEqual({ enabled: null, pyatspi: true });
-    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(1);
+    expect(probe()).toEqual({ enabled: null, pyatspi: null, checking: true });
+    expect(fake.calls).toHaveLength(0);
   });
 
   it("leave accessibility out on an OS that isn't Linux (an unknown OS gets the Linux object)", () => {
@@ -338,9 +344,28 @@ describe("the setup-check inputs", () => {
 });
 
 describe("fixes", () => {
+  it("lets Stop finish while Turn on is waiting for the session bus (reliability-r7-3)", async () => {
+    let finish!: () => void;
+    const waiting = new Promise<void>(resolve => { finish = resolve; });
+    const sync = vi.fn(() => { throw new Error("the fix must not block the main loop"); });
+    const run: ExecAsync = async (_cmd, args) => args[0] === "set" ? waiting : "true\n";
+    let fixed = false;
+    const fixing = linuxSystem(deps(), { exec: sync, run }).fixes.apply("enable-accessibility").then(() => { fixed = true; });
+    // Observe the result even on the failing synchronous baseline, so it cannot leave an unhandled rejection.
+    void fixing.catch(() => undefined);
+    expect(sync).not.toHaveBeenCalled();
+    const stop = vi.fn();
+    await new KillSwitch(() => [{ name: "agent", stop }], { info() {}, warn() {} } as never).pull("hotkey");
+    expect(stop).toHaveBeenCalledOnce();
+    expect(fixed).toBe(false);
+    finish();
+    await fixing;
+    expect(fixed).toBe(true);
+  });
   it("offer only turning accessibility on, with today's gsettings command", async () => {
     const fake = execFake({ "gsettings set org.gnome.desktop.interface toolkit-accessibility true": "" });
-    const f = linuxSystem(deps(), { exec: fake.exec }).fixes;
+    const run: ExecAsync = async (cmd, args, opts) => args[0] === "set" ? fake.exec(cmd, args, opts) : "true\n";
+    const f = linuxSystem(deps(), { run }).fixes;
     expect(f.ids).toEqual(["enable-accessibility"]);
     expect(f.label("enable-accessibility")).toBe("Turn on");
     await f.apply("enable-accessibility");
@@ -350,7 +375,8 @@ describe("fixes", () => {
 
   it("let a failed gsettings reach the caller", async () => {
     const fake = execFake({ "gsettings set org.gnome.desktop.interface toolkit-accessibility true": new Error("gsettings: not found") });
-    await expect(linuxSystem(deps(), { exec: fake.exec }).fixes.apply("enable-accessibility")).rejects.toThrow("gsettings: not found");
+    const run: ExecAsync = async (cmd, args, opts) => args[0] === "set" ? fake.exec(cmd, args, opts) : "true\n";
+    await expect(linuxSystem(deps(), { run }).fixes.apply("enable-accessibility")).rejects.toThrow("gsettings: not found");
   });
 });
 
@@ -410,27 +436,52 @@ describe("the doctor's probes", () => {
 });
 
 describe("accessibility probes", () => {
-  it("know a screen reader from GNOME's switch, asked once a minute, or from Chromium's accessibility being on", () => {
+  it("knows a screen reader from an asynchronous GNOME look, cached for a minute, or Chromium's current state (reliability-c7-1)", async () => {
     let fire: () => void = () => undefined;
     const fake = execFake({ "gsettings get org.gnome.desktop.a11y.applications screen-reader-enabled": "true\n" });
-    const io: LinuxSystemIO = { exec: fake.exec, setTimeout: (fn, ms) => { expect(ms).toBe(60_000); fire = fn; return {}; } };
+    const run: ExecAsync = async (cmd, args, opts) => fake.exec(cmd, args, opts);
+    const io: LinuxSystemIO = { exec: fake.exec, run, setTimeout: (fn, ms) => { expect(ms).toBe(60_000); fire = fn; return {}; } };
     const a = linuxSystem(deps(), io).a11y;
+    expect(a.screenReaderOn()).toBe(false);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
     expect(a.screenReaderOn()).toBe(true);
-    expect(a.screenReaderOn()).toBe(true);
-    expect(fake.calls).toHaveLength(1);
+    const readerCalls = () => fake.calls.filter(c => c.args.includes("screen-reader-enabled"));
+    expect(readerCalls()).toHaveLength(1);
     fire();
-    a.screenReaderOn();
-    expect(fake.calls).toHaveLength(2);
-    expect(linuxSystem(deps({}, true), { exec: execFake({}).exec, setTimeout: () => ({}) }).a11y.screenReaderOn()).toBe(true);
-    expect(linuxSystem(deps({}, false), { exec: execFake({}).exec, setTimeout: () => ({}) }).a11y.screenReaderOn()).toBe(false);
+    // Keep a known reader for speaking while a fresh answer is pending.
+    expect(a.screenReaderOn()).toBe(true);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    expect(readerCalls()).toHaveLength(2);
+    expect(linuxSystem(deps({}, true), { run, setTimeout: () => ({}) }).a11y.screenReaderOn()).toBe(true);
+    expect(linuxSystem(deps({}, false), { run, setTimeout: () => ({}) }).a11y.screenReaderOn()).toBe(false);
   });
 
-  it("count GNOME's Animations switch off as reduced motion", () => {
-    const off = execFake({ "gsettings get org.gnome.desktop.interface enable-animations": "false\n" });
-    expect(linuxSystem(deps(), { exec: off.exec }).a11y.systemReducedMotion()).toBe(true);
-    expect(off.calls[0].opts).toEqual({ encoding: "utf8", timeout: 2000 });
-    expect(linuxSystem(deps(), { exec: execFake({ "gsettings get org.gnome.desktop.interface enable-animations": "true\n" }).exec }).a11y.systemReducedMotion()).toBe(false);
-    expect(linuxSystem(deps(), { exec: execFake({}).exec }).a11y.systemReducedMotion()).toBe(false);
+  it("lets Stop finish while the desktop motion query is still pending (reliability-r7-2)", async () => {
+    let finish!: (out: string) => void;
+    const waiting = new Promise<string>(resolve => { finish = resolve; });
+    const sync = vi.fn(() => { throw new Error("a motion read must not block the main loop"); });
+    const run: ExecAsync = async (_cmd, args) => args.includes("enable-animations") ? waiting : "true\n";
+    const s = linuxSystem(deps(), { exec: sync, run });
+    let checked = false;
+    const motion = Promise.resolve(s.a11y.systemReducedMotion()).then(on => { checked = true; return on; });
+    const stop = vi.fn();
+    const kill = new KillSwitch(() => [{ name: "agent", stop }], { info() {}, warn() {} } as never);
+    expect(sync).not.toHaveBeenCalled();
+    expect(checked).toBe(false);
+    await kill.pull("hotkey");
+    expect(stop).toHaveBeenCalledOnce();
+    expect(checked).toBe(false);
+    finish("false\n");
+    expect(await motion).toBe(true);
+  });
+
+  it("counts GNOME's Animations switch off and unchecked motion as Calm (reliability-r7-2)", async () => {
+    for (const [out, calm] of [["false\n", true], ["true\n", false], ["", true], [undefined, true]] as const) {
+      const run: ExecAsync = async () => out;
+      expect(await linuxSystem(deps(), { run }).a11y.systemReducedMotion(), String(out)).toBe(calm);
+    }
+    const run: ExecAsync = async () => { throw new Error("session bus unavailable"); };
+    expect(await linuxSystem(deps(), { run }).a11y.systemReducedMotion()).toBe(true);
   });
 });
 

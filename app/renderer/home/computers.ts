@@ -225,11 +225,14 @@ export function targetsStatus(st: Status): void {
 }
 
 /** Asks the runtime for the targets once, and follows its changes; without a runtime the sections stay hidden. */
-export function startTargets(): void {
+export function startTargets(changed?: (list: readonly TargetSummary[]) => void): void {
   const api = window.emberTargets;
   if (!api) return;
-  api.onChanged(list => { summaries = Array.isArray(list) ? list : []; draw(); });
-  void api.list().then(list => { summaries = Array.isArray(list) ? list : []; draw(); }, () => { /* no targets runtime answers: the sections stay hidden */ });
+  let pushed = false;
+  const receive = (list: TargetSummary[]) => { summaries = Array.isArray(list) ? list : []; draw(); changed?.(summaries); };
+  api.onChanged(list => { pushed = true; receive(list); });
+  // A late initial snapshot must never bring back a capability a newer event switched off (home-v7-1).
+  void api.list().then(list => { if (!pushed) receive(list); }, () => { /* no targets runtime answers: the sections stay hidden */ });
   asks($("wsl-on") as HTMLInputElement, on => void act({ kind: "wsl", on }, "computers-msg"));
   asks($("offer-ssh") as HTMLInputElement, on => void act({ kind: "offerSsh", on }, "computers-msg"));
   $("host-form").addEventListener("submit", e => {

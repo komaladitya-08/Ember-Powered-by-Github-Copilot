@@ -10,6 +10,7 @@
 
 import type { AgentStatus } from "../../main/agent/host";
 import type { Settings, SettingsPatch } from "../../main/settings";
+import { stepFocusLabel } from "./welcome-copy";
 import { CONSENT_VERSION, consentChangesSince } from "../../shared/consent";
 import type { ProviderState, ProviderTest, Status, VoiceStatus } from "../../shared/ipc";
 import { AGREE_ARM_MS, endpointHost, endpointProblem, keyNeeded, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
@@ -24,7 +25,7 @@ import {
   ACTION_LABEL, failureView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
-  CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
+  CONSENT_WAITING, CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
   DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
@@ -99,6 +100,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
    * AGREE_ARM_MS is dropped, so a double click on Get started or Not now lands on neither (first-run-c1-1).
    */
   const shownAt = { agree: -Infinity, quit: -Infinity };
+  /** The actual agreement shown, including recipient and retention, bound to its arming interval. */
+  let shownConsent: string | null = null;
   const armed = (at: number) => performance.now() - at >= AGREE_ARM_MS;
   /** What the sign-in step's main button does: an action on the connection, or just go on. */
   let signInPrimary: FailureAction | "continue" = "continue";
@@ -108,6 +111,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let checkEpoch = 0;
   /** The newest provider check that was started: only it may put the provider away after its step was abandoned. */
   let checkRun = 0;
+  /** Only this step owns this id: Home's hidden controller cannot revoke its adoption on a redraw. */
+  let providerAdoption: string | null = null;
+  function cancelProviderAdoption(): void {
+    if (providerAdoption) void window.emberProvider?.cancelAdoption(providerAdoption).catch(() => undefined);
+    providerAdoption = null;
+  }
   /** Setup fixes under way: their buttons stay disabled however often the rows are drawn again. */
   const fixPending = new Set<string>();
   /** `kept`: the host still in use after a check of an edit to it failed (first-run-r2-1). */
@@ -169,6 +178,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     setTimeout(() => { if (active) deps.arrived(); }, 600);
   }
   function finish(): void {
+    cancelProviderAdoption();
     active = false;
     navigation++;
     wantLevel(false);
@@ -186,6 +196,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // Leaving the provider step: an older check is dropped, and going back to Copilot puts away a provider this visit
     // set up; one in use as the step opened stays on (first-run-c1-2).
     if (step === "provider" && to !== "provider") {
+      cancelProviderAdoption();
       checkEpoch++;
       if (to === "sign-in" && checkSaves) { providerCheck = { phase: "idle", line: "" }; void turnOwnOff(); }
     }
@@ -221,6 +232,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       own: ownInUse() ? agent?.service?.host : null, ownPhase: agent?.phase === "ready" || agent?.phase === "error" ? agent.phase : "starting", ownOffered: ownOffer().offered,
     }) : step === "consent" && changes().length ? CONSENT_AGAIN : using ? providerInUse(using) : STEP_TEXT[step];
     $("w-title").textContent = text.title;
+    $("w-title").setAttribute("aria-label", stepFocusLabel(step, text.title));
     $("w-lead").textContent = text.lead;
     for (const pane of root.querySelectorAll<HTMLElement>(".w-pane")) pane.hidden = pane.dataset.pane !== step;
     back.hidden = !stepBefore(step, ownInUse());
@@ -261,11 +273,14 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const a = status?.admin;
     // Named as the full text under it names it: the organisation's service, the user's own provider while it is in
     // force, otherwise GitHub Copilot; never Copilot while another service would answer (first-run-r2-2).
-    const service = recipientWords(deps.destination(), true);
+    const destination = deps.destination();
+    const service = recipientWords(destination, true);
     const points = consentPoints({ service, kept: a ? keptWords(a) : "kept 30 days", locked: !!a && a.error !== null });
     $("w-points").replaceChildren(...points.map(p => { const li = el("li", { textContent: p.text }); li.dataset.icon = p.icon; return li; }));
     // Agreed to an earlier version: what changed since, above the usual points (first-run-4).
     const changed = changes();
+    const consentKey = JSON.stringify([destination, points, changed]);
+    if (!consented() && consentKey !== shownConsent) { shownConsent = consentKey; shownAt.agree = performance.now(); }
     $("w-changes").hidden = !changed.length;
     $("w-changes-h").textContent = CONSENT_AGAIN.changes;
     if (JSON.stringify(changed) !== JSON.stringify([...$("w-changes-list").children].map(li => li.textContent))) {
@@ -274,7 +289,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const note = consented() ? CONSENT_TEXT.agreed : declined ? CONSENT_TEXT.declined : "";
     if ($("w-consent-note").textContent !== note) $("w-consent-note").textContent = note;
     if (consented()) return { label: NAV.next, why: "", alt: "" };
-    return { label: CONSENT_TEXT.agree, why: "", alt: declined ? CONSENT_TEXT.quit : CONSENT_TEXT.notNow };
+    return { label: CONSENT_TEXT.agree, why: destination.kind === "unknown" ? CONSENT_WAITING : "", alt: declined ? CONSENT_TEXT.quit : CONSENT_TEXT.notNow };
   }
 
   /** Asks main for the microphone's level, or stops, only when that changes. */
@@ -430,7 +445,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   // ───── Your own model provider (FE #2) ─────
   const provField = (id: string) => $(id) as HTMLInputElement;
   const prefilled = { done: false };
+  /** An unsaved key belongs only to the valid host it was entered for, never a later address. */
+  let typedKeyHost: string | null = null;
   function openProvider(): void {
+    cancelProviderAdoption();
     checkEpoch++;
     providerCheck = { phase: "idle", line: "" };
     prefilled.done = false;
@@ -455,9 +473,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     return null;
   }
   /**
-   * Saves the fields, the key, the card's yes for exactly this address, then asks the service for its models. With the
-   * provider in use as the step opened, the details typed are asked first, as they are, and saved only once they
-   * answer (`kept`: the host still in use after a check that failed).
+   * With a provider in use, asks the typed details first, then commits its key and agreed settings together only
+   * once they answer (`kept`: the host still in use after a check that failed). A fresh setup saves before testing.
    */
   const checkProvider = latestOnly<{ epoch: number; result: ProviderTest; kept?: string }>(
     async () => {
@@ -476,17 +493,16 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
         const tried = await api.test({ type: f.type, baseUrl: f.baseUrl, host, ...(f.key.trim() ? { key: f.key } : {}) });
         if (epoch !== checkEpoch) return { epoch, result: { ok: false, why: "" } };
         if (!tried.ok) return { epoch, result: tried, kept: keep };
-        // It answers: adopted whole (moments, not a network wait), unless a choice made since (“Use GitHub Copilot
-        // instead”, or Home's own) owns the provider now. The details go with the card's yes for their host in one
-        // change, so the provider in use never leaves force for Copilot between, then a typed key for it, as Home's
-        // held edit does (first-run-r4-3).
+        // A later choice owns the provider; otherwise main stages the key and settings as one durable adoption.
         if (since !== providerChoice()) return { epoch, result: tried };
-        const agreed = await api.agree(host, { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null });
-        if (!agreed.ok) return { epoch, result: { ok: false, why: agreed.why } };
-        if (f.key.trim()) {
-          const k = await api.saveKey(f.key);
-          if (!k.ok) return { epoch, result: { ok: false, why: k.why } };
-        }
+        const id = crypto.randomUUID();
+        providerAdoption = id;
+        const adopted = await api.adopt({ id, from: keep, host,
+          move: { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null },
+          ...(f.key.trim() ? { key: f.key } : {}) }).catch(() => ({ ok: false as const, why: "I couldn't save these details. Try again." }));
+        if (providerAdoption !== id || epoch !== checkEpoch) return { epoch, result: { ok: false, why: "" } };
+        providerAdoption = null;
+        if (!adopted.ok) return { epoch, result: { ok: false, why: adopted.why }, ...(settings?.provider.on && endpointHost(settings.provider.baseUrl) === keep ? { kept: keep } : {}) };
         return { epoch, result: tried };
       }
       // Back, an edit or another check can come between any two steps. Each step that does something (the card's yes
@@ -503,7 +519,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (!saved) return { epoch, result: { ok: false, why: "I couldn't save these details. The notice at the top says why." } };
       if (abandoned()) return { epoch, result: { ok: false, why: "" } };
       if (f.key.trim()) {
-        const k = await api.saveKey(f.key);
+        const k = await api.saveKey(f.key, host);
         if (!k.ok) return { epoch, result: { ok: false, why: k.why } };
         if (abandoned()) return { epoch, result: { ok: false, why: "" } };
       }
@@ -576,7 +592,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   $("w-p-keep").addEventListener("click", () => {
     // The details in use, as they were: the fields show them again without the typed key, and Continue goes on with
     // them; the button goes, so the focus goes to Continue (first-run-c3-1).
-    checkEpoch++;
+    cancelProviderAdoption(); checkEpoch++;
     edited = false;
     providerCheck = { phase: "idle", line: "" };
     prefilled.done = false;
@@ -589,19 +605,32 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     void turnOwnOff(true);
   });
   // A deliberate choice made in Home replaces whatever was true of the old state.
-  onProviderChoice(() => showOffFailure(false));
+  onProviderChoice(() => {
+    showOffFailure(false);
+    if (providerCheck.phase === "checking" && visitInUse) {
+      cancelProviderAdoption(); checkEpoch++;
+      providerCheck = { phase: "idle", line: "" };
+    }
+  });
   function renderProvider(): { label: string; why: string } {
     const needs = $("w-p-needs");
     if (!needs.childElementCount) needs.replaceChildren(...PROVIDER_STEP.needs.map(t => el("li", { textContent: t })));
     // The saved details come into the fields once, the first time the step opens: what is typed is never overwritten.
     if (!prefilled.done && settings) {
       prefilled.done = true;
+      provField("w-p-key").value = "";
+      typedKeyHost = null;
       ($("w-p-type") as unknown as HTMLSelectElement).value = settings.provider.type;
       provField("w-p-url").value = settings.provider.baseUrl;
       provField("w-p-conductor").value = settings.provider.conductor ?? "";
       provField("w-p-worker").value = settings.provider.worker ?? "";
     }
     const host = endpointHost(provField("w-p-url").value.trim());
+    // Retain a path edit or unfinished URL while typing; a different valid host (including a prefill) needs its own key.
+    if (host && provField("w-p-key").value && typedKeyHost !== host) {
+      provField("w-p-key").value = "";
+      typedKeyHost = null;
+    }
     // A saved key is said only for the address typed, as main's state says it now (that may come later in the visit).
     const keyHint = keyPlaceholder({ keySaved: !!ownState?.keySaved, keyHost: ownState?.host ?? null, host });
     if (provField("w-p-key").placeholder !== keyHint) provField("w-p-key").placeholder = keyHint;
@@ -836,7 +865,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (next.getAttribute("aria-disabled") === "true") return;
     if (step === "consent" && !consented()) {
       // Drawn just now where Get started was: a double click's second press agrees to nothing (first-run-c1-1).
-      if (!armed(shownAt.agree)) return;
+      // Re-read what is being agreed to at the press, so a changed or unknown recipient cannot inherit an old arm.
+      render();
+      if (next.getAttribute("aria-disabled") === "true" || !armed(shownAt.agree)) return;
       declined = false;
       // Not saved: the notice at the top says why (review #84), so it is brought into view.
       void saveStep(() => deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), "sign-in");
@@ -962,6 +993,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   // Any edit makes an earlier check (or a check in flight) say nothing about what is now typed.
   for (const id of ["w-p-type", "w-p-url", "w-p-key", "w-p-conductor", "w-p-worker"]) {
     $(id).addEventListener("input", () => {
+      if (id === "w-p-key") typedKeyHost = endpointHost(provField("w-p-url").value.trim());
+      cancelProviderAdoption();
       checkEpoch++;
       edited = true;
       // A provider in use as the step opened stays on: its edit is checked before it counts (first-run-r2-1).

@@ -24,7 +24,7 @@ export type ActivityEvent =
   /** A tool call ended; `ok` false when it didn't work. */
   | { type: "tool-end"; id: string; ok: boolean }
   /** The read under way sent the model a picture of its window (recorded first: safety-privacy-6). */
-  | { type: "picture" }
+  | { type: "picture"; id?: string }
   /** The worker's own note (report_progress): its text, and its few words for what it does now. */
   | { type: "note"; text: string; intent?: string }
   /** A step taken without asking (Work without asking): policy's words (Decision.announce), never the model's. */
@@ -37,9 +37,9 @@ export type ActivityEvent =
   /** It was answered (or not). */
   | { type: "answer"; answer: Answer }
   /** A step wasn't allowed; `reason` is Ember's (policy's) words. */
-  | { type: "refused"; reason: string }
+  | { type: "refused"; reason: string; id?: string }
   /** The step under way was turned down (a "Not now", a refusal, a stop): stopped, not a step that didn't work. */
-  | { type: "denied" }
+  | { type: "denied"; id?: string }
   /** The task now works with another hand. */
   | { type: "hand"; hand: TaskHand }
   /** A call to the model failed and is tried again. */
@@ -113,6 +113,12 @@ export class ActivityLog {
   get asking(): boolean { return this.a.asking; }
   get ended(): boolean { return this.a.endedAt !== undefined; }
 
+  /** SDK starts may overlap although handlers run serially: never assign a signal to another queued call. */
+  private runningStep(id?: string): ActivityItem | undefined {
+    const running = this.a.items.filter(i => i.kind === "step" && i.state === "running");
+    return id !== undefined ? running.find(i => i.id === id) : running.length === 1 ? running[0] : undefined;
+  }
+
   /** What its card shows. */
   card(): CardActivity {
     const a = this.a;
@@ -153,10 +159,9 @@ export class ActivityLog {
         return true;
       }
       case "picture": {
-        // Its row says a picture went, not only that it read (safety-privacy-6). Tools run one at a time, in the order
-        // called: the first read under way is the one that sent it.
-        const it = a.items.find(i => i.kind === "step" && i.state === "running" && i.group === "read");
-        if (it) it.group = "picture";
+        // Its row says a picture went, not only that it read (safety-privacy-6), for that exact invocation.
+        const it = this.runningStep(e.id);
+        if (it?.group === "read") it.group = "picture";
         return false;
       }
       case "note": {
@@ -197,8 +202,8 @@ export class ActivityLog {
       case "refused": {
         const words = refusedWords(clip(e.reason, REASON_MAX));
         // The step it stopped becomes the refusal (one row, not a failed step beside it); it isn't counted as a step.
-        const i = a.items.findLastIndex(x => x.kind === "step" && x.state === "running");
-        const step = a.items[i];
+        const step = this.runningStep(e.id);
+        const i = step ? a.items.indexOf(step) : -1;
         if (step) {
           Object.assign(step, { kind: "refused", state: "stopped", words, endedAt: at });
           // Refused once something came after it began (its question, answered: the look right before acting refused
@@ -210,7 +215,7 @@ export class ActivityLog {
       }
       case "denied": {
         // Not counted as a step, nor as one that didn't work: the user (or policy) said no, nothing failed.
-        const step = a.items.findLast(i => i.kind === "step" && i.state === "running");
+        const step = this.runningStep(e.id);
         if (!step) return false;
         Object.assign(step, { state: "stopped", words: triedWords(step.group ?? "other", 1, step.app), endedAt: at });
         this.setDoing("Thinking…");

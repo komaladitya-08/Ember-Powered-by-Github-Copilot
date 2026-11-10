@@ -84,11 +84,11 @@ describe("gate 2 for commands (§3.16)", () => {
     expect(await gateCommand(input({ spec: resent, classify: classifier(() => [RM, extra]).classify }))).toMatchObject({ status: "ok" });
   });
 
-  it("agrees with the PC about an ordinary bash if, asks for any loop, and still asks for a zsh one (commands-remote-2, commands-c7-1)", async () => {
+  it("agrees with the PC that an ordinary bash if and every loop ask (commands-remote-2, commands-c7-1, commands-remote-r7-1)", async () => {
     const real = (command: string, shell: RunSpec["shell"] = "bash") =>
       gateCommand(input({ spec: spec({}, { command, shell }), classify: classifyCommand, facts: facts({ shells: ["bash", "zsh"], shellPaths: { bash: "/usr/bin/bash", zsh: "/usr/bin/zsh" } }) }));
-    expect((await real("if [ -f package.json ]; then npm test; fi")).status).toBe("ok");
-    // Every loop keeps its own words, as on main and on the PC (commands-c7-1).
+    expect(await real("if [ -f package.json ]; then npm test; fi")).toMatchObject({ status: "needs_confirm", rules: ["unclear.if", "unclear.then", "unclear.fi"] });
+    // Every flow construct keeps its baseline words, on both computers (commands-remote-r7-1).
     expect(await real("for i in 1 2 3; do echo $i; done")).toMatchObject({ status: "needs_confirm", rules: ["unclear.for", "unclear.do", "unclear.done"] });
     expect(await real("while read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ status: "needs_confirm", rules: ["unclear.while", "unclear.do", "unclear.done"] });
     // A read over a file is text Ember can't see, on both machines (commands-a7-2), and its loop keeps its own words, as
@@ -119,25 +119,25 @@ describe("gate 2 for commands (§3.16)", () => {
     expect((await real("cp -r build/ /home/deploy/Documents", "linux", "/home/deploy")).status).toBe("ok");
   });
 
-  it("asks, as the PC does, before a loop or an if runs a command with a library preloaded or PATH changed (commands-remote-c1-1)", async () => {
+  it("asks, as the PC does, before a loop or an if runs a command with a library preloaded or PATH changed (commands-remote-c1-1, commands-remote-r7-1)", async () => {
     const real = (command: string) => gateCommand(input({ spec: spec({}, { command, shell: "bash" }), classify: classifyCommand }));
     for (const command of [
       "if true; then LD_PRELOAD=./x.so ls; fi",
       "for i in 1; do PATH=/tmp/evil:/usr/bin; done; git status",
       "time LD_PRELOAD=./x.so ls",
     ]) expect(await real(command), command).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: expect.arrayContaining(["unclear.assignment"]) });
-    // IFS in front of an if's read is no assignment; a loop's asks for the loop's own words only (commands-c7-1).
-    expect((await real("if IFS= read -r l <<< 'a b'; then echo \"$l\"; fi")).status).toBe("ok");
+    // IFS before the read adds no assignment question; the if and loop retain their own baseline words.
+    expect(await real("if IFS= read -r l <<< 'a b'; then echo \"$l\"; fi")).toMatchObject({ status: "needs_confirm", rules: ["unclear.if", "unclear.then", "unclear.fi"] });
     expect(await real("while IFS= read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ status: "needs_confirm", rules: ["unclear.while", "unclear.do", "unclear.done"] });
   });
 
-  it("asks, as the PC does, before any bash loop, whatever its body, and still runs an ordinary if (commands-c7-1)", async () => {
+  it("asks, as the PC does, before any bash loop or ordinary if (commands-c7-1, commands-remote-r7-1)", async () => {
     const real = (command: string) => gateCommand(input({ spec: spec({}, { command, shell: "bash" }), classify: classifyCommand }));
     for (const command of [
       "for f in --hard; do git reset $f; done", "for i in 1 2; do git reset $l; read -r l <<< '--hard'; done", "for i in 1 2 3; do echo $i; done",
       "while read -r l; do echo \"$l\"; done <<< 'a b'", "until [ -f x ]; do sleep 1; done",
     ]) expect(await real(command), command).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: expect.arrayContaining(["unclear.do", "unclear.done"]) });
-    expect((await real("if [ -f package.json ]; then npm test; fi")).status).toBe("ok");
+    expect(await real("if [ -f package.json ]; then npm test; fi")).toMatchObject({ status: "needs_confirm", rules: ["unclear.if", "unclear.then", "unclear.fi"] });
   });
 
   it("counts an approval 120 s old or older as none", async () => {

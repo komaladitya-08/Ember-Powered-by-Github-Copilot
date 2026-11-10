@@ -1318,16 +1318,25 @@ else {
     expect(r.ms).toBeLessThan(15_000);
   });
 
-  it("fails when the app logged a forbidden event, quoting it, and passes when it didn't (W8)", () => {
+  it("fails when the app logged a forbidden event, quoting it (W8, install-docs-v7-3)", () => {
     const taken = smoke("ok", { args: ["--forbid", "shortcut.unavailable"], log: "shortcut.unavailable" });
     expect(taken.status).toBe(1);
     expect(taken.stdout).toMatch(/ok {3}second launch handed over/);
     expect(taken.stderr).toMatch(/FAIL the first instance logged .*"msg":"shortcut\.unavailable"/);
+  });
+
+  it("passes when none of the requested forbidden events were logged (W8, install-docs-v7-3)", () => {
     const clear = smoke("ok", { args: ["--forbid", "shortcut.unavailable", "--forbid", "app.other"], log: "shortcut.question_key_taken" });
     expect(clear.stdout).toMatch(/ok {3}the first instance logged none of shortcut\.unavailable, app\.other/);
     expect(clear.status).toBe(0);
+  });
+
+  it("ignores an event when no --forbid flag was supplied (W8, install-docs-v7-3)", () => {
     // Without --forbid the event is only a log line.
     expect(smoke("ok", { log: "shortcut.unavailable" }).status).toBe(0);
+  });
+
+  it("shows usage when --forbid has no event argument (W8, install-docs-v7-3)", () => {
     expect(spawnSync(process.execPath, [path.resolve("test/smoke/launch.mjs"), "--forbid"], { encoding: "utf8" })).toMatchObject({ status: 2, stderr: expect.stringMatching(/usage:.*--forbid <event>/) });
   });
 

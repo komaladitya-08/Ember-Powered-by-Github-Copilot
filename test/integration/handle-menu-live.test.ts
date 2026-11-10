@@ -59,9 +59,9 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
     XCloseDisplay(dpy);
   }
 
-  const askShown = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(w => w.getTitle() === "Ask Ember" && w.isVisible()));
+  const askShown = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(w => w.getTitle() === "Companion request" && w.isVisible()));
   const showMenu = () => app.evaluate(() => (globalThis as unknown as { __ember: { showMenu(): void } }).__ember.showMenu());
-  const hideAsk = () => app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) if (w.getTitle() === "Ask Ember") w.hide(); });
+  const hideAsk = () => app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) if (w.getTitle() === "Companion request") w.hide(); });
 
   beforeAll(async () => {
     if (!xvfb || !built) throw new Error(`the handle's menu can't be checked here: ${!xvfb ? "no Xvfb" : "no build (npm run build first)"}`);
@@ -102,14 +102,16 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
     if (userData) fs.rmSync(userData, { recursive: true, force: true });
   });
 
-  it("opens the ask box when \"Ask Ember…\" is picked with the keyboard", async () => {
+  it("opens the ask box when \"Ask Ember…\" is picked with the keyboard (voice-listening-v7-test-1)", async () => {
     await showMenu();
     await sleep(1200);
     press("Down", "Return");
     for (let t = 0; t < 30 && !events.some(e => e.msg === "ask.reveal"); t++) await sleep(100);
     expect(events.filter(e => e.msg === "ask.menu_ignored")).toEqual([]);
     expect(events.find(e => e.msg === "ask.reveal")).toMatchObject({ source: "menu" });
-    expect(await askShown()).toBe(true);
+    const visibleTitles = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter(w => w.isVisible()).map(w => w.getTitle()));
+    expect(visibleTitles).toContain("Companion request");
+    expect(await askShown(), JSON.stringify(visibleTitles)).toBe(true);
     await hideAsk();
   }, 30_000);
 
@@ -144,7 +146,7 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
     };
     type Row = { name: number; nameWhole: number; overflow: number; cut: boolean; cutOnLine: boolean; state: string; height: number };
     const row = (ctx: object, text: string) => app.evaluate(async ({ BrowserWindow }, a: { ctx: object; text: string }): Promise<Row> => {
-      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember")!;
+      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Companion request")!;
       w.webContents.send("agent:ask-context", { sees: null, history: ["a"], opened: true });
       w.webContents.send("agent:ask-context", a.ctx);
       // The line measured here is the window's: none of Ember's own "can't answer yet" (its own test is in ask-renderer).

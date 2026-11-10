@@ -1,8 +1,8 @@
 # Ember status
 
-Updated 8 November 2026. This is the short pickup list; [the review backlog](docs/review-2026-11-03.md) records evidence and acceptance checks. PLAN.md §10 retains implementation history.
+Updated 10 November 2026. This is the short pickup list; [the review backlog](docs/review-2026-11-03.md) records evidence and acceptance checks. PLAN.md §10 retains implementation history.
 
-Since 4 November a product audit has rated 13 areas and fixed them in rounds on 7 and 8 November. PLAN.md §10's **Product audit fixes** entries record each round, and each ends with what it left (partly fixed, skipped, owner decisions and native validation); CHANGELOG.md's 0.1.1 notes say what ships. Read those before picking up anything below: the sections below are as of 4 November.
+Since 4 November a product audit has rated 13 areas and fixed them in rounds on 7 to 10 November. PLAN.md §10's **Product audit fixes** entries record each round, and each ends with what it left (partly fixed, skipped, owner decisions and native validation); CHANGELOG.md's 0.1.1 notes say what ships. Read those before picking up anything below: the sections below are as of 4 November.
 
 ## Completed review and merged repairs
 

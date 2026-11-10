@@ -195,12 +195,23 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   attributes, never a reference, a template's field or a sentence ("<password>${env.PW}</password>"). Memory runs a fact's lines
   together first, so a password under another label is refused on one line too ("credentials: admin: Wint3r!Sh0p",
   never a setting's label or a size: "Wi-Fi: SSID: Home5G"). Secrets are refused
-  whole, never stored redacted.
+  whole, never stored redacted. Passwords in quoted argument arrays or subprocess tuples use the same short-option
+  rules as shell text (memory-q6-1, memory-v7-1): MySQL and MariaDB, curl's user credentials, Docker login, Redis,
+  MongoDB and the other recognised password-bearing clients. Intervening expressions occupy unknown arguments;
+  they are never executed or silently dropped. Bare prompt options, references, placeholders and Docker's port
+  mappings still name no literal password.
+  Recognised executable literals are matched by basename regardless of case or a Windows `.exe` suffix; password
+  references and placeholders keep their original case-sensitive rules (memory-y7-1).
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
   (`MemoryService.trouble`, in every `MemoryView`; one that can't be read also makes Home's status line say "Memory
-  paused"), and the remember tool tells the model while saving fails (memory-r2).
+  paused"). New and reinforced facts are staged and written before the remember tool or an “Ember learned” line
+  acknowledges them (memory-r2). A failed write refuses the new fact, leaves the previous graph and recall index
+  unchanged, and says nothing new was kept. The spoken interview stops with a save-failure explanation instead of
+  promising to remember an answer it couldn't save. Recall-use metadata and sleep-time upkeep remain batched.
+  A multi-fact answer stops at its first failed write; later facts cannot clear that failure or make the interview
+  claim the whole answer was kept (memory-w7-1). Earlier successfully saved answers remain available.
 
 **Better recall** (step 8) adds matching by meaning, once the user downloads its model:
 - `embed-model.ts`: all-MiniLM-L6-v2 (int8, 23 MB, Apache-2.0) on onnxruntime-web's WebAssembly with one thread, the

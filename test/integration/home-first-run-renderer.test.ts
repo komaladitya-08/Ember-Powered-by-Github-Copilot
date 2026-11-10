@@ -7,8 +7,9 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { CONSENT_VERSION } from "../../app/shared/consent";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
 
 declare global {
@@ -33,7 +34,7 @@ const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], 
  * does (in force while on and agreed for the address's host; a saved key kept only for its own host), and the card's
  * yes is saved and broadcast.
  */
-interface Seed { consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
+interface Seed { failAdoption?: boolean | string; slowAdoption?: boolean; holdProvider?: boolean; voiceAgreed?: boolean; consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -54,10 +55,16 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 });
 afterAll(async () => { if (gate) return; await browser.close(); server.close(); });
+afterEach(async () => {
+  if (gate) return;
+  // A page's subscription state belongs to one journey; release its renderer before the next journey starts.
+  await Promise.all(browser.contexts().map(context => context.close()));
+});
 
 async function open(seed: Seed = {}): Promise<Page> {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.onboarded = !!seed.home;
+  if (seed.voiceAgreed) { settings.wakeWord = true; settings.voice.consent = true; }
   if (seed.provider) settings.provider = { ...settings.provider, ...seed.provider } as typeof settings.provider;
   settings.consent = { version: seed.consent ?? 99, at: "2026-11-04T12:00:00Z" };
   const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [], ...seed.admin };
@@ -66,7 +73,7 @@ async function open(seed: Seed = {}): Promise<Page> {
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
-  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState }) => {
+  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState, holdProvider, failAdoption, slowAdoption }) => {
     window.__frFailOff = failOff;
     window.__frCalls = []; window.__frPend = {};
     window.__frState = { settings, agent };
@@ -104,17 +111,39 @@ async function open(seed: Seed = {}): Promise<Page> {
       return () => new Promise(() => undefined);
     } }) as never;
     if (!noBridge) {
+      const cancelled = new Set<string>();
       window.emberProvider = {
         state: async () => {
+          if (holdProvider) return await defer("providerState") as never;
           const p = window.__frState.settings.provider as { on: boolean; baseUrl: string; consent?: { host?: string } };
           const host = hostOf(p.baseUrl);
           const agreed = !!host && p.consent?.host === host;
           const live = liveState ? { inForce: p.on && agreed, host, agreed, keySaved: !!host && keyHost === host } : {};
           return { allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false, ...providerState, ...live };
         },
-        onChanged: () => () => undefined,
-        saveKey: () => { window.__frCalls.push("saveKey"); keyHost = hostOf(window.__frState.settings.provider.baseUrl); return Promise.resolve({ ok: true }); },
+        onChanged: fn => { (subs.providerChanged ??= []).push(fn); return () => undefined; },
+        saveKey: (_key: string, host: string) => {
+          window.__frCalls.push("saveKey");
+          if (host !== hostOf(window.__frState.settings.provider.baseUrl)) return Promise.resolve({ ok: false, why: "The address changed: check it, then agree again." });
+          keyHost = host; return Promise.resolve({ ok: true });
+        },
         removeKey: async () => ({ ok: true }),
+        cancelAdoption: async (id: string) => { cancelled.add(id); window.__frCalls.push(`cancel-adoption:${id}`); },
+        adopt: async (request: { id: string; host: string; move: object; key?: string }) => {
+          window.__frCalls.push(`adopt:${request.host}`);
+          if (failAdoption) return { ok: false, why: typeof failAdoption === "string" ? failAdoption : "The API key couldn't be saved. Check the keyring, then try again." };
+          if (slowAdoption) {
+            const result = await defer("adopt") as { ok: boolean; why?: string };
+            if (cancelled.has(request.id)) return { ok: false, why: "The address changed: check it, then agree again." };
+            if (!result.ok) return result as never;
+          }
+          window.__frCalls.push(`move:${JSON.stringify(request.move)}`);
+          window.__frState.settings.provider = { ...window.__frState.settings.provider, ...request.move, on: true,
+            consent: { version: 1, at: "2026-11-09T00:00:00Z", host: request.host } };
+          keyHost = request.key ? request.host : keyHost === request.host ? keyHost : null;
+          window.__frEmit("onSettingsChanged", copy(window.__frState.settings));
+          return { ok: true };
+        },
         agree: (host: string, move?: object) => {
           window.__frCalls.push(`agree:${host}`);
           // Home's held edit of the provider in use comes with its details, saved with the yes (integrations-c3-1).
@@ -129,7 +158,7 @@ async function open(seed: Seed = {}): Promise<Page> {
         test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState, holdProvider: !!seed.holdProvider, failAdoption: seed.failAdoption ?? false, slowAdoption: !!seed.slowAdoption });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
@@ -147,6 +176,67 @@ const next = (p: Page) => p.locator("#w-next");
 const seen = (p: Page, sel: string) => p.locator(sel).evaluate(e => { const r = e.getBoundingClientRect(); return r.width > 20 && r.height > 8 && getComputedStyle(e).clipPath === "none"; });
 
 describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#6)", () => {
+  it("exposes a name-free focused Home document while retaining the visible brand (listening-refresh-1)", async () => {
+    const p = await open({ home: true, agent: readyAgent(), voiceAgreed: true });
+    try {
+      const cdp = await p.context().newCDPSession(p);
+      for (let i = 0; i < 2; i++) {
+        await p.bringToFront();
+        expect(await p.title()).toBe("Companion home");
+        const tree = await cdp.send("Accessibility.getFullAXTree");
+        const root = tree.nodes.find(n => n.role?.value === "RootWebArea")!;
+        expect(root.name?.value).toBe("Companion home");
+        expect(root.properties).toContainEqual({ name: "focused", value: { type: "booleanOrUndefined", value: true } });
+        expect(await p.locator("#home-h").innerText()).toBe("Ember");
+        expect(await p.locator("#home-h").getAttribute("aria-label")).toBe("Home");
+      }
+    } finally { await p.close(); }
+  });
+
+  it("starts with name-free focus and announcements after voice was already agreed (first-run-r6-1)", async () => {
+    const p = await open({ agent: readyAgent(), voiceAgreed: true, consent: CONSENT_VERSION - 1 });
+    try {
+      await p.waitForTimeout(AGREE_ARM_MS + 30);
+      await next(p).click();
+      for (let i = 0; i < 3; i++) await next(p).click();
+      expect(await p.locator("#w-title").innerText()).toBe("Your Ember");
+      expect(await p.locator("#w-title").getAttribute("aria-label")).toBe("Your companion");
+      await next(p).click();
+      await expect.poll(() => focusedId(p)).toBe("home-h");
+      expect(await p.locator("#home-h").innerText()).toBe("Ember");
+      expect(await p.locator("#home-h").getAttribute("aria-label")).toBe("Home");
+      expect(await p.locator("#home-live").innerText()).not.toMatch(/\bEmber\b/i);
+    } finally { await p.close(); }
+  }, 30_000);
+
+  it("waits for a known recipient and re-arms Agree when the shown recipient changes (first-run-c7-1)", async () => {
+    const p = await open({ consent: CONSENT_VERSION - 1, holdProvider: true });
+    try {
+      await p.waitForTimeout(AGREE_ARM_MS + 50);
+      expect(await p.locator("#w-points").innerText()).toContain("a model service I can't tell yet");
+      expect(await next(p).getAttribute("aria-disabled")).toBe("true");
+      await next(p).evaluate(e => (e as HTMLButtonElement).click());
+      expect((await calls(p)).some(c => c.startsWith('save:{"consent"'))).toBe(false);
+      const state = { allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false };
+      await p.evaluate(state => { for (const q of window.__frPend.providerState ?? []) q.resolve(state); }, state);
+      await expect.poll(() => p.locator("#w-points").innerText()).toContain("GitHub Copilot");
+      // Knowing the recipient must not consume the time spent waiting for it as the arming interval.
+      await next(p).evaluate(e => (e as HTMLButtonElement).click());
+      expect((await calls(p)).some(c => c.startsWith('save:{"consent"'))).toBe(false);
+      await p.waitForTimeout(AGREE_ARM_MS + 50);
+      // Main's provider-state change invalidates the old recipient until its fresh state is known.
+      await p.evaluate(() => window.__frEmit("providerChanged", undefined));
+      await expect.poll(() => p.locator("#w-points").innerText()).toContain("a model service I can't tell yet");
+      await p.evaluate(state => { for (const q of window.__frPend.providerState ?? []) q.resolve(state); }, { ...state, inForce: true, host: "new.example.com", agreed: true });
+      await expect.poll(() => p.locator("#w-points").innerText()).toContain("new.example.com");
+      await next(p).evaluate(e => (e as HTMLButtonElement).click());
+      expect((await calls(p)).some(c => c.startsWith('save:{"consent"'))).toBe(false);
+      await p.waitForTimeout(AGREE_ARM_MS + 50);
+      await next(p).click();
+      await expect.poll(async () => (await calls(p)).some(c => c.startsWith('save:{"consent"'))).toBe(true);
+    } finally { await p.close(); }
+  }, 30_000);
+
   it("(a) Copilot: a failed sign-in is visible, retry works, the models are reviewed, then the first answer", async () => {
     const p = await open();
     expect(await p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
@@ -298,6 +388,53 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await buttons(none)).not.toContain("Use my own provider");
   });
 
+  for (const inUse of [false, true]) it(`keeps an unsaved key with its original recipient during ${inUse ? "an in-use edit" : "new setup"} (first-run-v7-1)`, async () => {
+    const provider = { on: true, baseUrl: "https://a.example.com/v1", conductor: "fixture-model", consent: { version: 1, at: "2026-11-09T12:00:00Z", host: "a.example.com" } };
+    const p = await open(inUse ? { provider, liveState: true, providerState: { keySaved: true }, agent: readyAgent({ login: undefined, service: { kind: "user", host: "a.example.com" } }) } : {});
+    const keptProvider = await p.evaluate(() => structuredClone(window.__frState.settings.provider));
+    try {
+      if (inUse) {
+        await next(p).click();
+        await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+        await p.locator("#w-back").click();
+      } else await p.getByRole("button", { name: "Use my own provider" }).click();
+      await p.fill("#w-p-url", "https://b.example.com/v1");
+      await p.fill("#w-p-conductor", "fixture-model");
+      await p.fill("#w-p-key", "fixture-key-for-b");
+      // A path edit and an unfinished address do not change a known key's recipient.
+      await p.fill("#w-p-url", "https://b.example.com/v2");
+      expect(await p.locator("#w-p-key").inputValue()).toBe("fixture-key-for-b");
+      await p.fill("#w-p-url", "https://");
+      expect(await p.locator("#w-p-key").inputValue()).toBe("fixture-key-for-b");
+      await p.fill("#w-p-url", "https://c.example.com/v1");
+      expect(await p.locator("#w-p-key").inputValue()).toBe("");
+      await next(p).click();
+      if (inUse) {
+        await expect.poll(() => calls(p)).toContain("test-draft:c.example.com");
+        expect(await calls(p)).not.toContain("test-draft:c.example.com+key");
+        expect(await p.evaluate(() => window.__frState.settings.provider)).toEqual(keptProvider);
+        expect(await p.evaluate(() => window.emberProvider!.state())).toMatchObject({ keySaved: true, host: "a.example.com", inForce: true });
+      } else {
+        expect(await focusedId(p)).toBe("w-p-key");
+        expect((await calls(p)).filter(c => c === "saveKey" || c === "test" || c.startsWith("agree:") || c.startsWith("test-draft:"))).toEqual([]);
+      }
+      // The port is part of the recipient too.
+      await p.fill("#w-p-key", "fixture-key-for-c");
+      await p.fill("#w-p-url", "https://c.example.com:8443/v1");
+      expect(await p.locator("#w-p-key").inputValue()).toBe("");
+      // Reopening prefills the saved address; that change must not carry the draft key either.
+      await p.fill("#w-p-url", "https://b.example.com/v1");
+      await p.fill("#w-p-key", "fixture-key-for-b");
+      await p.locator("#w-back").click();
+      if (inUse) {
+        await next(p).click();
+        await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+        await p.locator("#w-back").click();
+      } else await p.getByRole("button", { name: "Use my own provider" }).click();
+      expect(await p.locator("#w-p-key").inputValue()).toBe("");
+    } finally { await p.close(); }
+  }, 30_000);
+
   it("(e) a slow failed check that arrives after the user left, or edited, doesn't overwrite newer state", async () => {
     const p = await open();
     await p.getByRole("button", { name: "Use my own provider" }).click();
@@ -308,6 +445,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(async () => (await calls(p)).filter(c => c === "test").length).toBe(1);
     // Edit the address while the first check is out, and check again: that one answers first, with success.
     await p.fill("#w-p-url", "https://other.example.com/v1");
+    await p.fill("#w-p-key", "fixture-key-for-other-host");
     await next(p).click();
     await expect.poll(async () => (await calls(p)).filter(c => c === "test").length).toBe(2);
     await settle(p, "test", { ok: true, host: "other.example.com", models: 1 }, 1);
@@ -581,7 +719,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(async () => (await calls(p)).filter(c => c === "test-draft:127.0.0.1:18309").length).toBe(2);
     await settle(p, "test", { ok: true, host: "127.0.0.1:18309", models: 1, ids: ["other-model"] }, 1);
     await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18309.");
-    expect(await calls(p)).toContain("agree:127.0.0.1:18309");
+    expect(await calls(p)).toContain("adopt:127.0.0.1:18309");
     expect(await calls(p)).toContain(`move:${JSON.stringify({ type: "openai", baseUrl: "http://127.0.0.1:18309/v1", conductor: "other-model", worker: null, wireApi: null, azureApiVersion: null })}`);
     expect(await saves()).toEqual([]);
     expect(await provider()).toMatchObject({ baseUrl: "http://127.0.0.1:18309/v1", conductor: "other-model", consent: { host: "127.0.0.1:18309" } });
@@ -808,7 +946,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     };
     const kept = (p: Page) => p.evaluate(() => ({ on: window.__frState.settings.provider.on, baseUrl: window.__frState.settings.provider.baseUrl }));
     const working = { on: true, baseUrl: "https://api.example.com/v1" };
-    const changed = (p: Page) => calls(p).then(c => c.filter(x => x.startsWith("save:") || x === "saveKey" || x.startsWith("agree:") || x === "test"));
+    const changed = (p: Page) => calls(p).then(c => c.filter(x => x.startsWith("save:") || x === "saveKey" || x.startsWith("agree:") || x.startsWith("adopt:") || x === "test"));
 
     // A slip: a field cleared and the button pressed says what to fill; typing it back switches nothing off.
     const a = await inUse();
@@ -871,8 +1009,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((await calls(d)).filter(x => x.startsWith("agree:") || x === "saveKey")).toEqual([]);
     expect(await d.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
 
-    // Details that answer replace the old ones: written with the card's yes for the new host in one change, so the
-    // provider in use never leaves force for Copilot between (first-run-r4-3), then the key for it.
+    // Details that answer replace the old ones with their key in one adoption (first-run-r4-3, integrations-r7-1).
     const e = await inUse();
     await e.fill("#w-p-url", "https://api2.example.com/v1");
     await e.fill("#w-p-key", "sk-good-not-real");
@@ -880,7 +1017,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => calls(e)).toContain("test-draft:api2.example.com+key");
     await settle(e, "test", { ok: true, host: "api2.example.com", models: 2 });
     await expect.poll(() => e.locator("#w-p-result").innerText()).toBe("Connected to api2.example.com. It lists 2 models.");
-    expect(await changed(e)).toEqual(["agree:api2.example.com", "saveKey"]);
+    expect(await changed(e)).toEqual(["adopt:api2.example.com"]);
     expect(await calls(e)).toContain(`move:${JSON.stringify({ type: "openai", baseUrl: "https://api2.example.com/v1", conductor: "gpt-4.1", worker: null })}`);
     expect(await kept(e)).toEqual({ on: true, baseUrl: "https://api2.example.com/v1" });
     expect(await calls(e)).not.toContain(off);
@@ -1009,7 +1146,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     for (const page of [p, q]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
-  it("(al) Home adopts an edit of my provider in use to a host that answers but lists no models, saying it asks for the model as typed; one that refuses the key changes nothing (integrations-r4-2)", async () => {
+  it("(al) Home keeps the working provider when an edited host returns no model list or refuses its key (integrations-c5-1)", async () => {
     const using = "127.0.0.1:18308";
     const service = { kind: "user", host: using };
     const p = await open({ home: true, liveState: true, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
@@ -1024,15 +1161,136 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await settle(p, "test", { ok: false, why: "127.0.0.1:18309 needs an API key." });
     await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`127.0.0.1:18309 needs an API key. Nothing has changed: Ember still uses ${using}.`);
     expect((await calls(p)).filter(c => c.startsWith("agree:"))).toEqual([]);
-    // It answers, with no model list there: adopted with the yes, in one change, saying what Ember asks it for.
+    // A blanket404 is not proof that the replacement can answer: keep the working endpoint.
     await p.locator("#byok-yes").click();
     await expect.poll(async () => (await calls(p)).filter(c => c === "test-draft:127.0.0.1:18309").length).toBe(2);
     await settle(p, "test", { ok: false, why: "127.0.0.1:18309 answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" }, 1);
-    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. 127.0.0.1:18309 answered but lists no models, so Ember asks it for mock-model as typed.");
-    expect(await calls(p)).toContain("agree:127.0.0.1:18309");
-    expect(await provider()).toMatchObject({ baseUrl: "http://127.0.0.1:18309/v1", consent: { host: "127.0.0.1:18309" } });
-    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(false);
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`127.0.0.1:18309 answered, but has no model list at that address. Check the endpoint and the provider. Nothing has changed: Ember still uses ${using}.`);
+    expect((await calls(p)).filter(c => c.startsWith("agree:"))).toEqual([]);
+    expect(await provider()).toMatchObject({ baseUrl: `http://${using}/v1`, consent: { host: using } });
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it.each(["The keyring refused the replacement key.", "The provider settings couldn't be saved."])("keeps the working setup provider and key when adoption fails: %s (integrations-r7-1)", async why => {
+    const p = await open({ liveState: true, failAdoption: why, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", conductor: "fixture-model", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    try {
+      await next(p).click(); await p.locator("#w-back").click();
+      await p.fill("#w-p-url", "https://b.example/v1"); await p.fill("#w-p-key", "b-fixture-key");
+      await next(p).click(); await expect.poll(() => calls(p)).toContain("test-draft:b.example+key");
+      await settle(p, "test", { ok: true, host: "b.example", models: 1 });
+      await expect.poll(() => p.locator("#w-p-result").innerText()).toContain("Nothing has changed: I'm still using a.example.");
+      expect(await p.locator("#w-p-result").innerText()).toContain(why);
+      expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+      expect(await p.locator("#w-p-key").inputValue()).toBe("b-fixture-key");
+      expect(await p.evaluate(() => window.emberProvider!.state())).toMatchObject({ keySaved: true, host: "a.example" });
+      expect((await calls(p)).filter(c => c === "saveKey" || c.startsWith("agree:"))).toEqual([]);
+      if (process.env.EMBER_UI_EVIDENCE) await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "welcome-adoption-failure.png"), fullPage: true });
+    } finally { await p.close(); }
+  }, 20_000);
+
+  it.each(["edit", "back"] as const)("cancels setup adoption on %s while a keyring result is pending (integrations-r7-1)", async action => {
+    const p = await open({ liveState: true, slowAdoption: true, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", conductor: "fixture-model", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    try {
+      await next(p).click(); await p.locator("#w-back").click();
+      await p.fill("#w-p-url", "https://b.example/v1"); await p.fill("#w-p-key", "b-fixture-key");
+      await next(p).click(); await settle(p, "test", { ok: true, host: "b.example", models: 1 });
+      await expect.poll(() => calls(p)).toContain("adopt:b.example");
+      if (action === "edit") await p.fill("#w-p-conductor", "new-fixture-model");
+      else await p.locator("#w-back").click();
+      await expect.poll(async () => (await calls(p)).some(c => c.startsWith("cancel-adoption:"))).toBe(true);
+      await settle(p, "adopt", { ok: true }); await p.waitForTimeout(100);
+      expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+      expect(await p.evaluate(() => window.emberProvider!.state())).toMatchObject({ keySaved: true, host: "a.example" });
+      if (action === "edit") expect(await p.locator("#w-p-conductor").inputValue()).toBe("new-fixture-model");
+      expect((p as Page & { errors: string[] }).errors).toEqual([]);
+    } finally { await p.close(); }
+  }, 20_000);
+
+  it("keeps the provider, its saved key and the typed replacement key after atomic adoption fails (integrations-r7-1)", async () => {
+    const using = "a.example";
+    const p = await open({ home: true, liveState: true, failAdoption: true, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: using } }),
+      provider: { on: true, baseUrl: `https://${using}/v1`, consent: { version: 1, at: "2026-11-09T00:00:00Z", host: using } } });
+    try {
+      await p.locator("#byok-url").fill("https://b.example/v1"); await p.keyboard.press("Tab");
+      await p.locator("#byok-key").fill("replacement-fixture-key");
+      await p.waitForTimeout(AGREE_ARM_MS + 100); await p.locator("#byok-yes").click();
+      await expect.poll(() => calls(p)).toContain("test-draft:b.example+key");
+      await settle(p, "test", { ok: true, host: "b.example", models: 1 });
+      await expect.poll(() => p.locator("#byok-msg").innerText()).toContain("Nothing has changed: Ember still uses a.example.");
+      expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+      expect(await p.locator("#byok-key").inputValue()).toBe("replacement-fixture-key");
+      expect(await p.locator("#byok-consent").isVisible()).toBe(true);
+      expect((await calls(p)).filter(c => c === "saveKey" || c.startsWith("agree:"))).toEqual([]);
+    } finally { await p.close(); }
+  }, 20_000);
+
+  it("keeps a typed key with its draft host and clears it before another authority can receive it (integrations-v7-2)", async () => {
+    const p = await open({ home: true, liveState: true, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    try {
+      await p.locator("#byok-url").fill("https://b.example/v1"); await p.keyboard.press("Tab");
+      await p.locator("#byok-key").fill("b-fixture-key");
+      await p.locator("#byok-url").fill("https://b.example/v2");
+      expect(await p.locator("#byok-key").inputValue()).toBe("b-fixture-key");
+      await p.locator("#byok-url").fill("https://");
+      expect(await p.locator("#byok-key").inputValue()).toBe("b-fixture-key");
+      await p.locator("#byok-url").fill("https://c.example/v1");
+      expect(await p.locator("#byok-key").inputValue()).toBe("");
+      await p.keyboard.press("Tab");
+      await p.waitForTimeout(AGREE_ARM_MS + 100); await p.locator("#byok-yes").click();
+      await expect.poll(() => calls(p)).toContain("test-draft:c.example");
+      expect((await calls(p)).some(c => c === "test-draft:c.example+key")).toBe(false);
+      expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+      await p.locator("#byok-key").fill("c-fixture-key");
+      await p.locator("#byok-url").fill("https://c.example:8443/v1");
+      expect(await p.locator("#byok-key").inputValue()).toBe("");
+    } finally { await p.close(); }
+  }, 20_000);
+
+  it("clears a held draft key when a newer saved provider replaces its host (integrations-v7-9)", async () => {
+    const p = await open({ home: true, liveState: true, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    try {
+      await p.fill("#byok-url", "https://b.example/v1"); await p.keyboard.press("Tab");
+      await p.fill("#byok-key", "b-fixture-key");
+      await p.evaluate(() => {
+        const s = window.__frState.settings;
+        s.provider = { ...s.provider, baseUrl: "https://c.example/v1", consent: { version: 1, at: "2026-11-09T00:01:00Z", host: "c.example" } };
+        window.__frEmit("onSettingsChanged", structuredClone(s));
+      });
+      await expect.poll(() => p.locator("#byok-url").inputValue()).toBe("https://c.example/v1");
+      expect(await p.locator("#byok-key").inputValue()).toBe("");
+      await p.locator("#byok-key-form").evaluate(form => form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true })));
+      expect(await calls(p)).not.toContain("saveKey");
+      expect((p as Page & { errors: string[] }).errors).toEqual([]);
+    } finally { await p.close(); }
+  }, 20_000);
+
+  it("cancels an overtaken adoption and keeps the newer draft when the old keyring result arrives (integrations-r7-1)", async () => {
+    const p = await open({ home: true, liveState: true, slowAdoption: true, providerState: { keySaved: true },
+      agent: readyAgent({ service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    try {
+      await p.locator("#byok-url").fill("https://b.example/v1"); await p.keyboard.press("Tab");
+      await p.waitForTimeout(AGREE_ARM_MS + 100); await p.locator("#byok-yes").click();
+      await settle(p, "test", { ok: true, host: "b.example", models: 1 });
+      await expect.poll(() => calls(p)).toContain("adopt:b.example");
+      await p.locator("#byok-url").fill("https://c.example/v1"); await p.keyboard.press("Tab");
+      await expect.poll(async () => (await calls(p)).some(c => c.startsWith("cancel-adoption:"))).toBe(true);
+      await settle(p, "adopt", { ok: true });
+      expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+      expect(await p.locator("#byok-url").inputValue()).toBe("https://c.example/v1");
+      expect(await p.locator("#byok-consent-text").innerText()).toContain("c.example");
+      expect(await p.locator("#byok-yes").getAttribute("aria-disabled")).toBeNull();
+    } finally { await p.close(); }
   }, 20_000);
 
   it("(ai) “Use GitHub Copilot instead” while I'm busy says I'll switch once I've finished, keeps Continue, and offers Copilot's sign-in once the switch is made (first-run-v4-1)", async () => {

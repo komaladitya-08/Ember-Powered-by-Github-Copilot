@@ -736,6 +736,9 @@ export const PROVIDER_IPC = {
    * record (settingsFromHome drops it).
    */
   agree: "provider:agree",
+  /** Atomically adopts a held edit and its optional key; cancellation retires a superseded renderer draft. */
+  adopt: "provider:adopt",
+  cancelAdoption: "provider:cancel-adoption",
   /**
    * One small request to the endpoint in settings (its model list), with the saved key: ProviderTest. With a
    * ProviderDraft, the same request to details typed but not saved, which it saves nothing of (first-run-r2-1).
@@ -793,12 +796,17 @@ export interface ProviderMove {
   azureApiVersion?: string | null;
 }
 
+/** An agreed held edit; its key is sent only to main and never returned to a renderer. */
+export interface ProviderAdoption { id: string; from: string; host: string; move: ProviderMove; key?: string }
+
 /** The settings window's provider API (`window.emberProvider`, app/preload/home.ts). */
 export interface EmberProviderApi {
+  adopt(request: ProviderAdoption): Promise<ProviderDone>;
+  cancelAdoption(id: string): Promise<void>;
   state(): Promise<ProviderState>;
   onChanged(fn: () => void): () => void;
   /** Saves the API key, encrypted (refused without a keyring); it is never sent back. */
-  saveKey(key: string): Promise<ProviderDone>;
+  saveKey(key: string, host: string): Promise<ProviderDone>;
   removeKey(): Promise<ProviderDone>;
   /**
    * Records the yes to the card for `host` (the endpoint's host in settings now, or that of `move`, the held edit's

@@ -101,6 +101,9 @@ describe("statusReply", () => {
 });
 
 describe("resultsRequest", () => {
+  it("does not turn reading this answer into a future-results preference (voice-speaking-r6-1)", () => {
+    for (const text of ["Read it out", "Ember, read it aloud", "read the answer aloud"]) expect(resultsRequest(text)).toBeNull();
+  });
   it("hears “just show me” and its kin as results on screen only (JARVIS's “leave it on the screen”)", () => {
     for (const t of ["Ember, just show me", "just show it", "Stop telling me.", "leave it on the screen", "leave them on screen", "stop reading them out", "don't read the results aloud"]) expect(resultsRequest(t), t).toBe("quiet");
   });

@@ -666,6 +666,11 @@ describe("policy: review round 5", () => {
     expect(e().decide({ taskId: "p", kind: "click", app: "Firefox", window: "Deactivate account - Mozilla Firefox", element: { role: "push button", name: "Continue" }, goal: "tidy up" }).verdict).toBe("confirm");
   });
 
+  it("recognises the name-free Ask window when its process id is unknown (voice-listening-r6-2)", () => {
+    expect(isEmberWindow({ app: "electron", name: "Companion request" }, 4242)).toBe(true);
+    expect(e({}, { ownPid: 4242 }).decide({ taskId: "o", kind: "click", app: "electron", window: "Companion request", element: { role: "push button", name: "Send" } })).toMatchObject({ verdict: "deny", tier: "never" });
+  });
+
   it("Ember's own windows are never acted in, by process or by name, and no grant is offered for them", () => {
     const own = e({ ember: "act", firefox: "act" }, { ownPid: 4242 });
     for (const r of [{ app: "Firefox", window: "Ember", windowId: { pid: 4242 } }, { app: "Ember", window: "Ember overlay" }, { app: "electron", window: "Ask Ember" },
@@ -774,6 +779,16 @@ describe("policy: review round 6", () => {
     expect(JSON.parse(fs.readFileSync(log.file, "utf8")).value).toBe("a");
     expect(JSON.parse(sunk[0])).toMatchObject({ chars: 1 });
     expect(JSON.parse(sunk[0]).value).toBeUndefined();
+  });
+
+  it("keeps current and legacy own titles private without claiming Files' Home (listening-refresh-1)", () => {
+    for (const name of ["Companion home", "Companion request", "Ember", "Ember overlay", "Ask Ember", "Ember's desk", "Ember microphone", "Ember commands"]) {
+      expect(isEmberWindow({ app: "", name, pid: null }, 4242), name).toBe(true);
+      expect(isEmberWindow({ app: "nautilus", name, pid: 3100 }, 4242), name).toBe(false);
+    }
+    expect(isEmberWindow({ app: "nautilus", name: "Home", pid: null }, 4242)).toBe(false);
+    expect(isEmberWindow({ app: "nautilus", name: "Home", pid: 3100 }, 4242)).toBe(false);
+    expect(isEmberWindow({ app: "nautilus", name: "Home", pid: 4242 }, 4242)).toBe(true);
   });
 
   it("a window only titled “Ember” in another program (Files showing ~/Ember) isn't Ember's own (DK6-1)", () => {

@@ -432,6 +432,13 @@ describe("README.md", () => {
   const readme = read("README.md");
   const version = (JSON.parse(read("package.json")) as { version: string }).version;
 
+  it("gives the measured listening footprint and dates every completed audit round (install-docs-r7-1)", () => {
+    expect(flat(readme)).toContain("790–930 MB of memory while Ember is idle and listening");
+    expect(flat(readme)).not.toContain("600 MB of memory");
+    expect(flat(read("STATUS.md"))).toContain("7 to 10 November");
+    expect(flat(read("CHANGELOG.md"))).not.toContain("1 GB of disk and 600 MB of memory");
+  });
+
   it("says where to download every file a release has, and how to check it", () => {
     const download = flat(section(readme, "Download"));
     expect(download).toMatch(/\[Releases page\]\(https:\/\/github\.com\/[^/]+\/[^/]+\/releases\)/);

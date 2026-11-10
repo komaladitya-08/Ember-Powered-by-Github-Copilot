@@ -600,8 +600,8 @@ export const isRiskyLabel = (s: string, os: OS = "linux") => RISKY.test(normaliz
 /** Is activating this control hard to undo or visible to others: a risky label, or one that posts or acts on others (RISKY_ACT) on a button, link or menu item? */
 export const isRiskyControl = (role: string, name: string, os: OS = "linux") => isRiskyLabel(name, os) || (ACTING_CONTROL.test(role) && isRiskyActLabel(name));
 
-/** Ember's own windows by app or title (settings, the overlay and its bubble, Ask Ember, the desk's view, the microphone helper, the command window). */
-const EMBER_WINDOW = /^(ember|ember overlay|ask ember|ember's desk|ember microphone|ember commands)$/;
+/** Ember's own windows by app or title (settings, the overlay and its bubble, the Ask box, the desk's view, the microphone helper, the command window). */
+const EMBER_WINDOW = /^(ember|ember overlay|ask ember|ember's desk|ember microphone|ember commands|companion request|companion home)$/;
 /**
  * Is this one of Ember's own windows: its process's, an app called Ember, or (when its process isn't known) a window
  * titled like one? A task never acts in them: they answer Ember's questions and hold its settings. Another program's

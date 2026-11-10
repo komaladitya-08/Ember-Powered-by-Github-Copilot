@@ -388,8 +388,8 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     expect(scriptLanguage("shebang", "\x7fELF\x02\x01\x01\x00")).toEqual({ kind: "none" });
   });
 
-  it("runs an ordinary POSIX script with if, for and while without asking; a dangerous command inside still asks (review #27)", async () => {
-    const plain = "#!/bin/sh\nif [ -f Makefile ]; then\n  make build\nelse\n  echo no Makefile\nfi\nfor t in unit lint; do echo $t; done\nwhile false; do echo; done\n";
+  it("runs an ordinary POSIX script conditional without asking; a dangerous command inside still asks (review #27)", async () => {
+    const plain = "#!/bin/sh\nif [ -f Makefile ]; then\n  make build\nelse\n  echo no Makefile\nfi\n";
     const h = scriptHarness(plain);
     expect((await call(h, { target: "this computer", command: "./build.sh" })).resultType).toBe("success");
     expect(h.asked).toEqual([]);
@@ -432,11 +432,11 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     for (const [script, command] of hidden) got.push(await judged(script, command));
     expect(got).toEqual(hidden.map(([script]) => `denied: ${script}`));
     // A plain `[[` test in a bash script is still read through.
-    const plain = "#!/bin/bash\nif [[ -d build ]]; then echo built; fi\nwhile [[ ! -f done.txt ]]; do sleep 1; done\n";
+    const plain = "#!/bin/bash\nif [[ -d build ]]; then echo built; fi\n";
     expect(await judged(plain, "./t.sh")).toBe(`success: ${plain}`);
   });
 
-  it("runs an if on a bash command line without asking when every command in it is ordinary, and asks before a loop as main does (commands-remote-2, commands-c7-1)", async () => {
+  it("asks before an if or a loop on a bash command line as main does (commands-remote-2, commands-c7-1)", async () => {
     const judged = async (command: string, shell?: "bash" | "zsh") => {
       setCommandJudge(null);
       const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: true, real: p }), run: () => ({ output: ["1\n"] }), ...(shell === "zsh" ? { facts: { shells: ["zsh", "bash"], shellPaths: { zsh: "/bin/zsh", bash: "/bin/bash" } } } : {}) });
@@ -444,7 +444,7 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
       const card = (h.asked[0]?.panel as { card: CommandCard } | undefined)?.card;
       return { result: r.resultType, rules: h0rules(h), says: card?.says ?? [] };
     };
-    expect(await judged("if [ -f package.json ]; then npm test; fi")).toMatchObject({ result: "success", rules: [] });
+    expect(await judged("if [ -f package.json ]; then npm test; fi")).toMatchObject({ result: "denied", rules: ["unclear.if", "unclear.then", "unclear.fi"] });
     // Every loop keeps its own words and asks, as on main, however plain its body (commands-c7-1).
     for (const loop of ["for i in 1 2 3; do echo $i; done", "while read -r l; do echo \"$l\"; done <<< \"a b\"", "until false; do break; done"]) {
       const got = await judged(loop);
@@ -510,10 +510,10 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     }
     // IFS in front of a loop's or an if's read is no assignment; the line loop over a file asks because Ember can't see
     // what it reads (commands-a7-2), with the loop's own words as on main (commands-b7-2), and so does one over
-    // written-out text, as every loop does (commands-c7-1); an if's read of written-out text runs.
+    // written-out text, as every loop does (commands-c7-1); an if's read of written-out text keeps the if's question.
     expect(await judged("while IFS= read -r l; do echo \"$l\"; done < list.txt")).toMatchObject({ result: "denied", rules: ["unclear.while", "unclear.do", "unclear.done", "unclear.read-text"] });
     expect(await judged("while IFS= read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ result: "denied", rules: ["unclear.while", "unclear.do", "unclear.done"] });
-    expect(await judged("if IFS= read -r l <<< 'a b'; then echo \"$l\"; fi")).toMatchObject({ result: "success", rules: [] });
+    expect(await judged("if IFS= read -r l <<< 'a b'; then echo \"$l\"; fi")).toMatchObject({ result: "denied", rules: ["unclear.if", "unclear.then", "unclear.fi"] });
   });
 
   it("says plainly when it can't read all of a script, and not that the user didn't ask when they named it (review #27)", async () => {
@@ -754,7 +754,7 @@ describe("a script of the task's own that can't be read in full (L8's padding by
 
   it("counts every script once a command wrote where Ember can't tell (a checkout), or ran code it couldn't see", async () => {
     const h = own();
-    expect((await local(h, "git pull")).resultType).toBe("success");
+    expect((await local(h, "git checkout other")).resultType).toBe("success");
     expect(h.ctx.state.written!.anywhere).toBe(true);
     // Nothing there (PowerShell's `.\\t` names t.bat and t.cmd too): nothing to read, nothing to ask.
     expect((await local(h, "sh missing.sh")).resultType).toBe("success");
@@ -764,8 +764,8 @@ describe("a script of the task's own that can't be read in full (L8's padding by
   });
 
   it("never takes a program in a folder only root changes for the task's own after a checkout: `#!/usr/bin/python3` runs", async () => {
-    const h = own({ "/home/ana/proj/x.py": "#!/usr/bin/python3\nprint('hi')\n", "/home/ana/proj/y": "#!/usr/local/bin/i\necho hi\n" }, { exists: () => true });
-    expect((await local(h, "git pull")).resultType).toBe("success");
+    const h = own({ "/home/ana/proj/x.py": "#!/usr/bin/python3\nprint('hi')\n", "/home/ana/proj/y": "#!/usr/local/bin/i\necho hi\n" }, { exists: p => p !== "/home/ana/proj/other" });
+    expect((await local(h, "git checkout other")).resultType).toBe("success");
     expect(h.ctx.state.written!.anywhere).toBe(true);
     expect((await local(h, "./x.py")).resultType).toBe("success");
     expect(h.reads).toContain("/usr/bin/python3");
@@ -2709,8 +2709,14 @@ describe("a job count, as the flow judges it (commands-a7-1)", () => {
     ]) expect(await judged(command), command).toMatchObject({ result: "denied", asked: 1 });
   });
 
+  it("asks before a separate wrapper option value can hide a different command (commands-q6-3, i6b, commands-v7-5)", async () => {
+    for (const command of ["N='1 rm -rf ~'; xargs -P $N echo", "xargs -P $(cat jobs.txt) echo", "env -C $(cat folder.txt) echo", "nice -n $(cat priority.txt) echo", "parallel --jobs $N echo"]) {
+      expect(await judged(command), command).toMatchObject({ result: "denied", asked: 1 });
+    }
+  });
+
   it("runs a job count written as a number, a processor count or arithmetic of numbers", async () => {
-    for (const command of ["make -j4", "make -j$(nproc)", "make -j \"$(nproc)\"", "cmake --build build -j $(nproc)", "xargs -P$(nproc) echo", "make -j$((2*4))"]) {
+    for (const command of ["make -j4", "make -j$(nproc)", "make -j \"$(nproc)\"", "xargs -P$(nproc) echo", "make -j$((2*4))"]) {
       expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
     }
   });
@@ -2739,9 +2745,9 @@ describe("a read or a loop over text Ember can't see, as the flow judges it (com
     }
   });
 
-  it("runs an if or a read that sets no variable from text Ember can't see, as its commands written out would; a loop asks as main does", async () => {
+  it("asks before an if or a loop and still runs a read of written-out text", async () => {
     for (const command of ["if [ -f package.json ]; then npm test; fi", "read -r a b <<< 'x y'; echo \"$a\"", "if read -r l <<< 'a b'; then echo \"$l\"; fi"]) {
-      expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
+      expect(await judged(command), command).toMatchObject(command.startsWith("if ") ? { result: "denied", asked: 1 } : { result: "success", asked: 0, rules: [] });
     }
     for (const command of ["for i in 1 2 3; do echo $i; done", "while read -r l; do echo \"$l\"; done <<< 'a b'", "while true; do echo x; break; done"]) {
       expect(await judged(command), command).toMatchObject({ result: "denied", asked: 1, ran: 0 });
@@ -2814,9 +2820,9 @@ describe("a loop or an if that changes the folder, sets a variable or asks, as t
     }
   });
 
-  it("still runs an if that sets no variable, changes no folder and asks for nothing else; a loop asks as main does (commands-c7-1)", async () => {
+  it("keeps the question before an ordinary if or a loop (commands-c7-1)", async () => {
     for (const command of ["if [ -f package.json ]; then npm test; fi", "if git diff --quiet; then echo clean; else echo dirty; fi"]) {
-      expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
+      expect(await judged(command), command).toMatchObject(command.startsWith("if ") ? { result: "denied", asked: 1 } : { result: "success", asked: 0, rules: [] });
     }
     for (const command of ["for i in 1 2 3; do echo $i; done", "while read -r l; do echo \"$l\"; done <<< 'a b'", "until [ -f x ]; do sleep 1; done"]) {
       const got = await judged(command);
@@ -2865,9 +2871,9 @@ describe("every bash loop on a command line, as the flow judges it (commands-c7-
     expect(risky.says).toEqual(expect.arrayContaining(["Deletes a.log and b.log.", "Ember can't tell exactly what this does."]));
   });
 
-  it("still runs an if whose every command runs alone, and a read of written-out text outside a loop", async () => {
+  it("keeps the question before an if and still runs a read outside a loop", async () => {
     for (const command of ["if [ -f package.json ]; then npm test; fi", "if git diff --quiet; then echo clean; else echo dirty; fi", "read -r a b <<< 'x y'; echo \"$a\""]) {
-      expect(await judged(command), command).toMatchObject({ result: "success", asked: 0, rules: [] });
+      expect(await judged(command), command).toMatchObject(command.startsWith("if ") ? { result: "denied", asked: 1 } : { result: "success", asked: 0, rules: [] });
     }
   });
 });
@@ -2883,6 +2889,73 @@ describe("patch -d and cd -- in Ember's folder, as the flow judges them (command
       const r = await call(h, { target: "this computer", command });
       expect(r.textResultForLlm, command).toMatch(/^Not allowed: Ember won't run this/);
       expect(h.starts, command).toEqual([]);
+    }
+  });
+});
+
+describe("uncertain download provenance across tool calls", () => {
+  it("asks again before executing what an unresolved URL or xargs fetched, and keeps known data separate (commands-remote-r6-1)", async () => {
+    setCommandJudge(null);
+    for (const command of ['V=1; curl -LO https://example.com/run-$V.sh', 'xargs -n1 curl -sO < urls.txt', 'for u in https://example.com/run.sh; do curl -sO "$u"; done']) {
+      const h = harness({ binding: LOCAL, answers: ["once", "deny"], paths: p => ({ exists: false, real: p }), readScript: async () => "echo harmless\n" });
+      expect((await call(h, { target: "this computer", command })).resultType, command).toBe("success");
+      expect(h.asked.length, command).toBe(1);
+      expect(h.ctx.state.downloaded.size, command).toBeGreaterThan(0);
+      expect((await call(h, { target: "this computer", command: "bash run-1.sh" })).resultType, command).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says).toContain("Runs a file downloaded in this task.");
+    }
+    const data = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: false, real: p }), readScript: async () => "print('report')\n" });
+    expect((await call(data, { target: "this computer", command: "curl -LO https://example.com/data.csv" })).resultType).toBe("success");
+    expect((await call(data, { target: "this computer", command: "python3 analyze.py" })).resultType).toBe("success");
+    expect(data.asked).toEqual([]);
+  });
+});
+
+describe("an empty database option expansion", () => {
+  it("asks before the following Redis deletion can run (commands-q6-1)", async () => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, answers: ["deny"] });
+    expect((await call(h, { target: "this computer", command: "O=''; redis-cli $O FLUSHALL" })).resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    expect(h.starts).toEqual([]);
+  });
+});
+
+describe("script loop bodies", () => {
+  it("asks before a loop can run later passes with different flags or folders (commands-remote-c7-4, i6a)", async () => {
+    setCommandJudge(null);
+    for (const script of [
+      "for f in --hard; do git reset $f; done\n",
+      "for f in -delete; do find . $f; done\n",
+      "for i in 1 2; do sed -i s/a/b/ ember/settings.json; cd ~/.config; done\n",
+    ]) {
+      const h = harness({ binding: LOCAL, answers: ["deny"], readScript: async () => script, paths: p => ({ exists: p !== "/home/ana/ember/settings.json", real: p }) });
+      expect((await call(h, { target: "this computer", command: "sh task.sh" })).resultType, script).toBe("denied");
+      expect(h.asked, script).toHaveLength(1);
+      expect(h.starts, script).toEqual([]);
+    }
+  });
+});
+
+describe("download provenance through opaque code and configured remotes", () => {
+  it("keeps an inline copy marked across separate calls (commands-remote-c2-2, i6a)", async () => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, answers: ["once", "deny"], paths: p => ({ exists: false, real: p }), readScript: async () => "echo harmless\n" });
+    expect((await call(h, { target: "this computer", command: "curl -o original.py https://example.com/original.py" })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: 'python3 -c \'import shutil; shutil.copy("original.py", "copied.sh")\'' })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: "bash copied.sh" })).resultType).toBe("denied");
+    expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says).toContain("Runs a file downloaded in this task.");
+  });
+
+  it("keeps code fetched from a previously configured remote marked across calls (commands-remote-c5-4, i6a)", async () => {
+    setCommandJudge(null);
+    for (const fetch of ["git pull extra-source", "git fetch extra-source"]) {
+      const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: false, real: p }) });
+      expect((await call(h, { target: "this computer", command: "git remote add extra-source https://example.com/project.git" })).resultType).toBe("success");
+      expect((await call(h, { target: "this computer", command: fetch })).resultType, fetch).toBe("success");
+      expect(h.ctx.state.downloaded.size, fetch).toBeGreaterThan(0);
+      expect((await call(h, { target: "this computer", command: "make" })).resultType, fetch).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says).toContain("Runs a file downloaded in this task.");
     }
   });
 });

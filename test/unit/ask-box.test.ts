@@ -20,10 +20,10 @@ import type { TargetSummary } from "../../app/shared/targets";
 const ASK_HTML = readFileSync(new URL("../../app/renderer/ask/index.html", import.meta.url), "utf8");
 
 describe("the ask box's placeholder", () => {
-  it("keeps its prompt concise beside Send and retains the full accessible label", () => {
+  it("keeps its prompt concise beside Send and retains the full accessible label (companion-v7-2)", () => {
     const placeholder = /placeholder="([^"]*)"/.exec(ASK_HTML)?.[1] ?? "";
-    expect(placeholder).toBe("Ask Ember…");
-    expect(ASK_HTML).toContain('<label for="q" class="sr">Ask or tell Ember</label>');
+    expect(placeholder).toBe("Ask…");
+    expect(ASK_HTML).toContain('<label for="q" class="sr">Ask or tell me</label>');
   });
 });
 

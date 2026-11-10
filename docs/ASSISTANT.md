@@ -502,3 +502,32 @@ Moonshine also wrote the name as "Remember", "Amber" and "Investop" where Parake
 Parakeet is a 482 MB download and 550 MB of memory, too much to force on the weakest target, so it is **Hear me more
 clearly** in Settings › Voice, off by default, native builds only. It writes the requests; Moonshine goes on doing the quick
 checks, so the name and a cut-in cost what they did. It is a transducer, so hotword biasing (§ above) is now open to it.
+
+## 11. An unfinished wake check on 10 November
+
+Fresh CI's synthetic evaluation reported 14/46 missed bare-name wakes and 5/78 ordinary wakes missed; the latter's
+confidence bound was inconclusive. A separate five-rendering, three-speed Amy capture found five misses among
+75 “Hey Ember” phrases: four had an ambiguous partial decode of the screen question, one remained ambiguous even
+when heard whole. Seven of 45 bare-name phrases produced no keyword-spotter hit; all 90 negative phrases stayed
+without an accepted wake. These are different generated inputs from CI, not a reclassification of its results.
+
+The early check heard “Hey, Amber, what?” or a hyphenated decoder repeat while the full audio said “Hey Ember, what's
+on my screen?”. Its bounded deferral now accepts that a partial decode's punctuation isn't the end of the audio;
+the existing full-phrase name rules still decide. An unresolved full check closes the window before unrelated later
+speech can become a request. Two frozen synthetic clips reproduce the original failures without depending on a new
+random rendering. No name spelling, spotter threshold, speaker rejection, Voice Match or approval rule is widened.
+Spotter misses and full-phrase ambiguity remain open; this repair does not establish the missed-wake target.
+
+Replaying those same fixed generated inputs plus the original clips in evaluation order (78 ordinary wakes,
+46 bare-name wakes, 96 negatives), on each production listening backend:
+
+| Backend | Ordinary wakes missed, before → after | Bare-name wakes missed, before → after | Accepted negative wakes or requests, before → after |
+|---|---|---|---|
+| WebAssembly | 5/78 → 1/78 | 7/46 → 7/46 | 0/96 → 0/96 |
+| Linux C API | 4/78 → 0/78 | 8/46 → 8/46 | 0/96 → 0/96 |
+
+Seven remaining bare-name cases produce no spotter hit on either backend. The C API's eighth bare-name miss is
+spotted, then rejected because both full checks read “Amber opened the terminal.”; the existing bounded alias accepts
+“open”, not “opened”. The remaining ordinary WebAssembly miss still reads “Pay amber” when heard whole, and stays
+rejected. These controlled pairs preserve the failed CI result above and do not prove a general false-wake rate or
+real-device recognition quality (listening-ci-review-1).

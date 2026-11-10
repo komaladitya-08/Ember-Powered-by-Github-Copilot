@@ -16,15 +16,16 @@
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import type { ProviderConfig } from "@github/copilot-sdk";
 import { applyAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "./admin";
 import { lenientJson, repairSettings, type Settings, type SettingsPatch } from "./settings";
-import { redactGitHubTokens, type SaveResult, type SecretBox } from "./agent/auth";
+import { redactGitHubTokens, type SecretBox } from "./agent/auth";
 import { friendlyError } from "./agent/presenter";
 import type { Fields, Logger } from "./logger";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { endpointHost, MAX_API_KEY, MODEL_ID } from "../shared/provider";
-import type { ProviderDraft, ProviderMove, ProviderState, RetryResult } from "../shared/ipc";
+import type { ProviderAdoption, ProviderDraft, ProviderMove, ProviderState, RetryResult } from "../shared/ipc";
 
 /** The user's provider settings (SettingsSchema `provider`). */
 export type UserProviderSettings = Settings["provider"];
@@ -203,6 +204,7 @@ const hostFile = (file: string) => file.replace(/\.bin$/, "") + ".host";
  */
 export class ProviderKeyStore {
   private revision = 0;
+  private artifacts = new Set<string>();
   constructor(private file: string, private box: SecretBox, private opts: { asyncKeyring?: boolean } = {}) {}
 
   /** Can a key be kept on this machine (a real keyring, not basic_text)? Asks the keyring: only when it is needed. */
@@ -229,25 +231,61 @@ export class ProviderKeyStore {
 
   /** Seals and writes `key` for `host`, or says why it wasn't. Never throws. */
   async save(key: string, host: string, current: () => boolean = () => true): Promise<KeyKept> {
-    const revision = ++this.revision;
-    const problem = apiKeyProblem(key);
-    if (problem) return { ok: false, why: problem };
+    let keyId: string | null = null;
+    const result = await this.replaceWith(key, host, current, id => { keyId = id; });
+    return result.ok && keyId ? { ok: true, keyId } : result.ok ? { ok: false, why: KEY_WRITE_FAILED } : result;
+  }
+
+  /** Stages a replacement before synchronously publishing its key and settings together (integrations-r7-1). */
+  async replaceWith(key: string | undefined, host: string, current: () => boolean, change: (keyId: string | null) => void, owner?: { before: string; after: string }): Promise<KeySave> {
     if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
-    if (!(await this.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
-    if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
-    // The id is sealed with the key, so the two can never be of different saves.
-    const keyId = randomUUID();
-    const text = JSON.stringify({ v: 1, host, key: key.trim(), id: keyId });
-    let sealed: Buffer;
-    try {
-      sealed = this.opts.asyncKeyring && this.box.encryptStringAsync ? await this.box.encryptStringAsync(text) : this.box.encryptString(text);
-    } catch {
-      return { ok: false, why: KEY_NO_KEYRING };
+    const revision = ++this.revision;
+    const fresh = () => revision === this.revision && current();
+    let sealed: Buffer | undefined;
+    const keyId = key === undefined ? null : randomUUID();
+    if (key !== undefined) {
+      const problem = apiKeyProblem(key);
+      if (problem) return { ok: false, why: problem };
+      if (!(await this.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
+      if (!fresh()) return { ok: false, why: PROVIDER_HOST_CHANGED };
+      const text = JSON.stringify({ v: 1, host, key: key.trim(), id: keyId });
+      try { sealed = this.opts.asyncKeyring && this.box.encryptStringAsync ? await this.box.encryptStringAsync(text) : this.box.encryptString(text); }
+      catch { return { ok: false, why: KEY_NO_KEYRING }; }
     }
-    if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
-    const r: SaveResult = this.write(this.file, sealed);
-    if (r !== "kept" || this.write(hostFile(this.file), Buffer.from(host)) !== "kept") { this.clear(); return { ok: false, why: KEY_WRITE_FAILED }; }
-    return { ok: true, keyId };
+    if (!fresh()) return { ok: false, why: PROVIDER_HOST_CHANGED };
+    const nonce = randomUUID();
+    const state = `${this.file}.${nonce}.state`;
+    const files = [this.file, hostFile(this.file)].map((file, i) => ({ file, stage: `${file}.${nonce}.stage`, backup: `${file}.${nonce}.backup`,
+      data: sealed === undefined ? undefined : i === 0 ? sealed : Buffer.from(host), old: false, published: false }));
+    for (const f of files) { this.artifacts.add(f.stage); this.artifacts.add(f.backup); }
+    let committed = false;
+    try {
+      // Write both new files before touching either old one; backups contain encrypted bytes and host metadata only.
+      for (const f of files) if (f.data) fs.writeFileSync(f.stage, f.data, { mode: 0o600, flush: true });
+      if (owner) { this.artifacts.add(state); fs.writeFileSync(state, JSON.stringify(owner), { mode: 0o600, flush: true }); }
+      if (!fresh()) return { ok: false, why: PROVIDER_HOST_CHANGED };
+      for (const f of files) {
+        try { fs.renameSync(f.file, f.backup); f.old = true; }
+        catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
+      }
+      for (const f of files) if (f.data) { fs.renameSync(f.stage, f.file); f.published = true; }
+      change(keyId);
+      committed = true;
+      return { ok: true };
+    } catch {
+      for (const f of [...files].reverse()) {
+        if (f.published) try { fs.rmSync(f.file, { force: true }); } catch { /* the backup still holds the original */ }
+        if (f.old) try { fs.renameSync(f.backup, f.file); f.old = false; } catch { /* retain the encrypted original for recovery */ }
+      }
+      return { ok: false, why: KEY_WRITE_FAILED };
+    } finally {
+      for (const f of files) {
+        try { fs.rmSync(f.stage, { force: true }); this.artifacts.delete(f.stage); } catch { /* never contains an unsealed key */ }
+        // A backup surviving a failed rollback is the only durable original: leave it for recovery.
+        if (committed || !f.old) try { fs.rmSync(f.backup, { force: true }); this.artifacts.delete(f.backup); } catch { /* clear() retries private artefacts */ }
+      }
+      if (committed || files.every(f => !f.old)) try { fs.rmSync(state, { force: true }); this.artifacts.delete(state); } catch { /* recovery or Remove retries */ }
+    }
   }
 
   /** The saved key and its host, or null (none saved, unreadable, or the keyring wouldn't open it). Never throws. */
@@ -266,25 +304,60 @@ export class ProviderKeyStore {
     }
   }
 
+  /** Restores an interrupted replacement for the endpoint settings still name; sealed host binding is checked on load. */
+  recover(host: string, force = false, owner?: string): void {
+    const nonces = new Set(this.transactionFiles().filter(f => /\.(?:backup|state)$/.test(f)).map(f => {
+      const prefix = f.startsWith(`${this.file}.`) ? this.file : hostFile(this.file);
+      return f.slice(prefix.length + 1, f.lastIndexOf("."));
+    }));
+    for (const nonce of nonces) {
+      const backup = `${this.file}.${nonce}.backup`;
+      const metadata = `${hostFile(this.file)}.${nonce}.backup`;
+      try {
+        const state = `${this.file}.${nonce}.state`;
+        let restore = force || this.savedHost() !== host;
+        if (fs.existsSync(state)) {
+          const saved = JSON.parse(fs.readFileSync(state, "utf8")) as { before?: unknown; after?: unknown };
+          // Host alone cannot tell A/v1 + old key from A/v2 + new key after an interrupted same-host edit.
+          if (!owner || typeof saved.before !== "string" || typeof saved.after !== "string") continue;
+          if (saved.after === owner && saved.before !== owner) continue;
+          if (saved.before !== owner) continue;
+          restore ||= saved.after !== owner;
+        }
+        if (!restore) continue;
+        const from = fs.existsSync(metadata) ? metadata : hostFile(this.file);
+        if (fs.readFileSync(from, "utf8").trim() !== host) continue;
+        ++this.revision;
+        // A rollback or recovery may already have restored the key before the metadata rename was interrupted.
+        if (fs.existsSync(backup)) fs.renameSync(backup, this.file);
+        if (from === metadata) fs.renameSync(metadata, hostFile(this.file));
+        return;
+      } catch { /* the original remains private; no key is used unless its sealed host matches */ }
+    }
+  }
+
+  /** Clears private transaction remnants after a matching primary key has been loaded successfully. */
+  cleanupTransactions(): void {
+    for (const f of this.transactionFiles()) try { fs.rmSync(f, { force: true }); this.artifacts.delete(f); } catch { /* Remove retries too */ }
+  }
+
+  private transactionFiles(): string[] {
+    const prefixes = [path.basename(this.file) + ".", path.basename(hostFile(this.file)) + "."];
+    try {
+      return fs.readdirSync(path.dirname(this.file)).filter(name => prefixes.some(prefix => name.startsWith(prefix)
+        && /^[0-9a-f-]{36}\.(?:stage|backup|state)$/.test(name.slice(prefix.length)))).map(name => path.join(path.dirname(this.file), name));
+    } catch { return []; /* no readable data folder: never guess a key */ }
+  }
+
   /** Deletes the saved key and its host. */
   clear(): void {
     ++this.revision;
-    for (const f of [this.file, hostFile(this.file)]) {
+    for (const f of [this.file, hostFile(this.file), ...this.artifacts, ...this.transactionFiles()]) {
       try { fs.rmSync(f, { force: true }); } catch { /* already gone */ }
     }
   }
 
-  private write(file: string, data: Buffer): SaveResult {
-    const tmp = `${file}.${process.pid}.tmp`;
-    try {
-      fs.writeFileSync(tmp, data, { mode: 0o600 });
-      fs.renameSync(tmp, file);
-      return "kept";
-    } catch {
-      try { fs.rmSync(tmp, { force: true }); } catch { /* nothing was written */ }
-      return "write-failed";
-    }
-  }
+
 }
 
 /**
@@ -375,9 +448,9 @@ export function redactingLogger(base: Logger, secret: () => string | null | read
 
 /** What the provider service needs from main (the settings store, the policy, the key store, the network). */
 export interface ProviderServiceDeps {
-  settings: { get(): Settings; own(): Settings; update(patch: SettingsPatch): Settings };
+  settings: { get(): Settings; own(): Settings; update(patch: SettingsPatch, opts?: { requirePersist?: boolean; expectedProvider?: Settings["provider"] }): Settings };
   admin: () => LoadedAdminPolicy;
-  keys: Pick<ProviderKeyStore, "savedHost" | "canPersist" | "save" | "load" | "clear">;
+  keys: Pick<ProviderKeyStore, "savedHost" | "canPersist" | "save" | "load" | "clear"> & Partial<Pick<ProviderKeyStore, "replaceWith" | "recover" | "cleanupTransactions">>;
   /** The user agreed to Ember at all (hasConsent): until then nothing is sent anywhere. */
   consented: () => boolean;
   fetch: FetchLike;
@@ -400,6 +473,8 @@ export function createProviderService(d: ProviderServiceDeps) {
   let reading: Promise<void> | null = null;
   let revision = 0;
   let saving: Promise<unknown> = Promise.resolve();
+  let adoption: string | null = null;
+  let committing = false;
   const invalidate = () => { ++revision; reading = null; };
   /**
    * Keys replaced or removed this run: still redacted from the log, since a task may still run on one (tasks keep the
@@ -414,11 +489,17 @@ export function createProviderService(d: ProviderServiceDeps) {
   /** Reads the saved key when it is for the endpoint now and not read yet; `always`: even with the provider off (a test). */
   const readKey = (always = false): Promise<void> => {
     const host = hostNow();
-    if (stored || !host || !allowed() || (!always && !d.settings.get().provider.on) || d.keys.savedHost() !== host) return Promise.resolve();
+    if (stored || !host || !allowed() || (!always && !d.settings.get().provider.on)) return Promise.resolve();
+    const owner = JSON.stringify(d.settings.own().provider);
+    d.keys.recover?.(host, false, owner);
+    if (d.keys.savedHost() !== host) return Promise.resolve();
     const started = revision;
-    const pending = reading ?? d.keys.load().then(k => {
+    const pending = reading ?? d.keys.load().then(async k => {
+      if (k && k.host !== host && started === revision) { d.keys.recover?.(host, true, owner); k = await d.keys.load(); }
       // A key sealed for another host than the one beside it is no key at all.
-      if (started === revision && allowed() && (always || d.settings.get().provider.on) && k && k.host === host && host === hostNow()) { stored = k; d.log.info("provider.key_read", {}); d.changed(); }
+      if (started === revision && allowed() && (always || d.settings.get().provider.on) && k && k.host === host && host === hostNow()) {
+        stored = k; d.keys.cleanupTransactions?.(); d.log.info("provider.key_read", {}); d.changed();
+      }
     }).finally(() => { if (reading === pending) reading = null; });
     reading = pending;
     return pending;
@@ -453,6 +534,21 @@ export function createProviderService(d: ProviderServiceDeps) {
     return r;
   };
 
+  const settingsChanged = (): void => {
+    if (committing) return;
+    invalidate();
+    if (!allowed() || !d.settings.get().provider.on) retire();
+    const saved = d.keys.savedHost();
+    const host = endpointHost(d.settings.own().provider.baseUrl);
+    if (saved && saved !== host) {
+      d.keys.clear();
+      retire();
+      d.log.info("provider.key_cleared", { why: "endpoint_changed" });
+      d.changed();
+    }
+    void readKey();
+  };
+
   return {
     /** The saved key and its host, once read (null: none, or not needed yet). */
     key: (): StoredKey | null => stored,
@@ -466,19 +562,7 @@ export function createProviderService(d: ProviderServiceDeps) {
       return !stored && !!host && allowed() && d.settings.get().provider.on && d.keys.savedHost() === host;
     },
     /** The settings changed: a key saved for another host than the endpoint now is deleted, and one now needed is read. */
-    settingsChanged(): void {
-      invalidate();
-      if (!allowed() || !d.settings.get().provider.on) retire();
-      const saved = d.keys.savedHost();
-      const host = endpointHost(d.settings.own().provider.baseUrl);
-      if (saved && saved !== host) {
-        d.keys.clear();
-        retire();
-        d.log.info("provider.key_cleared", { why: "endpoint_changed" });
-        d.changed();
-      }
-      void readKey();
-    },
+    settingsChanged,
     /** Signing out: the key goes. */
     forget(): void {
       invalidate();
@@ -486,11 +570,67 @@ export function createProviderService(d: ProviderServiceDeps) {
       retire();
     },
     api: {
+      /** Revokes a held renderer draft while its keyring operation is outstanding. */
+      cancelAdoption: (id: string): void => { if (adoption === id) adoption = null; },
+      /** Replaces a provider in force only once its key and settings can be published together. */
+      adopt: async (request: ProviderAdoption): Promise<KeySave> => {
+        if (!d.consented()) return { ok: false, why: PROVIDER_NO_CONSENT };
+        if (!allowed() || !d.keys.replaceWith) return { ok: false, why: PROVIDER_MANAGED };
+        const before = d.settings.own().provider;
+        if (!before.on || !providerAgreed(before) || hostNow() !== request.from || endpointHost(request.move.baseUrl) !== request.host) return { ok: false, why: PROVIDER_HOST_CHANGED };
+        adoption = request.id;
+        const started = revision;
+        const fingerprint = JSON.stringify(before);
+        const current = () => adoption === request.id && started === revision && d.consented() && allowed() && JSON.stringify(d.settings.own().provider) === fingerprint;
+        const operation = saving.then(async (): Promise<KeySave> => {
+          if (!current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
+          const previousKey = stored;
+          const next = { ...before, ...request.move, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host: request.host } };
+          const keepKey = request.key === undefined && request.host === request.from;
+          const publish = (keyId: string | null): void => {
+            committing = true;
+            if (!keepKey) {
+              retire();
+              stored = request.key === undefined ? null : { key: request.key.trim(), host: request.host, keyId };
+            }
+            try { d.settings.update({ provider: next }, { requirePersist: true, expectedProvider: before }); }
+            catch (err) {
+              // Settings listeners run after persistence: an observer fault cannot undo an already committed choice.
+              if (JSON.stringify(d.settings.own().provider) !== JSON.stringify(next)) {
+                if (started === revision) stored = previousKey;
+                throw err;
+              }
+              d.log.warn("provider.adoption_notice_failed", {});
+            } finally { committing = false; }
+          };
+          // A same-host edit without a typed replacement keeps the existing sealed key and its identity.
+          let result: KeySave;
+          if (keepKey) {
+            try { publish(null); result = { ok: true }; }
+            catch { result = { ok: false, why: "Ember couldn't save these provider details. Check its settings notice, then try again." }; }
+          } else result = await d.keys.replaceWith!(request.key, request.host, current, publish, { before: fingerprint, after: JSON.stringify(next) });
+          if (!result.ok) {
+            if (started === revision) {
+              stored = previousKey;
+              if (JSON.stringify(d.settings.own().provider) !== fingerprint) settingsChanged();
+            }
+          }
+          else {
+            invalidate(); d.log.info("provider.adopted", {});
+            try { d.changed(); } catch { d.log.warn("provider.adoption_notice_failed", {}); }
+          }
+          if (adoption === request.id) adoption = null;
+          return result;
+        });
+        saving = operation.catch(() => undefined);
+        return operation;
+      },
       state: () => providerStateOf({ settings: d.settings.get(), admin: d.admin(), keys: d.keys }),
-      saveKey: async (key: string): Promise<KeySave> => {
+      saveKey: async (key: string, expectedHost: string): Promise<KeySave> => {
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
         const host = hostNow();
         if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
+        if (host !== expectedHost) return { ok: false, why: PROVIDER_HOST_CHANGED };
         invalidate();
         const started = revision;
         // Serialise writes so cancelling an old save cannot erase a newer key.
@@ -587,7 +727,8 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
 /**
  * What a test of the endpoint found. `cause`, for a failure: nothing answered (refused, timed out, unreachable: the
  * provider is down), or it answered but has no model list at that address (`no-list`: 404, 405 or 501 on GET /models,
- * as some gateways that answer chat only do), which a held edit's check takes as an answer (integrations-r4-2).
+ * as some gateways that answer chat only do). A held edit keeps the working provider after that ambiguous answer
+ * (integrations-c5-1).
  */
 export type TestResult = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 

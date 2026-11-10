@@ -379,7 +379,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       env: { ...env, EMBER_TEST_HOOKS: "1", EMBER_USER_DATA: userData },
     });
     const askWindow = () => ember.evaluate(({ BrowserWindow }) => {
-      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember");
+      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Companion request");
       return w ? { visible: w.isVisible(), focused: w.isFocused() } : null;
     });
     try {
@@ -418,7 +418,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         .catch(async (e: unknown) => { throw new Error(`${(e as Error).message} (the ask window: ${JSON.stringify(await askWindow())})`); });
       await sleep(800);
       const { held, tip } = await ember.evaluate(async ({ BrowserWindow }) => {
-        const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Ask Ember");
+        const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Companion request");
         return w ? await w.webContents.executeJavaScript(`({ held: document.querySelector("#q")?.value ?? "", tip: document.getElementById("tip")?.hidden === false ? document.getElementById("tip").textContent : null })`) as { held: string; tip: string | null } : { held: "", tip: null };
       });
       const verdict = probeVerdict("Windows", PROBE_TEXT, held);
@@ -434,7 +434,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       // Review #77: open the field's edit menu, then click a point on the bench outside the Ask window.
       // If the native menu swallows the first click, Ask keeps the keyboard until the next click reaches the bench.
       const { at, askId } = await ember.evaluate(async ({ BrowserWindow, Menu, screen }) => {
-        const w = BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")!;
+        const w = BrowserWindow.getAllWindows().find(w => w.getTitle() === "Companion request")!;
         // Observe the real menu in this test's disposable Electron process. Its HWND varies across Windows versions.
         const probe: AskMenuProbe = { editable: null, popup: false, shown: false, closed: false };
         (globalThis as { __askMenuProbe?: AskMenuProbe }).__askMenuProbe = probe;
@@ -519,7 +519,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       const seen = await openAskAt(inEmber, "larger");
       console.log(`the ask box at Larger text (review #57): ${JSON.stringify(seen)}`);
       // Windows rounds the two pixel edges separately, and Electron converts them back to whole DIP on readback.
-      const hwnd = await ember.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")!.getNativeWindowHandle().readUInt32LE(0));
+      const hwnd = await ember.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.getTitle() === "Companion request")!.getNativeWindowHandle().readUInt32LE(0));
       const native = loadWin32()!.windowRect(hwnd);
       const { width, height, ...page } = askWant("larger", seen.tip);
       expect(native, JSON.stringify({ native, seen })).toMatchObject({ width: Math.round(width * seen.scaleFactor) });

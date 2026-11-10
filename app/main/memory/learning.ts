@@ -338,7 +338,11 @@ export class MemoryLearning {
       if (!this.d.inForce() || (request && !this.interview.answers(text))) { this.interview = null; return null; }
       const step = this.interview.answer(text, how.own);
       this.interviewAt = now;
-      this.keepAll(step.keep);
+      const kept = this.keepAll(step.keep);
+      if (kept < step.keep.length && (this.d.memory.trouble === "unsaved" || this.d.memory.trouble === "unreadable")) {
+        this.interview = null;
+        return "I couldn't save that answer. I've stopped the questions; check Memory in settings, then try again.";
+      }
       // "Spoken or not" is Ember's real choice, not only a fact (only what the user was heard to say reaches `keep`).
       const spoken = step.keep.find(f => f.predicate === "spoken_answers");
       if (spoken && how.own) {
@@ -467,6 +471,8 @@ export class MemoryLearning {
     const added: Fact[] = [];
     for (const f of facts) {
       const r = this.d.memory.learn(f);
+      // A later successful write must not hide an earlier lost answer in this batch (memory-w7-1).
+      if (r.kind === "refused" && (this.d.memory.trouble === "unsaved" || this.d.memory.trouble === "unreadable")) break;
       if (r.kind !== "refused") kept++;
       // (Said again: kept, and already known, so nothing new to show.)
       if (r.kind === "added") added.push(r.fact);

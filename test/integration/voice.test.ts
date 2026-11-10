@@ -13,6 +13,8 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import { COMPOSER_THINKING, STARTED_TEXT } from "../../app/renderer/home/copy";
+import { MATCH_TEXT, matchView } from "../../app/renderer/home/match-copy";
 import { VoiceEngine, type VoiceEvent } from "../../app/voice/engine";
 import { ModelLoadError, sherpaBackend } from "../../app/voice/sherpa";
 import { DEFAULT_VOICE, modelPaths, modelReady, modelsReady } from "../../app/voice/models";
@@ -99,6 +101,80 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
       expect(out.samples.every(Number.isFinite)).toBe(true);
       expect(out.samples.some(s => Math.abs(s) > 0.01)).toBe(true);
     } finally { voice.free(); }
+  });
+
+  it("does not wake on setup, Home focus or the thinking announcement (first-run-r6-1, voice-listening-r6-1)", () => {
+    if (capiDir) expect(backend.info.backend).toBe("native");
+    // The standard fixture voice is prepared by CI; the second fixture voice is checked when present too.
+    let checked = 0;
+    for (const name of ["amy", "ryan"]) {
+      const reader = path.join(dir, `vits-piper-en_US-${name}-low`);
+      if (!fs.existsSync(path.join(reader, `en_US-${name}-low.onnx`))) continue;
+      checked++;
+      const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(reader, `en_US-${name}-low.onnx`), tokens: path.join(reader, "tokens.txt"), dataDir: path.join(reader, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
+      for (const text of [STARTED_TEXT, "Home", COMPOSER_THINKING]) {
+        const raw: Float32Array = tts.generate({ text, sid: 0, speed: 1 }).samples;
+        const samples = new Float32Array(16_000 + raw.length);
+        samples.set(raw, 16_000);
+        const { events } = play(samples);
+        expect(events.filter(e => e.type === "wake"), text).toHaveLength(0);
+        expect(events.filter(e => e.type === "utterance"), text).toHaveLength(0);
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it("does not wake or hear a request from the Home title on activation (listening-refresh-1)", () => {
+    if (capiDir) expect(backend.info.backend).toBe("native");
+    const home = fs.readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    const title = /<title>([^<]+)<\/title>/.exec(home)?.[1];
+    expect(title).toBeTruthy();
+    let checked = 0;
+    for (const name of ["amy", "ryan"]) {
+      const reader = path.join(dir, `vits-piper-en_US-${name}-low`);
+      if (!fs.existsSync(path.join(reader, `en_US-${name}-low.onnx`))) continue;
+      checked++;
+      const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(reader, `en_US-${name}-low.onnx`), tokens: path.join(reader, "tokens.txt"), dataDir: path.join(reader, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
+      for (const text of [`${title}.`, `${title}. Home. Ready.`]) {
+        const raw: Float32Array = tts.generate({ text, sid: 0, speed: 1 }).samples;
+        const samples = new Float32Array(16_000 + raw.length);
+        samples.set(raw, 16_000);
+        const { events } = play(samples);
+        expect(events.filter(e => e.type === "wake"), `${name}: ${text}`).toHaveLength(0);
+        expect(events.filter(e => e.type === "utterance"), `${name}: ${text}`).toHaveLength(0);
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it("does not wake when focus reads Ask or Voice Match controls (voice-listening-r6-2, voice-listening-q6-1)", () => {
+    if (capiDir) expect(backend.info.backend).toBe("native");
+    const ask = fs.readFileSync(new URL("../../app/renderer/ask/index.html", import.meta.url), "utf8");
+    const title = /<title>([^<]+)<\/title>/.exec(ask)?.[1];
+    const label = /<label for="q" class="sr">([^<]+)<\/label>/.exec(ask)?.[1];
+    const placeholder = /placeholder="([^"]+)"/.exec(ask)?.[1];
+    expect(title && label && placeholder).toBeTruthy();
+    const phrases = [`${title}. ${label}. ${placeholder}`, MATCH_TEXT.notListening, MATCH_TEXT.again.failed];
+    for (const enrolled of [false, true]) {
+      const view = matchView({ enrolled, on: enrolled, model: true, enrolling: null }, { listening: true, managed: false });
+      phrases.push(`${enrolled ? MATCH_TEXT.teachAgain : MATCH_TEXT.teach}. ${view.description}`);
+    }
+    let checked = 0;
+    for (const name of ["amy", "ryan"]) {
+      const reader = path.join(dir, `vits-piper-en_US-${name}-low`);
+      if (!fs.existsSync(path.join(reader, `en_US-${name}-low.onnx`))) continue;
+      checked++;
+      const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(reader, `en_US-${name}-low.onnx`), tokens: path.join(reader, "tokens.txt"), dataDir: path.join(reader, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
+      for (const text of phrases) {
+        const raw: Float32Array = tts.generate({ text, sid: 0, speed: 1 }).samples;
+        const samples = new Float32Array(16_000 + raw.length);
+        samples.set(raw, 16_000);
+        const { events } = play(samples);
+        expect(events.filter(e => e.type === "wake"), text).toHaveLength(0);
+        expect(events.filter(e => e.type === "utterance"), text).toHaveLength(0);
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 
   it("wakes on 'Hey Ember' and hears the request in the same breath", () => {

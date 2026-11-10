@@ -75,6 +75,15 @@ function fakeElectron(o: { packaged?: boolean; iconThere?: boolean } = {}) {
 
 const actions = () => ({ showSettings: vi.fn(), quit: vi.fn() });
 
+it("gives Home a name-free native and document title on every platform (listening-refresh-1)", () => {
+  for (const os of ["linux", "win32", "darwin"] as OS[]) {
+    createHomeWindow(os);
+    expect(electron.made.at(-1)!.options.title, os).toBe("Companion home");
+  }
+  const html = fs.readFileSync(path.resolve("app/renderer/home/index.html"), "utf8");
+  expect(/<title>([^<]+)<\/title>/.exec(html)?.[1]).toBe("Companion home");
+});
+
 describe("the application menu (review #243, #176, #232)", () => {
   it("is none at all on Windows and Linux: no Quit that skips the question, no reload, DevTools, close or full screen", () => {
     expect(appMenuTemplate(false, actions())).toBeNull();

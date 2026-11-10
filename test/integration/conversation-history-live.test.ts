@@ -98,3 +98,57 @@ it.skipIf(process.env.EMBER_CONVERSATION_LIVE !== "1")("keeps the conversation a
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }, 240_000);
+
+it.skipIf(process.env.EMBER_CONVERSATION_LIVE !== "1")("keeps a safe Home title and unsent draft across closing, clears on privacy reset and still quits (home-r7-1, listening-refresh-1)", async () => {
+  const requireCjs = createRequire(import.meta.url);
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "ember-home-draft-"));
+  fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }));
+  const mock = await startMockLlm({ delayMs: 5, respond: () => ({ text: "Ready." }) });
+  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
+  try {
+    app = await _electron.launch({ executablePath: requireCjs("electron") as string, args: [process.cwd(), "--show-settings", ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])], env: { ...process.env, EMBER_USER_DATA: userData, EMBER_TEST_PROVIDER_URL: mock.baseUrl } });
+    const page = () => app?.windows().find(win => win.url().includes("/renderer/home/index.html"));
+    await expect.poll(() => !!page(), { timeout: 20_000 }).toBe(true);
+    const home = page()!;
+    await home.locator("#conversation-message").waitFor({ state: "visible", timeout: 20_000 });
+    expect(await home.title()).toBe("Companion home");
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes("/renderer/home/index.html"))!.getTitle())).toBe("Companion home");
+    await home.locator("#conversation-message").fill("My private unsent draft");
+    const id = await app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes("/renderer/home/index.html"))!;
+      const id = win.id;
+      win.close();
+      return id;
+    });
+    expect(await app.evaluate(({ BrowserWindow }, id) => !!BrowserWindow.fromId(id), id)).toBe(true);
+    expect(await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.isVisible(), id)).toBe(false);
+    await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)!.show(), id);
+    expect(await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)!.getTitle(), id)).toBe("Companion home");
+    expect(await home.title()).toBe("Companion home");
+    expect(await home.locator("#conversation-message").inputValue()).toBe("My private unsent draft");
+    await app.evaluate(({ BrowserWindow }, id) => {
+      const win = BrowserWindow.fromId(id)!;
+      win.close();
+      // The same privacy event sign-out/account/policy erasure sends: it must reach a hidden renderer too.
+      win.webContents.send("agent:conversation-forgotten");
+    }, id);
+    await expect.poll(() => home.locator("#conversation-message").inputValue(), { timeout: 10_000 }).toBe("");
+    await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)!.show(), id);
+    expect(await home.locator("#conversation-message").inputValue()).toBe("");
+    await home.locator("#conversation-message").fill("Draft before policy lockdown");
+    await app.evaluate(({ BrowserWindow }, id) => {
+      const win = BrowserWindow.fromId(id)!;
+      win.close();
+      win.webContents.send("ember:admin-changed", { source: "/etc/ember/policy.json", error: "Policy changed", held: true, managed: [], features: {}, provider: null, confirmEveryAction: true, allowGrants: false, retentionDays: null, neverLook: [] });
+    }, id);
+    await expect.poll(() => home.locator("#conversation-message").inputValue(), { timeout: 10_000 }).toBe("");
+    const exited = new Promise<void>(done => app!.process().once("exit", () => done()));
+    await app.evaluate(({ app: electronApp }) => electronApp.quit()).catch(() => { /* quitting closes the connection */ });
+    await exited;
+    app = undefined;
+  } finally {
+    await app?.close().catch(() => { /* already quit */ });
+    await mock.close();
+    fs.rmSync(userData, { recursive: true, force: true });
+  }
+}, 60_000);

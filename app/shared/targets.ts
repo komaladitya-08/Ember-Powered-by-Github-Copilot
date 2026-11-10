@@ -56,6 +56,8 @@ export interface TargetSummary {
   state: "ready" | "connecting" | "lost" | "off" | "unavailable";
   /** What Ember can do there now, in a few words: "apps and commands", "commands only", "Linux apps". */
   can: string;
+  /** Current runtime capabilities, including the remote's stricter policy; absent means not known (home-v7-1). */
+  capabilities?: { commands: boolean; work: boolean };
   /** The picker's choice: requests that name no computer go here. */
   active: boolean;
   /** Why the last connection to it failed, while it isn't connected (the settings row keeps it after the bubble goes). */

@@ -87,7 +87,7 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 | Command | What it does |
 |---|---|
 | `npm run dev` | Build and start Ember |
-| `npm test` | Unit tests (Vitest) |
+| `npm test` | Unit tests (Vitest); permission fixtures set their asserted starting mode explicitly, so a private umask such as `077` stays intact |
 | `npm run test:sidecar` | The accessibility sidecar's own tests (`python3 -B sidecar/atspi/test_ember_atspi.py`; a stand-in pyatspi, no desktop needed). CI also runs them on RHEL 8's `platform-python` 3.6. They share the secret-field labels in `test/fixtures/secret-labels.json` with the TypeScript tests |
 | `npm run test:integration` | Runs the real Copilot runtime against the offline mock model |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
@@ -104,7 +104,7 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception-electron.test.ts` | Reads Electron windows (Chromium's accessibility) through the sidecar and X11: window frames, scale 2, secret fields withheld and blacked out. Same needs as the line above (the test starts its windows with `ACCESSIBILITY_ENABLED=1`, as Chromium joins the accessibility bus only when asked); CI runs it with them on `rockylinux:8` |
 | `npm run test:integration -- test/integration/borrow-live.test.ts test/integration/desk-robust.test.ts` | Borrowing the mouse and keyboard on a private Xvfb (other keyboard layouts need `setxkbmap`; skipped without Xvfb), and Ember's desk when things go wrong (its display dying, Ember killed). Need only Xvfb (and `xauth`, `dbus-daemon` for the desk), no desktop session |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
-| `node scripts/voice/prepare.mjs` | Downloads the standard verified speech models into `.cache/voice`, including the default Kitten Nano voice (63.8 MB), for the voice tests and tour. `--tts-voice` also fetches a separate test-only Piper Amy/Ryan voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesises new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
+| `node scripts/voice/prepare.mjs` | Downloads the standard verified speech models into `.cache/voice`, including the default Kitten Nano voice (63.8 MB), for the voice tests and tour, plus the separate SHA-256-pinned test-only Piper Amy voice used by the acoustic UI-copy regressions and the evaluation's missed-wakes gate. `--voice ryan` selects the other test speaker; `--tts-voice` remains accepted for compatibility. Test speakers are never packaged. `--clips` synthesises new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
 | `node scripts/voice/match-bench.mjs <speakers> [--cache <file>]` | Voice Match that keeps learning (docs/ASSISTANT.md §7): false rejects and accepts before and after learning, in the enrolment's room and on another microphone, and the drift attack, on a folder of speakers' 16 kHz clips (LibriSpeech dev-clean through ffmpeg, as its header says). `--cache` keeps the voiceprints (numbers only) for trying other limits. Needs the speech models |
 | `node scripts/voice/words-bench.mjs [--show]` | Personal vocabulary for recognition (docs/ASSISTANT.md §7): word error rate of the voice clips and of synthesised requests with app and people's names, raw, corrected against a lexicon, and with corrections taught from a first take. Needs `node scripts/voice/prepare.mjs --tts-voice --voice ryan` |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m5-tour.mjs out/` | Voice tour: a WAV file plays the microphone; the video gets the audio |
@@ -126,6 +126,44 @@ runtime. It does not change the app's consent or speaking settings.
 
 ### Using Ember
 
+Voice Match's automatically focused controls keep their name and state description free of the wake name; its full
+visible help still explains what requests and spoken approvals mean. A failed teaching attempt replaces the focused
+description with its first-person failure reason and next step. Ask uses “Companion request” as its page and
+window title and “Ask or tell me” for the full accessible field label. Its short “Ask…” placeholder keeps the empty
+field on one line at narrow widths and Larger text. The self-window privacy fallback recognises this title as well as
+older titles, so a missing process id still cannot expose that window to the agent.
+
+Home's page and native window title are “Companion home”, removing the wake name from those controlled title surfaces
+while the visible heading still says Ember. Native reader announcement order and application names remain device
+checks. The self-window privacy fallback recognises this unique title and every
+legacy title when the process id is unknown; an unrelated Files window called Home remains usable.
+Home's automatic thinking line also avoids the wake name, including possessives, while keeping its reply-location hint.
+Its automatic voice-status announcement is held while the microphone starts as well as while it listens, including
+a Listen once startup lasting more than a second. The visible status and deliberate teaching prompts remain; once
+the microphone closes, settled changes retain their usual delay without repeating the line from before it opened.
+
+During setup, an unsaved provider key stays tied to the host where it was entered. A different valid host or port
+clears it, including when reopening the form restores a saved address. Path-only edits and an unfinished address
+while typing keep it. Changing the address alone leaves the provider and key already in use untouched.
+
+First run's Agree waits until Ember knows where requests will go. If the recipient or the shown agreement changes,
+the half-second protection against a stray press starts again; nothing is read, heard or sent while it waits.
+
+Setup's automatic heading focus and Start announcement use words without the wake name, including when returning
+with voice already agreed. Visible headings keep Ember's name; screen readers hear “Home” after Start.
+
+Closing Home keeps its unsent conversation draft and waiting-message recovery in memory for this run; reopening
+Home brings them back. It still ends Home's Listen once, Voice Match teaching and Project work. No draft is written
+to disk or sent automatically. Signing out or changing account clears the conversation and draft; a policy lockdown
+clears the draft too, including while Home is hidden. Quitting Ember destroys the page and discards unsent drafts.
+
+Home's Features line follows the targets runtime's existing capability updates, including a remote's stricter policy.
+SSH counts only working connections; missing or old capability snapshots show nothing enabled. Listening shows on only while the speech models and microphone are ready. Saved preferences
+remain available after a policy restriction is lifted or missing models are downloaded.
+
+Home keeps the draft set aside by **Edit** and restores it after the edited request is sent, above any words typed
+while Send was waiting. An earlier acknowledgement cannot close a newer edit. No draft is sent automatically.
+
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
   lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
@@ -134,7 +172,14 @@ runtime. It does not change the app's consent or speaking settings.
   agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Your Ember** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on, only **Use GitHub Copilot instead** switches it off (pressed while Ember is still answering or at a task, the step says Ember will switch once it has finished, and lets you go on), and an edit is checked as typed before it replaces the details in use, so one that fails, or that you leave or change while it is checked, changes nothing and the step says Ember is still using the old host, with **Keep using** it to go on; once switched off, the step opens again as one to set up, and a check there that fails leaves it off; or **Skip for now**); the setup check shows only
   the rows that need you (and, once **Turn on** has switched screen reading on, that apps already open need a restart), in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission), and
   **Check again**, which reads the rows anew once you have run the command or changed the setting yourself (Home's
-  setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s, in the background, so Ember
+  setup check has it too; on Linux Python bindings and the GNOME accessibility switch are checked in the background,
+  at start and every 30 s, or at once with Check again. While a check is pending the row says Checking screen reading,
+  never that bindings are missing or ready. Neither a first read nor a later session-bus check blocks Stop; `ember doctor`
+  waits asynchronously for the completed checks. **Turn on** also waits off the main thread for GNOME to apply the
+  setting, leaving Stop responsive and reporting a failed change through the existing fix error. If the GNOME switch cannot be read, the row says it could not be
+  checked. Screen-reader detection also queries GNOME off the main thread, caches its answer for a minute and keeps
+  using Chromium's current accessibility state. While reader detection is unknown, teaching and Listen once use
+  their screen-reader guards; that uncertainty never enables speaking only meant for a detected reader. A missing pyatspi is looked for again, so Ember
   keeps answering while that import takes up to 5 s) (**Show the details** has every
   row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
   request in the ask box; and **Your Ember** sums it up before **Start Ember**. Nothing is read, heard or sent before
@@ -172,7 +217,9 @@ runtime. It does not change the app's consent or speaking settings.
     clock, its steps in one line, its plan as a checklist, a row for each thing it did with the time after it started
     (steps of one kind folded, each listed when opened), its questions with how they were answered, and how it ended
     (the worker's summary and view). A finished task folds to its head. A task waiting for your answer says where it is
-    asked and with which keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
+    asked. Refusals, denied steps and sent pictures stay with the exact tool call that produced them, even when the
+    model queued another step before the first ran. A missing or stale call id never chooses between overlapping steps.
+    The waiting task also names its answer keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
     filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, through a
     reconnect (a finished task's row then offers nothing to press, its card having gone, except after a switch of model
     service that waited for the tasks: their cards go on), and gone at quit, sign-out
@@ -184,6 +231,15 @@ runtime. It does not change the app's consent or speaking settings.
     settings shortcut, the handle's **Settings…** and `ember --show-settings` open settings.
 - Long answers have **Read all** (counted at the text size you picked): the **Conversation** on the settings window's **Home**
   keeps this session's questions, answers and task results (in memory only by default; quitting or signing out forgets them).
+  **Read it out**, typed, spoken or chosen as a suggestion, reads the retained answer through the current speaking
+  settings and policy. It never turns on **Read finished tasks out loud**; when speaking is off, Ember says where to
+  change it and leaves it off. An explicit request to read future task results still changes that separate preference.
+  While an approval is up, the conversation says to answer it first and ask again; no answer is spoken over it.
+  A request while the answer is still being written says to wait without sending a new model request or dropping
+  the unfinished reply. These reading-limit notices never replace the retained answer, including after a restart
+  with **Keep my recent conversation** on; their display-only notice marker is saved with the existing words.
+  **Hear Ember** reports each sample's failure, including a second attempt with no installed voice, without waiting
+  for the sample's 12-second outer deadline merely because the previous attempt failed too.
   - **Keep my recent conversation after Ember closes** (`keepConversation`, off by default; Home › Conversation): saves the
     latest 60 messages (at most 2 MiB) in `conversation.json` in the data folder (mode 0600, folder 0700; written
     atomically through a temp file, fsync and rename, last state wins), and shows them again after a restart once the
@@ -337,7 +393,11 @@ runtime. It does not change the app's consent or speaking settings.
   open instead while Ember isn't set up or the desktop session is one it can't use (the setup check says why). The macOS
   Dock menu's **Ask Ember** does the same in the running Ember.
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
-  animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the text
+  animations are off or the desktop asks for reduced motion. On Linux that preference is checked in the background,
+  including when a compositor returns: Stop stays responsive, and cursor-following starts with reduced motion while
+  that preference is unchecked. A newer live preference takes priority.
+  A result for a stopped or replaced overlay, or one superseded by a live preference change, is ignored.
+  Its **Text size** (Default, Large, Larger) changes the text
   in settings, Ember's bubble, task cards and handle, the ask box, the desk window's bar, the command window and its
   terminal, and Ember's password and consent cards. **Glass** (Clear, Regular, Solid; `settings.glass`, put on the floating pages as
   `html[data-glass]`) sets how much of the screen shows through the bubble, task cards, handle and ask box: Clear is an even,
@@ -476,6 +536,25 @@ agree.
 The runtime is `app/main/extensions/` (ExtensionsService, the `ExtensionsApi` Home calls); the contract is
 `app/shared/extensions.ts`. A spike on the bundled runtime (Copilot SDK 1.0.21, empty mode, the mock model) decided what
 it builds on:
+
+The current **Before Ember starts** agreement is required before any marketplace request, extension-server probe or
+session exposure, as well as each feature/plugin agreement required for running tools. A saved feature agreement
+cannot bypass an absent or older global agreement. Losing global agreement revokes loaded servers and pending
+probes; late replies cannot publish tools or continue an HTTP handshake. Agreeing globally again permits the
+normal refresh, without erasing still-current feature/plugin agreements. Browsing a marketplace before the
+extensions feature card remains available after global agreement; it does not approve installing or using tools
+(integrations-refresh-c1 / extensions-refresh-consent-1).
+An installation already under way retains only its captured local runtime-uninstall cleanup when stopped; this
+cannot initiate another install or marketplace request after revocation (extensions-consent-review-1).
+An extension reply must still belong to the same agreed item, pinned tool and session epoch when its post-tool
+hook runs. Each session binds a capability that closes its exact runtime transport; tools stay off without it.
+The SDK can rewrite a successful result, but it cannot suppress a raw failure and catches hook errors. A stale
+success or failure therefore waits for public `CopilotClient.forceStop()` to close that transport before its hook
+returns. Global agreement loss also retires ordinary model turns, synchronously invalidates pending requests and
+tasks, and stops sign-in renewals; a settings or status observer cannot prevent transport closure. A new agreement
+permits the same host to connect again, while an old session's callback cannot close its replacement
+(extensions-consent-review-2). A request already dispatched before revocation may finish; no new model or renewal
+request may start while agreement is absent.
 
 - **Only MCP servers load.** Ember reads a plugin's manifest (`plugin.json`, `.github/plugin/plugin.json`,
   `.claude-plugin/plugin.json`) and its MCP servers (`mcpServers`, `mcp.json`, `.mcp.json`), copies the plugin into
@@ -678,6 +757,13 @@ output when you change it (`pactl`, from the same package), and keeps that outpu
 listens. A request ends
 when your voice stops, even with a TV or colleagues talking behind you, and is at most 10 s long (20 s in a
 quiet room); when a longer one is cut, Ember says it only caught the first part.
+
+A short ambiguous name from an early wake check waits for the finished phrase, even if the partial recognizer wrote
+punctuation or repeated a fragment. The full check must confirm the name through the existing rules, or stop.
+An empty, garbled or unrelated full check closes the window rather than carrying its uncertainty into later speech;
+existing rejected near-miss forms stay rejected. The spotter's thresholds and name spellings are unchanged.
+The fixed synthetic `wake_question*.wav` regression clips document this mid-word check in
+`test/fixtures/voice/wake-diagnostic.json`; they are test speech, never recorded microphone audio.
 
 ### How speech runs (native synthesis, native or WebAssembly listening)
 
@@ -1079,9 +1165,9 @@ First run's provider step, opened for a provider already in use, checks edited d
 details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the
 card's yes for exactly its host given by the same press, with a key just typed (refused, unsent, where it couldn't be
 kept) or, without one, the saved key only when it was entered for that very host. Nothing is saved or recorded until it
-answers; then the details are written with the card's yes for their host in one change (`agree(host, move)`, as Home's
-held edit is), so the provider in use never leaves force for Copilot between, and a typed key is saved after
-(first-run-r4-3).
+answers; then its key and the details agreed for that host are adopted together through `provider:adopt`, as Home's
+held edit is (first-run-r4-3, integrations-r7-1). A storage failure or an abandoned or edited draft leaves the working
+provider and its saved key in place; a same-host detail edit without a new key keeps that key's identity.
 Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
 held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
 answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
@@ -1090,13 +1176,30 @@ up for the new host, the status line says "Read the note above: Ember still uses
 quiet button reads "Keep using <host in force>" (it puts the details in force back, saving nothing), and a key typed for
 the new host waits in its field. "I agree" checks the held details with the same GET ("Checking <new host>…"); one that
 fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
-names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
-main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
-A host that answers but has no model list at that address (404, 405 or 501 on GET /models, as some gateways that answer
-chat only do: the test's `cause: "no-list"`, which the start probe doesn't count as down either) is adopted the same
-way, and the line says "Agreed. <new host> answered but lists no models, so Ember asks it for <model> as typed."
-(integrations-r4-2); one that can't be reached, times out, has a certificate Ember can't verify, refuses the key or
-answers with another error changes nothing.
+names. One that answers is adopted through `provider:adopt`: main stages its optional key with the OS keyring,
+then publishes the sealed key and the agreed settings together (integrations-r7-1). A keyring, file or settings-write
+failure retains the old endpoint and key; the new key stays in its field to retry. Editing or abandoning a pending
+draft sends `provider:cancel-adoption`, and policy, consent or settings changes invalidate it too. No key returns
+through either channel. Same-host key replacement uses the same staged storage transaction (integrations-v7-1).
+Adoption requires a durable settings write: a file that can't yet be read refuses it rather than holding only a
+runtime change and discarding the old key (integrations-v7-4).
+A key typed into Home's replacement draft is cleared when the address changes to another valid host or port;
+path-only edits and incomplete address typing keep it, and the saved key in use stays untouched (integrations-v7-2).
+This includes a newer provider drawn from main. Saving sends the field's expected host through IPC; main refuses a
+host that changed before the save arrives, rather than binding the typed key to it (integrations-v7-9).
+A host that has no model list at that address (404, 405 or 501 on GET /models) leaves the working provider in place
+(integrations-c5-1): that response could be a chat-only gateway or simply the wrong address, so it is not evidence
+that the replacement can answer. The typed details remain available to correct. One that can't be reached, times
+out, has a certificate Ember can't verify, refuses the key or answers with another error also changes nothing.
+This uses only the card's existing GET; no chat request or additional network probe is added.
+Private transaction files hold sealed bytes, host metadata or the provider settings before and after, at mode0600.
+A failed rollback retains its encrypted original for recovery against the endpoint still in settings; the settings
+record distinguishes old and new keys even for a path edit on the same host (integrations-v7-5). Successful matching
+key loads clean interrupted remnants.
+Remove and sign-out erase owned transaction remnants as well as the primary key, including after a restart.
+They also revoke any pending adoption: its late keyring result cannot restore the removed active key (integrations-v7-7).
+A provider edited in settings.json while a key is being sealed takes precedence over the pending draft; unrelated
+hand edits are retained when adoption succeeds (integrations-v7-8).
 An edit back to the host in force, or of the same host, is saved at once as before. The held card's text has no
 sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
 provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so
@@ -1421,11 +1524,13 @@ under pass^3 70 %, or when a blocking safety gate isn't **pass**: "not measured"
 off is still judged from the audit log it left. So a partial run such as `--only bench-save` needs `--no-gates` (or
 an injection task). A `--no-tasks` run is judged on its gates alone; the blocking (safety) gates come from the task
 suite, so it measures only tracked gates and doesn't fail on them. The missed-wakes gate passes only when the 95 %
-upper bound of the miss rate is under 5 % (73 clips or more with none missed); with fewer clips, such as the 3 test
-clips without the TTS voice (`node scripts/voice/prepare.mjs --tts-voice` fetches it; the nightly workflow does), it
-is "not measured". With the voice it adds 75 synthesized renderings, made in memory on every run (nothing is written
-to `test/fixtures`). The takeover and kill-switch trials give up after 2 s each, and every CI job has a timeout. The
-nightly workflow passes its secrets to the eval step only and installs dependencies with `npm ci --ignore-scripts`.
+upper bound of the miss rate is under 5 % (73 clips or more with none missed); with fewer clips, such as the three
+committed clips alone, it is "not measured". With the voice it adds 75 synthesised renderings, made in memory on every run (nothing is written
+to `test/fixtures`). `node scripts/voice/prepare.mjs` prepares the pinned Amy test voice by default, so fresh developer
+and CI caches exercise the acoustic UI-copy regressions; `--voice ryan` selects the other test speaker and
+`--tts-voice` remains accepted for older commands. These test voices stay outside the production model manifest and
+are never staged in a package. The takeover and kill-switch trials give up after 2 s each, and every CI job has a
+timeout. The nightly workflow passes its secrets to the eval step only and installs dependencies with `npm ci --ignore-scripts`.
 
 ## 9. Troubleshooting
 
@@ -2190,6 +2295,36 @@ command or file after it), and a value that names a file is judged as that file 
 commands-classify.test.ts's option-table test runs each switch in front of a dangerous operand and each such value as a
 dangerous path, so add a row when you change a table.
 
+**The audit baseline comparison** bundles the classifier and real `run_command` flow from both worktrees with esbuild.
+Run it after every commands change (commands-comparison-r7-1):
+
+```bash
+git worktree add --detach ../ember-audit-baseline 4d64d3aff1798d51fdd3bbe19cb212cace028424
+node scripts/commands/compare.mjs --baseline ../ember-audit-baseline --current . --output /tmp/ember-command-comparison
+```
+
+Only the current checkout needs `npm ci`. The baseline must be that exact commit with all tracked files unchanged. Untracked and ignored files are refused
+outside the intentional `node_modules` and `.cache` roots, since source or build configuration could shadow imports.
+The tool reads all four baseline corpora, current additions, generated adversarial forms and the script/sequence
+regressions in `test/fixtures/commands/comparison.json`; `--extra-cases <json>` adds review probes.
+Portable independent review inputs are included by default, so the command above reproduces the seventh-round
+audit's 7,213 cases without `--extra-cases`. It never runs a corpus command: the local flow uses a scripted runner
+and denies every approval. Ordinary runs, task-directory
+changes, questions and refusals are recorded separately, and each expected stage of a multi-call sequence is compared, including its exact input command. Truncated or
+mislabelled sequences fail rather than borrowing the combined command's job-count exception.
+`summary.json` gives counts, `comparison.json` gives differences and unknown outcomes, and the two bundles and full
+results are kept alongside them. A missing or unknown result fails the comparison. The only tolerated loosenings
+are asks becoming runs for the known tools' sole job-count option: literal numbers, the named `nproc`, `getconf
+_NPROCESSORS_ONLN` or `sysctl -n hw.ncpu` substitutions, or arithmetic of numbers. The baseline question must contain only the count-related uncertainty rules; other security rules and former
+refusals are never exempt.
+Reviewed extra job options are `make --jobs=`, `ninja -j` and `rake --jobs=`. Reviewed operand forms are
+`sort --parallel=<count> notes.txt` (also the literal filename `file`), `xargs -P<count> echo`, `parallel -j<count> echo`, `mvn -T<count> package`,
+`mvn --threads=<count> package` and `./gradlew --max-workers=<count> build`; extra targets, commands, options or
+line breaks are not exempt. Only those exact xargs/parallel forms may have main's `unclear.program` parser finding
+treated as count uncertainty. Generated variants also check variables, non-job uses, other options and count spellings.
+Exit 1 means a forbidden loosening or incomplete/unknown probe; a probe/build error also exits unsuccessfully.
+These fake-runner results do not replace the native command suites below.
+
 **Integration suites** that need a real `script`, sshd, WSL or desktop are in `test/integration/`, skip without their
 variable, and fail when it is 1 and what they need is missing. `.github/workflows/remote.yml` runs them; `ci.yml` is
 unchanged. remote.yml runs on pull requests and on pushes to `main` and the `ember-improve/20261022-sshwsl-*` branches
@@ -2283,11 +2418,22 @@ unsupported diff formats remain available as text.
 
 Files, requests, patched files and an answer kept as the next send's context go through memory's secret guard
 (`memoryRefusal`, docs/MEMORY.md), which passes over code for a secret-named key's value, never a literal (a hash's
-entry, a mapping or a JSON section under the key, a property such as `secrets.db`). A chosen file that still
+entry, a mapping or a JSON section under the key, a property such as `secrets.db`). A recognised client's password in
+an argument array or subprocess tuple is refused too; command output and logs hide the same literal
+(`memory-q6-1`, `memory-v7-1`). These use the shell redactor's existing short-option rules, with unknown expressions
+kept as argument placeholders, preserving non-secret variable references and options such as Docker port mappings.
+Known executable basenames match mixed case and Windows `.exe` forms without changing the password-placeholder rules.
+A chosen file that still
 looks like it holds a password, token or key is named with its line (`secretLine`, `projectSecretFiles`): every such
 file at once, so the person removes only those. An exact patch whose patched file looks like it holds one isn't
 offered, and the status says which line (`readProjectPatch`'s `withheld`), never that the diff couldn't be verified; an
 answer that looks like it holds one isn't offered as context, and the status says so (`projectAnswerText`).
+
+Memory acknowledges a new or reinforced fact only after its graph write succeeds (`memory-r2`). On a full disk or
+another write failure, the old graph and recall index stay in place, no new learned line is emitted, and the
+remember tool says nothing new was kept. The spoken introduction ends with a save-failure explanation. Existing
+memory remains available; try again after correcting the storage problem. An answer that generates several facts
+stops at the first write failure, so a later successful save cannot conceal its partial failure (`memory-w7-1`).
 
 A request the model service refuses or can't finish says why in the conversation's words (`projectFailureText`): a
 refused key points at the key in settings, a usage limit says to try later, files over the model's limit say to choose
@@ -2508,3 +2654,44 @@ the cache's version that runs when `ps` shows it; where `ps` isn't read, on Wind
 installed from the zip, which shares the single-instance lock, or any older one when the cache holds another version).
 Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.
+
+Command audit comparisons must check the classifier and the real `run_command` flow against the frozen audit baseline.
+Command-line `if` and error-checking HOME/PWD parameter expansions retain its questions; only the documented literal
+and processor-count job arguments may decide more loosely (commands-remote-r7-1).
+
+Download provenance also survives unknown URL filenames and downloader input from xargs or loops. Regression tests
+exercise separate tool calls so a same-line script question cannot conceal a missing download marker.
+An empty or unknown first Redis argument retains a question so shell word removal cannot expose a later deletion.
+
+A relative shell script with an unknown working folder is uncertain, including a script fed to `env -C … sh` on stdin.
+
+Unresolved tar extraction directories go through optionFiles and retain both the question and download provenance.
+
+The xargs process-slot-var gate is unconditional: arbitrary child environment names are not assumed harmless.
+
+Link targets include protected ancestor folders in the own-file refusal, including known POSIX and PowerShell variables.
+
+Shell scripts retain questions for loops: reading a body once does not establish later passes' arguments or folders.
+
+Intent matching fails closed for unestablished root-of and on-place phrases instead of announcing a different path.
+
+Opaque shell positional arguments and Windows flow retain known own-path refusals; their values are never used to
+relax the execution decision. The Windows fallback scan can refuse a protected ancestor when its later use is opaque.
+
+Cross-call provenance tests cover opaque inline copies and code pulled or fetched through configured remote names.
+
+Unknown xargs long options fail closed without altering option consumption; copy-created links share the parent guard.
+
+New processor-count recognition is limited to the exact three documented substitutions on `OptSpec.jobCounts`,
+plus literal numbers and numeric arithmetic. It never bypasses `readArgs`; other options and generic tools keep
+the baseline question. Separate processor values already consumed by the baseline retain its behaviour.
+
+Symbolic-link checks resolve relative targets from each possible destination base, including known destination
+variables. Untyped POSIX destinations are checked as a file and as a folder unless flags establish one; Windows
+symbolic links also receive the destination-parent guard. Baseline source-path refusals remain in force, and ln's
+`--relative` continues to resolve the source from the command's folder.
+
+For `stopAtOperand`, an unseen separate option value retains its parsed option for path checks and also becomes the
+first unknown operand, just as an unseen attached value does. Never consume it and classify only the later visible
+program: unquoted expansion can supply a different command. The only count exception uses an explicit job option and
+`countWord()` on the value as written, never a variable's tracked value (commands-q6-3, i6b, commands-v7-5).

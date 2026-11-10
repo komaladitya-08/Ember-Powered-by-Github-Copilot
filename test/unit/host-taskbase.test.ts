@@ -13,7 +13,7 @@ import path from "node:path";
 import type { Logger } from "../../app/main/logger";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- a pretend SDK */
-const sim = vi.hoisted(() => ({ sessions: [] as any[] }));
+const sim = vi.hoisted(() => ({ sessions: [] as any[], clients: [] as any[] }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
   const real = await importOriginal<typeof import("@github/copilot-sdk")>();
@@ -30,10 +30,11 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     async setModel() { /* nothing */ }
   }
   class FakeClient {
-    constructor(public opts: any) {}
+    forceStops = 0;
+    constructor(public opts: any) { sim.clients.push(this); }
     async start() { /* nothing */ }
     async stop() { return []; }
-    async forceStop() { /* nothing */ }
+    async forceStop() { this.forceStops++; }
     async getAuthStatus() { return { isAuthenticated: true, login: "octo" }; }
     async listModels() { return [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return []; }
@@ -123,7 +124,7 @@ function wslCommands() {
   return { service, say: (t: string | null) => { now = t; for (const f of [...fns]) f(t); }, listeners: () => fns.size };
 }
 
-beforeEach(() => { sim.sessions = []; });
+beforeEach(() => { sim.sessions = []; sim.clients = []; });
 
 describe("AgentHost's TaskManager without a window system (§2.6, critique integration-3)", () => {
   it("starts a task through the TaskManager with targets and no hands, on the hands the targets runtime gives", async () => {
@@ -252,6 +253,29 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     taskSessions()[0].emit("session.idle", {});
     await until(() => host.tasks!.list()[0]?.status !== "running");
     expect(wsl.listeners()).toBe(0);
+    await host.stop();
+  });
+
+  it("closes the runtime before a retiring status observer can throw (extensions-consent-review-2)", async () => {
+    let throwNext = false;
+    const { host } = makeHost({ onStatus() { if (throwNext) { throwNext = false; throw new Error("The fixture window closed."); } } });
+    await host.start(TOKEN, "stored");
+    const client = sim.clients.at(-1);
+    throwNext = true;
+    await expect(host.pauseForConsent()).resolves.toBeUndefined();
+    expect(client.forceStops).toBe(1);
+    await host.stop();
+  });
+
+  it("invalidates queued main-side work synchronously when agreement is lost (extensions-consent-review-2)", async () => {
+    const { host } = makeHost({ targets: targets(() => ({ ok: true, hands: commandsOnly() })).agent, taskBase: taskBase().base });
+    await host.start(TOKEN, "stored");
+    const cancelled = vi.spyOn(host.tasks!, "cancelAll");
+    const before = host.stopEpoch;
+    const stopped = host.pauseForConsent();
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    expect(host.stopEpoch).toBeGreaterThan(before);
+    await stopped;
     await host.stop();
   });
 

@@ -145,9 +145,11 @@ contextBridge.exposeInMainWorld("emberExtensions", extensions);
 // The user's own model provider (Home › Copilot): PROVIDER_IPC's channels only; main takes them only from this window and
 // checks every argument (app/main/provider-ipc.ts). The key goes to main once and never comes back.
 const provider: EmberProviderApi = {
+  adopt: request => ipcRenderer.invoke(PROVIDER_IPC.adopt, request),
+  cancelAdoption: id => ipcRenderer.invoke(PROVIDER_IPC.cancelAdoption, id),
   state: () => ipcRenderer.invoke(PROVIDER_IPC.state),
   onChanged: fn => listen<null>(PROVIDER_IPC.changed, () => fn()),
-  saveKey: key => ipcRenderer.invoke(PROVIDER_IPC.saveKey, key),
+  saveKey: (key, host) => ipcRenderer.invoke(PROVIDER_IPC.saveKey, key, host),
   removeKey: () => ipcRenderer.invoke(PROVIDER_IPC.removeKey),
   agree: (host, move) => (move ? ipcRenderer.invoke(PROVIDER_IPC.agree, host, move) : ipcRenderer.invoke(PROVIDER_IPC.agree, host)),
   test: draft => (draft ? ipcRenderer.invoke(PROVIDER_IPC.test, draft) : ipcRenderer.invoke(PROVIDER_IPC.test)),

@@ -185,10 +185,11 @@ const CALLED_AS_WORD = /^\W*(?:(?:hey|hi|hay|day|a)\W+(?:a\W+)?number\b|number\b
 /**
  * "Hey Amber…" when the spotter heard "Hey Ember": Moonshine base writes the name so (the early check heard "Pay amber to"
  * for "Hey Ember, turn on night light", and took a real wake back). Where the check heard only a word or two after the
- * name, with no end to it, it leaves this to the whole of what was said (Mode.maybeAmber): "Hey Amber, dinner's ready." is
+ * name, it leaves this to the whole of what was said (Mode.maybeAmber): punctuation from an unfinished decode and a
+ * hyphenated decoder repeat aren't an end to the audio (listening-ci-r7-1). "Hey Amber, dinner's ready." is
  * still someone else's, and so is "Hey Amber, what time is it?", heard whole.
  */
-const GREETED_AMBER = /^\W*(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?:\W+[\w']+){0,2}\s*,?\s*$/i;
+const GREETED_AMBER = /^\W*(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?:\W+[\w'-]+){0,2}[\s,.!?…]*$/i;
 
 /**
  * More of the recognizer's spellings of the name said first, alone or before the request ("Member.", "Member, what time
@@ -1778,12 +1779,14 @@ export class VoiceEngine {
       if (calledByName(again) || isStop(stripWake(again, true))) heard = again;
     }
     if (this.mode.maybeAmber) {
-      this.mode.maybeAmber = false;
-      if (heardOtherWord(heard) && !NAME_ALONE.test(heard) && !CALLED_AS_WORD.test(heard) && !isStop(stripWake(heard, true))) {
+      // An unresolved name isn't permission to hear the next segment as a request: an empty or garbled whole check
+      // used to clear this flag and let later unrelated words through (listening-ci-r7-2). Stop still errs safely.
+      if (!calledByName(heard) && !NAME_ALONE.test(heard) && !isStop(stripWake(heard, true))) {
         this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
         this.endListening("rejected");
         return;
       }
+      this.mode.maybeAmber = false;
     }
     if (this.mode.announced === false) {
       // The bare name, with all that was said with it: "Ember, stop" stops (the spotter takes the name, so the kill phrase

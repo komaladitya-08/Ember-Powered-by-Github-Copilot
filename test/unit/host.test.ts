@@ -141,6 +141,81 @@ function makeHost(extra: Partial<HostOptions> = {}) {
   return { host, settings, dir, patches, statuses, screen: () => screen, agentJson: () => { try { return JSON.parse(fs.readFileSync(path.join(dir, "agent.json"), "utf8")); } catch { return null; } } };
 }
 
+describe("reading the retained answer", () => {
+  it.each([{}, { spoken: true, replaces: true }])("keeps a read request local while the reply is still being written (%j) (voice-speaking-v7-2)", async how => {
+    const { host } = makeHost({ health: () => ({ mic: "off", speaks: true }) });
+    await host.start(TOKEN, "stored");
+    await host.ask("Explain the tides");
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { deltaContent: "The Moon's gravity" });
+    const before = session.sent.length;
+    await host.ask("Read it out", null, undefined, how);
+    expect(session.sent).toHaveLength(before);
+    expect(session.aborted).toBe(0);
+    expect(host.getTranscript().at(-1)?.text).toBe("I'm still answering. Ask me to read it out after this reply finishes.");
+    session.emit("assistant.message", { content: "The Moon's gravity pulls on the oceans." });
+    session.emit("session.idle");
+    expect(host.lastAnswer()).toBe("The Moon's gravity pulls on the oceans.");
+    await host.stop();
+  });
+  it("keeps the answer available after an approval held back reading it (voice-speaking-v7-1, voice-speaking-w7-1)", async () => {
+    let waiting = false;
+    const waiters: (() => void)[] = [];
+    const voiced: string[] = [];
+    const { host, settings } = makeHost({ hands: { ...hands(), confirmer: { get waiting() { return waiting; }, settled: () => waiting ? new Promise<void>(resolve => waiters.push(resolve)) : Promise.resolve(), cancelAll() {} } as never },
+      onAnswer: text => { if (!waiting) voiced.push(text); }, health: () => ({ mic: "off", speaks: true }) });
+    await host.start(TOKEN, "stored");
+    await host.ask("Explain the tides");
+    const answer = "The Moon's gravity pulls on the oceans.";
+    conductorSession().emit("assistant.message", { content: answer });
+    conductorSession().emit("session.idle");
+    settings.update({ speakResults: false });
+    waiting = true;
+    await host.ask("Read it out");
+    expect(host.getTranscript().at(-1)?.text).toBe("Answer my question first, then ask me to read it out.");
+    expect(voiced).toEqual([answer]);
+    expect(settings.get().speakResults).toBe(false);
+    waiting = false;
+    for (const resolve of waiters) resolve();
+    await host.ask("Read it out");
+    expect(voiced.at(-1)).toBe(answer);
+    await host.stop();
+  });
+
+  it.each([{}, { suggested: true }, { spoken: true }])("reads the answer for %j without changing future speech settings (voice-speaking-r6-1)", async how => {
+    const answers: string[] = [];
+    const { host, settings } = makeHost({ onAnswer: text => answers.push(text), health: () => ({ mic: "off", speaks: true }) });
+    await host.start(TOKEN, "stored");
+    await host.ask("Explain the tides");
+    const session = conductorSession();
+    const answer = "The Moon's gravity pulls on the oceans, making the tides rise and fall.";
+    session.emit("assistant.message", { content: answer });
+    session.emit("session.idle");
+    expect(host.lastAnswer()).toBe(answer);
+    settings.update({ speakResults: false });
+    const before = session.sent.length;
+    await host.ask("Read it out", null, undefined, how);
+    expect(answers.at(-1)).toBe(answer);
+    expect(settings.get().speakResults).toBe(false);
+    expect(session.sent).toHaveLength(before);
+    await host.stop();
+  });
+
+  it("keeps speaking off and explains the limit when asked to read an answer (voice-speaking-r6-1)", async () => {
+    const answers: string[] = [];
+    const { host, settings } = makeHost({ onAnswer: text => answers.push(text), health: () => ({ mic: "off", speaks: false }) });
+    await host.start(TOKEN, "stored");
+    await host.ask("Explain the tides");
+    conductorSession().emit("assistant.message", { content: "The Moon's gravity pulls on the oceans." });
+    conductorSession().emit("session.idle");
+    settings.update({ speak: false, speakResults: false });
+    await host.ask("Read it out");
+    expect(answers.at(-1)).toBe("I'm not speaking replies right now. Speaking is under Voice in settings.");
+    expect(settings.get()).toMatchObject({ speak: false, speakResults: false });
+    await host.stop();
+  });
+});
+
 /** Pretend hands: tasks run (their workers talk to the pretend SDK) but never touch a screen. */
 const hands = () => ({
   perception: {} as never, sidecar: {} as never, policy: {} as never, audit: { write() {} } as never,
@@ -5026,6 +5101,22 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
   }
   const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-keep-"));
   const say = (text: string) => { conductorSession().emit("assistant.message", { content: text }); conductorSession().emit("session.idle", {}); };
+
+  it("keeps a read-limit notice distinct from its answer after restart (voice-speaking-v7-3)", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("Explain the tides");
+    const answer = "The Moon's gravity pulls on the oceans.";
+    say(answer);
+    await first.host.ask("Read it out");
+    expect(first.host.lastAnswer()).toBe(answer);
+    await first.host.stop();
+    const second = kept(dir);
+    await second.host.start(TOKEN, "stored");
+    await vi.waitFor(() => expect(second.host.lastAnswer()).toBe(answer));
+    await second.host.stop();
+  });
 
   it("brings the conversation back after a restart, for reading only: nothing is sent and the model starts afresh", async () => {
     const dir = tmpDir();

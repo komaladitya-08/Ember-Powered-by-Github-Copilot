@@ -354,6 +354,26 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   available), Extensions, Setup & about. The current pane's link carries `aria-current`, a fill that glides between
   rows on a click (`--spring-smooth-0`), and in a contrast theme an outline. The window reopens on the last pane. Below
   640 px the links are one row of capsules, the search field first.
+- **General consent** holds Agree with “Checking where your requests go… Wait a moment.” until the recipient is
+  known. Any change to the recipient or the shown agreement re-arms its half-second stray-press guard (first-run-c7-1).
+- **Voice focus** uses “Set up Voice Match” and a separate name-free state description when focus returns after
+  teaching or forgetting a voice. The full visible explanation remains available to read. Ask's focused field says
+  “Ask or tell me”, with a short visible “Ask…” prompt so an empty field stays one line at narrow widths and Larger
+  text (companion-v7-2). Its window and page title are “Companion request”, so opening it does not read the wake name
+  into the microphone (voice-listening-r6-2, voice-listening-q6-1). Voice Match failure lines use the first person and
+  also update that focused description (voice-listening-r6-3).
+- **Home's window title** is “Companion home”, removing the wake name from the controlled native title and document
+  accessibility root. Native reader announcement order and application names remain device checks. The visible
+  Ember heading and its accessible Home name stay;
+  self-window protection recognises the unique title and legacy titles (listening-refresh-1).
+- **Composer progress** says “Thinking… The reply will appear above.” to avoid reading the wake name, including its
+  possessive, into an idle microphone (voice-listening-r6-1).
+- **Setup focus** uses name-free accessible headings, while visible headings keep Ember's name. The Start result
+  says “Started. Ready when you are.” so automatic screen-reader speech does not read the wake name into the microphone (first-run-r6-1).
+- **Closing Home** hides its page for this running session, preserving unsent drafts and waiting-message recovery;
+  it still ends Home's Listen once, teaching and Project work. Hidden Home draws no characters. Privacy erasure on
+  sign-out or account change reaches the hidden page too; a policy lockdown clears the draft, and actual quit destroys
+  the page (home-r7-1).
 - **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
   character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
   state in a few words ("Ready", "Working on 2 tasks", "Thinking…" while it answers what you sent from Home, "A task
@@ -369,6 +389,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   policy locks Ember down)
   beside a quiet **Stop everything** and the stop chord. Under them two quiet links, **Write to Ember** (the
   composer, focused) and **Task activity**, keep both a step away however long the conversation grows.
+  Home's Features line uses the targets runtime's current capabilities, including remote policy and agreements;
+  saved or restricted SSH hosts are never counted as working connections. Listening
+  shows on only with ready speech models and a waiting or active microphone; a missing or failed microphone shows off.
+  A held lockdown immediately removes commands and other computers from that line (home-r6-1).
 - **Home's setup check** says each row's state in first run's words beside its tint ("Ready", "Worth a look",
   "Needs fixing", never a code such as OK), in one column as wide as the widest word (a subgrid, so the labels line
   up), offers **Copy** for a command the row tells the user to run, and **Check again** under the rows, which shows
@@ -400,6 +424,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   that request never stays (home-w5-4), above the draft from before Edit (home-r4-1); Edit on another request keeps
   them above it, as left and still words given back ("…The message that wasn't sent stays above it…"), so Cancel edit
   still names them and says when they're over 2,000 characters with that draft (home-w5-3);
+  after an edited request is sent, the draft Edit set aside comes back, above any new words typed while Send waited;
+  an acknowledgement of an earlier send never closes a newer Edit (home-c5-1);
   together over 2,000 characters, the line says to send them one at a time, never to send again (home-c4-2), but to
   shorten what was being written or edited where that alone is over (home-v5-3); one whose line came (Ember answered it itself, or it went to
   the model) never does, however far the conversation has moved past it (home-v4-1); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's
@@ -464,7 +490,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   command and prompt windows' status lines (a refused press's line, the hints, "Starting Ubuntu…") do the same. Home and
   Ask announce nothing as the microphone opens for a request, or while it is open, since a screen reader says it
   through the speakers into what Ember hears: the voice line is said once it has held for a second and never while a
-  window is open, and Listen once's line is said through a status line of its own, which never says "Ember is already
+  window is open or its microphone is starting, even when startup lasts longer than that second. Listen once's line
+  is said through a status line of its own, which never says "Ember is already
   listening.", nor "Answer Ember's question first." while a conversation waits for that answer (shown under the button,
   as its description). While they say nothing new, both of those status lines are emptied, so reading the page never
   finds a line beside the one shown that no longer holds. Hear me more clearly's line, the voice row's line and the note
@@ -571,6 +598,8 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
+  An unsaved key belongs to the host where it was entered: a different valid host or port clears the field, including
+  a saved-address prefill when reopening it. Path-only edits and unfinished URL typing retain it (first-run-v7-1).
   Main's words for a check or a connection (written for Models & connections, which speaks of Ember) are said in first
   run's own voice on every visit, on the sign-in step too: “I can't reach <host>…”, “…and I'll connect in a moment.”
   (`inMyVoice`, first-run-r4-2), and what they call Ember's comes along: “…the GitHub sign-in I found (my saved

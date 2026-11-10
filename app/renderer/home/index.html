@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ember</title>
+  <title>Companion home</title>
   <link rel="stylesheet" href="../shared/ember.css">
   <link rel="stylesheet" href="../shared/view.css">
   <link rel="stylesheet" href="styles.css">
@@ -22,7 +22,7 @@
       <div class="hero">
         <div class="ring" id="ring" aria-hidden="true"><canvas id="buddy" width="132" height="132" aria-label="Your Ember character"></canvas></div>
         <div class="hero-text">
-          <h1 id="home-h" tabindex="-1">Ember</h1>
+          <h1 id="home-h" tabindex="-1" aria-label="Home">Ember</h1>
           <p class="state-word after-setup"><span id="state-word">Starting…</span> <button type="button" id="p-waiting" class="link" hidden>Open approval</button></p>
           <p id="tagline" role="status">Starting…</p>
           <p class="sr" id="home-live" role="status"></p>
@@ -466,11 +466,12 @@
         <progress id="voice-progress" max="1" value="0" aria-label="Speech models downloaded" hidden></progress>
         <div class="agent-actions"><button type="button" id="voice-download-cancel" class="btn quiet" hidden>Cancel download</button></div>
         <div id="match" class="match" role="group" aria-labelledby="match-label" hidden>
-          <label class="switch-row"><input type="checkbox" id="match-on" role="switch" aria-describedby="match-text"><span id="match-label">Answer questions with my voice (Voice Match)</span></label>
+          <label class="switch-row"><input type="checkbox" id="match-on" role="switch" aria-describedby="match-focus-text"><span id="match-label">Answer questions with my voice (Voice Match)</span></label>
           <p class="hint" id="match-text"></p>
+          <span class="sr" id="match-focus-text"></span>
           <p class="match-prompt" id="match-prompt" hidden></p>
           <progress id="match-progress" max="4" value="0" aria-label="Phrases Ember has heard" hidden></progress>
-          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="Also forgets the words Ember learnt from what you said." hidden>Forget my voice</button><span id="match-forget-hint" hidden>Also forgets the words Ember learnt from what you said.</span><button type="button" id="match-reset" class="btn quiet" aria-describedby="match-learnt" hidden>Reset to my enrolment</button></div>
+          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-focus-text">Set up Voice Match</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="Also forgets the words learnt from what you said." hidden>Forget my voice</button><span id="match-forget-hint" hidden>Also forgets the words learnt from what you said.</span><button type="button" id="match-reset" class="btn quiet" aria-describedby="match-learnt" hidden>Reset to my enrolment</button></div>
           <div class="noted-row" id="match-learn-row" hidden>
             <label class="switch-row"><input type="checkbox" id="match-learn" role="switch" aria-describedby="match-learn-hint match-learnt"><span id="match-learn-label">Keep learning my voice</span></label>
             <p class="row-note" id="match-learn-hint"></p>

@@ -56,6 +56,7 @@ async function listTools(rpc: Rpc, notify: (method: string) => Promise<void>): P
 
 /** Probes a stdio server: `command` started with exactly `env`, in `cwd`, no shell; stopped afterwards. */
 export function probeStdio(o: { command: string; args: string[]; env: Record<string, string>; cwd: string; timeoutMs?: number; signal?: AbortSignal; group?: boolean }): Promise<ProbeResult> {
+  if (o.signal?.aborted) return Promise.resolve({ ok: false, why: "It was stopped." });
   return new Promise(resolve => {
     let done = false, buf = "", bytes = 0, id = 0;
     const waiting = new Map<number, { ok: (v: unknown) => void; no: (e: Error) => void }>();
@@ -162,13 +163,16 @@ export async function probeHttp(o: { url: string; headers: Record<string, string
   let session: string | null = null, id = 0;
   class NeedsAuth extends Error {}
   const post = async (msg: object, wantId?: number): Promise<unknown> => {
+    ac.signal.throwIfAborted();
     const headers: Record<string, string> = { ...o.headers, "content-type": "application/json", accept: "application/json, text/event-stream" };
     if (session) headers["mcp-session-id"] = session;
     const res = await o.fetch(o.url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", ...msg }), signal: ac.signal, redirect: "error" });
+    ac.signal.throwIfAborted();
     if (res.status === 401 || res.status === 403) throw new NeedsAuth();
     if (!res.ok && res.status !== 202) throw new Error(`HTTP ${res.status}`);
     session = res.headers.get("mcp-session-id") ?? session;
     const body = await capped(res);
+    ac.signal.throwIfAborted();
     if (wantId === undefined) return undefined;
     const a = rpcAnswer(res.headers.get("content-type") ?? "", body, wantId);
     if (!a || a.error) throw new Error("no answer");

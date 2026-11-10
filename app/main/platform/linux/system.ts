@@ -24,7 +24,7 @@ import { watchDisplayGone } from "../../x11";
 /** The machine's state as the adapters read it; tests pass fakes, Ember the real thing. */
 export interface LinuxSystemIO {
   exec?: ExecSync;
-  /** The setup check's background look for pyatspi; default the real one, but only with the real `exec`. */
+  /** The setup check's asynchronous Python and GNOME probes (default: execAsync). */
   run?: ExecAsync;
   exists?: (file: string) => boolean;
   /** For the screen-reader cache (60 s, as before). */
@@ -39,14 +39,26 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
   const exec = io.exec ?? execSync;
   const later = io.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const whichLinux = (cmd: string) => which(cmd, { os: "linux", env: deps.env });
-  const environment = linuxEnvironment({ env: deps.env, exec, run: io.run ?? (io.exec ? undefined : execAsync) });
+  const environment = linuxEnvironment({ env: deps.env, exec, run: io.run ?? execAsync });
 
-  let screenReader: boolean | null = null;
-  /** Orca running (GNOME's screen-reader switch, asked at most once a minute), or anything else using Chromium's accessibility. */
+  let screenReader = false;
+  let readerFresh = false;
+  let readerKnown = false;
+  let readerLooking = false;
+  /** GNOME's cached switch, refreshed off the main thread, plus Chromium's current accessibility state. */
   const screenReaderOn = (): boolean => {
-    if (screenReader === null) {
-      try { screenReader = exec("gsettings", ["get", "org.gnome.desktop.a11y.applications", "screen-reader-enabled"], { encoding: "utf8", timeout: 2000 }).trim() === "true"; } catch { screenReader = false; }
-      later(() => { screenReader = null; }, 60_000).unref?.();
+    if (!readerFresh && !readerLooking) {
+      readerLooking = true;
+      void Promise.resolve().then(() => (io.run ?? execAsync)("gsettings", ["get", "org.gnome.desktop.a11y.applications", "screen-reader-enabled"], { timeout: 2000 }))
+        .then(out => {
+          readerKnown = typeof out === "string" && /^(true|false)$/.test(out.trim());
+          screenReader = readerKnown && (out as string).trim() === "true";
+        }, () => { readerKnown = false; screenReader = false; })
+        .finally(() => {
+          readerLooking = false;
+          readerFresh = true;
+          later(() => { readerFresh = false; }, 60_000).unref?.();
+        });
     }
     return screenReader || deps.electron.app.isAccessibilitySupportEnabled();
   };
@@ -104,16 +116,23 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
       ids: ["enable-accessibility"],
       apply: async fix => {
         if (fix !== "enable-accessibility") throw new Error(`unknown fix: ${fix}`);
-        exec("gsettings", ["set", "org.gnome.desktop.interface", "toolkit-accessibility", "true"], { timeout: 5000 });
+        await (io.run ?? execAsync)("gsettings", ["set", "org.gnome.desktop.interface", "toolkit-accessibility", "true"], { timeout: 5000 });
       },
       label: () => "Turn on",
     },
     doctorProbes: () => linuxDoctorProbes({ execPath: deps.execPath, which: whichLinux, exec, exists: io.exists, env: deps.env }),
     a11y: {
       screenReaderOn,
-      // GNOME's "Animations" switch off counts as asking for calm mode.
-      systemReducedMotion: () => {
-        try { return exec("gsettings", ["get", "org.gnome.desktop.interface", "enable-animations"], { encoding: "utf8", timeout: 2000 }).trim() === "false"; } catch { return false; }
+      screenReaderState: () => {
+        screenReaderOn();
+        return deps.electron.app.isAccessibilitySupportEnabled() ? true : readerKnown && readerFresh && !readerLooking ? screenReader : null;
+      },
+      // A compositor can return while tasks run: the session bus must not hold up Stop (reliability-r7-2).
+      systemReducedMotion: async () => {
+        try {
+          const out = await (io.run ?? execAsync)("gsettings", ["get", "org.gnome.desktop.interface", "enable-animations"], { timeout: 2000 });
+          return typeof out !== "string" || out.trim() !== "true";
+        } catch { return true; /* unchecked desktop preference: stay Calm */ }
       },
     },
     voice: {

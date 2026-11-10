@@ -6,7 +6,7 @@
  * at every launch) and never replayed as live: the host marks restored lines inert.
  *
  * - The file is `{ version, account, savedAt, entries }`, bounded to CONVERSATION_LIMIT entries, the per-message text
- *   limit and MAX_BYTES in all; the oldest entries go first. Only the fields Home displays are kept.
+ *   limit and MAX_BYTES in all; the oldest entries go first. Only display fields and the reading-notice marker are kept.
  * - Writes are coalesced (one in flight, the last state wins) and atomic: a unique temp file, fsync, then rename.
  * - `clear()` bumps an epoch and deletes the file at once; a write begun or queued before it checks the epoch
  *   immediately before its rename and gives up, so a clear is never undone by a late write. It says whether everything
@@ -38,8 +38,8 @@ export const SAVE_DELAY_MS = 400;
 
 const WHO = new Set(["you", "ember", "task", "problem"]);
 
-/** What is kept of a line: the fields Home shows, and `stopped` (an interrupted partial answer) if it is true. */
-export type SavedEntry = Pick<TranscriptEntry, "t" | "who" | "text" | "truncated"> & { stopped?: true };
+/** Display fields, interrupted-answer state and a reading-notice marker, never per-run ids or permission state. */
+export type SavedEntry = Pick<TranscriptEntry, "t" | "who" | "text" | "truncated" | "readNotice"> & { stopped?: true };
 
 /** The file operations a write uses, replaceable in tests (a deferred write, a crash). */
 export interface HistoryOps {
@@ -97,6 +97,7 @@ export function savedEntry(raw: unknown): SavedEntry | null {
     t: e.t, who: e.who as SavedEntry["who"], text: e.text,
     ...(e.truncated === true ? { truncated: true as const } : {}),
     ...(e.stopped === true ? { stopped: true as const } : {}),
+    ...(e.who === "ember" && e.readNotice === true ? { readNotice: true as const } : {}),
   };
 }
 

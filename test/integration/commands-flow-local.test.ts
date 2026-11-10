@@ -246,10 +246,12 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(w.audit.find(e => e.phase === "decided")).toMatchObject({ verdict: "run", command: "ls build && echo zq9-$((40+2))" });
   }, 20_000);
 
-  it("runs an ordinary if and a read of written-out text without asking, asks before any loop as main does, and before reading a file (commands-remote-2, commands-a7-2, commands-c7-1)", async () => {
+  it("asks before an ordinary if or loop and still reads written-out text after Allow (commands-remote-r7-1, commands-c7-1)", async () => {
     const { result } = await run("if [ -d build ]; then echo built; fi; read -r a b <<'EOF'\nzq3 got-b\nEOF\necho \"$a $b\"", "");
-    expect(w.cards).toEqual([]);
+    expect(w.cards).toHaveLength(1);
+    expect(w.cards[0].says).toContain("Ember can't tell exactly what this does.");
     expect(result.resultType).toBe("success");
+    w.cards.length = 0;
     for (const want of ["zq3", "built", "got-b"]) expect(result.textResultForLlm).toContain(want);
     w.verdicts = () => "deny";
     const loop = await run("for i in 1 2 3; do echo zq$i; done", "");
@@ -264,7 +266,7 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(file.result.resultType).toBe("denied");
   }, 20_000);
 
-  it("asks before an if runs a command with a library preloaded, and reads written-out text with an if's IFS= read without asking (commands-remote-c1-1)", async () => {
+  it("asks before an if with a library preloaded or an IFS read (commands-remote-c1-1, commands-remote-r7-1)", async () => {
     w.verdicts = () => "deny";
     const preload = await run("if true; then LD_PRELOAD=./x.so ls; fi", "");
     expect(w.cards).toHaveLength(1);
@@ -272,9 +274,9 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(preload.result.resultType).toBe("denied");
     w.cards.length = 0;
     const { result } = await run("if IFS= read -r l <<< ' a '; then echo \"got-[$l]\"; fi", "");
-    expect(w.cards).toEqual([]);
-    expect(result.resultType).toBe("success");
-    expect(result.textResultForLlm).toContain("got-[ a ]");
+    expect(w.cards).toHaveLength(1);
+    expect(result.resultType).toBe("denied");
+    expect(result.textResultForLlm).not.toContain("got-[ a ]");
   }, 20_000);
 
   it("asks before a copy into a folder replaces a file away from folder/name (cp --parents; a Mac's cp -R src/), and keeps it on deny (commands-remote-c2-1)", async () => {

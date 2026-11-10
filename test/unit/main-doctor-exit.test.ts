@@ -27,6 +27,11 @@ function between(from: string, to: string): string {
 describe("ember --doctor exits when an awaited step rejects (issue #53)", () => {
   const doctor = between("async function runDoctor(): Promise<void> {", "function start(): void {");
 
+  it("waits for Linux's asynchronous screen-reading checks before reporting their state (rp-1, reliability-c7-1)", () => {
+    expect(doctor.indexOf("await sys.lookAgain?.();")).toBeGreaterThan(-1);
+    expect(doctor.indexOf("await sys.lookAgain?.();")).toBeLessThan(doctor.indexOf("const env = readEnvironment();"));
+  });
+
   it("catches a rejected step instead of leaving it to the global unhandledRejection log", () => {
     expect(doctor).toContain(" try {");
     expect(doctor).toContain("} catch (err) {");
