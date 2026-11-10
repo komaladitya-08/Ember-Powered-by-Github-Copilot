@@ -2,6 +2,7 @@
 import { renderProjectAnswer } from "./project-output";
 import { PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, PROJECT_COMMANDS_OPEN, projectAnswerText, projectBytes, projectCommandsState, projectConnectionText, projectSelectionText } from "./project-copy";
 import type { ProjectMode, ProjectWorkspaceAction } from "../../shared/ipc";
+import { statusFence } from "./status-fence";
 
 export function mountProject() {
   const provider = document.querySelector<HTMLElement>("#project-provider")!;
@@ -220,7 +221,9 @@ export function mountProject() {
   });
   // The commands setting as it is now, and as it changes (in Commands, by voice or in the file).
   const followCommands = (s: Parameters<typeof projectCommandsState>[0]) => { localCommands = projectCommandsState(s, adminCommands); draw(); };
-  void window.ember.getStatus().then(st => { adminCommands = st.admin.commands?.local; followCommands(st.settings); }, () => { /* not known: the form stays as it was */ });
+  // Fenced like Home's own startup status: a push that arrives while this waits is newer than the snapshot.
+  const ticket = statusFence.begin();
+  void window.ember.getStatus().then(st => statusFence.apply(ticket, st)).then(st => { adminCommands = st.admin.commands?.local; followCommands(st.settings); }, () => { /* not known: the form stays as it was */ });
   window.ember.onSettingsChanged(followCommands);
   openCommands.textContent = PROJECT_COMMANDS_OPEN;
   openCommands.addEventListener("click", () => document.getElementById("jump-commands")?.click());

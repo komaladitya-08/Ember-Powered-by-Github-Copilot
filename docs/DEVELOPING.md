@@ -114,8 +114,8 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 Each test run works in a temporary folder of its own (`ember-run-…`), which it removes at the end with vitest's module
 cache (test/temp-folder.ts).
 
-After building, CI also runs the Ask, conversation, first-run (home-first-run-renderer: Copilot, own provider, failures, models), memory, sign-out and forget, microphone, speech-consent, reminders/desk, natural-voice, integrations and panes renderer journeys with
-`EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_FIRST_RUN_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_SIGNOUT_FORGET_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
+After building, CI also runs the Ask, conversation, first-run (home-first-run-renderer: Copilot, own provider, failures, models), memory, sign-out and forget, microphone, speech-consent, status-race (home-status-race-renderer: a late or failed startup status, microphone and consent recovery after a retry), reminders/desk, natural-voice, integrations and panes renderer journeys with
+`EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_FIRST_RUN_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_SIGNOUT_FORGET_TEST=1 EMBER_STATUS_RACE_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
 and `EMBER_CHROMIUM_PATH` pointing to Chrome or Chromium (each journey skips without its switch, so leave none out).
 The exact file list is in `.github/workflows/ci.yml`. Its `el8` job runs the Linux desktop suites with
 `EMBER_PROJECT_TEST=1 EMBER_CONVERSATION_LIVE=1 EMBER_ATSPI_TEST=1 EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1`

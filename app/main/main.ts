@@ -617,16 +617,21 @@ function start(): void {
     if (fresh && helperWatch) await helperWatch.again();
     return withTargetChecks(readEnvironment(fresh), await targetRows);
   };
-  ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => ({
+  ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => {
+    // Awaited first: settings and the notice are read after it, so the snapshot is at least as new as any push sent while
+    // the checks ran (Home also keeps a push that arrives meanwhile: app/renderer/home/status-fence.ts).
+    const environment = await environmentNow();
+    return {
     appVersion: app.getVersion(),
     settings: settings.get(),
-    environment: await environmentNow(),
+    environment,
     logFile: log.file,
     settingsNotice,
     unexpectedExit: lastRun ? { startedAt: lastRun.startedAt, version: lastRun.version } : null,
     admin: homeAdmin(admin),
     platform: platformStatus(),
-  })));
+    };
+  }));
   // Every entry the log keeps: the window shows the newest 80 it has lines for (a command writes several entries).
   ipcMain.handle(IPC.activity, guard((limit: unknown) => audit?.recent(recentLimit(limit)) ?? []));
   /** The administrator's never-look entries are applied on top; they never go into the user's own list. */

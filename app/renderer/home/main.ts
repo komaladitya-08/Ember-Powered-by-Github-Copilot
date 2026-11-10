@@ -63,6 +63,7 @@ import { mountMemoryCorrection } from "./memory-correction";
 import { MEMORY_PAGE_SIZE, MEMORY_SOURCES, memoryPage } from "./memory-view";
 import { homeFrameGap } from "./frame-gap";
 import type { TaskEntry } from "../../shared/activity";
+import { STATUS_RETRIES, STATUS_RETRY_MS, statusFence } from "./status-fence";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -495,6 +496,7 @@ function render(status: Status): void {
   // The last run ended unexpectedly (rp-5): said for this run, with where its log is.
   $("run-notice").textContent = status.unexpectedExit ? closedUnexpectedlyText(status.logFile) : "";
   applySettings(status.settings);
+  applyVoiceSettings(status.settings);
   targetsStatus(status);
   extensionsStatus(status);
 }
@@ -548,7 +550,7 @@ window.addEventListener("focus", () => {
 function renderSettingsNotice(notice: string | null): void {
   $("settings-notice").textContent = notice ?? "";
 }
-window.ember.onSettingsNotice(renderSettingsNotice);
+window.ember.onSettingsNotice(n => { statusFence.pushedNotice(n); renderSettingsNotice(n); });
 
 // ───── Organisation policy ─────
 let managed = new Set<string>();
@@ -569,8 +571,6 @@ let pushedAdmin: Status["admin"] | null = null;
  * or the user's provider changes, so the note is never stale when it is read.
  */
 function renderRecipient(): void {
-  const a = lastAdmin;
-  if (!a) return;
   const d = destinationNow();
   // The locked-down line replaces the sentence (and this span) altogether. Apps & privacy's copy of the line follows it
   // too, without being drawn again: the copy keeps no ids (safety-privacy-r6).
@@ -600,6 +600,7 @@ onProviderDestination(() => {
   const card = JSON.stringify(providerCard());
   if (card !== cardDrawn) { cardDrawn = card; if (agent) renderAgent(agent); }
 });
+renderRecipient();
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
   confirmEvery = a.confirmEveryAction;
@@ -1086,7 +1087,19 @@ window.ember.onSignInProgress(p => {
 void window.ember.agentStatus().then(renderAgent);
 window.ember.onAgentStatus(renderAgent);
 
-void window.ember.getStatus().then(render);
+// One snapshot initialises all settings, including voice, so retries recover every control together.
+// It never puts back what a newer push already set (status-fence.ts); a failed one is asked for again.
+function loadStatus(): Promise<Status> {
+  const ticket = statusFence.begin();
+  return window.ember.getStatus().then(st => statusFence.apply(ticket, st));
+}
+function startStatus(attempt = 0): void {
+  loadStatus().then(render, () => {
+    if (attempt < STATUS_RETRIES) setTimeout(() => startStatus(attempt + 1), STATUS_RETRY_MS * (attempt + 1));
+  });
+}
+startStatus();
+window.ember.onSettingsChanged(s => statusFence.pushedSettings(s));
 window.ember.onSettingsChanged(applySettings);
 // Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
 window.ember.onSettingsChanged(targetsSettings);
@@ -2807,4 +2820,3 @@ window.ember.onVoiceProgress(p => {
 void window.ember.voiceStatus().then(renderVoice);
 window.ember.onVoiceStatus(renderVoice);
 window.ember.onSettingsChanged(applyVoiceSettings);
-void window.ember.getStatus().then(st => applyVoiceSettings(st.settings));
