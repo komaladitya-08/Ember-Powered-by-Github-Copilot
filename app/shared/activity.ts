@@ -18,6 +18,8 @@ export const STATUS_WORDS = {
   done: "Done",
   failed: "Didn't finish",
   stopped: "Stopped",
+  /** A stopped task whose question went unanswered: the user stopped nothing (tasks-approvals-r1). */
+  unanswered: "No answer in time",
 } as const;
 export type StatusWord = keyof typeof STATUS_WORDS;
 
@@ -38,7 +40,7 @@ export type ActivityState = "running" | "done" | "failed" | "waiting" | "stopped
 
 /** Kinds of step, so steps of one kind fold into one line ("Clicked 3 times"). */
 export type StepGroup =
-  | "read" | "windows" | "switch" | "click" | "toggle" | "type" | "choose" | "setting" | "open" | "keys" | "scroll"
+  | "read" | "picture" | "windows" | "switch" | "click" | "toggle" | "type" | "choose" | "setting" | "open" | "keys" | "scroll"
   | "command" | "point" | "wait" | "other";
 
 export interface ActivityItem {
@@ -92,6 +94,10 @@ export interface TaskEntry {
   view?: ViewDoc;
   /** Main's current capabilities; every activation rechecks the exact task ID. Historical rows have none. */
   controls?: { stop: boolean; retry: boolean; window: boolean };
+  /** It stopped because its question went unanswered (StopCause "expired"): its state's word is STATUS_WORDS.unanswered. */
+  unanswered?: true;
+  /** It ended before it began to run (stopped, or cut off, while it waited its turn): it has no clock (tasks-approvals-r3-3). */
+  unstarted?: true;
   activity: TaskActivity;
 }
 
@@ -156,7 +162,10 @@ export interface CardActivity {
 export const ACTIVITY_LIMIT = 40;
 export const DETAIL_ROWS = 6;
 
-/** Each tool's kind of step (tools not listed are "other"; report_progress, the view tools and finish_task make no step). */
+/**
+ * Each tool's kind of step (tools not listed are "other"; report_progress, the view tools and finish_task make no step).
+ * A read that sent the model a picture of the window becomes "picture" once the worker says so (safety-privacy-6).
+ */
 export const STEP_GROUP: Readonly<Record<string, StepGroup>> = {
   perceive_window: "read", describe_screen: "read",
   list_windows: "windows", switch_window: "switch",
@@ -176,6 +185,7 @@ export const NOT_STEPS: ReadonlySet<string> = new Set(["report_progress", "show_
 /** A step kind's words once done: one step, and several. */
 const DONE_WORDS: Readonly<Record<StepGroup, { one: string; many: (n: number) => string }>> = {
   read: { one: "Read the window", many: n => `Read the window ${n} times` },
+  picture: { one: "Sent the model a picture of the window", many: n => `Sent the model ${n} pictures of the window` },
   windows: { one: "Looked at your windows", many: n => `Looked at your windows ${n} times` },
   switch: { one: "Switched windows", many: n => `Switched windows ${n} times` },
   click: { one: "Clicked once", many: n => `Clicked ${n} times` },
@@ -194,7 +204,7 @@ const DONE_WORDS: Readonly<Record<StepGroup, { one: string; many: (n: number) =>
 
 /** A step kind's words when it didn't work: what it tried (a red mark beside "Opened an app" would contradict itself). */
 const TRIED_WORDS: Readonly<Record<StepGroup, string>> = {
-  read: "Tried to read the window", windows: "Tried to look at your windows", switch: "Tried to switch windows",
+  read: "Tried to read the window", picture: "Tried to read the window", windows: "Tried to look at your windows", switch: "Tried to switch windows",
   click: "Tried to click", toggle: "Tried to flip a switch", type: "Tried to type text", choose: "Tried to choose an option",
   setting: "Tried to change a setting", open: "Tried to open an app", keys: "Tried to press keys", scroll: "Tried to scroll",
   command: "Tried to run a command", point: "Tried to point at a step", wait: "Tried to wait for your click", other: "Tried a step",
@@ -205,8 +215,32 @@ export function triedWords(group: StepGroup, n: number, app?: string): string {
   return `${TRIED_WORDS[group]}${n > 1 ? ` ${n} times` : ""}${app ? ` in ${app}` : ""}`;
 }
 
-/** Which kinds a summary names first: what changed things before what only looked (T3 Code's rule). */
-const PRIORITY: readonly StepGroup[] = ["setting", "command", "type", "choose", "click", "toggle", "open", "keys", "scroll", "switch", "point", "wait", "windows", "read", "other"];
+/** How a refusal's row begins, before Ember's (or policy's) reason. */
+const REFUSED_LEAD = "Not allowed: ";
+
+/**
+ * A refusal's row: "Not allowed: an authentication prompt is open", and refusals for one reason in a row folded into
+ * one, "Not allowed 6 times: …", so a model that keeps looking while Ember can't tell whether a password prompt is open
+ * never fills the card with one sentence (tasks-approvals-v5-2).
+ */
+export function refusedWords(reason: string, n = 1): string {
+  return n > 1 ? `Not allowed ${n} times: ${reason}` : `${REFUSED_LEAD}${reason}`;
+}
+
+/**
+ * The reason of refusal `it` when it folds into the row before it, `last`: a refusal (or refusals) in the very same words
+ * (`refused`, its first item's) and state. Null when it doesn't fold.
+ */
+export function foldedReason(it: Pick<ActivityItem, "kind" | "state" | "words">, last: { refused?: string; state: ActivityState } | undefined): string | null {
+  return last && it.kind === "refused" && it.words.startsWith(REFUSED_LEAD) && last.refused === it.words && last.state === it.state
+    ? it.words.slice(REFUSED_LEAD.length) : null;
+}
+
+/**
+ * Which kinds a summary names first: a picture of the window that went to the model (so the summary always says so,
+ * safety-privacy-6), then what changed things before what only looked (T3 Code's rule).
+ */
+const PRIORITY: readonly StepGroup[] = ["picture", "setting", "command", "type", "choose", "click", "toggle", "open", "keys", "scroll", "switch", "point", "wait", "windows", "read", "other"];
 
 /** Steps of one kind as words: "Clicked 3 times", with " in Text Editor" when they all worked in one app. */
 export function stepsWords(group: StepGroup, n: number, app?: string): string {
@@ -249,6 +283,14 @@ export function doingWords(step: string | undefined, app?: string): string {
   if (!step) return "Working…";
   const plain = step.replace(/ \(your (keyboard|mouse)\)$/, "");
   return `${plain}${app ? ` in ${app}` : ""}…`;
+}
+
+/**
+ * The live line while a step waits for the limit on actions a minute to free a slot: "Pausing to keep to 40 steps a
+ * minute…" (tasks-approvals-2: a pause, never a refusal).
+ */
+export function pacedWords(perMinute: number): string {
+  return `Pausing to keep to ${perMinute} ${perMinute === 1 ? "step" : "steps"} a minute…`;
 }
 
 /** The live line while Copilot is tried again after a failed call: "Retrying…", then "Retrying (try 3)…". */
@@ -310,12 +352,19 @@ export function telemetryItems(a: Pick<CardActivity, "approvals" | "nearLimit">,
 
 /**
  * The card's details: the items as rows, steps of one kind in a row folded into one ("Read the window 3 times in
- * Settings"), the latest `max` of them. A step still under way is a row of its own.
+ * Settings"), as are refusals for one reason ("Not allowed 3 times: …"), the latest `max` of them. A step still under
+ * way is a row of its own.
  */
 export function activityRows(items: readonly ActivityItem[], max = DETAIL_ROWS): ActivityRow[] {
-  const rows: (ActivityRow & { group?: StepGroup; app?: string; n?: number; apps?: Set<string> })[] = [];
+  const rows: (ActivityRow & { group?: StepGroup; app?: string; n?: number; apps?: Set<string>; refused?: string })[] = [];
   for (const it of items) {
     const last = rows.at(-1);
+    const reason = foldedReason(it, last);
+    if (last && reason !== null) {
+      last.n = (last.n ?? 1) + 1;
+      last.words = refusedWords(reason, last.n);
+      continue;
+    }
     if (last && it.kind === "step" && it.state !== "running" && it.group && last.group === it.group && last.state === it.state) {
       last.n = (last.n ?? 1) + 1;
       if (it.app) last.apps!.add(it.app);
@@ -327,6 +376,7 @@ export function activityRows(items: readonly ActivityItem[], max = DETAIL_ROWS):
     rows.push({
       at: it.at, state: it.state, words: it.words, ...(it.model ? { model: true as const } : {}),
       ...(it.kind === "step" && it.state !== "running" ? { group: it.group, apps: new Set(it.app ? [it.app] : []) } : {}),
+      ...(it.kind === "refused" ? { refused: it.words } : {}),
     });
   }
   return rows.slice(-max).map(r => ({ at: r.at, state: r.state, words: r.words, ...(r.model ? { model: true as const } : {}) }));
@@ -336,3 +386,12 @@ export function activityRows(items: readonly ActivityItem[], max = DETAIL_ROWS):
 export const ROW_WORD: Readonly<Record<ActivityState, string>> = {
   running: "Now: ", done: "Done: ", failed: "Didn't work: ", waiting: "Waiting: ", stopped: "Stopped: ",
 };
+
+/**
+ * ROW_WORD for a row: the last row of a task whose question went unanswered (its words Ember's STATUS_WORDS.unanswered),
+ * and that question's own row (ANSWER_WORDS.expired), say it ended, never "Stopped": nobody stopped it
+ * (tasks-approvals-r1).
+ */
+export function rowWord(r: { state: ActivityState; words: string; model?: true }): string {
+  return r.state === "stopped" && !r.model && (r.words === STATUS_WORDS.unanswered || r.words === ANSWER_WORDS.expired) ? "Ended: " : ROW_WORD[r.state];
+}

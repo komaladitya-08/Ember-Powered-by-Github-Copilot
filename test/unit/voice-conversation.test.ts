@@ -74,6 +74,20 @@ describe("a conversation", () => {
     c.say(20); c.quiet(2);
     expect(c.e.listening).toBe(false);
     expect(c.events.some(v => v.type === "listening" && v.window === "conversation")).toBe(false);
+    expect(c.events.at(-1)).toEqual({ type: "listening", on: false, reason: "done", window: "wake" });
+  });
+
+  it("says as the wake's window ends that the conversation opens next, so main never shows Ember stopped listening in between (voice-listening-c3-1)", () => {
+    // Settings' voice line and Listen once's line said "Listening for “Ember”" and back in the same millisecond, and a
+    // screen reader saying them was heard as the next request ("Is already listening.").
+    const c = setup(["Open the calculator."]);
+    c.wake();
+    c.say(20); c.quiet(2);
+    const ends = c.events.findIndex(v => v.type === "listening" && !v.on);
+    expect(c.events.slice(ends)).toEqual([
+      { type: "listening", on: false, reason: "done", window: "wake", next: "conversation" },
+      { type: "listening", on: true, reason: "conversation", window: "conversation" },
+    ]);
   });
 
   it("ends a conversation when it is turned off, and says so", () => {

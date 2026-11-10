@@ -15,8 +15,11 @@ const DEST = /^(?!-)[A-Za-z0-9._%+@[\]:-]{1,255}$/;
 const SSH_URL = /^ssh:\/\/[A-Za-z0-9._%+@[\]:-]{1,255}$/;
 
 /** What an act answers: done (or under way), or why not, in plain words for the settings window. */
-/** An act's result; a done act may say something too ("Already added as build-01."). */
-export type ActResult = { ok: true; message?: string } | { ok: false; message: string };
+/**
+ * An act's result; a done act may say something too ("Already added as build-01."). `declined`: the user's own Not now
+ * on a first-use card, whose message says what stayed as it was ("Commands stay off on build-01.").
+ */
+export type ActResult = { ok: true; message?: string } | { ok: false; message: string; declined?: true };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const only = (o: Record<string, unknown>, keys: string[]) => Object.keys(o).every(k => keys.includes(k));

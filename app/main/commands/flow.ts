@@ -31,18 +31,18 @@ import { notReviewable, reviewedDecision, type CommandReviewer } from "./review"
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
-import { mentioned } from "./intent";
+import { mentioned, namedKind, ruledOut } from "./intent";
 import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
 import { redactSecrets } from "./redact";
-import { judgeScripts, newTaskWrites, noteWrites, type ScriptIo, type TaskWrites } from "./scripts";
+import { judgeScripts, newTaskWrites, noteWrites, withoutReadFlow, type ScriptIo, type TaskWrites } from "./scripts";
 import { outputTaint } from "./taint";
 import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
   type CommandService, type DecideInput, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
-  type RunSpec, type ShellId,
+  type RunSpec, type ShellId, standingFindings,
 } from "./types";
 
 /** What run_command needs from its worker. */
@@ -57,6 +57,12 @@ export interface CommandFlowContext {
      * never count for an announcement, but the card says the user asked by voice rather than "You didn't ask for this."
      */
     spokenWords?: () => string;
+    /**
+     * The user's own words for this task, quoted on one line (Worker.ownWordsLine), or "" for none: the "Your task:" line
+     * of a question about a command they didn't ask for, or of any in a task that was steered (Question.taskLine;
+     * tasks-approvals-c1-1). Absent, such a question has no task line, never the goal.
+     */
+    ownWords?: () => string;
     agreed: () => Agreement[];
     tainted: () => boolean;
     /** Marks the task tainted (command output that reads like instructions, §3.11 step 7); audited. */
@@ -102,6 +108,15 @@ export interface CommandFlowContext {
 
 export type { SecretTracker, ShapeOptions };
 export { scriptLanguage, type ScriptLanguage } from "./scripts";
+
+/**
+ * A command question's task line (Question.taskLine; tasks-approvals-c1-1): the user's own words, never the goal, under a
+ * command they didn't ask for or in a task that screen text or a command's output tried to steer, read as it is asked.
+ */
+function ownTaskLine(ctx: CommandFlowContext, unasked: boolean): { taskLine?: string } {
+  if (!unasked && !ctx.task.tainted() && !ctx.state.outputTainted) return {};
+  return { taskLine: ctx.task.ownWords?.() ?? "" };
+}
 
 /** CL's pure functions the flow calls (§3.11's export block: exactly CL's signatures). */
 export interface CommandJudge {
@@ -567,7 +582,7 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
   if (r.tainted) { lines.push(CARD_LINES.tainted); policyOnly = false; }
   if (r.carried) { lines.push(CARD_LINES.carried(r.carried.from)); policyOnly = false; }
   // The findings that stand once the target said which overwritten paths don't exist (§3.8.2 rule 3).
-  const left = (r.cls?.findings ?? []).filter(f => !(f.ifExists !== undefined && r.paths?.get(f.ifExists)?.exists === false));
+  const left = standingFindings(r.cls?.findings ?? [], r.paths);
   const missed = (ordinary && left.length > 0)
     || (d.verdict === "announce" && [...d.classes, ...left.map(f => f.cls)].some(c => ALWAYS_ASK.has(c)))
     || (d.verdict !== "run" && d.verdict !== "announce");
@@ -681,7 +696,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     const consent = (svc as CommandService & Partial<CommandConsentSource>).consentPanel?.() ?? null;
     if (!consent) return denied(`Commands aren't turned on for ${place} yet: the user can turn them on in Ember's settings, under Commands. Finish the task saying so.`);
     const q: PanelQuestion = {
-      title: `Turn on commands on ${place}?`, context: ctx.task.title, prompt: "Ember needs your OK first. Read what it means in the window that opened.",
+      title: `Turn on commands on ${place}?`, context: ctx.task.title, ...ownTaskLine(ctx, false), prompt: "Ember needs your OK first. Read what it means in the window that opened.",
       options: [{ id: "once", label: "Turn on", primary: true }, { id: "deny", label: "Not now" }],
       task, ...(where ? { where } : {}), panel: { kind: "consent", consent }, clickOnly: true,
     };
@@ -741,6 +756,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const real = new Map<string, string>();
   probe.forEach((p, i) => { const r = found[i].real; if (r !== null && r !== p) real.set(p, r); });
   if (real.size) cls = j.classifyCommand(a.command, shell, { ...cctx, real });
+  // An sh or bash `if` asks only for what its commands do, as in a script; a loop asks as on main (commands-remote-2, c7-1).
+  cls = withoutReadFlow(cls, shell);
 
   // Step 6: the branch facts a push's announcement needs.
   const git: GitFacts | null = cls.needsGit ? await within(svc.runner.gitFacts(cwd), PROBE_MS, null) : null;
@@ -785,7 +802,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // Words heard where Ember can't tell the user from its speakers didn't count (OWNER V1): when they named it, the card
   // says so instead of "You didn't ask for this."
   const spoken = ctx.task.spokenWords?.() ?? "";
-  if (d.verdict === "ask" && d.unasked && spoken.trim() && mentioned(cls.findings, spoken)) {
+  if (d.verdict === "ask" && d.unasked && spoken.trim() && !ruledOut(cls.findings, spoken) && (mentioned(cls.findings, spoken) || namedKind(cls.findings, spoken))) {
     const says = d.says.includes(LINES.unasked) ? d.says.map(l => (l === LINES.unasked ? SPOKEN_LINE : l)) : [...d.says];
     if (!says.includes(SPOKEN_LINE)) says.splice(says.includes(LINES.windows) ? says.indexOf(LINES.windows) : says.length, 0, SPOKEN_LINE);
     d = { ...d, unasked: false, says };
@@ -821,6 +838,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
     verdict: d.verdict, classes: d.classes, rules: d.rules, ...(d.requested ? { requested: "user", intent: d.requested.intent } : {}), reason: d.reason,
+    ...(d.review ? { review: d.review } : {}),
   });
   ctx.log.info("commands.decided", { task, target, verdict: d.verdict, classes: d.classes, chars: a.command.length });
 
@@ -835,11 +853,13 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
     ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
     ...(cardMode === "announce" && d.requested?.intent === "ai-review" ? { reviewed: true } : {}),
+    // The header says the home folder as ~ in a POSIX shell (commands-remote-8).
+    ...(shell !== "powershell" && home ? { home } : {}),
   });
   /** Asks with the command card; "once", "no" (Not now), "expired" (no answer in time: a timeout, not a refusal) or "stopped". */
   const askCard = async (says: string[], q: string, prompt = `On ${place}: ${firstLine(says)}`): Promise<"once" | "no" | "expired" | "stopped"> => {
     const question: PanelQuestion = {
-      title: "May I run a command?", context: ctx.task.title, prompt,
+      title: "May I run a command?", context: ctx.task.title, ...ownTaskLine(ctx, d.unasked), prompt,
       options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
       task, ...(where ? { where } : {}), armMs: d.armMs, panel: { kind: "command", card: card("ask", [...says, why]) },
       // A dangerous command (deleting, publishing, secrets, system changes…: the classifier's classes) looks risky.
@@ -929,7 +949,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         const theirs = (exit.remoteSays ?? []).filter(l => typeof l === "string").slice(0, 10).map(l => shownQuote(l));
         // In the card's order (§3.8.4): the remote's own lines come before "You didn't ask for this." and the Windows line.
         const own = [`${binding.label}'s own check also found:`, ...theirs];
-        const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.windows);
+        const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
         const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
         let answer: "once" | "no" | "expired" | "stopped" = "stopped";
         try {

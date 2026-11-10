@@ -58,8 +58,14 @@ export type QuestionPanel =
 
 export interface Question {
   title: string;
-  /** What the bubble is titled with once answered (e.g. the task's name). */
+  /** What the bubble is titled with once answered (e.g. the task's name), and its "Your task:" line unless `taskLine` says. */
   context?: string;
+  /**
+   * What its "Your task:" line says in place of `context` ("": no line): the user's own words, quoted, where the step
+   * came up unasked or text on screen tried to steer the task, so the model's goal never reads as their request under
+   * "You didn't ask for this" (tasks-approvals-5).
+   */
+  taskLine?: string;
   prompt: string;
   options: { id: string; label: string; primary?: boolean }[];
   /** The task asking (its id): the question's bubble, and the one after the answer, belong to it. */
@@ -84,16 +90,34 @@ export interface Question {
   detail?: string;
 }
 
+/** What question `q`'s "Your task:" line says (its taskLine, else its context), or "" for no line: the bubble's and the prompt card's. */
+export function taskLineOf(q: Pick<Question, "context" | "taskLine" | "prompt">): string {
+  const t = (q.taskLine ?? q.context ?? "").trim();
+  return t && t !== q.prompt ? t : "";
+}
+
 /**
  * How long a question's answer ("Thanks! Carrying on.", "Okay, I won't.") stays before what waited behind the question
  * shows, or, with nothing waiting, the bubble empties (ConfirmerTiming.afterAnswer).
  */
 export const ANSWER_MS = 1500;
+/**
+ * How long a timed-out question's note stays (ConfirmerTiming.expiredMs), unless something replaces it: the user was
+ * away, so a 1.5 s note was gone before they could come back and read it (tasks-approvals-4).
+ */
+export const EXPIRED_MS = 10_000;
 
 /** What the bubble says when a question timed out: nothing was approved, and it was not a refusal. */
 /** Under a timed-out question's thought: how to review it (the bubble has no button once the question has gone). */
 export const EXPIRED_STEP = "To review it, say or type the request again.";
 export const EXPIRED_THOUGHT = "Time ran out, so nothing was approved and I haven't done it. Ask me again if you'd like to review it.";
+/**
+ * The same for a task's question, said before the task ends: one that can't finish without the answer ends with Try
+ * again on its card (and in Home) (tasks-approvals-r1), but one that finishes the rest ends done, with Close alone, so the
+ * note says which (tasks-approvals-c2-2).
+ */
+export const EXPIRED_TASK_STEP = "If I can't finish without it, choose Try again on its card. Otherwise, say or type the request again.";
+export const EXPIRED_TASK_THOUGHT = "Time ran out, so nothing was approved and I haven't done it.";
 
 /**
  * What main does once a question's answer has been up its moment (ConfirmerTiming.afterAnswer): nothing when something
@@ -146,8 +170,12 @@ export interface ConfirmerTiming {
   armMs?: number;
   /** The pause between one question being answered and the next appearing. */
   gapMs?: number;
-  /** How long a question's answer shows before afterAnswer (default ANSWER_MS). */
-  answerMs?: number;
+  /**
+   * How long a question's answer shows before afterAnswer (default ANSWER_MS), and a timed-out question's note (default
+   * EXPIRED_MS): read as each shows, so main scales them by the user's More time to read and answer.
+   */
+  answerMs?: number | (() => number);
+  expiredMs?: number | (() => number);
   /**
    * A question's answer (`shown`, the very bubble it wrote) has been up `answerMs` and no question has come up since:
    * main takes it down unless something replaced it (afterAnswerPatch). Absent (tests, the eval): it stays as before.
@@ -190,7 +218,8 @@ export class Confirmer {
   private readKeyHint: ConfirmerTiming["readKeyHint"];
   private panelReady: ConfirmerTiming["panelReady"];
   private panelHint: ConfirmerTiming["panelHint"];
-  private answerMs: number;
+  private answerMs: number | (() => number);
+  private expiredMs: number | (() => number);
   private afterAnswer: ConfirmerTiming["afterAnswer"];
   /** The answer's bubble is up: afterAnswer runs when this fires. */
   private answerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -212,6 +241,7 @@ export class Confirmer {
     this.panelReady = t.panelReady;
     this.panelHint = t.panelHint;
     this.answerMs = t.answerMs ?? ANSWER_MS;
+    this.expiredMs = t.expiredMs ?? EXPIRED_MS;
     this.afterAnswer = t.afterAnswer;
   }
 
@@ -351,8 +381,8 @@ export class Confirmer {
   }
 
   /**
-   * A line under the question up now, in place of its key hint (why a spoken answer wasn't taken, and how it can be):
-   * the question stays as it is. False when no question is up.
+   * A line under the question up now, before its key hint (why a spoken answer wasn't taken, and how it can be): the
+   * question stays as it is, and so do the keys that answer it (tasks-approvals-6). False when no question is up.
    */
   note(text: string): boolean {
     const c = this.current;
@@ -489,15 +519,17 @@ export class Confirmer {
   /** The bubble for question `p`: shown when it comes up, and again when its whole text has been read or paged on. */
   private bubbleOf(p: Pending): BubbleState {
     // The whole task, so a step like "press Enter" is read as part of what the user asked for (typing and saving too).
-    const task = p.q.context?.trim();
+    const task = taskLineOf(p.q);
     const panel = p.q.panel;
     return {
       visible: true, mood: "attention", title: p.q.title,
-      thought: task && task !== p.q.prompt ? `${p.q.prompt}\nYour task: ${task}` : p.q.prompt,
+      thought: task ? `${p.q.prompt}\nYour task: ${task}` : p.q.prompt,
       // A panel question is answered in its window, which names the keys while they work there; its step says how to
       // get there from the keyboard (the bubble's own buttons are mouse-only). Until all of a whole text has been shown,
       // the approve key shows its next part: the keys say that, not "allow".
-      step: p.note ?? ((panel ? this.panelHintFor(panel) : (p.whole && !p.whole.seen ? this.readKeyHint?.() : this.keyHint?.())) || null), streaming: false,
+      // A note (why a spoken answer wasn't taken) goes before the keys, never in their place: they are the keyboard's way
+      // to answer, and the bubble's buttons are mouse-only (tasks-approvals-6).
+      step: [p.note, (panel ? this.panelHintFor(panel) : (p.whole && !p.whole.seen ? this.readKeyHint?.() : this.keyHint?.())) || null].filter(Boolean).join("\n") || null, streaming: false,
       // A panel question's bubble only brings its window up (or says no): what is allowed must be seen whole first.
       actions: panel
         ? [{ id: `ui:panel:${p.n}`, label: panel.kind === "command" ? "Show the command" : "Read it" }, { id: `q${p.n}:deny`, label: "Not now" }]
@@ -510,16 +542,24 @@ export class Confirmer {
     };
   }
 
-  /** The answer `shown` went up: unless a question replaces it first, afterAnswer hears of it answerMs later. */
-  private answerShown(shown: BubbleState): void {
+  /**
+   * The answer `shown` went up: unless a question replaces it first, afterAnswer hears of it answerMs later (expiredMs
+   * for a timed-out question's note).
+   */
+  private answerShown(shown: BubbleState, expired = false): void {
     this.cancelAnswer();
     const after = this.afterAnswer;
     if (!after) return;
+    const fallback = expired ? EXPIRED_MS : ANSWER_MS;
+    const ms = expired ? this.expiredMs : this.answerMs;
+    let wait = fallback;
+    // A setting that can't be read, or isn't a time: the usual time.
+    try { const v = typeof ms === "function" ? ms() : ms; if (Number.isFinite(v) && v >= 0) wait = v; } catch { /* the usual time */ }
     this.answerTimer = setTimeout(() => {
       this.answerTimer = null;
       if (this.current) return;
       try { after(shown); } catch { /* main's bubble only: the next bubble replaces it anyway */ }
-    }, this.answerMs);
+    }, wait);
   }
 
   private cancelAnswer(): void {
@@ -537,9 +577,9 @@ export class Confirmer {
       this.current = null;
       // "Not now" (or no answer) leaves Ember idle, not still working.
       const yes = !!answer && answer !== "deny";
-      const shown: BubbleState = { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : expired ? EXPIRED_THOUGHT : "Okay, I won't.", step: expired && !yes ? EXPIRED_STEP : null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) };
+      const shown: BubbleState = { visible: true, mood: yes ? "acting" : "idle", title: p.q.context ?? p.q.title, thought: yes ? "Thanks! Carrying on." : expired ? (p.q.task ? EXPIRED_TASK_THOUGHT : EXPIRED_THOUGHT) : "Okay, I won't.", step: expired && !yes ? (p.q.task ? EXPIRED_TASK_STEP : EXPIRED_STEP) : null, streaming: false, actions: [], ...(p.q.task ? { task: p.q.task } : {}), ...(p.q.where ? { where: p.q.where } : {}) };
       this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: shown });
-      this.answerShown(shown);
+      this.answerShown(shown, expired && !yes);
     }
     p.resolve(answer);
     if (wasCurrent) this.onChange?.(null);

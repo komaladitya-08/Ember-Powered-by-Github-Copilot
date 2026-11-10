@@ -4,12 +4,15 @@
  * and a job that runs only on v* tags, after every other job, with the only write permission in the workflow.
  */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
-import { releaseFiles, releaseNotes, releaseProblems, unwrap } from "../../scripts/package/release.mjs";
+import { readmeProblems, releaseFiles, releaseNotes, releaseProblems, unwrap } from "../../scripts/package/release.mjs";
 
 const read = (p: string) => fs.readFileSync(p, "utf8");
 const version = JSON.parse(read("package.json")).version as string;
+const flat = (s: string) => s.replace(/\s*\n\s*/g, " ");
+const section15 = () => read("docs/DEVELOPING.md").split("## 15. Publishing a release")[1].split("\n## ")[0];
 
 describe("release.mjs", () => {
   it("names the eight files the README downloads and the three of the GPL source", () => {
@@ -51,11 +54,61 @@ describe("release.mjs", () => {
     ]);
   });
 
+  it("refuses a tagged README that still says this version isn't out, since the notes and See what's new… lead there (install-docs-c1-1)", () => {
+    const repo = "https://github.com/o/r";
+    const before = [
+      "# Ember", "", "## Download", "",
+      "This README describes 1.2.3, which isn't published yet. Until it is,",
+      `[1.2.2 remains the downloadable beta](${repo}/releases/tag/v1.2.2):`,
+      `install it with [1.2.2's own README](${repo}/blob/v1.2.2/README.md), not the steps below.`, "",
+      "### From npm (beta)", "",
+      "The npm launcher is new in 1.2.3: `ember-copilot` isn't on npm until 1.2.3 is published.", "",
+      "## Install on RHEL 8", "",
+      `Older notes: [1.0.0](${repo}/releases/tag/v1.0.0).`, "",
+    ].join("\n");
+    expect(readmeProblems(before, "1.2.3")).toEqual([
+      "README.md's Download section still says 1.2.3 isn't published yet",
+      "README.md's Download section sends readers to v1.2.2 instead of 1.2.3",
+      "README.md's From npm still says ember-copilot isn't on npm until 1.2.3 is published",
+    ]);
+    // As §15 step 1 says the tagged commit has it: the README describes this version. Links outside Download stay.
+    const after = before
+      .replace(/This README describes 1\.2\.3[^]*?not the steps below\./, "This README describes Ember 1.2.3.")
+      .replace(/The npm launcher is new in 1\.2\.3: [^\n]+/, "The npm launcher is new in 1.2.3.");
+    expect(readmeProblems(after, "1.2.3")).toEqual([]);
+    expect(readmeProblems("# Ember\n", "1.2.3")).toEqual(["README.md has no Download section"]);
+    // The release job checks it before it writes the notes, and the tag's checks job at once, so a tag moved after
+    // the fix is all it takes (§15).
+    const script = read("scripts/package/release.mjs");
+    const whole = script.slice(script.indexOf("const [dir, tag, repo, notesFile]"));
+    expect(whole.indexOf("readme();")).toBeGreaterThan(0);
+    expect(whole.indexOf("readme();")).toBeLessThan(whole.indexOf("releaseNotes("));
+    // The check on its own, as the tag's checks job runs it: it fails exactly when this README has problems.
+    const run = spawnSync(process.execPath, ["scripts/package/release.mjs", "--readme", `v${version}`], { encoding: "utf8" });
+    const wrong = readmeProblems(read("README.md"), version);
+    expect(run.status, run.stderr).toBe(wrong.length ? 1 : 0);
+    for (const w of wrong) expect(run.stderr).toContain(w);
+    expect(spawnSync(process.execPath, ["scripts/package/release.mjs", "--readme", "v9.9.9"], { encoding: "utf8" }).stderr).toContain(`isn't v${version}`);
+    const checks = read(".github/workflows/ci.yml").split("\n  checks:\n")[1].split(/\n {2}[\w-]+:\n {4}name:/)[0];
+    expect(checks).toMatch(/if: startsWith\(github\.ref, 'refs\/tags\/v'\)\n {8}run: node scripts\/package\/release\.mjs --readme "\$GITHUB_REF_NAME"/);
+    expect(flat(section15())).toContain("In the commit you tag, replace that line");
+  });
+
   it("has notes for this version in CHANGELOG.md", () => {
     const notes = releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` });
     expect(notes.length).toBeGreaterThan(1000);
     expect(notes).not.toMatch(/^## /m);
     expect(notes).not.toMatch(/\]\((?!https:|#)/);
+  });
+
+  it("keeps this version's notes, as releaseNotes builds them, under GitHub's 125,000-character limit for a release body", () => {
+    // GitHub refuses a release body longer than this, so the release job's `gh release create` would fail at the tag.
+    // The notes are measured as the job writes them: links made absolute for the repository Ember's releases come from.
+    const GITHUB_RELEASE_BODY_LIMIT = 125_000;
+    const repo = /const REPO = "([^"]+)"/.exec(read("app/main/updates.ts"))?.[1] ?? "";
+    expect(repo).toMatch(/^[\w.-]+\/[\w.-]+$/);
+    const notes = releaseNotes(read("CHANGELOG.md"), version, { repo, ref: `v${version}` });
+    expect(notes.length).toBeLessThan(GITHUB_RELEASE_BODY_LIMIT);
   });
 });
 

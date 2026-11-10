@@ -6,9 +6,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
+import { CONSENT_CHANGES, CONSENT_VERSION, consentChangesSince } from "../../app/shared/consent";
 import {
-  CONSENT_SOURCES, CONSENT_TEXT, STEP_TEXT, aboutNext, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
-  gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry,
+  CONSENT_AGAIN, CONSENT_CHANGE_SOURCES, CONSENT_SOURCES, CONSENT_TEXT, recheckMessage, STEP_TEXT, aboutNext, askWhy, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
+  gated, plainChecks, serviceSummary, signInView, SKIP_OWN, SKIP_SIGN_IN, stepAfter, stepBefore, stepCount, summaryRows, switchedLine, voiceTry,
 } from "../../app/renderer/home/welcome-copy";
 
 const read = (f: string) => readFileSync(new URL(`../../app/${f}`, import.meta.url), "utf8");
@@ -44,6 +45,8 @@ describe("first run's steps", () => {
     expect(aboutNext({ ready: false, filled: true })).toBe("Skip for now");
     expect(aboutNext({ ready: true, filled: false })).toBe("Skip for now");
     expect(aboutNext({ ready: true, filled: true })).toBe("Save and continue");
+    // Memory paused (a model service in force): nothing to answer, so the step just goes on (memory-c1-2).
+    expect(aboutNext({ ready: false, filled: true, paused: true })).toBe("Continue");
     // Saving waits for main's answer before going on; skipping keeps nothing.
     expect(SCRIPT).toContain('if (about.ready && about.filled) void saveStep(');
   });
@@ -53,8 +56,11 @@ describe("first run's steps", () => {
     for (const s of ["hello", "character", "consent"] as const) expect(gated(s, false), s).toBe(s);
     for (const s of WELCOME_STEPS) expect(gated(s, true), s).toBe(s);
     // Agreed in an earlier run that didn't finish: it opens at sign-in, with Back to what came before.
-    expect(firstStep(false)).toBe("hello");
-    expect(firstStep(true)).toBe("sign-in");
+    expect(firstStep(0)).toBe("hello");
+    expect(firstStep(CONSENT_VERSION)).toBe("sign-in");
+    // Agreed to an earlier version: it opens at the consent itself, never past it (first-run-4).
+    expect(firstStep(CONSENT_VERSION - 1)).toBe("consent");
+    expect(gated(firstStep(1), false)).toBe("consent");
   });
 
   it("goes forward from the consent step only once the agreement is saved", () => {
@@ -107,7 +113,8 @@ describe("the consent in short", () => {
     expect(SCRIPT).not.toContain("model-service");
     // The organisation's service and the lockdown line are written into the full text only.
     expect(HOME).toContain("document.querySelector<HTMLElement>(\"#w-full li[data-icon='send']\")");
-    expect(HOME).toContain("document.querySelector<HTMLElement>(\"#w-full #model-service\")");
+    // (and Apps & privacy's copy of it, which keeps no ids: safety-privacy-r6).
+    expect(HOME).toContain("document.querySelectorAll<HTMLElement>(\"#w-full #model-service, .model-service-copy\")");
     expect(HOME).not.toMatch(/querySelector<HTMLElement>\("li\[data-icon='send'\]"\)/);
   });
 
@@ -116,6 +123,27 @@ describe("the consent in short", () => {
     const locked = consentPoints({ service: "GitHub Copilot", kept: "none deleted until your organisation fixes its policy", locked: true });
     expect(locked[1].text).toBe("While your organisation's policy locks me down, nothing is sent to a model service, so I can't answer or act.");
     expect(locked[3].text).toContain("(none deleted until your organisation fixes its policy)");
+  });
+
+  it("tells someone who agreed to an earlier version what changed since, each line from the full text (first-run-4, safety-privacy-8)", () => {
+    const full = PAGE.slice(PAGE.indexOf("<details class=\"w-more\" id=\"w-full\">"), PAGE.indexOf("</details>", PAGE.indexOf("id=\"w-full\"")));
+    // Every bump has its line, so a bump can't ship without one, and every line is paired with the full text's words.
+    for (let v = 2; v <= CONSENT_VERSION; v++) {
+      expect(CONSENT_CHANGES[v], `version ${v}`).toBeTruthy();
+      expect(CONSENT_CHANGE_SOURCES[v]?.length, `version ${v}`).toBeGreaterThan(0);
+      for (const source of CONSENT_CHANGE_SOURCES[v]) expect(full, `${v}: ${source}`).toContain(source);
+    }
+    expect(Object.keys(CONSENT_CHANGES).map(Number).every(v => v >= 2 && v <= CONSENT_VERSION)).toBe(true);
+    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7]]);
+    expect(consentChangesSince(6)[0]).toContain("“Keep my recent conversation”");
+    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7]]);
+    expect(consentChangesSince(0)).toEqual([]);
+    expect(consentChangesSince(CONSENT_VERSION)).toEqual([]);
+    for (const line of Object.values(CONSENT_CHANGES)) expect(line, line).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);
+    expect(CONSENT_AGAIN.title).toBe("What's changed since you last agreed");
+    expect(CONSENT_AGAIN.lead).toContain("Nothing is read, heard or sent until you do.");
+    // The same gate: the step's button saves the current version, and nothing past it opens without it.
+    expect(SCRIPT).toContain("step = firstStep(settings?.consent.version ?? 0);");
   });
 
   it("says what Not now means: Ember stays off and asks again", () => {
@@ -134,17 +162,76 @@ describe("the sign-in step", () => {
     expect(signInView({ phase: "starting", signingIn: false, managedProvider: false })).toMatchObject({ primary: "continue", why: "Still connecting to Copilot.", skip: true });
   });
 
+  it("says I'll switch to Copilot once I've finished, with Continue open, while a switch waits for what I'm doing (first-run-v4-1)", () => {
+    expect(signInView({ phase: "starting", signingIn: false, managedProvider: false, switching: true }))
+      .toEqual({ line: "I'll switch to Copilot once I've finished what I'm doing.", tone: "", primary: "continue", why: "", cancel: false, skip: false, retry: false });
+    // Main's own status wins once it is ready again or the organisation locks Ember down.
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, switching: true }).line).toBe("Connected to Copilot.");
+    expect(signInView({ phase: "starting", signingIn: false, managedProvider: false, locked: true, switching: true }).line).toBe("Your organisation's policy locks me down, so I can't connect for now.");
+    // The try step's Ask waits for the switch, never for a sign-in the step doesn't offer yet.
+    expect(SCRIPT).toContain("noSignIn: !!status?.admin.provider || ownInUse() || toCopilotLater");
+    // Only while main leaves my own provider for Copilot: never for a switch the other way.
+    expect(SCRIPT).toContain("toCopilotLater = leaving && reported?.switchPending === true;");
+  });
+
+  it("says the switch to Copilot was made once the step's Continue becomes a sign-in, by the way this build signs in (first-run-c4-1)", () => {
+    expect(switchedLine("github-app")).toBe("I've switched to Copilot. Sign in with GitHub to go on, or skip for now.");
+    expect(switchedLine("github-cli")).toBe("I've switched to Copilot. Connect with GitHub CLI to go on, or skip for now.");
+  });
+
   it("offers Check again while signed out, and shows the page main offers for a GitHub CLI sign-in (review of #124)", () => {
     expect(signInView({ phase: "signed-out", signingIn: false, managedProvider: false }).retry).toBe(true);
     expect(signInView({ phase: "ready", signingIn: false, managedProvider: false }).retry).toBe(false);
     expect(SCRIPT).toContain("waitLink = p.link ?? null;");
-    expect(SCRIPT).toContain("$(\"w-check-again\").hidden = !((v.retry && agent?.signInWith === \"github-cli\") || waitLink);");
+    // Not while the user's own provider is in use: there is no GitHub sign-in to look for (first-run-1).
+    expect(SCRIPT).toContain("$(\"w-check-again\").hidden = !((v.retry && agent?.signInWith === \"github-cli\" && !ownInUse()) || waitLink);");
     expect(PAGE).toContain("<button type=\"button\" class=\"btn quiet small\" id=\"w-check-again\">Check again</button>");
   });
 
+  it("names the user's own provider once Ember uses it, never Copilot, and Back from the checks returns to it (first-run-1)", () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const ready = signInView({ phase: "ready", signingIn: false, managedProvider: false, service });
+    // A host elsewhere wasn't contacted at the start: in use, never "Connected", as Home says (integrations-r2-6).
+    expect(ready).toMatchObject({ line: "Using your own provider (api.example.com).", tone: "ok", primary: "continue" });
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host: "127.0.0.1:11434" } }).line).toBe("Connected to your own provider (127.0.0.1:11434).");
+    expect(signInView({ phase: "starting", signingIn: false, managedProvider: false, service }).line).toBe("Connecting to your own provider (api.example.com)…");
+    const text = signInText({ managed: false, own: "api.example.com" });
+    expect(text.title).toBe("Your own model provider");
+    expect(text.lead).toContain("api.example.com");
+    for (const w of [ready.line, text.title, text.lead]) expect(w, w).not.toMatch(/Copilot|Sign in to GitHub/);
+    expect(stepBefore("checks", true)).toBe("provider");
+    expect(stepBefore("checks")).toBe("sign-in");
+    // The summary doesn't call another service Copilot.
+    const rows = summaryRows({ character: "Cinder", size: 60, signedIn: "Your own provider (api.example.com)", voice: "off", keys: null, copilot: false });
+    expect(rows[1]).toEqual({ label: "Model service", value: "Your own provider (api.example.com)" });
+    expect(SCRIPT).toContain("const to = stepBefore(step, ownInUse());");
+  });
+
+  it("names the user's own provider while it connects or fails too, with no GitHub, Copilot or sign-in words (first-run-1)", () => {
+    const starting = signInText({ managed: false, own: "localhost:11434", ownPhase: "starting" });
+    const failing = signInText({ managed: false, own: "localhost:11434", ownPhase: "error" });
+    expect(starting).toEqual({ title: "Your own model provider", lead: "I'm connecting to the model provider you set up (localhost:11434). You can change it later in Settings › Models & connections." });
+    expect(failing).toEqual({ title: "Your own model provider", lead: "I can't connect to the model provider you set up (localhost:11434) yet: the line below says why. You can check its details here, or later in Settings › Models & connections." });
+    for (const w of [starting.title, starting.lead, failing.lead, SKIP_OWN]) expect(w, w).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
+    // Ready reads as before.
+    expect(signInText({ managed: false, own: "localhost:11434", ownPhase: "ready" })).toEqual(signInText({ managed: false, own: "localhost:11434" }));
+    expect(SKIP_SIGN_IN).toContain("sign in later");
+    expect(SKIP_OWN).toBe("You can go on for now and check it later in Settings › Models & connections. Until I'm connected, I can't answer or act.");
+  });
+
+  it("says it is using a provider elsewhere, as the line under it does, and connected only to one on this computer (first-run-r3-2)", () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const away = signInText({ managed: false, own: "api.example.com", ownPhase: "ready" });
+    expect(away.lead).toBe("I'm using the model provider you set up (api.example.com), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.");
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service }).line).toBe("Using your own provider (api.example.com).");
+    const near = signInText({ managed: false, own: "localhost:11434", ownPhase: "ready" });
+    expect(near.lead).toBe("I'm connected to the model provider you set up (localhost:11434), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.");
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host: "localhost:11434" } }).line).toBe("Connected to your own provider (localhost:11434).");
+  });
+
   it("never offers sign-in with the organisation's own service, under lockdown, or when the policy refused (review of #124)", () => {
-    expect(signInText(true).title).toBe("Connecting to your organisation's service");
-    expect(signInText(false)).toBe(STEP_TEXT["sign-in"]);
+    expect(signInText({ managed: true }).title).toBe("Connecting to your organisation's service");
+    expect(signInText({ managed: false })).toBe(STEP_TEXT["sign-in"]);
     expect(signInView({ phase: "starting", signingIn: false, managedProvider: true })).toMatchObject({ primary: "continue", why: "Still connecting to your organisation's model service." });
     expect(signInView({ phase: "error", signingIn: false, managedProvider: true })).toMatchObject({ primary: "continue", why: "", retry: false });
     expect(signInView({ phase: "error", reason: "policy", signingIn: false, managedProvider: false })).toMatchObject({ primary: "continue", why: "", retry: false, skip: false });
@@ -152,6 +239,31 @@ describe("the sign-in step", () => {
       .toMatchObject({ primary: "continue", line: "Your organisation's policy locks me down, so I can't connect for now.", retry: false });
     // Sign in (or another way on) is the step's button only while it can help; Continue otherwise.
     expect(SCRIPT).toContain("if (step === \"sign-in\" && signInPrimary !== \"continue\") { perform(signInPrimary); return; }");
+  });
+
+  it("under the organisation's lockdown, never says a service runs or that signing in helps (first-run-v1)", () => {
+    for (const held of [false, true]) {
+      const t = signInText({ managed: false, locked: true, held });
+      expect(t.title + t.lead, String(held)).not.toMatch(/its own model service|nothing to sign in to|Sign in/);
+      expect(t.lead, String(held)).toMatch(held ? /restart me/ : /Ask your administrator/);
+    }
+    // Locked wins over an organisation's service.
+    expect(signInText({ managed: true, locked: true }).title).toBe("Your organisation has locked me down");
+    expect(askWhy({ locked: true, noSignIn: false })).toBe("While your organisation's policy locks me down, I can't answer.");
+    expect(askWhy({ locked: false, noSignIn: true })).toBe("Once I'm connected, you can ask me something.");
+    expect(askWhy({ locked: false, noSignIn: false })).toBe("Sign in first, then you can ask me something.");
+    const row = summaryRows({ character: "Cinder", size: 60, signedIn: "Locked down by your organisation", voice: "off", keys: null, copilot: false })[1];
+    expect(row).toEqual({ label: "Model service", value: "Locked down by your organisation" });
+    expect(serviceSummary({ ready: false, locked: true, managed: false })).toBe("Locked down by your organisation");
+    expect(serviceSummary({ ready: false, locked: true, managed: true })).toBe("Locked down by your organisation");
+  });
+
+  it("offers the user's own provider in the lead only where it is offered (first-run-7)", () => {
+    expect(signInText({ managed: false }).lead).toContain("No Copilot? You can use your own model provider instead.");
+    const off = signInText({ managed: false, ownOffered: false });
+    expect(off.title).toBe("Sign in to GitHub");
+    expect(off.lead).not.toMatch(/own model provider/);
+    expect(off.lead).toBe("I think with GitHub Copilot, so I need a GitHub account that has Copilot. Your browser opens so you can approve it there.");
   });
 
   it("says who is signed in once connected", () => {
@@ -175,14 +287,15 @@ describe("the checks step", () => {
     expect(rows[0].text).not.toMatch(/X11|glibc|sudo/);
     expect(checksHeadline(LINUX)).toEqual({ text: "One thing to fix so I can read and use your apps.", tone: "warn" });
     expect(checksNext(LINUX)).toBe("Continue anyway");
-    expect(checksLater(LINUX)).toContain("Settings › Setup check");
+    // Named as the sidebar names it (first-run-9).
+    expect(checksLater(LINUX)).toContain("Settings › Setup & about");
   });
 
   it("gives a command to copy when the user runs the fix, and keeps it out of the words", () => {
     const missing = [{ id: "accessibility", label: "Screen reading", status: "warn" as const, detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi python3-gobject" }];
     expect(plainChecks(missing)[0]).toMatchObject({ command: "sudo dnf install python3-pyatspi python3-gobject" });
     expect(plainChecks(missing)[0].text).toContain("Run the command below");
-    expect(fixCommand("No SSH client found. Install OpenSSH with: sudo dnf install openssh-clients")).toBe("sudo dnf install openssh-clients");
+    expect(fixCommand("No SSH client found. Install OpenSSH with sudo dnf install openssh-clients, then try again.")).toBe("sudo dnf install openssh-clients");
     expect(fixCommand("Accessibility is on")).toBeUndefined();
     expect(fixCommand("Install it with sudo dnf install speech-dispatcher, then restart Ember.")).toBe("sudo dnf install speech-dispatcher");
   });
@@ -197,8 +310,34 @@ describe("the checks step", () => {
     expect(checksLater(ok)).toBe("");
   });
 
+  it("keeps saying to restart apps already open after Turn on, never that everything is ready (first-run-3)", () => {
+    const after = LINUX.map(r => (r.id === "accessibility" ? { id: r.id, label: r.label, status: "ok" as const, detail: "On. Restart apps that were already open, or log out and in, so Ember can read them.", next: true as const } : r));
+    expect(plainChecks(after)).toEqual([{ id: "accessibility", title: "Screen reading is on", text: "Restart apps that were already open, or log out and in, so I can read them.", held: false, tone: "ok" }]);
+    expect(checksHeadline(after)).toEqual({ text: "Ready, with one thing left for you to do.", tone: "ok" });
+    expect(checksNext(after)).toBe("Continue");
+    // Switched on before Ember started: nothing left to do.
+    expect(checksHeadline(after.map(r => ({ ...r, next: undefined })))).toEqual({ text: "Everything I need is ready.", tone: "ok" });
+  });
+
+  it("says what Check again found: the rows that are ready now, or that nothing changed (first-run-6)", () => {
+    const missing = [{ id: "accessibility", label: "Screen reading", status: "warn" as const }, { id: "os", label: "Operating system", status: "warn" as const }];
+    const fixed = [{ id: "accessibility", label: "Screen reading", status: "ok" as const }, missing[1]];
+    expect(recheckMessage(missing, fixed)).toBe("I checked again. Screen reading is ready now.");
+    expect(recheckMessage(missing, missing)).toBe("I checked again. Nothing has changed yet.");
+    const two = [...missing, { id: "session", label: "Desktop session", status: "fail" as const }];
+    expect(recheckMessage(two, two.map(r => ({ ...r, status: "ok" as const })))).toBe("I checked again. Screen reading and Desktop session are ready now.");
+    // Offered on the step while a row needs the user, through main's re-read (a throttled probe included).
+    expect(SCRIPT).toContain("$(\"w-checks-again-row\").hidden = !rows.some(needsUser);");
+    expect(MAIN).toContain("ipcMain.handle(IPC.recheckSetup, guard(async () => environmentNow(true)));");
+    expect(HOME).toContain("$(\"checks-again-row\").hidden = !view.needing;");
+  });
+
   it("names each row's state in words in the details", () => {
     expect(["ok", "warn", "fail"].map(s => checkState(s as "ok"))).toEqual(["Ready", "Worth a look", "Needs fixing"]);
+    // A warning that holds Ember back needs fixing, as the counts say; Home's setup check uses the same words (first-run-9).
+    expect(checkState("warn", true)).toBe("Needs fixing");
+    expect(checkState("ok", true)).toBe("Ready");
+    expect(HOME).toContain("pill.textContent = checkState(c.status, holdsBack(c));");
   });
 });
 
@@ -242,6 +381,24 @@ describe("“Your Ember”", () => {
       { label: "Character", value: "Wisp, 72 px" }, { label: "Copilot", value: "Signed in as octo" }, { label: "“Hey Ember”", value: "On" },
       { label: "Ask", value: "Ctrl+Alt+Space" }, { label: "Stop everything", value: "Ctrl+Alt+X" }, { label: "Settings", value: "Ctrl+Alt+E" },
     ]);
+  });
+
+  it("names the service Ember is connected through, and one with nothing to sign in to by name while it isn't connected (first-run-c1-3)", () => {
+    const user = { kind: "user", host: "localhost:11434" };
+    expect(serviceSummary({ ready: true, locked: false, managed: false, login: "octo" })).toBe("Signed in as octo");
+    expect(serviceSummary({ ready: true, locked: false, managed: false })).toBe("Connected");
+    expect(serviceSummary({ ready: true, locked: false, managed: true })).toBe("Your organisation's model service");
+    expect(serviceSummary({ ready: true, locked: false, managed: false, service: user, login: "octo" })).toBe("Your own provider (localhost:11434)");
+    // Not connected: Copilot isn't signed in yet; the user's own provider and the organisation's service have no sign-in.
+    expect(serviceSummary({ ready: false, locked: false, managed: false })).toBeNull();
+    expect(serviceSummary({ ready: false, locked: false, managed: false, service: user })).toBe("Your own provider (localhost:11434), not connected yet");
+    expect(serviceSummary({ ready: false, locked: false, managed: true })).toBe("Your organisation's model service, not connected yet");
+    expect(serviceSummary({ ready: false, locked: false, managed: false, service: { kind: "admin", host: "models.corp.example" } })).toBe("Your organisation's model service, not connected yet");
+    for (const service of [user, undefined]) {
+      const value = serviceSummary({ ready: false, locked: false, managed: !service, service });
+      expect(summaryRows({ character: "Cinder", size: 60, signedIn: value, voice: "off", keys: null, copilot: false })[1].value).not.toMatch(/signed in/i);
+    }
+    expect(SCRIPT).toContain("signedIn: serviceSummary({");
   });
 
   it("names no shortcut another app holds, and says when Copilot isn't signed in yet", () => {

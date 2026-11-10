@@ -87,6 +87,19 @@ describe("the logger's emitted lines hold no token (BE audit #1)", () => {
     expect(h.lines()[0]).toBeTruthy(); // still valid JSON, one line
   });
 
+  it("redacts today's common API keys and the commands redactor's other token shapes, keeping the line JSON (safety-privacy-2)", () => {
+    const h = harness();
+    const keys = [
+      "sk-proj-TESTMARKER0123456789abcdefghijklmnopqrstuv", "sk-ant-api03-TESTMARKER0123456789abcdefghijklmnop",
+      "sk_live_TESTMARKER0123456789ab", "hf_TESTMARKER0123456789abcdefghijklmn", "glpat-TESTMARKER0123456789ab",
+      "AKIAABCDEFGHIJKLMNOP", "xoxb-1234567890-TESTMARKER",
+    ];
+    h.log.info(`keys ${keys[0]}`, { a: keys.join(" "), b: JSON.stringify({ openai_key: keys[0], k: keys[3] }), c: `"${keys[4]}"\\` });
+    const text = h.emitted();
+    for (const k of keys) expect(text, k).not.toContain(k);
+    expect(h.lines()[0]).toBeTruthy();
+  });
+
   it("leaves ordinary words alone", () => {
     const h = harness();
     h.log.info("ghost_writer asked about a token count", { note: "github_pattern", n: 3, tokens: 12 });

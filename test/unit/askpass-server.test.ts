@@ -83,13 +83,15 @@ describe("the prompt cards for ssh's prompts (§5.1.6, §8.6)", () => {
     const passphrase = "Enter passphrase for key '/home/alice/.ssh/id_ed25519': ";
     const other = "alice@corp-sso.example.com's password: ";
     for (const c of [old, { ...ctx, client: { major: 8, minor: 4 } }, { id: "p1", host: "build-01", names: ctx.names }]) {
-      expect(promptCard({ prompt: passphrase, mode: "secret" }, c)).toEqual({ id: "p1", kind: "secret", secret: "other", host: "build-01", prompt: passphrase });
+      // Marked as a question whose asker this ssh can't show, for the card's words (commands-remote-3).
+      expect(promptCard({ prompt: passphrase, mode: "secret" }, c)).toEqual({ id: "p1", kind: "secret", secret: "other", host: "build-01", prompt: passphrase, unmarked: true });
       // Never "Sign in to corp-sso on the way to build-01": no via, no login.
-      expect(promptCard({ prompt: other, mode: "secret" }, c)).toEqual({ id: "p1", kind: "secret", secret: "other", host: "build-01", prompt: other });
+      expect(promptCard({ prompt: other, mode: "secret" }, c)).toEqual({ id: "p1", kind: "secret", secret: "other", host: "build-01", prompt: other, unmarked: true });
       expect(promptCard({ prompt: "deploy@build-01.example.com's password: ", mode: "secret" }, c)).toMatchObject({ secret: "other" });
     }
     // 8.5 marks the server's prompts, so ssh's own unmarked ones are ssh's.
     expect(promptCard({ prompt: passphrase, mode: "secret" }, { ...ctx, client: { major: 8, minor: 5 } })).toMatchObject({ secret: "passphrase" });
+    expect(promptCard({ prompt: passphrase, mode: "secret" }, { ...ctx, client: { major: 8, minor: 5 } })).not.toHaveProperty("unmarked");
     expect(promptCard({ prompt: other, mode: "secret" }, { ...ctx, client: { major: 8, minor: 5 } })).toMatchObject({ secret: "password", via: "corp-sso.example.com" });
     // A host key's card hands ssh only "yes"; a touch answers nothing: both stay.
     const hostKey = "The authenticity of host 'build-01.example.com (203.0.113.7)' can't be established.\nED25519 key fingerprint is SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ";

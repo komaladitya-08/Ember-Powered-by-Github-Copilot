@@ -5,7 +5,7 @@
  * changes.
  */
 
-import { textScaleOf } from "./terminal-options";
+import { termFontSize, textScaleOf } from "./terminal-options";
 
 /** The window's height taken by everything round a run's terminal at the default text size: padding, tabs, header, command, hint, status. */
 const TERM_CHROME_PX = 250;
@@ -46,6 +46,35 @@ export function fitTerminal(cell: { width: number; height: number }, width: numb
   const cols = Math.floor((width - 16) / cell.width) - 1;
   const rows = Math.floor((height - 8) / cell.height);
   return { cols: Math.max(20, Math.min(500, cols)), rows: Math.max(5, Math.min(200, rows)) };
+}
+
+/** The window main opens at the default text size (windows.ts's createCommandWindow), CSS px; it grows with the text. */
+const WINDOW_PX = { width: 760, height: 480 };
+/** The panels' side padding: the terminal's room across is the window's less this (736 of 760 px at Default). */
+const PANELS_PAD_PX = 24;
+/**
+ * A cell of the terminal's font at each type size (px), as measured on the built page with DejaVu Sans Mono (Linux's).
+ * macOS's SF Mono and Windows' Consolas are no wider, so a guess from these cuts no column there; the page's own
+ * measure takes over as soon as it reports.
+ */
+const CELL_AT: Readonly<Record<number, { width: number; height: number }>> = {
+  13: { width: 7.826953125, height: 18 },
+  15: { width: 9.030859375, height: 22 },
+  17: { width: 10.23515625, height: 24 },
+};
+
+/**
+ * What fits a run's terminal in the window main opens at a text scale, before its page has measured it (review
+ * commands-remote-1: the first command of a session starts before the window exists, and a run's size is fixed for
+ * the run, §3.10): 90×12, 91×12 and 91×13 at Default, Large and Larger. A scale that isn't one from 1 to 2 is the
+ * default's.
+ */
+export function defaultFit(scale: number): { cols: number; rows: number } {
+  const s = textScaleOf(String(scale));
+  const px = termFontSize(s);
+  const cell = CELL_AT[px] ?? { width: CELL_AT[13].width * px / 13, height: Math.ceil(CELL_AT[13].height * px / 13) };
+  const width = Math.round(WINDOW_PX.width * s), height = Math.round(WINDOW_PX.height * s);
+  return fitTerminal(cell, width - PANELS_PAD_PX, height - termChromePx(s));
 }
 
 /** xterm's hidden input's place and size, as its inline style holds them ("920.8px", or "" before xterm places it). */

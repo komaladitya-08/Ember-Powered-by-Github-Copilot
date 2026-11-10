@@ -415,8 +415,13 @@ export type FixId = "enable-accessibility" | "open-accessibility-settings" | "op
 /** The shared host's `status` answer as main keeps it (port/host answers it without starting the provider, PH correction). */
 export interface HelperStatus {
   toolkitAccessibility: boolean | null;
-  /** Why the provider couldn't start: the bridge's fatal line, or "refused by an execution policy" when PowerShell ran nothing. */
+  /** Why the provider couldn't start, in plain words that read after "didn't start: " (the setup check shows them). */
   detail?: string;
+  /**
+   * The same in PowerShell's, the compiler's or Node's own words (the bridge's fatal line, spawn's error), which can name
+   * .NET exceptions, error codes and paths in the user's folder: `ember doctor` only, never a window (reliability-performance-w5-1).
+   */
+  cause?: string;
   /** Windows: the bridge's `languageMode` ("FullLanguage", "ConstrainedLanguage"). */
   languageMode?: string;
   /** Windows: the bridge threads' DPI awareness and the process's; they differ on mixed-DPI risk (§12.2 R22). */
@@ -431,10 +436,14 @@ export interface EnvContext {
   /** Ember's accelerators another app holds; undefined while unknown. */
   shortcutsTaken?: string[];
   /**
-   * win32/darwin: the shared host's `status` answer, fetched once in the background after start (never on Linux, where
-   * the Python sidecar still starts on demand only): null when it didn't answer, undefined when not asked yet.
+   * win32/darwin: the shared host's `status` answer, fetched in the background after start (never on Linux, where the
+   * Python sidecar still starts on demand only); on Windows, whose Screen reading row reads it, also on Check again and
+   * when reads find the helper can't work while it says it does, or the reverse (main's HelperWatch; macOS's row reads
+   * the Accessibility permission live): null when it didn't answer, undefined when not asked yet.
    */
   helper?: HelperStatus | null;
+  /** The user pressed Check again: a probe that waits between tries (Linux's pyatspi, every 30 s) tries now (first-run-6). */
+  fresh?: boolean;
 }
 
 /** One doctor row a platform adds (doctor.ts DoctorCheck's shape). */
@@ -490,6 +499,12 @@ export interface PrivacyVocabulary {
   readonly neverLookDefaults: readonly string[];
   /** policy.ts isSecurityWindow with this OS's vocabulary. */
   isSecurityWindow(w: { app?: string; title?: string; name?: string }): boolean;
+  /**
+   * policy.ts isPromptWindow: a window of a program that is only a password prompt, which stops all reading and every
+   * step while it is on screen (Perception.promptOpen; safety-privacy-3). linux only: Windows' and macOS's prompts come
+   * from the accessibility host's list.
+   */
+  isPromptWindow?(w: { app?: string }): boolean;
 }
 
 /** Clipboard formats Ember saves and puts back around a tier-3 paste (agent/clipboard.ts), per OS (G5). */
@@ -516,8 +531,18 @@ export interface AppLifecycle {
   readonly appMenu: boolean;
   /** darwin: reopening Ember.app (Dock, Finder) emits "activate", not "second-instance": main shows settings then. */
   readonly reopenShowsSettings: boolean;
-  /** How the OS ends the session without will-quit (G10): win32 "session-end" on Ember's windows; darwin powerMonitor "shutdown"; linux null. */
-  readonly sessionEnd: "window-session-end" | "power-monitor-shutdown" | null;
+  /**
+   * How the OS ends the session without will-quit (G10): win32 "session-end" on Ember's windows; darwin powerMonitor
+   * "shutdown"; linux "display-gone": a GNOME on Xorg logout ends the X server, Chromium ends its run loop by itself
+   * and Electron says "quit" with no will-quit before it (reliability-performance-r1).
+   */
+  readonly sessionEnd: "window-session-end" | "power-monitor-shutdown" | "display-gone" | null;
+  /**
+   * linux: tells `ended` once, synchronously, when the X connection breaks before Electron can quit (Xlib's IO error
+   * handler: x11.ts watchDisplayGone); `ended` must not touch the display. Returns what stops the watch (as Ember
+   * quits), or null when it can't be set up. Absent elsewhere.
+   */
+  watchDisplay?(ended: () => void): (() => void) | null;
   /**
    * Before one of Ember's own normal windows takes the keyboard (settings, bringToFront) and before a dialog with no
    * parent window (G15): darwin app.focus({ steal: true }) (a hotkey doesn't activate Ember otherwise); linux/win32:
@@ -571,6 +596,11 @@ export interface SystemPlatform {
   readonly chromiumSwitches: readonly string[];
   /** Inputs for inspectEnvironment. Cheap: getStatus calls it on every settings-window status request. */
   environment(ctx: EnvContext): EnvInputs;
+  /**
+   * Check again (first-run-6): a probe that waits between tries looks now, off the main thread, and this resolves once
+   * it has its answer (reliability-performance-r2). linux: pyatspi's import, in the background; absent elsewhere.
+   */
+  lookAgain?(): Promise<void>;
   readonly fixes: { readonly ids: readonly FixId[]; apply(fix: FixId): Promise<void>; label(fix: FixId): string };
   doctorProbes(): Promise<PlatformDoctorProbes>;
   readonly a11y: A11yProbes;

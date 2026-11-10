@@ -2,17 +2,19 @@
  * Ember's memory as main uses it (docs/MEMORY.md step 2): one graph, loaded from memory.json on first use, saved soon
  * after each change, tidied while nothing changes, and erased whole on request or at sign-out. The conductor's
  * remember, recall and forget_memory tools and the `<memory>` block before each request go through here, and so do
- * Settings › Conversation's list and Forget buttons.
+ * Settings › Memory's list and Forget buttons.
  *
  * A fact the model saves counts as the user's own (`user`, the only source that may shape what Ember does) only when
  * most of its words are in what the user just said. Otherwise it is `conversation`: the model's inference, or text it
  * read somewhere, which is context and never more. Plain Node: no Electron.
  */
 
+import crypto from "node:crypto";
+import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { consolidateInSlices } from "./consolidate";
 import type { SemanticMemory } from "./embed";
 import { memoryBlock } from "./format";
-import { ENTITY_KINDS, MAX_FACT_CHARS, type AddResult, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
+import { ENTITY_KINDS, MAX_FACT_CHARS, type AddResult, type Entity, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
 import { memoryRefusal } from "./guard";
 import { recall, type Recalled } from "./recall";
 import { memoryFile, type MemoryFile } from "./store";
@@ -26,12 +28,29 @@ export const UPKEEP_EVERY_MS = 30 * 60_000;
 export const CONTEXT_FACTS = 6;
 /** At least this share of a fact's words in what the user said makes it the user's own. */
 export const OWN_WORDS = 0.6;
+/**
+ * How long Undo can put a forgotten fact back exactly (ms): the fact, Ember's notes that went with it and what it had
+ * replaced, held in main's memory only (never written), and dropped at Forget everything and when Ember stops.
+ */
+export const UNDO_FORGET_MS = MEMORY_UNDO_MS;
 
-/** One remembered fact as Settings lists it. */
-export interface MemoryItem { id: string; text: string; source: Source; at: string; revision?: number; correctedAt?: string }
+/**
+ * One remembered fact as Settings lists it. `kind`: one of Ember's own notes, its summary of a subject or a guess drawn
+ * from several facts (./refine.ts), which Home labels as Ember's rather than as the conversation (memory-3).
+ */
+export interface MemoryItem { id: string; text: string; source: Source; at: string; revision?: number; correctedAt?: string; kind?: "summary" | "guess" }
 
-const memoryItem = (f: Fact): MemoryItem => ({ id: f.id, text: f.text, source: f.source, at: f.validAt,
-  ...(f.revision === undefined ? {} : { revision: f.revision }), ...(f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt }) });
+/** Which of Ember's own notes a fact is, if it is one (`summary`, `reflection`). */
+export const noteKind = (f: Pick<Fact, "predicate">): MemoryItem["kind"] => (f.predicate === "summary" ? "summary" : f.predicate === "reflection" ? "guess" : undefined);
+
+const memoryItem = (f: Fact): MemoryItem => {
+  const kind = noteKind(f);
+  return { id: f.id, text: f.text, source: f.source, at: f.validAt,
+    ...(f.revision === undefined ? {} : { revision: f.revision }), ...(f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt }), ...(kind ? { kind } : {}) };
+};
+
+/** What is wrong with memory.json this run (MemoryService.trouble; memory-r2). */
+export type MemoryTrouble = "unreadable" | "reset" | "unsaved";
 
 export interface MemoryLog { info(event: string, fields?: Record<string, unknown>): void; warn(event: string, fields?: Record<string, unknown>): void }
 
@@ -68,6 +87,22 @@ export function ownFact(fact: string, said: string): boolean {
   return ownWords(fact, said) && samePolarity(fact, said);
 }
 
+/** The predicates of what the user said about themselves that bear on every request (the introduction's: ./intro.ts). */
+export const PROFILE_PREDICATES = ["called", "answer_length", "answer_style"] as const;
+
+/**
+ * The user's profile for every request (memory-5): the open facts they gave themselves (`user`) on what to call them
+ * and how they like answers, one for each, newest first. Recall is unchanged: this is added beside it.
+ */
+export function profileFacts(g: MemoryGraph): Fact[] {
+  const out: Fact[] = [];
+  for (const p of PROFILE_PREDICATES) {
+    const f = g.allFacts(true).filter(x => x.source === "user" && x.predicate === p).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))[0];
+    if (f) out.push(f);
+  }
+  return out;
+}
+
 const kindOf = (k: string | undefined): EntityKind | undefined => (ENTITY_KINDS as readonly string[]).includes(k ?? "") ? (k as EntityKind) : undefined;
 
 export class MemoryService {
@@ -78,10 +113,25 @@ export class MemoryService {
   private upkeepRun: { controller: AbortController; done: Promise<boolean> } | null = null;
   /** Changed since the last sleep-time pass. */
   private changed = false;
+  /** What each recent Forget removed, by its Undo token, until `until` (UNDO_FORGET_MS). */
+  private undoable = new Map<string, { entities: Entity[]; facts: Fact[]; reopened: { id: string; invalidAt: string; supersededBy: string | null }[]; until: number }>();
+
+  /**
+   * What is wrong with memory.json this run, for Settings › Memory to say (memory-r2): it couldn't be read and is left as
+   * it was (`unreadable`), it wasn't memory and was moved aside (`reset`), or the last save failed (`unsaved`).
+   */
+  private problem: MemoryTrouble | null = null;
 
   constructor(private o: MemoryServiceOptions) {
-    this.file = o.file ?? memoryFile(o.dir, err => o.log.warn("memory.broken_file", { err: err instanceof Error ? err.message : String(err) }));
+    this.file = o.file ?? memoryFile(o.dir, (err, how) => {
+      o.log.warn("memory.broken_file", { err: err instanceof Error ? err.message : String(err), how });
+      // (Said by the view that read it: nothing is broadcast from inside a load.)
+      this.problem = how === "out-of-reach" ? "unreadable" : "reset";
+    });
   }
+
+  /** What is wrong with memory.json this run, or null (memory-r2). */
+  get trouble(): MemoryTrouble | null { return this.problem; }
 
   private get g(): MemoryGraph {
     if (!this.graph) {
@@ -104,6 +154,7 @@ export class MemoryService {
   stop(): void {
     if (this.upkeepTimer) { clearInterval(this.upkeepTimer); this.upkeepTimer = null; }
     this.cancelUpkeep();
+    this.undoable.clear();
     this.flush();
     this.o.semantic?.flush();
     this.o.semantic?.stop();
@@ -128,8 +179,11 @@ export class MemoryService {
     this.dirty();
     this.o.semantic?.changed(this.g);
     this.o.log.info("memory.remembered", { kind: r.kind, source: r.fact.source, chars: r.fact.text.length, ...(r.kind === "added" ? { closed: r.closed.length } : {}) });
-    if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].`;
-    return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.`;
+    // Saving is failing (memory.json couldn't be saved or read this run): kept for now, and the model is told so it
+    // never promises more (memory-r2).
+    const unkept = this.problem === "unsaved" || this.problem === "unreadable" ? " Saving memory on this computer is failing, so tell the user it may be gone when Ember closes." : "";
+    if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].${unkept}`;
+    return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.${unkept}`;
   }
 
   /** The facts that bear on `query` (each counts as used); `semantic`: its matches by meaning (./embed.ts), if any. */
@@ -145,14 +199,33 @@ export class MemoryService {
    * be true (the recall tool's).
    */
   async context(request: string, history = false, allowed: () => boolean = () => true): Promise<string> {
-    if (!allowed()) return "";
+    const found = await this.matches(request, history, allowed);
+    return found ? memoryBlock(found) : "";
+  }
+
+  /**
+   * The `<memory>` block before the user's own request: the user's profile first (what they asked Ember to call them
+   * and how they like answers, `profileFacts`), whatever the request says, then what recall finds (memory-5).
+   * `matched`: recall found something (what memory keeps missing is counted from that alone).
+   */
+  async requestContext(request: string, allowed: () => boolean = () => true): Promise<{ text: string; matched: boolean }> {
+    const found = await this.matches(request, false, allowed);
+    if (!found) return { text: "", matched: false };
+    const profile = profileFacts(this.g);
+    const rest = found.map(r => r.fact).filter(f => !profile.some(p => p.id === f.id));
+    return { text: memoryBlock([...profile, ...rest]), matched: found.length > 0 };
+  }
+
+  /** Recall's matches for `request`, with Better recall's by meaning when it has them; null when no longer allowed. */
+  private async matches(request: string, history: boolean, allowed: () => boolean): Promise<Recalled[] | null> {
+    if (!allowed()) return null;
     // A restart may leave an older derived index beside a durable correction. Bind its hashes to the current graph
     // before the first query, even when the model became ready before index() could attach a lazy graph.
     let semantic: Map<string, number> | undefined;
     try { this.o.semantic?.changed(this.g, false); semantic = await this.o.semantic?.seeds(request); }
     catch { this.o.log.warn("memory.semantic_unavailable"); }
-    if (!allowed()) return "";
-    return memoryBlock(this.recall(request, CONTEXT_FACTS, history, semantic));
+    if (!allowed()) return null;
+    return this.recall(request, CONTEXT_FACTS, history, semantic);
   }
 
   /** Corrects exactly the shown open fact after a durable write, preserving its subject, provenance and authority. */
@@ -170,8 +243,16 @@ export class MemoryService {
     const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
     const corrected = { ...next.fact(current.id)!, text: clean, revision, correctedAt: this.now().toISOString() };
     next.replaceFact(corrected);
-    try { this.file.save(next); }
+    // Ember's notes made from the old words would keep them: they go in the same write (memory-3).
+    const notes = next.notesFrom(current.id);
+    for (const n of notes) next.forgetFact(n);
+    try {
+      for (const n of notes) this.o.semantic?.forget(n);
+      this.file.save(next);
+    }
     catch (err) {
+      // The notes' vectors may be gone already: rebuilt from the graph, which still holds them.
+      if (notes.length) try { this.o.semantic?.changed(this.g); } catch { this.o.log.warn("memory.correction_index_recovery_failed"); }
       this.o.log.warn("memory.correction_failed", { err: err instanceof Error ? err.message : String(err) });
       throw new Error("Ember couldn't save this correction. The original memory is unchanged. Try again.", { cause: err });
     }
@@ -187,18 +268,42 @@ export class MemoryService {
   }
 
   /** Forgets one fact by id, and reopens what it had replaced (Undo puts the old value back). True if it was there. */
-  forget(id: string): boolean {
+  forget(id: string, reopen = true): boolean {
+    return this.forgetCounted(id, reopen) !== null;
+  }
+
+  /** The words of an open fact, or null (forget_memory checks the user asked about it: memory-v2). */
+  factText(id: string): string | null {
+    const f = this.g.fact(id);
+    return f && !f.invalidAt ? f.text : null;
+  }
+
+  /**
+   * `forget`, saying what went: the fact's words, how many of Ember's own notes made from it went with it (its
+   * summaries and guesses, which hold its words: memory-3), the token `restore` takes to undo it, and (`back`) the
+   * words of what it had replaced, open again. Null if it wasn't there. `reopen` false: the fact goes alone, and what
+   * it replaced stays history (a deliberate Forget of what holds now: memory-12).
+   */
+  forgetCounted(id: string, reopen = true): { text: string; derived: number; undo: string; back?: string[] } | null {
     // Only an open fact gives back what it replaced: a closed one was itself replaced since, and reopening under it would
     // leave a single predicate with two open values.
-    if (!this.g.fact(id)) return false;
+    if (!this.g.fact(id)) return null;
     // Stage the edit separately: a failed disk write must not remove the visible fact or reopen its predecessor.
+    const before = this.g;
     const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
     const f = next.fact(id)!;
-    const reopened = !f.invalidAt ? next.reopenSuperseded(id) : 0;
-    next.forgetFact(id);
+    const notes = next.notesFrom(id);
+    // The notes the user could see in the list: older closed ones are history.
+    const shownNotes = notes.filter(n => !next.fact(n)!.invalidAt).length;
+    let reopened = 0;
+    // What the fact itself gives back, in its words, so whoever says what went says this too (memory-12).
+    const back = reopen && !f.invalidAt ? next.allFacts().filter(o => o.supersededBy === id && !notes.includes(o.id)).map(o => o.text) : [];
+    // A note that replaced an older one gives it back, unless that one goes too.
+    for (const x of [id, ...notes]) if (!next.fact(x)?.invalidAt && (reopen || x !== id)) reopened += next.reopenSuperseded(x);
+    for (const x of [id, ...notes]) next.forgetFact(x);
     try {
       // Derived data first. If the graph write fails, missing vectors can safely be rebuilt from the retained graph.
-      this.o.semantic?.forget(id);
+      for (const x of [id, ...notes]) this.o.semantic?.forget(x);
       this.file.save(next);
     } catch (err) {
       try { this.o.semantic?.changed(this.g); } catch { this.o.log.warn("memory.delete_index_recovery_failed"); }
@@ -211,14 +316,56 @@ export class MemoryService {
     this.changed = true;
     // The deletion is durable; derived work and view notifications cannot reverse its acknowledgement.
     try { this.o.semantic?.changed(next); } catch { this.o.log.warn("memory.delete_index_failed"); }
-    this.o.log.info("memory.forgot", { count: 1, reopened });
+    this.o.log.info("memory.forgot", { count: 1 + notes.length, reopened });
     try { this.o.onChange?.(); } catch { this.o.log.warn("memory.delete_notice_failed"); }
+    const undo = this.keepForUndo(before, next, [id, ...notes]);
+    return { text: f.text, derived: shownNotes, undo, ...(back.length ? { back } : {}) };
+  }
+
+  /**
+   * Undo of a recent Forget: puts back exactly what it removed and closes again what it had reopened, as one staged
+   * write (a failed write changes nothing). Once per token, within UNDO_FORGET_MS. False when it can't.
+   */
+  restore(token: string): boolean {
+    const u = this.undoable.get(token);
+    this.undoable.delete(token);
+    if (!u || this.now().getTime() > u.until) return false;
+    const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
+    next.putBack(u.entities, u.facts);
+    for (const r of u.reopened) next.reclose(r.id, r.invalidAt, r.supersededBy);
+    try { this.file.save(next); }
+    catch (err) {
+      this.o.log.warn("memory.restore_failed", { err: err instanceof Error ? err.message : String(err) });
+      throw new Error("Ember couldn't put this memory back. Try Undo again.", { cause: err });
+    }
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+    this.cancelUpkeep();
+    this.graph = next;
+    this.changed = true;
+    try { this.o.semantic?.changed(next); } catch { this.o.log.warn("memory.restore_index_failed"); }
+    this.o.log.info("memory.restored", { count: u.facts.length });
+    try { this.o.onChange?.(); } catch { this.o.log.warn("memory.restore_notice_failed"); }
     return true;
+  }
+
+  /** Keeps what `next` no longer has of `before` (the facts `gone`, orphaned entities, reopened facts) for Undo. */
+  private keepForUndo(before: MemoryGraph, next: MemoryGraph, gone: string[]): string {
+    const now = this.now().getTime();
+    for (const [k, u] of this.undoable) if (now > u.until) this.undoable.delete(k);
+    const facts = gone.map(x => before.fact(x)).filter((f): f is Fact => !!f);
+    const entities = before.allEntities().filter(e => !next.entity(e.id));
+    const reopened = before.allFacts().filter(f => f.invalidAt && f.supersededBy && gone.includes(f.supersededBy) && next.fact(f.id) && !gone.includes(f.id))
+      .map(f => ({ id: f.id, invalidAt: f.invalidAt!, supersededBy: f.supersededBy }));
+    const token = crypto.randomUUID();
+    this.undoable.set(token, { entities: structuredClone(entities), facts: structuredClone(facts), reopened, until: now + UNDO_FORGET_MS });
+    return token;
   }
 
   /** Forgets everything only after both persistent stores have been erased successfully. */
   forgetAll(): void {
     this.cancelUpkeep();
+    // Nothing forgotten earlier can come back after everything is.
+    this.undoable.clear();
     try {
       this.o.semantic?.forgetAll();
       this.file.erase();
@@ -232,6 +379,8 @@ export class MemoryService {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
     this.graph?.clear();
     this.changed = false;
+    // The file and any copy set aside are gone: nothing is left to say about them.
+    this.problem = null;
     this.o.log.info("memory.forgot_all");
     try { this.o.onChange?.(); } catch { this.o.log.warn("memory.delete_notice_failed"); }
   }
@@ -307,9 +456,17 @@ export class MemoryService {
     if (!this.graph) return;
     try {
       this.file.save(this.graph);
+      // Saved again: what Settings said about the last save no longer holds.
+      if (this.problem === "unsaved") { this.problem = null; this.notify(); }
     } catch (err) {
       this.o.log.warn("memory.save_failed", { err: err instanceof Error ? err.message : String(err) });
+      // Settings › Memory says so (a file left as it was because it couldn't be read says that instead).
+      if (this.problem !== "unreadable" && this.problem !== "unsaved") { this.problem = "unsaved"; this.notify(); }
     }
+  }
+
+  private notify(): void {
+    try { this.o.onChange?.(); } catch { this.o.log.warn("memory.notice_failed"); }
   }
 
   /** Something changed: saved soon; `shown`: Settings' list changed too. */

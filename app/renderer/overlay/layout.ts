@@ -3,7 +3,7 @@
  * handle's, bottom right or bottom left) and the status pill's place. Pure, so it is unit-tested.
  */
 
-import type { Rect } from "../../shared/overlay";
+import type { BubbleState, Rect } from "../../shared/overlay";
 import { sideOf, type HandlePosition, type HandleSide } from "../../shared/handle-place";
 
 /** How far the ring round a control reaches beyond the control (its 4 px inset, keylines and glow). */
@@ -92,4 +92,88 @@ export function pillBottom(bounds: Rect, workArea: Rect | null, handle: Rect | n
 export function bubbleHere(f: { ember: { x: number; y: number }; on?: number }, displayId: number, bounds: Rect): boolean {
   if (f.on !== undefined) return f.on === displayId;
   return f.ember.x >= bounds.x && f.ember.x < bounds.x + bounds.width && f.ember.y >= bounds.y && f.ember.y < bounds.y + bounds.height;
+}
+
+/**
+ * The open Ask box a bubble keeps off (global DIP), for which bubble (askKeepOffKey), and whether it grew into it
+ * (`grew`, askGrownInto: it may then go above or below the box, where nothing by Ember is clear of it). `released`: an
+ * answer opened in full that kept off the box no more once it closed, so it could show whole, or that the box came over
+ * where it is (it kept off the box elsewhere, or never), and keeps off the box wherever the box comes over it from then
+ * on (askKeepOff).
+ */
+export interface AskHeld { box: Rect | null; question: string; grew?: true; released?: true }
+
+/**
+ * The open Ask box for the bubble to keep off (global DIP), from main's word (`box`: state.askBox, null once it closes)
+ * and the bubble showing (`question`: askKeepOffKey, "" for none), given what it kept off last (`held`): a bubble that
+ * comes up while the box is open is placed clear of it where it can (companion-c1-1: a question came up under the
+ * field). A bubble already shown keeps off the box where the box was when it came (nowhere, if it came first), so it
+ * never moves for the box opening, stepping aside, growing or closing: nothing near a pending question moves, and an
+ * answer being read isn't thrown across the screen (companion-c2-4); the box keeps clear of it instead (ask.ts). One
+ * that grows into the box on its own (askGrew: as its words stream in, or as it finishes) keeps off it from then on
+ * (askGrownInto). So does an answer opened in full (`opened`: "Read all") while the box is open, which may go above or
+ * below the box at once (`grew`; companion-c5-1: the whole answer was laid under the field). One whose text doesn't all
+ * show for it (`clipped`: cut short to the room, bubbleCut, or narrowed with its text running on) keeps off the box no
+ * more once it closes, so it shows whole where it can (companion-v6-3: its last lines stayed behind the scroll bar for
+ * as long as it showed, though all of it fitted above Ember; companion-repairs-x6-2: narrowed into the screen's side
+ * strip, the same). From then on the box coming over it where it is (`at`: opening again on it, or growing into it as
+ * it settles) is kept off where the box is, as when Read all came with the box open (companion-repairs-x6-1: nothing
+ * by Ember was clear of it, so the field opened over its lines, and the box grew a row up into it as it opened); so is
+ * the box coming over any other answer opened in full, whatever it kept off before: one opened while the box was closed,
+ * which never kept off it (companion-y6-1: Read all with the box closed, then Ctrl+Alt+Space to reply, laid the field
+ * over its lines the same way), and one opened while the box was open that showed whole, so the box closing never let
+ * it go (companion-z6-1: Esc and Ctrl+Alt+Space to reply opened the box a row taller on its last lines, and the box grew
+ * a row into it as the chips came). A box clear of it never moves it.
+ */
+export function askKeepOff(box: Rect | null, question: string, held: AskHeld, opened = false, clipped = false, at: Rect | null = null): AskHeld {
+  if (question && question === held.question) {
+    if (opened && clipped && !box && held.box) return { box: null, question, released: true };
+    const same = !!held.box && !!box && held.box.x === box.x && held.box.y === box.y && held.box.width === box.width && held.box.height === box.height;
+    if ((held.released || opened) && box && !same && at && overlap(at, box) > 0) return { box, question, grew: true, released: true };
+    return held;
+  }
+  return opened && box ? { box, question, grew: true } : { box, question };
+}
+
+/**
+ * Which bubble askKeepOff holds for: a question by its answers' ids; anything else by its kind and title, so an answer
+ * is one bubble from when it shows until it goes, however its words stream in ("Read all" opens a new one); "" while
+ * none shows.
+ */
+export function askKeepOffKey(b: Pick<BubbleState, "visible" | "mood" | "title" | "actions" | "expanded">): string {
+  if (!b.visible) return "";
+  return b.actions.filter(a => !a.id.startsWith("ui:")).map(a => a.id).join(",") || `${b.mood}|${b.title}${b.expanded ? "|expanded" : ""}`;
+}
+
+/** A bubble still growing: its words stream in, and it asks nothing (a question never moves for the box). */
+export const askGrows = (b: Pick<BubbleState, "visible" | "streaming" | "actions">): boolean =>
+  b.visible && b.streaming && !b.actions.some(a => !a.id.startsWith("ui:"));
+
+/**
+ * Whether the bubble grows on its own now, for askGrownInto: while its words stream in (askGrows), or, asking nothing,
+ * larger at `at` than the last drawing showed the same bubble (`was`: null when none showed). An answer that streamed in
+ * grows most as it finishes: its streaming text is capped at three lines, and Read all, its hint and Ember's suggestions
+ * come only with its finished layout (134 to 277 px tall at Larger text; companion-c3-1: the field covered its last
+ * lines and its Read all). The box opening, stepping aside or growing never changes the bubble's size, so a finished
+ * answer still never moves for the box (companion-c2-4).
+ */
+export function askGrew(b: Pick<BubbleState, "visible" | "streaming" | "actions">, was: Rect | null, at: Rect | null): boolean {
+  if (askGrows(b)) return true;
+  return b.visible && !!was && !!at && !b.actions.some(a => !a.id.startsWith("ui:")) && (at.height > was.height || at.width > was.width);
+}
+
+/**
+ * What the bubble keeps off of the open box (`box`, global DIP) now that it is at `at` (global DIP): a bubble still
+ * growing (`grows`: askGrew) that has grown into the box keeps off the box where it is now from then on, though it held
+ * off the box elsewhere, or nowhere (it showed before the box opened; companion-c3-1: an answer still streaming when Ask
+ * opened beside it grew under the field, which covered its last lines, its Read all and its hint), and where nothing
+ * by Ember is clear of it, may go above or below it (`grew`). So may one that came while the box was open, kept off it
+ * where it is and grows into it all the same (companion-v5-1: an answer whose first words came with the box open, at
+ * Larger text with no room by Ember, finished under the field, 50,490 px² of it). Otherwise, `held`.
+ */
+export function askGrownInto(held: AskHeld, box: Rect | null, at: Rect | null, grows: boolean): AskHeld {
+  if (!grows || !box || !at || overlap(at, box) === 0) return held;
+  const same = held.box && held.box.x === box.x && held.box.y === box.y && held.box.width === box.width && held.box.height === box.height;
+  if (same) return held.grew ? held : { ...held, grew: true };
+  return { box, question: held.question, grew: true };
 }

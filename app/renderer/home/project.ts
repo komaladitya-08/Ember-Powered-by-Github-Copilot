@@ -1,7 +1,8 @@
 /** Project selection, explicit context sharing and inert, reviewable output in the Projects destination. */
 import { renderProjectAnswer } from "./project-output";
-import { projectBytes, projectSelectionText } from "./project-copy";
+import { PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, PROJECT_COMMANDS_OPEN, projectAnswerText, projectBytes, projectCommandsState, projectConnectionText, projectSelectionText } from "./project-copy";
 import type { ProjectMode, ProjectWorkspaceAction } from "../../shared/ipc";
+import { statusFence } from "./status-fence";
 
 export function mountProject() {
   const provider = document.querySelector<HTMLElement>("#project-provider")!;
@@ -36,6 +37,13 @@ export function mountProject() {
   const review = commands.querySelector<HTMLButtonElement>("#project-command-send")!;
   const stopCommand = commands.querySelector<HTMLButtonElement>("#project-command-stop")!;
   const commandStatus = commands.querySelector<HTMLElement>("#project-command-status")!;
+  const commandsOff = commands.querySelector<HTMLElement>("#project-commands-off")!;
+  const offText = commandsOff.querySelector<HTMLElement>("#project-commands-off-text")!;
+  const openCommands = commands.querySelector<HTMLButtonElement>("#project-commands-open")!;
+  /** Commands may run on this computer (null: not known yet). Off, the form says so before anything is typed (integrations-12). */
+  let localCommands: "on" | "off" | "managed" | null = null;
+  /** The organisation's commands mode here (Status.admin.commands.local), known from the status. */
+  let adminCommands: "off" | "ask" | "on" | undefined;
   const workspaces = document.querySelector<HTMLDetailsElement>("#project-workspaces")!;
   const saved = workspaces.querySelector<HTMLSelectElement>("#project-workspace-list")!;
   const workspaceName = workspaces.querySelector<HTMLInputElement>("#project-workspace-name")!;
@@ -58,17 +66,32 @@ export function mountProject() {
   let ready = false;
   let busy: "picking" | "running" | "applying" | "command" | "workspace" | "export" | null = null;
   let revision = 0;
+  /**
+   * A request's failure as the status line shows it, and when: Ember going off Ready because of it (main's check of the
+   * provider, which answers within its 10 s test) never hides why (integrations-r2-5).
+   */
+  let failedLine = "";
+  let failedAt = 0;
   const draw = () => {
     pick.disabled = !ready || !!busy;
-    apply.disabled = !ready || !!busy || !patchCurrent;
+    // Applying the reviewed patch, exporting and a file's Remove work on what is kept here and send nothing: they don't
+    // wait for a connection (integrations-r3-2).
+    apply.disabled = !!busy || !patchCurrent;
     apply.hidden = !patchCurrent;
-    exportAnswer.disabled = exportDiff.disabled = !ready || !!busy;
-    for (const button of files.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !ready || !!busy;
+    exportAnswer.disabled = exportDiff.disabled = !!busy;
+    for (const button of files.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !!busy;
     form.setAttribute("aria-busy", String(busy === "running"));
     send.textContent = busy === "running" ? "Working…" : "Send selected files";
+    const off = localCommands === "off" || localCommands === "managed";
+    commandsOff.hidden = !off;
+    offText.textContent = localCommands === "managed" ? PROJECT_COMMANDS_MANAGED : PROJECT_COMMANDS_OFF;
+    // The Commands pane is there only with the targets runtime: no link to a pane that isn't, nor to a switch the
+    // organisation holds off.
+    openCommands.hidden = localCommands !== "off" || !!document.getElementById("jump-commands")?.hidden;
+    // The folder can still be chosen (a saved workspace keeps it); the command waits for commands to be on.
     folderPick.disabled = !ready || !!busy;
-    command.disabled = !ready || !!busy;
-    review.disabled = !ready || !!busy || !commandFolder || !command.value.trim();
+    command.disabled = !ready || !!busy || off;
+    review.disabled = !ready || !!busy || off || !commandFolder || !command.value.trim();
     stopCommand.hidden = busy !== "command";
     workspaceName.disabled = !ready || !!busy;
     saved.disabled = !ready || !!busy || !saved.options.length;
@@ -140,10 +163,10 @@ export function mountProject() {
     }
   });
   async function removeFile(name: string): Promise<void> {
-    if (!ready || busy) return;
+    if (busy) return;
     const at = revision;
     busy = "picking";
-    let focusAfter: HTMLButtonElement | null = null;
+    let focusAfter: (() => HTMLElement) | null = null;
     draw();
     try {
       const result = await window.ember.projectRemove(name);
@@ -155,11 +178,13 @@ export function mountProject() {
         includePrevious.checked = false;
       }
       status.textContent = result.error ?? `Removed ${name}. Your request is kept.`;
-      if (result.changed) focusAfter = files.querySelector<HTMLButtonElement>("button") ?? pick;
+      // Chosen once drawn: Choose files… waits for a connection, so with the last file gone while not connected the
+      // request takes the focus, as after Apply patch (integrations-v4-4, WCAG 2.4.3).
+      if (result.changed) focusAfter = () => files.querySelector<HTMLButtonElement>("button") ?? (pick.disabled ? question : pick);
     } catch {
       if (at === revision) status.textContent = "Couldn't remove the file. Your selection is kept.";
     } finally {
-      if (at === revision) { busy = null; draw(); focusAfter?.focus(); }
+      if (at === revision) { busy = null; draw(); focusAfter?.().focus(); }
     }
   }
   async function copyText(text: string, message: string): Promise<void> {
@@ -172,7 +197,7 @@ export function mountProject() {
     }
   }
   const exportOutput = async (kind: "answer" | "diff") => {
-    if (!ready || busy) return;
+    if (busy) return;
     const at = revision;
     busy = "export";
     draw();
@@ -194,6 +219,17 @@ export function mountProject() {
     status.textContent = "Project work cleared.";
     void window.ember.projectClear().catch(() => { status.textContent = "Couldn't clear the selection. Choose your files again."; });
   });
+  // The commands setting as it is now, and as it changes (in Commands, by voice or in the file).
+  const followCommands = (s: Parameters<typeof projectCommandsState>[0]) => { localCommands = projectCommandsState(s, adminCommands); draw(); };
+  // Fenced like Home's own startup status: a push that arrives while this waits is newer than the snapshot.
+  const ticket = statusFence.begin();
+  void window.ember.getStatus().then(st => statusFence.apply(ticket, st)).then(st => { adminCommands = st.admin.commands?.local; followCommands(st.settings); }, () => { /* not known: the form stays as it was */ });
+  window.ember.onSettingsChanged(followCommands);
+  openCommands.textContent = PROJECT_COMMANDS_OPEN;
+  openCommands.addEventListener("click", () => document.getElementById("jump-commands")?.click());
+  // The Commands pane's link shows once the targets runtime has answered: Open Commands follows it.
+  const commandsLink = document.getElementById("jump-commands");
+  if (commandsLink) new MutationObserver(() => draw()).observe(commandsLink, { attributes: true, attributeFilter: ["hidden"] });
   folderPick.addEventListener("click", async () => {
     const at = revision;
     busy = "picking";
@@ -321,12 +357,33 @@ export function mountProject() {
           patchCurrent = true;
           patchSummary.textContent = "Review changes before applying";
         }
-        status.textContent = result.patch ? "Patch ready to review." : sent.mode === "patch" ? "Draft ready. Ember could not verify an exact patch to apply." : "Project answer ready.";
-      } else status.textContent = result.error + (answer.hidden ? "" : " Previous output is still shown; its diff cannot be applied.");
+        status.textContent = projectAnswerText({ mode: sent.mode, patch: !!result.patch, withheld: result.withheld ?? null, canContinue: result.canContinue });
+      } else {
+        status.textContent = failedLine = result.error + (answer.hidden ? "" : " Previous output is still shown; its diff cannot be applied.");
+        failedAt = Date.now();
+      }
     } catch {
       if (at === revision) status.textContent = "Couldn't finish the project request." + (answer.hidden ? "" : " Previous output is still shown; its diff cannot be applied.");
     } finally {
       if (at === revision) { busy = null; running.hidden = true; draw(); }
+    }
+  });
+  /** What the person chose and wrote here: it stays while Ember reconnects (integrations-r1). */
+  const kept = () => ({
+    files: files.childElementCount > 0,
+    work: files.childElementCount > 0 || !!question.value || !answer.hidden || !!commandFolder || !!command.value,
+  });
+  // Main forgot this work: all of it (sign-out, another account, the organisation's lockdown), or only the previous
+  // request and answer as context, once another model service or account is in force (they stay in view).
+  window.ember.onProjectForgot(what => {
+    if (what === "all") {
+      reset();
+      workspaceName.value = "";
+      status.textContent = projectConnectionText(ready, kept());
+    } else {
+      previousControl.hidden = true;
+      includePrevious.checked = false;
+      draw();
     }
   });
   return (on: boolean, service = "GitHub Copilot", model: string | null = null) => {
@@ -334,14 +391,18 @@ export function mountProject() {
     provider.textContent = on ? `Next send uses ${providerText}.` : "Connect a model in Models & connections.";
     if (ready === on) return;
     ready = on;
+    // Not connected (a reconnect, a service out of reach for now): sending waits, and nothing chosen or written goes.
+    // Saved workspaces are listed again when opened: another service or account has its own.
     if (!on) {
-      reset();
       workspaces.open = false;
-      workspaceName.value = "";
       saved.replaceChildren();
       workspaceStatus.textContent = "";
     }
-    status.textContent = on ? "Choose the files for this request." : "Connect a model to work with project files.";
+    // A failed request's own reason (a model server that isn't running) stays: main's check of it is what took Ember
+    // off Ready (integrations-r2-5). Anything else says only that sending waits.
+    const why = !on && failedLine && status.textContent === failedLine && Date.now() - failedAt < 15_000;
+    if (!why) status.textContent = projectConnectionText(on, kept());
+    failedLine = "";
     draw();
   };
 }

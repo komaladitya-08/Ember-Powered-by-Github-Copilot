@@ -53,6 +53,17 @@ export function setupIdle(phase: string | undefined, rows: readonly SetupRow[]):
   return held.length === 1 ? `Fix “${held[0].label}”` : `${held.length} setup checks to fix`;
 }
 
+/** The handle's word while first run isn't done: "Not connected" (true then) read like a network problem (first-run-8). */
+export const FINISH_SETUP = "Finish setting up";
+
+/**
+ * The handle's word when nothing more urgent is going on: `word`, the agent's own (host.ts idleWord), once first run is
+ * done (`onboarded`); before, that setup needs finishing, which its menu's first item does (main.ts showMenu).
+ */
+export function handleIdle(onboarded: boolean, word: string): string {
+  return onboarded ? word : FINISH_SETUP;
+}
+
 /**
  * What Ember's hello adds when rows hold it back (null when none do): their names (macOS's three permissions in full;
  * past three, two and how many more).

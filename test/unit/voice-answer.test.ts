@@ -551,3 +551,29 @@ describe("whose words a heard request counts as, for commands", () => {
     expect(heardUnchecked({ verified: true }, false, false)).toBe(true);
   });
 });
+
+describe("a refused spoken yes keeps the keys that answer the question (tasks-approvals-6)", () => {
+  it("shows the keys under the note, so a keyboard user keeps a way to answer", async () => {
+    const shown: { bubble?: { step?: string | null } }[] = [];
+    const c = new Confirmer(p => shown.push(p as never), { armMs: 0, gapMs: 0, keyHint: () => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" });
+    const answer = c.ask({ title: "May I?", prompt: "Click “Send”?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: "t1" });
+    expect(shown.at(-1)?.bubble?.step).toBe("Ctrl+Alt+Y allow · Ctrl+Alt+N not now");
+    c.note(VOICE_ANSWER_REFUSED["voice-match-off"]);
+    // On a line of their own under it: the bubble sets them as keycaps there (packages/bubble stepParts).
+    expect(shown.at(-1)?.bubble?.step).toBe(`${VOICE_ANSWER_REFUSED["voice-match-off"]}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now`);
+    c.note(VOICE_ANSWER_REFUSED.locked);
+    expect(shown.at(-1)?.bubble?.step).toBe(`${VOICE_ANSWER_REFUSED.locked}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now`);
+    c.answerKey("deny");
+    expect(await answer).toBe("deny");
+  });
+
+  it("says the keys Ember holds aloud where the line points to a click or the keys, and none it doesn't hold", () => {
+    const keys = ["Control Alt Y to allow", "Control Alt N for not now"];
+    expect(voiceAnswerSaid("voice-match-off", keys)).toBe("To answer yes by voice, set up Voice Match in Settings, then Voice, so I know it's you. For now, click Allow. Or press Control Alt Y to allow, or Control Alt N for not now.");
+    expect(voiceAnswerSaid("locked", keys)).toBe("I heard a voice that isn't yours, so for this question I'll take a click or the keys only. Press Control Alt Y to allow, or Control Alt N for not now.");
+    // The keys can't allow a click-only card, and other lines say what to say instead.
+    expect(voiceAnswerSaid("click-only", keys)).toBe(voiceAnswerSaid("click-only"));
+    expect(voiceAnswerSaid("too-short", keys)).toBe(voiceAnswerSaid("too-short"));
+    expect(voiceAnswerSaid("voice-match-off", [])).toBe(voiceAnswerSaid("voice-match-off"));
+  });
+});

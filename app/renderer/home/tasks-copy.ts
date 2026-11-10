@@ -6,7 +6,7 @@
  * worker's and are drawn as plain text.
  */
 
-import { STATUS_WORDS, clockText, stepsWords, summarizeActivity, triedWords, type ActivityItem, type ActivityState, type AskedIn, type StepGroup, type TaskEntry } from "../../shared/activity";
+import { STATUS_WORDS, clockText, foldedReason, refusedWords, stepsWords, summarizeActivity, triedWords, type ActivityItem, type ActivityState, type AskedIn, type StepGroup, type TaskEntry } from "../../shared/activity";
 import { HAND_WORDS } from "../../shared/view";
 
 /** The list while no task has run this session. */
@@ -33,11 +33,32 @@ export function offsetWords(ms: number): string {
 }
 
 /**
- * The line under a task's title: its state, how long it has worked (or took), how it works now and where ("Waiting for
- * you · 1:14 · In the background", "Done · Took 1:12", "Working · Just started · On my desk · on build-01").
+ * A task's state in words, as its card says it: a stopped task whose question went unanswered says so, never
+ * "Stopped" (tasks-approvals-c1-2: the user stopped nothing).
  */
-export function taskMeta(t: Pick<TaskEntry, "status" | "hand" | "where" | "activity">, now: number): string {
-  return [STATUS_WORDS[t.status === "queued" ? "queued" : t.status], clockText(t.activity, now), t.hand ? HAND_WORDS[t.hand] : "", t.where ?? ""]
+export function stateWord(t: Pick<TaskEntry, "status" | "unanswered">): string {
+  return t.status === "stopped" && t.unanswered ? STATUS_WORDS.unanswered : STATUS_WORDS[t.status];
+}
+
+/**
+ * Whether a task's row offers Try again (the card's, for the keyboard and screen readers): a failure, or a task whose
+ * question went unanswered while the user was away (tasks-approvals-c1-2), while main says it can be pressed. Once the
+ * card has gone (its time ran out, or Ember reconnected) or for a guide, none: never a greyed button nothing explains,
+ * as for an unanswered task (tasks-approvals-r3-5). Asking again still works.
+ */
+export function offersRetry(t: Pick<TaskEntry, "status" | "controls">): boolean {
+  return (t.status === "failed" || t.status === "stopped") && t.controls?.retry === true;
+}
+
+/**
+ * The line under a task's title: its state, how long it has worked (or took), how it works now and where ("Waiting for
+ * you · 1:14 · In the background", "Done · Took 1:12", "Working · Just started · On my desk · on build-01", "Waiting its
+ * turn").
+ */
+export function taskMeta(t: Pick<TaskEntry, "status" | "unanswered" | "unstarted" | "hand" | "where" | "activity">, now: number): string {
+  // A task in line hasn't begun, so it has no clock (tasks-approvals-r3: not "Just started"), nor has one that ended
+  // there (tasks-approvals-r3-3: not "Took 3s" beside "Stopped before it started").
+  return [stateWord(t), t.status === "queued" || t.unstarted ? "" : clockText(t.activity, now), t.hand ? HAND_WORDS[t.hand] : "", t.where ?? ""]
     .filter(Boolean).join(" · ");
 }
 
@@ -66,12 +87,22 @@ export interface TimelineRow {
 
 /**
  * A task's items as rows: steps of one kind and outcome in a row fold into one ("Typed text 6 times in Files"), and
- * open to list each; a step still under way, a question, a note, a refusal and a problem are rows of their own.
+ * open to list each; so do refusals for one reason ("Not allowed 6 times: …"), each listed as the step it refused
+ * ("Tried to read the window": tasks-approvals-v5-2). A step still under way, a question, a note, another refusal and a
+ * problem are rows of their own.
  */
 export function timelineRows(items: readonly ActivityItem[]): TimelineRow[] {
-  const rows: (TimelineRow & { group?: StepGroup; apps?: Set<string> })[] = [];
+  const rows: (TimelineRow & { group?: StepGroup; apps?: Set<string>; refused?: string })[] = [];
+  /** A refusal as its row lists it: the step it refused, in Ember's words, else the refusal's own. */
+  const refusedLine = (it: ActivityItem): StepLine => ({ id: it.id, at: it.at, state: it.state, words: it.group ? triedWords(it.group, 1, it.app) : it.words });
   for (const it of items) {
     const last = rows.at(-1);
+    const reason = foldedReason(it, last);
+    if (last && reason !== null) {
+      last.steps = [...last.steps ?? [], refusedLine(it)];
+      last.words = refusedWords(reason, last.steps.length);
+      continue;
+    }
     const folds = it.kind === "step" && it.state !== "running" && !!it.group;
     if (folds && last && last.group === it.group && last.state === it.state) {
       const step: StepLine = { id: it.id, at: it.at, state: it.state, words: it.words };
@@ -85,9 +116,10 @@ export function timelineRows(items: readonly ActivityItem[]): TimelineRow[] {
       id: it.id, at: it.at, state: it.state, words: it.words,
       ...(it.asked ? { asked: it.asked } : {}), ...(it.model ? { model: true as const } : {}),
       ...(folds ? { group: it.group, apps: new Set(it.app ? [it.app] : []), steps: [{ id: it.id, at: it.at, state: it.state, words: it.words }] } : {}),
+      ...(it.kind === "refused" ? { refused: it.words, steps: [refusedLine(it)] } : {}),
     });
   }
-  return rows.map(({ group: _g, apps: _a, steps, ...r }) => ({ ...r, ...(steps && steps.length > 1 ? { steps } : {}) }));
+  return rows.map(({ group: _g, apps: _a, refused: _r, steps, ...r }) => ({ ...r, ...(steps && steps.length > 1 ? { steps } : {}) }));
 }
 
 /** The words before a timeline that lost its oldest rows ("12 earlier steps aren't listed"). */
@@ -96,8 +128,8 @@ export function droppedText(n: number): string | null {
 }
 
 /** What the screen reader hears when a task's state changes (once per change, from the polite live region). */
-export function taskAnnouncement(title: string, status: TaskEntry["status"]): string {
-  return `${title}: ${STATUS_WORDS[status]}`;
+export function taskAnnouncement(title: string, status: TaskEntry["status"], unanswered = false): string {
+  return `${title}: ${stateWord({ status, ...(unanswered ? { unanswered: true as const } : {}) })}`;
 }
 
 /** Where the question a task waits on is answered (its latest question still waiting); the bubble when not said. */

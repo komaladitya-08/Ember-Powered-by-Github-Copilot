@@ -16,7 +16,7 @@ interface LifecycleFixture {
   resolveControl(index: number, accepted: boolean): void;
 }
 
-it.skipIf(process.env.EMBER_TASK_CONTROLS_TEST !== "1")("stops one of two tasks, focuses its result, and disables expired retry", async () => {
+it.skipIf(process.env.EMBER_TASK_CONTROLS_TEST !== "1")("stops one of two tasks, focuses its result, and drops Try again once its card has gone (tasks-approvals-r3-5)", async () => {
   const root = process.cwd(), dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-task-controls-"));
   const requireCjs = createRequire(import.meta.url);
   let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
@@ -55,7 +55,54 @@ it.skipIf(process.env.EMBER_TASK_CONTROLS_TEST !== "1")("stops one of two tasks,
     await result.getByRole("button", { name: "View result: Result", exact: true }).click();
     expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Result: Result");
     await app.evaluate(() => (globalThis as unknown as { __tasks: { expire(): void } }).__tasks.expire());
-    await expect.poll(() => result.getByRole("button", { name: "Try again: Result", exact: true }).isDisabled()).toBe(true);
+    // Never a greyed Try again nothing explains: none, as for a task nobody answered.
+    await expect.poll(() => result.getByRole("button", { name: "Try again: Result", exact: true }).count()).toBe(0);
+    expect(await result.getByRole("button", { name: "View result: Result", exact: true }).isEnabled()).toBe(true);
+  } finally { await app?.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+}, 90_000);
+
+it.skipIf(process.env.EMBER_TASK_CONTROLS_TEST !== "1")("offers Try again in Home for a task whose question went unanswered, and it starts a new attempt (tasks-approvals-c1-2)", async () => {
+  const root = process.cwd(), dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-task-expired-"));
+  const requireCjs = createRequire(import.meta.url);
+  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
+  try {
+    const main = path.join(dir, "main.cjs"), preload = path.join(dir, "preload.cjs"), renderer = path.join(dir, "renderer.js");
+    await build({ stdin: { contents: 'import {startTasks} from "./app/renderer/home/tasks"; startTasks();', resolveDir: root, loader: "ts" }, outfile: renderer, bundle: true, platform: "browser" });
+    fs.writeFileSync(preload, `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('ember',{tasks:()=>ipcRenderer.invoke('tasks:activity'),onTasks:fn=>{ipcRenderer.on('tasks:activity-changed',(_,v)=>fn(v));return()=>{}},taskControl:(id,action)=>ipcRenderer.invoke('tasks:control',{id,action})});`);
+    fs.writeFileSync(path.join(dir, "index.html"), '<!doctype html><html><body><h1>Task activity</h1><p id="tasks-asking" hidden></p><div id="task-filter"></div><div id="tasks"></div><p id="tasks-live" role="status"></p><script src="renderer.js"></script></body></html>');
+    const source = `
+      import {app,BrowserWindow,ipcMain} from 'electron';
+      import {TaskManager} from './app/main/agent/tasks';
+      import {taskControl} from './app/main/agent/task-controls';
+      const log={info(){},debug(){},warn(){},error(){},child(){return this}},runs=[];
+      app.whenReady().then(()=>{
+        const win=new BrowserWindow({width:800,height:800,webPreferences:{contextIsolation:true,sandbox:true,preload:${JSON.stringify(preload)}}});
+        const tm=new TaskManager({log,currentWindow:()=>null,deleteSession:async()=>{},setCards(){win.webContents.send('tasks:activity-changed',tm.activities())},
+          makeWorker:spec=>({sessionId:null,dispose:async()=>{},steer:async()=>false,run:()=>{runs.push(spec.userWords);return runs.length===1?Promise.resolve({success:false,stopped:true,expired:true,summary:'My question ran out of time with no answer, so I didn\\'t do it.'}):new Promise(()=>{})}})});
+        const host={tasks:tm,retryTask:id=>!!tm.retry(id)};
+        ipcMain.handle('tasks:activity',e=>e.sender===win.webContents?tm.activities():[]);
+        ipcMain.handle('tasks:control',(e,raw)=>e.sender===win.webContents&&taskControl(host,raw));
+        const t=tm.start('Send the report',{userWords:'send the report to Priya'});
+        globalThis.__tasks={runs,id:t.id};
+        win.loadFile(${JSON.stringify(path.join(dir, "index.html"))});
+      });`;
+    await build({ stdin: { contents: source, resolveDir: root, loader: "ts" }, outfile: main, bundle: true, platform: "node", format: "cjs", external: ["electron"] });
+    app = await _electron.launch({ executablePath: requireCjs("electron") as string, args: [main, ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])] });
+    const page = await app.firstWindow();
+    const id = await app.evaluate(() => (globalThis as unknown as { __tasks: { id: string } }).__tasks.id);
+    const row = page.locator(`[aria-labelledby="task-${id}-t"]`);
+    // Said for what it was, never "Stopped: Stopped".
+    await expect.poll(() => page.locator(`#task-${id}-t`).textContent()).toBe("No answer in time: Send the report");
+    expect(await row.locator(".task-meta").textContent()).toMatch(/^No answer in time · /);
+    await row.locator("summary").first().click();
+    expect(await row.locator(".timeline li").last().textContent()).toMatch(/No answer in time/);
+    // And to a screen reader it ended, never "Stopped: No answer in time" (tasks-approvals-r1).
+    expect(await row.locator(".timeline li").last().locator(".what .sr").first().textContent()).toBe("Ended: ");
+    const retry = row.getByRole("button", { name: "Try again: Send the report", exact: true });
+    expect(await retry.isEnabled()).toBe(true);
+    await retry.click();
+    // A new attempt, in the user's own words again: every question is asked again.
+    await expect.poll(() => app!.evaluate(() => (globalThis as unknown as { __tasks: { runs: string[] } }).__tasks.runs)).toEqual(["send the report to Priya", "send the report to Priya"]);
   } finally { await app?.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 }, 90_000);
 

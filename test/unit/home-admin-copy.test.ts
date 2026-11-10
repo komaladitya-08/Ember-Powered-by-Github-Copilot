@@ -6,7 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { FEATURE_TEXT, keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "../../app/renderer/home/admin-copy";
+import { FEATURE_TEXT, keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "../../app/renderer/home/admin-copy";
 import { AdminPolicySchema } from "../../app/main/admin";
 
 const inForce = { error: null, retentionDays: 30 };
@@ -14,9 +14,11 @@ const broken = { error: "/etc/ember/policy.json: Unrecognized key: \"futureKey\"
 const held = { error: "it changed while Ember was running; restart Ember to use it", held: true, retentionDays: null };
 
 describe("the settings window under a lockdown", () => {
-  it("asks for a restart when the policy changed while Ember ran, and names a broken policy's problem", () => {
+  it("asks for a restart when the policy changed while Ember ran, and says who fixes a broken one, never its raw error (safety-privacy-4)", () => {
     expect(lockdownNotice(held)).toBe("Your organisation changed Ember's policy. Restart Ember to use it.");
-    expect(lockdownNotice(broken)).toBe(`Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed (${broken.error}).`);
+    expect(lockdownNotice(broken)).toBe("Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed. Ask whoever manages this computer to fix it.");
+    const json = { error: "/etc/ember/policy.json is not valid JSON: Expected double-quoted property name in JSON at position 65 (line 2 column 1)", retentionDays: null };
+    expect(lockdownNotice(json)).not.toMatch(/\/etc|JSON|position|futureKey/);
     expect(lockdownNotice(inForce)).toBeNull();
   });
 
@@ -25,6 +27,26 @@ describe("the settings window under a lockdown", () => {
     expect(lockdownSendLine(broken)).toMatch(/^, nothing is sent to a model service until your organisation fixes its policy/);
     expect(lockdownSendLine(held)).toMatch(/^, nothing is sent to a model service until you restart Ember/);
     for (const a of [broken, held]) expect(lockdownSendLine(a)).not.toMatch(/Copilot/);
+  });
+
+  it("says plainly that nothing heard is sent anywhere while locked down, instead of naming no model service mid-sentence (safety-privacy-r4)", () => {
+    const before = "unless you turn on “Hey Ember” in settings or choose Listen once for one request. Once you call Ember it keeps listening through the conversation, and what it hears there goes to ";
+    const after = " as text, without its name, until you say “That's all” or it has been quiet for 30 seconds. Listen once processes audio on this computer.";
+    expect(lockdownMicWords(inForce, before, after)).toBeNull();
+    expect(lockdownMicWords(broken, before, after)).toEqual([
+      "unless you turn on “Hey Ember” in settings or choose Listen once for one request. Nothing it hears is sent anywhere until your organisation fixes its policy.",
+      " Listen once processes audio on this computer.",
+    ]);
+    expect(lockdownMicWords(held, before, after)?.[0]).toMatch(/Nothing it hears is sent anywhere until you restart Ember\.$/);
+    // Words it doesn't know (the page reworded): left alone rather than cut wrongly.
+    expect(lockdownMicWords(broken, "something else ", after)).toBeNull();
+  });
+
+  it("never says Listen once sends the request while locked down, when nothing it hears is sent (safety-privacy-r4)", () => {
+    const before = "choose Listen once for one request. Once you call Ember it keeps listening through the conversation, and what it hears there goes to ";
+    const after = " as text, without its name, until you say “That's all” or it has been quiet for 30 seconds. Listen once processes audio on this computer, sends the request as text, and closes temporary capture before Ember answers. If you teach Ember your voice, it keeps your voiceprint.";
+    expect(lockdownMicWords(broken, before, after)?.[1]).toBe(" Listen once processes audio on this computer and closes temporary capture once it has heard the request. If you teach Ember your voice, it keeps your voiceprint.");
+    expect(lockdownMicWords(held, before, after)?.[1]).not.toContain("sends the request");
   });
 
   it("says records are kept, none deleted, while locked down", () => {

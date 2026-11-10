@@ -20,7 +20,7 @@ Topic rules in `.claude/rules/` load when you open matching files:
 
 ## Commands
 
-Use Node 22.12 or later and npm 11.6.2 (`engines` and `packageManager` in package.json). npm 10 crashes with "Cannot read properties of null (reading edgesOut)"; fix it with `npm install -g npm@11.6.2`. Install with `npm ci`. Where the Electron binary can't download, `ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci` is enough for lint, typecheck, unit tests and build; `npx install-electron` fetches the binary later.
+Use Node 22.12 or later and npm 11.6.2 (`engines` and `packageManager` in package.json). npm 10 crashes with "Cannot read properties of null (reading edgesOut)"; fix it with `npm install -g npm@11.6.2` (for docs/DEVELOPING.md §3's root-owned /opt/node22, `sudo env PATH=/opt/node22/bin:$PATH npm install -g npm@11.6.2`). Install with `npm ci`. Where the Electron binary can't download, `ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci` is enough for lint, typecheck, unit tests and build; `npx install-electron` fetches the binary later.
 
 ```sh
 npm run dev                    # build into dist/app (scripts/build-app.mjs) and launch Electron; on a Mac: npm run dev:mac
@@ -34,19 +34,22 @@ The full gate, in CI's order. Run all of it before you push, and put the command
 npm run lint
 npm run typecheck
 npm test                         # vitest: test/unit/** and packages/**/*.test.ts
+(cd packages/npm && npm pack --dry-run)   # the npm launcher's package files
 npm run test:sidecar             # python3 -B sidecar/atspi/test_ember_atspi.py
 node scripts/voice/prepare.mjs   # speech models (SHA-256 checked) for the voice tests
 EMBER_VOICE_TEST=1 npm run test:integration
 npm run build
+EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_FIRST_RUN_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_SIGNOUT_FORGET_TEST=1 EMBER_STATUS_RACE_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1 EMBER_CHROMIUM_PATH=/usr/bin/google-chrome npm run test:integration -- <files>   # renderer journeys: the files are in ci.yml's checks job
 npm run build:lab                # demo/character-lab → dist/ember-character-lab.html
 xvfb-run -a npm run test:smoke   # launches dist/app, so build first; adds --no-sandbox as root
 ```
 
-- Linux desktop suites (AT-SPI, X11, desk, safety) run as in CI's `el8` job: `EMBER_ATSPI_TEST=1 dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- <files>`. The file list is in `.github/workflows/ci.yml`. The Windows and macOS suites are in docs/DEVELOPING.md §10.3 and §11.3; the commands, WSL and SSH suites (CI's `remote.yml`) in §14.4–14.5.
+- Linux desktop suites (AT-SPI, X11, desk, safety) run as in CI's `el8` job: `EMBER_PROJECT_TEST=1 EMBER_CONVERSATION_LIVE=1 EMBER_ATSPI_TEST=1 EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1 dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- <files>`. The file list is in `.github/workflows/ci.yml`. The Windows and macOS suites are in docs/DEVELOPING.md §10.3 and §11.3; the commands, WSL and SSH suites (CI's `remote.yml`) in §14.4–14.5.
+- The `el8` job ends with the awake-rest footprint budget. After `npm run build` and the speech models, with xcompmgr installed (EPEL's on EL8), run `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs --compositor --native --settle 70 --sample 30 --max-cpu 16 --max-pss 850` (listening on the C API the packages run), then the same without `--native` and with `--max-pss 950` (WebAssembly listening); docs/DEVELOPING.md ("What Ember costs at rest") says what it measures.
 - The eval drives real windows, so give it a display and a session bus, as CI's `eval` job does (with gedit installed): `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node eval/run.mjs`. For a partial run use `node eval/run.mjs --only <id> --no-gates`.
 - Without Copilot, start the mock model with `node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &`, then run `EMBER_TEST_PROVIDER_URL=http://127.0.0.1:18090/v1 npm run dev`.
 - Useful switches: `EMBER_USER_DATA` (a throwaway settings and logs folder), `EMBER_LOG_LEVEL=debug`, `EMBER_PYTHON`, and `EMBER_LOG_STDOUT=1` (logs to stdout from an installed Ember; development already does this). Ember's real data lives in `~/.config/ember/` (Linux), `%LOCALAPPDATA%\ember` (Windows) or `~/Library/Application Support/ember` (macOS).
-- Also available: `npm run rebuild:el8`, `npm run check:symvers`, and the packages, each built on its own OS (see `packaging-and-ci.md`): `npm run package` (RPMs and AppImage, on EL8 or in `rockylinux:8`), `npm run package:win` (on Windows) and `npm run package:mac` (on macOS).
+- Also available: `npm run rebuild:el8`, `npm run check:symvers`, and the packages, each built on its own OS (see `packaging-and-ci.md`): `npm run package` (the RPM and AppImage, on EL8 or in `rockylinux:8`), `npm run package:win` (on Windows) and `npm run package:mac` (on macOS).
 
 ## Repository map
 
@@ -112,15 +115,15 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
 - **Never.**
   - Ember never types into, selects in or sends keys to password, secret or payment fields.
   - It never acts in authentication windows (polkit, keyring, pinentry, sudo). While one is open, it reads, captures and sends nothing.
-  - It never opens, types into or acts in the user's terminals, makes files executable, or presses desktop-level keys or its own shortcuts. Commands run only through `run_command`, in Ember's own command window, after its classifier: dangerous ones (deleting, publishing, secrets, system changes, download-and-run) ask, except that one the user's own words asked for exactly (never secrets, download-and-run or anything unclear) is announced with a 4 s Stop; tampering with Ember's safety is refused (PLAN.md §2 "Commands").
+  - It never opens, types into or acts in the user's terminals, makes files executable, or presses desktop-level keys or its own shortcuts. Commands run only through `run_command`, in Ember's own command window, after its classifier: dangerous ones (deleting, publishing, secrets, system changes, download-and-run) ask, except that one the user's own words asked for exactly, for now (never held back by a condition or a later time, never secrets, download-and-run or anything unclear), is announced with a 4 s Stop; tampering with Ember's safety is refused (PLAN.md §2 "Commands").
   - It never reads or acts in its own windows or in never-look windows.
   - Password text never reaches the model.
 - **Screenshots** go only to workers. They are JPEGs at most 1280 px, with Ember hidden and never-look windows and secret fields blacked out. If masking fails, no image is sent. Prefer AT-SPI text to pixels.
 - **Least intrusive tier first:** 0 app APIs, 1 background accessibility, 2 Ember's desk (Linux only), 3 borrowing the cursor. Tier 3 asks every time (with Work without asking on, an ordinary borrow is announced instead; a risky one still asks), waits for the user to be still, and lets go on any user input. Ember never moves the pointer again after the user takes over.
-- **Kill switch.** The stop shortcut (Ctrl+Alt+X on Linux), "Ember, stop" and "Stop everything" call `KillSwitch.pull()`, which tells every part to stop at once and returns within 300 ms, logging any part still winding down as `late`. Register any new long-running part as a `StopPart`.
+- **Kill switch.** The stop shortcut (Ctrl+Alt+X on Linux), "Ember, stop", "Stop everything" and a typed "stop" while a task is at work (`AgentHost.stopsNow`) call `KillSwitch.pull()`, which tells every part to stop at once and returns within 300 ms, logging any part still winding down as `late`. Register any new long-running part as a `StopPart`.
 - **Consent.**
   - Nothing is read, heard or sent until `hasConsent` is true.
-  - When you change what Ember reads, sends or keeps, bump `CONSENT_VERSION` (app/shared/consent.ts) and update "Before Ember starts" in app/renderer/home/index.html. WSL, SSH and commands have their own first-use cards, memory its own note (`MEMORY_CONSENT_TEXT`), update notices theirs (`UPDATES_CONSENT_TEXT`) and Work without asking its card (`AUTONOMY_CONSENT_TEXT`): change one's text only with a bump of its entry in `FEATURE_CONSENT_VERSION`.
+  - When you change what Ember reads, sends or keeps, bump `CONSENT_VERSION` (app/shared/consent.ts), update "Before Ember starts" in app/renderer/home/index.html, and add the bump's line to `CONSENT_CHANGES` (what a returning user is told changed) with its full-text words in `CONSENT_CHANGE_SOURCES` (welcome-copy.ts). WSL, SSH and commands have their own first-use cards, memory its own note (`MEMORY_CONSENT_TEXT`), update notices theirs (`UPDATES_CONSENT_TEXT`) and Work without asking its card (`AUTONOMY_CONSENT_TEXT`): change one's text only with a bump of its entry in `FEATURE_CONSENT_VERSION`.
   - Audio stays on the machine and is never written to disk.
 - **Privacy.**
   - There is no telemetry.

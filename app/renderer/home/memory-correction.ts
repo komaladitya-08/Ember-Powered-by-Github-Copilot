@@ -1,4 +1,7 @@
-/** One local correction draft survives list paging and live updates; ownership resets retire both the draft and its acknowledgement. */
+/**
+ * One local correction draft survives list paging and live updates, and waits out of sight while the same account is
+ * checked again (a reconnect keeps the epoch: memory-8); ownership resets retire both the draft and its acknowledgement.
+ */
 import type { EmberHomeApi, MemoryView } from "../../shared/ipc";
 import { MEMORY_CORRECTION as words, memoryCorrectionFailedText, memoryProvenanceLabel } from "./copy";
 
@@ -21,11 +24,13 @@ export function mountMemoryCorrection(api: Pick<EmberHomeApi, "correctMemory">, 
   $("memory-correction-hint").textContent = words.hint;
   save.textContent = words.save; cancel.textContent = words.cancel;
   let expected: MemoryRow | null = null, epoch = 0, generation = 0, busy = false, writable = false, stale = false;
+  /** The draft waits while memory is checked again; `refocus`: it had focus, which went to the fallback meanwhile. */
+  let held = false, refocus = false;
   const say = (text: string) => { status.textContent = text; };
   const close = (message = "", returnFocus = true) => {
     const hadFocus = form.contains(document.activeElement);
     const id = expected?.id;
-    generation++; expected = null; busy = false; stale = false;
+    generation++; expected = null; busy = false; stale = false; held = false; refocus = false;
     input.value = ""; $("memory-correction-original").textContent = ""; $("memory-correction-source").textContent = "";
     form.hidden = true; save.removeAttribute("aria-disabled"); cancel.removeAttribute("aria-disabled"); say(message);
     if (hadFocus && returnFocus) {
@@ -59,12 +64,28 @@ export function mountMemoryCorrection(api: Pick<EmberHomeApi, "correctMemory">, 
       expected = { ...row }; stale = false; generation++;
       input.value = row.text;
       $("memory-correction-original").textContent = row.text;
-      $("memory-correction-source").textContent = memoryProvenanceLabel(row.source, row.correctedAt);
+      $("memory-correction-source").textContent = memoryProvenanceLabel(row.source, row.correctedAt, row.kind);
       form.hidden = false; say(writable ? "" : words.off); input.focus(); input.select();
     },
     observe(rows, nextEpoch, owned, canWrite) {
       writable = canWrite;
-      if (epoch !== nextEpoch || !owned) { epoch = nextEpoch; close(); return; }
+      if (epoch !== nextEpoch) { epoch = nextEpoch; close(); return; }
+      // The same account's memory, checked again: the draft goes out of sight with the list, and comes back with it.
+      if (!owned) {
+        if (!expected || held) return;
+        held = true;
+        refocus = form.contains(document.activeElement);
+        form.hidden = true;
+        if (refocus) fallback().focus();
+        return;
+      }
+      if (held) {
+        held = false;
+        form.hidden = false;
+        // Only if focus is still where it was put: someone who moved on meanwhile stays where they are.
+        if (refocus && document.activeElement === fallback()) input.focus();
+        refocus = false;
+      }
       if (!expected) return;
       const current = rows.find(row => row.id === expected?.id);
       if (!current) { close(words.gone); return; }

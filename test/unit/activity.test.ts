@@ -8,10 +8,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ActivityLog } from "../../app/main/agent/activity";
 import {
-  cardApp, CARD_APP_MAX, ACTIVITY_LIMIT, STATUS_WORDS, activityRows, clockText, doingWords, elapsedText, planStepText, retryWords, stepsWords,
+  cardApp, CARD_APP_MAX, ACTIVITY_LIMIT, STATUS_WORDS, activityRows, clockText, doingWords, elapsedText, pacedWords, planStepText, retryWords, stepsWords,
   summarizeActivity, telemetryItems, type ActivityItem,
 } from "../../app/shared/activity";
 import { stepOf } from "../../app/main/agent/presenter";
+import { timelineRows } from "../../app/renderer/home/tasks-copy";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 
@@ -90,13 +91,22 @@ describe("a task's live line", () => {
     expect(l.card().live).toBe("Thinking…");
   });
 
+  it("names the user's own provider on the card while it is quiet, never Copilot (integrations-v1)", () => {
+    const { l } = log();
+    l.add({ type: "turn" }, T0);
+    l.add({ type: "slow", on: true, words: "Still waiting for your model provider…" }, T0 + 30_000);
+    expect(l.card().live).toBe("Still waiting for your model provider…");
+    l.add({ type: "slow", on: false, words: "Still waiting for your model provider…" }, T0 + 31_000);
+    expect(l.card().live).toBe("Thinking…");
+  });
+
   it("ends with the state's word from the one table, and takes nothing after", () => {
     const { l, step } = log();
     step("click", 0);
     l.add({ type: "end", status: "failed" }, T0 + 5000);
     expect(l.card()).toMatchObject({ live: "Didn't finish", endedAt: T0 + 5000 });
     expect(l.add({ type: "turn" }, T0 + 6000)).toBe(false);
-    expect(STATUS_WORDS).toEqual({ running: "Working", waiting: "Waiting for you", queued: "Waiting its turn", retrying: "Retrying", done: "Done", failed: "Didn't finish", stopped: "Stopped" });
+    expect(STATUS_WORDS).toEqual({ running: "Working", waiting: "Waiting for you", queued: "Waiting its turn", retrying: "Retrying", done: "Done", failed: "Didn't finish", stopped: "Stopped", unanswered: "No answer in time" });
   });
 });
 
@@ -208,6 +218,76 @@ describe("the details' rows", () => {
     l.add({ type: "hand", hand: "cursor" }, T0 + 10);
     expect(l.card().rows.map(r => [r.state, r.words])).toEqual([["stopped", "Not allowed: password fields are for the user only"], ["done", "Used your mouse and keyboard"]]);
   });
+
+  it("put a step refused after its question was answered after that answer, at its own time, never as refused before the user's Allow (tasks-approvals-v5-1)", () => {
+    const { l } = log();
+    l.add({ type: "tool-start", id: "c1", tool: "click", step: stepOf("click"), app: "Text Editor" }, T0 + 1000);
+    l.add({ type: "question", asked: "Click in Text Editor?" }, T0 + 1100);
+    l.add({ type: "answer", answer: "allowed" }, T0 + 3000);
+    l.add({ type: "refused", reason: "an authentication prompt is open" }, T0 + 3200);
+    l.add({ type: "denied" }, T0 + 3200);
+    l.add({ type: "tool-end", id: "c1", ok: false }, T0 + 3300);
+    expect(l.card().rows).toEqual([
+      { at: 1100, state: "done", words: "Asked you: you allowed it" },
+      { at: 3200, state: "stopped", words: "Not allowed: an authentication prompt is open" },
+    ]);
+    expect(timelineRows(l.get().items).map(r => r.words)).toEqual(["Asked you: you allowed it", "Not allowed: an authentication prompt is open"]);
+    expect(l.card().summary).toBeUndefined();
+  });
+
+  it("fold refusals for one reason in a row into one line, so repeated looks never push what the task did off the card (tasks-approvals-v5-2)", () => {
+    const { l, step } = log();
+    step("click", 0, { app: "Text Editor" });
+    for (let i = 0; i < 6; i++) {
+      const id = `look_${i}`;
+      l.add({ type: "tool-start", id, tool: "perceive_window", step: stepOf("perceive_window"), app: "Text Editor" }, T0 + 1000 * (i + 1));
+      l.add({ type: "refused", reason: "Ember couldn't tell whether a password prompt was open" }, T0 + 1000 * (i + 1) + 5);
+      l.add({ type: "denied" }, T0 + 1000 * (i + 1) + 5);
+      l.add({ type: "tool-end", id, ok: false }, T0 + 1000 * (i + 1) + 10);
+    }
+    expect(l.card().rows.map(r => [r.state, r.words])).toEqual([
+      ["done", "Clicked once in Text Editor"], ["stopped", "Not allowed 6 times: Ember couldn't tell whether a password prompt was open"],
+    ]);
+    // Home folds them too, and the row opens to name each step that was refused.
+    const rows = timelineRows(l.get().items);
+    expect(rows.map(r => r.words)).toEqual(["Clicked once in Text Editor", "Not allowed 6 times: Ember couldn't tell whether a password prompt was open"]);
+    expect(rows[1]!.steps?.map(s => [s.state, s.words])).toEqual(Array(6).fill(["stopped", "Tried to read the window in Text Editor"]));
+    // A refusal for another reason is a row of its own.
+    l.add({ type: "refused", reason: "password fields are for the user only" }, T0 + 9000);
+    expect(l.card().rows.map(r => r.words).slice(-2)).toEqual(["Not allowed 6 times: Ember couldn't tell whether a password prompt was open", "Not allowed: password fields are for the user only"]);
+  });
+});
+
+describe("a read that sent the model a picture of the window (safety-privacy-6)", () => {
+  /** A read of the window in `app` from `at`, that sent a picture with it when `picture`. */
+  const look = (l: ActivityLog, id: string, at: number, picture: boolean) => {
+    l.add({ type: "tool-start", id, tool: "perceive_window", step: stepOf("perceive_window"), app: "Firefox" }, T0 + at);
+    if (picture) l.add({ type: "picture" }, T0 + at + 50);
+    l.add({ type: "tool-end", id, ok: true }, T0 + at + 100);
+  };
+
+  it("says on the card that a picture went, apart from reads of the text alone, and names it in the summary", () => {
+    const { l, step } = log();
+    look(l, "a", 0, false);
+    look(l, "b", 1000, true);
+    look(l, "c", 2000, true);
+    step("click", 3000, { app: "Firefox" });
+    expect(l.card().rows.map(r => r.words)).toEqual(["Read the window in Firefox", "Sent the model 2 pictures of the window in Firefox", "Clicked once in Firefox"]);
+    // However many other kinds of step there were, the summary says pictures went.
+    step("type_text", 4000);
+    step("choose_option", 5000);
+    expect(l.card().summary).toBe("Sent the model 2 pictures of the window, typed text and 3 other steps");
+    expect(summarizeActivity({ read: 2, click: 3 })).toBe("Clicked 3 times and read the window 2 times");
+  });
+
+  it("marks only a read under way, never a step of another kind", () => {
+    const { l } = log();
+    l.add({ type: "tool-start", id: "k", tool: "click", step: stepOf("click"), app: "Firefox" }, T0);
+    expect(l.add({ type: "picture" }, T0 + 10)).toBe(false);
+    l.add({ type: "tool-end", id: "k", ok: true }, T0 + 20);
+    expect(l.get().items.map(i => i.group)).toEqual(["click"]);
+    expect(l.card().rows.map(r => r.words)).toEqual(["Clicked once in Firefox"]);
+  });
 });
 
 describe("the worker's note", () => {
@@ -246,6 +326,21 @@ describe("the telemetry row (HUD direction: three items at most, readable in a g
     expect(l.add({ type: "near-limit" }, T0)).toBe(true);
     expect(l.add({ type: "near-limit" }, T0 + 1)).toBe(false);
     expect(l.card().nearLimit).toBe(true);
+  });
+
+  it("says a step waits for the minute's limit in its live line, a pause and never a refusal (tasks-approvals-2)", () => {
+    const { l } = log();
+    l.add({ type: "tool-start", id: "c1", tool: "click", step: "Clicking", app: "Text Editor" }, T0);
+    expect(l.add({ type: "paced", perMinute: 40 }, T0 + 1)).toBe(true);
+    expect(l.card().live).toBe("Pausing to keep to 40 steps a minute…");
+    expect(l.card().rows.map(r => r.words)).toEqual(["Clicking in Text Editor…"]);
+    l.add({ type: "tool-end", id: "c1", ok: true }, T0 + 2);
+    expect(l.card().live).toBe("Thinking…");
+  });
+
+  it("says one step a minute, not “1 steps”, where the administrator's limit is one (tasks-approvals-r4)", () => {
+    expect(pacedWords(1)).toBe("Pausing to keep to 1 step a minute…");
+    expect(pacedWords(2)).toBe("Pausing to keep to 2 steps a minute…");
   });
 });
 

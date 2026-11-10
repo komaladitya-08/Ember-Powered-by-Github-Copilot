@@ -43,6 +43,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # The release's notes link the README at the tag: fail the tag's run at once if it says this version isn't out.
+      - name: The tagged README describes this version (docs/DEVELOPING.md §15 step 1)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node scripts/package/release.mjs --readme "$GITHUB_REF_NAME"
       - run: npm install -g npm@11.6.2
       - run: npm ci
         env:
@@ -83,7 +87,7 @@ jobs:
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
           test -n "$browser_path"
-          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/home-speech-consent-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts test/integration/home-first-run-renderer.test.ts test/integration/home-status-race-renderer.test.ts
+          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/home-speech-consent-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts test/integration/home-first-run-renderer.test.ts test/integration/home-integrations-renderer.test.ts test/integration/home-panes-renderer.test.ts test/integration/home-status-race-renderer.test.ts
       - run: npm run build:lab
       - name: The built-in GitHub App client id starts a sign-in (GitHub answers with a device code, never printed)
         run: |
@@ -162,7 +166,18 @@ jobs:
       - name: Screen reading and acting on RHEL 8's Python 3.6 (AT-SPI sidecar, a worker against a GTK3 window, Ember's desk, hostile windows, Electron windows and their secret fields, a click that runs a modal dialog)
         run: |
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_PROJECT_TEST=1 EMBER_CONVERSATION_LIVE=1 EMBER_ATSPI_TEST=1 EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1 \
-            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/perception-electron.test.ts test/integration/action-link.test.ts test/integration/keybuffer-live.test.ts test/integration/overlay-shape-live.test.ts test/integration/handle-menu-live.test.ts test/integration/handle-card-whole-live.test.ts test/integration/bubble-motion-live.test.ts test/integration/project-live.test.ts test/integration/conversation-history-live.test.ts test/integration/approval-ui-live.test.ts test/integration/task-controls-live.test.ts
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/perception-electron.test.ts test/integration/action-link.test.ts test/integration/keybuffer-live.test.ts test/integration/overlay-shape-live.test.ts test/integration/handle-menu-live.test.ts test/integration/handle-card-whole-live.test.ts test/integration/bubble-motion-live.test.ts test/integration/project-live.test.ts test/integration/conversation-history-live.test.ts test/integration/approval-ui-live.test.ts test/integration/task-controls-live.test.ts test/integration/run-marker-live.test.ts
+      # The overlay beside the cursor, the biggest drawer at rest, exists only under a compositor (rp-4).
+      - name: A compositor for the footprint (EPEL's xcompmgr)
+        run: dnf -y -q install epel-release && dnf -y -q install xcompmgr
+      # The budget docs/DEVELOPING.md records: it fails only on a large regression, never on noise (rp-4). Past the first
+      # minute, when the first minute's livelier fidgets are over, with the overlay counted, and listening on the C API
+      # the Linux packages run (reliability-performance-c5-1: a development build listens on WebAssembly).
+      - name: What Ember costs awake at rest, the overlay included, listening as the packages do, against its budget (16 % of one core, 850 MB)
+        run: sudo -u ci env "PATH=$PATH" HOME=/home/ci dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs --compositor --native --settle 70 --sample 30 --max-cpu 16 --max-pss 850
+      # WebAssembly listening, where the C API can't run (a processor without what it needs, a development build).
+      - name: The same with WebAssembly listening, against its budget (16 % of one core, 950 MB)
+        run: sudo -u ci env "PATH=$PATH" HOME=/home/ci dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs --compositor --settle 70 --sample 30 --max-cpu 16 --max-pss 950
 
   package:
     name: Package (RPM, AppImage) and install on rockylinux:8

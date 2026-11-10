@@ -89,7 +89,7 @@ export function demoExtensionsApi(variant: DemoVariant): ExtensionsApi {
       changed();
       return { ok: true };
     },
-    removeMarketplace: async name => { marketplaces = marketplaces.filter(m => m.name !== name); changed(); },
+    removeMarketplace: async name => { marketplaces = marketplaces.filter(m => m.name !== name); changed(); return { ok: true }; },
     browse: async marketplace => { await wait(300); return CATALOG.filter(e => e.marketplace === marketplace || marketplace === "*").map(entry); },
     install: async (marketplace, name) => {
       const e = CATALOG.find(x => x.marketplace === marketplace && x.name === name);

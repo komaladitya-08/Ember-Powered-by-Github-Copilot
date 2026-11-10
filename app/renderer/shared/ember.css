@@ -284,6 +284,10 @@ html {
 
 /* Read out by screen readers, never seen. */
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* A status line in a content window (Home, the command window, the prompt window) stays on the page while it says
+   nothing, as a box of nothing out of the flow: hidden until filled, it joined the accessibility tree with its words
+   already in, which NVDA and Orca with Chromium don't announce (accessibility-visual-c1-1, c2-1). Home's sheet repeats it. */
+:where(html.content) :is([role="status"], [aria-live]):empty { position: absolute; width: 0; height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; outline: 0; box-shadow: none; }
 
 /* A state symbol beside its words (never colour alone): set data-status, size it, and it draws in the state's colour. */
 [data-status] { --sym-tint: var(--accent-text-on-glass, var(--accent)); --sym: var(--sym-working); }

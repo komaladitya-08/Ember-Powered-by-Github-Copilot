@@ -5,6 +5,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
+import type { EmberState } from "../../app/shared/overlay";
 
 const Q: Question = { title: "May I?", prompt: "Click “Send”?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: "t1", risky: true };
 
@@ -67,5 +68,65 @@ describe("the Confirmer's deadline", () => {
       expect(c.answer("q1:once")).toBe(true);
       await expect(q).resolves.toBe("once");
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("a question that runs out of time (tasks-approvals-4)", () => {
+  it("leaves its note up long enough to be read on coming back, longer with More time to read and answer", async () => {
+    vi.useFakeTimers();
+    try {
+      let read = 1;
+      const settled: unknown[] = [];
+      const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, timeoutMs: 1000, answerMs: () => 1500 * read, expiredMs: () => 10_000 * read, afterAnswer: s => settled.push(s) });
+      const q = c.ask(Q);
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(q).resolves.toBeNull();
+      await vi.advanceTimersByTimeAsync(1600);
+      // A 1.5 s note was gone before anyone coming back to the computer could see it.
+      expect(settled).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(8500);
+      expect(settled).toHaveLength(1);
+      // With More time to read and answer, answers stay ten times as long, as the setting says bubbles do.
+      read = 10;
+      const q2 = c.ask(Q);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(c.answer("q2:once")).toBe(true);
+      await q2;
+      await vi.advanceTimersByTimeAsync(14_000);
+      expect(settled).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect(settled).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("what a timed-out question says to do next (tasks-approvals-r1)", () => {
+  it("points a task's question at Try again on its card, and keeps “say or type the request again” for one with no task", async () => {
+    const { EXPIRED_STEP, EXPIRED_TASK_STEP, EXPIRED_THOUGHT, EXPIRED_TASK_THOUGHT } = await import("../../app/main/agent/confirm");
+    const shown: Partial<EmberState>[] = [];
+    const c = new Confirmer(s => shown.push(s), { armMs: 0, gapMs: 0, timeoutMs: 20 });
+    await c.ask(Q);
+    expect(shown.at(-1)!.bubble).toMatchObject({ thought: EXPIRED_TASK_THOUGHT, step: EXPIRED_TASK_STEP });
+    expect(EXPIRED_TASK_STEP).toBe("If I can't finish without it, choose Try again on its card. Otherwise, say or type the request again.");
+    expect(EXPIRED_TASK_THOUGHT).toBe("Time ran out, so nothing was approved and I haven't done it.");
+    const { task: _task, ...untasked } = Q;
+    await c.ask(untasked);
+    expect(shown.at(-1)!.bubble).toMatchObject({ thought: EXPIRED_THOUGHT, step: EXPIRED_STEP });
+    expect(EXPIRED_STEP).toBe("To review it, say or type the request again.");
+  });
+
+  it("promises Try again only for a task that can't finish without the answer, since one that finishes the rest offers Close alone (tasks-approvals-c2-2)", async () => {
+    const { EXPIRED_TASK_STEP } = await import("../../app/main/agent/confirm");
+    const { TaskManager } = await import("../../app/main/agent/tasks");
+    const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as never;
+    const cards: { actions?: { label: string }[] }[][] = [];
+    // The question went unanswered (the note is up), then the worker finished the rest and said it was done.
+    const tm = new TaskManager({ log: quiet, currentWindow: () => null, setCards: c => cards.push(c), deleteSession: async () => undefined, keepMs: 0,
+      makeWorker: () => ({ run: async () => ({ success: true, summary: "I tidied the build folder, but didn't delete the old one: my question timed out." }), dispose: async () => undefined, sessionId: "s" }) as never });
+    tm.start("Tidy the build folder", { userWords: "tidy the build folder" });
+    await vi.waitFor(() => expect(cards.at(-1)?.[0]?.actions?.map(a => a.label)).toEqual(["Close"]));
+    // So the note says when the card offers Try again, and what to do otherwise; never that it does.
+    expect(EXPIRED_TASK_STEP).toMatch(/^If I can't finish without it, choose Try again on its card\. Otherwise, say or type the request again\.$/);
+    expect(EXPIRED_TASK_STEP).not.toMatch(/^To review it, choose Try again/);
   });
 });

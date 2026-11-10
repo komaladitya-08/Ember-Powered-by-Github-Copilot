@@ -156,7 +156,7 @@ it.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("shows one answer row tha
     await page.evaluate(e => window.__streamTest.push(e), [cut]);
     expect(await status.innerText()).not.toContain("Reply received");
     await page.evaluate(e => window.__streamTest.push(e), [cut, { t: at(91), who: "problem" as const, text: "Lost it." }]);
-    expect(await status.innerText()).toContain("couldn’t finish");
+    expect(await status.innerText()).toContain("couldn't be finished");
 
     // Restored lines (no answerId) from a saved copy: a stopped one shows its note, and flips neither the composer
     // status nor a new stream's row (F1, history).

@@ -132,6 +132,7 @@ describe("Perception's quick look (review #78)", () => {
     const log = { debug() {}, info() {}, warn() {}, error() {}, child() { return log; } } as unknown as Logger;
     const sidecar = {
       readWindow: async (p: { pid?: number }) => { reads.push(p); return { window: p.pid === 42 ? geditAx : null, nodes: [], ms: 1 }; },
+      shellOverlays: async () => ({ overlays: [] }),
     } as unknown as AtspiSidecar;
     const ws: PerceptionWindows = { stack: () => [], activeWindow: () => box, focusWindow: () => box, clientWindows: () => [], capture: () => null };
     const perception = new Perception({ sidecar, x11: ws, log, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }), ownPid: OWN });
@@ -186,7 +187,7 @@ describe("the user's window on Windows with WSLg, as Perception names it (review
     const seen = wrapWindowsWith(h.windows.ws, h.options, h.deps);
     await routerFor(h.options).refresh();
     // A sidecar that names no window: only the window system's name for it can tell it is on the never-look list.
-    const sidecar = { readWindow: async () => ({ window: null, nodes: [], ms: 1 }) } as unknown as AtspiSidecar;
+    const sidecar = { readWindow: async () => ({ window: null, nodes: [], ms: 1 }), shellOverlays: async () => ({ overlays: [] }) } as unknown as AtspiSidecar;
     const perception = new Perception({ sidecar, x11: seen, log: quiet, neverLook: () => ["gedit"], screenBounds: () => ({ x: 0, y: 0, width: 1920, height: 1080 }), ownPid: OWN });
     return { h, seen, raw: h.windows.ws, perception };
   }

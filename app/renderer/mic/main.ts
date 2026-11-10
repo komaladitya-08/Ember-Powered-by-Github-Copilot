@@ -174,11 +174,14 @@ const localSpeech = new LocalSpeech({
 }, navigator.language || "en-US");
 speechSynthesis.addEventListener("voiceschanged", () => localSpeech.drain());
 
-function speakLocal(text: string, voice: SpeechSynthesisVoice): void {
+/** The speaking speed setting, as main last sent it (0.8 to 1.4): the system voice speaks at 1.05 times it. */
+let speechRate = 1;
+
+function speakLocal(text: string, voice: SpeechSynthesisVoice, lang?: string): void {
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = navigator.language || "en-US";
+  u.lang = lang ?? (navigator.language || "en-US");
   u.voice = voice;
-  u.rate = 1.05;
+  u.rate = 1.05 * speechRate;
   const queued = synthQueued;
   queued.add(u);
   watchHead();
@@ -200,9 +203,10 @@ function speakLocal(text: string, voice: SpeechSynthesisVoice): void {
   speechSynthesis.speak(u);
 }
 
-api.onSpeak(({ text, append }) => {
+api.onSpeak(({ text, append, lang, rate }) => {
+  speechRate = typeof rate === "number" && rate >= 0.8 && rate <= 1.4 ? rate : 1;
   if (!append) hush();
-  localSpeech.enqueue(text);
+  localSpeech.enqueue(text, typeof lang === "string" ? lang : undefined);
 });
 function hush(): void {
   localSpeech.cancel();

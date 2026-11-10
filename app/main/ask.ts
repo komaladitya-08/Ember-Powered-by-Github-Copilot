@@ -5,7 +5,9 @@
 
 import { BrowserWindow, Menu, screen } from "electron";
 import path from "node:path";
-import { IPC, type AskContext, type ListenOnceStatus } from "../shared/ipc";
+import { answerRoom } from "@ember/bubble";
+import { IPC, listenOnceShown, type AskContext, type ListenOnceStatus } from "../shared/ipc";
+import type { BubbleState } from "../shared/overlay";
 import type { OS } from "../shared/shortcuts";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
@@ -22,7 +24,7 @@ const SIZE = { width: 560, height: 92 };
 const GROWS = 46 + 17;
 /**
  * The field grows a line at a time (its line height, at the text size), up to MAX_LINES, as the user types or pastes
- * several lines; the cut note and wait tip each take another row. Comfortable controls and wrapped suggestions use
+ * several lines; the count near the limit and the wait tip each take another row. Comfortable controls and wrapped suggestions use
  * their measured rows; the work area caps the window and the page scrolls on very small displays.
  */
 const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 20;
@@ -36,6 +38,15 @@ export const WAIT_TIP_OPENINGS = 5;
 export function showsWaitTip(holds: boolean, opened: number): boolean {
   return !holds && opened < WAIT_TIP_OPENINGS;
 }
+/**
+ * The rows an opening reserves before the page measures them: the field's line, Listen once's two (none where the
+ * organisation turned voice off: companion-3), and one each for the wait tip and the suggestions; the room kept for
+ * those still to come (AskContext.suggestionsComing) is one row of chips, two of the box's rows as the page measures it
+ * (auxiliaryRows), so the box opens as tall as it stays and roomForAnswer judges the box it will be.
+ */
+export const askOpeningRows = (c: AskContext): number =>
+  1 + (listenOnceShown(c.listenOnce) ? 2 : 0) + (c.tip ? 1 : 0) + (c.suggestions?.length ? 1 : c.suggestionsComing ? 2 : 0);
+
 /** Ember's size when the caller doesn't say (the default setting). */
 const EMBER_SIZE = 60;
 /** Gap to the work area's edges and to Ember's handle. */
@@ -122,7 +133,7 @@ function clearOf(b: Box, wa: Box, keepOff?: Box | null): Box {
 }
 
 /**
- * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, the note's when a paste was cut, the tip's):
+ * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, the count's near the limit, the tip's):
  * growing upward when the box is above Ember (`up`, its hint row stays put beside Ember's head), else downward; always
  * inside the work area and clear of `keepOff`. `scale`: the text's (askSize), by which each row is taller too.
  */
@@ -133,6 +144,120 @@ export function grownBounds(b: Box, rows: number, wa: Box, up: boolean, keepOff?
   const top = wa.y + gap, bottom = wa.y + wa.height - height - gap;
   const y = up ? b.y + b.height - height : b.y;
   return clearOf({ ...b, height, y: Math.round(Math.max(top, Math.min(y, bottom))) }, wa, keepOff);
+}
+
+/**
+ * `b` moved off Ember's bubble (`bubble`: the answer or question on screen, global DIP) when over it (companion-1: the
+ * box opened on the answer near the top of the screen, and on a question's Allow near the bottom). Given `near` (Ember),
+ * the other side of Ember first, keeping its centre; then beside the bubble at the height it has, the nearer side first;
+ * then beside it on the other side of Ember; then stacked under or over the bubble (the nearer first), at its own x where
+ * that fits, never over Ember. Each inside the work area and clear of `keepOff` (the handle), or `b` as it was when
+ * nothing is. `cross`: false for a box being typed in, which never jumps to the other side of Ember. The bubble itself
+ * never moves (nothing near a pending question does).
+ */
+export function clearOfBubble(b: Box, wa: Box, bubble?: Box | null, keepOff?: Box | null, near?: { x: number; y: number; size?: number } | null, cross = true): Box {
+  if (!bubble || !overlap(b, bubble)) return b;
+  const gapY = gapIn(wa.height, b.height), gapX = gapIn(wa.width, b.width);
+  const top = wa.y + gapY, bottom = wa.y + wa.height - b.height - gapY;
+  const left = wa.x + gapX, right = wa.x + wa.width - b.width - gapX;
+  const size = near?.size ?? EMBER_SIZE;
+  // Above Ember the box's foot keeps clear of its head (askBounds); below, its top clears Ember's hands.
+  const head = Math.max(18, size * 0.5 - 8), hands = size * 0.6;
+  const heights = [b.y];
+  if (near && cross) {
+    const other = b.y + b.height <= near.y ? Math.round(near.y + hands) : Math.round(near.y - b.height - head);
+    if (other >= top && other <= bottom) heights.push(other);
+  }
+  const sides = [Math.round(bubble.x - b.width - GAP), Math.round(bubble.x + bubble.width + GAP)]
+    .sort((p, q) => Math.abs(p - b.x) - Math.abs(q - b.x));
+  // Stacked under or over the bubble (companion-1: at Large and Larger text, and on a 1024-wide screen at any size, the
+  // box fits beside neither side of it, and opened on it): its x kept, or as near it as the work area allows.
+  const stacked = [Math.round(bubble.y + bubble.height + GAP), Math.round(bubble.y - b.height - GAP)]
+    .sort((p, q) => Math.abs(p - b.y) - Math.abs(q - b.y))
+    .map(y => ({ x: Math.min(Math.max(b.x, left), right), y }));
+  const ember = near ? { x: near.x - size * 0.75, y: near.y - head, width: size * 1.5, height: head + hands } : null;
+  const tries = [
+    ...(heights.length > 1 ? [{ x: b.x, y: heights[1] }] : []),
+    ...heights.flatMap(y => sides.map(x => ({ x, y }))),
+  ];
+  for (const at of [...tries, ...stacked]) {
+    if (at.x < left || at.x > right || at.y < top || at.y > bottom) continue;
+    const c = clearOf({ ...b, ...at }, wa, keepOff);
+    if (overlap(c, bubble) || (keepOff && overlap(c, keepOff))) continue;
+    // Beside the bubble it is at a height clear of Ember already; stacked, it may not be.
+    if (stacked.includes(at) && ember && overlap(c, ember)) continue;
+    return c;
+  }
+  return b;
+}
+
+const overlapArea = (a: Box, b: Box) =>
+  Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+
+/**
+ * `b` moved off the task cards (`cards`, global DIP) where what it shows (`parts`: the page's shape, window-local; none
+ * yet: all of it) is over them (companion-r5-1: at Larger text the box opened under Ember's "I've started on that" ran
+ * its field, Send and its hint over the card's ring, title and status). The least move that clears them, sideways first
+ * (it stays clear as a card grows taller), then up; each inside the work area, clear of the handle (`keepOff`), never
+ * over Ember (`near`), and never more over Ember's bubble (`bubble`) than before, which comes first. Else `b` as it was.
+ */
+export function clearOfCards(b: Box, parts: readonly Box[], wa: Box, cards: readonly Box[], keepOff?: Box | null, bubble?: Box | null, near?: { x: number; y: number; size?: number } | null): Box {
+  const shown = (at: Box) => (parts.length ? parts : [{ x: 0, y: 0, width: at.width, height: at.height }]).map(p => ({ x: at.x + p.x, y: at.y + p.y, width: p.width, height: p.height }));
+  const over = (at: Box) => shown(at).filter(p => cards.some(c => overlap(p, c)));
+  const hit = over(b);
+  if (!hit.length) return b;
+  const gapY = gapIn(wa.height, b.height), gapX = gapIn(wa.width, b.width);
+  const left = wa.x + gapX, right = wa.x + wa.width - b.width - gapX, top = wa.y + gapY, bottom = wa.y + wa.height - b.height - gapY;
+  const size = near?.size ?? EMBER_SIZE;
+  const ember = near ? { x: near.x - size * 0.75, y: near.y - Math.max(18, size * 0.5 - 8), width: size * 1.5, height: Math.max(18, size * 0.5 - 8) + size * 0.6 } : null;
+  const onBubble = bubble ? overlapArea(b, bubble) : 0;
+  const sideways = cards.flatMap(c => hit.flatMap(p => [c.x - GAP - (p.x + p.width), c.x + c.width + GAP - p.x])).sort((p, q) => Math.abs(p) - Math.abs(q));
+  const upward = cards.flatMap(c => hit.map(p => c.y - GAP - (p.y + p.height))).filter(d => d < 0).sort((p, q) => q - p);
+  const tries = [...sideways.map(dx => ({ ...b, x: Math.round(b.x + dx) })), ...upward.map(dy => ({ ...b, y: Math.round(b.y + dy) }))];
+  for (const at of tries) {
+    if (at.x < left || at.x > right || at.y < top || at.y > bottom || over(at).length) continue;
+    if ((keepOff && overlap(at, keepOff)) || (ember && overlap(at, ember)) || (bubble && overlapArea(at, bubble) > onBubble)) continue;
+    return at;
+  }
+  return b;
+}
+
+/**
+ * Where the box opens (global DIP) as tall as `rows` rows, and whether it grows upward (it sits above Ember): askBounds,
+ * grown to its rows as the page will need them, then clear of Ember's bubble (`bubble`) as of the handle (companion-1).
+ */
+export function openingBounds(near: { x: number; y: number; size?: number } | null, wa: Box, keepOff: Box | null | undefined, scale: number, rows: number, bubble?: Box | null): { bounds: Box; up: boolean } {
+  let bounds = askBounds(near, wa, keepOff, scale);
+  const above = (b: Box) => !near || b.y + b.height <= near.y;
+  if (rows > 1) bounds = grownBounds(bounds, rows, wa, above(bounds), keepOff, scale);
+  bounds = clearOfBubble(bounds, wa, bubble, keepOff, near);
+  return { bounds, up: above(bounds) };
+}
+
+/**
+ * Whether the box opening at `b` (global DIP) leaves the answer Ember streams beside it room to finish whole in Ember's
+ * column (`near`: Ember's centre and size; `display`: its display's bounds; `scale`: the text's): answerRoom, in the
+ * overlay's coordinates. Without Ember to go by, none is assumed.
+ */
+export function roomForAnswer(b: Box, near: { x: number; y: number; size?: number } | null, display: Box, scale: number): boolean {
+  if (!near) return false;
+  const size = near.size ?? EMBER_SIZE;
+  const anchor = { x: near.x - display.x, y: near.y + size * 0.4 - display.y };
+  return answerRoom(anchor, size, { width: display.width, height: display.height }, { ...b, x: b.x - display.x, y: b.y - display.y }, scale);
+}
+
+/**
+ * The bubble the open box steps aside for when it comes up under it (companion-c1-1), by what it is: a question (its
+ * answers' ids), which must be read and answered there, or the box's own Listen once's "Listening…" (`ownListen`: the
+ * box's Listen once is under way). Null for the others (an answer, a reminder, a task's result, a wake's or a
+ * follow-up's "Listening…": companion-c2-3), which keep off the box where they can but never move the field being
+ * typed in.
+ */
+export function stepsAsideFor(b: Pick<BubbleState, "visible" | "mood" | "actions">, ownListen = false): string | null {
+  if (!b.visible) return null;
+  const answers = b.actions.filter(a => !a.id.startsWith("ui:")).map(a => a.id);
+  if (answers.length) return answers.join(",");
+  return b.mood === "listening" && ownListen ? "listening" : null;
 }
 
 /** What the field's right-click menu may do now (Electron's context-menu editFlags). */
@@ -174,6 +299,14 @@ export class AskWindow {
   private source = "unknown";
   /** The box sits above Ember (or low in the middle of the screen): a taller field grows it upward. */
   private up = true;
+  /** Ember as the box last opened by it (its centre and size, global DIP), or null: opened without it. */
+  private near: { x: number; y: number; size?: number } | null = null;
+  /** The bubble (stepsAsideFor) the box last stepped aside for in this opening: once for each, so it never dances. */
+  private steppedFor: string | null = null;
+  /** How tall that bubble was then: it steps aside again only for the same one grown taller (companion-c4-1). */
+  private steppedHeight = 0;
+  /** Where main last heard the box is (onBounds), as JSON: said again only when it changed. */
+  private told = "null";
   /** The field's right-click menu is open: the box keeps its place while the menu has the keyboard. */
   private menuUp = false;
   /** The box lost the keyboard while that menu was up and hasn't had it back since. */
@@ -204,12 +337,40 @@ export class AskWindow {
    * `settleMs`: once the box has held the keyboard this long since it was shown, a blur is the user clicking away even
    * inside the handover (OPENING_MS), so it closes the box; unset, every blur in the handover takes the keyboard back
    * (Windows, where Ember's own windows finishing their load or the OS can take it straight back). macOS: MAC_SETTLE_MS.
+   * `onBounds`: where the box is on screen (global DIP) each time it shows or moves, null once it is closed: a bubble
+   * that comes up meanwhile keeps off it (companion-c1-1). `cards`: the task cards on screen (global DIP), which what the
+   * box shows keeps off where it can (clearOfCards, companion-r5-1).
    */
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
     windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void; textScale?: () => number;
-    settleMs?: number; onHide?: () => void;
+    settleMs?: number; onHide?: () => void; bubble?: () => Box | null; shape?: (w: BrowserWindow, rects: readonly Box[]) => boolean;
+    onBounds?: (b: Box | null) => void; cards?: () => readonly Box[];
   } = {}) {}
+
+  /** Tells main where the box is now (null: closed), when that changed. */
+  private tellBounds(): void {
+    if (!this.o.onBounds) return;
+    const win = this.win;
+    const b = win && !win.isDestroyed() && win.isVisible() ? win.getBounds() : null;
+    const key = JSON.stringify(b);
+    if (key === this.told) return;
+    this.told = key;
+    try { this.o.onBounds?.(b && { x: b.x, y: b.y, width: b.width, height: b.height }); } catch { /* the bubble keeps off what it knew */ }
+  }
+
+  /** Where the page shows something (window-local DIP), as it last said: none yet, all of the box takes clicks. */
+  private shown: Box[] = [];
+
+  /**
+   * The box takes clicks only where it shows something, where the window system can say so (`shape`: Linux's input
+   * shape), so a click in its clear margins reaches the app beneath and closes the box (companion-4); elsewhere, and
+   * before the page has said, all of it does, as always. Never as an opaque panel, which is all box.
+   */
+  private applyShape(win: BrowserWindow): void {
+    if (!this.o.shape || this.builtOpaque || !this.shown.length || win.isDestroyed() || !win.isVisible()) return;
+    try { this.o.shape(win, this.shown); } catch { /* all of the box takes clicks, as before */ }
+  }
 
   /** The box is still being handed the keyboard: a blur now is that handover, not the user (OPENING_MS, settleMs). */
   private handingOver(): boolean {
@@ -279,9 +440,20 @@ export class AskWindow {
     });
     // Right-click in the field: Cut, Copy, Paste and Select all, for a mouse-only paste or copy.
     win.webContents.on("context-menu", (_e, p) => this.editMenu(win, p.editFlags));
-    // The page asks for the rows its field and note need (Shift+Enter, a pasted traceback, a paste cut at the limit):
+    // The page asks for the rows its field and count need (Shift+Enter, a pasted traceback, a paste near the limit):
     // only this box's page is heard here.
     win.webContents.ipc.on(IPC.askFit, (_e, rows: unknown) => { if (this.win === win && typeof rows === "number" && Number.isFinite(rows)) this.fit(rows); });
+    // Where it shows something: a short list of boxes inside a window this size, or nothing is changed.
+    win.webContents.ipc.on(IPC.askShape, (_e, rects: unknown) => {
+      if (this.win !== win || !Array.isArray(rects) || !rects.length || rects.length > 16) return;
+      const ok = (r: unknown): r is Box => !!r && typeof r === "object" && ["x", "y", "width", "height"].every(k => Number.isFinite((r as Record<string, unknown>)[k]) && Math.abs((r as Record<string, number>)[k]) <= 10_000)
+        && (r as Box).width > 0 && (r as Box).height > 0;
+      if (!rects.every(ok)) return;
+      this.shown = rects.map(r => ({ x: r.x, y: r.y, width: r.width, height: r.height }));
+      this.applyShape(win);
+      // What it shows now (a row of suggestions came) may be over a task card: off it.
+      this.keepClear();
+    });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
     win.webContents.on("render-process-gone", () => { if (this.win === win) this.hide(); if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
     // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
@@ -309,11 +481,14 @@ export class AskWindow {
     this.openingTries = 0;
     this.keyboardAt = 0;
     win.show();
+    // Pointer back on, which gives an X window its whole input region again: then only where it shows something.
+    this.applyShape(win);
     win.focus();
     // Best effort, as it always was: the box is shown and gets its context whatever the window manager says.
     try { this.o.takeFocus?.(this.idOf(win)); } catch { /* the keyboard stays where the window manager put it */ }
     // Said once the box is up: a log line written before it would hold up the keyboard.
     this.o.onReveal?.(this.source);
+    this.tellBounds();
   }
 
   /**
@@ -329,6 +504,9 @@ export class AskWindow {
    * Ember will read and lists earlier questions (it can follow a moment later via setContext).
    */
   show(near: { x: number; y: number; size?: number } | null, context?: AskContext, source = "open"): void {
+    this.near = near;
+    this.steppedFor = null;
+    this.steppedHeight = 0;
     this.context = { ...(context ?? this.context), opened: true };
     this.source = source;
     this.wanted = true;
@@ -336,11 +514,20 @@ export class AskWindow {
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
     // As large as its words at the text size now (it is hidden while Settings changes it, so each opening is sized here).
     const scale = this.scale();
-    let bounds = askBounds(near, display.workArea, this.keepOff(), scale);
-    this.up = !near || bounds.y + bounds.height <= near.y;
-    // Reserve the first rows before showing; the page measures any further wrapping at the work area's width.
-    const rows = 3 + (this.context.tip ? 1 : 0) + (this.context.suggestions?.length ? 1 : 0);
-    if (rows > 1) bounds = grownBounds(bounds, rows, display.workArea, this.up, this.keepOff(), scale);
+    // Reserve the first rows before showing (the page measures any further wrapping at the work area's width), clear of
+    // the answer or question Ember shows as well as its handle.
+    let { bounds, up } = openingBounds(near, display.workArea, this.keepOff(), scale, askOpeningRows(this.context), this.bubble());
+    // Room for follow-ups still to come only where the answer coming in still has room to finish whole by Ember, clear
+    // of the box with it (answerRoom): the row would take what it needs once it finishes (companion-c3-1: the field
+    // covered its last lines and its Read all). Otherwise they wait for the next opening, as before.
+    if (this.context.suggestionsComing && !roomForAnswer(bounds, near, display.bounds, scale)) {
+      const { suggestionsComing: _kept, ...rest } = this.context;
+      this.context = rest;
+      ({ bounds, up } = openingBounds(near, display.workArea, this.keepOff(), scale, askOpeningRows(this.context), this.bubble()));
+    }
+    // Off the task cards where it can be, by what it showed last (the page says again once it has laid out).
+    bounds = clearOfCards(bounds, this.shown, display.workArea, this.cards(), this.keepOff(), this.bubble(), near);
+    this.up = up;
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
     if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }
@@ -374,32 +561,104 @@ export class AskWindow {
   }
 
   /**
-   * The page needs `rows` rows (the field, cut note, wait tip and measured controls): the box grows
+   * The page needs `rows` rows (the field, the count, wait tip and measured controls): the box grows
    * or shrinks to fit, away from Ember.
    */
   fit(rows: number): void {
     if (!this.win || this.win.isDestroyed()) return;
     const b = this.win.getBounds();
-    const next = grownBounds(b, rows, screen.getDisplayMatching(b).workArea, this.up, this.keepOff(), this.scale());
-    if (next.height !== b.height || next.y !== b.y || next.x !== b.x) this.win.setBounds(next);
+    const wa = screen.getDisplayMatching(b).workArea;
+    // Grown over Ember's bubble (more lines, wrapped suggestions): aside, at the height it grew to, else stacked by it;
+    // never across Ember, nor over it.
+    const grown = clearOfBubble(grownBounds(b, rows, wa, this.up, this.keepOff(), this.scale()), wa, this.bubble(), this.keepOff(), this.near, false);
+    const next = clearOfCards(grown, this.shown, wa, this.cards(), this.keepOff(), this.bubble(), this.near);
+    if (next.height !== b.height || next.y !== b.y || next.x !== b.x) { this.win.setBounds(next); this.tellBounds(); }
   }
 
-  /** Ember's handle changed (the compositor came or went): a box open over the new one moves off it. */
+  /**
+   * Ember's handle changed (the compositor came or went, or the corner card grew for a question: companion-c1-1), or the
+   * task cards did (companion-r5-1), or what the box shows: a box open over the new one moves off it.
+   */
   keepClear(): void {
     if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) return;
     const b = this.win.getBounds();
-    const next = clearOf(b, screen.getDisplayMatching(b).workArea, this.keepOff());
-    if (next !== b) this.win.setBounds(next);
+    const wa = screen.getDisplayMatching(b).workArea;
+    const next = clearOfCards(clearOf(b, wa, this.keepOff()), this.shown, wa, this.cards(), this.keepOff(), this.bubble(), this.near);
+    if (next !== b) { this.win.setBounds(next); this.tellBounds(); }
+  }
+
+  /**
+   * Ember's bubble came up or moved while the box is open (`asideFor`: stepsAsideFor of what it shows). The bubble keeps
+   * off the box where it can (onBounds); where it found no room, a question, or Listen once's "Listening…", under the box
+   * moves the box off it, once for each (companion-c1-1: a question that came while the box was open showed under the
+   * field, and the box never moved), and again only for the same one grown taller under it since (companion-c4-1: a
+   * spoken yes that wasn't taken adds its note, and the field covered the keys it names). The question itself never
+   * moves for the box.
+   */
+  bubbleChanged(asideFor: string | null): void {
+    const win = this.win;
+    if (!asideFor || !win || win.isDestroyed() || !win.isVisible()) return;
+    const bubble = this.bubble();
+    if (!bubble || (asideFor === this.steppedFor && bubble.height <= this.steppedHeight)) return;
+    const b = win.getBounds();
+    if (!overlap(b, bubble)) return;
+    const wa = screen.getDisplayMatching(b).workArea;
+    let next = clearOfBubble(b, wa, bubble, this.keepOff(), this.near);
+    if (next === b) return;
+    next = clearOfCards(next, this.shown, wa, this.cards(), this.keepOff(), bubble, this.near);
+    this.steppedFor = asideFor;
+    this.steppedHeight = bubble.height;
+    // It grows away from Ember from here: up when it is above Ember now.
+    this.up = !this.near || next.y + next.height <= this.near.y;
+    win.setBounds(next);
+    this.tellBounds();
   }
 
   private keepOff(): Box | null {
     try { return this.o.keepOff?.() ?? null; } catch { return null; }
   }
 
+  /** The task cards on screen now (global DIP); none when they can't be told (the box goes where it always has). */
+  private cards(): readonly Box[] {
+    try { return this.o.cards?.() ?? []; } catch { return []; }
+  }
+
+  /** Ember's bubble on screen now (global DIP), or null: none, or it can't be told (the box goes where it always has). */
+  private bubble(): Box | null {
+    try { return this.o.bubble?.() ?? null; } catch { return null; }
+  }
+
   /** What Ember will read, once the quick look at the screen is done. */
   setContext(context: AskContext): void {
-    this.context = { ...context, listenOnce: this.context.listenOnce };
+    // (What it suggests stays as the opening or setSuggestions left it: only those change the chips.)
+    this.context = { ...context, listenOnce: this.context.listenOnce, ...(this.context.suggestions ? { suggestions: this.context.suggestions } : {}) };
     this.sendContext();
+  }
+
+  /**
+   * Why a request would go unanswered now (host.ts unansweredWord; undefined: it would be answered) changed while the
+   * box may be open: its line follows, as the handle's word does (companion-6: it said "Offline" after Copilot was back,
+   * and nothing when the connection failed after it opened). Only the line changes: the page keeps all else it shows.
+   */
+  setUnavailable(word: string | undefined): void {
+    if (this.context.unavailable === word) return;
+    this.context = { ...this.context, unavailable: word };
+    if (this.win && !this.win.isDestroyed() && this.win.isVisible() && !this.win.webContents.isLoading()) {
+      this.win.webContents.send(IPC.askUnavailable, word ?? null);
+    }
+  }
+
+  /**
+   * What the open box suggests now (main's askSuggestions) changed: a question came or went, or the answer they follow
+   * went (companion-r2-1, companion-c2-2). Only the chips change, and only in an open box: each opening brings its own.
+   */
+  setSuggestions(list: string[]): void {
+    const now = list.slice(0, 3);
+    if (JSON.stringify(now) === JSON.stringify(this.context.suggestions ?? [])) return;
+    this.context = { ...this.context, suggestions: now };
+    if (this.win && !this.win.isDestroyed() && this.win.isVisible() && !this.win.webContents.isLoading()) {
+      this.win.webContents.send(IPC.askSuggestions, now);
+    }
   }
 
   private sendContext(): void {
@@ -423,6 +682,7 @@ export class AskWindow {
     // A hidden always-on-top box on X11 can stay mapped and steal a click into the app beneath (that click then
     // looks like the box opening by itself). While hidden it takes no pointer.
     try { this.win.setIgnoreMouseEvents(true); } catch { /* test double */ }
+    this.tellBounds();
     // What was left in the field is selected now, while nothing can be typed in it, so typing replaces it when the box
     // opens again (selected as it opened, it took the letters typed first: review #78).
     if (!this.win.webContents.isLoading()) this.win.webContents.send(IPC.askHidden);

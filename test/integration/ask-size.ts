@@ -76,7 +76,9 @@ export async function openAskAt(inEmber: InEmber, size: TextSize, text = ""): Pr
     await w.webContents.executeJavaScript(`{ const q = document.getElementById("q"); q.value = ${JSON.stringify(t)}; q.dispatchEvent(new Event("input")); }`);
     await new Promise(r => setTimeout(r, 400));
     const page = await w.webContents.executeJavaScript(`(() => {
-      const meta = document.querySelector(".meta"), form = document.getElementById("form"), listen = document.getElementById("listen-once-detail");
+      const meta = document.querySelector(".meta"), form = document.getElementById("form");
+      // Listen once's words: its explanation, or "Set up voice in Settings…" in its place without the speech models.
+      const listen = [document.getElementById("listen-once-detail"), document.getElementById("voice-setup")].find(e => e && !e.hidden);
       const foot = Math.max(...[...form.children].filter(e => getComputedStyle(e).display !== "none").map(e => e.getBoundingClientRect().bottom));
       return { size: document.documentElement.dataset.textSize ?? "default", font: getComputedStyle(document.getElementById("q")).fontSize,
         tip: document.getElementById("tip").hidden === false,

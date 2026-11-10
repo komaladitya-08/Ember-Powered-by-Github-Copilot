@@ -17,8 +17,10 @@ export interface MicBadge {
 }
 
 const BADGES: Readonly<Record<Exclude<MicState, "off">, MicBadge>> = {
-  waiting: { glyph: "mic", label: "Listening for “Hey Ember”" },
-  active: { glyph: "mic", label: "Hearing you" },
+  // The name alone, as settings' voice line says it: "Ember" and "Hey Ember" both wake it (voice-listening-8).
+  waiting: { glyph: "mic", label: "Listening for “Ember”" },
+  // (A window open, said or not: "Hearing you" was up while nobody had spoken yet; voice-listening-c2-2.)
+  active: { glyph: "mic", label: "Listening" },
   muted: { glyph: "mic-off", label: "Microphone off" },
   "needs-models": { glyph: "mic-off", label: "Voice isn't set up: download the speech models in Settings" },
   downloading: { glyph: "working", label: "Downloading speech models…" },
@@ -26,9 +28,16 @@ const BADGES: Readonly<Record<Exclude<MicState, "off">, MicBadge>> = {
   error: { glyph: "problem", label: "Microphone problem" },
 };
 
-/** The badge for a microphone state, or null while listening is off (or the state is unknown). */
-export function micBadge(state: MicState | undefined): MicBadge | null {
+/** While Voice Match is taught, "Hey Ember" isn't heard (its phrases would be requests): the badge doesn't say it is. */
+const LEARNING: MicBadge = { glyph: "mic", label: "Learning your voice" };
+
+/**
+ * The badge for a microphone state, or null while listening is off (or the state is unknown). `learning`: Voice Match
+ * is being taught (voice-listening-v1).
+ */
+export function micBadge(state: MicState | undefined, learning = false): MicBadge | null {
   if (!state || state === "off") return null;
+  if (learning && (state === "waiting" || state === "active")) return LEARNING;
   return BADGES[state] ?? null;
 }
 

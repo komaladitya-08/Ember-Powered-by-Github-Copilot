@@ -10,7 +10,7 @@
  */
 
 import {
-  ACTIVITY_LIMIT, ANSWER_WORDS, HAND_ROW, NOT_STEPS, STATUS_WORDS, STEP_GROUP, activityRows, doingWords, retryWords,
+  ACTIVITY_LIMIT, ANSWER_WORDS, HAND_ROW, NOT_STEPS, STATUS_WORDS, STEP_GROUP, activityRows, doingWords, pacedWords, refusedWords, retryWords,
   stepsWords, summarizeActivity, triedWords, type ActivityItem, type Answer, type AskedIn, type CardActivity, type TaskActivity,
 } from "../../shared/activity";
 import type { TaskHand } from "../../shared/view";
@@ -23,6 +23,8 @@ export type ActivityEvent =
   | { type: "tool-start"; id: string; tool: string; step?: string; app?: string }
   /** A tool call ended; `ok` false when it didn't work. */
   | { type: "tool-end"; id: string; ok: boolean }
+  /** The read under way sent the model a picture of its window (recorded first: safety-privacy-6). */
+  | { type: "picture" }
   /** The worker's own note (report_progress): its text, and its few words for what it does now. */
   | { type: "note"; text: string; intent?: string }
   /** A step taken without asking (Work without asking): policy's words (Decision.announce), never the model's. */
@@ -45,13 +47,15 @@ export type ActivityEvent =
   /** Copilot answered again (a retry worked). */
   | { type: "heard" }
   /** Copilot has been quiet a while (true), or is heard again (false). */
-  | { type: "slow"; on: boolean }
+  | { type: "slow"; on: boolean; words?: string }
   /** Past 80% of the task's step or time limit. */
   | { type: "near-limit" }
+  /** A step waits for the limit on actions a minute (`perMinute`) to free a slot (tasks-approvals-2). */
+  | { type: "paced"; perMinute: number }
   /** Something went wrong, in Ember's words. */
   | { type: "problem"; words: string }
   /** The task ended. */
-  | { type: "end"; status: "done" | "failed" | "stopped" };
+  | { type: "end"; status: "done" | "failed" | "stopped"; unanswered?: boolean };
 
 /** Longest words kept from a note or a reason (the card shows a line of it). */
 const NOTE_MAX = 200;
@@ -90,6 +94,8 @@ export class ActivityLog {
   private retrying: ActivityItem | null = null;
   /** What it was doing before a question or a retry took the live line. */
   private doing: string;
+  /** The live line while the model is slow: the worker's words for the service in use (integrations-v1). */
+  private slowWords = "Still waiting for Copilot…";
 
   constructor(startedAt: number) {
     this.doing = "Starting…";
@@ -146,6 +152,13 @@ export class ActivityLog {
         this.setDoing("Thinking…");
         return true;
       }
+      case "picture": {
+        // Its row says a picture went, not only that it read (safety-privacy-6). Tools run one at a time, in the order
+        // called: the first read under way is the one that sent it.
+        const it = a.items.find(i => i.kind === "step" && i.state === "running" && i.group === "read");
+        if (it) it.group = "picture";
+        return false;
+      }
       case "note": {
         const text = clip(e.text, NOTE_MAX);
         const shown = clip(e.intent?.trim() ? e.intent : text, NOTE_MAX);
@@ -182,11 +195,16 @@ export class ActivityLog {
         return true;
       }
       case "refused": {
-        const words = `Not allowed: ${clip(e.reason, REASON_MAX)}`;
+        const words = refusedWords(clip(e.reason, REASON_MAX));
         // The step it stopped becomes the refusal (one row, not a failed step beside it); it isn't counted as a step.
-        const step = a.items.findLast(i => i.kind === "step" && i.state === "running");
-        if (step) Object.assign(step, { kind: "refused", state: "stopped", words, endedAt: at });
-        else this.push({ id: this.id("r"), kind: "refused", at, state: "stopped", words });
+        const i = a.items.findLastIndex(x => x.kind === "step" && x.state === "running");
+        const step = a.items[i];
+        if (step) {
+          Object.assign(step, { kind: "refused", state: "stopped", words, endedAt: at });
+          // Refused once something came after it began (its question, answered: the look right before acting refused
+          // it), it goes last, at its own time: never a refusal above the user's Allow (tasks-approvals-v5-1).
+          if (i < a.items.length - 1) { a.items.splice(i, 1); step.at = at; a.items.push(step); }
+        } else this.push({ id: this.id("r"), kind: "refused", at, state: "stopped", words });
         this.setDoing("Thinking…");
         return true;
       }
@@ -216,6 +234,7 @@ export class ActivityLog {
         return true;
       }
       case "slow":
+        if (e.words) this.slowWords = e.words;
         if (a.slow === e.on) return false;
         a.slow = e.on;
         a.live = this.liveNow();
@@ -224,6 +243,9 @@ export class ActivityLog {
         if (a.nearLimit) return false;
         a.nearLimit = true;
         return true;
+      case "paced":
+        // The live line only: the step itself is the row (it goes on once a slot frees, then says what it did).
+        return this.setDoing(pacedWords(e.perMinute));
       case "problem":
         this.push({ id: this.id("p"), kind: "problem", at, state: "failed", words: e.words });
         return true;
@@ -232,7 +254,8 @@ export class ActivityLog {
         a.asking = false;
         a.retry = 0;
         a.slow = false;
-        const words = STATUS_WORDS[e.status];
+        // A question that went unanswered stopped it: the user stopped nothing (tasks-approvals-r1).
+        const words = e.status === "stopped" && e.unanswered ? STATUS_WORDS.unanswered : STATUS_WORDS[e.status];
         this.push({ id: this.id("end"), kind: "result", at, state: e.status === "done" ? "done" : e.status === "failed" ? "failed" : "stopped", words });
         a.live = words;
         a.endedAt = now;
@@ -246,7 +269,7 @@ export class ActivityLog {
     const a = this.a;
     if (a.asking) return STATUS_WORDS.waiting;
     if (a.retry) return retryWords(a.retry);
-    if (a.slow) return "Still waiting for Copilot…";
+    if (a.slow) return this.slowWords;
     return this.doing;
   }
 

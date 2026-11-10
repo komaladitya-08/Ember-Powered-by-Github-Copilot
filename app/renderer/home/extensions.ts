@@ -7,13 +7,15 @@
  */
 
 import type { ExtensionsState, Status, EmberExtensionsApi } from "../../shared/ipc";
-import type { Installed, MarketplaceEntry } from "../../shared/extensions";
+import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
+import type { Installed, Marketplace, MarketplaceEntry } from "../../shared/extensions";
+import type { SettingsPatch } from "../../main/settings";
 import { marketplaceSource } from "../../shared/extensions-input";
 import {
-  BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, EXTENSIONS_FAILED, EXTENSIONS_LOADING, INSTALLED_EMPTY, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
-  addedMarketplace, added, addingMarketplace, agreedAgain, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
-  consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion, removed,
-  toolBadge, type ConsentCard, type ItemAction,
+  BROWSE_AGAIN, BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, MARKETPLACES_NOT_CONNECTED, EXTENSIONS_FAILED, EXTENSIONS_LOADING, EXTENSIONS_ON_LABEL, INSTALLED_EMPTY, extensionsOnHint, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
+  addedMarketplace, added, addingMarketplace, agreedTo, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
+  consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, marketplaceRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion,
+  removed, removedMarketplace, toolBadge, type ConsentCard, type ItemAction,
 } from "./extensions-copy";
 
 declare global { interface Window { emberExtensions?: EmberExtensionsApi } }
@@ -36,6 +38,10 @@ const button = (label: string, cls: string, key: string, onClick: () => void, ar
 
 let state: ExtensionsState | null = null;
 let lockdown = false;
+/** The settings' extensions (the section's own switch), as the status last said them. */
+let extSettings: Status["settings"]["extensions"] | null = null;
+/** The section's switch is on: what was added may run (integrations-11). */
+const sectionOn = () => extSettings?.on !== false;
 /** The marketplace being browsed, and what it lists (null while loading), or why it couldn't be read. */
 let browsing: { name: string; entries: MarketplaceEntry[] | null; error: string | null } | null = null;
 let connectors: MarketplaceEntry[] | null = null;
@@ -120,15 +126,19 @@ async function agree(): Promise<void> {
   const a = api();
   const q = asking;
   if (!a || !q) return;
+  const back = askedFrom();
   asking = null;
   // The first yes also records the current first-use card; existing installs need it after the version changes.
   if (state && state.consented === false) {
     const r = await a.agree();
-    if (!r.ok) { say(r.why); return; }
+    if (!r.ok) { say(r.why); draw(); focusKey(back); return; }
     state = { ...state, consented: true };
   }
   if (q.kind === "reagree") {
-    await run(`item:${q.item.id}`, () => a.reagree(q.item.id, q.item.reviewToken ?? ""), agreedAgain(q.item.name));
+    const id = q.item.id;
+    const done = await run(`item:${id}`, () => a.reagree(id, q.item.reviewToken ?? ""), agreedTo(q.item));
+    // The card's button is gone: focus goes to the item, not the page's top (integrations-8, WCAG 2.4.3).
+    if (done) { await refresh(); focusItem(id); } else focusKey(back);
     return;
   }
   const e = q.entry;
@@ -225,7 +235,7 @@ function statusLine(text: string, tone: keyof typeof PHASE): HTMLElement {
 }
 
 function installedItem(i: Installed): HTMLLIElement {
-  const r = installedRow(i);
+  const r = installedRow(i, sectionOn(), state?.connected !== false);
   const li = el("li", "ext-item");
   const head = el("div", "ext-head");
   const text = el("span", "ext-text");
@@ -282,10 +292,11 @@ function installedItem(i: Installed): HTMLLIElement {
   return li;
 }
 
-function marketItem(m: { name: string; source: string }): HTMLLIElement {
+function marketItem(m: Marketplace): HTMLLIElement {
+  const row = marketplaceRow(m);
   const li = el("li", "ext-market");
   const text = el("span", "ext-text");
-  text.append(el("b", "ext-name", m.name), el("span", "ext-meta", m.source));
+  text.append(el("b", "ext-name", row.name), el("span", "ext-meta", row.meta));
   li.append(text);
   // Turned off by the organisation: listed, but nothing to browse or change.
   if (!state?.allowed) return li;
@@ -293,14 +304,18 @@ function marketItem(m: { name: string; source: string }): HTMLLIElement {
   const key = `market:${m.name}`;
   const open = button(browsing?.name === m.name ? "Browsing" : "Browse", "btn quiet small", `${key}:browse`, () => void browse(m.name), browseLabel(m.name));
   if (browsing?.name === m.name) open.setAttribute("aria-current", "true");
-  const remove = button("Remove", "btn quiet small danger", `${key}:remove`, () => {
-    if (!window.confirm(removeMarketplaceQuestion(m.name))) return;
-    const a = api();
-    if (!a) return;
-    if (browsing?.name === m.name) browsing = null;
-    void run(key, () => a.removeMarketplace(m.name), null);
-  }, removeMarketplaceLabel(m.name));
-  actions.append(open, remove);
+  actions.append(open);
+  // Copilot's own marketplace and the organisation's can't be removed: no Remove that would do nothing (integrations-4).
+  if (row.removable) {
+    const remove = button("Remove", "btn quiet small danger", `${key}:remove`, () => {
+      if (!window.confirm(removeMarketplaceQuestion(m.name))) return;
+      const a = api();
+      if (!a) return;
+      if (browsing?.name === m.name) browsing = null;
+      void run(key, () => a.removeMarketplace(m.name), removedMarketplace(m.name));
+    }, removeMarketplaceLabel(m.name));
+    actions.append(remove);
+  }
   li.append(actions);
   return li;
 }
@@ -314,7 +329,7 @@ function entryNode(e: MarketplaceEntry): HTMLLIElement {
   if (c.description) li.append(el("p", "ext-desc", c.description));
   li.append(el("p", "ext-meta", c.meta));
   if (asking?.kind === "entry" && asking.entry.marketplace === e.marketplace && asking.entry.name === e.name) {
-    li.append(consentNode(consentCard(e)));
+    li.append(consentNode(consentCard({ ...e, builtIn: state?.marketplaces.some(m => m.name === e.marketplace && m.builtIn) === true })));
     return li;
   }
   const foot = el("div", "ext-card-foot");
@@ -370,12 +385,21 @@ function focusKey(key: string): void {
   document.querySelector<HTMLElement>(`#extensions [data-key="${CSS.escape(key)}"]`)?.focus();
 }
 
+/** Focuses an item's switch, else its tools or its first button: the first of them that can take focus. */
+function focusItem(id: string): void {
+  for (const key of [`item:${id}:switch`, `item:${id}:tools`, `item:${id}:reagree`, `item:${id}:uninstall`, `item:${id}:disconnect`]) {
+    const e = document.querySelector<HTMLElement>(`#extensions [data-key="${CSS.escape(key)}"]`);
+    if (!e || (e as HTMLInputElement).disabled) continue;
+    e.focus();
+    if (document.activeElement === e) return;
+  }
+}
+
 let drawn = "";
 /** Draws the section from what is known now. */
 function draw(): void {
   if (!state) return;
   const blocked = extensionsBlocked({ available: state.available, allowed: state.allowed, lockdown });
-  $("extensions-blocked").hidden = !blocked;
   $("extensions-blocked").textContent = blocked ?? "";
   // Unavailable: nothing more to show. Turned off: what was added stays listed (so the user sees it is off), read only.
   $("extensions-body").hidden = !state.available;
@@ -383,7 +407,13 @@ function draw(): void {
   $("ext-market-form").hidden = !state.allowed;
   $("ext-markets-hint").hidden = !state.allowed;
   if (!state.allowed) { browsing = null; asking = null; }
-  const key = JSON.stringify([state, browsing, connectors, connectorsError, [...pending], asking, [...busy]]);
+  // Use extensions: once agreed to (the first add's card is how they are turned on), while the organisation allows them.
+  const agreed = !!extSettings && extSettings.consent.version >= FEATURE_CONSENT_VERSION.extensions;
+  $("ext-on-group").hidden = !state.allowed || !agreed;
+  $("ext-on-hint").hidden = !state.allowed || !agreed;
+  ($("ext-on") as HTMLInputElement).checked = sectionOn();
+  $("ext-on-hint").textContent = extensionsOnHint(sectionOn());
+  const key = JSON.stringify([state, browsing, connectors, connectorsError, [...pending], asking, [...busy], sectionOn()]);
   if (key === drawn) return;
   drawn = key;
   const focused = (document.activeElement as HTMLElement | null)?.dataset?.key ?? "";
@@ -391,12 +421,21 @@ function draw(): void {
   // Connectors the catalog lists are shown under Connectors, with their tools; everything else is here.
   const own = state.installed.filter(i => i.kind !== "connector" || !connectors?.some(c => c.name === i.name)).map(installedItem);
   $("ext-installed").replaceChildren(...(state.error ? [empty(state.error)] : own.length ? own : [empty(INSTALLED_EMPTY)]));
-  $("ext-markets").replaceChildren(...(state.marketplaces.length ? state.marketplaces.map(marketItem) : [empty(MARKETPLACES_EMPTY)]));
+  // Not connected: why the list is empty, and Add waits with that reason (integrations-v2).
+  const offline = state.connected === false;
+  const why = empty(offline ? MARKETPLACES_NOT_CONNECTED : MARKETPLACES_EMPTY);
+  why.id = "ext-markets-why";
+  $("ext-markets").replaceChildren(...(state.marketplaces.length ? state.marketplaces.map(marketItem) : [why]));
+  const add = document.querySelector<HTMLButtonElement>("#ext-market-form [data-key='market-add']")!;
+  add.disabled = offline && !busy.has("market-add");
+  if (offline) add.setAttribute("aria-describedby", "ext-markets-why"); else add.removeAttribute("aria-describedby");
 
   $("ext-browse").hidden = !browsing;
   if (browsing) {
     $("ext-browse-h").textContent = browsingHeading(browsing.name);
     $("ext-browse-status").textContent = browsing.entries === null ? browsingLoading(browsing.name) : browsing.error ?? (browsing.entries.length ? "" : BROWSE_EMPTY);
+    // A list that couldn't be fetched or read is offered again here, where its sentence is (integrations-r2).
+    $("ext-browse-again").hidden = !browsing.error;
     $("ext-cards").replaceChildren(...(browsing.entries ?? []).map(entryNode));
   }
 
@@ -412,7 +451,22 @@ function draw(): void {
 /** The status arrived: the organisation's policy, and whether Ember is locked down. */
 export function extensionsStatus(st: Status): void {
   lockdown = st.admin.error !== null;
+  extSettings = st.settings.extensions;
   draw();
+}
+
+/** The section's switch: off stops every server and gives no session a tool (ExtensionsService.active), on again uses them. */
+function setSectionOn(on: boolean): void {
+  const e = extSettings;
+  if (!e) return;
+  extSettings = { ...e, on };
+  draw();
+  // Only the switch: main keeps the card's record as it is (withOwnExtensions, integrations-i1).
+  window.ember.updateSettings({ extensions: { on } } as SettingsPatch).catch((err: unknown) => {
+    extSettings = e;
+    say(extensionsError(err));
+    draw();
+  });
 }
 
 /** Asks main for the extensions once and follows its changes; wires the marketplace form and the browsing panel. */
@@ -433,6 +487,17 @@ export function startExtensions(): void {
       if (ok && marketplaceSource(input.value) === source) input.value = "";
     });
   });
+  // Connected again (or no longer): what the section shows no longer matches, so the runtime's marketplaces and what
+  // runs are read again (integrations-v2).
+  window.ember?.onAgentStatus?.(a => {
+    if (state?.available && (a?.phase === "ready") === (state.connected === false)) void refresh();
+  });
+  // The first add's card turns extensions on in main: the switch follows the settings.
+  window.ember?.onSettingsChanged?.(s => { extSettings = s.extensions; draw(); });
+  $("ext-on-label").textContent = EXTENSIONS_ON_LABEL;
+  $("ext-on").addEventListener("change", e => setSectionOn((e.target as HTMLInputElement).checked));
+  $("ext-browse-again").textContent = BROWSE_AGAIN;
+  $("ext-browse-again").addEventListener("click", () => { if (browsing) void browse(browsing.name); });
   $("ext-browse-done").textContent = BROWSE_DONE;
   $("ext-browse-done").addEventListener("click", () => {
     const back = browsing ? `market:${browsing.name}:browse` : "";

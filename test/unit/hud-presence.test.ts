@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { LEVEL_MS, LEVEL_STEPS, LevelMeter, NO_LEVEL, envelope, levelForOverlay, levelStep, readLevel, rms, voiceAt } from "../../app/shared/level";
 import { DONE_RING_MS, RING_TICKS, meterBars, presenceOf, ticksLit } from "../../app/shared/presence";
 import { handleLine } from "../../app/renderer/handle/line";
+import { FINISH_SETUP, handleIdle } from "../../app/shared/setup-attention";
 import { IDLE_BUBBLE, type TaskCard } from "../../app/shared/overlay";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
@@ -179,6 +180,20 @@ describe("the handle's line (review #5)", () => {
     expect(handleLine({ idle: "Ready", setup: null, mic: "error", tasks: [] })).toBe("Microphone problem");
     expect(handleLine({ idle: "Ready", tasks: [] })).toBe("Ready");
     expect(handleLine({ tasks: [] })).toBe("Ready");
+  });
+
+  it("says setup needs finishing while first run isn't done, not \"Not connected\", which reads like the network (first-run-8)", () => {
+    expect(handleIdle(false, "Not connected")).toBe(FINISH_SETUP);
+    expect(FINISH_SETUP).toBe("Finish setting up");
+    expect(handleLine({ idle: handleIdle(false, "Not connected"), tasks: [] })).toBe("Finish setting up");
+    // Once Start is pressed, the agent's own word again.
+    expect(handleIdle(true, "Not connected")).toBe("Not connected");
+    expect(handleIdle(true, "Ready")).toBe("Ready");
+    // Main asks it for the handle's word, from the very first state, and again when first run is done.
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("const idleNow = (status: Parameters<typeof idleWord>[0]) => handleIdle(settings.get().onboarded, idleWord(status));");
+    expect(main).toContain("idle: handleIdle(settings.get().onboarded, \"Not connected\") };");
+    expect(main).toMatch(/if \(s\.onboarded !== wasOnboarded\) \{ const st = agent\?\.getStatus\(\); showState\(\{ idle: st \? idleNow\(st\) : handleIdle\(s\.onboarded, "Not connected"\) \}\); \}/);
   });
 });
 

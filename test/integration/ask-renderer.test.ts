@@ -21,7 +21,15 @@ interface Harness {
   rows: number;
   calls: { kind: "ask" | "suggestion"; text: string }[];
   closes: number;
+  /** Presses that asked main to listen, and the way to Settings for voice. */
+  listens: number;
+  voiceSettings: number;
+  /** Where the page last said the box takes clicks (window-local CSS px). */
+  shape: { x: number; y: number; width: number; height: number }[] | null;
   context(c: AskContext): void;
+  unavailable(word: string | null): void;
+  /** What the open box suggests now (main's askSuggestions, as it changes). */
+  suggestions(list: string[]): void;
   typed(t: Typed): void;
   hidden(): void;
   listen(s: ListenOnceStatus): void;
@@ -51,7 +59,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       await route.fulfill({ body: fs.readFileSync(file), contentType });
     });
     await page.addInitScript(() => {
-      const state: Harness = { rows: 3, calls: [], closes: 0, context() {}, typed() {}, hidden() {}, listen() {} };
+      const state: Harness = { rows: 3, calls: [], closes: 0, listens: 0, voiceSettings: 0, shape: null, context() {}, unavailable() {}, suggestions() {}, typed() {}, hidden() {}, listen() {} };
       (window as unknown as TestWindow).askHarness = state;
       window.emberAsk = {
         ask: text => { state.calls.push({ kind: "ask", text }); },
@@ -59,10 +67,14 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
         close: () => { state.closes++; },
         fit: rows => { state.rows = rows; },
         onContext: fn => { state.context = fn; },
+        onUnavailable: fn => { state.unavailable = fn; },
+        onSuggestions: fn => { state.suggestions = fn; },
         onTyped: fn => { state.typed = fn; },
         onHidden: fn => { state.hidden = fn; },
         onListenOnce: fn => { state.listen = fn; },
-        listenOnce: async () => ({ phase: "ready", detail: "" }),
+        listenOnce: async () => { state.listens++; return { phase: "ready", detail: "" }; },
+        voiceSettings: () => { state.voiceSettings++; },
+        shape: rects => { state.shape = rects; },
       };
     });
     await page.goto("http://ember.test/renderer/ask/index.html");
@@ -111,6 +123,154 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("leaves Esc and ↑ to an input method while it composes a word, and closes or goes back only after (companion-5)", async () => {
+    const page = await pageAt();
+    try {
+      const input = page.locator("#q");
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ sees: null, history: ["An earlier request"] }));
+      await input.fill("にほ");
+      const key = (k: string, composing: boolean) => input.evaluate((e, a) => e.dispatchEvent(new KeyboardEvent("keydown", { key: a.k, isComposing: a.composing, bubbles: true, cancelable: true })), { k, composing });
+      // Esc cancels the half-composed word in the input method, not the whole box.
+      await key("Escape", true);
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.closes)).toBe(0);
+      // ↑ moves within the input method's candidates, not to an earlier request.
+      await key("ArrowUp", true);
+      expect(await input.inputValue()).toBe("にほ");
+      // Composition over: Esc closes the box as always, and ↑ goes back through earlier requests.
+      await key("ArrowUp", false);
+      expect(await input.inputValue()).toBe("An earlier request");
+      await key("Escape", false);
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.closes)).toBe(1);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("narrows the line under the field to its keys once the quick look finds nothing to show, and keeps it whole while it waits (companion-7)", async () => {
+    const page = await pageAt();
+    try {
+      const meta = () => page.evaluate(() => {
+        const m = document.querySelector<HTMLElement>(".meta")!.getBoundingClientRect(), f = document.querySelector(".field")!.getBoundingClientRect();
+        const h = document.getElementById("hint")!.getBoundingClientRect();
+        return { width: m.width, right: m.right, fieldWidth: f.width, hint: h.width };
+      });
+      const context = (c: Partial<AskContext>) => page.evaluate(c => (window as unknown as TestWindow).askHarness.context({ sees: null, history: [], ...c } as AskContext), c);
+      // Opening, before the quick look: as wide as the field, so nothing jumps when what Ember sees arrives.
+      await context({ opened: true });
+      const waiting = await meta();
+      expect(waiting.width).toBeCloseTo(waiting.fieldWidth - 28, 0);
+      // The look found nothing (no readable window): just its keys, at the trailing edge, no long empty strip.
+      await context({});
+      const bare = await meta();
+      expect(bare.width).toBeLessThanOrEqual(bare.hint + 2 * 10 + 2 + 1);
+      expect(bare.right).toBeCloseTo(waiting.right, 0);
+      // A window's name to show, or another computer's: the whole line again.
+      await context({ sees: "Text Editor · Notes.txt" });
+      expect((await meta()).width).toBeCloseTo(waiting.width, 0);
+      await context({});
+      await context({ target: { id: "ssh:me@build", kind: "ssh", label: "me@build", state: "ready", can: "", active: true } } as Partial<AskContext>);
+      expect((await meta()).width).toBeCloseTo(waiting.width, 0);
+      // The next opening starts whole again.
+      await context({});
+      await context({ opened: true });
+      expect((await meta()).width).toBeCloseTo(waiting.width, 0);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("says at the start of the line under the field when Ember can't answer yet, and why (companion-6)", async () => {
+    const page = await pageAt();
+    try {
+      const line = page.locator("#unavailable");
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], unavailable: "Not connected" }));
+      expect(await line.isVisible()).toBe(true);
+      expect(await line.textContent()).toBe("Not connected: I can't answer yet");
+      // First on its line, in the label's colour, and read with the field's description.
+      expect(await page.evaluate(() => document.querySelector(".meta")!.firstElementChild?.id)).toBe("unavailable");
+      expect(await line.evaluate(e => getComputedStyle(e).color === getComputedStyle(document.body).color)).toBe(true);
+      expect(await page.locator("#q").getAttribute("aria-describedby")).toMatch(/^unavailable /);
+      // A window's name beside it: both stay on the line, nothing pushed off it.
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ sees: "Text Editor · Notes.txt", history: [], unavailable: "Offline" }));
+      expect(await line.textContent()).toBe("Offline: I can't answer yet");
+      expect(await page.locator(".meta").evaluate(e => e.scrollWidth - e.clientWidth)).toBe(0);
+      // Connected again by the next update: gone.
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ sees: "Text Editor · Notes.txt", history: [] }));
+      expect(await line.isVisible()).toBe(false);
+      // The connection lost while the box is open (main sends the word as it changes): the line comes back, and a
+      // screen reader hears it, as the field's description isn't read again; nothing else changes (companion-6).
+      await page.locator("#q").fill("draft");
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.unavailable("Offline"));
+      expect(await line.textContent()).toBe("Offline: I can't answer yet");
+      expect(await page.locator("#sees-live").textContent()).toBe("Offline: I can't answer yet");
+      expect(await page.locator("#q").inputValue()).toBe("draft");
+      expect(await page.locator("#sees").isVisible()).toBe(true);
+      expect(await page.locator(".meta").evaluate(e => e.scrollWidth - e.clientWidth)).toBe(0);
+      // Back: the line goes, and the window's name stays; a screen reader hears that Ember can answer again, not the
+      // stale "Offline" its live region still held (companion-6).
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.unavailable(null));
+      expect(await line.isVisible()).toBe(false);
+      expect(await page.locator("#sees").isVisible()).toBe(true);
+      expect(await page.locator("#sees-live").textContent()).toBe("I can answer again.");
+      // A crowded line (another computer that is lost, a long window name, what else goes): the line says just why, in
+      // the handle's word, before the window's name is cut short; its whole sentence stays for screen readers and the
+      // tooltip (the live X11 suite found the name cut to 5 px; a request wouldn't be answered now, so why comes first).
+      const ssh = { id: "ssh:deploy@build-server-01", kind: "ssh", label: "deploy@build-server-01", state: "lost", can: "", active: true };
+      await page.evaluate(t => (window as unknown as TestWindow).askHarness.context({ sees: "Terminal · deploy@build-server-01: ~/src", carries: { selection: false, fieldText: true, windows: 2 }, history: ["a"], target: t } as AskContext), ssh);
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.unavailable("Not connected"));
+      const crowded = await page.evaluate(() => {
+        const t = document.getElementById("sees-text")!, u = document.getElementById("unavailable")!;
+        return { name: t.clientWidth, whole: t.scrollWidth, text: u.textContent, label: u.getAttribute("aria-label"), title: u.title };
+      });
+      expect(crowded.name, JSON.stringify(crowded)).toBeGreaterThanOrEqual(100);
+      expect(crowded).toMatchObject({ text: "Not connected", label: "Not connected: I can't answer yet", title: "Not connected: I can't answer yet" });
+      expect(await page.locator(".meta").evaluate(e => e.scrollWidth - e.clientWidth)).toBe(0);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("keeps a long paste whole, says how much to shorten it, and sends nothing until it fits (companion-i1, as home-5)", async () => {
+    const page = await pageAt();
+    try {
+      const long = `${"A long log line that matters. ".repeat(80)}THE IMPORTANT LAST LINE`;
+      expect(long.length).toBe(2423);
+      const input = page.locator("#q");
+      await input.focus();
+      await page.keyboard.insertText(long);
+      // Whole, never cut at the limit unseen (maxlength dropped its end, the important last line with it).
+      expect(await input.inputValue()).toBe(long);
+      expect(await page.locator("#cut").innerText()).toBe("2,423 of 2,000 characters, 423 too many.");
+      expect(await input.getAttribute("aria-invalid")).toBe("true");
+      expect(await page.locator("#sees-live").textContent()).toBe("This request is longer than 2,000 characters. Shorten it to send it.");
+      expect(await page.locator("#send").isDisabled()).toBe(true);
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.calls)).toEqual([]);
+      expect(await input.inputValue()).toBe(long);
+      // Cut to fit: the count stays while it is near the limit, and Enter sends it.
+      await input.fill(long.slice(-1900));
+      expect(await page.locator("#cut").innerText()).toBe("1,900 of 2,000 characters.");
+      expect(await input.getAttribute("aria-invalid")).toBeNull();
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.calls)).toEqual([{ kind: "ask", text: long.slice(-1900) }]);
+      expect(await page.locator("#cut").isHidden()).toBe(true);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("counts what is sent, so a request at the limit with line breaks after it is never \"too many\" while Send is lit (companion-r2-3)", async () => {
+    const page = await pageAt();
+    try {
+      const request = `Explain this log. ${"x".repeat(1982)}`;
+      expect(request.length).toBe(2000);
+      const input = page.locator("#q");
+      await input.fill(`${request}\n\n\n`);
+      expect(await page.locator("#cut").innerText()).toBe("2,000 of 2,000 characters.");
+      expect(await input.getAttribute("aria-invalid")).toBeNull();
+      expect(await page.locator("#send").isEnabled()).toBe(true);
+      // Leading spaces aren't sent either; one character more than fits is said, and nothing goes.
+      await input.fill(`   ${request}x\n`);
+      expect(await page.locator("#cut").innerText()).toBe("2,001 of 2,000 characters, 1 too many.");
+      expect(await page.locator("#send").isDisabled()).toBe(true);
+      await input.fill(`${request}\n\n\n`);
+      await page.locator("#send").click();
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.calls)).toEqual([{ kind: "ask", text: request }]);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("retains the draft and selection through late context, microphone updates and dismissal", async () => {
     const page = await pageAt();
     try {
@@ -136,6 +296,121 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
     } finally { await page.close(); }
   }, 30_000);
 
+  it("shows that Ember is already listening without telling screen readers, who still hear Listen once's other lines (voice-listening-c3-1)", async () => {
+    // Said as a wake's window opened, a screen reader's "Ember is already listening." was heard in the request, or as
+    // one of its own in the conversation after it.
+    const page = await pageAt();
+    try {
+      const listen = (s: ListenOnceStatus) => page.evaluate(l => (window as unknown as TestWindow).askHarness.listen(l), s);
+      const live = page.locator("#listen-once-live"), detail = page.locator("#listen-once-detail");
+      expect(await live.textContent()).toBe("Say one request after you press Listen once.");
+      // The line under the control is its description, and the one live region is apart from it.
+      expect(await page.locator("#listen-once").getAttribute("aria-describedby")).toBe("listen-once-detail");
+      expect(await detail.evaluate(e => [e.getAttribute("role"), e.getAttribute("aria-live")])).toEqual([null, null]);
+      expect(await live.evaluate(e => [e.getAttribute("role"), e.getAttribute("aria-atomic")])).toEqual(["status", "true"]);
+      for (let i = 0; i < 2; i++) {
+        await listen({ phase: "blocked", detail: "Ember is already listening.", reason: "listening" });
+        expect(await detail.textContent()).toBe("Ember is already listening.");
+        expect(await page.locator("#listen-once").getAttribute("aria-disabled")).toBe("true");
+        // (Its status line is emptied meanwhile, unsaid, rather than kept to be read beside it: voice-listening-v4-2.)
+        expect(await live.textContent()).toBe("");
+        await listen({ phase: "ready", detail: "" });
+      }
+      // Back to the line it said before: not said again.
+      expect(await live.textContent()).toBe("");
+      await listen({ phase: "blocked", detail: "The microphone is muted. Unmute it to speak one request." });
+      expect(await live.textContent()).toBe("The microphone is muted. Unmute it to speak one request.");
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("tells screen readers what it will see, and that it can't answer, only once the microphone is no longer open for a request (voice-listening-i5)", async () => {
+    // Opened while a voice conversation was open, a screen reader said "Ember will see: <app — window title>." through
+    // the speakers into it, where it was taken as the person's next request.
+    const page = await pageAt();
+    try {
+      const harness = (fn: string, value: unknown) => page.evaluate(([f, v]) => ((window as unknown as TestWindow).askHarness as unknown as Record<string, (x: unknown) => void>)[f as string](v), [fn, value] as const);
+      const said: string[] = [];
+      await page.exposeFunction("__said", (t: string) => { said.push(t); });
+      await page.evaluate(() => { const r = document.getElementById("sees-live")!; new MutationObserver(() => { if (r.textContent) (window as unknown as { __said(t: string): void }).__said(r.textContent); }).observe(r, { subtree: true, childList: true, characterData: true }); });
+      const already = { phase: "blocked", detail: "Ember is already listening.", reason: "listening" };
+      await harness("context", { opened: true, sees: null, history: [], listenOnce: already });
+      await harness("context", { sees: "Text Editor · Notes.txt", history: [], listenOnce: already });
+      await harness("unavailable", "Offline");
+      await page.waitForTimeout(1300);
+      expect(await page.locator("#sees").isVisible()).toBe(true);
+      expect(await page.locator("#unavailable").textContent()).toBe("Offline: I can't answer yet");
+      expect(said).toEqual([]);
+      // The conversation ends with the box still open: what it would have said is said then, once.
+      await harness("listen", { phase: "ready", detail: "" });
+      const late = "I'll see: Text Editor · Notes.txt. Offline: I can't answer yet.";
+      await expect.poll(() => said, { timeout: 3000 }).toEqual([late]);
+      await page.waitForTimeout(1300);
+      expect(said).toEqual([late]);
+      // Ask's own Listen once opening: nothing said while it starts and listens.
+      said.length = 0;
+      await harness("listen", { phase: "starting", detail: "Starting to listen…" });
+      await harness("unavailable", null);
+      await harness("listen", { phase: "listening", detail: "Listening for one request…" });
+      await page.waitForTimeout(1300);
+      expect(said.filter(t => t !== "Starting to listen…")).toEqual([]);
+      await harness("listen", { phase: "ready", detail: "Request heard." });
+      await expect.poll(() => said, { timeout: 3000 }).toContain("I can answer again.");
+      // Put away meanwhile: nothing is said for a box that is gone.
+      said.length = 0;
+      await harness("listen", already);
+      await harness("unavailable", "Offline");
+      await harness("hidden", undefined);
+      await harness("listen", { phase: "ready", detail: "" });
+      await page.waitForTimeout(1300);
+      expect(said).toEqual([]);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("says only the latest of what waited for the microphone, each as a sentence, never a line it overtook (voice-listening-v5-2)", async () => {
+    // Offline and back while a conversation held the box's lines: once the microphone closed, a screen reader said
+    // "Offline: I can't answer yet I'll see: Text Editor · Notes.txt. I can answer again.", the first line long gone.
+    const page = await pageAt();
+    try {
+      const harness = (fn: string, value: unknown) => page.evaluate(([f, v]) => ((window as unknown as TestWindow).askHarness as unknown as Record<string, (x: unknown) => void>)[f as string](v), [fn, value] as const);
+      const said: string[] = [];
+      await page.exposeFunction("__said", (t: string) => { said.push(t); });
+      await page.evaluate(() => { const r = document.getElementById("sees-live")!; new MutationObserver(() => { if (r.textContent) (window as unknown as { __said(t: string): void }).__said(r.textContent); }).observe(r, { subtree: true, childList: true, characterData: true }); });
+      const already = { phase: "blocked", detail: "Ember is already listening.", reason: "listening" };
+      await harness("context", { opened: true, sees: null, history: [], listenOnce: already });
+      await harness("unavailable", "Offline");
+      await harness("context", { sees: "Text Editor · Notes.txt", history: [], unavailable: "Offline" });
+      await harness("unavailable", null);
+      await harness("listen", { phase: "ready", detail: "" });
+      await expect.poll(() => said, { timeout: 3000 }).toEqual(["I'll see: Text Editor · Notes.txt."]);
+      await page.waitForTimeout(1300);
+      expect(said).toEqual(["I'll see: Text Editor · Notes.txt."]);
+      expect(await page.locator("#unavailable").isVisible()).toBe(false);
+      // Another window, and offline and back, while the microphone is open again: only the window is news by then.
+      said.length = 0;
+      await harness("listen", already);
+      await harness("context", { sees: "Files · Documents", history: [] });
+      await harness("unavailable", "Offline");
+      await harness("unavailable", null);
+      await harness("listen", { phase: "ready", detail: "" });
+      await expect.poll(() => said, { timeout: 3000 }).toEqual(["I'll see: Files · Documents."]);
+      // Back to the first window and offline: both said, each a sentence, the window first.
+      said.length = 0;
+      await harness("listen", already);
+      await harness("unavailable", "Offline");
+      await harness("context", { sees: "Text Editor · Notes.txt", history: [], unavailable: "Offline" });
+      await harness("listen", { phase: "ready", detail: "" });
+      await expect.poll(() => said, { timeout: 3000 }).toEqual(["I'll see: Text Editor · Notes.txt. Offline: I can't answer yet."]);
+      // A window that changed and changed back while it waited is no news.
+      said.length = 0;
+      await harness("listen", already);
+      await harness("context", { sees: "Files · Documents", history: [], unavailable: "Offline" });
+      await harness("context", { sees: "Text Editor · Notes.txt", history: [], unavailable: "Offline" });
+      await harness("listen", { phase: "ready", detail: "" });
+      await page.waitForTimeout(1300);
+      expect(said).toEqual([]);
+    } finally { await page.close(); }
+  }, 30_000);
+
   it("shows every suggestion and comfortable controls at narrow widths, every text size and forced colours", async () => {
     const page = await pageAt();
     try {
@@ -153,7 +428,7 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
           return {
             scale, rows: (window as unknown as TestWindow).askHarness.rows, clipped: form.scrollHeight > form.clientHeight + 1,
             fieldHeight: document.querySelector(".field")!.getBoundingClientRect().height,
-            controls: [...document.querySelectorAll<HTMLButtonElement>("button")].map(b => {
+            controls: [...document.querySelectorAll<HTMLButtonElement>("button:not([hidden])")].map(b => {
               const r = b.getBoundingClientRect(), css = getComputedStyle(b);
               return { text: b.textContent, height: r.height, left: r.left, right: r.right, bottom: r.bottom,
                 clipped: b.scrollHeight > b.clientHeight + 1 || b.scrollWidth > b.clientWidth + 1, border: css.borderTopStyle };
@@ -179,6 +454,301 @@ describe.skipIf(!required && (!executable || !built))("Ask's rendered controls",
       expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.calls)).toEqual([{ kind: "suggestion", text: suggestions[2] }]);
     } finally { await page.close(); }
   }, 60_000);
+
+  it("shows a blocked Listen once as unavailable, offers Settings for missing speech models and leaves it out where the organisation turned voice off (companion-3)", async () => {
+    const page = await pageAt();
+    try {
+      const harness = () => page.evaluate(() => { const h = (window as unknown as TestWindow).askHarness; return { rows: h.rows, listens: h.listens, voiceSettings: h.voiceSettings }; });
+      // Each opening: main has reserved its rows (askOpeningRows, listen-once-ui.test.ts); the page asks for others only
+      // when what it shows needs them (rows stays -1 when it agrees).
+      const open = (listenOnce: ListenOnceStatus) => page.evaluate(l => {
+        const h = (window as unknown as TestWindow).askHarness;
+        h.rows = -1;
+        h.context({ opened: true, sees: null, history: [], listenOnce: l });
+      }, listenOnce);
+      const button = page.locator("#listen-once");
+      // Waiting on something that passes (a question up): the row stays, its button announced and drawn as unavailable.
+      await open({ phase: "blocked", detail: "Answer Ember's question first." });
+      expect(await button.getAttribute("aria-disabled")).toBe("true");
+      expect(await button.evaluate(e => getComputedStyle(e).opacity)).toBe("0.4");
+      await button.click({ force: true });
+      expect((await harness()).listens).toBe(0);
+      expect(await page.locator("#listen-once-detail").textContent()).toBe("Answer Ember's question first.");
+      expect((await harness()).rows).toBe(-1);
+      // Only Settings' Download fixes this: one button that goes there, no dead control.
+      await open({ phase: "blocked", detail: "Download speech models in Settings first.", fix: "settings" });
+      expect(await button.isVisible()).toBe(false);
+      expect(await page.locator("#listen-once-detail").isVisible()).toBe(false);
+      const setup = page.getByRole("button", { name: "Set up voice in Settings…", exact: true });
+      expect(await setup.isVisible()).toBe(true);
+      expect(await setup.getAttribute("aria-disabled")).toBeNull();
+      // Its capsule is as wide as the one button it holds, not a full-width strip with nothing after it (companion-r2),
+      // and the clicks it takes (the input shape) end there too.
+      const row = await page.locator("#listen-once-row").boundingBox(), only = await setup.boundingBox();
+      expect(row!.width, JSON.stringify([row, only])).toBeLessThanOrEqual(only!.width + 2 * 6 + 2 * 1 + 1);
+      const taken = await page.evaluate(() => (window as unknown as TestWindow).askHarness.shape ?? []);
+      expect(taken.some(r => r.y <= row!.y && r.y + r.height >= row!.y + row!.height && r.width <= row!.width + 4 + 1), JSON.stringify(taken)).toBe(true);
+      await setup.click();
+      expect(await harness()).toMatchObject({ rows: -1, listens: 0, voiceSettings: 1 });
+      // Turned off by the organisation: nothing here can change that, so the row is left out and the box is a row shorter.
+      await open({ phase: "blocked", detail: "Your organisation has turned voice off.", fix: "admin" });
+      expect(await page.locator("#listen-once-row").isVisible()).toBe(false);
+      expect(await page.locator("#listen-once-row").evaluate(e => (e as HTMLElement).offsetHeight)).toBe(0);
+      expect((await harness()).rows).toBe(-1);
+      // The row going while the box is open (the organisation's policy can't change then, but a status can): one row now.
+      await open({ phase: "ready", detail: "" });
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.listen({ phase: "blocked", detail: "Your organisation has turned voice off.", fix: "admin" }));
+      expect((await harness()).rows).toBe(1);
+      // Ready again: Listen once is back and works.
+      await open({ phase: "ready", detail: "" });
+      expect(await button.isVisible()).toBe(true);
+      expect(await setup.isVisible()).toBe(false);
+      expect(await button.getAttribute("aria-disabled")).toBe("false");
+      await button.click();
+      expect((await harness()).listens).toBe(1);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("keeps the field where it is when the first letter typed puts the suggestions away, and back when it is cleared (companion-v1)", async () => {
+    const page = await pageAt();
+    try {
+      await page.evaluate(suggestions => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions, listenOnce: { phase: "ready", detail: "" } }), suggestions.slice(1));
+      await fit(page);
+      const rows = await page.evaluate(() => (window as unknown as TestWindow).askHarness.rows);
+      const chips = page.locator("#suggest button");
+      expect(await chips.first().isVisible()).toBe(true);
+      // Main keeps the box's bottom beside Ember (it grows upward): fewer rows would move the field and its caret
+      // 48 px down under the user's eyes on the first letter.
+      await page.locator("#q").press("w");
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.rows)).toBe(rows);
+      // Put away all the same: not seen, not in the accessibility tree, no click or Tab lands on one.
+      expect(await chips.first().isVisible()).toBe(false);
+      expect(await page.getByRole("button", { name: suggestions[1], exact: true }).count()).toBe(0);
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      expect(await page.evaluate(() => document.activeElement?.closest("#suggest") === null)).toBe(true);
+      await page.locator("#q").press("Backspace");
+      expect(await chips.first().isVisible()).toBe(true);
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.rows)).toBe(rows);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("puts its suggestions away while a question is up, and back once it is answered, never moving the field, empty or typed in (companion-r2-1, companion-r3-1)", async () => {
+    const page = await pageAt();
+    try {
+      const harness = () => page.evaluate(() => (window as unknown as TestWindow).askHarness);
+      const offer = (list: string[]) => page.evaluate(list => (window as unknown as TestWindow).askHarness.suggestions(list), list);
+      // Main keeps the box's bottom beside Ember while it grows or shrinks: the field stays put on screen while the
+      // window's rows and the field's distance from its bottom stay the same.
+      const fieldFromBottom = () => page.evaluate(() => Math.round(innerHeight - document.getElementById("q")!.getBoundingClientRect().top));
+      const reachable = async (name: string) => page.getByRole("button", { name, exact: true }).count();
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions: ["Yes, please", "No, thanks"], listenOnce: { phase: "ready", detail: "" } }));
+      await fit(page);
+      const chips = page.locator("#suggest button");
+      const rows = (await harness()).rows;
+      const at = await fieldFromBottom();
+      expect(await chips.count()).toBe(2);
+      // A keyboard user is on "Yes, please" when a task asks: the chips go out of sight and reach, the field has the
+      // keyboard, and the box keeps its height, so the empty field doesn't move 48 px (companion-r3-1).
+      await chips.first().focus();
+      await offer([]);
+      await fit(page);
+      expect(await chips.first().isVisible()).toBe(false);
+      expect(await reachable("Yes, please")).toBe(0);
+      expect(await page.locator("#q").evaluate(e => e === document.activeElement)).toBe(true);
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      expect(await page.evaluate(() => document.activeElement?.closest("#suggest") === null)).toBe(true);
+      await page.locator("#q").focus();
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+      // Answered: what stands on its own comes back, in the same room.
+      await offer(["Remind me in an hour"]);
+      await fit(page);
+      expect(await chips.allTextContents()).toEqual(["Remind me in an hour"]);
+      expect(await chips.first().isVisible()).toBe(true);
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+      // A question comes while a reply is typed: the chips are already put away and keep their room, so nothing moves;
+      // nor when the field is cleared under the question, and none of them can be clicked or reached meanwhile.
+      await page.locator("#q").fill("add one for Sydney too");
+      await offer([]);
+      await fit(page);
+      expect((await harness()).rows).toBe(rows);
+      expect(await reachable("Remind me in an hour")).toBe(0);
+      await page.locator("#q").fill("");
+      await fit(page);
+      expect(await reachable("Remind me in an hour")).toBe(0);
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+      expect((await harness()).calls).toEqual([]);
+      // A box that opened with none doesn't grow a row for ones that come while it is open (an answer arriving with
+      // "Yes, please": the bubble shows them under it); the next opening shows them.
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], listenOnce: { phase: "ready", detail: "" } }));
+      await fit(page);
+      const bare = (await harness()).rows, bareAt = await fieldFromBottom();
+      expect(await page.locator("#suggest").isVisible()).toBe(false);
+      await offer(["Yes, please", "No, thanks"]);
+      await fit(page);
+      expect(await page.locator("#suggest").isVisible()).toBe(false);
+      expect(await reachable("Yes, please")).toBe(0);
+      expect((await harness()).rows).toBe(bare);
+      expect(await fieldFromBottom()).toBe(bareAt);
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions: ["Yes, please", "No, thanks"], listenOnce: { phase: "ready", detail: "" } }));
+      await fit(page);
+      expect(await reachable("Yes, please")).toBe(1);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("opened while an answer still comes in, keeps its follow-ups' room, so they land where the keyboard reaches them and the field doesn't move (accessibility-visual-c4-1)", async () => {
+    const page = await pageAt();
+    try {
+      const harness = () => page.evaluate(() => (window as unknown as TestWindow).askHarness);
+      const offer = (list: string[]) => page.evaluate(list => (window as unknown as TestWindow).askHarness.suggestions(list), list);
+      const fieldFromBottom = () => page.evaluate(() => Math.round(innerHeight - document.getElementById("q")!.getBoundingClientRect().top));
+      const reachable = async (name: string) => page.getByRole("button", { name, exact: true }).count();
+      const chips = page.locator("#suggest button");
+      // The room a row of chips takes, in layout px: none in a box that opened with nothing to offer and nothing coming.
+      const room = () => page.evaluate(() => document.getElementById("suggest")!.offsetHeight);
+      await fit(page);
+      expect(await room()).toBe(0);
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions: ["Yes, please", "Read it out"], listenOnce: { phase: "ready", detail: "" } }));
+      await fit(page);
+      const oneRow = await room();
+      expect(oneRow).toBeGreaterThan(0);
+      // Opened while the answer streams, with nothing offered yet: that row's room, empty, out of sight and out of reach.
+      await page.evaluate(() => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestionsComing: true, listenOnce: { phase: "ready", detail: "" } }));
+      await fit(page);
+      const rows = (await harness()).rows, at = await fieldFromBottom();
+      expect(await room()).toBe(oneRow);
+      expect(await page.locator("#suggest").isVisible()).toBe(false);
+      expect(await chips.count()).toBe(0);
+      expect(await reachable("Yes, please")).toBe(0);
+      // Nor does a screen reader meet an empty "Ember suggests" group meanwhile.
+      const group = page.getByRole("group", { name: "Ember suggests", exact: true });
+      expect(await group.count()).toBe(0);
+      // The answer is whole and its follow-ups come: into that row, the field where it was.
+      await offer(["Yes, please", "Read it out"]);
+      await fit(page);
+      expect(await page.locator("#suggest button:visible").allTextContents()).toEqual(["Yes, please", "Read it out"]);
+      expect(await reachable("Yes, please")).toBe(1);
+      // In the named group a screen reader reads them in (browse mode and Tab alike).
+      expect(await group.getByRole("button").allTextContents()).toEqual(["Yes, please", "Read it out"]);
+      expect(await room()).toBe(oneRow);
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+      // From the field, Tab reaches them (the bubble's own chips take no keyboard), and Enter sends one.
+      await page.locator("#q").focus();
+      let on = "";
+      for (let i = 0; i < 4 && on !== "Yes, please"; i++) {
+        await page.keyboard.press("Tab");
+        on = await page.evaluate(() => document.activeElement?.closest("#suggest") ? document.activeElement.textContent ?? "" : "");
+      }
+      expect(on).toBe("Yes, please");
+      await page.keyboard.press("Enter");
+      expect((await harness()).calls).toEqual([{ kind: "suggestion", text: "Yes, please" }]);
+      // More than the row holds: those that fit it show, in order, and the field still doesn't move.
+      await offer(["Yes, please", "Read it out", "What's the weather in London now and for the rest of the week"]);
+      await fit(page);
+      expect((await page.locator("#suggest button:visible").allTextContents()).slice(0, 2)).toEqual(["Yes, please", "Read it out"]);
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+      // An answer that brought none: the room stays, out of sight, until the box closes.
+      await offer([]);
+      await fit(page);
+      expect(await page.locator("#suggest button:visible").count()).toBe(0);
+      expect(await reachable("Read it out")).toBe(0);
+      expect((await harness()).rows).toBe(rows);
+      expect(await fieldFromBottom()).toBe(at);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("keeps the room its suggestions opened with, on two rows, so neither a question nor fewer or more of them after it moves the empty field (companion-v4-1)", async () => {
+    const page = await pageAt();
+    try {
+      const harness = () => page.evaluate(() => (window as unknown as TestWindow).askHarness);
+      const open = (list: string[]) => page.evaluate(suggestions => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions, listenOnce: { phase: "ready", detail: "" } }), list);
+      const offer = (list: string[]) => page.evaluate(list => (window as unknown as TestWindow).askHarness.suggestions(list), list);
+      const fieldFromBottom = () => page.evaluate(() => Math.round(innerHeight - document.getElementById("q")!.getBoundingClientRect().top));
+      // Every chip shown sits whole inside the row's glass (none clipped or past it).
+      const inside = () => page.evaluate(() => {
+        const row = document.getElementById("suggest")!.getBoundingClientRect();
+        return [...document.querySelectorAll("#suggest button")].every(b => { const r = b.getBoundingClientRect(); return r.top >= row.top && r.bottom <= row.bottom && r.right <= row.right; });
+      });
+      const chips = page.locator("#suggest button");
+      // Beside an answer that offered something: its two offers and a request said twice, wrapping to two rows.
+      const all = ["Yes, please", "No, thanks", "What's the weather in London now"];
+      const alone = all.slice(2);
+      await open(all);
+      await fit(page);
+      expect(await chips.count()).toBe(3);
+      expect(await page.evaluate(() => {
+        const b = [...document.querySelectorAll("#suggest button")].map(e => e.getBoundingClientRect());
+        return b[2].top >= b[0].bottom;
+      })).toBe(true);
+      const rows = (await harness()).rows, at = await fieldFromBottom();
+      // A question takes them away; "Not now" and its "Okay, I won't." bring back only the one that stands on its own
+      // (it moved the field 48 px down for 1.4 s); the answer back brings all three.
+      for (const list of [[], alone, all]) {
+        await offer(list);
+        await fit(page);
+        const what = list.join(", ") || "none";
+        expect(await page.locator("#suggest button:visible").allTextContents(), what).toEqual(list);
+        expect((await harness()).rows, what).toBe(rows);
+        expect(await fieldFromBottom(), what).toBe(at);
+        expect(await inside(), what).toBe(true);
+      }
+      // Opened beside "Okay, I won't." with the one alone, on one row: the answer back offers all three, which need a
+      // second row. The one shown stays and the others wait for the next opening, so the field doesn't move up.
+      await open(alone);
+      await fit(page);
+      const oneRow = (await harness()).rows, oneAt = await fieldFromBottom();
+      expect(oneRow).toBeLessThan(rows);
+      await offer(all);
+      await fit(page);
+      expect(await chips.allTextContents()).toEqual(alone);
+      expect((await harness()).rows).toBe(oneRow);
+      expect(await fieldFromBottom()).toBe(oneAt);
+      expect(await inside()).toBe(true);
+      await open(all);
+      await fit(page);
+      expect(await chips.allTextContents()).toEqual(all);
+      expect((await harness()).rows).toBe(rows);
+      expect((await harness()).calls).toEqual([]);
+    } finally { await page.close(); }
+  }, 30_000);
+
+  it("takes clicks only where it shows something, so one in its clear margins or beside a short row reaches the app (companion-4)", async () => {
+    const page = await pageAt();
+    try {
+      await page.evaluate(suggestions => (window as unknown as TestWindow).askHarness.context({ opened: true, sees: null, history: [], suggestions, listenOnce: { phase: "ready", detail: "" } }), suggestions.slice(1));
+      await fit(page);
+      const takes = (p: { x: number; y: number }) => page.evaluate(p => ((window as unknown as TestWindow).askHarness.shape ?? []).some(r => p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height), p);
+      const centre = async (selector: string) => {
+        const r = (await page.locator(selector).first().boundingBox())!;
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2, right: r.x + r.width, top: r.y };
+      };
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.shape?.length ?? 0)).toBeGreaterThan(0);
+      // What it shows takes clicks: the field, Send, Listen once, each suggestion.
+      for (const selector of ["#q", "#send", "#listen-once", "#suggest button"]) expect(await takes(await centre(selector)), selector).toBe(true);
+      // Its clear margins and the room right of the short suggestions row don't (the verifier's two XTest clicks).
+      const row = await centre("#suggest");
+      expect(await takes({ x: row.right + 40, y: row.y })).toBe(false);
+      expect(await takes({ x: 3, y: row.top - 2 })).toBe(false);
+      expect(await takes({ x: 3, y: 30 })).toBe(false);
+      // Suggestions put away while a request is typed take no click either.
+      const chip = await centre("#suggest button");
+      await page.locator("#q").press("w");
+      expect(await takes(chip)).toBe(false);
+      expect(await takes(await centre("#q"))).toBe(true);
+      // A box the work area cuts short scrolls: all of it takes the wheel and clicks.
+      await page.locator("#q").press("Backspace");
+      await fit(page, 120);
+      expect(await page.locator("#form").evaluate(e => e.classList.contains("constrained"))).toBe(true);
+      expect(await page.evaluate(() => (window as unknown as TestWindow).askHarness.shape?.length)).toBe(1);
+      expect(await takes({ x: 520, y: 100 })).toBe(true);
+    } finally { await page.close(); }
+  }, 30_000);
 
   it("keeps every suggestion reachable when a small work area caps the window's height", async () => {
     const page = await pageAt(300);

@@ -9,7 +9,8 @@
 
 import type { ClassificationExtra } from "./classify";
 import type { CommandDecision, DangerClass, DecideInput, Finding } from "./types";
-import { matchIntent, mentioned } from "./intent";
+import { standingFindings } from "./types";
+import { matchIntent, mentioned, namedKind, ruledOut } from "./intent";
 import { joinList } from "./words";
 
 /** The classes in the card's order (§3.8.4), which is also "most serious first". */
@@ -25,6 +26,7 @@ export const LINES = {
   unclear: "Ember can't tell exactly what this does.",
   tainted: "Ember is checking each step: a step came up that you didn't ask for.",
   unasked: "You didn't ask for this.",
+  inexact: "Your words don't name exactly this, so Ember checks first.",
   windows: "This can reach your Windows files.",
 } as const;
 
@@ -86,8 +88,8 @@ export function decideCommand(i: DecideInput): CommandDecision {
     const says = `Your organisation has turned off commands ${offWords(i.binding.kind)}.`;
     return { verdict: "refuse", reason: says, classes: [], rules: ["admin.off"], says: [says], unasked: false, armMs: 0 };
   }
-  // 3. Overwrites of paths the target says don't exist are dropped.
-  const F = cls.findings.filter(f => !(f.ifExists !== undefined && i.paths.get(f.ifExists)?.exists === false));
+  // 3. Overwrites of paths the target says don't exist are dropped; one into a folder is about the file inside it.
+  const F = standingFindings(cls.findings, i.paths);
   const windowsLine = i.binding.kind === "wsl" && reachesWindows(i) ? [LINES.windows] : [];
   const classes = CLASS_ORDER.filter(c => F.some(f => f.cls === c));
   const findingRules = uniq(F.map(f => f.rule));
@@ -129,8 +131,14 @@ export function decideCommand(i: DecideInput): CommandDecision {
     rules.push("carried");
   }
   if (i.tainted) { lines.push(LINES.tainted); reasons.push("an earlier step in the task wasn't the user's"); rules.push("tainted"); }
-  const unasked = F.length > 0 && !mentioned(F, i.userWords);
+  // Words that ask for this kind of step, but not exactly this one, aren't "You didn't ask for this." (commands-remote-v2);
+  // words that rule a step of it out are, whatever else they ask (commands-remote-c1-2).
+  const ruled = F.length > 0 && ruledOut(F, i.userWords);
+  const unnamed = F.length > 0 && (ruled || !mentioned(F, i.userWords));
+  const inexact = unnamed && !ruled && namedKind(F, i.userWords);
+  const unasked = unnamed && !inexact;
   if (unasked) lines.push(LINES.unasked);
+  if (inexact) lines.push(LINES.inexact);
   lines.push(...windowsLine);
   const allClasses: DangerClass[] = privileged && !classes.includes("system")
     ? CLASS_ORDER.filter(c => c === "system" || classes.includes(c))

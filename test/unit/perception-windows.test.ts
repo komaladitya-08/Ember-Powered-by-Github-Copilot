@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 import { coveringRects, elementScales, isPopupOf, matchFrame, samePopups, shellCovers, uncoveredArea } from "../../app/main/perception/windows";
 import { Perception } from "../../app/main/perception";
+import { askSees } from "../../app/main/ask-sees";
 import type { AtspiSidecar, AxNode, AxWindow, Bounds, ElementInfo, ReadWindowResult, SecretFieldsResult, ShellOverlay } from "../../app/main/perception/sidecar";
 import type { StackedWindow, X11, X11Window } from "../../app/main/x11";
 import type { Logger } from "../../app/main/logger";
@@ -337,7 +338,7 @@ describe("reading a named window", () => {
     expect(listed).toEqual([{ ownPid: 999 }]);
   });
 
-  it("lists every open window, not just the focused one: X11's, as the question's context does, apps without accessibility too", async () => {
+  it("lists every open window for describe_screen, not just the focused one: X11's, apps without accessibility too", async () => {
     const bounds = { x: 0, y: 0, width: 400, height: 300 };
     const terminal = { ...axWin(42, "Terminal", bounds), app: "Terminal" };
     const thunar = { ...axWin(7, "Home", bounds), app: "Thunar", active: false };
@@ -356,17 +357,37 @@ describe("reading a named window", () => {
     expect(text).toContain('<screen source="open-windows" untrusted="true">\nOpen windows:\n- "Terminal": "Terminal" (focused by the user)\n- "Thunar": "Home"\n- "XTerm": "xterm"\n</screen>');
     // The focused window's read is the only request: the sidecar answers one at a time.
     expect([calls.length, listings.length]).toEqual([1, 0]);
-    // The same list the question's context gave.
-    expect((await perception.quickContext())?.text).toContain('Open windows:\n- "Terminal": "Terminal"\n- "Thunar": "Home"\n- "XTerm": "xterm"\n');
+    // The request's context names only the window the user is in (safety-privacy-r2).
+    expect((await perception.quickContext())?.text).not.toMatch(/Open windows|Thunar|xterm/);
 
     // Without X11, the sidecar's list (the apps that expose accessibility).
-    const sidecar = { readWindow: async () => ({ window: terminal, nodes: [frame], ms: 1 }), listWindows: async () => ({ windows: [terminal, thunar] }) } as unknown as AtspiSidecar;
+    const sidecar = { readWindow: async () => ({ window: terminal, nodes: [frame], ms: 1 }), listWindows: async () => ({ windows: [terminal, thunar] }), shellOverlays: async () => ({ overlays: [] }) } as unknown as AtspiSidecar;
     const atspi = new Perception({ sidecar, x11: null, neverLook: () => [], screenBounds: () => bounds, log: quiet, ownPid: 999 });
     const listed = await atspi.describe();
     expect(listed).toContain('<screen source="open-windows" untrusted="true">\nOpen windows:\n- "Terminal": "Terminal" (focused by the user)\n- "Thunar": "Home"\n</screen>');
   });
 
-  it("puts the X selection with the focused window, before the other windows, whatever their titles say", async () => {
+  it("sends only the window the user is in with a request, never the other open windows' titles (safety-privacy-r2)", async () => {
+    // "Before Ember starts" says it reads the window you're working in: a mail's subject or a file's name in another
+    // window goes only when describe_screen is asked (it says so: "what apps are open").
+    const bounds = { x: 0, y: 0, width: 400, height: 300 };
+    const gedit = { ...axWin(42, "notes.txt - gedit", bounds), app: "gedit" };
+    const doc: AxNode = { id: 1, parent: null, depth: 0, role: "text", name: "Document", states: ["focused"], text: "hello world", bounds };
+    const clientWindows = [
+      { id: 1, pid: 42, title: "notes.txt - gedit", wmClass: "gedit Gedit", ...bounds },
+      { id: 2, pid: 7, title: "salaries-2026-layoffs.xlsx - LibreOffice Calc", wmClass: "libreoffice-calc libreoffice-calc", ...bounds },
+      { id: 3, pid: 8, title: "Re: Offer letter - Inbox - Thunderbird", wmClass: "Mail thunderbird", ...bounds },
+    ];
+    const { perception } = desktop({ window: gedit, nodes: [doc], stack: [], clientWindows });
+    const ctx = await perception.quickContext();
+    expect(ctx?.text).toContain('App: "gedit", window: "notes.txt - gedit".');
+    expect(ctx?.text).not.toMatch(/Open windows|salaries|Offer letter|Thunderbird|Calc/);
+    expect(askSees(ctx).carries?.windows).toBe(0);
+    // describe_screen still lists them, when the conversation asks.
+    expect(await perception.describe()).toContain('"salaries-2026-layoffs.xlsx - LibreOffice Calc"');
+  });
+
+  it("puts the X selection with the focused window, whatever other windows' titles say", async () => {
     const bounds = { x: 0, y: 0, width: 400, height: 300 };
     const gedit = { ...axWin(42, "notes.txt - gedit", bounds), app: "gedit" };
     // The app tells no selection of its own: the X selection fills it in.
@@ -380,8 +401,8 @@ describe("reading a named window", () => {
     ];
     const ctx = await desktop({ window: gedit, nodes: [doc], stack: [], clientWindows }).perception.quickContext();
     const text = Perception.withSelection(ctx, "hello world")?.text ?? "";
-    expect(text).toMatch(/\nIts text begins: "hello world and more"\.\nSelected text: "hello world"\.\n\nOpen windows:\n- "gedit": /);
-    expect(text).toContain('- "Firefox": "How to open a private window');
+    expect(text).toMatch(/\nIts text begins: "hello world and more"\.\nSelected text: "hello world"\.\n<\/context>$/);
+    expect(text).not.toContain("How to open a private window");
     expect(text.match(/Selected text: "hello world"/g)).toHaveLength(1);
     // Added once.
     expect(Perception.withSelection(Perception.withSelection(ctx, "hello world"), "again")?.text).not.toContain("again");
@@ -396,11 +417,11 @@ describe("reading a named window", () => {
       { id: 2, pid: 44, title: "Chat | Microsoft Teams", wmClass: "microsoft teams - preview Microsoft Teams - Preview", wmClassName: "Microsoft Teams - Preview", ...bounds },
       { id: 3, pid: 7, title: "Home", wmClass: "thunar Thunar", wmClassName: "Thunar", ...bounds },
     ];
-    const ctx = await desktop({ window: terminal, stack: [], clientWindows }).perception.quickContext();
-    expect(ctx?.text).toContain('Open windows:\n- "VirtualBox Manager": "Oracle VM VirtualBox Manager"\n- "Microsoft Teams - Preview": "Chat | Microsoft Teams"\n- "Thunar": "Home"');
+    const listed = await desktop({ window: terminal, stack: [], clientWindows }).perception.describe();
+    expect(listed).toContain('Open windows:\n- "VirtualBox Manager": "Oracle VM VirtualBox Manager"\n- "Microsoft Teams - Preview": "Chat | Microsoft Teams"\n- "Thunar": "Home"');
   });
 
-  it("lists every mapped X11 window in the question context and while Ember itself has focus", async () => {
+  it("lists every mapped X11 window for describe_screen, also while Ember itself has focus", async () => {
     const bounds = { x: 0, y: 0, width: 400, height: 300 };
     const terminal = { ...axWin(42, "user@host: ~", bounds), app: "Terminal" };
     const thunar = { ...axWin(7, "Home", bounds), app: "Thunar", active: false };
@@ -413,13 +434,13 @@ describe("reading a named window", () => {
     const { perception } = desktop({
       window: terminal, stack: [], neverLook: ["secretvault"], listed: [terminal, thunar], clientWindows,
     });
-    // The question's context (sent without a screen read) names the window behind the focused one too.
-    const ctx = await perception.quickContext();
-    expect(ctx?.text).toContain("Open windows:");
-    expect(ctx?.text).toContain('"Xfce4-terminal": "user@host: ~"');
-    expect(ctx?.text).toContain('"Thunar": "Home"');
-    expect(ctx?.text).not.toContain("My Vault");
-    expect(ctx?.text).not.toContain("Ask Ember");
+    // describe_screen names the window behind the focused one too; never a never-look one or Ember's own.
+    const described = await perception.describe();
+    expect(described).toContain("Open windows:");
+    expect(described).toContain('"Xfce4-terminal": "user@host: ~"');
+    expect(described).toContain('"Thunar": "Home"');
+    expect(described).not.toContain("My Vault");
+    expect(described).not.toContain("Ask Ember");
 
     // describe_screen also lists them while the ask box itself has the focus.
     const own = desktop({
@@ -749,7 +770,9 @@ describe("GNOME Shell's own dialogs and notifications", () => {
     expect(await pixel(n.capture!.data, 50, 100)).toBeGreaterThan(170);
     const d = await shot([{ role: "dialog", name: "", text: "Authentication Required Password", bounds: { x: 0, y: 0, width: 50, height: 50 } }]);
     expect(d.capture).toBeNull();
-    expect(d.text).toContain("a system dialog is open");
+    // Nothing is read either while it is up (safety-privacy-3).
+    expect(d).toMatchObject({ nodes: [], authPrompt: true });
+    expect(d.text).toContain("Ember read nothing: a system dialog is open");
   });
 
   it("mean no picture while the overview or the window switcher shows every window", async () => {
@@ -759,11 +782,17 @@ describe("GNOME Shell's own dialogs and notifications", () => {
     expect(o.text).toContain("the Activities overview or the window switcher is open");
   });
 
-  it("don't stop pictures when GNOME Shell isn't there or can't be asked", async () => {
+  it("don't stop pictures when GNOME Shell isn't there", async () => {
     expect((await shot([])).capture).not.toBeNull();
     expect((await shot({ overlays: [], complete: true })).capture).not.toBeNull();
-    expect((await shot(new Error("no gnome-shell"))).capture).not.toBeNull();
     expect(await shell([]).systemDialogOpen()).toBe(false);
+  });
+
+  it("stop pictures and borrowing when the shell can't be asked at all (fail closed) (safety-privacy-r1)", async () => {
+    const p = await shot(new Error("accessibility helper did not answer shell_overlays in 5000 ms"));
+    expect(p.capture).toBeNull();
+    expect(p.text).toContain("GNOME Shell didn't answer in time");
+    expect(await shell(new Error("request timed out")).systemDialogOpen()).toBe(true);
   });
 
   it("count as a dialog when the shell couldn't be looked through in time: no picture, no borrowing", async () => {

@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { MANAGED_TEXT, MATCH_TEXT, TRUST_TEXT, matchAnnouncement, matchView, trustView } from "../../app/renderer/home/match-copy";
+import { MANAGED_TEXT, MATCH_SAID, MATCH_TEXT, TRUST_TEXT, matchAnnouncement, matchView, trustView } from "../../app/renderer/home/match-copy";
 import { managedKeys } from "../../app/main/admin";
 import type { VoiceMatchStatus } from "../../app/shared/ipc";
 
@@ -15,7 +15,7 @@ const main = read("main.ts");
 const css = read("styles.css");
 
 const none: VoiceMatchStatus = { enrolled: false, on: false, enrolling: null };
-const enrolling = (got: number, again?: "short" | "unlike" | "failed", phrase = "Ember, what's the weather like"): VoiceMatchStatus =>
+const enrolling = (got: number, again?: "short" | "unlike" | "failed" | "over", phrase = "Ember, what's the weather like"): VoiceMatchStatus =>
   ({ enrolled: false, on: false, enrolling: { got, of: 4, phrase, ...(again ? { again } : {}) } });
 const onNow: VoiceMatchStatus = { enrolled: true, on: true, enrolling: null };
 const offNow: VoiceMatchStatus = { enrolled: true, on: false, enrolling: null };
@@ -41,6 +41,8 @@ describe("Voice Match's states", () => {
     expect(matchView(enrolling(2, "short"), shown).prompt).toBe("That was too short. Say it again: “Ember, what's the weather like”");
     expect(matchView(enrolling(2, "unlike"), shown).prompt).toBe("That didn't sound like the others (another voice, or noise). Say it again: “Ember, what's the weather like”");
     expect(matchView(enrolling(0, "failed"), shown).prompt).toBe("Ember couldn't hear that clearly. Say it again: “Ember, what's the weather like”");
+    // Said while a screen reader still read the prompt, the two came as one (voice-listening-r4-1).
+    expect(matchView(enrolling(1, "over"), shown).prompt).toBe("Your screen reader was still reading. Wait for it to finish, then say: “Ember, what's the weather like”");
   });
 
   it("without its model: off with a note (a kept voiceprint isn't used, so every voice is heard), nothing to switch on or teach", () => {
@@ -102,13 +104,62 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
     expect(matchAnnouncement(enrolling(1), enrolling(1))).toBeNull();
   });
 
-  it("says how learning ended, and a forgotten voice", () => {
-    expect(matchAnnouncement(enrolling(3), onNow)).toBe(`Ember knows your voice now. ${MATCH_TEXT.on}`);
-    expect(matchAnnouncement(enrolling(1), none, true)).toBe(`Stopped teaching Ember your voice. ${MATCH_TEXT.none}`);
-    expect(matchAnnouncement(enrolling(1), none)).toBe(MATCH_TEXT.none);
-    expect(matchAnnouncement(onNow, none)).toBe(`Ember forgot your voice. ${MATCH_TEXT.none}`);
+  it("says how learning ended, and a forgotten voice, without Ember's name or a phrase it answers (voice-listening-r5-1)", () => {
+    expect(matchAnnouncement(enrolling(3), onNow)).toBe("Your voice is learnt. On: your voice can answer questions out loud, and other voices can't. Everyone is still heard. Your voiceprint stays on this computer.");
+    expect(matchAnnouncement(enrolling(1), none, true)).toBe("Stopped teaching your voice. Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.");
+    expect(matchAnnouncement(enrolling(1), none)).toBe(MATCH_SAID.none);
+    expect(matchAnnouncement(onNow, none)).toBe(`Your voiceprint and the words learnt from what you said are forgotten. ${MATCH_SAID.none}`);
+    expect(matchAnnouncement(enrolling(2), offNow)).toBe(`${MATCH_SAID.learnt} Off: answer questions by clicking. Your voiceprint is kept until you forget it.`);
+    // The line shown says the same with the name, and quotes “Ember, stop”, which said into the microphone stops Ember.
+    expect(MATCH_TEXT.none).toContain("“Ember, stop”");
     expect(matchAnnouncement(onNow, offNow)).toBeNull();
     expect(matchAnnouncement(undefined, undefined)).toBeNull();
+  });
+
+  it("says who is heard, and what is forgotten, without an “it” that could mean the person's own voice (voice-listening-x6-4)", () => {
+    // Heard alone from a live region, "Your voice and the words learnt from it are forgotten. Anyone who talks to it is
+    // heard. Teach it your voice…" read as talking to, and teaching, the person's own voice.
+    expect(matchAnnouncement(onNow, none)).toBe("Your voiceprint and the words learnt from what you said are forgotten. Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.");
+    for (const line of [MATCH_SAID.none, MATCH_SAID.forgot, MATCH_SAID.stopped, MATCH_SAID.learnt, ...Object.values(MATCH_SAID.ended)]) expect(line, line).not.toMatch(/\bit(?:s|['’]s)?\b/i);
+    // "Off: … until you forget it.": the voiceprint, just named.
+    expect(MATCH_SAID.off).toMatch(/Your voiceprint is kept until you forget it\.$/);
+  });
+
+  it("says requests from any voice are heard, as the line shown does, never all talk, and points to teaching it again (voice-listening-y6-3)", () => {
+    // Heard alone, right after Forget my voice, "Everyone who talks is heard." said whatever anyone says near the
+    // computer is heard, where the line shown says Ember hears anyone who talks to it; and "Once your voice is taught"
+    // lost the shown line's pointer to Teach.
+    expect(matchAnnouncement(onNow, none)).toBe("Your voiceprint and the words learnt from what you said are forgotten. Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.");
+    expect(MATCH_SAID.none).not.toMatch(/\b(?:every|any)(?:one|body) who talks\b/i);
+    expect(MATCH_TEXT.none).toMatch(/^Ember hears anyone who talks to it\. Teach it your voice, and /);
+  });
+
+  it("says why teaching stopped when it gave up, timed out or Ember stopped listening, never that it knows the voice (voice-listening-2, voice-listening-5, voice-listening-v1)", () => {
+    const gaveUp = "Your voice wasn't learnt: too many phrases didn't sound alike. Try again somewhere quiet, with only you speaking.";
+    expect(matchAnnouncement(enrolling(2), { ...none, ended: "gave-up" })).toBe(`${gaveUp} ${MATCH_SAID.none}`);
+    // Taught again, and it gave up: the earlier voiceprint is still in use, and nothing says Ember learnt the voice.
+    expect(matchAnnouncement({ ...onNow, enrolling: enrolling(2).enrolling }, { ...onNow, ended: "gave-up" })).toBe(`${gaveUp} ${MATCH_SAID.on}`);
+    expect(matchAnnouncement(enrolling(0), { ...none, ended: "timeout" })).toBe(`Teaching stopped because no phrase was heard for a while. Try again when you're ready. ${MATCH_SAID.none}`);
+    expect(matchAnnouncement(enrolling(1), { ...none, ended: "interrupted" })).toBe(`Teaching stopped because listening stopped. Try again once listening starts again. ${MATCH_SAID.none}`);
+    // "Ember, stop", Stop everything or settings closing: stopped, as Cancel says.
+    expect(matchAnnouncement({ ...onNow, enrolling: enrolling(1).enrolling }, { ...onNow, ended: "stopped" })).toBe(`Stopped teaching your voice. ${MATCH_SAID.on}`);
+    expect(matchAnnouncement({ ...onNow, enrolling: enrolling(1).enrolling }, { ...onNow, ended: "cancelled" })).toBe(`Stopped teaching your voice. ${MATCH_SAID.on}`);
+    expect(matchAnnouncement({ ...onNow, enrolling: enrolling(3).enrolling }, { ...onNow, ended: "learnt" })).toBe(`Your voice is learnt. ${MATCH_SAID.on}`);
+    // The note stays under the switch until Ember is taught again, and Teach takes focus from Cancel.
+    const v = matchView({ ...none, ended: "interrupted" }, shown);
+    expect(v.text).toMatch(/^Teaching stopped because Ember stopped listening\./);
+    expect(v.focus[0]).toBe("match-teach");
+    expect(matchView({ ...onNow, ended: "learnt" }, shown).text).toBe(MATCH_TEXT.on);
+  });
+
+  it("ends the teaching when settings closes or hides (it shows the phrase to say), and maps each ending (voice-listening-v1)", () => {
+    const m = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(m).toContain('const cancelHomeListenOnce = () => { if (manualCall?.source === "home") voice?.cancelListenOnce(); endTeaching(); };');
+    expect(m).toMatch(/const hidden = \(\) => \{ shown\(false\)\(\); cancelHomeListenOnce\(\);/);
+    expect(m).toMatch(/home\.on\("closed", \(\) => \{\s*cancelHomeListenOnce\(\);/);
+    expect(m).toMatch(/const endTeaching = \(\) => \{\s*if \(!enrolling\) return;\s*voice\?\.cancelEnrol\(\);\s*enrolling = null;\s*enrolEnded = "cancelled";/);
+    expect(m).toContain('if (enrolling) enrolEnded = p.why === "timeout" || p.why === "stopped" || p.why === "gave-up" || p.why === "interrupted" ? p.why : "cancelled";');
+    expect(m).toContain("setState({ mic: state, micLearning: !!voice?.isEnrolling });");
   });
 
   it("goes through the Voice section's one live region, not a live region that appears with its text", () => {
@@ -127,7 +178,8 @@ describe("Voice Match's markup", () => {
     expect(page).toContain(`<progress id="match-progress" max="4" value="0" aria-label="${MATCH_TEXT.progressLabel}" hidden></progress>`);
     expect(page).toContain(`<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">${MATCH_TEXT.teach}</button>`);
     expect(page).toContain(`<button type="button" id="match-cancel" class="btn quiet" hidden>${MATCH_TEXT.cancel}</button>`);
-    expect(page).toContain(`<button type="button" id="match-forget" class="btn quiet" hidden>${MATCH_TEXT.forget}</button>`);
+    // Forget my voice deletes the words learnt too: the button says so before it is pressed (voice-listening-9).
+    expect(page).toContain(`<button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="${MATCH_TEXT.forgetHint}" hidden>${MATCH_TEXT.forget}</button><span id="match-forget-hint" hidden>${MATCH_TEXT.forgetHint}</span>`);
     // The bar is read as "1 of 4 heard", not a percentage.
     expect(main).toMatch(/bar\.setAttribute\("aria-valuetext", view\.progress\.text\)/);
   });
@@ -153,7 +205,8 @@ describe("When Ember asks first", () => {
     expect(keys.has("askedApps") && keys.has("reviewCommands")).toBe(true);
     const [apps, commands] = trustView({ askedApps: false, reviewCommands: true }, keys);
     expect(apps).toEqual({ id: "trust-apps", checked: false, disabled: true, locked: true, title: MANAGED_TEXT, describedBy: "trust-apps-hint trust-managed" });
-    expect(commands).toMatchObject({ checked: true, disabled: true, locked: true, describedBy: "trust-commands-hint trust-managed" });
+    // Shown off as in force, though the settings still hold it on (a held lockdown; safety-privacy-w5-2).
+    expect(commands).toMatchObject({ checked: false, disabled: true, locked: true, describedBy: "trust-commands-hint trust-managed" });
     // Only the managed one is locked.
     expect(trustView({ askedApps: true, reviewCommands: true }, new Set(["reviewCommands"])).map(r => r.locked)).toEqual([false, true]);
     expect(page).toContain(`<span id="trust-managed" hidden>${MANAGED_TEXT}</span>`);

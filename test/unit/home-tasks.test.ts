@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { ActivityLog, askedWords } from "../../app/main/agent/activity";
-import { FILTER_EMPTY, NOTE_TAG, TASKS_EMPTY, TASK_FILTER_FROM, droppedText, filterLabel, filterTasks, offsetText, offsetWords, stepsLine, taskAnnouncement, taskMeta, timelineRows } from "../../app/renderer/home/tasks-copy";
+import { FILTER_EMPTY, NOTE_TAG, TASKS_EMPTY, TASK_FILTER_FROM, droppedText, filterLabel, filterTasks, offersRetry, offsetText, offsetWords, stateWord, stepsLine, taskAnnouncement, taskMeta, timelineRows } from "../../app/renderer/home/tasks-copy";
 import type { ActivityItem, TaskActivity } from "../../app/shared/activity";
 
 const step = (id: string, at: number, group: ActivityItem["group"], app: string, state: ActivityItem["state"] = "done", words = `${group} in ${app}`): ActivityItem =>
@@ -61,6 +61,41 @@ describe("a task's rows in Home", () => {
     expect(NOTE_TAG).toBe("Note");
     expect(taskAnnouncement("Turn on Night Light", "done")).toBe("Turn on Night Light: Done");
     expect(taskAnnouncement("Turn on Night Light", "failed")).toBe("Turn on Night Light: Didn't finish");
+  });
+
+  it("gives a task still in line no clock: it hasn't begun, so never “Just started” (tasks-approvals-r3)", () => {
+    const a: TaskActivity = { startedAt: 0, items: [], dropped: 0, steps: 0, failedSteps: 0, counts: {}, questions: 0, approvals: 0, asking: false, retry: 0, slow: false, nearLimit: false, live: "" };
+    expect(taskMeta({ status: "queued", activity: a }, 2000)).toBe("Waiting its turn");
+    expect(taskMeta({ status: "queued", where: "on build-01", activity: a }, 74_000)).toBe("Waiting its turn · on build-01");
+  });
+
+  it("gives a task stopped before it began no clock either, never “Took 3s” beside “stopped before it started” (tasks-approvals-r3-3)", () => {
+    const a: TaskActivity = { startedAt: 0, endedAt: 3000, items: [], dropped: 0, steps: 0, failedSteps: 0, counts: {}, questions: 0, approvals: 0, asking: false, retry: 0, slow: false, nearLimit: false, live: "" };
+    expect(taskMeta({ status: "stopped", unstarted: true, activity: a }, 9000)).toBe("Stopped");
+    expect(taskMeta({ status: "failed", unstarted: true, where: "on build-01", activity: a }, 9000)).toBe("Didn't finish · on build-01");
+    // One that began keeps its clock.
+    expect(taskMeta({ status: "stopped", activity: a }, 9000)).toBe("Stopped · Took 3s");
+  });
+
+  it("says a task whose question went unanswered ended for that, never that it was stopped (tasks-approvals-c1-2)", () => {
+    const a: TaskActivity = { startedAt: 0, endedAt: 125_000, items: [], dropped: 0, steps: 0, failedSteps: 0, counts: {}, questions: 1, approvals: 0, asking: false, retry: 0, slow: false, nearLimit: false, live: "" };
+    expect(stateWord({ status: "stopped", unanswered: true })).toBe("No answer in time");
+    expect(stateWord({ status: "stopped" })).toBe("Stopped");
+    expect(taskMeta({ status: "stopped", unanswered: true, activity: a }, 999_999)).toBe("No answer in time · Took 2:05");
+    expect(taskAnnouncement("Send the report", "stopped", true)).toBe("Send the report: No answer in time");
+    expect(taskAnnouncement("Send the report", "stopped")).toBe("Send the report: Stopped");
+  });
+
+  it("offers Try again only while it can be pressed, never a greyed one nothing explains once the card has gone (tasks-approvals-r3-5)", () => {
+    const can = { stop: false, retry: true, window: false }, cannot = { ...can, retry: false };
+    expect(offersRetry({ status: "failed", controls: can })).toBe(true);
+    // (A stopped task offers it only when its question went unanswered: main says so in its controls.)
+    expect(offersRetry({ status: "stopped", controls: can })).toBe(true);
+    // The card went (its time ran out, or Ember reconnected), or a guide: as for a task nobody answered, no button.
+    expect(offersRetry({ status: "failed", controls: cannot })).toBe(false);
+    expect(offersRetry({ status: "failed" })).toBe(false);
+    expect(offersRetry({ status: "stopped", controls: cannot })).toBe(false);
+    for (const status of ["done", "running", "waiting", "queued"] as const) expect(offersRetry({ status, controls: can })).toBe(false);
   });
 });
 

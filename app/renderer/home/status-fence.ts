@@ -35,6 +35,9 @@ export class StatusFence {
   }
 }
 
+/** The one fence every startup status consumer in Home goes through (main.ts and project.ts share it). */
+export const statusFence = new StatusFence();
+
 /** How many times Home asks again after the first status failed, and the pause before attempt n (n × this). */
 export const STATUS_RETRIES = 4;
 export const STATUS_RETRY_MS = 1000;

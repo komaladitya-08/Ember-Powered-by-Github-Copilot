@@ -109,6 +109,14 @@ body.fallback :is(.whole, .whole-hint)[hidden] { display: none; }
 /* The step, or a question's keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"). */
 body.fallback .step { display: block; flex: none; margin-top: 4px; font: var(--type-footnote); color: var(--label-2); }
 body.fallback .step[hidden] { display: none; }
+/* A question's keys as keycaps beside their words, as the bubble shows them (accessibility-visual-r3), on the footnote's line. */
+body.fallback .step kbd { min-width: 1.5em; margin-right: 2px; padding: 0 4px; line-height: round(calc(16px * var(--text-scale)), 1px); vertical-align: 0; }
+body.fallback .step .key-word { margin: 0 4px 0 2px; }
+/* Each chord on a line of its own, with no separator left at a line's end (accessibility-visual-r2-2): its keycaps
+   together, its words wrapping under them where the column is too narrow for both (accessibility-visual-c3-1: kept on
+   one line, "Ctrl Alt Shift Y shows the next part" reached 401 px of the 360 px card at Larger). */
+body.fallback .step .key-hint { display: block; text-wrap: pretty; }
+body.fallback .step .key-caps { white-space: nowrap; }
 /* The question's buttons and the task row share the card's 12 px inset (main.ts reads their bottom margins). */
 .actions { display: flex; flex: none; gap: 8px; flex-wrap: wrap; margin: 0 12px 12px; }
 /* On the card they line up under the words they answer, not under Ember's face (8 px in, the 96 px face, a 10 px gap),

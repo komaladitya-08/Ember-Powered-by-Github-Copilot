@@ -21,8 +21,15 @@ export const OVERLAY = {
   handleMenu: "handle:menu",
   /** The fallback card's content height, so the card fits what it shows. */
   handleFit: "handle:fit",
+  /**
+   * The fallback card has shown the last line of the answer opened in full on it (its words, as main sent them), so the
+   * Ask box may offer what answers them, as the overlay's word does (BubbleBox.endShown; companion-repairs-x6-3).
+   */
+  handleAnswerEnd: "handle:answer-end",
   /** Where the task cards are (global DIP), so Ember keeps off their buttons. */
   cards: "overlay:cards",
+  /** Where Ember's bubble is (global DIP; null: none on that display), so the Ask box opens clear of it. */
+  bubble: "overlay:bubble",
   /** The desktop's reduce-motion preference changed (the overlay's page follows it live), for Ember's follow spring. */
   motion: "overlay:motion",
   /** The sound's level (app/shared/level.ts SoundLevel) for Ember's presence ring and voice meter, apart from the state. */
@@ -38,6 +45,37 @@ export const OVERLAY = {
 export const TASK_READING_LEASE_MS = 15_000;
 
 export interface Rect { x: number; y: number; width: number; height: number }
+
+/**
+ * Where the bubble is (global DIP), as its overlay reports it (OVERLAY.bubble). `endShown`: it is an answer opened in
+ * full ("Read all") whose last line has been in view (all of it showed, or its text was scrolled to its end), so the
+ * Ask box may offer what answers its last words (askSuggestions; companion-v6-2: one cut short to the room hid its
+ * offer, and the box offered "Yes, please" to it all the same).
+ */
+export interface BubbleBox extends Rect { endShown?: true }
+
+/**
+ * What an overlay's report of its bubble (OVERLAY.bubble) says: a place (global DIP), with `endShown` only as `true`;
+ * null when none shows; undefined for anything else, which main refuses (not a rect, or an `endShown` that isn't true).
+ */
+export function bubbleBoxOf(r: unknown): BubbleBox | null | undefined {
+  if (r === null) return null;
+  if (!r || typeof r !== "object") return undefined;
+  const o = r as Record<string, unknown>;
+  if (!["x", "y", "width", "height"].every(k => Number.isFinite(o[k]))) return undefined;
+  if (o.endShown !== undefined && o.endShown !== null && o.endShown !== true) return undefined;
+  return { x: o.x as number, y: o.y as number, width: o.width as number, height: o.height as number, ...(o.endShown === true ? { endShown: true as const } : {}) };
+}
+
+/**
+ * Whether the answer opened in full shown now (`b`) has shown its last line, for askSuggestions: by its overlay's word
+ * (`box`: BubbleBox.endShown), or, without a compositor, the corner card's (`cardEnded`: the words of the answer opened
+ * in full whose last line the card showed, OVERLAY.handleAnswerEnd), which counts only for those very words shown now
+ * (companion-repairs-x6-3: the card showed all of it, offer included, and the box never offered "Yes, please").
+ */
+export function answerEndShown(b: Pick<BubbleState, "visible" | "expanded" | "thought">, box: BubbleBox | null | undefined, cardEnded: string | null): boolean {
+  return box?.endShown === true || (b.visible && b.expanded === true && cardEnded !== null && cardEnded === b.thought);
+}
 
 export interface OverlayInit {
   displayId: number;
@@ -88,6 +126,12 @@ export interface BubbleState {
    * update of the bubble's words drops it.
    */
   autonomous?: boolean;
+  /**
+   * The conversation's turn has heard nothing from the model service for a while ("Still waiting for …", with Stop):
+   * still thinking, but said once to screen readers with its step, the keyboard's way to stop (accessibility-visual-2).
+   * Set only by the Presenter, and only while its title says so.
+   */
+  stalled?: boolean;
 }
 
 /**
@@ -137,6 +181,8 @@ export interface TaskCard {
   viewRev?: number;
   /** What it is doing and has done, in Ember's words (app/shared/activity.ts), from the moment it starts to run. */
   activity?: CardActivity;
+  /** A stopped task whose question went unanswered: its state's word says so (TaskEntry.unanswered; tasks-approvals-r1). */
+  unanswered?: true;
 }
 
 /** A running task's card detail from the moment its Stop is pressed until it has wound down. */
@@ -154,8 +200,15 @@ export interface EmberState {
   gesture?: Gesture | null;
   /** Microphone: off, waiting for "Hey Ember", or hearing a request. */
   mic?: MicState;
+  /** Voice Match is being taught: the microphone hears its phrases and "Ember, stop", not requests (shared/mic.ts). */
+  micLearning?: boolean;
   /** Places the bubble keeps off (global DIP), e.g. the settings window while the user works in it. */
   avoid?: Rect[];
+  /**
+   * The Ask box while it is open (global DIP): a bubble that comes up meanwhile keeps off it where it can, but never
+   * hides for it, and a question already shown doesn't move for it (companion-c1-1).
+   */
+  askBox?: Rect | null;
   /** What the handle says when nothing else is going on: "Ready", or why Ember can't answer yet. */
   idle?: string;
   /**
@@ -190,6 +243,37 @@ export function suggestionsShown(s: Pick<EmberState, "bubble" | "suggest">): str
   return g.thought === b.thought ? g.items.slice(0, 3) : [];
 }
 
+/**
+ * The suggestions the Ask box offers for state `s` (`items`: PersonalVoice.current()), as the bubble's rule has it:
+ * none while a question is up (`questionUp`: the Confirmer waits, or answers show on the bubble), which "Yes, please"
+ * would only seem to answer (companion-r2-1); and those that follow the answer they were made for (`follows`: "Yes,
+ * please" to its offer, "Close it", "Read it out") only while that answer shows, so a chip never agrees to an offer that
+ * has left the screen (companion-c2-2). Those that answer its last words (`answers`: "Yes, please", "No, thanks") also
+ * need those words in view: not while the bubble cuts it short under Read all (companion-c5-2: its last line, the offer,
+ * didn't show), and opened in full only once its end has shown (`endShown`: the overlay's word, BubbleBox; companion-v6-2:
+ * cut short to the room, its offer was out of view). The rest stay for a cut answer ("Read it out" is for a long one:
+ * companion-v6-1), and the others (a request said twice, the time of day's) stand on their own.
+ */
+export function askSuggestions(s: Pick<EmberState, "bubble" | "suggest">, items: readonly { text: string; follows?: boolean; answers?: boolean }[], questionUp: boolean, endShown = false): string[] {
+  const b = s.bubble;
+  if (questionUp || (b.visible && b.actions.some(a => !a.id.startsWith("ui:")))) return [];
+  const answerShown = !!s.suggest && b.visible && b.thought === s.suggest.thought;
+  const lastWordsShown = answerShown && !b.actions.some(a => a.id === "ui:more") && (!b.expanded || endShown);
+  return items.filter(i => (i.answers ? lastWordsShown : !i.follows || answerShown)).map(i => i.text).slice(0, 3);
+}
+
+/**
+ * Whether the Ask box opening for state `s` keeps its suggestions' row for follow-ups still to come: an answer is still
+ * coming in (they are offered once it is whole) and nothing is asked (`questionUp`: the Confirmer waits), so they land in
+ * the box, where the keyboard reaches them, without moving the field (accessibility-visual-c4-1). Only while Ember offers
+ * any (`suggests`: "Suggest what I might say next" is on): otherwise the row could never fill, and the box opened a row
+ * taller with a blank gap for as long as it was open (companion-v5-2).
+ */
+export function askSuggestionsComing(s: Pick<EmberState, "bubble">, questionUp: boolean, suggests: boolean): boolean {
+  const b = s.bubble;
+  return suggests && !questionUp && b.visible && b.streaming && b.mood === "idle" && !b.actions.some(a => !a.id.startsWith("ui:"));
+}
+
 export const IDLE_BUBBLE: BubbleState = {
   visible: false, mood: "idle", title: "", thought: "", step: null, streaming: false, actions: [],
 };
@@ -205,6 +289,8 @@ export interface OverlayApi {
   pointerHeld(held: boolean): void;
   /** The task cards' area in global DIP (null: no cards on this display). */
   setCards(rect: Rect | null): void;
+  /** The bubble's box in global DIP (null: not shown on this display), and whether an answer opened in full showed its end. */
+  setBubble?(rect: BubbleBox | null): void;
   /** The desktop's reduce-motion preference changed while Ember runs (true: less motion). */
   setReducedMotion?(on: boolean): void;
   /** The sound's level for the presence ring (the microphone's while Ember hears) and the voice meter (its own voice). */
@@ -221,4 +307,6 @@ export interface HandleApi {
   bubbleAction(id: string): void;
   /** Fallback card only: the height its content needs. */
   fit(height: number): void;
+  /** Fallback card only: the answer opened in full on it (its words) has shown its last line (OVERLAY.handleAnswerEnd). */
+  answerEnd(words: string): void;
 }

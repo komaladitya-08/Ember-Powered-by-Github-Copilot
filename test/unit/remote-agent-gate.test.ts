@@ -84,6 +84,62 @@ describe("gate 2 for commands (§3.16)", () => {
     expect(await gateCommand(input({ spec: resent, classify: classifier(() => [RM, extra]).classify }))).toMatchObject({ status: "ok" });
   });
 
+  it("agrees with the PC about an ordinary bash if, asks for any loop, and still asks for a zsh one (commands-remote-2, commands-c7-1)", async () => {
+    const real = (command: string, shell: RunSpec["shell"] = "bash") =>
+      gateCommand(input({ spec: spec({}, { command, shell }), classify: classifyCommand, facts: facts({ shells: ["bash", "zsh"], shellPaths: { bash: "/usr/bin/bash", zsh: "/usr/bin/zsh" } }) }));
+    expect((await real("if [ -f package.json ]; then npm test; fi")).status).toBe("ok");
+    // Every loop keeps its own words, as on main and on the PC (commands-c7-1).
+    expect(await real("for i in 1 2 3; do echo $i; done")).toMatchObject({ status: "needs_confirm", rules: ["unclear.for", "unclear.do", "unclear.done"] });
+    expect(await real("while read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ status: "needs_confirm", rules: ["unclear.while", "unclear.do", "unclear.done"] });
+    // A read over a file is text Ember can't see, on both machines (commands-a7-2), and its loop keeps its own words, as
+    // on main (commands-b7-2).
+    expect(await real("while read -r l; do echo \"$l\"; done < list.txt")).toMatchObject({ status: "needs_confirm", rules: ["unclear.while", "unclear.do", "unclear.done", "unclear.read-text"] });
+    expect(await real("for i in 1 2; do echo $i; done", "zsh")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
+    expect(await real("zsh -c 'while true { rm -rf ~ }'")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
+  });
+
+  it("agrees with the PC that a move into a folder here asks only when the file of its name is in it (commands-remote-r1)", async () => {
+    const real = (dirFile: boolean | null) => gateCommand(input({
+      spec: spec({}, { command: "mv report.pdf /home/deploy/Documents", shell: "bash" }), classify: classifyCommand,
+      inspect: async paths => paths.map(p => (p === "/home/deploy/Documents" ? { exists: true, real: p, dir: true } : { exists: p.endsWith("/Documents/report.pdf") ? dirFile : true, real: p })),
+    }));
+    expect((await real(false)).status).toBe("ok");
+    expect(await real(true)).toMatchObject({ status: "needs_confirm", rules: ["posix.mv"], says: expect.arrayContaining(["Replaces ~/Documents/report.pdf if it exists."]) });
+  });
+
+  it("asks, as the PC does, before a Mac here copies a folder's contents into a folder, or cp --parents does, whatever is missing (commands-remote-c2-1)", async () => {
+    const real = (command: string, os: RunnerFacts["os"], home: string) => gateCommand(input({
+      spec: spec({}, { command, shell: os === "darwin" ? "zsh" : "bash", cwd: `${home}/proj` }), classify: classifyCommand,
+      facts: facts({ os, home, shells: [os === "darwin" ? "zsh" : "bash"] }),
+      inspect: async paths => paths.map(p => (p.endsWith("/Documents") || p.endsWith("/backup") ? { exists: true, real: p, dir: true } : { exists: !/\/(Documents\/build|backup\/(a\.txt|src))$/.test(p), real: p })),
+    }));
+    expect(await real("cp -R build/ /Users/deploy/Documents", "darwin", "/Users/deploy")).toMatchObject({ status: "needs_confirm", rules: ["posix.cp"], says: expect.arrayContaining(["Replaces files in ~/Documents if they exist."]) });
+    expect(await real("cp --parents src/a.txt /home/deploy/backup", "linux", "/home/deploy")).toMatchObject({ status: "needs_confirm", rules: ["posix.cp"] });
+    // GNU cp puts build at Documents/build, which isn't there.
+    expect((await real("cp -r build/ /home/deploy/Documents", "linux", "/home/deploy")).status).toBe("ok");
+  });
+
+  it("asks, as the PC does, before a loop or an if runs a command with a library preloaded or PATH changed (commands-remote-c1-1)", async () => {
+    const real = (command: string) => gateCommand(input({ spec: spec({}, { command, shell: "bash" }), classify: classifyCommand }));
+    for (const command of [
+      "if true; then LD_PRELOAD=./x.so ls; fi",
+      "for i in 1; do PATH=/tmp/evil:/usr/bin; done; git status",
+      "time LD_PRELOAD=./x.so ls",
+    ]) expect(await real(command), command).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: expect.arrayContaining(["unclear.assignment"]) });
+    // IFS in front of an if's read is no assignment; a loop's asks for the loop's own words only (commands-c7-1).
+    expect((await real("if IFS= read -r l <<< 'a b'; then echo \"$l\"; fi")).status).toBe("ok");
+    expect(await real("while IFS= read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ status: "needs_confirm", rules: ["unclear.while", "unclear.do", "unclear.done"] });
+  });
+
+  it("asks, as the PC does, before any bash loop, whatever its body, and still runs an ordinary if (commands-c7-1)", async () => {
+    const real = (command: string) => gateCommand(input({ spec: spec({}, { command, shell: "bash" }), classify: classifyCommand }));
+    for (const command of [
+      "for f in --hard; do git reset $f; done", "for i in 1 2; do git reset $l; read -r l <<< '--hard'; done", "for i in 1 2 3; do echo $i; done",
+      "while read -r l; do echo \"$l\"; done <<< 'a b'", "until [ -f x ]; do sleep 1; done",
+    ]) expect(await real(command), command).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: expect.arrayContaining(["unclear.do", "unclear.done"]) });
+    expect((await real("if [ -f package.json ]; then npm test; fi")).status).toBe("ok");
+  });
+
   it("counts an approval 120 s old or older as none", async () => {
     const s = spec({ verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], approval: { ageMs: APPROVAL_MAX_MS } });
     expect(await gateCommand(input({ spec: s, classify: classifier(() => [RM]).classify }))).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.approvalMissing });
@@ -110,6 +166,17 @@ describe("gate 2 for commands (§3.16)", () => {
     expect(r).toEqual({ status: "needs_confirm", reason: GATE_WORDS.disagree, says: [GATE_WORDS.adminAsks, GATE_WORDS.root, RM.says], rules: ["posix.rm"] });
     const again = spec({ verdict: "ask", rules: ["posix.rm"], approval: { ageMs: 300 } });
     expect((await gateCommand(input({ spec: again, classify: c, mode: "ask", facts: facts({ privileged: true }) }))).status).toBe("ok");
+  });
+
+  it("denies the remote's own files reached through a loop's list or a variable, approved or not (commands-remote-c3-2)", async () => {
+    const own = facts({ ember: { paths: ["/home/deploy/.local/state/ember-remote"], pids: [], names: emberNamesRegExp([]) } });
+    const real = (command: string) => gateCommand(input({ spec: spec({ verdict: "ask", approval: { ageMs: 1 } }, { command }), classify: classifyCommand, facts: own }));
+    for (const command of [
+      "for f in ~/.local/state/ember-remote/*; do rm -f \"$f\"; done",
+      "d=~/.local/state/ember-remote; rm -rf \"$d\"",
+      "for d in ~/.local/state; do rm -rf \"$d\"; done",
+    ]) expect(await real(command), command).toMatchObject({ status: "deny" });
+    expect((await real("for f in *.log; do echo \"$f\"; done")).status).not.toBe("deny");
   });
 
   it("denies what its own classifier refuses (D4.5 on this computer's paths), approved or not", async () => {
@@ -192,7 +259,7 @@ describe("gate 2 reads the scripts a command runs, here (L8, the lead's ruling)"
     // "delete build/" announced `rm -r build`: the script's rm of src isn't what the user named.
     const announced = await at({ verdict: "announce", classes, rules });
     expect(announced).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["in-script:posix.rm"] });
-    expect((announced as { says: string[] }).says).toEqual(["In t.sh: Deletes /home/deploy/src and everything in it."]);
+    expect((announced as { says: string[] }).says).toEqual(["In t.sh: Deletes ~/src and everything in it."]);
     // A yes to the PC's card (which couldn't show the script) doesn't cover it either; a yes to this question does.
     expect((await at({ verdict: "ask", classes, rules, approval: { ageMs: 500 } })).status).toBe("needs_confirm");
     expect(await at({ verdict: "ask", classes, rules: [...rules, "in-script:posix.rm"], approval: { ageMs: 500 } })).toMatchObject({ status: "ok", approved: true });

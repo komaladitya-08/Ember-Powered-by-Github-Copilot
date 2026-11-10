@@ -37,8 +37,14 @@ export interface PredictInput {
   people: readonly string[];
 }
 
-/** A suggestion: its words, as the user would say them. */
-export interface Suggestion { text: string }
+/**
+ * A suggestion: its words, as the user would say them. `follows`: it answers or follows the reply it was made for
+ * ("Yes, please" to its offer, "Close it", "Read it out"), so it means something only while that reply shows
+ * (askSuggestions, companion-c2-2); without it, it stands on its own (a request said twice, the time of day's).
+ * `answers`: it answers the reply's own question ("Yes, please", "No, thanks"), the reply's last words, so it means
+ * something only while those show too: not while the bubble cuts the reply short (companion-c5-2, companion-v6-1).
+ */
+export interface Suggestion { text: string; follows?: true; answers?: true }
 
 /** At most this many (the bubble's row holds three short ones). */
 export const MAX_SUGGESTIONS = 3;
@@ -52,32 +58,36 @@ export function predictNext(p: PredictInput, risky: (words: string) => boolean):
   const out: string[] = [];
   /** The ones built from the last request itself (only those may be risky, when it was: "Send it to Priya"). */
   const fromRequest = new Set<string>();
-  const add = (t: string, own = false) => {
+  /** The ones that follow the last reply (Suggestion.follows), and those that answer its question (Suggestion.answers). */
+  const following = new Set<string>(), answering = new Set<string>();
+  const add = (t: string, own = false, follows = false, answers = false) => {
     if (!t || t.length > MAX_CHARS || out.some(o => o.toLowerCase() === t.toLowerCase())) return;
     out.push(t);
     if (own) fromRequest.add(t);
+    if (follows) following.add(t);
+    if (answers) answering.add(t);
   };
   const req = said(p.lastRequest), reply = said(p.lastReply);
   const asked = /\?\s*$/.test(p.lastReply.trim());
 
   // Ember asked something: the two plain answers.
-  if (asked) { add("Yes, please"); add("No, thanks"); }
+  if (asked) { add("Yes, please", false, true, true); add("No, thanks", false, true, true); }
   // Something was opened or shown: closing it is the usual next step.
-  if (/\b(open|show|launch|start|bring up|pull up)\b/.test(req) && (!p.task || p.task.status === "done")) add("Close it");
+  if (/\b(open|show|launch|start|bring up|pull up)\b/.test(req) && (!p.task || p.task.status === "done")) add("Close it", false, true);
   // Turned something on: off again later.
   const on = /\bturn (?:on|up) (?:the )?([a-z][a-z ]{1,20}?)(?:[.!?]|$)/.exec(req) ?? /\bturn (?:the )?([a-z][a-z ]{1,20}?) on\b/.exec(req);
   if (on) add(`Turn ${on[1].trim()} off`);
   // A task on one item (the first email, this file, the next page…): the same again.
-  if (p.task?.status === "done" && /\b(this|the first|the top|the last|the next|that) (one|email|mail|message|file|page|row|item|document|photo|tab|line)\b/.test(req)) add("Do the same for the next one");
+  if (p.task?.status === "done" && /\b(this|the first|the top|the last|the next|that) (one|email|mail|message|file|page|row|item|document|photo|tab|line)\b/.test(req)) add("Do the same for the next one", false, true);
   // A failed task: why, in a word.
-  if (p.task?.status === "failed") add("What went wrong?");
+  if (p.task?.status === "failed") add("What went wrong?", false, true);
   // An answer with something to it that wasn't said aloud.
-  if (!p.spoken && p.lastReply.trim().length > 60 && !asked) add("Read it out");
+  if (!p.spoken && p.lastReply.trim().length > 60 && !asked) add("Read it out", false, true);
   // Sending, only after the user's own words were about sending: to someone they told Ember about.
   const own = p.lastRequestOwn === true;
   if (own && /\b(send|email|mail|message|forward|share)\b/.test(req) && risky(p.lastRequest)) {
     const who = p.people.find(n => !req.includes(said(n)) && /^[\p{Lu}]/u.test(n));
-    if (who) add(`Send it to ${who}`, true);
+    if (who) add(`Send it to ${who}`, true, true);
   }
   // Said twice this session: likely again.
   const counts = new Map<string, { n: number; text: string }>();
@@ -99,7 +109,8 @@ export function predictNext(p: PredictInput, risky: (words: string) => boolean):
   }
   // Never a risky step, but one built from the user's own risky request just now.
   const userRisky = own && risky(p.lastRequest);
-  return out.filter(t => !risky(t) || (userRisky && fromRequest.has(t))).slice(0, MAX_SUGGESTIONS).map(text => ({ text }));
+  return out.filter(t => !risky(t) || (userRisky && fromRequest.has(t))).slice(0, MAX_SUGGESTIONS)
+    .map(text => ({ text, ...(following.has(text) ? { follows: true as const } : {}), ...(answering.has(text) ? { answers: true as const } : {}) }));
 }
 
 /**

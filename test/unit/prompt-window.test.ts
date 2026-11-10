@@ -267,6 +267,13 @@ describe("consent cards", () => {
     expect(validPromptCard({ id: "c", kind: "consent-direct", consent: { ...commandsCard(), title: "Changed" } })).toBe(false);
   });
 
+  it("shows an SSH question whose asker ssh can't show only marked as such (commands-remote-3)", () => {
+    const q = { id: "s", kind: "secret", secret: "other", host: "build-01", prompt: "Password: " };
+    expect(validPromptCard(q)).toBe(true);
+    expect(validPromptCard({ ...q, unmarked: true })).toBe(true);
+    for (const bad of [false, "yes", 1]) expect(validPromptCard({ ...q, unmarked: bad }), String(bad)).toBe(false);
+  });
+
   it("are ready only while shown, in a visible window on top or focused, and go when hidden", () => {
     const { ctl, win } = setup();
     ctl.showConsent(3, commandsCard());
@@ -487,6 +494,17 @@ describe("the window's size", () => {
     expect(PROMPT_SIZE.consent.height).toBeGreaterThanOrEqual(520);
     expect(promptSizeOf({ id: "d", kind: "consent-direct", consent: commandsCard() })).toBe(PROMPT_SIZE.consent);
     expect(promptSizeOf(hostKey())).toBe(PROMPT_SIZE.card);
+    // A long question (a two-factor menu) gets the height its quote needs, so the whole of it and the line after it
+    // show before the person answers, up to the consent card's height (commands-remote-r4).
+    const duo = "Duo two-factor login for deploy\n\nEnter a passcode or select one of the following options:\n\n 1. Duo Push to XXX-XXX-1234\n 2. Phone call to XXX-XXX-1234\n\nPasscode or option (1-2):";
+    const secret = (prompt: string, unmarked: boolean) => ({ id: "s", kind: "secret" as const, secret: "other" as const, host: "build-01", prompt, ...(unmarked ? { unmarked: true as const } : {}) });
+    const tall = promptSizeOf(secret(duo, true));
+    expect(tall.width).toBe(PROMPT_SIZE.card.width);
+    expect(tall.height).toBeGreaterThanOrEqual(PROMPT_SIZE.card.height + 6 * 18);
+    expect(tall.height).toBeLessThanOrEqual(PROMPT_SIZE.consent.height);
+    expect(promptSizeOf(secret(duo, false)).height).toBeGreaterThan(PROMPT_SIZE.card.height);
+    expect(promptSizeOf(secret("deploy@build-01's password:", true))).toBe(PROMPT_SIZE.card);
+    expect(promptSizeOf(secret(Array.from({ length: 80 }, (_, k) => `line ${k}`).join("\n"), true)).height).toBe(PROMPT_SIZE.consent.height);
     // A window without the hook (tests, an older factory) is shown as before.
     const plain = setup();
     plain.ctl.showConsent(2, commandsCard());

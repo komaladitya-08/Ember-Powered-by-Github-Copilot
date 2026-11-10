@@ -10,7 +10,7 @@ const fakes = vi.hoisted(() => ({ execFile: vi.fn(), spawn: vi.fn() }));
 vi.mock("node:child_process", async importOriginal => ({ ...(await importOriginal<typeof import("node:child_process")>()), execFile: fakes.execFile, spawn: fakes.spawn }));
 
 import { linuxSystem, type LinuxSystemIO } from "../../app/main/platform/linux/system";
-import { accessibilityProbe, linuxEnvironment, type ExecSync } from "../../app/main/platform/linux/environment";
+import { accessibilityProbe, linuxEnvironment, type ExecAsync, type ExecSync } from "../../app/main/platform/linux/environment";
 import { linuxDoctorProbes } from "../../app/main/platform/linux/doctor-probes";
 import type { PlatformDeps } from "../../app/main/platform/types";
 import { SETTINGS, findApp, hasBuiltInShell, isTerminalApp, listApps, programsOf, type DesktopApp } from "../../app/main/hands/system";
@@ -129,7 +129,8 @@ describe("settings", () => {
       cb(null, args[0] === "get" ? values[args[2]] : "", "");
     });
     expect(await s.change("night_light", "on")).toEqual({ before: "false", after: "true" });
-    expect(fakes.execFile.mock.calls.map(c => [c[0], ...c[1]].join(" "))).toEqual([
+    // (The setup check's background look for pyatspi, started as the platform is made, is its own test's: rp-1.)
+    expect(fakes.execFile.mock.calls.filter(c => c[0] === "gsettings").map(c => [c[0], ...c[1]].join(" "))).toEqual([
       "gsettings writable org.gnome.settings-daemon.plugins.color night-light-enabled",
       "gsettings get org.gnome.settings-daemon.plugins.color night-light-enabled",
       "gsettings set org.gnome.settings-daemon.plugins.color night-light-enabled true",
@@ -241,12 +242,93 @@ describe("the setup-check inputs", () => {
     t = 30_001;
     probe();
     expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(2);
+    // Check again (first-run-6): looked for at once, however soon after the last try.
+    t = 30_002;
+    probe(true);
+    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(3);
+    // And the setup check's own read passes Check again's `fresh` through to it.
+    const viaEnv = execFake({});
+    const read = linuxEnvironment({ env: { EMBER_PYTHON: "/opt/py" }, platform: "linux", exec: viaEnv.exec, readFile: () => "", report: () => undefined, now: () => 0 });
+    read({ windows: null });
+    read({ windows: null });
+    expect(viaEnv.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(1);
+    read({ windows: null, fresh: true });
+    expect(viaEnv.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(2);
     const found = execFake({ "python3 -c import pyatspi": "" });
     const once = accessibilityProbe({ env: { EMBER_PYTHON: "python3" }, exec: found.exec, now: () => t });
     expect(once()).toEqual({ enabled: null, pyatspi: true });
     t += 100_000;
     once();
     expect(found.calls.filter(c => c.cmd === "python3")).toHaveLength(1);
+  });
+
+  it("never makes a status read wait on a pyatspi import that hangs once the first answer is in (rp-1)", async () => {
+    let t = 0;
+    const fake = execFake({ "gsettings get org.gnome.desktop.interface toolkit-accessibility": "true\n" });
+    const asked: string[] = [];
+    const settles: ((found: boolean) => void)[] = [];
+    const run: ExecAsync = (cmd, args) => {
+      asked.push([cmd, ...args].join(" "));
+      return new Promise<void>((resolve, reject) => { settles.push(found => (found ? resolve() : reject(new Error("No module named 'pyatspi'")))); });
+    };
+    const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run, now: () => t });
+    // Asked as Ember starts, in the background: usually answered before the first read.
+    expect(asked).toEqual(["/opt/py -c import pyatspi"]);
+    settles[0](false);
+    await Promise.resolve(); await Promise.resolve();
+    expect(probe()).toEqual({ enabled: true, pyatspi: false });
+    // While it is missing it is asked again every 30 s, never on the main thread: a read returns what is known now.
+    t = 30_001;
+    expect(probe().pyatspi).toBe(false);
+    expect(asked).toHaveLength(2);
+    t = 60_002;
+    // (Still hanging: not asked a third time meanwhile.)
+    expect(probe().pyatspi).toBe(false);
+    expect(asked).toHaveLength(2);
+    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(0);
+    settles[1](true);
+    await Promise.resolve(); await Promise.resolve();
+    expect(probe().pyatspi).toBe(true);
+  });
+
+  it("looks for pyatspi in the background when the user checks again, and never imports it in the read (reliability-performance-r2)", async () => {
+    const fake = execFake({ "gsettings get org.gnome.desktop.interface toolkit-accessibility": "true\n" });
+    const asked: string[] = [];
+    const settles: ((found: boolean) => void)[] = [];
+    const run: ExecAsync = (cmd, args) => {
+      asked.push([cmd, ...args].join(" "));
+      return new Promise<void>((resolve, reject) => { settles.push(found => (found ? resolve() : reject(new Error("No module named 'pyatspi'")))); });
+    };
+    const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run, now: () => 1000 });
+    settles[0](false);
+    await Promise.resolve(); await Promise.resolve();
+    // Check again's own read returns at once with what is known: no import on the main thread (it hung for 5 s).
+    expect(probe(true)).toEqual({ enabled: true, pyatspi: false });
+    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(0);
+    // Its look runs in the background, a second press joins it, and the check waits for that answer, off the main thread.
+    let answered = false;
+    const looked = probe.again().then(() => { answered = true; });
+    void probe.again();
+    expect(asked).toEqual(["/opt/py -c import pyatspi", "/opt/py -c import pyatspi"]);
+    await Promise.resolve();
+    expect(answered).toBe(false);
+    settles[1](true);
+    await looked;
+    expect(probe(true).pyatspi).toBe(true);
+    // Once pyatspi is there, checking again has nothing to wait for.
+    await probe.again();
+    expect(asked).toHaveLength(2);
+    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(0);
+    // The platform's lookAgain is the same look.
+    const sys = linuxSystem(deps(), { exec: fake.exec, run });
+    expect(sys.lookAgain).toBeTypeOf("function");
+  });
+
+  it("answers the first read itself when the background look hasn't yet, as before (rp-1)", () => {
+    const fake = execFake({ "/opt/py -c import pyatspi": "" });
+    const probe = accessibilityProbe({ env: { EMBER_PYTHON: "/opt/py" }, exec: fake.exec, run: () => new Promise<void>(() => undefined), now: () => 0 });
+    expect(probe()).toEqual({ enabled: null, pyatspi: true });
+    expect(fake.calls.filter(c => c.cmd === "/opt/py")).toHaveLength(1);
   });
 
   it("leave accessibility out on an OS that isn't Linux (an unknown OS gets the Linux object)", () => {
@@ -372,10 +454,14 @@ describe("voice, privacy, clipboard and lifecycle", () => {
     for (const w of [{ app: "polkit-gnome-authentication-agent-1" }, { title: "Authentication Required" }, { app: "gedit", title: "notes" }]) {
       expect(s.privacy.isSecurityWindow(w), JSON.stringify(w)).toBe(isSecurityWindow(w));
     }
+    // A prompt's own window stops all reading while it is up, focused or not: only the prompts (safety-privacy-3).
+    for (const app of ["pinentry-gtk-2", "gnome-ssh-askpass", "polkit-gnome-authentication-agent-1", "gcr-prompter"]) expect(s.privacy.isPromptWindow?.({ app }), app).toBe(true);
+    for (const app of ["firewall-config", "gnome-shell", "gedit"]) expect(s.privacy.isPromptWindow?.({ app }), app).toBe(false);
     expect(s.clipboardFormats).toBe(CLIPBOARD_FORMATS.linux);
     const l = s.lifecycle;
-    expect({ ...l, ensureShortcut: undefined, focusOwnApp: undefined }).toEqual({ appUserModelId: null, appMenu: false, reopenShowsSettings: false, sessionEnd: null,
-      activateOwnWithInput: true, activateForAsk: true, ensureShortcut: undefined, focusOwnApp: undefined });
+    expect({ ...l, ensureShortcut: undefined, focusOwnApp: undefined, watchDisplay: undefined }).toEqual({ appUserModelId: null, appMenu: false, reopenShowsSettings: false,
+      sessionEnd: "display-gone", activateOwnWithInput: true, activateForAsk: true, ensureShortcut: undefined, focusOwnApp: undefined, watchDisplay: undefined });
+    expect(l.watchDisplay).toBeTypeOf("function");
     expect(l.askMicrophone).toBeUndefined();
     expect(() => { l.ensureShortcut(); l.focusOwnApp(); }).not.toThrow();
   });

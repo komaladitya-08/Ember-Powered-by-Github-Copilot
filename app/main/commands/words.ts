@@ -24,6 +24,14 @@ export interface Arg {
   fetch?: boolean;
   /** PowerShell: this token is a parameter name (`-Path`, without its dash); its value, if attached (`-Path:x`), is v. */
   param?: string;
+  /**
+   * A POSIX word with v null: its text as written pieces and the variables in it (`{ name }`; null for an expansion
+   * that isn't a plain variable), so Ember's own refusal can be judged against values the text gives those variables.
+   * `cut`: a cut or a default (`${d%x}`, `${d:-x}`) that may be other text than the values; `value`: the value the
+   * scope knows (HOME, PWD) in place of the text's (commands-remote-w5-1, w5-3); `alt`: a default's text, resolved
+   * (`${XDG_CONFIG_HOME:-$HOME/.config}`: commands-remote-v4-4).
+   */
+  parts?: readonly (string | { name: string | null; cut?: true; value?: string; alt?: string })[];
 }
 
 /** A literal argument (tests, wrappers that build words). */
@@ -38,10 +46,32 @@ export interface OptSpec {
   shortValue?: string;
   /** Long options that take a value, without `--` (`--file FILE` or `--file=FILE`). */
   longValue?: readonly string[];
-  /** Long options that may take a value only when attached (`--color=auto`). */
+  /**
+   * Long options that may take a value only when attached (`--color=auto`, GNU's `--backup[=CONTROL]`): written alone
+   * they take none and the next word is an operand, so they never belong in longValue (commands-remote-c4-3).
+   */
   longOptional?: readonly string[];
+  /**
+   * Short options whose value is only ever attached (`-l5`, `-i{}`, `-S<key>`): written alone they take none and the
+   * next word is the command or an operand (commands-remote-c4-1).
+   */
+  shortOptional?: string;
+  /**
+   * Short options that take the next word as their value only when it is a number, a processor count's substitution,
+   * an arithmetic expansion or a variable (make's `-j 4`, `-j $(nproc)` and `-j $JOBS`, as make took them before round
+   * six, but `-j install`); attached, only a count (countWord) is their value (commands-a7-1).
+   */
+  shortNumeric?: string;
+  /** Long options that take the next word as shortNumeric's do (make's `--jobs 4`). */
+  longNumeric?: readonly string[];
   /** Stop at the first operand (the rest belongs to a command it runs: sudo, env, xargs, ssh). */
   stopAtOperand?: boolean;
+  /**
+   * With stopAtOperand: the job-count options (`P`, `max-procs`) whose value attached as a count (countWord) leaves the
+   * command after it found (`xargs -P$(nproc) echo`); any other value attached from text Ember can't see may hold the
+   * command (commands-a7-1).
+   */
+  jobCounts?: readonly string[];
   /** Single-dash long options (`-name`, `-exec`: find, Java-style tools) are not split into letters. */
   singleDashLong?: boolean;
 }
@@ -52,6 +82,8 @@ export interface Opt {
   name: string;
   /** Its value, when it takes one (null: unresolved). */
   value?: string | null;
+  /** An unresolved value attached to it (`--arg-file="$d/x"`): its pieces, as Arg.parts (commands-remote-w5-6). */
+  parts?: Arg["parts"];
   /** The index of the argument it came from. */
   at: number;
 }
@@ -66,6 +98,71 @@ export interface Parsed {
   missingValue: boolean;
 }
 
+/** A command that prints the number of processors (`nproc`, `getconf _NPROCESSORS_ONLN`, `sysctl -n hw.ncpu`). */
+const CPU_COUNT = String.raw`\s*(nproc(\s+--(all|ignore=\d+))*|getconf\s+_?NPROCESSORS_ONLN|sysctl\s+-n\s+hw\.(ncpu|logicalcpu|physicalcpu|activecpu))\s*`;
+/**
+ * A word that is only a processor count's substitution, an arithmetic expansion or a variable, quoted or not: the word
+ * make's `-j` takes apart, as it did before round six; any other substitution may print a target (`make -j
+ * "$(printf deploy)"`), and the row judges whatever is not a count (commands-remote-w5-2, commands-a7-1).
+ */
+const COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|\$\(\([^()]*\)\)|` + "`" + CPU_COUNT + "`" + String.raw`|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"?$`);
+/**
+ * A word that is only a processor count's substitution, quoted or not (`$(nproc)`, `` `getconf _NPROCESSORS_ONLN` ``):
+ * a plain number, whatever option it is given to or stands alone, so no file or command hides in it
+ * (commands-remote-r5-3).
+ */
+export const CPU_COUNT_WORD = new RegExp(String.raw`^"?(\$\(${CPU_COUNT}\)|` + "`" + CPU_COUNT + "`" + String.raw`)"?$`);
+
+/**
+ * Whether a job count as written is only a count (commands-a7-1): a number, a processor count's substitution or
+ * arithmetic of numbers, quoted or not, with blanks round it or not. Never a variable, whatever the command set it to:
+ * Ember doesn't follow what a variable holds to loosen a judgement, so one is judged as the word it is.
+ */
+export function countWord(raw: string): boolean {
+  const v = raw.replace(/^"([^"]*)"$/, "$1").replace(/^[ \t\n]+|[ \t\n]+$/g, "");
+  return /^\d+(\.\d+)?$/.test(v) || CPU_COUNT_WORD.test(v) || /^\$\(\([\d\s+\-*/%]*\)\)$/.test(v);
+}
+
+/** The text of an option's value attached to it as written (`-P"$N"` → `"$N"`, `--jobs=$X` → `$X`). */
+function attachedRaw(raw: string, name: string): string {
+  return name.startsWith("--") ? raw.slice(raw.indexOf("=") + 1) : raw.slice(raw.indexOf(name[1], 1) + 1);
+}
+
+/**
+ * The option a word Ember can't see stands for when a count is attached to it (`-j$(nproc)`, `-j"$((2*4))"`,
+ * `--parallel=$(nproc)`, `--max-workers=$(nproc)`): a numeric option takes any count (countWord), an option that takes
+ * a value only a processor count. Its value is unseen, its pieces kept (commands-remote-r5-3). A variable there is no
+ * count, so the word is an operand, as it was on main (commands-a7-1).
+ */
+function attachedCount(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
+  const long = /^--([A-Za-z][A-Za-z0-9-]*)=(.+)$/s.exec(a.raw);
+  const parts = (a.parts ?? []).slice();
+  const cut = (n: number): Arg["parts"] => {
+    const first = typeof parts[0] === "string" ? parts[0].slice(n) : "";
+    return [...(first ? [first] : []), ...parts.slice(typeof parts[0] === "string" ? 1 : 0)];
+  };
+  if (long) {
+    const numeric = (spec.longNumeric ?? []).includes(long[1]);
+    if (!(numeric ? countWord(long[2]) : CPU_COUNT_WORD.test(long[2])) || !(numeric || (spec.longValue ?? []).includes(long[1]))) return null;
+    return [{ name: `--${long[1]}`, value: null, parts: cut(long[1].length + 3) }];
+  }
+  const short = /^-([A-Za-z0-9]+)(.+)$/s.exec(a.raw);
+  if (!short || a.raw.startsWith("--")) return null;
+  const out: Omit<Opt, "at">[] = [];
+  for (let j = 0; j < short[1].length; j++) {
+    const c = short[1][j];
+    const numeric = (spec.shortNumeric ?? "").includes(c);
+    if (numeric || (spec.shortValue ?? "").includes(c)) {
+      // The count must be all that follows the letter.
+      const rest = short[1].slice(j + 1) + short[2];
+      return (numeric ? countWord(rest) : CPU_COUNT_WORD.test(rest)) ? [...out, { name: `-${c}`, value: null, parts: cut(j + 2) }] : null;
+    }
+    if ((spec.shortOptional ?? "").includes(c)) return null;
+    out.push({ name: `-${c}` });
+  }
+  return null;
+}
+
 /**
  * Parses options GNU-style (clusters, attached values, `--` ends options, options after operands unless
  * stopAtOperand). Unknown options count as flags. An unresolved argument (null) is an operand.
@@ -76,7 +173,13 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
   let restAt = args.length;
   let missingValue = false;
   const shortValue = spec.shortValue ?? "";
+  const shortOptional = spec.shortOptional ?? "";
+  const shortNumeric = spec.shortNumeric ?? "";
   const longValue = new Set(spec.longValue ?? []);
+  const longNumeric = new Set(spec.longNumeric ?? []);
+  // A word Ember can't see that is only a processor count's substitution or a variable (`$(nproc)`, `` `nproc` ``,
+  // `"$JOBS"`) is the usual job count, as a number is; a literal word (`install`) is still a target (commands-remote-v5-4).
+  const numberNext = (k: number): boolean => k + 1 < args.length && (/^\d+(\.\d+)?$/.test(args[k + 1].v ?? "") || (args[k + 1].v === null && COUNT_WORD.test(args[k + 1].raw)));
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
     const v = a.v;
@@ -85,6 +188,26 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       if (spec.stopAtOperand) restAt = k + 1;
       break;
     }
+    // Before a command, a word Ember can't see all of that starts as an option with its value attached
+    // (`--arg-file="$d/x"`, `-a"$d/x"`) is that option, its value unseen, so the command after it is still found and
+    // the value judged by its pieces (commands-remote-w5-6).
+    const attached = v === null && spec.stopAtOperand && !a.param ? attachedOption(a, spec) : null;
+    if (attached) {
+      opts.push(...attached.map(o => ({ ...o, at: k })));
+      // Unless the value is only a job count (`-P$(nproc)`, `-P"$((2*4))"`), it is text Ember can't see, which the shell
+      // may split into more words, the first of them the command (`X='1 rm'; xargs -n$X echo` runs rm): what runs is a
+      // command Ember can't name, as on main, quoted or not, and the value is still judged by its pieces for Ember's own
+      // refusal (commands-z6-4, commands-a7-1).
+      const last = attached[attached.length - 1].name;
+      if (!((spec.jobCounts ?? []).includes(last.replace(/^--?/, "")) && countWord(attachedRaw(a.raw, last)))) {
+        restAt = k;
+        for (let j = k; j < args.length; j++) operands.push(args[j]);
+        break;
+      }
+      continue;
+    }
+    const counted = v === null && !a.param ? attachedCount(a, spec) : null;
+    if (counted) { opts.push(...counted.map(o => ({ ...o, at: k }))); continue; }
     if (v === null || !v.startsWith("-") || v === "-") {
       if (spec.stopAtOperand) {
         restAt = k;
@@ -101,12 +224,19 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       if (eq >= 0) opts.push({ name, value: body.slice(eq + 1), at: k });
       else if (longValue.has(name.slice(2))) {
         if (k + 1 < args.length) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else { opts.push({ name, value: null, at: k }); missingValue = true; }
-      } else opts.push({ name, at: k });
+      } else if (longNumeric.has(name.slice(2)) && numberNext(k)) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else opts.push({ name, at: k });
       continue;
     }
     // A short cluster: -rf, -fFILE, -C dir.
     for (let j = 1; j < v.length; j++) {
       const c = v[j];
+      // GNU's optional values (`-l[N]`): the rest of the word, never the next one.
+      if (shortOptional.includes(c) || shortNumeric.includes(c)) {
+        const attached = v.slice(j + 1);
+        if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
+        else if (shortNumeric.includes(c) && numberNext(k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else opts.push({ name: `-${c}`, at: k });
+        break;
+      }
       if (shortValue.includes(c)) {
         const attached = v.slice(j + 1);
         if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
@@ -117,6 +247,30 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
     }
   }
   return { opts, operands, restAt, missingValue };
+}
+
+/**
+ * The options a word Ember can't see all of stands for when its written start is an option whose value is attached
+ * (`--arg-file="$d/x"`, `-a"$d/x"`, `-0a"$d"`), the value's pieces kept; null when it isn't one (`-$x`, `--$x`, `-r$x`).
+ */
+function attachedOption(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
+  const parts = a.parts ?? [];
+  let n = 0;
+  let lead = "";
+  for (; n < parts.length && typeof parts[n] === "string"; n++) lead += parts[n] as string;
+  const rest = parts.slice(n);
+  if (rest.length === 0) return null;
+  const long = /^--([A-Za-z][A-Za-z0-9-]*)=/.exec(lead);
+  if (long) return [{ name: `--${long[1]}`, value: null, parts: [lead.slice(long[0].length), ...rest] }];
+  if (!/^-[A-Za-z0-9]/.test(lead) || lead.startsWith("--")) return null;
+  const takes = `${spec.shortValue ?? ""}${spec.shortOptional ?? ""}${spec.shortNumeric ?? ""}`;
+  const out: Omit<Opt, "at">[] = [];
+  for (let j = 1; j < lead.length; j++) {
+    const c = lead[j];
+    if (takes.includes(c)) return [...out, { name: `-${c}`, value: null, parts: [lead.slice(j + 1), ...rest] }];
+    out.push({ name: `-${c}` });
+  }
+  return null;
 }
 
 /** Whether a parsed line has a short option (`"r"`) or a long one (`"recursive"`, also when abbreviated to 3+ letters). */
@@ -281,6 +435,16 @@ export function nameNamed(name: string, words: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * A path as the card says it (commands-remote-v1): "." and "./" are the current folder and ".." the folder above it,
+ * since "Deletes what it finds under .." reads as the folder above. Any other path is said as written.
+ */
+export function shownPath(text: string): string {
+  if (/^\.[\\/]*$/.test(text)) return "the current folder";
+  if (/^\.\.[\\/]*$/.test(text)) return "the folder above the current one";
+  return text;
 }
 
 /** "a", "a and b", "a, b and c"; more than `max` items end "and N more". */

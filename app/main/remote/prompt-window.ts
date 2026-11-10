@@ -59,11 +59,26 @@ export interface Rect { x: number; y: number; width: number; height: number }
  * key path, larger text, a short screen) keeps the yes off until it has been read (copy.ts readThrough).
  */
 export const PROMPT_SIZE = { card: { width: 440, height: 300 }, consent: { width: 520, height: 600 } } as const;
-export type PromptSize = (typeof PROMPT_SIZE)[keyof typeof PROMPT_SIZE];
+export type PromptSize = { readonly width: number; readonly height: number };
 
-/** The size a card's window takes. */
-export const promptSizeOf = (card: PromptCard): PromptSize =>
-  (card.kind === "consent" || card.kind === "consent-direct" || card.kind === "approval" ? PROMPT_SIZE.consent : PROMPT_SIZE.card);
+/** A quoted question's line height and about how many of its 12 px monospace characters fit a line of the small card. */
+const QUOTE_LINE = 18;
+const QUOTE_COLS = 54;
+/** The lines of a quote the small card shows whole with the words around it (one before OpenSSH 8.5, measured: r4). */
+const QUOTE_FITS = 1;
+
+/**
+ * The size a card's window takes. An SSH question longer than the small card shows (a two-factor menu) gets the
+ * height its quote needs, up to the consent card's, so the person can read all of it before they answer
+ * (commands-remote-r4); fitBounds then keeps it inside the work area.
+ */
+export const promptSizeOf = (card: PromptCard): PromptSize => {
+  if (card.kind === "consent" || card.kind === "consent-direct" || card.kind === "approval") return PROMPT_SIZE.consent;
+  if (card.kind !== "secret") return PROMPT_SIZE.card;
+  const lines = card.prompt.split(/\r?\n/).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / QUOTE_COLS)), 0);
+  const extra = lines - QUOTE_FITS;
+  return extra > 0 ? { width: PROMPT_SIZE.card.width, height: Math.min(PROMPT_SIZE.consent.height, PROMPT_SIZE.card.height + extra * QUOTE_LINE) } : PROMPT_SIZE.card;
+};
 
 /** Bounds for a window of `size`, centred where the window is now, inside `area` (with `margin` where there is room). */
 export function fitBounds(now: Rect, size: { width: number; height: number }, area: Rect, margin = 16): Rect {
@@ -131,7 +146,7 @@ export function validPromptCard(c: unknown): c is PromptCard {
     case "host-key-changed": case "touch": return host;
     case "secret":
       return host && ["password", "passphrase", "code", "other"].includes(c.secret as string) && str(c.prompt, 2000)
-        && (c.via === undefined || str(c.via, 255, 1)) && (c.login === undefined || str(c.login, 255, 1));
+        && (c.via === undefined || str(c.via, 255, 1)) && (c.login === undefined || str(c.login, 255, 1)) && (c.unmarked === undefined || c.unmarked === true);
     case "consent": return typeof c.n === "number" && Number.isSafeInteger(c.n) && c.n >= 0 && validConsent(c.consent);
     case "consent-direct": return validConsent(c.consent);
     case "approval": return Number.isSafeInteger(c.n) && (c.n as number) >= 0 && str(c.title, 2000, 1) && str(c.prompt, 100_000, 1)

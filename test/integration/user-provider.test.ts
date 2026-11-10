@@ -116,6 +116,8 @@ describe("the user's own model provider on the real Copilot runtime", () => {
       setState: p => states.push(p), onStatus: st => phases.push(`${st.phase}${st.reason ? `/${st.reason}` : ""}: ${st.detail}`),
       onTurnEnd: () => { turnsEnded++; },
       provider: () => activeProvider({ fixed: null, settings: settings.get(), admin: NONE, key }),
+      // Asked first, as main does for a server on this computer: it answers, so Ember connects (integrations-1).
+      probeProvider: () => testConnection(settings.get().provider, key, globalThis.fetch as unknown as FetchLike),
     });
     try {
       expect(await host.start(null), phases.join("\n")).toBe("ready");
@@ -154,6 +156,34 @@ describe("the user's own model provider on the real Copilot runtime", () => {
     }
   }, 120000);
 
+  it("says the model server on this computer isn't running, not Connected, when nothing listens at its address (integrations-1)", async () => {
+    // A port that was just free: a model server that was stopped.
+    const gone = await startMockLlm({ delayMs: 5 });
+    const baseUrl: string = gone.baseUrl;
+    await gone.close();
+    const userData = fs.mkdtempSync(path.join(dir, "down-"));
+    const settings = new SettingsStore(path.join(userData, "settings.json"));
+    settings.load();
+    const where = endpointHost(baseUrl)!;
+    settings.update({ provider: { ...settings.get().provider, on: true, type: "openai", baseUrl, conductor: "mock-model", consent: { version: FEATURE_CONSENT_VERSION.provider, at: new Date().toISOString(), host: where } } });
+    const phases: string[] = [];
+    const host = new AgentHost({
+      userData, runtimePath: locateRuntime({ appPath: process.cwd(), runtimeId, exe }).path, settings,
+      log: createLogger({ dir: path.join(userData, "logs") }), setState: () => undefined,
+      onStatus: st => phases.push(`${st.phase}${st.reason ? `/${st.reason}` : ""}: ${st.detail}`),
+      provider: () => activeProvider({ fixed: null, settings: settings.get(), admin: NONE, key: null }),
+      // main's probe: the same one GET as Test connection (here Node's fetch, main's is Electron's).
+      probeProvider: () => testConnection(settings.get().provider, null, globalThis.fetch as unknown as FetchLike),
+    });
+    try {
+      expect(await host.start(null), phases.join("\n")).toBe("error");
+      expect(host.getStatus()).toMatchObject({ phase: "error", reason: "network", detail: `Ember can't reach the model server on this computer (${where}). Start it, and Ember will connect in a moment.` });
+      expect(phases.some(p => p.startsWith("ready"))).toBe(false);
+    } finally {
+      await host.stop();
+    }
+  }, 60000);
+
   it("tests the connection with one request to the model list, and sends nothing to a host not agreed to (B1)", async () => {
     const host = endpointHost(mock.baseUrl)!;
     const p = { ...new SettingsStore(path.join(dir, "none.json")).get().provider, on: true, baseUrl: mock.baseUrl };
@@ -163,6 +193,6 @@ describe("the user's own model provider on the real Copilot runtime", () => {
     expect(mock.requests.length).toBe(before);
     const agreed = { ...p, consent: { version: FEATURE_CONSENT_VERSION.provider, at: new Date().toISOString(), host } };
     const r = await testConnection(agreed, { key: KEY, host }, globalThis.fetch as unknown as FetchLike);
-    expect(r).toEqual({ ok: true, host, models: 1 });
+    expect(r).toEqual({ ok: true, host, models: 1, ids: ["mock-model"] });
   });
 });

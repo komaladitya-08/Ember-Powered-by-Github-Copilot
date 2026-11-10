@@ -14,19 +14,19 @@ import { activityItems, planItems } from "./view";
 import { HAND_WORDS, applyViewPatch, diffViews, type ViewDoc } from "../../shared/view";
 import { ViewRenderer, fitView } from "../shared/view-dom";
 import { clockText } from "../../shared/activity";
-import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
+import { Rig, FACTORIES, PRESETS, frameSeconds, restingGap, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
 import { ReasoningBubble, onPress, plainStream, snapToDevice } from "@ember/bubble";
 import { canvasSize, watchPixels } from "../shared/pixels";
 import { LEVEL_STEPS } from "../../shared/level";
-import { TASK_READING_LEASE_MS, TASK_STOPPING, suggestAction, suggestionsShown, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
+import { IDLE_BUBBLE, TASK_READING_LEASE_MS, TASK_STOPPING, suggestAction, suggestionsShown, waitsForWhole, wholeSeenAction, type BubbleBox, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
-import { STATE_WORD, STOP_ACK_MS, cardLines, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
+import { STOP_ACK_MS, cardLines, cardStateWord, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { ArmClock, TASK_ARM_MS } from "../handle/arm";
 
 /** The bubble's Try again and Stop ignore presses for a moment after they come up, as a task card's buttons do. */
 const bubbleArm = new ArmClock();
 import { shortWhere, whereText } from "../handle/badge";
-import { bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
+import { askGrew, askGrownInto, askKeepOff, askKeepOffKey, bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace, type AskHeld } from "./layout";
 import { handleCorner, type HandleSide } from "../../shared/handle-place";
 import { presenceOf } from "../../shared/presence";
 import { PresenceView } from "./presence";
@@ -41,6 +41,7 @@ const LIVELY_MS = 22;
  * 10-16 % more of a core than over the old opaque glass (blending what is under the glass at 45 frames a second).
  */
 const TALKING_MS = 33;
+/** A face at rest that isn't Ready, or with the bubble up; an awake Ready face waits restingGap's (about 6 a second: rp-4). */
 const RESTING_MS = 55;
 /** Dozing: the face still settling into sleep. Once it has, nothing is drawn until something happens. */
 const DOZING_MS = 110;
@@ -56,6 +57,9 @@ const bubble = new ReasoningBubble(document.getElementById("bubble-host")!);
 bubble.setVisible(false);
 // All of a question's whole text has been in view here (review #116): main lets its Allow work from then on.
 bubble.onWholeSeen = n => api.bubbleAction(wholeSeenAction(n));
+// An answer opened in full showed its last line here (scrolled to its end, or all of it showed): main's Ask box may
+// offer what answers it (companion-v6-2). Said with the bubble's box (reportBubble), whether or not Ember is drawn.
+bubble.onEndShown = () => reportBubble(bubble.rect());
 const statusEl = document.getElementById("status")!;
 const tasksEl = document.getElementById("tasks")!;
 const focusEl = document.getElementById("focus")!;
@@ -104,6 +108,12 @@ let statusClear: ReturnType<typeof setTimeout> | null = null;
 /** The windows main names (the settings window while the user works in it), in this overlay's coordinates. */
 let windows: Rect[] = [];
 let avoidKey = "null";
+/** The Ask box the bubble keeps off, and for which question it was held (askKeepOff). */
+let askHeld: AskHeld = { box: null, question: "" };
+/** The open Ask box (in avoid) the bubble may go above or below: one it grew into (askGrownInto's `grew`). */
+let askAcross: Rect[] = [];
+/** The bubble as the last drawing showed it (global DIP, null: not shown), and which it was (askKeepOffKey): askGrew. */
+let askSeen: { key: string; at: Rect | null } = { key: "", at: null };
 
 function applyReducedMotion(): void {
   rig.reducedMotion = reducedMotionQuery.matches || settings?.reduceMotion === true;
@@ -191,6 +201,7 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
     bubble.setMood(b.mood);
     bubble.setRisky(b.risky === true);
     bubble.setAutonomous(b.autonomous === true);
+    bubble.setStalled(b.stalled === true);
     showWhere(b.where, b.title);
     bubble.setTitle(b.title);
     // The finished answer arrives plain; the tail shown while it streams may still carry markdown.
@@ -343,6 +354,15 @@ function measureTasks(): void {
   avoidKey = keepOffKey(state);
   windows = (state?.avoid ?? []).map(r => ({ x: r.x - bounds.x, y: r.y - bounds.y, width: r.width, height: r.height }));
   list.push(...windows);
+  // The open Ask box: kept off where the bubble can, never hidden from (the box is where the user answers it), and a
+  // bubble already shown doesn't move for it (companion-c1-1, companion-c2-4); one opened in full while it is open may go
+  // across it (companion-c5-1), and once it closes, one cut short or narrowed for it shows whole where it can
+  // (companion-v6-3, companion-repairs-x6-2), keeping off the box again if it opens on it there (companion-repairs-x6-1),
+  // as any opened in full does where the box comes over it (companion-y6-1, companion-z6-1).
+  askHeld = askKeepOff(state?.askBox ?? null, askKeepOffKey(state?.bubble ?? IDLE_BUBBLE), askHeld, state?.bubble.expanded === true, bubble.clipped(), bubbleAt());
+  const askAt = askHeld.box && { x: askHeld.box.x - bounds.x, y: askHeld.box.y - bounds.y, width: askHeld.box.width, height: askHeld.box.height };
+  if (askAt) list.push(askAt);
+  askAcross = askAt && askHeld.grew ? [askAt] : [];
   // The control Ember works on: the bubble keeps off its ring (what Ember is about to click, or is showing you) where
   // it can do that and still keep off the handle, the cards and the windows above.
   const f = state?.focus;
@@ -403,8 +423,27 @@ setInterval(reportReading, TASK_READING_LEASE_MS / 3);
 document.addEventListener("visibilitychange", reportReading);
 window.addEventListener("pagehide", () => { for (const id of readingCards) api.taskReading(id, false); readingCards.clear(); });
 
-/** What the bubble keeps off besides the cards: the windows main names and the control Ember works on. */
-const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null]);
+/** The bubble where it is now, in global DIP (null: not shown). */
+function bubbleAt(): Rect | null {
+  const r = bubble.rect();
+  return r && { x: r.x + bounds.x, y: r.y + bounds.y, width: r.width, height: r.height };
+}
+
+/**
+ * A bubble growing on its own (askGrew: its words stream in, or it finishes) that has grown into the open Ask box keeps
+ * off the box where it is now (askGrownInto, companion-c3-1): what it keeps off is measured again. True when it was.
+ */
+function grewIntoAsk(): boolean {
+  const b = state?.bubble ?? IDLE_BUBBLE, at = bubbleAt(), key = askKeepOffKey(b);
+  const next = askGrownInto(askHeld, state?.askBox ?? null, at, askGrew(b, askSeen.key === key ? askSeen.at : null, at));
+  if (next === askHeld) return false;
+  askHeld = next;
+  measureTasks();
+  return true;
+}
+
+/** What the bubble keeps off besides the cards: the windows main names, the open Ask box and the control Ember works on. */
+const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null, s?.askBox ?? null, askKeepOffKey(s?.bubble ?? IDLE_BUBBLE)]);
 const cards = new Map<string, CardEls>();
 let tasksKey = "";
 /** The cards in stack order (top first), as last rendered. */
@@ -655,7 +694,8 @@ function renderTasks(tasks: TaskCard[]): boolean {
       setTimeout(() => { delete li.dataset.justDone; }, 700);
     }
     c.li.dataset.status = t.status;
-    if (c.state.textContent !== STATE_WORD[t.status]) c.state.textContent = STATE_WORD[t.status];
+    const said = cardStateWord(t);
+    if (c.state.textContent !== said) c.state.textContent = said;
     const where = whereText(t.where) ?? "";
     if (c.where.textContent !== where) c.where.textContent = where;
     c.where.hidden = !where;
@@ -799,10 +839,13 @@ function requestDraw(delay = 0): void {
 }
 
 let last = performance.now();
+/** The resting gap the last drawing waited for (restingGap's, else 0): its time passes in full (frameSeconds). */
+let planned = 0;
 function draw(now: number): void {
   rafPending = false;
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.1));
+  const dt = frameSeconds(now - last, planned);
   last = now;
+  planned = 0;
   const size = settings?.size ?? 60;
   const scale = size / 100;
 
@@ -858,7 +901,10 @@ function draw(now: number): void {
     // Conversation section has its words); a question stays, wherever it must go.
     // (An answer opened in full is pinned: it stays on screen too.)
     const asks = !!state?.bubble.actions.some(a => !a.id.startsWith("ui:")) || state?.bubble.expanded === true;
-    if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff)) interactiveDirty = true;
+    if (showBubble && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff, askAcross)) interactiveDirty = true;
+    // Grown into the open Ask box as its words stream in or it finishes: placed again, clear of the box, before this
+    // frame shows.
+    if (showBubble && grewIntoAsk() && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff, askAcross)) interactiveDirty = true;
     // Beside a control (a guide's step, a click) or asking, Ember holds still where the user may click, and may hide
     // another control (a form's Submit next to the button it points at): its body then catches clicks, so one on
     // Ember never lands on what it hides. Following the cursor, it lets them through; and sitting on the control
@@ -875,7 +921,11 @@ function draw(now: number): void {
     const lively = busy || talking;
     // Asleep and settled: the last frame stays, and nothing is drawn until Ember or the cursor moves or the state
     // changes (onFrame, onState). Drawing on at 110 ms cost idle wakeups for a picture that didn't change.
-    if (!(rig.asleep && rig.settled && !urgent && !lively)) requestDraw(urgent ? 0 : busy ? LIVELY_MS : talking ? TALKING_MS : rig.asleep ? DOZING_MS : RESTING_MS);
+    // Awake at rest with no bubble up, only the breath and the idle float move: drawn about 6 times a second, waking for
+    // the next blink or fidget (restingGap). At 55 ms the overlay drew 23-24 times a second for that (rp-4).
+    const rest = showBubble ? RESTING_MS : restingGap(rig, RESTING_MS);
+    if (!urgent && !lively && !rig.asleep && rest > RESTING_MS) planned = rest;
+    if (!(rig.asleep && rig.settled && !urgent && !lively)) requestDraw(urgent ? 0 : busy ? LIVELY_MS : talking ? TALKING_MS : rig.asleep ? DOZING_MS : rest);
   } else {
     // Hidden or on another display: sleep until a frame brings Ember here.
     showStage(false);
@@ -886,6 +936,28 @@ function draw(now: number): void {
   bubble.setVisible(showBubble);
   if (showBubble !== bubbleShown) { bubbleShown = showBubble; interactiveDirty = true; }
   reportInteractive();
+  reportBubble(showBubble ? bubble.rect() : null);
+  // The bubble as this drawing shows it: what it grows from on the next (askGrew).
+  askSeen = { key: askKeepOffKey(state?.bubble ?? IDLE_BUBBLE), at: showBubble ? bubbleAt() : null };
+}
+
+/** What main last heard of the bubble's box, the box to tell it next, and the timer that will. */
+let bubbleSent = "null";
+let bubbleNext: BubbleBox | null = null;
+let bubbleTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Tells main where the bubble is (global DIP), so the Ask box opens clear of it (companion-1): at once when it shows or
+ * goes, at most every 100 ms while it moves with Ember (a frame's move would be an IPC message a frame).
+ */
+function reportBubble(r: Rect | null): void {
+  bubbleNext = r ? { x: Math.round(r.x + bounds.x), y: Math.round(r.y + bounds.y), width: Math.round(r.width), height: Math.round(r.height), ...(bubble.endShown() ? { endShown: true as const } : {}) } : null;
+  const send = () => {
+    const key = JSON.stringify(bubbleNext);
+    if (key !== bubbleSent) { bubbleSent = key; api.setBubble?.(bubbleNext); }
+  };
+  if (JSON.stringify(bubbleNext) === bubbleSent) return;
+  if (!bubbleNext || bubbleSent === "null") { send(); return; }
+  bubbleTimer ??= setTimeout(() => { bubbleTimer = null; send(); }, 100);
 }
 requestDraw();
 

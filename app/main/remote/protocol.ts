@@ -438,7 +438,7 @@ const RunExitSchema = z.object({
   remoteSays: z.array(str(CAPS.str.reason)).max(CAPS.paths).optional(),
 }).strict();
 
-const PathFactSchema = z.object({ exists: z.boolean().nullable(), real: path.nullable() }).strict();
+const PathFactSchema = z.object({ exists: z.boolean().nullable(), real: path.nullable(), dir: z.boolean().optional() }).strict();
 const GitFactsSchema = z.object({ branch: plain(CAPS.str.name).nullable(), pushDefault: plain(64).nullable(), upstream: plain(CAPS.str.name).nullable() }).strict();
 
 const HelloSchema = z.object({

@@ -14,8 +14,11 @@ import { writeAllSync } from "../write-all";
 
 export interface AuditEntry {
   task?: string;
-  /** `autonomy`: "Work without asking" turned on or off (`on`), and how (`via`: home, voice or typed; `verified`). */
-  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy";
+  /**
+   * `autonomy`: "Work without asking" turned on or off (`on`), and how (`via`: home, voice or typed; `verified`).
+   * `read`: a picture of a window went to the model (`kind: "screenshot"`, its app and size, never its title).
+   */
+  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy" | "read";
   [key: string]: unknown;
 }
 
@@ -92,6 +95,8 @@ export class AuditLog {
   /** The newest entries, newest first (for the activity timeline, asked for every few seconds). */
   recent(limit = 100): (AuditEntry & { t: string })[] {
     this.latest ??= this.readNewest(AuditLog.KEEP);
+    // Further back than the newest KEEP (What Ember did's Show earlier): read from the files, not kept in memory.
+    if (limit > AuditLog.KEEP && this.latest.length >= AuditLog.KEEP) return this.readNewest(limit);
     return this.latest.slice(0, limit);
   }
 
@@ -327,7 +332,8 @@ const PLAIN_VALUE_KINDS = new Set(["keys", "scroll", "setting", "open_app", "tog
  * window titles, element names (an email's subject), chosen values (a form's answers) and error messages
  * (they can quote the app's own text) go there as sizes only (the full text stays in ~/.config/ember/audit).
  * A key that types a character goes there as a count like typed text (letters typed one by one would spell it out);
- * shortcuts and keys that edit or move stay. Reasons stay: they are Ember's own words and app names.
+ * shortcuts and keys that edit or move stay. Reasons stay: they are Ember's own words and app names. A command
+ * review's words (`review`) are the model's, and can name the file and the request: a size only (safety-privacy-v1).
  */
 export function journalLine(line: string): string {
   try {
@@ -335,7 +341,7 @@ export function journalLine(line: string): string {
     const size = (o: Record<string, unknown>, k: string) => {
       if (typeof o[k] === "string") { o[`${k}Chars`] = (o[k] as string).length; delete o[k]; }
     };
-    for (const k of ["goal", "summary", "window", "error", "cwd"]) size(e, k);
+    for (const k of ["goal", "summary", "window", "error", "cwd", "review"]) size(e, k);
     // A command's text goes as its size only, as typed text does; the size its entry already gives (before redaction
     // and the 2000-character cut, §3.12) stays.
     if (typeof e.command === "string") { if (typeof e.commandChars !== "number") e.commandChars = e.command.length; delete e.command; }

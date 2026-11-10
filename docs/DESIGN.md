@@ -41,6 +41,18 @@ They share one emotion rig, so switching never changes behaviour.
     sends its level at least every half second, and the rig lets go of one older than 1.5 s, so a voice
     that stops without saying so never leaves the mouth moving; the system's voice gives no level, so
     the mouth keeps its syllable flap;
+  - awake and Ready with nothing passing, only the breath and the idle float move, under a third of a pixel a
+    step: between blinks and fidgets the overlay, the handle and Home's hero draw it about 6 times a second
+    (`restingGap`, `RESTING_FRAME_MS`), waking in time for the next one, where they drew 15–24 times a second. With
+    the blinks and the first minute's fidgets drawn at their own rate, the overlay and the handle still draw 11–16
+    times a second awake at rest (the pointer moves often enough to keep Ember there). The eyes count as still once
+    less than a tenth of a pixel of their travel is left (`LOOK_STILL`), which saves the handle, whose eyes wander
+    because the pointer isn't over it, about a tenth of its drawings (14.7 to 13.6 a second). An idle glance holds its
+    look once the eyes are there, so the rest of its 1.2 s is drawn at the resting rate too, waking as it ends for the
+    eyes to come back (39 drawings a glance to 21; the overlay 13.2–14.1 a second to 10.6–11.5, the whole tree 7.6–8.3 %
+    of a core to 6.0–6.8 %); while Home sits behind the window you are working in, its still faces aren't drawn at all
+    until it takes the focus, the pointer comes over it or something changes (`homeFrameGap`; a glance held there is
+    drawn on, so its eyes come back);
   - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until
     something happens (it drew every 110 ms);
   - while a question is up, the idle float stops and the body's springs settle without wobbling;
@@ -71,23 +83,57 @@ They share one emotion rig, so switching never changes behaviour.
   current step with its reason, and buttons when Ember needs a decision. A finished answer has no
   head at all: it is Ember's bubble, so "Ember" doesn't title it. A question sets its decision (up
   to its "?") in weight 600, what the step does after it, and "Your task: …" under it in the
-  secondary label; its title ("May I?") is the quieter lead-in, its keys show as keycaps under the
-  buttons, four corner brackets lock onto the bubble once (180 ms) and then hold still, and nothing
-  about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
+  secondary label (the task's goal; under a step or command the user didn't ask for, or once text
+  on screen or a command's output tried to steer the task, their own words in curly quotes, never
+  the goal passed off as theirs);
+  its title ("May I?") is the quieter lead-in, its keys show as keycaps under the buttons (under a
+  note's line when a spoken answer wasn't taken, never replaced by it: `stepParts`; on the
+  no-compositor corner card too, above its buttons; on both each chord kept on one line with its word, broken under
+  its keycaps only where it alone is wider than the row, and on the bubble with the " · " between two only where
+  they share a line, and none before the first, which a screen reader read though it was clipped from sight), four corner
+  brackets lock onto the bubble once (180 ms) and then hold still, and nothing about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
   install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
   than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. The
   no-compositor corner card marks it the same way: the tag beside Ember's name and the bordered
-  Allow. A step Ember took **without asking** (Work without asking) shows its announcement with a
+  Allow; in its narrow column each chord is a line of its own, with no " · " left at a line's end, its
+  keycaps together and its words wrapping under them where the column can't hold both (the Shift chords'
+  "shows the next part" at Large and Larger).
+  The card grows for any question (up to 640 px, inside the work area) so its sentence shows
+  whole at Large and Larger text too, and where even that can't hold it, its answers but Not now
+  take no press until the sentence shows. A step Ember took **without asking** (Work without asking) shows its announcement with a
   "Without asking" tag in the accent tint, set only by Ember (`BubbleState.autonomous`): a task's
   own note never carries it. When
   "Thinking…" has heard nothing from Copilot for 10 seconds it says "Still waiting for Copilot…"
-  with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. A problem
+  (or "Still waiting for your model provider…" or "…for the model service…" when that is the one in use) with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. Its step names the keyboard's ways to stop,
+  which the bubble's Stop can't offer ("Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops
+  everything.", each key only while Ember holds it), and screen readers hear the wait and that step once. Meanwhile the
+  settings key opens Home at **Stop response**, whatever pane it was left on, so Enter stops the reply. A problem
   offers **Open settings** where settings can fix it, otherwise **Try again** where asking again is
-  safe (the conversation's own request, whose turn ran no tool). An answer whose turn started a task
+  safe (the conversation's own request, whose turn ran no tool). A request the runtime stopped under
+  before it reached the model keeps its Try again while Ember reconnects, and once Copilot is back
+  the bubble says "I'm connected again. Try again?" (and Home's conversation line for it, "I'm connected again: send
+  it again."). An answer whose turn started a task
   says "Its card in the corner shows how it's going.", so the bubble and the card tell one story. Under a finished
   answer (and only that answer) the bubble may show what you might say next: a caption, "Ember suggests", then up to
   three quiet 24 px capsules (never the accent, never under a question), in its clickable area; the Ask box shows the
-  same as a row of 20 px capsules under its hint line while the field is empty (docs/ASSISTANT.md §7). A question's
+  same as a row of 20 px capsules under its hint line while the field is empty (docs/ASSISTANT.md §7); a typed letter
+  puts them out of sight but keeps their room, so the box and its field don't move. Neither shows any while a question
+  is up, and the box shows the ones that follow the answer ("Close it", "Read it out") only while that answer shows,
+  and the ones that answer its last words, usually an offer ("Yes, please", "No, thanks"), only while those show too:
+  not while the bubble cuts it short under **Read all**, and opened in full only once its last line has been in view,
+  all of it at once or scrolled to (the overlay says so: `endShown`; without a compositor the corner card does, for
+  the words it shows), as one cut short to the room or longer than
+  its sixteen lines isn't at first (`askSuggestions`; a change while a reply is typed waits until the field is
+  cleared). While
+  the box is open its row keeps the room it opened with, rows and all: none to offer puts the row out of sight, fewer
+  keep its height, ones that would need more rows than it opened with wait for its next opening (those it shows that are
+  still offered stay), and ones that come into a box that opened with none wait too, so a question coming or going never
+  moves the field. A box that opens beside an answer still coming in, with none to offer yet, keeps their row's room,
+  empty and out of sight, so the answer's follow-ups land in it, where the keyboard reaches them (the bubble takes no
+  keyboard), and the field doesn't move (`askSuggestionsComing`), but only while **Suggest what I might say next** is
+  on (off, none can come, and the row would stay blank) and where the tallest finished answer still has
+  a place by Ember clear of the box with that row (`answerRoom`, `ANSWER_MAX_HEIGHT`): elsewhere the row would take the
+  room the answer needs once it finishes, so there they wait for the next opening. A question's
   answer ("Thanks! Carrying on.", "Okay, I won't.") stays 1.5 s; then what the question covered or held off shows
   again, or the bubble empties and the ring rests, so a task that ends on its card never leaves "Working" behind. A
   turn that only ran steps (it started a task and said nothing) leaves no "Working" bubble either, and one that
@@ -122,8 +168,46 @@ They share one emotion rig, so switching never changes behaviour.
   spring) and leaves the way it came, faster; a question only fades in and out, so nothing near a
   decision moves. Streamed text is drawn at most 15 times a second. A card's plan dot fills as its
   step starts, and a finished card's tick settles in once on the reward spring; a failure just shows
-  its mark (no shake, no flash). The Ask box grows out of Ember beneath it. In Calm, each of them
-  fades over 150 ms instead.
+  its mark (no shake, no flash). The Ask box grows out of Ember beneath it, and opens beside the
+  bubble, or over or under it where it fits beside neither (larger text, a 1024-wide screen), never
+  on it nor on Ember (the bubble never moves for it, but for an answer opened in full with **Read
+  all**, below). A bubble that comes up while the box is open
+  keeps off it where it can (never hiding for it); a question, or its own Listen once's
+  "Listening…" (never a wake's), that finds no room moves the box aside once (again only once it
+  has grown under the field: a spoken yes that wasn't taken adds its note), and a bubble already
+  shown, a question or an answer being read, never moves for the box (but for an answer opened in
+  full, below): where the box can't keep clear of it whole (a small screen at Larger text), the box
+  may come against it. An answer that
+  grows into the box on its own, as its words come in or as it finishes (its Read all, its hint
+  and Ember's suggestions come only then), keeps off it from there, going above or below the box
+  where nothing by Ember is clear of it, so the field never covers its last lines or its Read all;
+  so does one that started while the box was open (Ask opened during "Thinking…"), and anything
+  else still coming in that asks nothing (a step, "Listening…") and finds no room by Ember, and an
+  answer opened in full with **Read all** while the box is open. An answer opened in full that fits
+  nowhere clear whole (a 1024 x 768 screen at Larger text) is cut short a line at a time to the
+  tallest place clear of the box, the handle, the cards and the settings window, never under three
+  lines, and its text scrolls inside it; with no such place it goes where it always went. Once
+  the box closes, one whose text didn't all show for it (cut short, or narrowed into a side strip
+  with its text running on) keeps off the box's place no more and shows whole where it can (it may
+  move to do so); one that showed whole stays where it is. When the box opens on an answer opened in
+  full that doesn't keep off it where it is now (the one that moved; one opened with **Read all**
+  while the box was closed; one opened while it was open that showed whole, so stayed put once it
+  closed), or grows into it as it opens or as Ember's suggestions come, the answer keeps off the box
+  there from then on as it does with Read all, so the field never lies over its lines; a box that
+  opens or grows clear of it never moves it.
+  While the box is
+  open no bubble goes on its timer, so the answer being replied to stays beside it; once the box
+  closes, each goes after what was left of its time, never sooner than 4 s (`ASK_AFTER_MS`, times
+  More time to read). Without a
+  compositor the box moves off the corner card as it grows for a question. What the box shows keeps off the task cards
+  too, as it opens, grows, shows a new row and as a card comes up or grows under it: by the least sideways move (else
+  up) that keeps it clear of the answer or question, the handle and Ember, which come first (on a 1024-wide screen at
+  Larger text there may be none). On Linux it takes clicks only on what it
+  shows (an X input shape the page reports), so a click in its clear margins reaches the app
+  beneath and closes it. The line under its field is as wide as the field while the quick look
+  runs; when it finds nothing to show, it narrows to its keys at the trailing edge. A long paste is kept
+  whole there as in Home's composer: from 1,800 characters a line under the field counts them, and over
+  2,000 says how many too many while Enter sends nothing. In Calm, each of them fades over 150 ms instead.
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
 - **Mini-Embers** mark tasks running in background windows or on Ember's desk.
@@ -175,29 +259,35 @@ Ember is two places at once, each for one kind of work.
   - how the task works now, under its title: "In the background", "On my desk", or "Using your mouse and keyboard"
     in the accent;
   - a **live line** in Ember's own words: what it is doing now and where ("Clicking in Text Editor…", "Thinking…",
-    "Waiting for you" while its question is up, "Retrying…", "Still waiting for Copilot…");
+    "Waiting for you" while its question is up, "Retrying…", "Still waiting for Copilot…", named for the service in use);
   - the worker's own note under it (`report_progress`'s `intent`, else its `text`), in the secondary label: the
     model's words, never set as Ember's;
   - a **telemetry row** of at most three items in footnote type, weight 500 and tabular figures: the plan's step
     ("Step 3 of 7"), its clock ("Just started", then "42s", "1:42"; written once a second as text by one shared
-    tick, so nothing moves or re-lays out), then "Close to my limit" past 80% of its 150 steps or 20 minutes, else
-    how many steps the user allowed. Once it ends, the state's word and how long it took ("Didn't finish · Took 1:12");
-  - the steps so far in one sentence ("Clicked 3 times and read the window 2 times (1 didn't work)"), what changed
-    things named before what only looked;
+    tick, so nothing moves or re-lays out), then "Close to my limit" past 80% of its 150 steps or 20 minutes (the
+    worker is told then too, so it can finish and say what's left; a task a limit stops says what it had done by then,
+    from Ember's own count, and its Try again is told an earlier try stopped part-way), else how many steps the user
+    allowed. Once it ends, the state's word and how long it took ("Didn't finish · Took 1:12");
+  - the steps so far in one sentence ("Clicked 3 times and read the window 2 times (1 didn't work)"), a picture of
+    the window sent to the model named first ("Sent the model 2 pictures of the window, …"), then what changed things
+    before what only looked;
   - its plan, a dot per step (`report_progress`'s `plan` and `now`): done, under way (the accent, weight 600), to come
     (the step a failed or stopped task was on keeps its weight in red or grey, not the accent);
   - **Details**: up to six rows of what it did (steps of one kind in a row folded together, "Read the window 3 times in
-    Settings"; a refusal with policy's reason; a question and how it was answered; the worker's notes, marked as
+    Settings", and a read that sent a picture of it apart, "Sent the model a picture of the window in Firefox"; a refusal with policy's reason, or Ember's own (a password prompt open, the accessibility helper not working), refusals for one reason in a row folded together too ("Not allowed 6 times: …"), and one that came once the user had answered its question after that answer; a question and how it was answered; the worker's notes, marked as
     its words), each with a static state symbol and when it happened. Closed until the user opens it, kept open by
     task id across updates;
-  - when it ends, what it found or made, as a **view**, and on a failure **Try again** (the same request starts again
-    as a new task, asking every question again) beside **Close**.
+  - when it ends, what it found or made, as a **view**, and on a failure, or a question that ran out of time while the
+    user was away, **Try again** (the same request starts again as a new task, asking every question again) beside
+    **Close**. Never after "Not now", a Stop or the mouse taken back: those were the user's own choice.
 
   The words come from `app/shared/activity.ts` (one table of state words: Working, Waiting for you, Waiting its turn,
-  Retrying, Done, Didn't finish, Stopped) and `app/main/agent/activity.ts`, which builds a task's activity from its
+  Retrying, Done, Didn't finish, Stopped, and No answer in time for a task whose question ran out of time, which the
+  user didn't stop: so its card, the handle's task row, the conversation's line and What Ember did say so, and its last
+  row and its question's row read "Ended: No answer in time" and "Ended: Asked you: no answer" to a screen reader) and `app/main/agent/activity.ts`, which builds a task's activity from its
   worker's tool calls and Ember's own signals: never the model's arguments, its reasoning or screen text. A running
   task's symbol is a ring round a lit dot, which never reads as a spinner. A card with a view or a failure stays a
-  minute, and the stack widens from 270 to 320px to hold it; both widths grow with the text size. Without a
+  minute (and waits while the user is away), and the stack widens from 270 to 320px to hold it; both widths grow with the text size. Without a
   compositor, the corner card's task row has two lines: the title, and the live line under it.
 - **The cursor** (the character beside the pointer, and its bubble) is the assistant with you. It holds:
   - the conversation: what you asked, and the answer;
@@ -253,37 +343,107 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **The sidebar.** **Search settings** sits at its top: typing narrows the links to the panes that hold the words
   (headings, switch labels, footnotes, buttons, and a few other words people use for a pane, so "mic" finds Voice:
   `SEARCH_ALIASES`, ranked after the settings named by their own words), and says "Nothing found" in the sidebar
-  when none does. Selectable labelled results show in batches of 12. ArrowDown/Tab reaches a chosen result, Enter selects it and marks its row, with its control focused (a group's header
+  when none does. A result says the words as the page shows them (`shownText`: no hidden alternative for a key
+  another app took, no pop-up's options, which still find their setting, no words for screen readers only), one
+  sentence of a longer footnote: the one with the words typed. Selectable labelled results show in batches of 12. ArrowDown/Tab reaches a chosen result, Enter selects it and marks its row, with its control focused (a group's header
   or footnote stands for the group: a one-row group's row, else the whole group). The sidebar grows with the text size,
-  so its labels stay on one line, but never past what leaves a pane 460 px (no sideways scroll at 640–720 px). The links, most
+  so its labels stay on one line, but never past what leaves a pane 460 px (no sideways scroll at 640–720 px). Below
+  that, a pane never scrolls sideways either, down to 304 px at Larger text (200% zoom): its one column may shrink, and
+  a pop-up's row puts the pop-up under its words. The links, most
   used first: Home, Projects, Models & connections, Voice, Your Ember, Memory, Apps & privacy, Comfort & access, Computers and Commands (once
   available), Extensions, Setup & about. The current pane's link carries `aria-current`, a fill that glides between
   rows on a click (`--spring-smooth-0`), and in a contrast theme an outline. The window reopens on the last pane. Below
   640 px the links are one row of capsules, the search field first.
 - **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
   character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
-  state in a few words ("Ready", "Working on 2 tasks", "A task needs you" with **Open approval**, "Not connected",
-  "Needs setting up"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
-  you, then two facts (which of listening, memory and commands are on; today's tasks by outcome and the steps you
+  state in a few words ("Ready", "Working on 2 tasks", "Thinking…" while it answers what you sent from Home, "A task
+  needs you" with **Open approval**, "Not connected", "Reconnecting…" while Ember's own model connection starts again
+  by itself, as the handle and Ask say,
+  "Needs setting up", "Locked by your organisation"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
+  you, then two facts (which of listening, memory and commands are on; today's tasks by outcome, in their rows' words (a task
+  whose question went unanswered "got no answer in time", never "stopped": tasks-approvals-r3-1), and the steps you
   allowed, from the same tasks Task activity lists) and **Ask Ember…** (the one prominent button; **Connect Copilot…**
-  takes that place while Copilot isn't connected) beside a quiet **Stop everything** and the stop chord.
-- **The conversation** is part of the page, not a box that scrolls inside it: its latest 30 messages, then **Show
-  earlier messages**. Home searches all 60 retained session entries, shows explicit per-answer truncation beyond
-  131,072 characters, and offers Copy and Edit. Edit only fills the composer; a fresh Send is required. Home sends
-  no foreground-window capture. Stop response cancels the current answer; Stop everything also stops tasks. Drafts
+  takes that place while Ember isn't connected, **Check my provider…** for the user's own provider and **Models &
+  connections…** for the organisation's service (first-run-r1) or whenever Ember's own model connection stopped, which
+  is never the provider's or Copilot's sign-in (accessibility-visual-c1-2), and nothing does while the organisation's
+  policy locks Ember down)
+  beside a quiet **Stop everything** and the stop chord. Under them two quiet links, **Write to Ember** (the
+  composer, focused) and **Task activity**, keep both a step away however long the conversation grows.
+- **Home's setup check** says each row's state in first run's words beside its tint ("Ready", "Worth a look",
+  "Needs fixing", never a code such as OK), in one column as wide as the widest word (a subgrid, so the labels line
+  up), offers **Copy** for a command the row tells the user to run, and **Check again** under the rows, which shows
+  what it found (“I checked again. Nothing has changed yet.”) beside it as well as reading it out, in first run's
+  checks step too; a fix's failure is only read out, as its row shows it (first-run-r2).
+- **The conversation** is part of the page, not a box that scrolls inside it: its latest 6 messages (so the composer
+  and Task activity below stay within reach), then **Show earlier messages**. Home searches all 60 retained session entries (a search left typed in is cleared when you send, so your message and
+  its reply show; the composer's line, right under its buttons, says "Thinking…" until the reply, "Still waiting for
+  Copilot… Stop response ends this reply." while the bubble says so (for a request from the Ask box or by voice too,
+  where the settings key lands on Stop response, until the wait ends: home-r2-3, but never over a note about the draft
+  being written, such as Edit's caution that sending again may repeat actions or the over-limit note: home-c3-1), "This
+  goes to the new model service once what's under way now has finished. Stop response cancels it." while it
+  is held for a switch of model service (main's "held" turn, with the status word "Switching model service…":
+  home-r4-4), and, when main says the turn ended with nothing
+  written (it only started a task or ran a step), "No reply was written. Task activity shows any task this request
+  started."; main sends a turn's lines (its reply, its Problem line) before its end, so a model error says "This reply
+  couldn't be finished…" (home-r2-1), never counts a request waiting for a reconnect as over (home-r2-2), and says
+  with the end when a Stop ended it: "Response stopped. Running tasks continue." for the bubble's Stop too, "Stopped
+  everything, running tasks included." for Stop everything (home-c2-2); a Stop ends a request still waiting for a
+  reconnect at once, and every message of the composer's that it ended before it went (its own line never came) comes
+  back in the composer, oldest first, never over anything typed since (above it, the caret kept where it was), with
+  "Your message wasn't sent, so it's back here to edit or send again." ("Your 2 messages weren't sent…", "…back here,
+  above what you were writing, …": home-r3-1, home-v4-2), said once however main tells the Stop (home-r4-3); a typed
+  "stop" still on its way to main is never taken for something being written (home-r4-2); above a request being
+  edited the line keeps Edit's caution (and says it again once what is there fits after being over: home-v5-2), and
+  Cancel edit keeps the words as the person left them (corrected, none once deleted: home-v5-1), followed through each
+  change in the field, so a word typed into the request being edited, or a fresh request under an emptied one, is
+  never kept with them, a deleted message never comes back and only those left are counted (home-w5-1, home-w5-2), and
+  that request never stays (home-w5-4), above the draft from before Edit (home-r4-1); Edit on another request keeps
+  them above it, as left and still words given back ("…The message that wasn't sent stays above it…"), so Cancel edit
+  still names them and says when they're over 2,000 characters with that draft (home-w5-3);
+  together over 2,000 characters, the line says to send them one at a time, never to send again (home-c4-2), but to
+  shorten what was being written or edited where that alone is over (home-v5-3); one whose line came (Ember answered it itself, or it went to
+  the model) never does, however far the conversation has moved past it (home-v4-1); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's
+  "Okay, I've stopped everything."; the status panel says "Thinking…" while Ember answers any request, from the Ask
+  box and by voice too: main's `conversationTurn`, never a guess, home-c1-1), shows explicit per-answer truncation beyond
+  131,072 characters, and offers Copy and Edit. A Problem line that settings can help with names Models & connections
+  (once) where the bubble says "Ember's settings (Ctrl+Alt+E)" (Home is them), and offers **Models & connections…**, which
+  goes there (home-7; Try again stays the bubble's): only where the line sends the person there (a setting, a sign-in,
+  Check again), never on one that sends them to their administrator, whoever manages their plan, IT or GitHub
+  (home-r3-2, accessibility-visual-c3-2). A long paste is kept whole: from 1,800 characters the composer counts
+  them, and over 2,000 it says how many too many and Send refuses until it fits. Its hint names the send key as the OS
+  does (Ctrl+Enter; Command+Enter on a Mac), and a message's Copy says Copied on itself for 2 s. Messages kept from before a restart
+  (**Keep my recent conversation**) show their day beside their time, and a quiet line under the last of them says
+  they are for reading and Ember starts afresh below. Edit only fills the composer; a fresh Send is required. Home sends
+  no foreground-window capture. While you write in the composer, a reply growing above it keeps the composer, its
+  buttons and the line under them in view (also as a search cleared by Send brings the hidden messages back, and as
+  the line itself says why a send was refused, that it is sending or thinking, or how a Stop ended it: home-c3-2); nothing
+  scrolls for someone reading elsewhere, or who scrolled away from it. A message whose Copy or Edit has the keyboard
+  focus stays on the page, with those after it, while newer ones come, and Send, Stop response and Copy keep the focus
+  while main answers them (`aria-disabled`, never `disabled`, which drops it to the page). **Read the last
+  answer** and a long answer's **Open conversation** open it at the newest answer, focused, from its top (once the
+  messages have come, when Home opens for it). Stop response cancels
+  the current answer (or says there was nothing to stop, and the bubble keeps what it showed); Stop everything also
+  stops tasks. New conversation asks first while there are messages to clear ("Start a new conversation? This clears
+  the 12 messages here", and "deletes the copy saved on this computer" when one is kept), with the focus on **Keep
+  this conversation**; Escape keeps it too. Drafts
   remain in memory while switching panes and clear on account reset, independently of ordinary empty-list updates.
 - **Task activity**: one group per task, the one that needs you first, then those at work, then the rest, newest first.
-  Its head is the state symbol, the title, a line of state, clock, hand and place, and its steps in one sentence; then
+  Its head is the state symbol, the title, a line of state, clock (none for a task that never began: one in line, or
+  stopped there), hand and place, and its steps in one sentence; then
   the plan as a checklist (done ticks, the accent dot for now, rings to come), then the timeline: rows of at least
   44 px with the time after the task began in tabular figures, a state symbol and Ember's words, steps of one kind
-  folded behind a chevron, a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged
+  folded behind a chevron (and refusals for one reason, each listed as the step it refused), a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged
   **Note** in the secondary label. Then how it ended: the worker's summary in the secondary label and its view, drawn
-  by the cards' catalog code. A finished task folds to its head. Home offers exact-task Stop, retained safe retry, verified Show app and
+  by the cards' catalog code. A finished task folds to its head. Home offers exact-task Stop, retained safe retry (Try again
+  wherever its card has it: a failure, and a task whose question went unanswered; none once the card has gone, never a
+  greyed one nothing explains: tasks-approvals-r3-5), verified Show app and
   focusable View result. Capability hints never authorise an action: main revalidates the exact task and native window
   identity, while stale/remote/desk/locked/borrowing cases cannot raise another window. While a task waits for an answer, a callout in its
   group says where it is asked (the bubble, with the keys that answer it; the command window; or a consent card's window); Open approval opens the exact live question in a focusable card or its existing panel; Home never answers from
   transcript text. From five tasks, **All**,
-  **Needs you**, **Working** and **Ended** filter it. A working task's clock is text written once a second.
+  **Needs you**, **Working** and **Ended** filter it. A working task's clock is text written once a second. A task's
+  group is drawn again when it changes (every step), and keyboard focus stays on the control it was on (Stop task, a
+  steps row, Open approval), or on the task's own heading when that control is gone.
 - **Settings panes** keep System Settings' grouped rows: switches at the trailing edge, a switch's note inside its
   row (Apps & privacy's **When Ember asks first**), pop-up buttons styled as one (Handle position too), and states
   shown as switches (**Follow my cursor**, **Hide Ember until it needs me**) rather than buttons. Voice shows its
@@ -292,7 +452,42 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **Labelled fields** (Models & connections' **Model provider**): a label, then its filled text field (`.field-row`, the never-look
   field's look and height), the field under the label below 480 px. A secret goes in a password field and is never
   shown again: once saved the row says **Key saved** with **Replace** (quiet) and **Remove** (a `--red-text` text
-  button). Rows a switch governs show only while it is on, and rarely needed ones fold under **Advanced**.
+  button). Rows a switch governs show only while it is on, and rarely needed ones fold under **Advanced**. An edit of
+  the provider in force to another host waits in the fields until its card is agreed and it answers: the hint says the
+  host in force still answers, the card's quiet button is “Keep using <host>”, and a failed check says “Nothing has
+  changed” (integrations-c3-1); a host that answers with no model list there is adopted and says it is asked for the
+  model as typed (integrations-r4-2). A
+  disclosure inside a group (Projects' patch, command and saved workspaces) has the folds' chevron (`details.disclose`),
+  a lone button (Refresh list, Choose command folder…) keeps its own size in a row of actions, and an empty status line
+  takes no row: every status line in Home stays on the page while it says nothing, as a box of nothing out of the flow,
+  never hidden, so a screen reader announces it when it speaks (an alert may hide: it is announced as it shows). The
+  command and prompt windows' status lines (a refused press's line, the hints, "Starting Ubuntu…") do the same. Home and
+  Ask announce nothing as the microphone opens for a request, or while it is open, since a screen reader says it
+  through the speakers into what Ember hears: the voice line is said once it has held for a second and never while a
+  window is open, and Listen once's line is said through a status line of its own, which never says "Ember is already
+  listening.", nor "Answer Ember's question first." while a conversation waits for that answer (shown under the button,
+  as its description). While they say nothing new, both of those status lines are emptied, so reading the page never
+  finds a line beside the one shown that no longer holds. Hear me more clearly's line, the voice row's line and the note
+  that no voice spoke a reply are said the same way, each through a status line of its own: once it has held, only when
+  its words change, and never while the microphone opens or is open for a request. The voice row's says only where
+  the voice stands, never that it is checking or downloading, nor a line that the checking overtook before it was
+  said, and the voice loading again after two quiet minutes changes nothing it says; Try again's outcome is said even
+  when it ends as it did before. Task activity says a task's new state only once the
+  microphone has closed (each task's state as it is by then, once), the connection line is written only when its words
+  change, and Ask says what it will see, or that it can't answer, once the microphone has closed, while it is still
+  open. These lines, and Listen once's, are worded without Ember's name: said into the wake word's microphone,
+  “Ember will see: …” and “Ember couldn't speak: …” woke Ember and were sent as requests. So are the lines Home says
+  by itself or after a press, outside those windows: the status panel's (“Beside your cursor. Press Ctrl+Alt+Space to
+  ask anything.”, “… Reconnecting to Copilot…”), Hide's (“Hidden. It shows itself again…”), the composer's outcome
+  and refusal (“This request got no answer. …”, “Reconnecting to Copilot. …”), what Hear Ember found (“Spoken in
+  Kitten Nano.”), and how Voice Match's teaching ended or the voice was forgotten (“Your voice is learnt. …”), which
+  also leaves out the “Ember, stop” the shown line quotes: said into the microphone, it stops Ember. Listen once's lines
+  (“Stops speaking first, then listens for one request.”, “Stops the answer on its way, …”, “Checking what was said…”)
+  and where the update check stands (“Version 0.10.0 is out.”, “Couldn't check for updates. The next check is
+  tomorrow.”) are worded the same way, without even “Ember's”, but for “Answer Ember's question first.”, said while a
+  question holds Listen once back outside a conversation (read into the wake word's microphone, it woke Ember in none
+  of 120 placements): “Stops Ember's answer, …” was heard as “Stop Timbers' answer, …” and woke Ember. Ask speaks
+  in the first person (“I'll see: …”).
 - **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
   from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
 
@@ -369,14 +564,35 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   `max(outer − padding, 6 px)`: the bubble's whole-text panel is 6.
 - **First run's connection** (FE #2–#6; first-run-copy.ts, welcome.ts). The sign-in step offers “Use my own provider”
   beside GitHub's sign-in (hidden, with its reason, when the organisation fixes or forbids a provider of the user's own),
-  which opens an optional detour (same position, “Step 3 of 6”): the provider's type, address, API key and model names,
+  which opens an optional detour (same position, “Step 3 of 6”): the provider's type, address, API key (not needed for
+  a model server on this computer, also where there is no keyring, when the button waits with “I can't keep a key
+  safely on this computer.” beside it; its field says a key is saved only while the address typed is the one it was
+  saved for) and model names,
   the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
+  Main's words for a check or a connection (written for Models & connections, which speaks of Ember) are said in first
+  run's own voice on every visit, on the sign-in step too: “I can't reach <host>…”, “…and I'll connect in a moment.”
+  (`inMyVoice`, first-run-r4-2), and what they call Ember's comes along: “…the GitHub sign-in I found (my saved
+  sign-in)”, “I couldn't find one of my files”, “My model connection keeps stopping…” (first-run-v5-1, v5-2). Their
+  “press Check again” is Home's button: the sign-in step says its own, “…then press Try again.”, and shows Try again
+  wherever nothing else on it does that check (a refused token, the organisation's service), keeping Check again only
+  where the GitHub CLI's button is shown; the in-use provider step, which has neither, says “Go back and press Try
+  again” (`signInWays`, `pressOnStep`, first-run-w5-2).
   A failed connection offers what its reason calls for (`failureView`): an entitlement failure leads with the user's own
-  provider or a different GitHub account, never the same sign-in. Once connected, “Models I'll use” names both models
+  provider or a different GitHub account, never the same sign-in. A failure of the user's own provider leads with
+  “Check my provider's details” (or Try again for the network), with no GitHub account, sign-in or Copilot words, in
+  first run, Home and the bubble's title alike (integrations-3). Once connected, “Models I'll use” names both models
   with the premium-request multiplier where Copilot gives one, and says so when tasks work from text only; Change is
-  optional. A setup fix that fails says so in its own row.
+  optional. A setup fix that fails says so in its own row. Once Ember uses the user's own provider, connected, still
+  connecting or failing, the sign-in step, its status line and **Your Ember**'s “Model service” row name that provider,
+  with no GitHub, Copilot or sign-in words and no “Use my own provider”, and Back from the setup check returns to the
+  provider's step (first-run-1). A provider already in use as that step opens is shown as in use (“Your own model
+  provider's details”, its connection's status, the card without a last sentence about going back, and Continue with
+  no new check); Back leaves it on, an edit is checked as typed before it replaces anything (one that fails, or is left
+  while it is checked, changes nothing: “Nothing has changed: I'm still using <host>.”, in first run's voice throughout, with the focus on
+  the field the failure names and “Keep using <host>” under it to put back the details in use and go on: first-run-c3-1), and only “Use GitHub Copilot instead” switches it off (first-run-r2-1). Back puts away only a provider the visit itself set up, as its card says (first-run-c1-2). It is in use only while it is on: after “Use GitHub Copilot instead” its step opens again as one to set up, and a check there that fails switches it off again (first-run-r3-1). That press draws Copilot's sign-in at once, connecting, so the title the focus lands on is Copilot's before main's status follows; a switch-off that couldn't be saved shows the provider still in use, under the notice that says so (first-run-c3-2). While Ember is busy (a turn or a task under way) the step says “I'll switch to Copilot once I've finished what I'm doing.” with Continue open, “Use my own provider” still offered (first-run-r4-1) and no sign-in yet, and the try step's Ask “Once I'm connected, you can ask me something.”; main switches as soon as it is done, and the step then offers “Sign in with GitHub” (first-run-v4-1): a focus on Continue as it turns into the sign-in goes to the title, and the line says “I've switched to Copilot. Sign in with GitHub to go on, or skip for now.”, so a press meant for Continue starts nothing (first-run-c4-1). A service with nothing to sign in to that isn't connected yet (the user's own, the
+  organisation's) is named on **Your Ember** as “…, not connected yet”, never “Not signed in yet” (first-run-c1-3).
 - **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column (720 px in a window
   1,000 px wide or more), centred in the window's height in a box of one size (560 px), so the indicator and title stay
   put from step to step and a short step no longer leaves the window's lower half empty. A still step indicator
@@ -384,7 +600,10 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   Ember's character on its tile beside its line as the step's large title (148 px on the first step, 76 px after),
   and the step's own part. The buttons follow the step, never stuck to the window's foot: Back leading, the step's
   quiet choice (Not now, Skip for now, Cancel), then its one prominent button, with the reason beside it whenever it
-  waits (`aria-describedby`). Rows that need the user, the tries and **Your Ember** are grouped rows on `--surface-1`;
+  waits (`aria-describedby`). Not now leaves focus on the note that says what it did, and Agree and Quit Ember drop a
+  press for half a second after they appear, so a double click or a held Enter can't agree or quit (first-run-c1-1). Sign in
+  keeps focus on its own button while it waits, and a cancelled sign-in moves it to the title, so a second Enter
+  neither cancels nor skips (first-run-r3). Rows that need the user, the tries and **Your Ember** are grouped rows on `--surface-1`;
   the full consent text and the setup rows' details are disclosures (an accent chevron and words) over a
   `--surface-2` callout. Every state is a symbol and words. Motion: Ember arrives once (0.6 to 1 over 600 ms on the
   brisk spring, then a happy hop), each step's part comes in from the side it lies on (16 px over 420 ms, Back from the
@@ -431,9 +650,15 @@ Answers and fenced code are inert text with Copy controls; native export writes 
 answer/diff to a chosen destination, with overwrite/freshness checks. It cannot overwrite a selected source file
 or Ember's private data, and never substitutes for Apply patch approval.
 
-Memory has query/source filters, counts and pages of 50. Surviving memory and learned-word controls keep their
-DOM identity and keyboard focus through background updates. Undo acknowledges only successful deletion and stays
-retryable on failure. An unavailable account hides facts and returns focus to the memory switch. Correct… opens
+Memory has query/source filters, counts and pages of 50 (no count over an empty list). Each row ends with Forget,
+a `--red-text` text button, and Correct… in the words' colour, side by side on one line however long the fact,
+and apart, inside the group, when forced colours give them an edge. Surviving memory and learned-word controls
+keep their DOM identity and keyboard focus through background updates. Undo acknowledges only successful deletion and stays
+retryable on failure. An unavailable account hides facts and parks focus on Memory's heading, never the memory
+switch, where a typed space would turn memory off; it goes back to the search, the draft or the Forgotten line when
+the same account's list returns (memory-c2-1). A request opens Memory at its search ("forget…") or at its note's
+words ("get to know me", Open Memory), never at "I agree, remember", and the note's agree button, like Work without
+asking's, takes no press for `AGREE_ARM_MS` after the card comes up (memory-r7). Correct… opens
 one local draft (up to 400 characters); Save correction is explicit, checks the exact account/revision and saves
 durably before publication. Correction preserves original source/authority and adds Corrected by you. It invalidates
 stale recall/learning/vector work; failures keep the draft and account reset clears it.

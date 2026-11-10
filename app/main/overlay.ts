@@ -1,6 +1,7 @@
 /**
  * Ember on screen: one transparent, click-through, always-on-top window per
- * display, driven at 60 Hz from the main process. Ember's position (a spring
+ * display, driven at 60 Hz from the main process while Ember or the pointer moves (about 10 Hz once both are still: see
+ * tickGap). Ember's position (a spring
  * toward the cursor) lives here in global coordinates, so it can cross
  * displays; each overlay renderer only draws what falls inside its bounds.
  *
@@ -20,12 +21,27 @@ import type { OverlayShaper } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
 import { linuxOverlayShaper } from "./platform/linux/overlay-shaper";
 import { pageUrl } from "./page-url";
-import { OVERLAY, IDLE_BUBBLE, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
+import { OVERLAY, IDLE_BUBBLE, type BubbleBox, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
 import { NO_LEVEL, levelForOverlay, type SoundLevel } from "../shared/level";
 import type { ViewDoc } from "../shared/view";
 import { ViewHub } from "./agent/view-doc";
 
 const appDir = __dirname;
+
+/** The frame loop's gap while Ember or the pointer moves (60 Hz), and once both are still (rp-7). */
+export const FAST_TICK_MS = 16;
+export const SLOW_TICK_MS = 100;
+/** How long after the last movement (or a change of state) the loop stays at 60 Hz. */
+const ACTIVE_MS = 2000;
+
+/**
+ * The gap before the next frame, `sinceMoveMs` after Ember, the pointer or Ember's state last changed (rp-7): 60 Hz
+ * for 2 s, then 10 Hz, so a still Ember stops waking the processor 60 times a second (measured: 1.8 % of a core in
+ * main with every renderer at rest). The first movement after is followed within 100 ms.
+ */
+export function tickGap(sinceMoveMs: number): number {
+  return sinceMoveMs < ACTIVE_MS ? FAST_TICK_MS : SLOW_TICK_MS;
+}
 
 interface Overlay {
   win: BrowserWindow;
@@ -38,12 +54,21 @@ interface Overlay {
   shaped: boolean;
   /** The task cards on this display (global DIP). */
   cards: Rect | null;
+  /**
+   * Ember's bubble on this display (global DIP), or null: the Ask box opens clear of it (companion-1), and offers what
+   * answers an answer opened in full once its end has shown (`endShown`, companion-v6-2).
+   */
+  bubble?: BubbleBox | null;
 }
 
 export class OverlayManager {
   private overlays = new Map<number, Overlay>();
   private follower: Follower;
   private timer: NodeJS.Timeout | null = null;
+  /** The loop runs (start() to stop()), at the gap it waits now; `movedAt`: when something last moved (tickGap). */
+  private running = false;
+  private gap = FAST_TICK_MS;
+  private movedAt = performance.now();
   private topTimer: NodeJS.Timeout | null = null;
   private last = performance.now();
   private hidden = false;
@@ -82,13 +107,16 @@ export class OverlayManager {
     screen.on("display-added", this.onAdded);
     screen.on("display-removed", this.onRemoved);
     screen.on("display-metrics-changed", this.onMetrics);
-    this.timer = setInterval(() => this.tick(), 16);
+    this.running = true;
+    this.loop();
     // Some shell surfaces (Activities, notifications) can rise above us; take the top back.
     this.topTimer = setInterval(() => this.raise(), 2000);
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
+    this.running = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
     if (this.topTimer) clearInterval(this.topTimer);
     screen.off("display-added", this.onAdded);
     screen.off("display-removed", this.onRemoved);
@@ -99,6 +127,7 @@ export class OverlayManager {
   }
 
   setHidden(on: boolean): void {
+    this.wake();
     const shows = this.hidden && !on;
     this.hidden = on;
     if (on) for (const o of this.overlays.values()) o.pointerUntil = 0;
@@ -119,11 +148,13 @@ export class OverlayManager {
   private paused = false;
 
   setPaused(on: boolean): void {
+    this.wake();
     this.paused = on;
     this.follower.setPaused(on);
   }
 
   park(at: { x: number; y: number } | null): void {
+    this.wake();
     this.follower.park(at);
   }
 
@@ -148,10 +179,12 @@ export class OverlayManager {
   private aside: Rect | null = null;
 
   stepAside(r: Rect | null): void {
+    this.wake();
     this.aside = r;
   }
 
   setState(next: Partial<EmberState>): void {
+    this.wake();
     // Ember holds still while you decide (buttons) and while you read a finished answer or error;
     // following the cursor resumes when the bubble goes.
     const waiting = (s: EmberState) => s.bubble.visible && (s.bubble.actions.length > 0
@@ -196,12 +229,13 @@ export class OverlayManager {
   }
 
   setBorrowing(on: boolean): void {
+    this.wake();
     this.borrowing = on;
     if (on) for (const o of this.overlays.values()) o.pointerUntil = 0;
     for (const o of this.overlays.values()) this.applyHits(o);
   }
 
-  private lastHandleCheck = 0;
+  private lastHandleCheck = -Infinity;
   private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; on: number; at: number } | null = null;
 
   getState(): EmberState {
@@ -235,8 +269,27 @@ export class OverlayManager {
     return this.beside;
   }
 
+  /** Called by IPC when a renderer reports where its bubble is (null: none on its display). */
+  setBubble(sender: Electron.WebContents, r: BubbleBox | null): void {
+    for (const o of this.overlays.values()) if (o.win.webContents === sender) o.bubble = r;
+  }
+
+  /** Ember's bubble on screen now (global DIP; only one display shows it), or null: none, or Ember is hidden. */
+  bubbleRect(): BubbleBox | null {
+    if (this.hidden) return null;
+    for (const o of this.overlays.values()) if (o.bubble && !o.win.isDestroyed()) return o.bubble;
+    return null;
+  }
+
+  /** The task cards on screen now, each display's (global DIP): the open Ask box keeps off them too (companion-r5-1). */
+  cardsRects(): Rect[] {
+    if (this.hidden) return [];
+    return [...this.overlays.values()].filter(o => !o.win.isDestroyed()).flatMap(o => (o.cards ? [o.cards] : []));
+  }
+
   /** Called by IPC when a renderer reports where its task cards are. */
   setCards(sender: Electron.WebContents, r: Rect | null): void {
+    this.wake();
     for (const o of this.overlays.values()) if (o.win.webContents === sender) o.cards = r;
     // Cards that came up over where Ember holds still beside a control: it moves off them (only then: a question's
     // buttons move with it).
@@ -270,7 +323,7 @@ export class OverlayManager {
   /** Called by IPC when a renderer reports where its clickable parts are. */
   pointerHeld(sender: Electron.WebContents, held: boolean): void {
     for (const o of this.overlays.values()) if (o.win.webContents === sender) {
-      o.pointerUntil = held && !this.hidden && !this.borrowing ? Date.now() + 30_000 : 0;
+      o.pointerUntil = held && !this.hidden && !this.borrowing ? performance.now() + 30_000 : 0;
       if (o.pointerUntil && !o.shaped) { o.clickThrough = false; o.win.setIgnoreMouseEvents(false); }
     }
   }
@@ -405,6 +458,29 @@ export class OverlayManager {
     this.overlays.delete(id);
   }
 
+  /** One frame, then the next at tickGap's (a frame that throws still schedules the next). */
+  private loop = (): void => {
+    this.timer = null;
+    if (!this.running) return;
+    try {
+      this.tick();
+    } finally {
+      if (this.running) {
+        this.gap = tickGap(performance.now() - this.movedAt);
+        this.timer = setTimeout(this.loop, this.gap);
+      }
+    }
+  };
+
+  /** Something changed (the state, the window Ember steps aside for, a park): back to 60 Hz now, not at the next slow tick. */
+  private wake(): void {
+    this.movedAt = performance.now();
+    if (!this.running || this.gap === FAST_TICK_MS || !this.timer) return;
+    clearTimeout(this.timer);
+    this.gap = FAST_TICK_MS;
+    this.timer = setTimeout(this.loop, 0);
+  }
+
   private raise(): void {
     for (const o of this.overlays.values()) {
       if (o.win.isDestroyed()) continue;
@@ -414,11 +490,12 @@ export class OverlayManager {
   }
 
   private tick(): void {
-    const now = Date.now();
-    // A frame's time on a monotonic clock: the wall clock steps after a resume or an NTP sync (review #88).
-    const mono = performance.now();
-    const dt = (mono - this.last) / 1000;
-    this.last = mono;
+    // A frame's times on a monotonic clock: the wall clock steps after a resume or an NTP sync (review #88), and a
+    // step back held the loop at 60 Hz, and its heartbeat and handle check off, for as long as the step
+    // (reliability-performance-c1-2).
+    const now = performance.now();
+    const dt = (now - this.last) / 1000;
+    this.last = now;
     if (now - this.lastHandleCheck > 1000) { this.lastHandleCheck = now; this.checkHandle(); }
     const cursor = this.cursor();
     const display = screen.getDisplayNearestPoint(cursor);
@@ -439,6 +516,9 @@ export class OverlayManager {
     const still = !!p && p.visible === frame.visible && p.on === on && Math.abs(p.ember.x - ember.x) < 0.25 && Math.abs(p.ember.y - ember.y) < 0.25
       && p.cursor.x === cursor.x && p.cursor.y === cursor.y && now - p.at < 1000;
     if (!still) this.lastFrame = { ...frame, ember: { ...ember }, at: now };
+    // (Not the heartbeat: a frame that moved, or showed or hid Ember, keeps the loop at 60 Hz.)
+    if (!p || p.visible !== frame.visible || p.on !== on || Math.abs(p.ember.x - ember.x) >= 0.25 || Math.abs(p.ember.y - ember.y) >= 0.25
+      || p.cursor.x !== cursor.x || p.cursor.y !== cursor.y) this.movedAt = now;
 
     for (const o of this.overlays.values()) {
       if (o.win.isDestroyed()) continue;

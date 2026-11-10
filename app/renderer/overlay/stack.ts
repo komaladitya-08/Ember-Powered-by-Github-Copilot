@@ -15,6 +15,14 @@ export const STATE_WORD: Record<TaskCard["status"], string> = {
   done: `${STATUS_WORDS.done}: `, failed: `${STATUS_WORDS.failed}: `, stopped: `${STATUS_WORDS.stopped}: `,
 };
 
+/**
+ * Card `t`'s state in words for screen readers: STATE_WORD by its status, but "No answer in time: " for a task stopped
+ * because its question went unanswered, as its row and its telemetry say (tasks-approvals-r1, companion-r2-5: it was
+ * read as "Stopped: ").
+ */
+export const cardStateWord = (t: Pick<TaskCard, "status" | "unanswered">): string =>
+  t.status === "stopped" && t.unanswered ? `${STATUS_WORDS.unanswered}: ` : STATE_WORD[t.status];
+
 /** What a card's lines say (app/shared/activity.ts has the words); null hides a line. */
 export interface CardLines {
   /** What it is doing now, in Ember's words (while it is under way). */
@@ -38,7 +46,7 @@ export function cardLines(t: TaskCard, stopPressed = false): CardLines {
   if (!a) return { live: null, detail: stopPressed ? TASK_STOPPING : t.detail, tele: null, summary: null };
   const ended = !underWay(t);
   const { step, extra } = telemetryItems(a, t.plan, ended);
-  const word = !ended ? null : t.status === "done" ? STATUS_WORDS.done : t.status === "failed" ? STATUS_WORDS.failed : STATUS_WORDS.stopped;
+  const word = !ended ? null : t.status === "done" ? STATUS_WORDS.done : t.status === "failed" ? STATUS_WORDS.failed : t.unanswered ? STATUS_WORDS.unanswered : STATUS_WORDS.stopped;
   // Never the same words twice (audit #2): a result that is only the state's word ("Stopped.") goes, and one that
   // starts with it ("Stopped before it started.") says it for the row.
   const said = ended ? t.detail.trim() : "";

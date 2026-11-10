@@ -3,7 +3,9 @@
 A small, expressive companion that lives next to your cursor, listens for "Hey Ember",
 and does the work in your real apps where you can watch, without taking over your mouse.
 The agent loop runs on the GitHub Copilot SDK. Spoken replies use the native Kitten Nano 0.8 voice by default;
-Kokoro is an explicit optional download, and unavailable or failed neural speech uses an installed local system voice.
+the Kokoro and Supertonic voices are explicit optional downloads on Windows and macOS. **Hear me more clearly**, a
+clearer recogniser for what you say to Ember, is another optional download, and unavailable or failed neural speech
+uses an installed local system voice.
 
 Ember runs on:
 - **RHEL 8.4** and the rest of the RHEL 8 family (Rocky, Alma, Oracle Linux 8) with GNOME on Xorg, its first platform;
@@ -12,9 +14,27 @@ Ember runs on:
 
 Ember's desk, a private display where Ember can work out of your way, is Linux-only.
 
+## What you need
+
+- A **GitHub account with Copilot** (for Copilot Business or Enterprise, your organisation must also turn on the
+  **Copilot CLI** policy), or instead your own model provider or your organisation's model service (see **Use your own
+  model provider** below).
+- One of the computers above. On Linux, log in to a **GNOME on Xorg** session: on GNOME on Wayland, Ember reads apps
+  but takes no screenshots and doesn't borrow the mouse or keyboard.
+- About 1 GB of disk for Ember and its standard speech models, and each optional extra's size again if you turn it on
+  (**Computers without internet access** lists them).
+- About 600 MB of memory while Ember is idle and listening, and about 550 MB more with **Hear me more clearly**.
+- A microphone only for “Hey Ember”: everything else works typed.
+
 ## Download
 
-This checkout prepares 0.1.1. Until it is published, [0.1.0 remains the downloadable beta](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases/tag/v0.1.0); use that release's version in the example filenames below.
+This README describes 0.1.1, which isn't published yet. Until it is,
+[0.1.0 remains the downloadable beta](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases/tag/v0.1.0):
+install it with [0.1.0's own README](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/blob/v0.1.0/README.md),
+not the steps below, because 0.1.1 packages Ember differently. In 0.1.0 the speech models are a separate
+`ember-voice-models` RPM on RHEL 8 and the AppImage downloads them when voice is turned on; 0.1.1 carries them in the RPM
+and the AppImage, and adds the `Ember-voice-models` zip, the `source-*.zip` archives, **Tell me when a new version is
+out** and the npm launcher, none of which 0.1.0 has.
 
 Each release's files are on this repository's
 [Releases page](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases), with `SHA256SUMS`, the
@@ -32,10 +52,14 @@ manual CI run with **packages** ticked also keeps them for 3 days as artifacts (
 
 ### From npm (beta)
 
+The npm launcher is new in 0.1.1 and goes to npm with that release: `ember-copilot` isn't on npm until 0.1.1 is
+published (`npm i -g ember-copilot` answers "404 Not Found" until then), so meanwhile install from the
+[Releases page](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases) as below.
+
 With Node.js 18.17 or later, `npm i -g ember-copilot` and then `ember` (or just `npx ember-copilot`) downloads this
 version's Windows zip, macOS zip or Linux AppImage from the Releases page, checks it against `SHA256SUMS`, caches it in
-your user account and starts it. The builds are unsigned betas, as below; see
-[packages/npm/README.md](packages/npm/README.md).
+your user account and starts it. Behind a proxy it uses npm's proxy setting or `HTTPS_PROXY`, as npm does. The builds
+are unsigned betas, as below; see [packages/npm/README.md](packages/npm/README.md).
 
 ## Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)
 
@@ -56,14 +80,15 @@ speech-dispatcher-espeak-ng`, then restart Ember.
 
 The RPM carries Ember's verified speech models, so nothing is downloaded when voice is turned on. The standard
 model downloads total about 220 MB: listening needs 130 MB, the default Kitten Nano 0.8 voice 63.8 MB, and Voice
-Match 26.5 MB. These are download sizes; the archives expand when installed. Kitten runs locally on one CPU thread;
-Kokoro remains an explicit optional voice download in Voice settings. Both the RPM and the AppImage also carry the
+Match 26.5 MB. These are download sizes; the archives expand when installed. Kitten runs locally on one CPU thread.
+Kitten is Ember's neural voice on RHEL: the optional Kokoro and Supertonic voices are Windows and macOS only, so Voice
+settings doesn't offer them here. Both the RPM and the AppImage also carry the
 libraries that run speech natively on this computer (sherpa-onnx and ONNX Runtime: 32 MB installed, about 9 MB of each
 download). On a processor or system where they can't run, listening uses WebAssembly and spoken replies use an
 installed local system voice (`ember doctor` shows the speech backend).
 
-Or run `Ember-0.1.1-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
-system packages the RPM would bring for reading apps:
+Or run `Ember-0.1.1-x86_64.AppImage` without installing Ember itself. It doesn't bring the system packages the RPM
+would bring for reading apps, so install those:
 
 ```bash
 sudo dnf install python3-pyatspi python3-gobject at-spi2-core
@@ -73,15 +98,23 @@ chmod +x Ember-0.1.1-x86_64.AppImage
 ./Ember-0.1.1-x86_64.AppImage doctor    # checks this computer, as ember doctor does
 ```
 
-The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM): about 220 MB,
-of which listening needs 130 MB. Should Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still
-listens, replies in the system's voice or takes no spoken yes meanwhile, and settings offers just that one to download. Where user
-namespaces are off (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
+Start Ember with `./Ember-0.1.1-x86_64.AppImage` (`--ask` after it opens the ask box). It adds no entry to your apps
+menu, so run the file again to start Ember again or to open its settings while it runs. The RPM installs a menu
+entry, which also has **Ask Ember** when you right-click it.
+
+The AppImage carries the speech models too, as the RPM does, so nothing is downloaded when voice is turned on. Should
+Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still listens, replies in the system's voice or
+takes no spoken yes meanwhile, and settings offers just that one to download. The AppImage needs `fusermount` to start
+(`sudo dnf install fuse`; without it, it stops with "No suitable fusermount binary found"). Where you can't install
+that, run it unpacked: `APPIMAGE_EXTRACT_AND_RUN=1 ./Ember-0.1.1-x86_64.AppImage`. Where user namespaces are off
+(STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
 
 To update, quit Ember, then install the new RPM the same way (`sudo dnf upgrade ./ember-<version>-1.el8.x86_64.rpm`,
 which also replaces the separate `ember-voice-models` RPM of 0.1.0); then start Ember again (it starts by itself at your next
 login when **Start Ember when I log in** is on). If Ember was running during an update (GNOME Software or automatic
-updates included), it asks the next time it opens a window: choose **Restart Ember** to finish the update. To remove
+updates included), it asks the next time it opens a window: choose **Restart Ember** to finish the update. To update
+the AppImage, quit Ember, save the new AppImage where the old one was, make it executable and delete the old one.
+Start the new one once: Ember then points **Start Ember when I log in** at it, if that is on. To remove
 Ember, first remove its helper from the computers you added over SSH (below). Then turn off
 **Start Ember when I log in** in its settings (or delete `~/.config/autostart/ember.desktop`), quit it, run
 `sudo dnf remove ember` or delete the AppImage, and delete `~/.config/ember` (its
@@ -177,22 +210,48 @@ Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Termin
 open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --doctor; cat ~/ember-doctor.txt
 ```
 
+## First steps
+
+1. Start Ember from your apps (Linux), the Start menu (Windows) or Applications (macOS); the AppImage by running the
+   file, and the npm launcher with `ember`. Its first window takes you
+   through 6 steps: a hello, **What I do, and what I don't** (nothing is read, heard or sent until you agree), **Sign
+   in to GitHub** (or **Use my own provider**), **Checking this computer** (what to fix, with a button where Ember can
+   do it), **Try me out** (stop Ember, ask it something, and say “Hey Ember” if you like) and **Your Ember**, a summary
+   of what you chose.
+2. To ask, press Ctrl+Alt+Space (on Windows Win+Alt+Space, on a Mac Control+Shift+Command+Space; see **Shortcuts**),
+   type your request and press Enter. Ember answers in its bubble beside your cursor, and asks "May I?" before it does
+   something in an app.
+3. To stop, press Ctrl+Alt+X (on Windows Win+Alt+X, on a Mac Control+Shift+Command+X) or say “Ember, stop”:
+   everything stops at once.
+4. If something doesn't work, run the setup check (`ember doctor`, the AppImage's `doctor`, `.\ember-doctor.cmd` on
+   Windows, or the `open` command above on a Mac), or open Ember's settings with Ctrl+Alt+E (on Windows Win+Alt+E, on
+   a Mac Control+Shift+Command+E) or by starting Ember again.
+
 ## Hear about new versions
 
 Ember doesn't update itself. To hear when a new version is out, turn on **Tell me when a new version is out** under
 **Updates** in its settings and agree to its note. Once a day Ember then asks GitHub, sends nothing about you, and tells
-you once. It never downloads or installs anything: you install the new version as above. The source of the voice's
+you once, in a notification that opens **Updates** when you click it (**See what's new…** there opens the release's
+page). It never downloads or installs anything: you install the new version as above, and **Updates** says how for
+the way you installed Ember (the RPM, the AppImage, the zip, the dmg or npm). The source of the voice's
 GPL-licensed part is on each release, as `source-*.zip`.
 
 ## Computers without internet access
 
 Everything Ember hears and says is worked out on the computer itself: the wake word, speech recognition, Ember's
-voice and Voice Match need no network. Ember's packages carry everything it runs: its speech models, and the Node.js
-runtime it installs on computers you bring it to over SSH (each checked against its pinned SHA-256). The one thing it
-fetches from a third party is optional: Better recall's 23 MB language model (Settings › Memory), downloaded from
-Hugging Face (`huggingface.co`, served from `*.hf.co`) only when you click its Download, and checked against its pinned
-SHA-256. Without it, memory still works, matching your words. Only Copilot itself, and the review of commands, need
-the network: your organisation's model service, your own model provider, or GitHub Copilot's. With your own provider
+voice and Voice Match need no network. Ember's packages carry everything it needs to run: its standard speech models,
+and the Node.js runtime it installs on computers you bring it to over SSH (each checked against its pinned SHA-256).
+Four optional extras are downloaded only when you turn them on, each showing its size first and checked against its
+pinned SHA-256, so a computer that can't reach their host goes without them:
+
+- **Hear me more clearly** (482 MB, Settings › Voice), the clearer recogniser, and the Kokoro voice (350 MB, Windows
+  and macOS) and the Supertonic voice (129 MB, Windows and macOS), from sherpa-onnx's releases on `github.com`, which
+  hands the files over from `release-assets.githubusercontent.com`;
+- Better recall (23 MB, Settings › Memory), a small language model from Hugging Face (`huggingface.co`, served from
+  `*.hf.co`), only when you click its Download.
+
+Without them Ember listens with its standard recogniser, speaks in Kitten Nano, and its memory still works, matching
+your words. Only Copilot itself, and the review of commands, need the network: your organisation's model service, your own model provider, or GitHub Copilot's. With your own provider
 on a model server on this computer (below), nothing needs the network at all.
 
 What to install so nothing is downloaded:
@@ -206,7 +265,8 @@ What to install so nothing is downloaded:
 
 `Ember-voice-models-0.1.1.zip` (check it against `SHA256SUMS`) also serves IT that installs the models once per
 computer for every copy of Ember: unzip it so its `voice-models` folder lands in `%ProgramData%\Ember\voice-models`
-(Windows) or `/Library/Application Support/Ember/voice-models` (macOS).
+(Windows), `/Library/Application Support/Ember/voice-models` (macOS) or `/usr/share/ember/voice-models` (Linux, for an
+AppImage built without them; the RPM puts its own there). It holds the standard models only, not the optional extras.
 
 Ember checks each model against its SHA-256 and uses that folder without downloading anything; it never changes it.
 
@@ -214,7 +274,7 @@ Ember checks each model against its SHA-256 and uses that folder without downloa
 
 Ember needs a **GitHub account with Copilot** (for Copilot Business or Enterprise, your organisation must also turn on
 the **Copilot CLI** policy). Once you have agreed to how Ember works in its first window, press **Sign in with GitHub**
-in its Copilot section. Your browser opens GitHub's device page: enter the code Ember shows (**Copy** puts it on the
+on its **Sign in to GitHub** step (later, in Settings › **Models & connections**). Your browser opens GitHub's device page: enter the code Ember shows (**Copy** puts it on the
 clipboard) and approve. Ember connects within a few seconds, with no restart. It keeps the sign-in encrypted by your
 system (the GNOME keyring, Windows' own protection or the macOS Keychain); where it can't, you sign in again the next
 time Ember starts. Ember's own GitHub sign-in lasts eight hours at a time: Ember renews it by itself before it runs out
@@ -236,13 +296,17 @@ GitHub CLI. Install it, run `gh auth login` in a terminal, and press **Connect w
 
 ## Use your own model provider
 
-Instead of GitHub Copilot, Ember can use a model service of your own: in its settings, open **Copilot** and turn on
-**Use my own model provider**. Choose the **Provider** (OpenAI-compatible, Azure OpenAI or Anthropic), enter its
-**Endpoint** (an `https://` address, or `http://localhost:…` for a model server on this computer such as Ollama or LM
-Studio), paste the **API key** and press **Save**, and enter the **Conversation model** (and, if it differs, a **Model
-for tasks** that understands images). Ember first shows what it will send to that service, screenshots of the windows
-it works in included, and uses it only once you agree. **Test connection** checks the address and the key. A change
-applies from your next message, without a restart.
+Instead of GitHub Copilot, Ember can use a model service of your own. In its first window, press **Use my own
+provider** on the **Sign in to GitHub** step: choose the provider's type (OpenAI-compatible, Azure OpenAI or
+Anthropic), enter its address (an `https://` address, or `http://localhost:…` for a model server on this computer such
+as Ollama or LM Studio, which may need no key), its API key and the name of a model, then press **Agree and check the
+models**. Ember first shows what it will send to that service, screenshots of the windows it works in included, and
+uses it only once you agree; the check says what the service answered. **Back** takes you to GitHub Copilot instead.
+
+Later, open Settings › **Models & connections** and turn on **Use my own model provider** under **Model provider**:
+choose the **Provider**, enter its **Endpoint**, paste the **API key** and press **Save**, and enter the
+**Conversation model** (and, if it differs, a **Model for tasks** that understands images). **Test connection** checks
+the address and the key. A change applies from your next message, without a restart.
 
 The key is kept encrypted by your system's keyring, apart from Ember's settings, and goes only to that service; Ember
 never shows it again (**Replace** and **Remove** are there), and signing out deletes it. Where there is no keyring
@@ -268,13 +332,13 @@ check says so ("Ctrl+Alt+Space is taken by another app, so Ask Ember is
 Ctrl+Alt+Shift+Space"), and the greeting, the handle's menu, settings and every hint name the chord Ember holds.
 
 If another app holds the fallback too, the setup check says which, and Ember keeps trying to get them. Meanwhile click
-Ember's handle in its corner, or from the keyboard start Ember again (from your apps, the Start menu or
-Applications) or press the settings shortcut: settings then opens at **Ask Ember…** and **Stop everything**, at the
+Ember's handle in its corner, or from the keyboard start Ember again (from your apps, the AppImage, `ember`, the Start
+menu or Applications) or press the settings shortcut: settings then opens at **Ask Ember…** and **Stop everything**, at the
 top of **Home**. On Windows, PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar uses Win+Alt+M by
 default.
 
 **Ask Ember** is also in the system's own launcher, whatever another app holds: right-click Ember in the dash or the
-app grid (Linux), Ember's taskbar icon (Windows: its jump list), or Ember's Dock icon while it runs (macOS). On Windows,
+app grid (Linux, with the RPM), Ember's taskbar icon (Windows: its jump list), or Ember's Dock icon while it runs (macOS). On Windows,
 Ember has a taskbar icon while its settings, command, or password and consent window is open, or once you pin it there: right-click
 Ember in the Start menu and pin it to the taskbar. On Linux and Windows it starts Ember with `--ask` (`ember --ask`,
 `Ember.exe --ask`), which opens the ask box, starting Ember first if it isn't running (settings instead until Ember is
@@ -316,7 +380,7 @@ and VoiceOver on a Mac. While one runs:
 | Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds it and its fallback: **Ask Ember…** in settings, at the top of **Home**, or **Ask Ember** in the system's launcher (app menu, Dock menu, or the jump list once Ember is pinned to the taskbar) |
 | Answer "May I?" | Ctrl+Alt+Y allow, Ctrl+Alt+N not now, while the question is up. **Always in this app** is a click only, so that a key meant for an app never grants for good. A question about typing a long text shows all of it in a box under it and allows only once all of it has been in view: until then Ctrl+Alt+Y shows the next part, and once it has, a moment later, Ctrl+Alt+Y pressed again allows |
 | Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds it and its fallback: **Stop everything** at the top of settings' **Home** |
-| Open settings | The settings shortcut, or start Ember again from your apps, the Start menu or Applications |
+| Open settings | The settings shortcut, or start Ember again from your apps, the AppImage, `ember`, the Start menu or Applications |
 | What the handle's menu does | Settings' **Home**: **Ask Ember…** and **Stop everything**. Settings › **Your Ember › Ember on screen**: **Hide Ember until it needs me** for **Hide Ember**, **Follow my cursor** for **Stay put**, **Handle position** for **Move to the other side**, and **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
 | A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, once the card has shown the whole command; or say “Ember, allow” (Voice Match on) or “Ember, not now” then |
 | Any question of Ember's | Say “Ember, allow” (only with **Answer questions with my voice (Voice Match)** on and recognising you) or “Ember, not now” (anyone). Never “Always” by voice. **Apps & privacy › Work without asking** has Ember tell you instead of asking before routine steps; risky ones still ask |
@@ -375,9 +439,9 @@ you turn it on in settings (**Commands**, **Computers**) and accept the card tha
   voice and your GitHub sign-in always stay on this computer.
 
 The same switches turn them off, and the stop shortcut stops every command at once. Administrators can turn each off,
-or make every command ask, in the organisation policy (`features.wsl`, `features.ssh`, `commands`, `ssh`); an Ember
-older than this release locks down when its policy uses those keys. [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md)
-has the details, including what Ember can't do yet.
+or make every command ask, in the organisation policy (`features.wsl`, `features.ssh`, `commands`, `ssh`, which 0.1.0
+knows too; the `features` keys 0.1.1 adds lock a 0.1.0 Ember down, as the RPM's `policy.README` says).
+[docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md) has the details, including what Ember can't do yet.
 
 **Before you remove Ember from this computer**, press **Remove helper** beside each computer you added in Settings ›
 **Computers**: it removes the helper there and keeps that computer's record of what Ember did. Once Ember is
@@ -394,7 +458,11 @@ sh ~/Library/Application\ Support/Ember\ Remote/versions/*/uninstall.sh    # mac
 Report what doesn't work, or what is hard to use, on the
 [issue tracker](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues). Settings'
 **About this build** shows the same address under **Report a problem**, to copy, and the setup check's advice points
-there when only a report can help.
+there when only a report can help. **About this build** also shows Ember's **Log file** (`ember.log`), with **Copy** and
+**Show in Files** (**Show in File Explorer** on Windows, **Show in Finder** on a Mac): look it over, then attach it to
+your report. What to try first for common problems is in the developer guide's troubleshooting tables, for
+[Linux](docs/DEVELOPING.md#9-troubleshooting), [Windows](docs/DEVELOPING.md#109-troubleshooting) and
+[macOS](docs/DEVELOPING.md#118-troubleshooting).
 
 ## Develop
 
@@ -405,7 +473,7 @@ npm ci && npm run dev      # needs Node 22 and npm 11, see docs/DEVELOPING.md
 - **[PLAN.md](PLAN.md)**: the frozen v1 plan, task list and progress (Windows and macOS: milestone M11; SSH, WSL and
   commands: M12)
 - [docs/DEVELOPING.md](docs/DEVELOPING.md): set up a development machine (RHEL 8.4 §1–§9, Windows §10, macOS §11;
-  SSH, WSL and commands §14)
+  SSH, WSL and commands §14), and troubleshooting (§9, §10.9, §11.8)
 - [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md): commands, WSL and other computers, for users and administrators
 - [CHANGELOG.md](CHANGELOG.md): release notes
 - [docs/RESEARCH.md](docs/RESEARCH.md): background research and evidence

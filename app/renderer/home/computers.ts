@@ -10,7 +10,7 @@ import type { Status, StatusPlatform } from "../../shared/ipc";
 import type { Settings } from "../../main/settings";
 import type { TargetSummary, TargetsAct } from "../../shared/targets";
 import {
-  ACT_FAILED, ADD_INVALID, actMessage, actResult, addPending, addResult, commandsView, computersIntro, computersView, hostInput, type ComputerRow, type EmberTargetsApi,
+  ACT_FAILED, ADD_INVALID, actMessage, actResult, addPending, addResult, cardPending, commandsView, unbrokenRuns, computersIntro, computersView, hostInput, type ComputerRow, type EmberTargetsApi,
   type RowAction, type Switch, type TargetsAdmin,
 } from "./computers-copy";
 
@@ -35,11 +35,19 @@ function adminOf(a: Status["admin"]): TargetsAdmin {
   return { source: a.error ? "error" : a.source, features: { wsl: a.features?.wsl, ssh: a.features?.ssh }, commands: x.commands, sshHostsLimited: x.sshHostsLimited };
 }
 
-const say = (id: string, text: string) => { $(id).textContent = text; };
+/** A status line, with each hyphenated word kept whole (a command, a host's name: commands-remote-8). */
+const say = (id: string, text: string) => {
+  const line = $(id);
+  line.textContent = "";
+  for (const r of unbrokenRuns(text)) line.append(r.whole ? el("span", "whole", r.text) : document.createTextNode(r.text));
+};
 
 async function act(a: TargetsAct, msg: string): Promise<void> {
   const api = window.emberTargets;
   if (!api) return;
+  // A switch whose first-use card is open in another window says where to answer it (commands-remote-4).
+  const pending = cardPending(a, settings);
+  if (pending) say(msg, pending);
   try {
     say(msg, actMessage(await api.act(a)) ?? "");
   } catch {

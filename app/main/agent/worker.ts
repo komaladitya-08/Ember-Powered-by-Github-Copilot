@@ -30,6 +30,7 @@ import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
+import { helperCantRun } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { isRiskyLabel } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
@@ -219,6 +220,8 @@ export interface TaskSpec {
   target: WindowTarget & { app?: string };
   /** "do": Ember acts. "guide": Ember points and the user clicks. */
   mode?: "do" | "guide";
+  /** A retry of a try that stopped part-way, having changed something: the first prompt says so (tasks-approvals-3). */
+  partWay?: boolean;
 }
 
 export interface WorkerResult {
@@ -230,6 +233,10 @@ export interface WorkerResult {
   declined?: boolean;
   /** Stopped because a question ran out of time unanswered and nothing was done after that: not a "Not now". */
   expired?: boolean;
+  /** Stopped because the user took the mouse back from Ember (its summary need not say so: TaskManager's endedBy). */
+  tookOver?: boolean;
+  /** Its step or time limit stopped it: TaskManager adds what it had done by then, from its own count (tasks-approvals-3). */
+  limit?: boolean;
   /** What it found or made, for its card (finish_task's view: app/shared/view.ts's catalog, checked). */
   view?: ViewDoc;
 }
@@ -238,6 +245,58 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/**
+ * A step that can't be done because the accessibility helper can't work here at all (helperCantRun: its Python
+ * bindings missing, macOS not having given Ember the Accessibility permission, the helper unable to start;
+ * tasks-approvals-8). It can't work again until the user fixes that, so the model is never told to try again.
+ */
+const HELPER_DOWN = "Ember's accessibility helper isn't working, so this step couldn't be done. Finish the task and tell the user to open the setup check in Ember's settings (Setup & about), which says what's wrong.";
+
+/**
+ * A tool's result when its handler threw: the accessibility helper's answers that it can't work here as what the user
+ * can do about them (the setup check says what's wrong), anything else, a helper that only timed out or was restarted
+ * included (safety-privacy-c2-1), quoted as untrusted words (an error may carry screen text).
+ */
+function toolFailure(err: unknown): ToolResultObject {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (helperCantRun(msg)) return fail(HELPER_DOWN);
+  return fail(`That step didn't work: ${q(msg, 200)}. Call perceive_window and try again, or finish the task saying what's left.`);
+}
+
+/**
+ * A task's first prompt: its goal, a note when an earlier try stopped part-way (TaskSpec.partWay: it may have done some
+ * of it already, so it checks before repeating anything), and where the user was (`where`: untrusted context).
+ */
+export function taskPrompt(goal: string, partWay: boolean, where: string): string {
+  return `Task: ${goal}${partWay ? "\n(An earlier try of this task stopped part-way: check what is already done before repeating anything.)" : ""}${where}`;
+}
+
+/** What the step past 80% of a task's steps or time adds to its result, once (tasks-approvals-3). */
+const NEAR_LIMIT = "You have used most of this task's steps or time: finish the step you're on, then call finish_task saying what's done and what's left.";
+/** A step refused while a password or authentication prompt is open on the user's screen (M8.3, safety-privacy-3). */
+const AUTH_PROMPT_OPEN = "An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.";
+/** Steps done with the user's borrowed mouse and keyboard (tier 3), which an authentication prompt with the keyboard stops. */
+const BORROWED: ReadonlySet<ActionKind> = new Set<ActionKind>(["cursor_click", "cursor_text", "keys", "scroll"]);
+/**
+ * A step refused because the desktop couldn't be asked whether such a prompt is open (fail closed, safety-privacy-r1):
+ * never said to be one, so nobody goes looking for a prompt that isn't there (safety-privacy-c1-2).
+ */
+const PROMPT_UNCHECKED = "Ember can't tell right now whether a password prompt is open on the user's screen (the desktop didn't answer in time), so nothing was read or done. Wait a moment and look again, or finish the task saying what's left.";
+/** What a look that asked for a picture says when the user turned Send screenshots for tasks off during the task. */
+const NO_PICTURES = "(No screenshot: the user turned off sending screenshots for tasks; work from the elements.)";
+/** The audit's reason for each (What Ember did shows it): a helper that can't work here is no prompt (reliability-performance-r2-1). */
+const PROMPT_REASON = { open: "an authentication prompt is open", unchecked: "Ember couldn't tell whether a password prompt was open", helper: "Ember's accessibility helper isn't working" } as const;
+/** The refusal for a step while promptOpen says one is open, may be, or can't be asked (the helper can't work here). */
+const PROMPT_REFUSAL = { open: AUTH_PROMPT_OPEN, unchecked: PROMPT_UNCHECKED, helper: HELPER_DOWN } as const;
+/**
+ * The cause in the window system's reason for its check, "<cause>, so <what Ember won't do and what the user can>"
+ * (macOS's secure keyboard entry, a Wayland session: systemDialogReason), as the task's card says it: "secure keyboard
+ * entry is on in Terminal (…)", "this is a Wayland session" (tasks-approvals-v5-3). The whole reason when it has no such
+ * clause.
+ */
+const causeOf = (why: string): string => why.split(", so ")[0]!.trim() || why;
+/** promptOpen's answer as PROMPT_REASON's and PROMPT_REFUSAL's key (true is a prompt that is open). */
+const promptKey = (open: true | "unchecked" | "helper"): keyof typeof PROMPT_REASON => (open === true ? "open" : open);
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
 const POSES_AS_ANNOUNCEMENT = new RegExp([
   String.raw`without\s+(asking|checking|permission|approval|confirm\w*|a\s+question)`, String.raw`as\s+you\s+(let|allow\w*|permit\w*)`,
@@ -1135,6 +1194,14 @@ export class Worker {
   private readonly commandState: CommandFlowContext["state"] = { cwd: null, downloaded: new Set<string>(), running: false };
   /** The latest decision authorize() let through (gate 1's stamp for a remote step, onAuthorized). */
   private lastAuth: { at: number; verdict: "allow" | "confirm"; approvedAt: number | null } | null = null;
+  /**
+   * A step Work without asking let through (authorize, authorizeCells): its decisions' audit entries and its
+   * announcement, held until the look right before acting has passed (act, system, withCursor: goAhead). So a step a
+   * password prompt then stops is never said, nor recorded, as going ahead without asking, and no extra look through the
+   * shell is made to find out (safety-privacy-v4-2). The next decision, and the next tool call, drop one that never got
+   * that far (safety-privacy-r4-1).
+   */
+  private ahead: { entries: AuditEntry[]; words: string | null } | null = null;
   /** Ember's questions the user answered with a yes or a choice, with those added since (TaskSpec.agreed). */
   private agreed: Agreement[];
   /** The user said no to a question (or let it go unanswered), and nothing was done after that. */
@@ -1326,6 +1393,29 @@ export class Worker {
     this.activity({ type: "announce", text: words });
   }
 
+  /** The step held in `ahead` goes ahead now that the look right before acting has passed: recorded, then said. */
+  private goAhead(): void {
+    const ahead = this.ahead;
+    if (!ahead) return;
+    this.ahead = null;
+    for (const e of ahead.entries) this.audit(e);
+    if (ahead.words) this.announce(ahead.words);
+  }
+
+  /**
+   * An authentication prompt (an X11 pinentry or ssh-askpass window) has the keyboard on the user's screen: the borrow
+   * refuses (M8.3), and so does a question about one before it is asked, so nobody is asked about a borrow that is then
+   * refused (safety-privacy-v4-3). Only the window with the keyboard is looked at, with no walk of the shell.
+   */
+  private keyboardTaken(kind: ActionKind, element?: Focus): ToolResultObject | null {
+    const w = this.place ? null : this.d.cursor?.activeWindow?.();
+    if (!w || !this.sys.privacy.isSecurityWindow(w)) return null;
+    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
+    // Its card's row says why, in Ember's words (tasks-approvals-r3-4).
+    this.activity({ type: "refused", reason: "an authentication prompt has the keyboard" });
+    return denied(AUTH_PROMPT_OPEN);
+  }
+
   /**
    * How question `q` was answered, for its audit entry: a spoken answer says so, whether Voice Match verified it, and
    * `trust: "task-voice"` for a short yes taken on this task's voice trust.
@@ -1340,15 +1430,22 @@ export class Worker {
     try { this.d.onActivity?.(e); } catch (err) { this.d.log.warn("worker.activity_failed", { err }); }
   }
 
-  /** Past 80% of its steps or its time, the card says the task is close to its limit (once). */
+  /**
+   * Past 80% of its steps or its time, the card says the task is close to its limit (once), and so does the result of
+   * the step that crossed it, to the model (whether it did now: tasks-approvals-3).
+   */
   private nearLimitSaid = false;
-  private checkLimits(maxSteps: number): void {
-    if (this.nearLimitSaid) return;
+  private checkLimits(maxSteps: number): boolean {
+    if (this.nearLimitSaid) return false;
     if (this.steps >= maxSteps * 0.8 || (this.clock?.used() ?? 0) >= 0.8) {
       this.nearLimitSaid = true;
       this.activity({ type: "near-limit" });
+      return true;
     }
+    return false;
   }
+  /** A limit (not the user, not Copilot) stopped the task: its result says so (WorkerResult.limit). */
+  private limitHit = false;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
   tools(): Tool<any>[] {
@@ -1405,22 +1502,39 @@ export class Worker {
   private wrappingUp = false;
 
   private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number): Promise<ToolResultObject | string> {
+    // A step held to go ahead without asking that its own call didn't take (a password prompt, the keyboard or the desk
+    // refused it) is never written by a later call's action entry, after its refusal (safety-privacy-r4-1).
+    this.ahead = null;
     if (this.halted) return STOPPED();
     if (this.result) return denied("The task is already finished. Stop now.");
     // Asked for its summary (its turn ended without one): nothing more is done in the user's apps.
     if (this.wrappingUp && name !== "finish_task" && name !== "report_progress") return denied("The task is over: call finish_task now with what you already did. Do nothing else.");
     if (++this.steps > maxSteps) {
+      this.limitHit = true;
       this.stopNow(`I stopped after ${maxSteps} steps without finishing, to be safe.`);
       return STOPPED();
     }
-    this.checkLimits(maxSteps);
+    const nearLimit = this.checkLimits(maxSteps);
     const parsed = parameters.safeParse(raw ?? {});
     if (!parsed.success) {
       return fail(`Invalid arguments for ${name}: ${parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
     }
     // Only a read right after a step learns that the step closed its window: any other call starts afresh.
     if (name !== "perceive_window" && name !== "report_progress") this.stepClosedIt = false;
-    const result = await handler(parsed.data);
+    let result: ToolResultObject | string;
+    try {
+      result = await handler(parsed.data);
+    } catch (err) {
+      // A handler that throws (the accessibility helper can't start, a reader that broke) reached the model only as the
+      // runtime's "Tool execution failed", and Ember logged nothing of it: now the tool and the error are logged, and the
+      // model hears what happened in plain words (tasks-approvals-8). Stopped meanwhile: stopped.
+      if (this.isOver || err instanceof BorrowStopped) return STOPPED();
+      this.d.log.warn("worker.tool_failed", { task: this.spec.id, tool: name, err });
+      result = toolFailure(err);
+    }
+    // The step that took it past 80% of its steps or time says so, once: the model can still wrap up and say what's
+    // left, where a limit would otherwise stop it mid-way with nothing said (tasks-approvals-3).
+    if (nearLimit) result = typeof result === "string" ? `${result}\n${NEAR_LIMIT}` : { ...result, textResultForLlm: `${result.textResultForLlm}\n${NEAR_LIMIT}` };
     // Turned down ("Not now", a refusal, a stop): its card shows the step stopped, not one that didn't work.
     if (typeof result === "object" && result.resultType === "denied") this.activity({ type: "denied" });
     return result;
@@ -1440,8 +1554,18 @@ export class Worker {
         : this.tool("perceive_window",
           "Read the window you are working in: its elements with ids, roles, names, states and positions." + (this.d.vision ? " Pass image=true to also get a screenshot with numbered marks." : ""),
           z.object({ image: z.boolean().optional().describe("Also return a marked screenshot") }),
-          async ({ image }) => this.perceive(image === true && this.d.vision)),
+          async ({ image }) => {
+            // Home's "Send screenshots for tasks" is asked at every look, not only as the task began: turned off while
+            // it works, the task's next look sends no picture (safety-privacy-c1-1).
+            const wanted = image === true && this.d.vision;
+            const may = wanted && this.picturesAllowed();
+            const r = await this.perceive(may);
+            return wanted && !may && r.resultType === "success" ? { ...r, textResultForLlm: `${r.textResultForLlm}\n${NO_PICTURES}` } : r;
+          }),
       this.tool("list_windows", "List the open windows (app and title).", z.object({}), async () => {
+        // No window's title goes anywhere while the shell's own password prompt is open (safety-privacy-3).
+        const prompt = await this.promptRefusal("read");
+        if (prompt) return prompt;
         // Ember's own windows aren't for tasks.
         const wins = (await this.perception.windows()).filter(w => !isEmberWindow(w));
         // Their titles reach the model (an email's subject, a file's name): text typed elsewhere may carry them.
@@ -1570,7 +1694,10 @@ export class Worker {
             await apps.launch(app);
             for (let i = 0; i < 40 && !this.isOver; i++) {
               await new Promise(r => setTimeout(r, 250));
-              const wins = await this.perception.windows().catch(() => []);
+              // A helper that can't read here (macOS before the Accessibility permission) won't list it in 10 s either.
+              let cantRead = false;
+              const wins = await this.perception.windows().catch((err: unknown) => { cantRead = helperCantRun(err); return []; });
+              if (cantRead) return `Started ${shownApp}, but ${HELPER_DOWN.replace("this step couldn't be done", "Ember can't work in its window")}`;
               const w = wins.find(x => !before.has(key(x)) && (ours(x) || x.name.toLowerCase().includes(app.name.toLowerCase())))
                 ?? (i >= 8 ? wins.find(ours) : undefined);
               if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; this.window = { app: w.app, name: w.name }; return `Opened ${shownApp}; now working in its window ${q(w.name, 100)}. Call perceive_window.`; }
@@ -1730,6 +1857,7 @@ export class Worker {
         id: this.spec.id, title: goal.length > 200 ? `${goal.slice(0, 199)}…` : goal,
         commandWords: () => this.commandWords, agreed: () => this.agreed, tainted: () => this.tainted,
         spokenWords: () => (this.spokenOnly ? this.userWords : ""),
+        ownWords: () => this.ownWordsLine(),
         // Output that reads like instructions: every later step (command or not) is checked with the user (§3.11).
         taint: () => { this.tainted = true; },
         readFrom: () => [...this.read.values()],
@@ -1775,7 +1903,7 @@ export class Worker {
     signal.addEventListener("abort", onAbort, { once: true });
     const maxMs = d.limits?.maxMs ?? 20 * 60_000;
     // Its questions' waits for the user's answer don't count (TaskClock).
-    const clock = this.clock = new TaskClock(maxMs, () => this.stopNow(`I stopped because the task took longer than ${Math.round(maxMs / 60_000)} minutes.`));
+    const clock = this.clock = new TaskClock(maxMs, () => { this.limitHit = true; this.stopNow(`I stopped because the task took longer than ${Math.round(maxMs / 60_000)} minutes.`); });
     let lastAnswer = "";
     try {
       fs.mkdirSync(d.workDir, { recursive: true });
@@ -1855,13 +1983,13 @@ export class Worker {
           d.log.warn(why === "silent" ? "worker.turn_silent" : "worker.turn_not_started");
           let full = false;
           try { full = why === "not-started" && d.inotifyUsedUp?.() === true; } catch { /* can't be counted */ }
-          this.stopNow(why === "silent" ? "Copilot didn't answer, so I stopped this task. You can ask me again in a moment."
-            : full ? "Copilot can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again."
-            : "Copilot isn't answering, so I stopped this task. You can ask me again in a moment.");
+          // Named for the model service in use, never Copilot when it isn't (integrations-v1).
+          this.stopNow(d.presenter.taskStopped(full ? "watchers" : why === "silent" ? "silent" : "not-started"));
         }, {
           slowMs: d.limits?.turnSlowMs, silentMs: d.limits?.turnSilentMs,
           // The task's card and its bubble say so (without a compositor the card's task row is one short line).
-          onSlow: slow => { if (!this.halted) { d.onProgress(slow ? "Still waiting for Copilot…" : "Working…"); d.presenter.stalled(slow); this.activity({ type: "slow", on: slow }); } },
+          // Named for the service in use, never Copilot when it isn't (integrations-v1).
+          onSlow: slow => { if (!this.halted) { const waiting = d.presenter.stillWaiting(); d.onProgress(slow ? waiting : "Working…"); d.presenter.stalled(slow); this.activity({ type: "slow", on: slow, words: waiting }); } },
         });
         const unwatch = session.on(e => watch.event(e));
         const send = async (prompt: string) => {
@@ -1872,7 +2000,7 @@ export class Worker {
         };
         try {
           let wait = idle();
-          await send(`Task: ${this.spec.goal}${where}`);
+          await send(taskPrompt(this.spec.goal, !!this.spec.partWay, where));
           await wait;
           if (!this.result && !this.halted) {
             this.wrappingUp = true;
@@ -1895,12 +2023,12 @@ export class Worker {
       if (this.place) d.onDesk?.(null, this.place);
     }
     if (this.halted && this.haltReason === null) return { success: false, summary: this.stoppedSummary(), stopped: true };
-    if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason };
+    if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason, ...(this.limitHit ? { limit: true } : {}) };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
     if (this.expired && !this.declined && !this.result?.success) return { success: false, stopped: true, expired: true, summary: this.result?.summary || "My question ran out of time with no answer, so I didn't do it." };
     if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
     const result = this.result ?? { success: false, summary: lastWordsSummary(lastAnswer) };
-    return this.userTookOver && !result.success ? { ...result, stopped: true } : result;
+    return this.userTookOver && !result.success ? { ...result, stopped: true, tookOver: true } : result;
   }
 
   /**
@@ -2227,6 +2355,13 @@ export class Worker {
     const target = expectTitle ? { title: expectTitle } : this.target;
     const p = await this.perception.perceive({ image, scope: "window", target });
     if (this.isOver) return STOPPED();
+    // The shell's own password prompt is open: nothing was read (safety-privacy-3). The task may wait and look again.
+    if (p.authPrompt) {
+      const key = promptKey(p.authPrompt);
+      this.audit({ event: "decision", task: this.spec.id, kind: "read", app: "", window: "", tier: "never", verdict: "deny", reason: PROMPT_REASON[key] });
+      this.activity({ type: "refused", reason: PROMPT_REASON[key] });
+      return denied(PROMPT_REFUSAL[key]);
+    }
     if (p.blocked) {
       this.audit({ event: "decision", task: this.spec.id, kind: "read", app: p.window?.app ?? "", window: p.window?.name ?? p.x11Window?.title ?? "", tier: "never", verdict: "deny", reason: "private window (never-look list or a password prompt)" });
       return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
@@ -2274,7 +2409,15 @@ export class Worker {
     // control on its own: a phrase never runs from one control's name into the next ("Ignore", "All", "Rules").
     const flagged = this.flagInjection(readText, "window", p.window.app);
     const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${flagged ? INJECTION_NOTE : ""}`, resultType: "success" };
-    if (p.capture) result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
+    if (p.capture) {
+      // Every picture of a window sent to the model is recorded first, by its app and size (never its title), so What
+      // Ember did can say it went (safety-privacy-6); one that can't be recorded isn't sent (audit() throws).
+      this.audit({ event: "read", task: this.spec.id, kind: "screenshot", app: p.window.app, ok: true, bytes: p.capture.data.length, ...(this.place ? { onDesk: true } : {}) });
+      if (this.isOver) return STOPPED();
+      result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
+      // Its card says a picture went, not only that it read the window.
+      this.activity({ type: "picture" });
+    }
     return result;
   }
 
@@ -2689,6 +2832,11 @@ export class Worker {
       if (this.isOver) return STOPPED();
       if (now && isOn(now.states) === (value === "on")) return done(`Already ${value}: ${describeAfter(now)}`);
     }
+    // Never while the shell's own password prompt is open, also by accessibility (safety-privacy-3).
+    const prompt = await this.promptRefusal(kind, element);
+    if (prompt) return prompt;
+    // Only now is a step Work without asking let through recorded and said (safety-privacy-v4-2).
+    this.goAhead();
     const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
     try {
       if (this.isOver) return STOPPED();
@@ -3304,11 +3452,14 @@ export class Worker {
    */
   private async authorizeCells(jobs: CellJob[]): Promise<ToolResultObject | null | "each"> {
     this.asked = false;
+    this.ahead = null;
     if (this.isOver) return STOPPED();
     this.keyed = { window: "", selected: null };
     this.moving = null;
     const base = { taskId: this.spec.id, kind: "cursor_text" as const, app: this.window.app, window: this.window.name, mode: "replace" as const,
       onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], windowId: this.windowId };
+    // The batch counts as one action: it waits its turn under the limit on actions a minute as one step would.
+    if (!await this.pace()) return STOPPED();
     // Judged after what was typed into the window's other fields before, as each cell would be one after the other.
     let typed = this.typedWindows.get(this.windowKey);
     const judged = jobs.map((job, i) => {
@@ -3330,10 +3481,22 @@ export class Worker {
     const asks = judged.find(j => j.d.verdict !== "allow");
     const alone = judged.some(j => j.d.aligned === false) || jobs.some(j => reachesOut(j.text));
     const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
-    for (const [i, { req, d }] of judged.entries()) {
-      const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
-      this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...batch });
+    // No question while the shell's own password prompt is open (or Ember can't tell), or an authentication prompt has
+    // the keyboard: the borrow would refuse the batch once the user answered, as for one step (authorize;
+    // safety-privacy-3, safety-privacy-v4-3). A batch going ahead without asking is looked at by the borrow alone.
+    if (!no && !alone && asks) {
+      const cells: Focus = { role: "table cell", name: jobs.map(j => j.cell).join(", ") };
+      const prompt = this.keyboardTaken("cursor_text", cells) ?? await this.promptRefusal("cursor_text", cells);
+      if (prompt) return prompt;
     }
+    const entries: AuditEntry[] = judged.map(({ req, d }, i) => {
+      const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
+      return { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...batch };
+    });
+    // A batch going ahead without asking is recorded, and said, once the borrow's look right before acting has passed
+    // (goAhead), as one step is (authorize; safety-privacy-v4-2).
+    const ahead = !no && !alone && !asks && judged.some(j => j.d.autonomy);
+    if (!ahead) for (const e of entries) this.audit(e);
     if (no) return denied(`Not allowed in ${no.job.cell}: ${no.d.reason}. Nothing was typed. Don't try another way for that cell; fill the others without it if that still makes sense, and tell the user in finish_task.`);
     const out = jobs.find(j => reachesOut(j.text));
     if (out) return fail(`The formula for ${out.cell} can fetch from the internet or read other files, which the user is asked about on its own. Nothing was typed: fill ${out.cell} with type_text (cell ${out.cell}), and the other cells with fill_cells.`);
@@ -3344,11 +3507,10 @@ export class Worker {
     if (judged.every(j => j.d.verdict === "allow")) {
       // Going ahead without asking: one line for the batch, built from it (how many cells, the app), never their text.
       const waived = judged.filter(j => j.d.autonomy && j.d.announce);
-      if (waived.length === 1 && jobs.length === 1) this.announce(waived[0].d.announce!);
-      else if (waived.length) {
-        const app = this.window.app ? friendlyApp(this.window.app) : "this app";
-        this.announce(`${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, without asking as you let me.${this.place ? "" : " Move the mouse or press a key to take it back."}`);
-      }
+      const app = this.window.app ? friendlyApp(this.window.app) : "this app";
+      const words = waived.length === 1 && jobs.length === 1 ? waived[0].d.announce!
+        : waived.length ? `${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, without asking as you let me.${this.place ? "" : " Move the mouse or press a key to take it back."}` : null;
+      if (ahead) this.ahead = { entries, words };
       return null;
     }
     // Each cell, with what goes in (and what it replaces): the values cut short, all of them listed.
@@ -3368,10 +3530,11 @@ export class Worker {
     const app = this.window.app ? ` in ${friendlyApp(this.window.app)}` : "";
     const prompt = `${this.place ? "Fill" : "Borrow your keyboard to fill"} ${jobs.length} cell${jobs.length > 1 ? "s" : ""}${app}${this.place ? " on my desk" : ""}: ${list}?${added ? ` ${added}` : ""}`;
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
+    const taskLine = this.tainted ? this.ownWordsLine() : undefined;
     this.asked = true;
     // On another computer the question says where (§2.4), as every other question of a task does.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
-    const question: WhereQuestion = { title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: "cursor_text", cells: jobs.length, ...(this.window.app ? { app: friendlyApp(this.window.app) } : {}), onDesk: !!this.place }));
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
@@ -3996,18 +4159,28 @@ export class Worker {
     const c = this.d.cursor;
     // A password or authentication prompt has the keyboard: those are the user's alone (M8.3).
     const authPrompt = () => { const w = c.activeWindow?.(); return !!w && this.sys.privacy.isSecurityWindow(w); };
-    if (authPrompt()) {
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "an authentication prompt has the keyboard" });
-      return denied("An authentication prompt is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
-    }
-    // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too.
-    if (await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => false)) {
+    const taken = this.keyboardTaken(kind, element);
+    if (taken) return taken;
+    // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too. A check that fails refuses
+    // (fail closed, safety-privacy-r1).
+    const dialog = await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => "unchecked" as const);
+    if (dialog) {
       // Not always a dialog: macOS's secure keyboard entry (Terminal's, a focused password field) is named as itself.
-      const why = await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? "a system dialog is open" });
+      const why = dialog === "unchecked" ? null : await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
+      // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2), and a helper that
+      // can't work here as the helper (reliability-performance-r2-1).
+      const unchecked = dialog === "unchecked" ? "unchecked" : !why && await this.promptUnchecked();
+      const reason = why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open");
+      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason });
+      // The card's row keeps a line of a reason: the window system's says its cause there, whole, and the audit and the
+      // model get all of it (tasks-approvals-v5-3).
+      this.activity({ type: "refused", reason: why ? causeOf(why) : reason });
       return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
-        : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+        : unchecked ? PROMPT_REFUSAL[unchecked]
+          : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
     }
+    // Only now is a borrow Work without asking let through recorded and said (safety-privacy-v4-2, safety-privacy-v4-3).
+    this.goAhead();
     const check = () => {
       if (this.isOver) throw new BorrowStopped();
       if (authPrompt()) throw new Error("an authentication prompt took the keyboard, so Ember stopped");
@@ -4072,6 +4245,8 @@ export class Worker {
   /** Tier 2: full mouse and keyboard on Ember's own desk (the user's input is never touched). */
   private async onDeskInput(place: DeskPlace, kind: ActionKind, element: Focus | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number, afterBorrow?: () => Promise<void>): Promise<ToolResultObject> {
     if (place.userInControl()) return this.deskTaken(kind, element);
+    // Ember's desk has no password prompt of the user's: a step let through without asking is recorded and said now.
+    this.goAhead();
     // Exactly the window approved, as on the user's screen: a refusal is in the audit log too.
     if (!this.window.name) {
       this.audit({ event: "action", task: this.spec.id, kind, app: this.window.app, element, ok: false, tier: 2, error: "no window known yet" });
@@ -4126,6 +4301,10 @@ export class Worker {
     const verdict = await this.authorize(request);
     if (verdict) return verdict;
     if (this.isOver) return STOPPED();
+    // Never while the shell's own password prompt is open: a new app's window would open over it (safety-privacy-3).
+    const prompt = await this.promptRefusal(kind);
+    if (prompt) return prompt;
+    this.goAhead();
     try {
       this.authorized(request);
       const text = await run();
@@ -4213,6 +4392,9 @@ export class Worker {
 
   /** Every audit entry goes through here: an action done (or a command started) after a "Not now" means the task went on. */
   private audit(e: AuditEntry): void {
+    // A step held to go ahead without asking that fails before its look right before acting (the user's clipboard couldn't
+    // be saved) is still recorded as decided before what it did, though it isn't said (goAhead).
+    if (e.event === "action" && this.ahead) { const held = this.ahead.entries; this.ahead = null; for (const d of held) this.audit(d); }
     // (Only a step that happened: one that failed after the "Not now" leaves the task declined.)
     if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) { this.declined = false; this.expired = false; }
     try {
@@ -4234,6 +4416,7 @@ export class Worker {
   private async authorize(request: ActionRequest, o: { note?: string; covered?: boolean } = {}): Promise<ToolResultObject | null> {
     this.asked = false;
     this.lastAuth = null;
+    this.ahead = null;
     if (this.isOver) return STOPPED();
     const inWindow = request.kind !== "open_app" && request.kind !== "setting";
     // What the keys selected ends where text goes in, or the mouse clicks or types into a text field (that moves the
@@ -4247,6 +4430,12 @@ export class Worker {
     const typedHere = adds && inWindow ? this.typedHere(this.fieldOf(request.element), adds) : undefined;
     const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
     let decision = this.d.policy.decide(req);
+    // The limit on actions a minute paces the task (tasks-approvals-2): the step waits for the minute to free a slot,
+    // then is decided afresh (another task may take that slot first: it waits again). A Stop ends the wait at once.
+    while (decision.paced) {
+      if (!await this.pace()) return STOPPED();
+      decision = this.d.policy.decide(req);
+    }
     if (decision.aligned === false) this.tainted = true;
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
     // as it would have. A task that was steered or went off-task is held to asking just below, as before.
@@ -4279,7 +4468,19 @@ export class Worker {
     // A yes to keys that only move (Ctrl+End) never puts the app on that list: typing or a save is asked about itself.
     const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted
       && this.allowedApps.has(req.app.toLowerCase());
-    this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}) });
+    // No question while the shell's own password prompt is open (or Ember can't tell), nor about a borrow while an
+    // authentication prompt has the keyboard: the step would only be refused once the user answered (safety-privacy-3,
+    // safety-privacy-v4-3). Looked at here only for a step that asks, since a walk of the shell costs up to a second on
+    // the target; the look right before acting (act, system, withCursor) still keeps the rule for every step.
+    if (decision.verdict === "confirm" && !sessionAllowed) {
+      const prompt = (BORROWED.has(req.kind) ? this.keyboardTaken(req.kind, req.element) : null) ?? await this.promptRefusal(req.kind, req.element);
+      if (prompt) return prompt;
+    }
+    const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}) };
+    // Going ahead without asking is recorded, and said, once the look right before acting has passed (goAhead), so a
+    // step that look refuses is recorded only as refused (safety-privacy-v4-2).
+    if (decision.verdict === "allow" && decision.autonomy) this.ahead = { entries: [entry], words: decision.announce ?? null };
+    else this.audit(entry);
     if (decision.verdict === "deny") {
       this.activity({ type: "refused", reason: decision.reason });
       return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
@@ -4287,8 +4488,8 @@ export class Worker {
     const decidedAt = performance.now();
     if (decision.verdict === "allow" || sessionAllowed) {
       this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null };
-      // Going ahead without asking: Ember says what it is doing, in the bubble and on the task's card.
-      if (decision.autonomy && decision.announce) this.announce(decision.announce);
+      // Going ahead without asking: Ember says what it is doing, in the bubble and on the task's card, once the look right
+      // before acting has passed (goAhead).
       return null;
     }
     // "Always in this app" isn't offered once something on screen tried to steer Ember.
@@ -4297,13 +4498,15 @@ export class Worker {
       ? [{ id: "once", label: "Allow", primary: true }, { id: "always", label: `Always in ${friendlyApp(req.app)}` }, { id: "deny", label: "Not now" }]
       : [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
+    // A step that came up unasked, or a task text on screen tried to steer: its task line quotes the user, not the goal.
+    const taskLine = decision.aligned === false || this.tainted ? this.ownWordsLine() : undefined;
     this.asked = true;
     // On another computer the question says where (§2.4): a badge in the bubble, and in the spoken question.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
     // Once text on screen tried to steer Ember, every step it asks about looks risky too (it is asked every time).
     const risky = !!decision.risky || this.steered;
-    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
@@ -4321,6 +4524,79 @@ export class Worker {
       return null;
     }
     return this.refused(answer);
+  }
+
+  /**
+   * A password prompt the desktop's shell draws itself is open (Perception.promptOpen: GNOME Shell's polkit and keyring
+   * dialogs, which no X11 window shows, and on Linux a prompt program's own window, focused or not, such as pinentry's):
+   * no step is taken until it's done, by accessibility as with the borrowed mouse
+   * (CLAUDE.md "Never"; safety-privacy-3), and the refusal is audited. A check that can't be made, or fails, refuses too
+   * (fail closed, safety-privacy-r1), in words that say Ember can't tell rather than that a prompt is open
+   * (safety-privacy-c1-2), or, when the helper can't work here at all, that it isn't working and where the setup check
+   * is (reliability-performance-r2-1); a screen whose perception has no such check (another computer's) goes on as before.
+   */
+  private async promptRefusal(kind: ActionKind, element?: Focus): Promise<ToolResultObject | null> {
+    if (!this.perception.promptOpen) return null;
+    const open = await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => "unchecked" as const);
+    if (this.isOver) return STOPPED();
+    if (!open) return null;
+    const key = promptKey(open);
+    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: PROMPT_REASON[key] });
+    // Its card's row and Home's say why (Ember's words, never screen text), not only that the step was tried
+    // (tasks-approvals-r3-4).
+    this.activity({ type: "refused", reason: PROMPT_REASON[key] });
+    return denied(PROMPT_REFUSAL[key]);
+  }
+
+  /**
+   * May a look send a picture now? Settings as they are now (the admin's policy applied): Home's "Send screenshots for
+   * tasks" may have been turned off since the task began. Settings that can't be read send none (fail closed).
+   */
+  private picturesAllowed(): boolean {
+    try {
+      return this.d.settings.get().screenImages !== false;
+    } catch (err) {
+      this.d.log.warn("worker.settings_read_failed", { err });
+      return false;
+    }
+  }
+
+  /**
+   * Is the system dialog the borrow saw only a shell Ember couldn't ask (promptOpen "unchecked"), or one the helper can't
+   * ask at all ("helper")? Words only: it refuses either way.
+   */
+  private async promptUnchecked(): Promise<false | "unchecked" | "helper"> {
+    if (!this.perception.promptOpen) return false;
+    const open = await Promise.resolve().then(() => this.perception.promptOpen!()).catch(() => "unchecked" as const);
+    return open === "unchecked" || open === "helper" ? open : false;
+  }
+
+  /**
+   * A question's task line in the user's own words (Question.taskLine; tasks-approvals-5): what they said for this task,
+   * each line a sentence, on one line in curly quotes, at most 200 characters. "" (no line) for a task given none of
+   * their words, whose only words are the model's goal.
+   */
+  private ownWordsLine(): string {
+    if (this.spec.userWords === undefined) return "";
+    const said = this.userWords.split("\n").map(l => l.trim()).filter(Boolean).map((l, i, all) => (i < all.length - 1 && !/[.!?…]$/.test(l) ? `${l}.` : l)).join(" ");
+    if (!said) return "";
+    return `“${said.length > 200 ? `${said.slice(0, 199).trimEnd()}…` : said}”`;
+  }
+
+  /**
+   * Waits while the limit on actions a minute is reached (PolicyEngine.paceMs), the card saying so (tasks-approvals-2);
+   * at least a quarter of a second at a time, so a clock that says otherwise can't spin it. Whether the task goes on.
+   */
+  private async pace(): Promise<boolean> {
+    for (let ms = this.d.policy.paceMs(); ms > 0 && !this.isOver; ms = this.d.policy.paceMs()) {
+      this.activity({ type: "paced", perMinute: this.d.policy.perMinute });
+      await new Promise<void>(resolve => {
+        const done = () => { clearTimeout(timer); this.overSignal.removeEventListener("abort", done); resolve(); };
+        const timer = setTimeout(done, Math.max(250, ms));
+        this.overSignal.addEventListener("abort", done, { once: true });
+      });
+    }
+    return !this.isOver;
   }
 
   /** A question without a yes: "Not now" is the user's no; no answer (null) is a timeout, which approved nothing either. */

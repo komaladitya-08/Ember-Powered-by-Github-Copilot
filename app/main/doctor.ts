@@ -11,8 +11,10 @@ import { ADMIN_POLICY_FILE, type LoadedAdminPolicy } from "./admin";
 import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
 import { FALLBACK_SHORTCUTS, SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";
+import { holdsBack } from "../shared/setup-attention";
 import { LISTENING_MODELS, VOICE_MODELS, modelsBytes, type ModelId } from "../voice/models";
 import { cliSteps, type SignInWith } from "./agent/github-app";
+import { onThisComputer } from "../shared/provider";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -118,7 +120,9 @@ function helperRow(h: HelperStatus | null, fix: string, reinstall: string): Doct
     return facts ? `${bare} (${facts}).` : `${bare}.`;
   };
   if (h.toolkitAccessibility === false) {
-    return { id: "accessibility-helper", status: "fail", label, detail: withFacts(`Ember's accessibility helper can't read apps${h.detail ? `: ${h.detail}` : ""}`), fix };
+    // The host's own words where it has them: an administrator reads this row (the setup check shows only `detail`).
+    const why = h.cause ?? h.detail;
+    return { id: "accessibility-helper", status: "fail", label, detail: withFacts(`Ember's accessibility helper can't read apps${why ? `: ${why}` : ""}`), fix };
   }
   if (h.toolkitAccessibility === null) return { id: "accessibility-helper", status: "warn", label, detail: withFacts("The accessibility helper answered but couldn't tell whether it can read apps"), fix };
   if (h.dpi && h.processDpi && h.dpi !== h.processDpi) {
@@ -199,7 +203,10 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     : p.auth?.kind === "provider"
       ? { id: "copilot", status: "ok", label: "Model service", detail: `Your organisation's model service (${p.auth.host}).` }
       : p.auth?.kind === "own-provider"
-        ? { id: "copilot", status: "ok", label: "Model service", detail: `Your own model provider (${p.auth.host}), ${p.auth.key ? "with its API key saved" : "with no API key saved"}.` }
+        // A service elsewhere with no key saved may refuse every request: a warning, not "ok" (integrations-r3).
+        ? !p.auth.key && !onThisComputer(p.auth.host)
+          ? { id: "copilot", status: "warn", label: "Model service", detail: `Your own model provider (${p.auth.host}), with no API key saved.`, fix: "If it needs a key, save it in Ember's settings, under Models & connections › Model provider." }
+          : { id: "copilot", status: "ok", label: "Model service", detail: `Your own model provider (${p.auth.host}), ${p.auth.key ? "with its API key saved" : "with no API key saved"}.` }
       : p.auth?.kind === "github"
         ? { id: "copilot", status: "ok", label: "Copilot", detail: `Signed in (${p.auth.source === "stored" ? "Ember's saved sign-in" : p.auth.source === "github-cli" ? "GitHub CLI sign-in" : "token from the environment"}).` }
         : { id: "copilot", status: "warn", label: "Copilot", detail: "Not signed in to GitHub yet.", fix: p.signIn?.with === "github-cli"
@@ -236,10 +243,16 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   if (p.speechBackend) out.push(p.speechBackend.backend === "native"
     ? { id: "speech-engine", status: "ok", label: "Speech", detail: "On this computer (native)." }
     : { id: "speech-engine", status: "ok", label: "Speech", detail: `Recognition uses WebAssembly (${p.speechBackend.why}). Replies use the system's voice.` });
+  // Kitten Nano speaks where its native speech and model are in: speech-dispatcher (a Recommends of the RPM) is then
+  // only its fallback, never a reason to warn that Ember can't speak (voice-speaking-9).
+  const ownVoice = linux && p.speechBackend?.backend === "native" && p.voiceModels !== "missing" && !missing.some(m => m.id === "tts");
   out.push(off
     ? p.speechDispatcher
       ? { id: "speech", status: "ok", label: "Speaking", detail: off.voices }
       : { id: "speech", status: "warn", label: "Speaking", detail: `${off.name} has no voice Ember can use, so Ember can't read replies aloud.` }
+    : ownVoice
+      ? { id: "speech", status: "ok", label: "Speaking", detail: p.speechDispatcher ? "In Ember's own voice (Kitten Nano); speech-dispatcher is the fallback if it can't run."
+        : "In Ember's own voice (Kitten Nano). If that can't run, replies need speech-dispatcher (sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng)." }
     : p.speechDispatcher
       ? { id: "speech", status: "ok", label: "Speaking", detail: "speech-dispatcher is installed." }
       : { id: "speech", status: "warn", label: "Speaking", detail: "speech-dispatcher is missing, so Ember can't read replies aloud.", fix: "sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng" });
@@ -259,14 +272,19 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
         : { id: "sandbox", status: "fail", label: "Window sandbox", detail: "User namespaces are off and chrome-sandbox isn't setuid root, so Ember's windows can't be sandboxed.", fix: "sudo chown root:root /opt/ember/chrome-sandbox && sudo chmod 4755 /opt/ember/chrome-sandbox (the RPM does this)" });
   }
   // The Copilot runtime needs a free file watcher for each conversation and task; with none left it takes requests
-  // and never answers them.
+  // and never answers them. Under another model service it is Ember's model connection, never "Copilot can't answer"
+  // (integrations-r3-3, as host.ts runtimeWords says it).
   const w = p.fileWatchers;
   const watchersFix = "sudo sysctl -w fs.inotify.max_user_instances=512, and put fs.inotify.max_user_instances=512 in /etc/sysctl.d/90-ember.conf to keep it";
+  const other = p.auth?.kind === "provider" || p.auth?.kind === "own-provider";
+  const watchers = other
+    ? { label: "Ember's file watchers", none: "so Ember can't answer: its model connection needs", low: "Ember's model connection needs" }
+    : { label: "Copilot's file watchers", none: "so Copilot can't answer: it needs", low: "Copilot needs" };
   if (w) out.push(w.max - w.used >= 8
-    ? { id: "file-watchers", status: "ok", label: "Copilot's file watchers", detail: `${w.used} of ${w.max} in use.` }
+    ? { id: "file-watchers", status: "ok", label: watchers.label, detail: `${w.used} of ${w.max} in use.` }
     : w.used >= w.max
-      ? { id: "file-watchers", status: "fail", label: "Copilot's file watchers", detail: `All ${w.max} are in use, so Copilot can't answer: it needs a free one for each conversation and task.`, fix: watchersFix }
-      : { id: "file-watchers", status: "warn", label: "Copilot's file watchers", detail: `${w.used} of ${w.max} in use: Copilot needs a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
+      ? { id: "file-watchers", status: "fail", label: watchers.label, detail: `All ${w.max} are in use, ${watchers.none} a free one for each conversation and task.`, fix: watchersFix }
+      : { id: "file-watchers", status: "warn", label: watchers.label, detail: `${w.used} of ${w.max} in use: ${watchers.low} a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
   return out;
 }
 
@@ -279,7 +297,13 @@ export function formatDoctor(checks: DoctorCheck[]): string {
     ...(c.fix && c.status !== "ok" ? [`${" ".repeat(width + 8)}→ ${c.fix}`] : []),
   ]);
   const fails = checks.filter(c => c.status === "fail").length, warns = checks.filter(c => c.status === "warn").length;
-  lines.push("", fails ? `${fails} problem${fails > 1 ? "s" : ""} to fix before Ember can work${warns ? `, and ${warns} thing${warns > 1 ? "s" : ""} worth a look` : ""}.`
-    : warns ? `Ember can work. ${warns} thing${warns > 1 ? "s" : ""} worth a look.` : "Everything Ember needs is in place.");
+  // A warning that holds Ember back (it can't read, see or use apps: setup-attention.ts) is to fix, as first run and
+  // Home say it, and named, so it isn't lost among the optional ones (first-run-5).
+  const held = checks.filter(c => c.status === "warn" && holdsBack(c));
+  const things = (n: number) => `${n} thing${n > 1 ? "s" : ""}`;
+  const rest = warns - held.length;
+  lines.push("", fails ? `${fails} problem${fails > 1 ? "s" : ""} to fix before Ember can work${warns ? `, and ${things(warns)} worth a look` : ""}.`
+    : held.length ? `${things(held.length)} to fix so Ember can read and use your apps (${held.map(c => c.label).join(", ")})${rest ? `, and ${rest} worth a look` : ""}.`
+      : warns ? `Ember can work. ${things(warns)} worth a look.` : "Everything Ember needs is in place.");
   return lines.join("\n");
 }

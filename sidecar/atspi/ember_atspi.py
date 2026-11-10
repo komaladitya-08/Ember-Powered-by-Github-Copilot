@@ -2679,14 +2679,18 @@ def is_shell(app, pid):
 def shell_overlays(params):
     """What GNOME Shell shows over the windows right now: its dialogs and notifications, with their
     text (for the password-prompt check), and "overview" while the overview or the window switcher may be
-    up. Empty without GNOME Shell. `complete` is false when the shell couldn't be looked through in time."""
+    up. Empty without GNOME Shell. `complete` is false when the shell couldn't be looked through in time, or the
+    desktop's apps couldn't be listed at all (the shell may be among them: fail closed)."""
     new_request()
     out, complete = [], True
-    desktop = pyatspi.Registry.getDesktop(0)
     try:
+        desktop = pyatspi.Registry.getDesktop(0)
         napps = desktop.childCount
     except Exception:
-        return {"overlays": out, "complete": complete}
+        return {"overlays": out, "complete": False}
+    if napps < 0:
+        # What libatspi answers when the call timed out.
+        return {"overlays": out, "complete": False}
     until = time.monotonic() + SHELL_FIND_S
     for a in range(napps):
         if time.monotonic() > until:
@@ -2694,7 +2698,11 @@ def shell_overlays(params):
             complete = False
             break
         app = child_at(desktop, a)
-        if app is None or not is_shell(app, process_id(app)):
+        if app is None:
+            # Listed but not handed over: it may be the shell (fail closed, safety-privacy-3).
+            complete = False
+            continue
+        if not is_shell(app, process_id(app)):
             continue
         started = time.monotonic()
         budget = Budget(SHELL_BUDGET_S)
@@ -5169,6 +5177,39 @@ def encode(resp):
                            "error": {"message": "the answer could not be encoded: %s" % e}})
 
 
+# While pyatspi is missing it is looked for again at most this often, so bindings installed while Ember runs (the
+# setup check's own fix: sudo dnf install python3-pyatspi) are used without a restart (reliability-performance-c2-1).
+# A failed import costs a few milliseconds.
+LOAD_AGAIN_S = 2.0
+LOAD_TRIED = {"at": None}
+
+
+def load_atspi_again():
+    """pyatspi imported now if it was installed since the last look (at most every LOAD_AGAIN_S), with Gio and GLib
+    for the links (the module's own import of them ran while libatspi was missing) and libatspi's timeouts shortened as
+    main() does at the start. Whether it is loaded."""
+    if pyatspi is not None:
+        return True
+    now = time.monotonic()
+    last = LOAD_TRIED["at"]
+    if last is not None and now - last < LOAD_AGAIN_S:
+        return False
+    LOAD_TRIED["at"] = now
+    try:
+        import importlib
+        importlib.invalidate_caches()  # the folders' listings, as they were before the package went in
+    except Exception:  # an import below finds it, or not, either way
+        pass
+    if not load_atspi():
+        return False
+    # Without them every action would go on Ember's own connection, which hangs a GTK app in a modal dialog for good
+    # (see on_link; reliability-performance-r3-1).
+    load_links()
+    if not configure_atspi():
+        sys.stderr.write("ember_atspi: could not shorten libatspi timeouts\n")
+    return True
+
+
 def handle(line):
     req_id = None
     try:
@@ -5182,7 +5223,7 @@ def handle(line):
             # Inside WSL, before (or without) a bus: only what needs none.
             if name not in ("ping", "status", "find_bus"):
                 raise RuntimeError("no session bus")
-        elif pyatspi is None and name != "ping":
+        elif pyatspi is None and name != "ping" and not load_atspi_again():
             raise RuntimeError("python3-pyatspi is not installed")
         result = method(req.get("params") or {})
         return {"jsonrpc": "2.0", "id": req_id, "result": result}

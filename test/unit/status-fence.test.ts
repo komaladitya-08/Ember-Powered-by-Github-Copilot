@@ -56,3 +56,11 @@ describe("getStatus in main", () => {
     expect(body.indexOf("settingsNotice,")).toBeGreaterThan(awaited);
   });
 });
+
+describe("Home's startup status consumers", () => {
+  it("fences the Project card's own getStatus too, so a late snapshot cannot undo a pushed commands setting", () => {
+    const src = fs.readFileSync("app/renderer/home/project.ts", "utf8");
+    expect(src).toContain("const ticket = statusFence.begin();");
+    expect(src).toContain("getStatus().then(st => statusFence.apply(ticket, st))");
+  });
+});

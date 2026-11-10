@@ -31,13 +31,18 @@ function within<T>(work: Promise<T>, signal: AbortSignal, ms: number): Promise<T
   });
 }
 
-export function copilotOneShot(o: { client: CopilotClient; model: string | null; provider?: ProviderConfig; workDir: string; log: Logger; purpose?: "project" }): OneShot {
+/** Why a call failed, as the session said it (`onFailure`): its error's words, type and status code, or that it took too long. */
+export interface OneShotFailure { message: string; errorType?: string; statusCode?: number; timedOut?: boolean }
+
+export function copilotOneShot(o: { client: CopilotClient; model: string | null; provider?: ProviderConfig; workDir: string; log: Logger; purpose?: "project"; onFailure?: (f: OneShotFailure) => void }): OneShot {
   return async (system, prompt, signal) => {
     if (signal.aborted) return null;
     const purpose = o.purpose ?? "memory";
     const sessionId = `ember-${purpose}-${crypto.randomUUID()}`;
     let making: Promise<unknown> | null = null;
     let made = false;
+    /** The session's own error (sendAndWait keeps only its words): its type and status code say what to do. */
+    let said: { errorType?: string; statusCode?: number } = {};
     try {
       const config = hardenedSessionConfig({
         sessionId, model: o.model ?? undefined, provider: o.provider, tools: [],
@@ -54,6 +59,11 @@ export function copilotOneShot(o: { client: CopilotClient; model: string | null;
       if (signal.aborted) return null;
       const abort = () => { void session.abort().catch(() => undefined); };
       signal.addEventListener("abort", abort, { once: true });
+      if (o.onFailure && typeof session.on === "function") session.on(e => {
+        if (e.type !== "session.error") return;
+        const d = e.data as { errorType?: unknown; statusCode?: unknown };
+        said = { ...(typeof d.errorType === "string" ? { errorType: d.errorType } : {}), ...(typeof d.statusCode === "number" ? { statusCode: d.statusCode } : {}) };
+      });
       try {
         const limit = purpose === "project" ? PROJECT_SHOT_MS : ONE_SHOT_MS;
         const answer = await within(session.sendAndWait({ prompt }, limit), signal, limit);
@@ -63,8 +73,12 @@ export function copilotOneShot(o: { client: CopilotClient; model: string | null;
       }
     } catch (err) {
       if (signal.aborted) return null;
-      if (purpose === "project") o.log.warn("project.model_failed");
-      else o.log.warn("memory.model_failed", { err: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      const timedOut = /^one-shot timed out$|^Timeout after \d+ms/.test(message);
+      // A project's log keeps the cause's kind only, never its words: the service may quote the files it was sent.
+      if (purpose === "project") o.log.warn("project.model_failed", { errorType: said.errorType, statusCode: said.statusCode, timedOut });
+      else o.log.warn("memory.model_failed", { err: message });
+      o.onFailure?.({ message, ...said, ...(timedOut ? { timedOut } : {}) });
       return null;
     } finally {
       // Always, even when createSession failed: it may have made the session before it rejected (each session holds an

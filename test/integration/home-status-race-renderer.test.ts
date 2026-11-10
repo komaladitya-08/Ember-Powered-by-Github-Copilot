@@ -88,7 +88,8 @@ describe.skipIf(process.env.EMBER_STATUS_RACE_TEST !== "1")("Home startup snapsh
   it("(a) shows the snapshot on a normal first load", async () => {
     const { page, errors } = await openHome(A);
     await expect.poll(() => held(page)).toBeGreaterThan(0);
-    await settle(page, 0, "resolve", statusOf(A));
+    // Every held request answers (Home's own, and the Project card's, which asks for the commands setting too).
+    for (let i = 0; i < await held(page); i++) await settle(page, i, "resolve", statusOf(A));
     await expect.poll(() => shown(page).then(s => s.recipient)).toContain(A.host);
     expect((await shown(page)).size).toBe(String(A.size));
     expect(errors).toEqual([]);

@@ -6,7 +6,7 @@
 
 import type { VoiceStatus, VoiceWord } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
-import { CLEAR_HINT, PERSONAL_TEXT, WORD_DELETE_FAILED, WORDS_DELETE_FAILED, forgetWordLabel, personalView, teachOutcomeText, wordRowText } from "./copy";
+import { CLEAR_HINT, PERSONAL_TEXT, WORD_DELETE_FAILED, WORDS_DELETE_FAILED, forgetAllWordsAsk, forgetWordLabel, personalView, teachOutcomeText, wordForgottenText, wordRowText } from "./copy";
 import { KeyedRows } from "./keyed-rows";
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -16,10 +16,12 @@ type Save = (patch: SettingsPatch) => Promise<unknown>;
 let current: Settings | null = null;
 let save: Save = async () => undefined;
 let wordRows: KeyedRows<VoiceWord> | null = null;
+/** How many words Forget all words would forget (its question says so). */
+let wordCount = 0;
 
 /** The voice settings as Home last had them, with this change. */
 const voiceWith = (change: Partial<Settings["voice"]>): Settings["voice"] => ({
-  consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false,
+  consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1,
   ...(current?.voice ?? {}), ...change,
 });
 
@@ -35,10 +37,19 @@ function renderWords(list: VoiceWord[]): void {
       const button = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
       button.setAttribute("aria-label", forgetWordLabel(word));
       button.addEventListener("click", () => {
-        if (button.getAttribute("aria-disabled") === "true") return;
+        // A Forget that focus just landed on as its row's neighbour went: a second Enter forgets nothing (memory-7).
+        if (button.getAttribute("aria-disabled") === "true" || KeyedRows.justFocused(button)) return;
         button.setAttribute("aria-disabled", "true");
         $("words-note").textContent = "";
-        void window.ember.forgetVoiceWord(read()).then(renderWords, () => {
+        const word = read();
+        void window.ember.forgetVoiceWord(word).then(list => {
+          const had = document.activeElement === button;
+          renderWords(list);
+          // Said, and focus goes to the words that say it, never to the next word's Forget (memory-7).
+          const note = $("words-note");
+          note.textContent = wordForgottenText(word);
+          if (had || $("words-list").contains(document.activeElement)) { note.tabIndex = -1; note.focus(); }
+        }, () => {
           button.removeAttribute("aria-disabled");
           $("words-note").textContent = WORD_DELETE_FAILED;
         });
@@ -48,9 +59,12 @@ function renderWords(list: VoiceWord[]): void {
     },
   });
   wordRows.render(list);
+  wordCount = list.length;
   const all = $("words-forget-all");
-  const wasFocused = document.activeElement === all;
+  const wasFocused = document.activeElement === all || $("words-forget-confirm").contains(document.activeElement);
   all.hidden = !list.length;
+  if (all.hidden) $("words-forget-confirm").hidden = true;
+  else $("words-forget-title").textContent = forgetAllWordsAsk(wordCount);
   if (wasFocused && all.hidden) $("words-on").focus();
 }
 
@@ -162,10 +176,25 @@ export function startPersonal(saveSettings: Save): void {
   $("match-reset").addEventListener("click", () => {
     void window.ember.resetVoice().then(() => { $("voice-live").textContent = PERSONAL_TEXT.resetDone; ($("match-learn") as HTMLElement).focus(); });
   });
+  // Forget all words asks first, as Forget everything does (memory-7): Keep them, or Esc, keeps every word.
+  const ask = $("words-forget-confirm");
+  const closeAsk = () => { ask.hidden = true; $("words-forget-all").focus(); };
+  $("words-forget-no").textContent = PERSONAL_TEXT.forgetAllWordsKeep;
+  $("words-forget-yes").textContent = PERSONAL_TEXT.forgetAllWords;
   $("words-forget-all").addEventListener("click", () => {
+    if ($("words-forget-all").getAttribute("aria-disabled") === "true") return;
+    $("words-forget-title").textContent = forgetAllWordsAsk(wordCount);
+    ask.hidden = false;
+    $("words-forget-no").focus();
+  });
+  $("words-forget-no").addEventListener("click", closeAsk);
+  ask.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); closeAsk(); } });
+  $("words-forget-yes").addEventListener("click", () => {
     const button = $("words-forget-all");
     if (button.getAttribute("aria-disabled") === "true") return;
+    ask.hidden = true;
     button.setAttribute("aria-disabled", "true");
+    button.focus();
     $("words-note").textContent = "";
     void window.ember.forgetVoiceWords().then(() => renderWords([]), () => { $("words-note").textContent = WORDS_DELETE_FAILED; }).finally(() => button.removeAttribute("aria-disabled"));
   });

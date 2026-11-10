@@ -81,6 +81,21 @@ describe("the doctor calls a check what the setup check calls it (review #229)",
     expect(mac.filter(r => r === "Microphone")).toHaveLength(1);
   });
 
+  it("names the file watchers for the service in use: Copilot's under Copilot, Ember's model connection's under another, never that Copilot can't answer there (integrations-r3-3)", () => {
+    const row = (auth: DoctorProbes["auth"], used: number) => doctorChecks(probes({ auth, fileWatchers: { used, max: 128 } })).find(c => c.id === "file-watchers")!;
+    const github = { kind: "github", source: "stored" } as const;
+    expect(row(github, 3)).toMatchObject({ label: "Copilot's file watchers", status: "ok", detail: "3 of 128 in use." });
+    expect(row(github, 128).detail).toBe("All 128 are in use, so Copilot can't answer: it needs a free one for each conversation and task.");
+    expect(row(github, 125).detail).toBe("125 of 128 in use: Copilot needs a free one for each conversation and task, and stops answering without.");
+    for (const auth of [{ kind: "own-provider", host: "127.0.0.1:11434", key: false }, { kind: "provider", host: "models.example.com" }] as const) {
+      expect(row(auth, 3), auth.kind).toMatchObject({ label: "Ember's file watchers", status: "ok", detail: "3 of 128 in use." });
+      expect(row(auth, 128), auth.kind).toMatchObject({ label: "Ember's file watchers", status: "fail", detail: "All 128 are in use, so Ember can't answer: its model connection needs a free one for each conversation and task." });
+      expect(row(auth, 125), auth.kind).toMatchObject({ label: "Ember's file watchers", status: "warn", detail: "125 of 128 in use: Ember's model connection needs a free one for each conversation and task, and stops answering without." });
+    }
+    // Nothing signed in yet: Copilot is what it would be.
+    expect(row(null, 3).label).toBe("Copilot's file watchers");
+  });
+
   it("names the tool the setup check, as the settings window does", () => {
     const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
     expect(main).toContain("process.stdout.write(`Ember ${app.getVersion()} setup check\\n\\n${formatDoctor(checks)}\\n`);");

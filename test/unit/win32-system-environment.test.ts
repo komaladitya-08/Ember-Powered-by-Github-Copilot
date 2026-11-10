@@ -7,8 +7,15 @@
  * the RemoteSigned case.
  */
 
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
+import { inspectEnvironment } from "../../app/main/environment";
+import { HelperWatch } from "../../app/main/helper-watch";
+import { toHelperStatus } from "../../app/main/platform/compose";
+import { Host } from "../../app/sidecar-host/host";
+import { UiaProvider } from "../../app/sidecar-host/providers/uia";
 import type { HelperStatus } from "../../app/main/platform/types";
 import { sessionKind, win32Environment, windowsBuild, WIN32_FIX_IDS } from "../../app/main/platform/win32/system/environment";
 import {
@@ -189,6 +196,75 @@ describe("the Windows environment inputs", () => {
 
   it("reports a service session", () => {
     expect(make({ session: 0 }).e.environment({ windows: undefined }).windows.session).toBe("service");
+  });
+
+  it("puts the host's reason in the Screen reading row once the watch hears the helper can't start, so the setup check says what's wrong (reliability-performance-v5-1)", async () => {
+    const { e } = make();
+    let kept: HelperStatus | null | undefined = helper();
+    const answers: HelperStatus[] = [{ toolkitAccessibility: false, detail: "Windows PowerShell stopped before it was ready.", cause: "Windows PowerShell stopped before the bridge was ready (exit code 3)" }];
+    const watch = new HelperWatch({ ask: async () => { kept = answers.shift() ?? kept; }, row: () => kept, waitMs: 1000 });
+    const row = () => inspectEnvironment(e.environment({ windows: undefined, helper: kept })).checks.find(c => c.id === "accessibility");
+    await watch.again();
+    expect(row()).toMatchObject({ status: "warn", detail: "Ember's accessibility helper didn't start: Windows PowerShell stopped before it was ready." });
+    // Only "missing" carries it: under Constrained Language Mode the row says why in its own words.
+    kept = { toolkitAccessibility: false, detail: "Add-Type failed", languageMode: "ConstrainedLanguage" };
+    expect(e.environment({ windows: undefined, helper: kept }).windows.helperDetail).toBeUndefined();
+    // Without a reason it still says the helper didn't start.
+    expect(inspectEnvironment(e.environment({ windows: undefined, helper: { toolkitAccessibility: false } })).checks.find(c => c.id === "accessibility")?.detail)
+      .toBe("Ember's accessibility helper didn't start.");
+  });
+
+  it("says in plain words why the helper didn't start, never PowerShell's, the compiler's or Node's own, with a full stop (reliability-performance-w5-1)", async () => {
+    const { e } = make();
+    /** A Windows PowerShell that writes `stdout` and exits with `code`, or that Windows wouldn't start (`error`). */
+    const powershell = (o: { stdout?: string; code?: number; error?: { code: string; message: string } }) => (() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null as number | null, signalCode: null, kill: () => true,
+      });
+      setTimeout(() => {
+        if (o.error) { child.emit("error", Object.assign(new Error(o.error.message), { code: o.error.code })); return; }
+        child.stdout.end(o.stdout ?? "");
+        child.stderr.end();
+        child.exitCode = o.code ?? 1;
+        child.emit("exit", child.exitCode, null);
+      }, 5);
+      return child;
+    }) as never;
+    // The host's own status answer, as main keeps it, read by the setup check.
+    const rowFor = async (spawn: never) => {
+      const host = new Host(new UiaProvider({ script: "C:\\Ember\\sidecar\\uia\\ember_uia.ps1", spawn, backoffMs: [60_000] }), { env: {}, settleMs: 0 });
+      const status = toHelperStatus(JSON.parse((await host.handle('{"jsonrpc":"2.0","id":1,"method":"status","params":{}}'))!).result);
+      return { status, row: inspectEnvironment(e.environment({ windows: undefined, helper: status })).checks.find(c => c.id === "accessibility") };
+    };
+    const ps = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+    const cases: [string, never, string, string][] = [
+      // ember_uia.ps1's Write-Fatal ($_.Exception.Message): here an antivirus took the source, under the user's own folder.
+      ["a fatal line from the script", powershell({ stdout: JSON.stringify({ fatal: "Could not find file 'C:\\Users\\ada.lovelace\\AppData\\Local\\Programs\\Ember\\resources\\sidecar\\uia\\ember_uia.cs'.", languageMode: "FullLanguage" }) + "\n" }),
+        "Windows PowerShell couldn't set it up. If this keeps happening, reinstall Ember.", "Could not find file 'C:\\Users\\ada.lovelace"],
+      // ember_uia.cs's own fatal line: the exception's type and message.
+      ["a fatal line from the bridge", powershell({ stdout: JSON.stringify({ fatal: "TypeInitializationException: The type initializer for 'Ember.Uia.Dpi' threw an exception." }) + "\n" }),
+        "Windows PowerShell couldn't set it up. If this keeps happening, reinstall Ember.", "TypeInitializationException"],
+      // AppLocker or Software Restriction Policies refusing powershell.exe.
+      ["Windows refusing to run PowerShell", powershell({ error: { code: "EACCES", message: `spawn ${ps} EACCES` } }),
+        "Windows didn't let Ember run Windows PowerShell. Ask your administrator to allow it.", `spawn ${ps} EACCES`],
+      ["no PowerShell at all", powershell({ error: { code: "ENOENT", message: `spawn ${ps} ENOENT` } }),
+        "Ember couldn't find Windows PowerShell on this computer.", `spawn ${ps} ENOENT`],
+      // As Node reports a powershell.exe that a policy blocks, ERROR_ACCESS_DENIED or ERROR_ACCESS_DISABLED_BY_POLICY:
+      // thrown by spawn, never an "error" event (reliability-performance-r5-1).
+      ...(["EPERM", "UNKNOWN"].map(code => [`Windows' policy blocking PowerShell (${code}, thrown)`,
+        (() => { throw Object.assign(new Error(`spawn ${ps} ${code}`), { errno: -4048, code, syscall: `spawn ${ps}` }); }) as never,
+        "Windows didn't let Ember run Windows PowerShell. Ask your administrator to allow it.", `spawn ${ps} ${code}`]) as [string, never, string, string][]),
+      ["PowerShell stopping before the ready line", powershell({ code: 3 }), "Windows PowerShell stopped before it was ready.", "exit code 3"],
+      ["a bridge of another version", powershell({ stdout: '{"ready":true,"version":2,"dpi":"per-monitor-v2"}\n' }),
+        "it doesn't match this Ember (it is out of date). Reinstall or update Ember.", ""],
+    ];
+    for (const [name, spawn, why, own] of cases) {
+      const { status, row } = await rowFor(spawn);
+      expect(row, name).toMatchObject({ status: "warn", detail: `Ember's accessibility helper didn't start: ${why}` });
+      expect(row!.detail, name).not.toMatch(/[A-Z]\w+Exception|\bE[A-Z]{3,}\b|\bUNKNOWN\b|[A-Z]:\\|exit code|bridge/);
+      // The host's own words are kept for `ember doctor` (status's cause), never for a window.
+      if (own) expect(status.cause, name).toContain(own);
+    }
   });
 
   it("offers the microphone settings and Unblock it, with their labels", async () => {

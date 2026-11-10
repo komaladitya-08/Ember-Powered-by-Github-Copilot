@@ -424,6 +424,8 @@ describe("review round 2: stopping and questions", () => {
     tm.cancel(t.id);
     expect(t.result?.summary).toBe("Stopped before it started.");
     expect(taskOutcome(t)).toBe("Tidy the desktop: stopped before it started.");
+    // Home lists it with no clock: it never began (tasks-approvals-r3-3).
+    expect(tm.activities()[0]).toMatchObject({ id: t.id, status: "stopped", unstarted: true });
     expect(taskOutcome({ title: "Tidy", status: "cancelled", result: { success: false, summary: "Stopped.", stopped: true } })).toBe("Tidy: stopped.");
     expect(taskOutcome({ title: "Tidy", status: "cancelled", result: { success: false, summary: "You took the mouse back at step 3." } })).toBe("Tidy: stopped. You took the mouse back at step 3.");
     expect(taskOutcome({ title: "Tidy", status: "done", result: { success: true, summary: "Moved 3 files." } })).toBe("Tidy: done. Moved 3 files.");
@@ -569,5 +571,421 @@ describe("review round 4: how tasks end", () => {
     expect(cards.at(-1)).toEqual([]);
     expect(removed).toEqual([[t.id, false]]);
     vi.useRealTimers();
+  });
+});
+
+describe("a task whose question went unanswered while the user was away (tasks-approvals-4)", () => {
+  const EXPIRED: WorkerResult = { success: false, stopped: true, expired: true, summary: "My question ran out of time with no answer, so I didn't do it." };
+  const manager = (makeWorker: ConstructorParameters<typeof TaskManager>[0]["makeWorker"], extra = {}) => {
+    const cards: TaskCard[][] = [];
+    const tm = new TaskManager({ log: quiet, makeWorker, currentWindow: () => null, setCards: c => cards.push(c), deleteSession: async () => undefined, keepMs: 0, cardMs: 100, failureCardMs: 1000, ...extra });
+    return { tm, cards };
+  };
+
+  it("keeps its card as long as a failure's and offers Try again, which asks with the user's own words again (tasks-approvals-4)", async () => {
+    vi.useFakeTimers();
+    try {
+      const specs: { goal: string; userWords?: string }[] = [];
+      const { tm, cards } = manager(spec => { specs.push(spec); return fakeWorker(async () => EXPIRED); });
+      const t = tm.start("Send the Q3 report to Priya", { userWords: "send the Q3 report to Priya" });
+      await vi.advanceTimersByTimeAsync(10);
+      // Calm, as a stop is (no failure face), but said for what it was.
+      expect(t.status).toBe("cancelled");
+      expect(t.endedBy).toBe("expired");
+      expect(cards.at(-1)?.[0]).toMatchObject({ status: "stopped", detail: EXPIRED.summary, actions: [{ id: `task:${t.id}:retry`, label: "Try again" }, { id: `task:${t.id}:dismiss`, label: "Close" }] });
+      expect(tm.canRetry(t.id)).toBe(true);
+      // Still there well after a stopped card's time: the user coming back can see what happened.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(tm.get(t.id)).toBeDefined();
+      const again = tm.retry(t.id);
+      expect(again).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(specs.map(s => s.userWords)).toEqual(["send the Q3 report to Priya", "send the Q3 report to Priya"]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("keeps its card and Try again for as long as the user is away, and its whole time once they are back (tasks-approvals-4)", async () => {
+    vi.useFakeTimers();
+    try {
+      let away = true;
+      const { tm } = manager(() => fakeWorker(async () => EXPIRED), { failureCardMs: 20_000, userAway: () => away });
+      const t = tm.start("Send the Q3 report to Priya", { userWords: "send the Q3 report to Priya" });
+      await vi.advanceTimersByTimeAsync(10);
+      // Three minutes away (the question's two, and one more): still there, with Try again on its card and in Home.
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(tm.canRetry(t.id)).toBe(true);
+      expect(tm.activities()[0]).toMatchObject({ id: t.id, unanswered: true, controls: { retry: true } });
+      expect(tm.askedWith(t.id)).toMatchObject({ userWords: "send the Q3 report to Priya" });
+      // Back: the card has its whole time from then, then goes as it would have.
+      away = false;
+      await vi.advanceTimersByTimeAsync(19_000);
+      expect(tm.get(t.id)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(6_100);
+      expect(tm.get(t.id)).toBeUndefined();
+      // A task that finished waits for nobody: its short card goes on time.
+      away = true;
+      const done = manager(() => fakeWorker(async () => ({ success: true, summary: "Sent." })), { userAway: () => away });
+      const d = done.tm.start("Send it");
+      await vi.advanceTimersByTimeAsync(200);
+      expect(done.tm.get(d.id)).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("offers no Try again after “Not now”, a Stop or the mouse taken back: those were the user's own choice (tasks-approvals-4)", async () => {
+    vi.useFakeTimers();
+    try {
+      const results: WorkerResult[] = [
+        { success: false, stopped: true, declined: true, summary: "You said not now, so I left it." },
+        { success: false, stopped: true, tookOver: true, summary: "You took the mouse back." },
+      ];
+      let n = 0;
+      const { tm, cards } = manager(() => { const r = results[n++]; return fakeWorker(async () => r); });
+      const declined = tm.start("a"), tookOver = tm.start("b");
+      await vi.advanceTimersByTimeAsync(10);
+      expect([declined.endedBy, tookOver.endedBy]).toEqual(["declined", "took-over"]);
+      expect([declined, tookOver].map(t => tm.canRetry(t.id))).toEqual([false, false]);
+      expect(cards.at(-1)?.map(c => c.actions?.map(a => a.label))).toEqual([["Close"], ["Close"]]);
+      const stopped = manager(() => fakeWorker(signal => new Promise(resolve => signal.addEventListener("abort", () => resolve(EXPIRED)))));
+      const s = stopped.tm.start("c");
+      await vi.advanceTimersByTimeAsync(10);
+      stopped.tm.cancel(s.id);
+      await vi.advanceTimersByTimeAsync(10);
+      // Stopped by the user while it waited: a Stop, whatever the worker said.
+      expect([s.status, s.endedBy, stopped.tm.canRetry(s.id)]).toEqual(["cancelled", "stop", false]);
+      // It began to run, so Home keeps its clock (tasks-approvals-r3-3).
+      expect(stopped.tm.activities()[0].unstarted).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("goes at once with Stop everything, as a failure's card does, and leaves a stopped or finished one (tasks-approvals-r1)", async () => {
+    vi.useFakeTimers();
+    try {
+      const results: WorkerResult[] = [EXPIRED, { success: false, summary: "It broke." }, { success: false, stopped: true, declined: true, summary: "You said not now, so I left it." }];
+      let n = 0;
+      const { tm } = manager(() => { const r = results[n++]; return fakeWorker(async () => r); });
+      const expired = tm.start("a", { userWords: "a" }), failed = tm.start("b", { userWords: "b" });
+      await vi.advanceTimersByTimeAsync(10);
+      const declined = tm.start("c", { userWords: "c" });
+      await vi.advanceTimersByTimeAsync(10);
+      tm.dismissFailures();
+      expect([expired, failed, declined].map(t => !!tm.get(t.id))).toEqual([false, false, true]);
+      // Gone, so nothing is left to try again from its card.
+      expect(tm.canRetry(expired.id)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("says no answer came in time, on its card, in Home and in its last row, never that it was stopped (tasks-approvals-r1, tasks-approvals-c1-2)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { tm, cards } = manager(() => fakeWorker(async () => EXPIRED));
+      tm.start("Send the Q3 report to Priya", { userWords: "send the Q3 report to Priya" });
+      await vi.advanceTimersByTimeAsync(10);
+      const { STATUS_WORDS } = await import("../../app/shared/activity");
+      const { cardLines } = await import("../../app/renderer/overlay/stack");
+      const card = cards.at(-1)![0];
+      expect(card).toMatchObject({ status: "stopped", unanswered: true });
+      expect(cardLines(card).tele?.state).toBe(STATUS_WORDS.unanswered);
+      const entry = tm.activities()[0];
+      expect(entry).toMatchObject({ status: "stopped", unanswered: true, controls: { retry: true } });
+      expect(entry.activity.items.at(-1)).toMatchObject({ kind: "result", state: "stopped", words: STATUS_WORDS.unanswered });
+      expect(STATUS_WORDS.unanswered).toBe("No answer in time");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("says no answer came in time in the conversation, aloud and to screen readers on its card, the handle and Home's last row (tasks-approvals-r1)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { tm, cards } = manager(() => fakeWorker(async () => ({ ...EXPIRED, summary: "I didn't delete it." })));
+      const t = tm.start("Clean the build folder", { userWords: "clean the build folder" });
+      await vi.advanceTimersByTimeAsync(10);
+      const { taskOutcome } = await import("../../app/main/agent/tasks");
+      const { STATE_WORD, cardStateWord } = await import("../../app/renderer/overlay/stack");
+      const { timelineRows } = await import("../../app/renderer/home/tasks-copy");
+      const { rowWord, ROW_WORD } = await import("../../app/shared/activity");
+      // The conversation's line, which is also what Ember says aloud (main's onTaskFinished speaks it).
+      expect(taskOutcome(t)).toBe("Clean the build folder: no answer in time. I didn't delete it.");
+      // The overlay's card and the handle's task row read its state first.
+      expect(cardStateWord(cards.at(-1)![0])).toBe("No answer in time: ");
+      // Home's last row of its timeline: it ended, with no answer, and nobody stopped it.
+      const last = timelineRows(tm.activities()[0].activity.items).at(-1)!;
+      expect(`${rowWord(last)}${last.words}`).toBe("Ended: No answer in time");
+      // Everything else reads as before.
+      expect(taskOutcome({ title: "Tidy", status: "cancelled", endedBy: "stop", result: { success: false, summary: "You took the mouse back." } })).toBe("Tidy: stopped. You took the mouse back.");
+      expect(cardStateWord({ status: "stopped" })).toBe(STATE_WORD.stopped);
+      expect(cardStateWord({ status: "done" })).toBe(STATE_WORD.done);
+      expect(rowWord({ state: "stopped", words: "Stopped" })).toBe(ROW_WORD.stopped);
+      expect(rowWord({ state: "done", words: "Read the window" })).toBe(ROW_WORD.done);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("says no answer came in time on its question's row, in What Ember did and to the next turn, never that it was stopped (tasks-approvals-r1)", async () => {
+    vi.useFakeTimers();
+    try {
+      const written: Record<string, unknown>[] = [];
+      const { tm } = manager((_spec, _p, _u, activity) => fakeWorker(async () => {
+        // A command whose question ran out of time, as the worker tells its card.
+        activity?.({ type: "tool-start", id: "c1", tool: "run_command" });
+        activity?.({ type: "question", asked: "Run a command?" });
+        activity?.({ type: "answer", answer: "expired" });
+        activity?.({ type: "denied" });
+        activity?.({ type: "tool-end", id: "c1", ok: false });
+        return { ...EXPIRED, summary: "I didn't delete it." };
+      }), { audit: { write: (e: Record<string, unknown>) => { written.push(e); } } });
+      const t = tm.start("Clean the build folder", { userWords: "clean the build folder" });
+      await vi.advanceTimersByTimeAsync(10);
+      const { timelineRows } = await import("../../app/renderer/home/tasks-copy");
+      const { activityRows, rowWord } = await import("../../app/shared/activity");
+      const { describeEntry } = await import("../../app/renderer/home/copy");
+      const { report } = await import("../../app/main/agent/host");
+      // The question's row, in Home and on the card's details, as a screen reader hears it.
+      const items = tm.activities()[0].activity.items;
+      const asked = (rows: { state: string; words: string }[]) => rows.filter(r => r.words.startsWith("Asked you")).map(r => `${rowWord(r as never)}${r.words}`);
+      expect(asked(timelineRows(items))).toEqual(["Ended: Asked you: no answer"]);
+      expect(asked(activityRows(items))).toEqual(["Ended: Asked you: no answer"]);
+      // What Ember did: the task's end is recorded as unanswered, and tagged so.
+      const end = written.find(e => e.event === "task" && e.phase === "cancelled")!;
+      expect(end).toMatchObject({ endedBy: "expired" });
+      expect(describeEntry({ t: "2026-11-08T12:00:00.000Z", ...end } as never)).toMatchObject({ tag: "No answer", what: "Clean the build folder", why: "I didn't delete it." });
+      // The next turn hears it as the card says it.
+      expect(report(t)).toBe('Task "Clean the build folder" ended with no answer in time: I didn\'t delete it.');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("is notified while the user is away, as a task that couldn't finish is, but a task they stopped isn't (tasks-approvals-4)", async () => {
+    const { taskNotice } = await import("../../app/main/agent/tasks");
+    expect(taskNotice({ title: "Send the report", status: "cancelled", endedBy: "expired", summary: EXPIRED.summary }))
+      .toEqual({ title: "Ember couldn't finish: Send the report", body: EXPIRED.summary });
+    expect(taskNotice({ title: "Send the report", status: "failed", summary: "It broke." })).toEqual({ title: "Ember couldn't finish: Send the report", body: "It broke." });
+    expect(taskNotice({ title: "Send the report", status: "done", summary: "Sent." })).toEqual({ title: "Ember finished: Send the report", body: "Sent." });
+    for (const endedBy of ["declined", "took-over", "stop", undefined] as const) {
+      expect(taskNotice({ title: "Send the report", status: "cancelled", ...(endedBy ? { endedBy } : {}), summary: "Stopped." })).toBeNull();
+    }
+  });
+});
+
+describe("Home's Task activity across a reconnect (tasks-approvals-c2-1)", () => {
+  const manager = (makeWorker: ConstructorParameters<typeof TaskManager>[0]["makeWorker"], extra = {}) =>
+    new TaskManager({ log: quiet, makeWorker, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0, cardMs: 10, ...extra });
+
+  it("lists what the manager before it kept after its own, with nothing to press, and never more than 20 ended tasks", async () => {
+    vi.useFakeTimers();
+    try {
+      const old = manager(() => fakeWorker(async () => ({ success: false, summary: "It broke." })));
+      const failed = old.start("Rename the report", { userWords: "rename the report" });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(old.activities()[0]?.controls?.retry).toBe(true);
+      const kept = old.history();
+      old.close();
+      // Its card went with the old manager: the row stays, saying what happened, but offers no Try again.
+      expect(kept).toEqual([expect.objectContaining({ id: failed.id, status: "failed", summary: "It broke.", controls: { stop: false, retry: false, window: false } })]);
+      const next = manager(() => fakeWorker(async () => ({ success: true, summary: "Done." })), { earlier: () => kept });
+      const done = next.start("Tidy the desktop");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(next.activities().map(e => e.id)).toEqual([done.id, failed.id]);
+      // Handed on again at the next reconnect, newest first, within the 20 kept.
+      for (let i = 0; i < 25; i++) next.start(`task ${i}`);
+      await vi.advanceTimersByTimeAsync(100);
+      const again = next.history();
+      expect(again).toHaveLength(20);
+      expect(again.map(e => e.id)).not.toContain(failed.id);
+      expect(again[0].title).toBe("task 24");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("hands a finished card on with its Try again and the time it had left, lists it once, and never a task still at work (tasks-approvals-r4-2)", async () => {
+    vi.useFakeTimers();
+    try {
+      const gate = deferred<WorkerResult>();
+      let n = 0;
+      const old = manager(() => (n++ === 0 ? fakeWorker(async () => ({ success: false, summary: "It broke." })) : fakeWorker(() => gate.promise)), { failureCardMs: 1000, maxRunning: 2 });
+      const failed = old.start("Rename the report", { userWords: "rename the report" });
+      const running = old.start("Tidy the desktop");
+      await vi.advanceTimersByTimeAsync(400);
+      const kept = old.keptCards();
+      expect(kept.map(c => c.task.id)).toEqual([failed.id]);
+      const earlier = old.history();
+      old.close();
+      const cards: TaskCard[][] = [];
+      const next = manager(() => fakeWorker(async () => ({ success: true, summary: "Done." })), { failureCardMs: 1000, carried: kept, earlier: () => earlier, setCards: (c: TaskCard[]) => cards.push(c) });
+      expect(cards.at(-1)?.map(c => [c.id, c.actions?.map(a => a.label)])).toEqual([[failed.id, ["Try again", "Close"]]]);
+      expect(next.activities().filter(e => e.id === failed.id)).toEqual([expect.objectContaining({ controls: expect.objectContaining({ retry: true }) })]);
+      expect(next.get(running.id)).toBeUndefined();
+      // The rest of its minute, then it goes as it would have.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(next.get(failed.id)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(next.get(failed.id)).toBeUndefined();
+      gate.resolve({ success: true, summary: "" });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("leaves handed cards and their views on screen until the next manager lists them, and takes the view of one whose time ran out (integrations-v5-2)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { upgradeView } = await import("../../app/shared/view");
+      const shown: TaskCard[][] = [];
+      const views: [string, unknown][] = [];
+      const screen = { setCards: (c: TaskCard[]) => shown.push(c), onView: (id: string, v: unknown) => views.push([id, v]) };
+      const old = manager(() => fakeWorker(async () => ({ success: false, summary: "It broke.", view: upgradeView([{ kind: "text", text: "Half done" }]) })), { failureCardMs: 1000, ...screen });
+      const kept = old.start("Rename the report", { userWords: "rename the report" });
+      const gone = old.start("Tidy the desktop", { userWords: "tidy the desktop" });
+      await vi.advanceTimersByTimeAsync(10);
+      const cards = old.keptCards();
+      const [before, viewsBefore] = [shown.length, views.length];
+      old.close(true);
+      // Nothing is taken off the screen: the next manager lists them at once.
+      expect([shown.length, views.length]).toEqual([before, viewsBefore]);
+      const next = manager(() => fakeWorker(async () => ({ success: true, summary: "" })), { failureCardMs: 1000, ...screen, carried: cards.map(c => (c.task.id === gone.id ? { ...c, left: 0 } : c)) });
+      expect(shown.at(-1)?.map(c => c.id)).toEqual([kept.id]);
+      expect(views.slice(viewsBefore)).toEqual(expect.arrayContaining([[kept.id, expect.objectContaining({ rev: expect.any(Number) })], [gone.id, null]]));
+      expect(next.get(gone.id)).toBeUndefined();
+      // And a manager closed for good takes them off.
+      next.close();
+      expect(shown.at(-1)).toEqual([]);
+      expect(views.at(-1)).toEqual([kept.id, null]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("hands a card to another model service with only the user's own words for its Try again (integrations-v5-1)", async () => {
+    const { handedElsewhere } = await import("../../app/main/agent/tasks");
+    const old = manager(() => fakeWorker(async () => ({ success: false, summary: "Mail wasn't open." })));
+    const agreed = [{ asked: "Reply now?", answer: "yes" }];
+    const said = "Reply to my last email saying yes";
+    const t = old.start("Reply to Dr Smith: the results were benign", { userWords: said, alone: true, agreed, commandWords: said, screen: "Dr Smith: Biopsy results", target: { title: "Inbox", pid: 3 } });
+    await vi.waitFor(() => expect(old.get(t.id)?.status).toBe("failed"));
+    const [card] = old.keptCards();
+    const handed = handedElsewhere(card);
+    expect(handed.spec?.goal).toBe(said);
+    expect(handed.spec?.opts).toMatchObject({ userWords: said, commandWords: said, agreed, target: { title: "Inbox", pid: 3 } });
+    expect(handed.spec?.opts.screen).toBeUndefined();
+    // The card itself is as it was (its title is shown only here), and the card before isn't changed.
+    expect(handed.task).toBe(card.task);
+    expect(card.spec?.goal).toContain("benign");
+    // Without the user's words there is nothing of theirs to start from: Close only.
+    expect(handedElsewhere({ ...card, spec: { goal: "x", opts: {} } }).spec).toBeUndefined();
+    expect(handedElsewhere({ ...card, spec: { goal: "x", opts: { alone: true } } }).spec).toBeUndefined();
+    const next = manager(() => fakeWorker(async () => ({ success: true, summary: "" })), { carried: [handed] });
+    const retried = next.retry(t.id)!;
+    expect(retried.goal).toBe(said);
+  });
+
+  it("hands a card whose words weren't its alone to another model service with Close only, saying to ask again (integrations-w5-1)", async () => {
+    const { ASK_AGAIN_ELSEWHERE, handedElsewhere } = await import("../../app/main/agent/tasks");
+    const hold = deferred<void>();
+    const old = manager(() => fakeWorker(async () => { await hold.promise; return { success: false, summary: "The calendar wouldn't open." }; }), { maxRunning: 1 });
+    const said = "Reply to Dr Smith saying yes, and put the appointment in my calendar.";
+    // A request split into two tasks (the host takes back each one's `alone`), and one steered while it waited.
+    const mail = old.start("Reply to Dr Smith saying yes", { userWords: said, alone: true });
+    const cal = old.start("Add the 12 Nov appointment to the calendar", { userWords: said, alone: true });
+    const steered = old.start("Turn on the night light", { userWords: "turn on the night light", alone: true });
+    old.shared(mail.id);
+    old.shared(cal.id);
+    expect(await old.steer(steered.id, "and dim it", "and dim it")).toBe(true);
+    hold.resolve();
+    await vi.waitFor(() => expect([mail, cal, steered].map(t => old.get(t.id)?.status)).toEqual(["failed", "failed", "failed"]));
+    // On the same service each card still offers its own task again.
+    expect([mail, cal, steered].map(t => old.canRetry(t.id))).toEqual([true, true, true]);
+    const cards = old.keptCards();
+    const handed = cards.map(handedElsewhere);
+    for (const h of handed) {
+      expect(h.spec).toBeUndefined();
+      expect(h.task.detail).toBe(`The calendar wouldn't open. ${ASK_AGAIN_ELSEWHERE}`);
+    }
+    // The cards before aren't changed.
+    expect(cards.map(c => c.task.detail)).toEqual(Array(3).fill("The calendar wouldn't open."));
+    const shown: TaskCard[][] = [];
+    const next = manager(() => fakeWorker(async () => ({ success: true, summary: "" })), { carried: handed, setCards: (c: TaskCard[]) => shown.push(c) });
+    expect(shown.at(-1)?.map(c => c.actions?.map(a => a.label))).toEqual([["Close"], ["Close"], ["Close"]]);
+    expect(shown.at(-1)?.[1].detail).toContain(ASK_AGAIN_ELSEWHERE);
+    expect(next.retry(cal.id)).toBeNull();
+  });
+
+  it("offers no Try again while the next try would wait for a switch of model service (tasks-approvals-c4-1)", async () => {
+    vi.useFakeTimers();
+    try {
+      let waits = true;
+      const cards: TaskCard[][] = [];
+      const tm = manager(() => fakeWorker(async () => ({ success: false, summary: "It broke." })), { retryWaits: () => waits, setCards: (c: TaskCard[]) => cards.push(c), failureCardMs: 60_000 });
+      const failed = tm.start("Rename the report", { userWords: "rename the report" });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(cards.at(-1)?.[0].actions?.map(a => a.label)).toEqual(["Close"]);
+      expect(tm.canRetry(failed.id)).toBe(false);
+      expect(tm.retry(failed.id)).toBeNull();
+      waits = false;
+      tm.refresh();
+      expect(cards.at(-1)?.[0].actions?.map(a => a.label)).toEqual(["Try again", "Close"]);
+      expect(tm.canRetry(failed.id)).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("how a finished task is worded (tasks-approvals-9)", () => {
+  it("says it the card's way in the conversation, speech and notifications: “didn't finish”, never “failed”", async () => {
+    const { taskOutcome, statusWord } = await import("../../app/main/agent/tasks");
+    const { STATUS_WORDS } = await import("../../app/shared/activity");
+    expect(taskOutcome({ title: "Open LibreOffice Writer", status: "failed", result: { success: false, summary: "I stopped after 150 steps without finishing, to be safe." } }))
+      .toBe("Open LibreOffice Writer: didn't finish. I stopped after 150 steps without finishing, to be safe.");
+    expect(statusWord("failed")).toBe(STATUS_WORDS.failed.toLowerCase());
+    expect(statusWord("done")).toBe(STATUS_WORDS.done.toLowerCase());
+    expect(statusWord("cancelled")).toBe(STATUS_WORDS.stopped.toLowerCase());
+  });
+});
+
+describe("a task its step or time limit stopped (tasks-approvals-3)", () => {
+  const LIMIT: WorkerResult = { success: false, summary: "I stopped after 150 steps without finishing, to be safe.", limit: true };
+  /** A worker that typed 3 times and read the window once (its activity, as its tools tell it), then ends as `result`. */
+  const working = (result: WorkerResult) => (_spec: unknown, _p: unknown, _u: unknown, activity?: (e: import("../../app/main/agent/activity").ActivityEvent) => void) => fakeWorker(async () => {
+    const steps: [string, string][] = [["1", "type_text"], ["2", "type_text"], ["3", "type_text"], ["4", "perceive_window"]];
+    for (const [id, tool] of steps) { activity?.({ type: "tool-start", id, tool }); activity?.({ type: "tool-end", id, ok: true }); }
+    return result;
+  });
+
+  it("says what it had done by then, from Ember's own count of its steps, never the model's words", async () => {
+    const tm = new TaskManager({ log: quiet, makeWorker: working(LIMIT) as never, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0 });
+    const t = tm.start("Add the rows", { userWords: "add these rows to the sheet" });
+    await vi.waitFor(() => expect(t.status).toBe("failed"));
+    expect(t.result?.summary).toBe("I stopped after 150 steps without finishing, to be safe. Before I stopped: typed text 3 times and read the window.");
+  });
+
+  it("tries again knowing an earlier try did part of it, with the user's words unchanged, so every question is asked again", async () => {
+    const specs: { goal: string; userWords?: string; partWay?: boolean }[] = [];
+    let n = 0;
+    const tm = new TaskManager({ log: quiet, makeWorker: ((spec: { goal: string; userWords?: string; partWay?: boolean }, ...rest: unknown[]) => { specs.push(spec); return n++ === 0 ? (working(LIMIT) as (...a: unknown[]) => unknown)(spec, ...rest) : fakeWorker(() => new Promise(() => undefined)); }) as never,
+      currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0 });
+    const t = tm.start("Add the rows", { userWords: "add these rows to the sheet" });
+    await vi.waitFor(() => expect(t.status).toBe("failed"));
+    expect(tm.retry(t.id)).not.toBeNull();
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    // Its first prompt says so; its goal, its card's title and the user's words stay as they were.
+    expect(specs[1]).toMatchObject({ goal: "Add the rows", userWords: "add these rows to the sheet", partWay: true });
+    expect(tm.list().at(-1)?.title).toBe("Add the rows");
+    const { taskPrompt } = await import("../../app/main/agent/worker");
+    expect(taskPrompt("Add the rows", true, "")).toBe("Task: Add the rows\n(An earlier try of this task stopped part-way: check what is already done before repeating anything.)");
+    expect(taskPrompt("Add the rows", false, "")).toBe("Task: Add the rows");
+    tm.cancelAll();
+  });
+
+  it("tries a task that only looked, sending the model a picture of the window, again as a fresh try, never one that stopped part-way (tasks-approvals-c3-1)", async () => {
+    const specs: { partWay?: boolean }[] = [];
+    let n = 0;
+    const tm = new TaskManager({ log: quiet, makeWorker: ((spec: { partWay?: boolean }, _p: unknown, _u: unknown, activity?: (e: import("../../app/main/agent/activity").ActivityEvent) => void) => {
+      specs.push(spec);
+      return n++ === 0 ? fakeWorker(async () => {
+        // One read that sent a picture (Send screenshots for tasks is on by default): it changed nothing.
+        activity?.({ type: "tool-start", id: "1", tool: "perceive_window" });
+        activity?.({ type: "picture" });
+        activity?.({ type: "tool-end", id: "1", ok: true });
+        return { success: false, summary: "I couldn't find the report." };
+      }) : fakeWorker(() => new Promise(() => undefined));
+    }) as never, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0 });
+    const t = tm.start("Find the report", { userWords: "find the report" });
+    await vi.waitFor(() => expect(t.status).toBe("failed"));
+    expect(tm.activities()[0].activity.counts).toEqual({ picture: 1 });
+    // A typed or spoken "try again" carries no part-way note, and neither does its card's Try again.
+    expect(tm.askedWith(t.id)).toEqual({ userWords: "find the report" });
+    expect(tm.retry(t.id)).not.toBeNull();
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs[1].partWay).toBeUndefined();
+    tm.cancelAll();
   });
 });
