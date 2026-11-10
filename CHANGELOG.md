@@ -456,6 +456,8 @@ the automated tests don't stand in for them.
   punctuation or repeated fragment, waits for the full phrase's existing name check. If that check can't confirm the
   name, Ember closes the listening window; later unrelated speech never becomes a request from that uncertain wake.
   Existing near-miss rejection rules remain, and Stop still works.
+- **Wake recognition still has limits.** Keyword-spotter misses and genuinely ambiguous full-name checks remain
+  under investigation; this repair does not establish the missed-wake target.
 - **“Read it out” reads the retained answer**, from a suggestion or a typed or spoken request, without changing
   **Read finished tasks out loud**. It stays local while another reply is under way, explains when speaking or an
   approval holds it back, and keeps the original answer selected after that notice, including after a restart when

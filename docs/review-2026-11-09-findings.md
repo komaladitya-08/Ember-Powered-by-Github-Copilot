@@ -368,3 +368,37 @@ from a regression caused by the round. Final gate and reviewed-head status remai
 
 Final fresh scores, six dimensions and all gate exceptions are in the companion review. CI and automated-review
 completion must be assessed at the actual final head; these package results do not establish release readiness.
+
+
+## CI wake diagnosis and reviewed repair, 10 November
+
+Assessed integrated source: `446e1b47`, app `740790298da14b333e6abaf6b7c0d32603a1747c`.
+
+- **listening-ci-r7-1 — P2, partly fixed and still open.** The evaluation's green job at `1ee46d69` reports
+  14/46 synthetic bare-name misses and an inconclusive 5/78 ordinary-wake result (`eval/src/gates.ts:276`).
+  At `1ee46d69`, `app/voice/engine.ts:191` discarded some early punctuated/decoder-repeat hypotheses before the full
+  question could confirm its name. Two fixed synthetic WAVs fail first (two failures, six negative controls pass),
+  then pass on native and WASM after bounded deferral at current `446e1b47` engine.ts:192. The final name rules are unchanged. A separate fixed
+  220-input comparison improves ordinary misses from 5 to 1 on WASM and 4 to 0 on the C API, but bare misses remain
+  7/46 and 8/46 respectively. These are different inputs from CI, not a retest that makes its 14/46 green.
+  No negative accepted wake/request is added across the 96 negative inputs on either backend. Seven remaining
+  bare cases on each have no keyword hit; native's eighth has a hit followed by the existing full-name rejection.
+  Both final assessors retain the P2 and score Listening 8.8/8.7. An owner/native-only exemption is not established.
+- **listening-ci-r7-2 — P1, fixed.** At `1ee46d69` engine.ts:1780, a pending ambiguous-name check cleared itself on an
+  empty, punctuation-only or nameless complete transcript. Three finding-named controls fail on that source;
+  two emit unrelated later Open the calendar words as a request and the third can emit the nameless question.
+  This is actual engine-event evidence, not an observed model send. Current `446e1b47` engine.ts:1781 requires the existing
+  positive full-name/standalone rules or Stop before clearing uncertainty; otherwise it ends the window. The
+  first and separate second reviews accept the repair. The second review independently executes 160 transcript
+  cases: 96 negatives emit no candidate request versus seven baseline requests, 48 positives work and all 16
+  Stop controls stop without a request. Safety returns to 9.1/9.0; pre-repair P1-open scores remain historical.
+- **listening-ci-review-1 — P3, fixed.** The first runtime review accepts the code but catches the new documentation
+  attributing every residual native miss to the spotter. The actual native trace includes a detected name followed
+  by Amber opened the terminal, which the unchanged bounded alias rejects. Signed repair `bfb4d11f` corrects the
+  cause, preserving result counts and guards; the second reviewer verifies the correction.
+
+The package adds only synthetic regression speech with pinned provenance/licence; production audio is not written.
+The source comparison, actual tests, finite counts and residual limits are recorded in the main review. Both CI
+workflows at the earlier head pass, but the automated code and security reviews fail to complete because their
+paying accounts have exhausted usage limits. That external blocker is not a completed review or a substantive code
+finding. The final available-head assessment cannot be called completed automated-review acceptance.

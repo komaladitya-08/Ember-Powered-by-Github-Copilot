@@ -2331,7 +2331,19 @@ integration passes and 474 capability/platform skips, all 194 required renderer 
 three actual-Electron smoke checks. Original deadlines remain. Older failed runs and isolated controls remain in
 the review. A later unchanged-budget WASM pair passes at 14.7%/886 MB on main and 13.8%/885 MB on candidate827,
 without reproducing the earlier increase; eight older CPU failures remain failed and unexplained. Native/WASM EL8
-budget CI, both automated reviews and final reviewed-head assessment remain pending, so this is not release acceptance.
+budget CI and both automated reviews were still pending at that stage, so the local result was not release acceptance.
+
+Both following CI workflows pass at `1ee46d69`, including packaged Mac Ask, desktop AT-SPI and the unchanged
+EL8 budgets (native 12.1%/762 MB; WASM 12.2%/903 MB). The green eval still reports the failed 14/46 synthetic
+bare-name metric and inconclusive 5/78 ordinary-wake metric; neither is relabelled green. Its causal package closes
+listening-ci-r7-2's uncertain-name P1 and four captured ordinary misses, with name/threshold/approval guards kept.
+The first review's P3 residual-cause correction is repaired in a separate signed commit; the second reviewer checks
+both commits and independently passes 460 units and 160 transcript controls. The package integrates at `446e1b47`.
+All thirteen independent re-raters and challengers refresh that source: eleven areas meet 9; Listening remains
+8.8/8.7 and Commands 8.8/8.7. The full post-repair local gate passes all twelve stages: 13,386 units/10 skips, 258 integration passes/474 skips,
+all 194 renderer cases and three actual-Electron smoke checks, with original deadlines. The record-only commit
+leaves the tested app subtree unchanged; latest published-head CI remains in the PR. Both automated reviews fail to
+complete due to payer usage limits, so their required final-head acceptance remains blocked. The PR stays unmerged.
 
 **Consent and departures.** No new kind of data is read, sent or persistently kept; no consent text or version
 changes. Existing host, memory, microphone and approval boundaries remain. No §2 departure, no weaker safety or
@@ -2340,7 +2352,8 @@ not write it to disk or send it automatically.
 
 **Left.** Ordinary loops and `[[ ]]` on the command line still ask (commands-remote-r6-2, P2). Baseline asks too;
 running them would violate this task's hard rule, which permits only the exact job-count loosenings. This round
-does not call that fixed or award a 9 while it remains. P3s include awk's `NR>1` write wording, unknown-download
+does not call that fixed or award a 9 while it remains. Listening also retains the verified P2 spotter/full-name
+misses (listening-ci-r7-1); no alias or threshold is loosened for a score. P3s include awk's `NR>1` write wording, unknown-download
 build-tool wording, Windows Test-Path of Ember's folder, held-lockdown refusal guidance, not-answering status's
 wording dependency, duplicate “Request heard.”, the narrow Ask history-key capsule edge overflow, the recorded memory phrasings and
 over-refusals, stale comments describing delayed memory writes, launcher error wording and crash-log actions.
