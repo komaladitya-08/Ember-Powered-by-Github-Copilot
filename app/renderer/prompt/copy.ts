@@ -178,6 +178,20 @@ export function promptView(card: PromptCard): PromptView {
           buttons: [ok("Send"), cancel()],
         };
       }
+      // Before 8.5 ssh can't show whether it or the server asks (askpass-server.ts): no asker is named, the question
+      // stays quoted, and the user is told to read it first and where the answer goes (commands-remote-3).
+      if (card.unmarked) {
+        return {
+          title: ["A question while connecting to ", { v: card.host }],
+          body: [
+            p("This computer's SSH can't show whether this question comes from SSH itself or from ", { v: card.host }, ", so read it before you answer: what you type goes to whoever asked."),
+            { kind: "quote", text: card.prompt },
+            p("Ember hands your answer to SSH only: it's never saved, logged or sent to Copilot."),
+          ],
+          field: { label: "Answer", masked: true },
+          buttons: [ok("Send"), cancel()],
+        };
+      }
       return {
         title: [{ v: card.host }, " asks"],
         body: [{ kind: "quote", text: card.prompt }],

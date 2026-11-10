@@ -20,6 +20,9 @@ body { margin: 0; color: var(--fg); background: var(--bg); font: var(--type-body
 .home > * { min-width: 0; }
 section { display: grid; gap: 8px; }
 .stack { display: grid; gap: 8px; }
+/* One track that may shrink below its widest child's own width (accessibility-visual-v1): an auto track grew to the
+   never-look field or the Appearance row, and the pane scrolled sideways at 200% zoom with Larger text. */
+section, .stack { grid-template-columns: minmax(0, 1fr); }
 /* What the page hides stays hidden, whatever display a rule gives it (a section, the SSH add form): the browser's own
    [hidden] rule loses to any author rule that sets display. */
 [hidden] { display: none !important; }
@@ -70,6 +73,9 @@ body:not(.first-run) .hero-text #tagline { margin-top: 4px; font: var(--type-cal
 .status-facts dd { margin: 2px 0 0; font: var(--type-callout); font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .status-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .stop-hint { margin: 0; color: var(--muted); font: var(--type-footnote); }
+/* Below the conversation's latest messages: the composer and Task activity, a step away however long it grows (home-v2). */
+.status-jumps { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 12px 0 0; font: var(--type-callout); }
+.status-jumps .link { font: var(--type-callout); font-weight: 500; }
 @media (max-width: 560px) { .status-facts { grid-template-columns: minmax(0, 1fr); } }
 
 /* ───── Panes: one at a time once Ember has started (the sidebar picks it); the first run shows its own parts ───── */
@@ -93,10 +99,31 @@ h2[tabindex="-1"]:focus { outline: none; }
 #project-files, #project-folder, #project-previous-question { overflow-wrap: anywhere; }
 #project-command-form { display: grid; gap: 10px; }
 #project-commands > summary, #project-workspaces > summary, #project-patch > summary { cursor: pointer; }
+/* A disclosure inside Projects (the patch, a command, saved workspaces): the fold's chevron, never the browser's
+   triangle (home-12). */
+.disclose > summary { list-style: none; display: flex; align-items: center; gap: 8px; border-radius: var(--r-sm); }
+.disclose > summary::-webkit-details-marker { display: none; }
+.disclose > summary::before {
+  content: "" / ""; flex: none; width: 14px; height: 14px; background: var(--muted);
+  -webkit-mask: var(--sym-chevron) center / 12px no-repeat; transition: transform 260ms var(--spring-snappy);
+}
+.disclose[open] > summary::before { transform: rotate(90deg); }
+.disclose > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+@media (hover: hover) { .disclose > summary:hover::before { background: var(--fg); } }
 .project-answer { margin: 0; max-height: 22em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .group > * { min-height: 48px; padding: 12px 0; margin: 0; }
 .group > * + * { border-top: 1px solid var(--line); }
 .group > [hidden], .group > .agent-actions:not(:has(> :not([hidden]))) { display: none; }
+/* An empty status line in a group takes no row (accessibility-visual-4: a 48 px blank band with a hairline). */
+.group > p:empty { min-height: 0; padding: 0; border-top: 0; }
+/* An empty footnote under a group takes no gap; one that speaks when filled (a status or an alert) stays on the page,
+   out of the flow, so what it says next is still announced. */
+section > p.hint:empty:not([role]):not([aria-live]) { display: none; }
+section > p.hint:empty:is([role], [aria-live]) { position: absolute; }
+/* Every status line in Home is on the page while it says nothing, as a box of nothing out of the flow: hidden or
+   display: none, it would join the accessibility tree with its words already in, which NVDA and Orca with Chromium
+   don't announce (accessibility-visual-c1-1). An alert is announced as it shows, so it may hide. */
+:is([role="status"], [aria-live]):empty { position: absolute; width: 0; height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; outline: 0; box-shadow: none; }
 .group > progress { min-height: 0; margin: 14px 0; padding: 0; border-top: 0; }
 .group > .agent-line, .group > .presence-line { display: flex; align-items: center; }
 .group > .consent { margin: 12px 0; }
@@ -165,7 +192,7 @@ h2[tabindex="-1"]:focus { outline: none; }
 .start[hidden] { display: none; }
 
 /* Footnotes: under their group, in the secondary label. */
-.hint { margin: 0 4px; color: var(--muted); font: var(--type-footnote); }
+.hint { margin: 0 4px; min-width: 0; overflow-wrap: anywhere; color: var(--muted); font: var(--type-footnote); }
 .copilot .hint, .group .hint { margin: 0; }
 .terms code, .hint code { font: 12px var(--ember-mono); }
 
@@ -187,21 +214,23 @@ h2[tabindex="-1"]:focus { outline: none; }
 .sign-in-msg[hidden] { display: none; }
 .sign-in-msg .wait { flex-basis: 100%; color: var(--muted); }
 .sign-in-msg .nowrap { white-space: nowrap; }
+/* A command or a host's name in Computers' and Commands' status lines never breaks at its hyphen (computers.ts). */
+.hint .whole { white-space: nowrap; }
 .models { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
 .models[hidden] { display: none; }
 .models label { color: var(--fg); }
 /* A choice in a list (Speak … out loud), laid out and styled as the model choices. */
 .choice { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; }
 /* A pop-up button, sized to its choice and set at the row's end; its height grows with the text size, as its words do. */
-.models select, .choice select, #text-size, #handle-position, #glass, #appearance {
+.models select, #w-models select, #w-p-type, .choice select, #text-size, #handle-position, #glass, #appearance {
   justify-self: end; max-width: 100%; height: calc(28px * var(--text-scale)); padding: 0 30px 0 11px; border-radius: var(--r-sm); border: 0;
   -webkit-appearance: none; appearance: none; cursor: pointer;
   color: var(--fg); font: 500 13px var(--ember-font); letter-spacing: -0.003em;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5f2ef' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E") right 10px center / 12px no-repeat, rgba(255, 255, 255, 0.07);
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
-.models select:focus-visible, .choice select:focus-visible, #text-size:focus-visible, #handle-position:focus-visible, #glass:focus-visible, #appearance:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
-.models select option, .choice select option, #text-size option, #handle-position option, #glass option, #appearance option { background: var(--surface-2); color: var(--fg); }
+.models select:focus-visible, #w-models select:focus-visible, #w-p-type:focus-visible, .choice select:focus-visible, #text-size:focus-visible, #handle-position:focus-visible, #glass:focus-visible, #appearance:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.models select option, #w-models select option, #w-p-type option, .choice select option, #text-size option, #handle-position option, #glass option, #appearance option { background: var(--surface-2); color: var(--fg); }
 /* Narrow: the choice goes under its label. */
 @media (max-width: 480px) { .choice { grid-template-columns: minmax(0, 1fr); } .choice select { justify-self: start; } }
 .models-hint { grid-column: 1 / -1; margin: 0; }
@@ -211,7 +240,7 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* ───── Switch rows: the words first, the switch at the row's end (a checkbox keeps its box in front) ───── */
 .switch-row { display: flex; align-items: center; gap: 12px; cursor: pointer; }
 .switch-row:has(> input[role="switch"]) { flex-direction: row-reverse; justify-content: space-between; }
-.switch-row:has(> select) { justify-content: space-between; }
+.switch-row:has(> select) { justify-content: space-between; flex-wrap: wrap; row-gap: 8px; }
 .switch-row > span { min-width: 0; }
 .locked { opacity: 0.5; }
 
@@ -292,12 +321,9 @@ progress[hidden] { display: none; }
 .fold.byok-advanced > summary { margin-left: 0; color: var(--fg); }
 .fold.byok-advanced[open] > summary { margin-bottom: 0; }
 .byok-msg { margin: 6px 0 0; }
-.byok-msg:empty { display: none; }
 .byok-msg.error { color: var(--red-text); }
 #consent-error { color: var(--red-text); margin: 8px 0 0; }
-.never-look-msg:empty { display: none; }
 .presence-line { margin: 0; color: var(--fg); }
-#presence-text:empty { display: none; }
 /* A switch with its note under it, as one row of its group (Apps & privacy, UI audit #11). */
 .group > .noted-row { display: grid; gap: 4px; }
 .row-note { margin: 0; padding-right: 64px; color: var(--muted); font: var(--type-footnote); text-wrap: pretty; }
@@ -314,6 +340,8 @@ progress[hidden] { display: none; }
 .conversation-compose label { font-weight: 600; }
 .conversation-compose textarea { width: 100%; min-width: 0; box-sizing: border-box; resize: vertical; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 8px; }
 .conversation-compose .hint { margin: 0; }
+/* The line under the buttons that says how a request is going (home-7) takes no gap while it says nothing. */
+.conversation-compose > p.hint:empty[role] { position: absolute; }
 .conversation-compose-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .conversation-message-actions { order: 3; flex-basis: 100%; display: flex; gap: 4px; padding: 2px 6px; }
 .conversation li.you .conversation-message-actions { justify-content: flex-end; }
@@ -350,16 +378,36 @@ progress[hidden] { display: none; }
 .conversation li.learned::before { content: none; }
 .conversation li.learned p { order: 0; flex: 1; min-width: 0; max-width: none; margin: 0; background: transparent; padding: 2px 6px; border-radius: 0; color: var(--muted); font: var(--type-footnote); }
 .conversation li.learned .btn { flex: none; }
+/* Where focus goes when the line's own Undo changed it (memory-c1-3), or once a learnt word is forgotten (memory-7). */
+#words-note:focus-visible { outline: none; border-radius: var(--r-xs); box-shadow: var(--focus-ring); }
+.conversation li.learned p:focus-visible { outline: none; border-radius: var(--r-xs); box-shadow: var(--focus-ring); }
+/* Where the lines kept from before Ember restarted end (home-8): those above are for reading, this conversation below. */
+.conversation li.restored-end { display: block; margin: 6px 14px; padding: 8px 0 2px; border-top: 1px solid var(--separator); color: var(--muted); font: var(--type-footnote); text-align: center; text-wrap: pretty; }
+.conversation li.restored-end::before { content: none; }
 /* Memory's list: the fact, and where it came from under it. */
 .mem-fact { display: grid; gap: 2px; min-width: 0; }
 .mem-fact > span { min-width: 0; overflow-wrap: anywhere; }
 .mem-from { color: var(--muted); font: var(--type-footnote); }
+/* Its two buttons stay side by side at the row's end, however long the fact: Forget in red, Correct… (which changes
+   nothing until saved) in the words' colour. Their words sit 16px apart; only the last one's padding hangs past the
+   edge (memory-13). */
+.memory-list li > .agent-actions { flex: none; flex-wrap: nowrap; gap: 0; }
+.memory-list .agent-actions .btn.quiet:not(:last-child) { margin-right: 0; }
+.memory-list .agent-actions [data-memory-correct] { color: var(--fg); }
 /* "Tell Ember about you": memory off, the line and its button sit on one row. */
 .about-off:not(.consent) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .about-off .row-note { margin: 0; min-width: 0; padding-right: 0; }
 .about-off[hidden] { display: none; }
 .about-off .btn { flex: none; white-space: nowrap; }
-.about-msg:empty { display: none; }
+/* After Forget, focus waits on what went (never the next Forget: memory-7), ringed as a control is, with Undo beside it. */
+.memory-forgotten { align-items: center; flex-wrap: wrap; }
+.memory-forgotten > .hint { margin: 0; border-radius: var(--r-xs); }
+.memory-forgotten > .hint:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Memory's note, opened by a request: focus waits on its words, never its "I agree, remember" (memory-r7). */
+#memory-consent-text { border-radius: var(--r-xs); }
+#memory-consent-text:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Memory on but paused: its line stands alone in the group, so no rule above it. */
+.group > .about-paused { border-top: 0; }
 /* Its group and the hints under it are spaced as a section's own children are. */
 #about-you, #w-about { display: grid; gap: 8px; }
 
@@ -429,9 +477,9 @@ progress[hidden] { display: none; }
 .task-view { min-width: 0; }
 
 /* ───── What Ember did: time, a fixed-width state tag, the step ───── */
-.activity { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
+.activity { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; container: activity / inline-size; }
 .activity:empty::before { content: "Nothing yet. When Ember works in your apps, each step shows here."; display: block; padding: 14px 16px; color: var(--muted); }
-.activity li { display: grid; grid-template-columns: 4.6em 6.4em 1fr; gap: 10px; align-items: baseline; margin: 0 16px; padding: 9px 0; font: var(--type-callout); }
+.activity li { display: grid; grid-template-columns: 4.6em 8em 1fr; gap: 10px; align-items: baseline; margin: 0 16px; padding: 9px 0; font: var(--type-callout); }
 .activity li + li:not(.day) { border-top: 1px solid var(--line); }
 .activity li.day {
   display: block; margin: 0; padding: 10px 16px 4px; font: 600 12px/16px var(--ember-font); color: var(--muted);
@@ -444,10 +492,20 @@ progress[hidden] { display: none; }
 .activity .tag.no { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-text); }
 .activity .what { overflow-wrap: anywhere; }
 .activity .why { display: block; color: var(--muted); font: var(--type-footnote); }
+/* Narrow, or at a large text size, the words take the whole row under the time and the tag: beside them they kept
+   107 of 340 px at 420 px Larger, two or three words a line (accessibility-visual-r1). In em, so it follows the text size. */
+@container activity (max-width: 24em) {
+  .activity li { grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; }
+  .activity .what { grid-column: 1 / -1; }
+}
+/* Show earlier, after the lines drawn (safety-privacy-5); a line it moved focus to shows the ring inside the list. */
+.activity li.more { display: block; }
+.activity li[tabindex="-1"]:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-xs); }
 
 /* ───── Setup check ───── */
-.checks { list-style: none; margin: 0; padding: 0 16px; }
-.checks li { display: grid; grid-template-columns: 52px 1fr; gap: 2px 12px; padding: 12px 0; }
+/* One column for every row's state, as wide as the widest word ("Worth a look"), so the labels line up. */
+.checks { list-style: none; margin: 0; padding: 0 16px; display: grid; grid-template-columns: max-content minmax(0, 1fr); }
+.checks li { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; gap: 2px 12px; padding: 12px 0; }
 .checks li + li { border-top: 1px solid var(--line); }
 .pill {
   grid-row: span 2; align-self: start; justify-self: stretch; margin-top: 1px; padding: 1px 6px; border-radius: var(--r-capsule);
@@ -459,10 +517,16 @@ progress[hidden] { display: none; }
 .check-label { font-weight: 600; }
 .check-detail { color: var(--muted); overflow-wrap: anywhere; }
 .checks .check-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+/* Check again, under the rows, for a fix the user made outside Ember (first-run-6). */
+.checks-again { margin: 0; padding: 8px 16px 4px; }
+/* What Check again found, above its button (first-run-r2): in line with it. */
+.fold > .hint.checks-msg { margin: 0; padding: 8px 16px 0; }
 .facts { margin: 0; padding: 14px 16px; display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 .facts dd.path { font: 13px/20px var(--ember-mono); }
+/* The log file's Copy and Show in Files (rp-8), on the line under its path. */
+.facts dd.path .btn { margin: 4px 8px 0 0; }
 .facts dd.plain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 
 /* ── First run: only its steps (welcome.ts; styled at the end of this sheet) ── */
@@ -532,7 +596,9 @@ html { scroll-padding-top: 16px; }
   -webkit-mask: var(--sym-chevron) center / 12px no-repeat; transition: transform 260ms var(--spring-snappy);
 }
 .fold[open] > summary::before { transform: rotate(90deg); }
-.fold > summary h2 { margin: 0; }
+.fold > summary h2, .fold > summary h3.sub { margin: 0; }
+/* "Before Ember starts" again after setup (safety-privacy-9), on the pane's own surface. */
+.privacy-terms .terms { margin: 4px 0 8px; }
 @media (hover: hover) { .fold > summary:hover::before { background: var(--fg); } }
 .fold > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .fold-note { color: var(--muted); font: var(--type-callout); margin-left: auto; }
@@ -553,16 +619,16 @@ html { scroll-padding-top: 16px; }
    an outline; the slider, the chevrons and the sidebar's symbols are drawn in system colours. */
 @media (forced-colors: active) {
   body:not(.first-run) .status-panel, .task-group, .task-groups > .empty, .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .consent, .managed, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
-  .card, .start, .models select, .choice select, #text-size, #handle-position, #glass, #appearance, .add-row input, .field-row > input { border: 1px solid ButtonText; }
+  .card, .start, .models select, #w-models select, #w-p-type, .choice select, #text-size, #handle-position, #glass, #appearance, .add-row input, .field-row > input { border: 1px solid ButtonText; }
   .card[aria-checked="true"] { border: 3px solid Highlight; padding: 8px 8px 12px; }
   /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
   /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
-  .models select, .choice select, #text-size, #handle-position, #glass, #appearance { appearance: auto; -webkit-appearance: menulist; background-image: none; }
+  .models select, #w-models select, #w-p-type, .choice select, #text-size, #handle-position, #glass, #appearance { appearance: auto; -webkit-appearance: menulist; background-image: none; }
   .pick-row input[type="range"] { forced-color-adjust: none; }
   .pick-row input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, Highlight var(--fill, 32%), CanvasText var(--fill, 32%)); box-shadow: none; }
   .pick-row input[type="range"]::-webkit-slider-thumb, .pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { background: ButtonText; box-shadow: 0 0 0 2px Canvas; }
-  .fold > summary::before, .fold > summary:hover::before { background: CanvasText; }
+  .fold > summary::before, .fold > summary:hover::before, .disclose > summary::before, .disclose > summary:hover::before { background: CanvasText; }
   .jump a[aria-current="true"] { outline: 1px solid LinkText; outline-offset: -1px; }
   .jump a::after { background: LinkText; }
   .jump-badge { outline: 1px solid CanvasText; outline-offset: -1px; }
@@ -656,8 +722,8 @@ html { scroll-padding-top: 16px; }
 .ext-browse-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .ext-browse-head h3.sub { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .ext-browse-head h3.sub:focus { outline: none; }
+.ext-browse-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 #ext-browse-status, #extensions-msg { margin: 0 4px; }
-#ext-browse-status:empty, #extensions-msg:empty { display: none; }
 .ext-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); align-items: start; gap: 10px; }
 /* The card asking for consent takes the whole row, so its promises read at a comfortable measure. */
 .ext-card:has(> .ext-consent) { grid-column: 1 / -1; }
@@ -696,7 +762,7 @@ html[data-text-size] h3.sub, html[data-text-size] .activity li.day { font-size: 
 html[data-text-size] .start { font-size: calc(15px * var(--text-scale)); line-height: round(calc(20px * var(--text-scale)), 1px); }
 html[data-text-size] .terms code, html[data-text-size] .hint code { font-size: calc(12px * var(--text-scale)); }
 html[data-text-size] .sign-in-msg code { font-size: calc(20px * var(--text-scale)); line-height: round(calc(28px * var(--text-scale)), 1px); }
-html[data-text-size] .models select, html[data-text-size] .choice select, html[data-text-size] #text-size, html[data-text-size] #handle-position, html[data-text-size] #glass, html[data-text-size] #appearance { font-size: calc(13px * var(--text-scale)); }
+html[data-text-size] .models select, html[data-text-size] #w-models select, html[data-text-size] #w-p-type, html[data-text-size] .choice select, html[data-text-size] #text-size, html[data-text-size] #handle-position, html[data-text-size] #glass, html[data-text-size] #appearance { font-size: calc(13px * var(--text-scale)); }
 html[data-text-size] .ext-tool-name { font-size: calc(12px * var(--text-scale)); line-height: round(calc(16px * var(--text-scale)), 1px); }
 html[data-text-size] .ext-list .tag, html[data-text-size] .ext-card .tag { font-size: calc(11px * var(--text-scale)); line-height: round(calc(17px * var(--text-scale)), 1px); }
 html[data-text-size] .activity .tag, html[data-text-size] .pill { font-size: calc(11px * var(--text-scale)); line-height: round(calc(17px * var(--text-scale)), 1px); }
@@ -809,7 +875,7 @@ body:not(.first-run) .home > [data-pane]:not(.off-pane) {
 body.first-run .home { max-width: 640px; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; gap: 20px; padding: 28px 24px 32px; }
 body.first-run #welcome { min-height: min(560px, calc(100vh - 60px)); }
 @media (min-width: 1000px) { body.first-run .home { max-width: 720px; } }
-body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: none; }
+body.first-run .home > :not(#welcome, #managed, #settings-notice, #provider-off) { display: none; }
 .welcome {
   display: flex; flex-direction: column; gap: 22px;
   /* The motion system's tokens (docs/DESIGN.md "Motion"), with the values ember.css takes on: defined here until then. */
@@ -870,11 +936,12 @@ body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: non
 .w-more .terms, .w-detail { margin: 0; padding: 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
 .w-more h3 + .terms { margin-top: -4px; }
 .w-note { margin: 0; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
-.w-note:empty { display: none; }
+/* Focused after Not now (first-run-c1-1): the ring gets room round the words without moving them. */
+.w-note[tabindex="-1"]:not(:empty) { margin: -2px -6px; padding: 2px 6px; border-radius: var(--r-xs); }
+.w-note[tabindex="-1"]:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 /* A status line with its symbol (never colour alone): connected, all good, or what needs doing. */
 .w-status { margin: 0; display: flex; align-items: flex-start; gap: 8px; color: var(--fg); font: var(--type-headline); text-wrap: pretty; }
-.w-status:empty { display: none; }
 .w-status.ok::before, .w-status.fail::before, .w-status.warn::before, .w-status.error::before {
   content: "" / ""; flex: none; width: 18px; height: 18px; margin-top: 1px; -webkit-mask: var(--sym) center / contain no-repeat; background: var(--sym-tint);
 }
@@ -899,9 +966,21 @@ body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: non
 .w-check-text, .w-try-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .w-check-text p, .w-try-text p { margin: 2px 0 0; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
 .w-try-text b, .w-check-text b { font-weight: 600; }
+.w-check-text p.w-check-fail { color: var(--red-text); }
+.w-models { margin-top: 16px; }
+.w-models h3 { margin: 0 0 6px; font: var(--type-headline); }
+.w-models .field-row { margin-top: 8px; }
+.w-models .field-row > select, #welcome .field-row > select { min-width: 0; }
+.w-needs { margin: 0 0 8px; padding-left: 18px; color: var(--muted); font: var(--type-callout); }
+/* What changed since an earlier agreement: a callout above the consent's points. */
+.w-changes { margin: 0 0 16px; padding: 12px 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.w-changes h3 { margin: 0 0 6px; font: var(--type-headline); }
+.w-changes ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--fg); font: var(--type-callout); text-wrap: pretty; }
 .w-try-text .chord { margin-left: 6px; }
 .w-sym { flex: none; width: 20px; height: 20px; background: var(--yellow); -webkit-mask: var(--sym-failed) center / contain no-repeat; }
 .w-check[data-tone="fail"] .w-sym { background: var(--red); }
+/* Done, with something left for the user (a restart): the done symbol, the words say what is left. */
+.w-check[data-tone="ok"] .w-sym { background: var(--green); -webkit-mask-image: var(--sym-done); }
 /* A try not done yet is an empty ring; done, a filled check that lands once (a completion flourish). */
 .w-tick { flex: none; position: relative; width: 20px; height: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--control-edge); }
 .w-tick::after {
@@ -958,7 +1037,7 @@ html.calm .w-card > * { transition-delay: 0s; }
 @media (forced-colors: active) {
   .w-arc i, .w-meter i { forced-color-adjust: none; background: GrayText; }
   .w-arc i.on, .w-meter i.on { background: Highlight; }
-  .w-checks, .w-tries, .w-card, .w-code, .w-more .terms, .w-detail { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .w-checks, .w-tries, .w-card, .w-code, .w-changes, .w-more .terms, .w-detail { outline: 1px solid CanvasText; outline-offset: -1px; }
   .w-status::before, .w-sym, .w-tick::after, .w-more > summary::before, .w-state::before { background: CanvasText; }
   .w-cmd code { outline: 1px solid CanvasText; outline-offset: -1px; }
   .w-tick { border: 1.5px solid CanvasText; }
@@ -989,7 +1068,6 @@ html.calm .w-card > * { transition-delay: 0s; }
 .search-result { display: block; width: 100%; min-height: calc(36px * var(--text-scale)); border: 0; border-radius: var(--r-xs); padding: 8px; color: var(--fg); background: transparent; font: var(--type-callout); text-align: left; overflow-wrap: anywhere; cursor: pointer; }
 .search-result:hover { background: var(--surface-2); }
 .search-result:focus-visible, .memory-filters input:focus-visible, .memory-filters select:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.learned-undo-note:empty { display: none; }
 .memory-correction { gap: 8px; padding-block: 12px; }
 .memory-correction > * { min-height: 0; padding: 0; border-top: 0; }
 .memory-correction textarea { width: 100%; resize: vertical; padding: 8px; border: 1px solid var(--control-edge); border-radius: var(--r-sm); background: var(--surface-2); color: var(--fg); font: var(--type-body); }
@@ -1001,6 +1079,9 @@ html.calm .w-card > * { transition-delay: 0s; }
 @media (forced-colors: active) {
   .search-result { border: 1px solid ButtonText; }
   .memory-filters input, .memory-filters select, .memory-correction textarea, .search-results { border: 1px solid ButtonText; }
+  /* Drawn with an edge, a memory's buttons stand apart and stay inside the group (memory-13). */
+  .memory-list li > .agent-actions { gap: 6px; }
+  .memory-list .agent-actions .btn.quiet { margin-right: 0; }
 }
 
 /* Project context stays inspectable and removable without clearing the authored request. */
@@ -1014,7 +1095,7 @@ html.calm .w-card > * { transition-delay: 0s; }
 #project-diff { font-family: var(--ember-mono); font-size: inherit; line-height: 1.6; }
 #project-patch[open] > * + * { margin-top: 12px; }
 #project-patch > summary { min-height: 28px; padding-block: 4px; }
-.jump a[href="#project-h"] { --tile: var(--blue); --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E"); }
+.jump a[href="#project-h"] { --tile: #0a84ff; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E"); }
 @media (forced-colors: active) {
   #project-files li + li { border-color: CanvasText; }
   #project-patch > summary { outline: 1px solid ButtonText; outline-offset: -1px; }
@@ -1039,7 +1120,7 @@ html.calm .w-card > * { transition-delay: 0s; }
   html.content { --bg: var(--surface-0); --sidebar-fill: #ebe7e4; }
   html.content ::placeholder { color: #6b6664; }
   html.content .conversation li.you p { color: var(--label); }
-  html.content :is(.models select, .choice select, #text-size, #handle-position, #glass, #appearance) {
+  html.content :is(.models select, #w-models select, #w-p-type, .choice select, #text-size, #handle-position, #glass, #appearance) {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231d1a1b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E");
   }
 }

@@ -5,6 +5,7 @@
  */
 
 import type { BubbleState, EmberState } from "../../shared/overlay";
+import { CONVERSATION_TEXT_LIMIT, type ConversationTurn } from "../../shared/conversation";
 import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
@@ -76,7 +77,7 @@ const CONVERSATION_TOO_LONG = "That's more than the model can take in at once: t
  * shortcut as this OS writes it (default Linux's "Ctrl+Alt+E"); null while another app holds
  * it: the sentence names none (cross-review X5).
  */
-export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: ServiceKind; settingsKey?: string | null } = {}): string {
+export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: ServiceKind; settingsKey?: string | null; local?: boolean } = {}): string {
   const key = ctx.settingsKey === undefined ? SHORTCUTS.linux.settings.label : ctx.settingsKey;
   /** "in settings (Ctrl+Alt+E)", or where to go without a shortcut. */
   const inSettings = (own: boolean) => (key ? `in ${own ? "Ember's " : ""}settings (${key})` : "in Ember's settings");
@@ -105,8 +106,13 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens/i.test(m)) return CONVERSATION_TOO_LONG;
   if (/context.?(length|limit|window)/i.test(m)) return CONVERSATION_TOO_LONG;
   if (/too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
-  // The runtime's own connection went away ("Pending response rejected since connection got disposed").
-  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) return `I can't reach ${service} right now. Check the network, then ask again.`;
+  // The runtime's own connection went away ("Pending response rejected since connection got disposed"). Its native
+  // client says "error sending request … client error (Connect): tunnel error / dns error …" for a proxy that refused
+  // the tunnel or a name that didn't resolve (integrations-r2-1).
+  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected|error sending request|client error \(connect\)|dns error|tunnel error|failed to lookup address/i.test(m)) {
+    // The user's own model server on this computer (`local`): it is most likely not running, not the network (integrations-1).
+    return mine && ctx.local ? "I can't reach the model server on this computer. Is it running? Start it, then ask again." : `I can't reach ${service} right now. Check the network, then ask again.`;
+  }
   if (/\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded/i.test(m)) return `${mine ? "Your model service" : ctx.provider ? "Your organisation's model service" : "Copilot"} had a problem on its side. Try again in a moment.`;
   // A request that timed out (not the network's ETIMEDOUT, which is above).
   if (/timed? ?out|timeout|took too long/i.test(m)) return `${ctx.provider ? "The model service" : "Copilot"} took too long to answer. Try again in a moment.`;
@@ -170,9 +176,10 @@ export function problemTitle(said: string, provider: ServiceKind = false): strin
   if (/model I'm set to use/i.test(said)) return "That model isn't available";
   if (/too much for me/i.test(said)) return "Too much at once";
   if (/can't reach|\bnetwork\b/i.test(said)) return provider ? "I can't reach the model service" : "I can't reach Copilot";
-  if (/isn't answering|didn't answer|not answering/i.test(said)) return "Copilot isn't answering";
-  if (/stopped unexpectedly/i.test(said)) return "Copilot stopped";
-  if (/file watchers/i.test(said)) return "Copilot can't work right now";
+  if (/isn't answering|didn't answer|not answering/i.test(said)) return provider === "user" ? "Your model provider isn't answering" : provider ? "The model service isn't answering" : "Copilot isn't answering";
+  // Ember's Copilot runtime, named "my model connection" while it serves another model service (integrations-v1).
+  if (/stopped unexpectedly/i.test(said)) return provider ? "My model connection stopped" : "Copilot stopped";
+  if (/file watchers/i.test(said)) return provider ? "I can't work right now" : "Copilot can't work right now";
   return `${service} had a problem`;
 }
 
@@ -193,6 +200,11 @@ export function forBubble(text: string): string {
 const ACK_MS = ANSWER_MS;
 /** A task whose work is in the bubble keeps it while it writes; this long without a word, another task's work may show. */
 const QUIET_MS = 15_000;
+/**
+ * Once the Ask box closes, a bubble it held (BubbleOwner.holdForAsk) stays at least this long (times More time to read
+ * and answer), or what was left of its own time if that is longer: a glance back at what was being replied to.
+ */
+export const ASK_AFTER_MS = 4000;
 
 /**
  * How a write claims the shared bubble.
@@ -238,6 +250,10 @@ export class BubbleOwner {
   private covered: Presenter | null = null;
   /** A guide step waits behind an answer that has finished: it shows when this fires. */
   private stepTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The Ask box is open (holdForAsk): no presenter's bubble goes meanwhile. */
+  private askOpen = false;
+  /** Presenters whose bubble would have gone while the box was open: they go once it closes. */
+  private askHeld = new Set<Presenter>();
 
   constructor(
     /** A question with buttons is up (main shows nothing else meanwhile); `answered` resolves once none is. */
@@ -267,6 +283,32 @@ export class BubbleOwner {
     if (!c || keep(c)) return c;
     c.drop();
     return null;
+  }
+
+  /**
+   * The Ask box opened (`open`) or closed (companion-c2-1: the answer being replied to went at its usual time while the
+   * reply was typed beside it). While it is open no presenter's bubble goes on its timer: the one on screen and any that
+   * comes meanwhile stay. Once it closes, each goes after what was left of its time, and never sooner than ASK_AFTER_MS.
+   * A new request, a question or a stop still replaces a bubble as always: only the timers wait.
+   */
+  holdForAsk(open: boolean): void {
+    if (open === this.askOpen) return;
+    this.askOpen = open;
+    if (open) {
+      for (const p of this.showing) p.holdForAsk();
+      if (this.current instanceof Presenter) this.current.holdForAsk();
+      return;
+    }
+    const held = [...this.askHeld];
+    this.askHeld.clear();
+    for (const p of held) p.afterAsk();
+  }
+
+  /** `p`'s bubble would go now: while the Ask box is open it waits (true), and goes once the box closes. */
+  heldForAsk(p: Presenter): boolean {
+    if (!this.askOpen) return false;
+    this.askHeld.add(p);
+    return true;
   }
 
   /** May `p` write the bubble now? */
@@ -413,6 +455,8 @@ export interface PresenterOptions {
    * that needs more than the bubble's six lines at that size offers Read all (cross-review X2). Asked at each answer.
    */
   textScale?: () => number;
+  /** The user's own model service runs on this computer: one it can't reach is asked about as not running (integrations-1). */
+  serviceOnThisComputer?: () => boolean;
 }
 
 /**
@@ -536,11 +580,77 @@ export function expandedBubble(b: BubbleState, full: string): BubbleState {
   };
 }
 
+/**
+ * What the user might say next (EmberState.suggest) once "Read all" opens `b` in full with `full` (expandedBubble): made
+ * for the answer as the bubble showed it (its first KEEP_CHARS), they follow all of it now, so the Ask box still offers
+ * them under it (companion-v6-1: one over 600 characters never matched them again once opened). Only for that very
+ * answer, kept whole by the conversation (CONVERSATION_TEXT_LIMIT: one cut there no longer ends as it did); anything
+ * else is left as it is.
+ */
+export function expandedSuggest(suggest: EmberState["suggest"], b: BubbleState, full: string): EmberState["suggest"] {
+  if (!suggest || suggest.thought !== b.thought || clip(full) !== b.thought || full.length >= CONVERSATION_TEXT_LIMIT) return suggest;
+  return { ...suggest, thought: full };
+}
+
 /** What the conversation says when a turn of it ended without an answer or a step. */
 export const NO_REPLY = "Copilot ended that turn without an answer. Please ask me again.";
 
 /** The bubble's title while a turn under way hears nothing from Copilot (see TurnWatch). */
 export const STILL_WAITING = "Still waiting for Copilot…";
+
+/**
+ * That title for the model service in use (`provider`, ServiceKind): Copilot, the organisation's service or a test
+ * server (true), or the user's own provider ("user"), so a slow wait never blames a service that isn't in use
+ * (integrations-v1, reliability-performance-v3).
+ */
+export function stillWaiting(provider: ServiceKind = false): string {
+  return provider === "user" ? "Still waiting for your model provider…" : provider ? "Still waiting for the model service…" : STILL_WAITING;
+}
+
+/** One of stillWaiting's titles (whichever service it named). */
+const isStillWaiting = (title: string) => title === stillWaiting(false) || title === stillWaiting(true) || title === stillWaiting("user");
+
+/**
+ * Under the conversation's "Still waiting for …" (with Stop, which no keyboard reaches: the overlay never takes it): the
+ * keyboard's ways to stop, each key named only while Ember holds it (accessibility-visual-2). Home's Stop response ends
+ * the turn alone, as that Stop does; the stop chord stops everything.
+ */
+export function stalledStep(settingsKey: string | null, stopKey: string | null): string {
+  const turn = settingsKey ? `Or press ${settingsKey} and use Stop response in Home.` : "Or use Stop response in Ember's settings, on Home.";
+  return stopKey ? `${turn} ${stopKey} stops everything.` : turn;
+}
+
+/**
+ * Where settings opened from the keyboard lands (main's showHomeFromKeys): while the conversation's turn is stalled, at
+ * Stop response, as stalledStep says, whatever pane Home was left on (accessibility-visual-2: it reopened there, Stop
+ * response about nine Tab stops into another pane); else the keyboard's way to a shortcut another app holds (`route`,
+ * environment.ts keyboardRoute), or nowhere in particular.
+ */
+export function keysLanding(turn: ConversationTurn, route: "access:ask" | "access:stop" | null): string | null {
+  return turn === "slow" ? "conversation:stop" : route;
+}
+
+/** The model service in use, as a sentence starts with it. */
+const serviceName = (provider: ServiceKind) => (provider === "user" ? "Your model provider" : provider ? "The model service" : "Copilot");
+
+/**
+ * What a task stopped for its model service's silence says (worker.ts TurnWatch), for the service in use (integrations-v1),
+ * and with the file watchers used up, Copilot's runtime as "I" under another service.
+ */
+export function taskStoppedWords(provider: ServiceKind, why: "silent" | "not-started" | "watchers"): string {
+  if (why === "watchers") return `${provider ? "I" : "Copilot"} can't work right now: this computer has run out of file watchers, so I stopped this task. Close a few apps, then ask me again.`;
+  return `${serviceName(provider)} ${why === "silent" ? "didn't answer" : "isn't answering"}, so I stopped this task. You can ask me again in a moment.`;
+}
+
+/** What a turn that is stuck says, for the model service in use (conductor.ts, when nothing else handles it). */
+export function notAnswering(provider: ServiceKind = false): string {
+  return `${serviceName(provider)} isn't answering. Ask me again in a moment.`;
+}
+
+/** What a turn that got nothing back says, for the model service in use (conductor.ts NO_ANSWER is Copilot's). */
+export function noAnswer(provider: ServiceKind = false): string {
+  return `${serviceName(provider)} didn't answer. Ask me again in a moment.`;
+}
 
 /**
  * How long "Thinking…" may show with nothing from Copilot before the bubble says it is still waiting and offers Stop
@@ -555,6 +665,33 @@ export const TRY_AGAIN = { id: "ui:retry", label: "Try again" } as const;
 export const TASK_IN_CORNER = "Its card in the corner shows how it's going.";
 /** The bubble after the conversation's Stop. */
 export const STOPPED_ANSWER = "Okay, I've stopped.";
+/** What the bubble says when the runtime stopped under Ember and it reconnects by itself (host.ts lost). */
+export const LOST_RECONNECTING = "Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.";
+/** The conversation's line for that problem once Copilot is connected again (host.ts: reliability-performance-c1-1). */
+export const LOST_RECONNECTED = "Copilot stopped unexpectedly. I'm connected again: send it again.";
+/** The conversation's line for it once Ember gave up, Copilot having stopped too often (host.ts: reliability-performance-c2-3). */
+export const LOST_GAVE_UP = "Copilot stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.";
+/** The same in the bubble, whose Open settings leads to Check again. */
+export const GAVE_UP = "Copilot keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.";
+/** What Ember says while the runtime is lost, once it is back, and once Ember gave up (lostWords). */
+export interface LostWords { reconnecting: string; reconnected: string; gaveUp: string; gaveUpBubble: string }
+/**
+ * LOST_RECONNECTING, LOST_RECONNECTED, LOST_GAVE_UP and GAVE_UP for the model service in use (integrations-v1): Copilot's
+ * as they are, and under the user's own provider or the organisation's service the runtime is "my model connection"
+ * (noticeTitle's name for it then), never Copilot, which the person isn't using.
+ */
+export function lostWords(service: ServiceKind): LostWords {
+  if (service === false) return { reconnecting: LOST_RECONNECTING, reconnected: LOST_RECONNECTED, gaveUp: LOST_GAVE_UP, gaveUpBubble: GAVE_UP };
+  return {
+    reconnecting: "My model connection stopped unexpectedly. I'm reconnecting; ask me again in a moment.",
+    reconnected: "My model connection stopped unexpectedly. I'm connected again: send it again.",
+    gaveUp: "My model connection stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.",
+    gaveUpBubble: "My model connection keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.",
+  };
+}
+/** The same bubble once Copilot is connected again (reconnected), with Try again (rp-6), or without a request to offer. */
+export const RECONNECTED_RETRY = "I'm connected again. Try again?";
+export const RECONNECTED = "I'm connected again. Ask me again.";
 
 /** What Ember's body does during each tool. */
 export const TOOL_GESTURES: Record<string, Gesture> = {
@@ -577,6 +714,10 @@ export class Presenter {
   private hideMs = 0;
   /** A hide asked for while the bubble wasn't on screen: its time starts once it shows. */
   private pendingHide: number | null = null;
+  /** When the armed hide was armed (now()): what is left of it when the Ask box holds it. */
+  private armedAt = 0;
+  /** The time its bubble had left when the Ask box held it (BubbleOwner.holdForAsk), or null: not held. */
+  private askLeft: number | null = null;
   /** The latest bubble hasn't reached the screen (someone else held it, or a question was up). */
   private unseen = false;
   /** Stopped by the kill switch: nothing more is shown until the next request. */
@@ -620,8 +761,9 @@ export class Presenter {
   private readonly heldSettingsKey: () => string | null;
   /** The stop chord as Ember holds it now ("Ctrl+Alt+X"; PresenterOptions.stopKey), named by an announcement. */
   private readonly heldStopKey: () => string | null;
-  /** The title "Still waiting for Copilot…" replaced (see stalled). */
+  /** The title "Still waiting for …" replaced (see stalled), and the step its keyboard route replaced. */
   private stalledTitle = "";
+  private stalledStepWas: string | null = null;
   /** "Thinking…" with nothing from Copilot yet: after THINK_SLOW_MS it says it is still waiting, with Stop (see slowThinking). */
   private thinkTimer: ReturnType<typeof setTimeout> | null = null;
   /**
@@ -655,10 +797,26 @@ export class Presenter {
   private readonly now: () => number;
   private readonly readTime: () => number;
   private readonly textScale: () => number;
+  private readonly onThisComputer: () => boolean;
 
   /** Which model service is in use now (see the constructor's `service`). */
   private get provider(): ServiceKind {
     return typeof this.service === "function" ? this.service() : this.service;
+  }
+
+  /** "Still waiting for …" for the service in use now (a task's card line says the same: worker.ts onSlow). */
+  stillWaiting(): string {
+    return stillWaiting(this.provider);
+  }
+
+  /** What a turn that got nothing back says, for the service in use now. */
+  notAnswering(): string {
+    return notAnswering(this.provider);
+  }
+
+  /** What a task stopped for its model service's silence says, for the service in use now (integrations-v1). */
+  taskStopped(why: "silent" | "not-started" | "watchers"): string {
+    return taskStoppedWords(this.provider, why);
   }
 
   constructor(
@@ -690,6 +848,7 @@ export class Presenter {
     this.now = opts.now ?? Date.now;
     this.readTime = opts.readTime ?? (() => 1);
     this.textScale = opts.textScale ?? (() => 1);
+    this.onThisComputer = opts.serviceOnThisComputer ?? (() => false);
   }
 
   /** The settings shortcut Ember holds now, or null (taken, or the check failed: naming one that may not work is worse). */
@@ -705,6 +864,8 @@ export class Presenter {
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
   private apply(patch: Partial<EmberState>, claim: Claim = this.guiding ? "reply" : this.work): boolean {
     this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}), ...(this.taskId ? { task: this.taskId } : {}), ...(this.where ? { where: this.where } : {}) } };
+    // "Still waiting" is news for screen readers only while the bubble says it (BubbleState.stalled).
+    if (patch.bubble && !isStillWaiting(this.state.bubble.title)) delete this.state.bubble.stalled;
     // Ember's "Without asking" tag goes with its own announcement only: any other change of the bubble drops it (a task's
     // note, the model's title, a question), even one that copies the bubble it replaces (security review of #127).
     if (patch.bubble && !this.announcing) delete this.state.bubble.autonomous;
@@ -732,11 +893,32 @@ export class Presenter {
   private cancelHide(): void {
     if (this.hideTimer) { this.timers.clear(this.hideTimer); this.hideTimer = null; }
     this.pendingHide = null;
+    this.askLeft = null;
+  }
+
+  /** The Ask box opened (BubbleOwner.holdForAsk): a bubble on screen with its time running keeps what is left of it. */
+  holdForAsk(): void {
+    if (!this.hideTimer) return;
+    const left = Math.max(0, this.hideMs - (this.now() - this.armedAt));
+    this.armHide(left);
+  }
+
+  /** The Ask box closed: a bubble it held goes after what was left of its time, never sooner than ASK_AFTER_MS. */
+  afterAsk(): void {
+    const left = this.askLeft;
+    this.askLeft = null;
+    if (left === null || !this.visible) return;
+    this.armHide(Math.max(left, ASK_AFTER_MS * this.readScale()));
   }
 
   /** Thinking, streaming or working: a turn is under way. */
   get busy(): boolean {
     return this.state.bubble.streaming || this.state.emotion === "thinking" || this.state.emotion === "focused";
+  }
+
+  /** The conversation's bubble says Ember is still waiting for the model service (Home's composer says so too: home-c1-1). */
+  get stalledNow(): boolean {
+    return this.work === "reply" && !this.silent && this.busy && isStillWaiting(this.state.bubble.title);
   }
 
   /**
@@ -785,7 +967,7 @@ export class Presenter {
 
   /** Someone else (main's own bubble) has the bubble now: no timer of this presenter hides it. */
   letGo(): void {
-    const ms = this.hideTimer ? this.hideMs : this.pendingHide;
+    const ms = this.hideTimer ? this.hideMs : this.askLeft ?? this.pendingHide;
     this.cancelHide();
     // Its time starts over if it shows again (reshow).
     this.pendingHide = ms;
@@ -840,9 +1022,12 @@ export class Presenter {
   /** This presenter's bubble goes `base` ms after it reaches the screen, times the user's "More time to read and answer". */
   private hideLater(base: number): void {
     // As long as the user needs to read it (their setting), never shorter than usual.
-    let scale = 1;
-    try { scale = Math.max(1, Math.min(10, Number(this.readTime()) || 1)); } catch { /* the usual time */ }
-    this.armHide(base * scale);
+    this.armHide(base * this.readScale());
+  }
+
+  /** How many times its usual time a bubble stays (the user's More time to read and answer: 1 to 10, 1 if unreadable). */
+  private readScale(): number {
+    try { return Math.max(1, Math.min(10, Number(this.readTime()) || 1)); } catch { return 1; }
   }
 
   /**
@@ -853,7 +1038,10 @@ export class Presenter {
     this.cancelHide();
     // Not on screen yet: its time starts when it shows.
     if (this.unseen) { this.pendingHide = ms; return; }
+    // The Ask box is open beside it: it stays until the box closes (companion-c2-1).
+    if (this.owner.heldForAsk(this)) { this.askLeft = ms; return; }
     this.hideMs = ms;
+    this.armedAt = this.now();
     this.hideTimer = this.timers.set(() => { this.hideTimer = null; this.hide(); }, ms);
   }
 
@@ -874,8 +1062,9 @@ export class Presenter {
    * settings can fix it (settingsHelps): a runtime that reconnects by itself needs nothing from there.
    */
   fail(message: string): void {
-    // (Taken before the request owed a turn is let go: a send that failed offers that request again.)
-    const retry = this.retryCandidate();
+    // (Taken before the request owed a turn is let go: a send that failed offers that request again. The runtime found
+    // gone just after, the problem on screen keeps offering it: the request never reached the model, rp-6.)
+    const retry = this.retryCandidate() ?? this.retryRequest;
     this.cancelHide();
     this.guiding = false;
     this.answering = false;
@@ -957,6 +1146,30 @@ export class Presenter {
   }
 
   /**
+   * Copilot is connected again after the problem that said `text` (host.ts lost: "I'm reconnecting; ask me again in a
+   * moment.", or that it had stopped reconnecting: GAVE_UP): a bubble still saying so says it is back now, keeping its Try
+   * again and the time it had (rp-6: it said it was reconnecting for about 10 s after it had, with no button), and not
+   * the Open settings that no longer helps (reliability-performance-r3-2). Anything else on screen is left alone.
+   */
+  reconnected(text: string): void {
+    const b = this.state.bubble;
+    if (!b.visible || b.mood !== "error" || b.thought !== forBubble(text) || this.busy) return;
+    const again = b.actions.some(a => a.id === TRY_AGAIN.id);
+    this.apply({ bubble: { ...b, mood: "idle", title: "Connected again", thought: again ? RECONNECTED_RETRY : RECONNECTED, actions: b.actions.filter(a => a.id === TRY_AGAIN.id) } });
+  }
+
+  /**
+   * Ember stopped reconnecting (Copilot kept stopping): a bubble still saying `text` (that it is reconnecting) says `said`
+   * (GAVE_UP, or lostWords' gaveUpBubble for the service it named), with the way to Check again instead of a Try again
+   * that would only be refused (reliability-performance-c2-3).
+   */
+  gaveUp(text: string, said: string = GAVE_UP): void {
+    const b = this.state.bubble;
+    if (!b.visible || b.mood !== "error" || b.thought !== forBubble(text) || this.busy) return;
+    this.apply({ bubble: { ...b, thought: said, actions: [{ id: "ui:settings", label: "Open settings" }] } });
+  }
+
+  /**
    * A notice still up that says `text` goes (what it said no longer holds: Copilot is back, the user signed in). It is
    * matched as notice() put it on screen (in Ember's voice, and "Needs you" when signing in is what to do next).
    * Anything else stays.
@@ -1028,9 +1241,15 @@ export class Presenter {
 
   private slowThinking(): void {
     const b = this.state.bubble;
-    if (this.silent || this.produced || !b.visible || b.mood !== "thinking" || b.title === STILL_WAITING) return;
+    if (this.silent || this.produced || !b.visible || b.mood !== "thinking" || isStillWaiting(b.title)) return;
     this.stalledTitle = b.title;
-    this.apply({ bubble: { ...b, title: STILL_WAITING, actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), { ...STOP_ANSWER }] } });
+    this.stalledStepWas = b.step;
+    this.apply({ bubble: { ...b, ...this.stallWords(), actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), { ...STOP_ANSWER }] } });
+  }
+
+  /** The conversation's stall as the bubble says it: its title, said once to screen readers with the keyboard's route. */
+  private stallWords(): Pick<BubbleState, "title" | "step" | "stalled"> {
+    return { title: this.stillWaiting(), step: stalledStep(this.settingsKey, this.stopKey), stalled: true };
   }
 
   /**
@@ -1041,8 +1260,14 @@ export class Presenter {
     this.cancelSlow();
     // (A task's bubble: its turn's watch says when it is heard from again, through stalled(false).)
     const b = this.state.bubble;
-    if (this.work !== "reply" || (b.title !== STILL_WAITING && !b.actions.some(a => a.id === STOP_ANSWER.id))) return;
-    this.apply({ bubble: { ...b, title: b.title === STILL_WAITING ? this.stalledTitle : b.title, actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
+    if (this.work !== "reply" || (!isStillWaiting(b.title) && !b.actions.some(a => a.id === STOP_ANSWER.id))) return;
+    this.apply({ bubble: { ...b, ...this.unstalled(b), actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
+  }
+
+  /** What a stall replaced, given back (its title, and the step its keyboard route took the place of). */
+  private unstalled(b: BubbleState): Pick<BubbleState, "title" | "step"> {
+    const step = b.stalled ? this.stalledStepWas : b.step;
+    return { title: isStillWaiting(b.title) ? this.stalledTitle : b.title, step };
   }
 
   /**
@@ -1081,11 +1306,14 @@ export class Presenter {
     const b = this.state.bubble;
     // The conversation's bubble offers Stop meanwhile (a task's card has its own).
     const stop = this.work === "reply" ? [{ ...STOP_ANSWER }] : [];
-    if (on && this.busy && !this.silent && b.title !== STILL_WAITING) {
+    if (on && this.busy && !this.silent && !isStillWaiting(b.title)) {
       this.stalledTitle = b.title;
-      this.apply({ bubble: { ...b, title: STILL_WAITING, actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), ...stop] } });
-    } else if (!on && b.title === STILL_WAITING) {
-      this.apply({ bubble: { ...b, title: this.stalledTitle, actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
+      this.stalledStepWas = b.step;
+      // (A task's card has its own words and Stop: only the conversation's bubble says it with the keyboard's route.)
+      const words = this.work === "reply" ? this.stallWords() : { title: this.stillWaiting() };
+      this.apply({ bubble: { ...b, ...words, actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), ...stop] } });
+    } else if (!on && isStillWaiting(b.title)) {
+      this.apply({ bubble: { ...b, ...this.unstalled(b), actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
     }
   }
 
@@ -1368,7 +1596,7 @@ export class Presenter {
         this.answering = false;
         this.produced = true;
         const said = friendlyError(String(d.message ?? ""), typeof d.errorType === "string" ? d.errorType : undefined,
-          { statusCode: typeof d.statusCode === "number" ? d.statusCode : undefined, provider: this.provider, settingsKey: this.settingsKey });
+          { statusCode: typeof d.statusCode === "number" ? d.statusCode : undefined, provider: this.provider, settingsKey: this.settingsKey, local: this.onThisComputer() });
         // "Open settings" where settings can fix it (a sign-in, the model, access), never for the network or a hiccup.
         this.apply({
           emotion: "sad", talking: false,
@@ -1425,9 +1653,15 @@ export class Presenter {
         // Nothing runs any more: not "thinking" or "working". (Held off meanwhile, it shows once the bubble is free.)
         const face = aborted ? "neutral" : this.answering ? "happy" : this.state.emotion === "thinking" || this.state.emotion === "focused" ? "neutral" : this.state.emotion;
         this.apply({ talking: false, emotion: face, bubble: { ...this.state.bubble, streaming: false, ...said, ...(aborted ? { title: "Stopped", mood: "idle" as const, step: null } : {}) } });
-        // Long answers stay up longer (they also have "Read all", and the settings window keeps them).
-        const chars = Math.max(this.answer.length, this.saidThisTurn.length);
-        this.hideLater(Math.min(30000, 6000 + chars * 50));
+        // Long answers stay up longer (they also have "Read all", and the settings window keeps them). A problem
+        // (session.error's 12 s) or the Stopped notice (stopped()'s 4 s) on screen keeps the time it was given: the turn
+        // ending under it is no answer to read (companion-2: the problem and its Try again went at 6 s, and "Okay, I've
+        // stopped." stayed up to 30 s for the length of the answer it had cut off).
+        const notice = mood === "error" || (this.state.bubble.title === "Stopped" && this.state.bubble.thought === STOPPED_ANSWER);
+        if (!notice || (this.hideTimer === null && this.pendingHide === null)) {
+          const chars = Math.max(this.answer.length, this.saidThisTurn.length);
+          this.hideLater(Math.min(30000, 6000 + chars * 50));
+        }
         this.answering = false;
         // The request had its turn: a later problem (the runtime stopping meanwhile) doesn't offer to ask it again.
         this.turnOn = false;

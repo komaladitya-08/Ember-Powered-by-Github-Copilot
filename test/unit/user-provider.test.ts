@@ -11,11 +11,11 @@ import path from "node:path";
 import { AdminPolicySchema, applyAdminPolicy, managedKeys, parseAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "../../app/main/admin";
 import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore, repairSettings, type Settings } from "../../app/main/settings";
 import {
-  KEY_NO_KEYRING, ProviderKeyStore, activeProvider, apiKeyProblem, providerSummary, testConnection, testRequest, userProviderConfig, userProviderFromFile,
+  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, checkAgain, listedModelIds, providerSummary, providerWaitingHost, testConnection, testRequest, userProviderConfig, userProviderFromFile,
   userProviderInForce, type FetchLike,
 } from "../../app/main/provider";
 import { PROVIDER_BAD_REQUEST, PROVIDER_FAILED, registerProviderIpc, type ProviderApi, type ProviderIpcEvent } from "../../app/main/provider-ipc";
-import { endpointHost, endpointProblem } from "../../app/shared/provider";
+import { endpointHost, endpointProblem, keyNeeded } from "../../app/shared/provider";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { PROVIDER_IPC } from "../../app/shared/ipc";
 import type { SecretBox } from "../../app/main/agent/auth";
@@ -66,6 +66,11 @@ describe("the own provider's endpoint", () => {
     expect(endpointProblem("https://x.com/" + "a".repeat(3000))).not.toBeNull();
   });
 
+  it("needs no API key from a model server on this computer, and one from any other service (first-run-v2)", () => {
+    for (const local of ["http://localhost:11434/v1", "http://127.0.0.1:1234/v1", "http://[::1]:8080/v1", "https://LOCALHOST:8443/v1"]) expect(keyNeeded(local), local).toBe(false);
+    for (const remote of ["https://api.openai.com/v1", "https://localhost.example.com/v1", "https://127.0.0.1.example.com/v1", "", "not an address"]) expect(keyNeeded(remote), remote).toBe(true);
+  });
+
   it("names the host with its port, lower-cased, and nothing for an address it refuses", () => {
     expect(endpointHost("https://Models.Example.com/v1")).toBe("models.example.com");
     expect(endpointHost("http://localhost:11434/v1")).toBe("localhost:11434");
@@ -112,6 +117,17 @@ describe("which endpoint is in force", () => {
     // Agreed to for another host: the card asks again before anything goes to this one.
     expect(userProviderInForce(withProvider({ consent: { version: 1, at: "x", host: "other.example.com" } }), NONE)).toBeNull();
     expect(userProviderInForce(SettingsSchema.parse({ provider: { on: true, consent: { version: 1, at: "x", host: "" } } }), NONE)).toBeNull();
+  });
+
+  it("waits for its card while it is on with an address not agreed to, and for nothing otherwise (integrations-r3-1)", () => {
+    expect(providerWaitingHost(withProvider({ consent: { version: 0, at: null, host: "" } }), NONE)).toBe("models.example.com");
+    // Agreed to for another host: it waits for this one's.
+    expect(providerWaitingHost(withProvider({ consent: { version: FEATURE_CONSENT_VERSION.provider, at: null, host: "old.example.com" } }), NONE)).toBe("models.example.com");
+    expect(providerWaitingHost(withProvider(), NONE)).toBeNull();
+    expect(providerWaitingHost(withProvider({ on: false, consent: { version: 0, at: null, host: "" } }), NONE)).toBeNull();
+    expect(providerWaitingHost(withProvider({ baseUrl: "", consent: { version: 0, at: null, host: "" } }), NONE)).toBeNull();
+    expect(providerWaitingHost(withProvider({ consent: { version: 0, at: null, host: "" } }), policy({ features: { userProvider: false } }))).toBeNull();
+    expect(providerWaitingHost(withProvider({ consent: { version: 0, at: null, host: "" } }), parseAdminPolicy("{", "/etc/ember/policy.json"))).toBeNull();
   });
 
   it("gives way to the organisation's own provider, which always wins", () => {
@@ -255,11 +271,40 @@ describe("Home's provider channels", () => {
     }
     expect(await call(PROVIDER_IPC.removeKey, HOME, "x")).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
     expect(await call(PROVIDER_IPC.test, HOME, { url: "https://evil.example.com" })).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    // A draft of typed details (first-run-r2-1): its kind, address and agreed host, a key at most, and nothing else.
+    const draft = { type: "openai", baseUrl: "https://b.example/v1", host: "b.example" };
+    for (const bad of [{ ...draft, type: "other" }, { ...draft, host: "B EXAMPLE" }, { ...draft, baseUrl: "x".repeat(3000) }, { ...draft, key: "" }, { ...draft, key: "k".repeat(9000) }, { ...draft, on: true }, [draft, draft]]) {
+      expect(await call(PROVIDER_IPC.test, HOME, ...(Array.isArray(bad) ? bad : [bad]))).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    }
     expect(await call(PROVIDER_IPC.state, HOME, 1)).toBeNull();
     expect(calls).toEqual([]);
     expect(await call(PROVIDER_IPC.saveKey, HOME, KEY)).toEqual({ ok: true });
     expect(await call(PROVIDER_IPC.removeKey, HOME)).toEqual({ ok: true });
     expect(calls).toEqual(["save", "remove"]);
+  });
+
+  it("takes one host for agree, or one host and the details an edit moved to, and nothing else (integrations-c3-1)", async () => {
+    const seen: unknown[] = [];
+    const { call } = wire({ agree: (host, move) => { seen.push([host, move]); return { ok: true }; } });
+    const move = { type: "openai", baseUrl: "https://b.example/v1", conductor: "gpt-4.1", worker: null, wireApi: "responses", azureApiVersion: null };
+    for (const bad of [[], ["B EXAMPLE"], ["b.example", { ...move, type: "other" }], ["b.example", { ...move, baseUrl: "x".repeat(3000) }], ["b.example", { ...move, conductor: "has space" }],
+      ["b.example", { ...move, consent: { version: 9, host: "b.example" } }], ["b.example", { ...move, on: true }], ["b.example", { conductor: "gpt-4.1" }], ["b.example", move, move]]) {
+      expect(await call(PROVIDER_IPC.agree, HOME, ...bad)).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    }
+    expect(seen).toEqual([]);
+    expect(await call(PROVIDER_IPC.agree, HOME, "b.example")).toEqual({ ok: true });
+    expect(await call(PROVIDER_IPC.agree, HOME, "b.example", move)).toEqual({ ok: true });
+    expect(await call(PROVIDER_IPC.agree, HOME, "b.example", { type: "azure", baseUrl: "https://b.example/v1" })).toEqual({ ok: true });
+    expect(seen).toEqual([["b.example", undefined], ["b.example", move], ["b.example", { type: "azure", baseUrl: "https://b.example/v1" }]]);
+  });
+
+  it("passes a draft of typed details to the check, and none when there is none (first-run-r2-1)", async () => {
+    const seen: unknown[] = [];
+    const { call } = wire({ test: async d => { seen.push(d); return { ok: true, host: "b.example", models: 1 }; } });
+    const draft = { type: "anthropic", baseUrl: "https://b.example/v1", host: "b.example", key: KEY };
+    expect(await call(PROVIDER_IPC.test, HOME, draft)).toEqual({ ok: true, host: "b.example", models: 1 });
+    expect(await call(PROVIDER_IPC.test, HOME)).toEqual({ ok: true, host: "b.example", models: 1 });
+    expect(seen).toEqual([draft, undefined]);
   });
 
   it("never sends the key back, and never logs it, even when saving it fails", async () => {
@@ -270,6 +315,26 @@ describe("Home's provider channels", () => {
     expect(JSON.stringify(logs)).toContain("provider.ipc_failed");
     const state = await call(PROVIDER_IPC.state, HOME);
     expect(JSON.stringify(state)).not.toContain(KEY);
+  });
+});
+
+describe("Check again", () => {
+  it("connects to the model provider in force again, and never looks for or names a GitHub sign-in (integrations-c1-1)", async () => {
+    const github = vi.fn(async () => ({ found: false, source: null, hint: "No GitHub sign-in found on this computer." }));
+    const reconnect = vi.fn(async () => "error");
+    expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false } });
+    reconnect.mockResolvedValueOnce("ready");
+    expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: true } });
+    expect(github).not.toHaveBeenCalled();
+    expect(reconnect).toHaveBeenCalledTimes(2);
+    // Not ready: why, from the status, so Home says "can't connect" only when nothing answered (integrations-c2-2).
+    expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github, reason: () => "models" })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason: "models" } });
+    reconnect.mockResolvedValueOnce("ready");
+    expect(await checkAgain({ host: "127.0.0.1:18408" }, { reconnect, github, reason: () => undefined })).toEqual({ found: false, source: null, provider: { host: "127.0.0.1:18408", ready: true } });
+    reconnect.mockClear();
+    // GitHub Copilot in force: a GitHub sign-in is what it looks for.
+    expect(await checkAgain(null, { reconnect, github })).toEqual({ found: false, source: null, hint: "No GitHub sign-in found on this computer." });
+    expect(reconnect).not.toHaveBeenCalled();
   });
 });
 
@@ -288,7 +353,7 @@ describe("Test connection", () => {
 
   it("makes one GET that refuses redirects, so the key goes nowhere but the address entered", async () => {
     const fetch = answer(200, { data: [{ id: "a" }, { id: "b" }] });
-    expect(await testConnection(settings(), STORED, fetch)).toEqual({ ok: true, host: "models.example.com", models: 2 });
+    expect(await testConnection(settings(), STORED, fetch)).toEqual({ ok: true, host: "models.example.com", models: 2, ids: ["a", "b"] });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0][1]).toMatchObject({ method: "GET", redirect: "error" });
   });
@@ -296,14 +361,34 @@ describe("Test connection", () => {
   it("says in one sentence why it failed, never with the service's raw text or the key", async () => {
     expect(await testConnection(settings(), STORED, answer(401))).toEqual({ ok: false, why: "models.example.com didn't accept the API key. Check it, or replace it." });
     expect(await testConnection(settings(), null, answer(403))).toEqual({ ok: false, why: "models.example.com needs an API key." });
-    expect(await testConnection(settings(), STORED, answer(404))).toEqual({ ok: false, why: "models.example.com answered, but has no model list at that address. Check the endpoint and the provider." });
+    // Answered, with no model list there (some gateways answer chat only): said as a cause too, which a held edit adopts (integrations-r4-2).
+    for (const status of [404, 405, 501]) {
+      expect(await testConnection(settings(), STORED, answer(status))).toEqual({ ok: false, why: "models.example.com answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" });
+    }
     expect(await testConnection(settings(), STORED, answer(503))).toEqual({ ok: false, why: "Your model service had a problem on its side. Try again in a moment." });
     const thrown = vi.fn<FetchLike>(async () => { throw Object.assign(new TypeError(`fetch failed for ${KEY}`), { cause: { code: "ECONNREFUSED" } }); });
     const r = await testConnection(settings(), STORED, thrown);
-    expect(r).toEqual({ ok: false, why: "Ember can't reach models.example.com. Check the address and the network." });
+    // Nothing listens there: said so as a cause too, which the status uses (integrations-1).
+    expect(r).toEqual({ ok: false, why: "Ember can't reach models.example.com. Check the address and the network.", cause: "refused" });
     expect(JSON.stringify(r)).not.toContain(KEY);
     const late = vi.fn<FetchLike>(async () => { throw new DOMException("The operation timed out.", "TimeoutError"); });
-    expect(await testConnection(settings(), STORED, late)).toEqual({ ok: false, why: "models.example.com didn't answer within 10 seconds." });
+    expect(await testConnection(settings(), STORED, late)).toEqual({ ok: false, why: "models.example.com didn't answer within 10 seconds.", cause: "timeout" });
+    const lost = vi.fn<FetchLike>(async () => { throw new Error("net::ERR_NAME_NOT_RESOLVED"); });
+    expect(await testConnection(settings(), STORED, lost)).toMatchObject({ ok: false, cause: "unreachable" });
+    const electron = vi.fn<FetchLike>(async () => { throw new Error("net::ERR_CONNECTION_REFUSED"); });
+    expect(await testConnection(settings(), STORED, electron)).toMatchObject({ ok: false, cause: "refused" });
+  });
+
+  it("names the models it lists, as suggestions, keeping only real ids and at most 50 (integrations-9)", async () => {
+    const shown = await testConnection(settings(), STORED, answer(200, { data: [{ id: "gpt-4.1" }, { id: "has space" }, { id: "<b>x</b>" }, { id: "gpt-4.1" }, { id: 7 }, {}, { id: "o3-mini" }] }));
+    expect(shown).toEqual({ ok: true, host: "models.example.com", models: 7, ids: ["gpt-4.1", "o3-mini"] });
+    // Ollama's own list names them by name.
+    expect(listedModelIds([{ name: "llama3.2:3b" }, { model: "qwen2.5:7b" }])).toEqual(["llama3.2:3b", "qwen2.5:7b"]);
+    const many = Array.from({ length: 80 }, (_, i) => ({ id: `m-${i}` }));
+    expect(listedModelIds(many)).toHaveLength(TEST_IDS_MAX);
+    expect(TEST_IDS_MAX).toBe(50);
+    // A list with none it can name says only how many.
+    expect(await testConnection(settings(), STORED, answer(200, { data: [{ object: "model" }] }))).toEqual({ ok: true, host: "models.example.com", models: 1 });
   });
 
   it("makes no request without a usable address", async () => {
@@ -319,6 +404,11 @@ describe("errors with the user's own provider", () => {
     expect(friendlyError("HTTP 502 bad gateway", undefined, { provider: "user" })).toBe("Your model service had a problem on its side. Try again in a moment.");
     expect(friendlyError("fetch failed ECONNREFUSED", undefined, { provider: "user" })).toBe("I can't reach your model service right now. Check the network, then ask again.");
     expect(problemTitle("I can't reach your model service right now.", "user")).toBe("I can't reach the model service");
+    // A model server on this computer: is it running, not the network (integrations-1).
+    const local = "I can't reach the model server on this computer. Is it running? Start it, then ask again.";
+    expect(friendlyError("connect ECONNREFUSED 127.0.0.1:11434", undefined, { provider: "user", local: true })).toBe(local);
+    expect(problemTitle(local, "user")).toBe("I can't reach the model service");
+    expect(friendlyError("connect ECONNREFUSED 10.0.0.5:443", undefined, { provider: true, local: true })).toBe("I can't reach your organisation's model service right now. Check the network, then ask again.");
     // The organisation's wording is unchanged.
     expect(friendlyError("401 Unauthorized", undefined, { provider: true })).toBe("Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings.");
   });
@@ -332,6 +422,19 @@ describe("ember doctor with the user's own provider", () => {
     } as never);
     const row = checks.find(c => c.id === "copilot")!;
     expect(row).toMatchObject({ status: "ok", label: "Model service", detail: "Your own model provider (models.example.com), with its API key saved." });
+  });
+
+  it("warns when a provider elsewhere has no API key saved, and not for a model server on this computer (integrations-r3)", () => {
+    const row = (host: string) => doctorChecks({
+      os: "linux", env: { checks: [] } as never, compositor: true, xtest: true, speechDispatcher: true, microphones: null, voiceModels: "bundled", runtime: true,
+      auth: { kind: "own-provider", host, key: false }, admin: NONE,
+    } as never).find(c => c.id === "copilot")!;
+    expect(row("api.openai.com")).toMatchObject({
+      status: "warn", label: "Model service", detail: "Your own model provider (api.openai.com), with no API key saved.",
+      fix: "If it needs a key, save it in Ember's settings, under Models & connections › Model provider.",
+    });
+    expect(row("127.0.0.1:11434")).toMatchObject({ status: "ok", detail: "Your own model provider (127.0.0.1:11434), with no API key saved." });
+    expect(row("127.0.0.1:11434").fix).toBeUndefined();
   });
 });
 

@@ -86,11 +86,13 @@ async function hashShown(c: { title: string; body: string[] }): Promise<string |
 
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** A line under the card saying why a press didn't take (never silent). */
+/**
+ * A line under the card saying why a press didn't take (never silent). Emptied, never hidden: a screen reader hears
+ * the refusal only if the line was already on the page when it came (accessibility-visual-c2-1).
+ */
 function say(text: string): void {
   const n = $("notice");
   n.textContent = text;
-  n.hidden = !text;
   delete n.dataset.earlier;
   if (noticeTimer) clearTimeout(noticeTimer);
   noticeTimer = null;
@@ -110,7 +112,7 @@ function sayEarlier(): void {
 
 /** A refusal already on screen when its card is pulled or replaced: it now belongs to the earlier question. */
 function keepAsEarlier(): void {
-  if ($("notice").hidden) return;
+  if (!$("notice").textContent) return;
   sayEarlier();
 }
 
@@ -165,7 +167,6 @@ function judge(): void {
   else words.removeAttribute("tabindex");
   const h = promptHint({ consent: isConsent(card) || (card.kind === "approval" && !!card.detail), seen, more, field: !$("form").hidden, focused: document.hasFocus(), sinceShownMs: Date.now() - shownAt });
   if (hint.textContent !== h) hint.textContent = h;
-  hint.hidden = !h;
   paintArmed();
 }
 // Measured again when the words scroll, when the window is fitted to the card, when their lines rewrap and when a
@@ -191,7 +192,7 @@ function show(next: PromptCard | null): void {
   field.value = "";
   // A pulled card keeps its last refusal on screen ("gone", "too soon"); a new question starts with none of its own,
   // but a refusal of an earlier question's press stays, worded as that, until it times out.
-  if (next && $("notice").hidden) say("");
+  if (next && !$("notice").textContent) say("");
   else if (hadCard || next) keepAsEarlier();
   if (armTimer) clearTimeout(armTimer);
   armTimer = null;

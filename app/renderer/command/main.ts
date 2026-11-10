@@ -128,12 +128,12 @@ function buildAsk(card: CommandCard & { n: number; retry?: number }): AskEls {
   root.append(block);
   for (const line of new Set([...where.legend, ...legend])) root.append(el("p", "legend", line));
   appendLines(root, card);
+  // Emptied, never hidden: a screen reader hears what fills it only if it was already on the page (accessibility-visual-c2-1).
   const hint = el("p", "hint");
   hint.setAttribute("aria-live", "polite");
-  hint.hidden = true;
   const row = el("div", "buttons");
-  // A command that deletes data gets a quiet marker on its card, and its Allow doesn't stand out (as the host-key card's
-  // "Trust and connect" doesn't): habit shouldn't carry the user through it (review #275).
+  // A dangerous command gets a quiet marker on its card, and its Allow doesn't stand out (as the host-key card's "Trust
+  // and connect" doesn't), as the bubble's risky question: habit shouldn't carry the user through it (review #275).
   const risky = isRiskyCard(card);
   root.classList.toggle("risky", risky);
   const allow = el("button", risky ? "btn quiet" : "btn", ALLOW_LABEL);
@@ -221,7 +221,6 @@ function paintAllow(): void {
   if (!ask.sent) ask.allow.disabled = !on;
   const hint = allowHint(model.card) ?? (ask.retry > 0 && !ask.sent ? ANSWER_RETRY_HINT : "");
   if (ask.hint.textContent !== hint) ask.hint.textContent = hint;
-  ask.hint.hidden = !hint;
   // The approve keys work only while the whole command is in view (R7): their hint shows only then.
   const keys = on && model.card?.inView && model.view?.keyHint ? model.view.keyHint : "";
   if (ask.keys.textContent !== keys) ask.keys.textContent = keys;
@@ -292,9 +291,10 @@ function buildClosing(running: number): ClosingEls {
   const d = el("p", "closing-line", closeLine(running));
   d.id = "closing-d";
   const row = el("div", "buttons");
-  const stop = el("button", "btn", STOP_AND_CLOSE_LABEL);
+  // Stopping is the destructive choice, so it is quiet; the safe one stands out (commands-remote-7).
+  const stop = el("button", "btn quiet", STOP_AND_CLOSE_LABEL);
   stop.type = "button";
-  const keep = el("button", "btn quiet", KEEP_OPEN_LABEL);
+  const keep = el("button", "btn", KEEP_OPEN_LABEL);
   keep.type = "button";
   stop.addEventListener("click", e => { if (e.isTrusted) { stop.disabled = keep.disabled = true; api.closeWindow(true); } });
   keep.addEventListener("click", e => { if (e.isTrusted) { stop.disabled = keep.disabled = true; api.closeWindow(false); } });
@@ -454,7 +454,7 @@ function render(): void {
     }));
     box.dataset.lines = linesKey;
   }
-  box.hidden = lines.length === 0;
+  // With no lines it is empty, never hidden, so the next "Starting Ubuntu…" is announced (accessibility-visual-c2-1).
 
   // The tabs, newest first.
   const tabs = v?.tabs ?? [];
@@ -488,6 +488,7 @@ function render(): void {
     if (e.typing.textContent !== t.typing) e.typing.textContent = t.typing;
     e.typing.hidden = !t.typing;
     e.term.setInteractive(t.interactive);
+    if (t.ended) e.term.end();
     e.term.setScreenReader(v?.screenReader === true);
     if (e.ended !== t.ended) {
       e.ended = t.ended;

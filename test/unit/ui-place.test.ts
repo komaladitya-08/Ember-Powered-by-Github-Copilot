@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({ BrowserWindow: class {}, screen: {}, ipcMain: { on() {} } }));
 
-const { askBounds, askSize, grownBounds } = await import("../../app/main/ask");
+const { askBounds, askSize, clearOfBubble, grownBounds, openingBounds } = await import("../../app/main/ask");
 const { deskViewBounds, deskViewStart } = await import("../../app/main/desk/view");
 const { foldCount, foldedLine, stackOrder } = await import("../../app/renderer/overlay/stack");
 
@@ -97,6 +97,139 @@ describe("grownBounds (review #70: the field grows to four lines, and a row for 
     const pill = { x: 812, y: 532, width: 200, height: 56 };
     const b = askBounds({ x: 900, y: 540, size: 60 }, wa, pill);
     expect(overlaps(grownBounds(b, 4, wa, false, pill), pill)).toBe(false);
+  });
+});
+
+describe("the ask box beside Ember's bubble (companion-1: it opened on the answer or question it should sit beside)", () => {
+  const wa = { x: 0, y: 0, width: 1280, height: 800 };
+  const pill = { x: 1072, y: 736, width: 200, height: 56 };
+  /** Ember from the top of its head to its hands, around its centre. */
+  const ember = (c: { x: number; y: number }, size = 60) => ({ x: c.x - size * 0.75, y: c.y - size * 0.5, width: size * 1.5, height: size * 0.9 });
+  const clearOfAll = (b: Box, bubble: Box, c: { x: number; y: number }, label: string) => {
+    expect(inside(b, wa), label).toBe(true);
+    expect(overlaps(b, bubble), label).toBe(false);
+    expect(overlaps(b, pill), label).toBe(false);
+    expect(overlaps(b, ember(c)), label).toBe(false);
+  };
+
+  it("keeps off an answer below Ember near the top of the screen, where it opens below Ember too", () => {
+    // The verifier's run: the pointer at (640, 60), the answer at (665, 155), the box 188 px tall at (407, 149) on it.
+    const c = { x: 640, y: 110, size: 60 }, answer = { x: 665, y: 155, width: 330, height: 123 };
+    for (const rows of [3, 4, 6]) {
+      // Where it opened before: on the answer.
+      expect(overlaps(openingBounds(c, wa, pill, 1, rows).bounds, answer), `${rows} rows`).toBe(true);
+      const { bounds, up } = openingBounds(c, wa, pill, 1, rows, answer);
+      clearOfAll(bounds, answer, c, `${rows} rows: ${JSON.stringify(bounds)}`);
+      expect(up, `${rows} rows`).toBe(bounds.y + bounds.height <= c.y);
+    }
+  });
+
+  it("goes to the other side of Ember from a question above it, and beside the question where there is no room there", () => {
+    // The verifier's run: the pointer at (300, 760), the question at (326, 504), the box at (68, 518) over its Allow.
+    const question = { x: 326, y: 504, width: 366, height: 152 };
+    const low = { x: 300, y: 700, size: 60 };
+    const below = openingBounds(low, { ...wa, height: 1024 }, null, 1, 4, question);
+    expect(below.bounds.y, JSON.stringify(below)).toBeGreaterThan(low.y);
+    expect(below.up).toBe(false);
+    expect(overlaps(below.bounds, question)).toBe(false);
+    // No room below Ember (the bottom of the screen): beside the question, at the height it would have had.
+    const c = { x: 300, y: 740, size: 60 };
+    expect(overlaps(openingBounds(c, wa, pill, 1, 4).bounds, question)).toBe(true);
+    const { bounds, up } = openingBounds(c, wa, pill, 1, 4, question);
+    clearOfAll(bounds, question, c, JSON.stringify(bounds));
+    expect(up).toBe(true);
+    expect(bounds.y).toBe(openingBounds(c, wa, pill, 1, 4).bounds.y);
+  });
+
+  it("opens where it always has when the bubble isn't in its way, or nothing clear of it is left", () => {
+    const c = { x: 640, y: 400, size: 60 };
+    const usual = openingBounds(c, wa, pill, 1, 4);
+    // The answer below-right of Ember, the box above it: as before.
+    expect(openingBounds(c, wa, pill, 1, 4, { x: 665, y: 445, width: 330, height: 123 })).toEqual(usual);
+    expect(openingBounds(c, wa, pill, 1, 4, null)).toEqual(usual);
+    // A bubble as wide as the screen on both sides of Ember: nowhere is clear, so the usual place.
+    const huge = { x: 0, y: 100, width: 1280, height: 600 };
+    expect(openingBounds(c, wa, pill, 1, 4, huge)).toEqual(usual);
+  });
+
+  it("slides aside rather than grow over the bubble as the field gains lines", () => {
+    const b = { x: 360, y: 300, width: 560, height: 140 };
+    const answer = { x: 700, y: 200, width: 330, height: 120 };
+    const grown = clearOfBubble(grownBounds(b, 6, wa, true), wa, answer, pill);
+    expect(overlaps(grown, answer)).toBe(false);
+    expect(grown.height).toBe(92 + 5 * 24);
+    expect(grown.y).toBe(grownBounds(b, 6, wa, true).y);
+  });
+
+  /**
+   * Where the live sweep found the box on the bubble (Xvfb with a compositor, the mock model): Ember's centre, the
+   * bubble as the overlay reported it, on screens without a panel. Each opening reserved 5 rows (Listen once's two, a
+   * suggestions row). The box fits beside neither side of the bubble there: it stacks over or under it.
+   */
+  const sweep: { screen: [number, number]; scale: number; kind: string; ember: { x: number; y: number }; bubble: Box }[] = [
+    // A 1024x768 screen at the default text size (a common RHEL 8 VM size): 11 of 14 openings were on the bubble.
+    { screen: [1024, 768], scale: 1, kind: "answer, top left", ember: { x: 297, y: 113 }, bubble: { x: 275, y: 155, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "answer, top centre", ember: { x: 559, y: 113 }, bubble: { x: 537, y: 155, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "answer, top right", ember: { x: 821, y: 113 }, bubble: { x: 513, y: 155, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "answer, bottom left", ember: { x: 247, y: 679 }, bubble: { x: 225, y: 484, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "answer, bottom centre", ember: { x: 559, y: 679 }, bubble: { x: 537, y: 484, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "answer, bottom right", ember: { x: 821, y: 660 }, bubble: { x: 513, y: 465, width: 330, height: 123 } },
+    { screen: [1024, 768], scale: 1, kind: "question, top centre", ember: { x: 559, y: 113 }, bubble: { x: 537, y: 155, width: 366, height: 152 } },
+    { screen: [1024, 768], scale: 1, kind: "question, top right", ember: { x: 821, y: 113 }, bubble: { x: 477, y: 155, width: 366, height: 152 } },
+    { screen: [1024, 768], scale: 1, kind: "question, bottom left", ember: { x: 247, y: 679 }, bubble: { x: 225, y: 455, width: 366, height: 152 } },
+    { screen: [1024, 768], scale: 1, kind: "question, bottom centre", ember: { x: 559, y: 679 }, bubble: { x: 537, y: 455, width: 366, height: 152 } },
+    { screen: [1024, 768], scale: 1, kind: "question, bottom right", ember: { x: 821, y: 660 }, bubble: { x: 477, y: 436, width: 366, height: 152 } },
+    // 1280x800 at Larger text: 9 of 14.
+    { screen: [1280, 800], scale: 1.3, kind: "answer, top left", ember: { x: 297, y: 113 }, bubble: { x: 275, y: 155, width: 330, height: 185 } },
+    { screen: [1280, 800], scale: 1.3, kind: "answer, top centre", ember: { x: 687, y: 113 }, bubble: { x: 665, y: 155, width: 330, height: 185 } },
+    { screen: [1280, 800], scale: 1.3, kind: "answer, bottom left", ember: { x: 247, y: 711 }, bubble: { x: 225, y: 454, width: 330, height: 185 } },
+    { screen: [1280, 800], scale: 1.3, kind: "answer, bottom centre", ember: { x: 687, y: 711 }, bubble: { x: 665, y: 454, width: 330, height: 185 } },
+    { screen: [1280, 800], scale: 1.3, kind: "question, top centre", ember: { x: 687, y: 113 }, bubble: { x: 665, y: 155, width: 366, height: 224 } },
+    { screen: [1280, 800], scale: 1.3, kind: "question, top right", ember: { x: 1077, y: 113 }, bubble: { x: 733, y: 155, width: 366, height: 224 } },
+    { screen: [1280, 800], scale: 1.3, kind: "question, bottom left", ember: { x: 247, y: 711 }, bubble: { x: 225, y: 415, width: 366, height: 224 } },
+    { screen: [1280, 800], scale: 1.3, kind: "question, bottom centre", ember: { x: 687, y: 711 }, bubble: { x: 665, y: 415, width: 366, height: 224 } },
+    { screen: [1280, 800], scale: 1.3, kind: "question, bottom right", ember: { x: 1077, y: 692 }, bubble: { x: 733, y: 396, width: 366, height: 224 } },
+    // 1366x768 at Larger, and 1280x800 and 1366x768 at Large (the bubble as tall as at Larger: the worst case).
+    { screen: [1366, 768], scale: 1.3, kind: "answer, top centre", ember: { x: 730, y: 113 }, bubble: { x: 708, y: 155, width: 330, height: 185 } },
+    { screen: [1366, 768], scale: 1.3, kind: "question, bottom centre", ember: { x: 730, y: 679 }, bubble: { x: 708, y: 415, width: 366, height: 224 } },
+    { screen: [1280, 800], scale: 1.15, kind: "answer, top centre", ember: { x: 687, y: 113 }, bubble: { x: 665, y: 155, width: 330, height: 185 } },
+    { screen: [1280, 800], scale: 1.15, kind: "question, bottom left", ember: { x: 247, y: 711 }, bubble: { x: 225, y: 415, width: 366, height: 224 } },
+    { screen: [1366, 768], scale: 1.15, kind: "answer, top centre", ember: { x: 730, y: 113 }, bubble: { x: 708, y: 155, width: 330, height: 185 } },
+    { screen: [1366, 768], scale: 1.15, kind: "question, bottom left", ember: { x: 247, y: 679 }, bubble: { x: 225, y: 415, width: 366, height: 224 } },
+  ];
+  /** Ember from where the box's foot may come above it (askBounds) to where its top may come below it. */
+  const emberRoom = (c: { x: number; y: number }, size = 60) => ({ x: c.x - size * 0.75, y: c.y - 22, width: size * 1.5, height: 22 + size * 0.6 });
+
+  it("stacks over or under the bubble where it fits beside neither, at every text size, on 1024-, 1280- and 1366-wide screens (companion-1)", () => {
+    for (const s of sweep) {
+      const area = { x: 0, y: 0, width: s.screen[0], height: s.screen[1] };
+      const handle = { x: area.width - 12 - Math.round(200 * s.scale), y: area.height - 12 - 56, width: Math.round(200 * s.scale), height: 56 };
+      const near = { ...s.ember, size: 60 };
+      const label = `${s.screen.join("x")} at ${s.scale}, ${s.kind}`;
+      // Where it opened before: on the bubble.
+      expect(overlaps(openingBounds(near, area, handle, s.scale, 5).bounds, s.bubble), label).toBe(true);
+      const { bounds, up } = openingBounds(near, area, handle, s.scale, 5, s.bubble);
+      const at = `${label}: ${JSON.stringify(bounds)}`;
+      expect(inside(bounds, area), at).toBe(true);
+      expect(overlaps(bounds, s.bubble), at).toBe(false);
+      expect(overlaps(bounds, handle), at).toBe(false);
+      expect(overlaps(bounds, emberRoom(s.ember)), at).toBe(false);
+      // It grows away from Ember and the bubble: up when it sits above Ember.
+      expect(up, at).toBe(bounds.y + bounds.height <= s.ember.y);
+      // A field that gains lines keeps off Ember too, on the side of it where it is (it never jumps across Ember).
+      const grown = clearOfBubble(grownBounds(bounds, 7, area, up, handle, s.scale), area, s.bubble, handle, near, false);
+      expect(inside(grown, area), `${at}, grown`).toBe(true);
+      expect(overlaps(grown, emberRoom(s.ember)), `${at}, grown`).toBe(false);
+      expect(grown.y + grown.height <= s.ember.y, `${at}, grown`).toBe(up);
+    }
+  });
+
+  it("never stacks itself over Ember: under an answer below Ember, not over it (companion-1)", () => {
+    const area = { x: 0, y: 0, width: 1024, height: 768 };
+    const near = { x: 559, y: 113, size: 60 }, answer = { x: 537, y: 155, width: 330, height: 123 };
+    const b = openingBounds(near, area, null, 1, 5, answer).bounds;
+    expect(b.y).toBe(answer.y + answer.height + 8);
+    expect(b.x).toBe(openingBounds(near, area, null, 1, 5).bounds.x);
   });
 });
 

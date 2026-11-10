@@ -6,7 +6,7 @@
  * as computers-copy.ts is. Sentence case, British spelling, curly quotes around names. Renderer-safe.
  */
 
-import type { Installed, Kind, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
+import type { Installed, Kind, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 
 export const EXTENSIONS_HEADING = "Extensions";
 export const EXTENSIONS_INTRO = "Extensions give Ember more tools through plugins from marketplaces you add. Only you can add them, here.";
@@ -72,11 +72,17 @@ export function toolCounts(tools: readonly ToolInfo[]): string {
   return parts.join(", ");
 }
 
-/** An installed item's status, as words beside its symbol (never colour alone). */
-export function installedStatus(i: Installed): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
+/**
+ * An installed item's status, as words beside its symbol (never colour alone). `on`: the section's Use extensions
+ * switch; while it is off nothing added runs (integrations-11).
+ */
+export function installedStatus(i: Installed, on = true, connected = true): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
   if (i.needsReview || i.tools.some(t => t.changed)) return { text: "Changed since you agreed", tone: "fail" };
   if (!i.consented) return { text: "Waiting for you to agree", tone: "wait" };
   if (!i.enabled || i.status === "disabled") return { text: "Off", tone: "off" };
+  if (!on) return { text: "Off: extensions are off", tone: "off" };
+  // Nothing runs before Ember is connected: "Ready" then said it did (integrations-v2).
+  if (!connected && i.status === "ready") return { text: "Ready once Ember connects", tone: "wait" };
   switch (i.status) {
     case "ready": return { text: i.kind === "connector" ? "Connected" : "Ready", tone: "ok" };
     case "starting": return { text: "Starting…", tone: "wait" };
@@ -110,8 +116,8 @@ const detailLine = (d: string | undefined): string | null => {
   return s === EXTENSIONS_FAILED ? null : s;
 };
 
-export function installedRow(i: Installed): InstalledRow {
-  const status = installedStatus(i);
+export function installedRow(i: Installed, on = true, connected = true): InstalledRow {
+  const status = installedStatus(i, on, connected);
   const changed = i.needsReview || i.tools.some(t => t.changed);
   const meta = [kindLabel(i.kind), ...(i.publisher ? [`by ${i.publisher}`] : []), i.source, ...(i.version ? [i.version] : [])].join(" · ");
   const note = changed ? "Its tools changed since you agreed, so Ember stopped using the ones that changed. Check what they do now, then agree again."
@@ -129,7 +135,8 @@ export function installedRow(i: Installed): InstalledRow {
     : { act: "uninstall", label: "Remove", ariaLabel: `Remove ${i.name}`, confirm: removeQuestion(i.name), danger: true });
   return {
     id: i.id, name: i.name, meta, status, note,
-    toggle: { checked: i.enabled, disabled: !i.consented, ariaLabel: `Use ${i.name}` },
+    // Not on until agreed: a switch shown on beside "Waiting for you to agree" said it ran (integrations-11).
+    toggle: { checked: i.enabled && i.consented, disabled: !i.consented, ariaLabel: `Use ${i.name}` },
     tools: i.tools.map(t => ({ name: t.name, description: t.description, badge: toolBadge(t) })),
     toolSummary: toolCounts(i.tools),
     actions,
@@ -140,18 +147,36 @@ export const removeQuestion = (name: string) => `Remove “${name}”? Ember sto
 export const disconnectQuestion = (name: string) => `Disconnect “${name}”? Ember stops using its tools at once.`;
 
 export const INSTALLED_HEADING = "Added";
-export const INSTALLED_EMPTY = "Nothing added yet. Browse a marketplace or connect a service below.";
+export const INSTALLED_EMPTY = "Nothing added yet. Browse a marketplace below.";
+
+/** The section's own switch, shown once extensions are agreed to: off stops every server and uses no tool. */
+export const EXTENSIONS_ON_LABEL = "Use extensions";
+export function extensionsOnHint(on: boolean): string {
+  return on ? "Ember may use the tools you agreed to. Turn this off to stop them all: what you added stays here."
+    : "Off: Ember uses no extension's tools and runs nothing you added. What you added stays here.";
+}
 
 // ───── Marketplaces ─────
 
 export const MARKETPLACES_HEADING = "Marketplaces";
 export const MARKETPLACES_EMPTY = "No marketplaces yet. Add one by its GitHub repository or its address.";
+/** While Ember isn't connected the runtime can't list marketplaces (Copilot's own included), nor add one. */
+export const MARKETPLACES_NOT_CONNECTED = "Marketplaces appear once Ember is connected to Copilot or your model provider.";
 /** Short enough to show whole in a narrow window (the field is labelled for screen readers). */
 export const MARKETPLACE_PLACEHOLDER = "owner/repo or https://…";
 export const MARKETPLACE_FIELD_LABEL = "Marketplace's GitHub repository or address";
 export const MARKETPLACE_ADD = "Add";
 export const MARKETPLACE_INVALID = "Type a GitHub repository as owner/repo, or an address that starts with https://.";
-export const MARKETPLACES_HINT = "Ember fetches each marketplace's list from the address you add, and nothing from it runs until you add an item and agree.";
+export const MARKETPLACES_HINT = "Browse fetches a marketplace's list: from GitHub for one built into Copilot, else from the address you added. Nothing from it runs until you add an item and agree.";
+/** Why Remove was refused: Copilot keeps its own, and the organisation's managed settings keep theirs (integrations-4). */
+export const MARKETPLACE_BUILT_IN_KEPT = "Copilot's built-in marketplace can't be removed. Nothing from it runs unless you add an item and agree.";
+export const MARKETPLACE_MANAGED_KEPT = "Your organisation set this marketplace, so it can't be removed here.";
+/** A marketplace's row: where it is from, and whether Remove is offered (never for Copilot's own or the organisation's). */
+export function marketplaceRow(m: Marketplace): { name: string; meta: string; removable: boolean } {
+  const whose = m.builtIn ? "Built into Copilot" : m.managed ? "Set by your organisation" : null;
+  return { name: m.name, meta: whose ? `${whose} · ${m.source}` : m.source, removable: !m.builtIn && !m.managed };
+}
+export const removedMarketplace = (name: string) => `Removed the marketplace “${name}”.`;
 export const addingMarketplace = (source: string) => `Adding ${source}…`;
 export const addedMarketplace = (source: string) => `Added ${source}.`;
 export const removeMarketplaceQuestion = (name: string) => `Remove the marketplace “${name}”? What you added from it stays until you remove it.`;
@@ -162,6 +187,23 @@ export const removeMarketplaceLabel = (name: string) => `Remove the marketplace 
 export const browsingHeading = (name: string) => `In “${name}”`;
 export const browsingLoading = (name: string) => `Loading “${name}”…`;
 export const BROWSE_EMPTY = "This marketplace lists nothing yet.";
+/**
+ * Why a marketplace's list couldn't be shown (integrations-r2), never as an empty list: the runtime couldn't reach it
+ * (`offline`) or fetch it (`fetch`), or its catalogue couldn't be found or read on this computer (`read`).
+ */
+export function browseFailed(name: string, why: "offline" | "fetch" | "read"): string {
+  if (why === "offline") return `Ember couldn't reach “${name}”. Check the network, then press Browse again.`;
+  return why === "fetch" ? `Ember couldn't fetch “${name}”'s list. Press Browse again in a moment.` : `Ember couldn't read “${name}”'s list. Press Browse again in a moment.`;
+}
+/**
+ * Why a marketplace couldn't be added (integrations-r2-3), with the address the person typed: the runtime couldn't
+ * reach it (`offline`), or reached it but got no marketplace from it (`fetch`: a private repository, not a marketplace).
+ */
+export function addMarketplaceFailed(address: string, why: "offline" | "fetch"): string {
+  return why === "offline" ? `Ember couldn't reach “${address}”. Check the address and the network, then press Add again.`
+    : `Ember couldn't fetch a marketplace from “${address}”. Check that it's a marketplace repository you can open, then press Add again.`;
+}
+export const BROWSE_AGAIN = "Browse again";
 export const BROWSE_DONE = "Done";
 
 /** A catalog entry as its card shows it. */
@@ -236,6 +278,10 @@ export const added = (name: string) => `Added “${name}”. Turn it off here an
 export const removed = (name: string) => `Removed “${name}”.`;
 export const disconnected = (name: string) => `Disconnected “${name}”.`;
 export const agreedAgain = (name: string) => `Ember uses “${name}” again.`;
+/** The first agreement to an item's tools (it was never used before), not "again" (integrations-8). */
+export const agreedFirst = (name: string) => `Ember can use “${name}” now.`;
+/** What agreeing to an item's tools says: the first time, or again after its tools changed. */
+export const agreedTo = (i: Pick<Installed, "name" | "consented">) => (i.consented ? agreedAgain(i.name) : agreedFirst(i.name));
 
 // ───── The consent card, before anything is added or connected ─────
 
@@ -246,10 +292,12 @@ export interface ConsentCard { title: string; lines: string[]; tools?: ToolInfo[
  * The card shown before each add or connect: what Ember will and won't do with the item, and where it reaches. The
  * marketplace's own description isn't in it (it is the publisher's text, not Ember's promise).
  */
-export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source" | "marketplace" | "reaches">): ConsentCard {
+export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source" | "marketplace" | "reaches"> & { builtIn?: boolean }): ConsentCard {
   const connector = e.kind === "connector";
+  // A marketplace built into Copilot wasn't added by the user, so the card never says it was (integrations-4).
   const reach = connector
     ? `It connects to “${e.name}” through GitHub's Copilot service. You sign in to it on GitHub's page, in your browser, and what its tools send and receive goes through GitHub.`
+    : e.builtIn ? `It comes from ${e.source}, listed in “${e.marketplace}”, a marketplace built into Copilot. Its tools may run on this computer and reach the internet.`
     : `It comes from ${e.source}, listed in the marketplace “${e.marketplace}” you added. Its tools may run on this computer and reach the internet.`;
   return {
     title: connector ? `Before you connect “${e.name}”` : `Before you add “${e.name}”`,

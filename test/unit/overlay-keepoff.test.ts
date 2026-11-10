@@ -33,7 +33,9 @@ import type { Logger } from "../../app/main/logger";
 import type { Settings } from "../../app/main/settings";
 import type { OverlayShaper } from "../../app/main/platform/types";
 import { besideControl, followTarget } from "../../app/main/follow";
-import { bubbleHere, cardsCorner, handleSide, stackPlace } from "../../app/renderer/overlay/layout";
+import { askGrew, askGrownInto, askGrows, askKeepOff, askKeepOffKey, bubbleHere, cardsCorner, handleSide, stackPlace } from "../../app/renderer/overlay/layout";
+import { bubbleCut, bubbleFit } from "../../packages/bubble/src/bubble";
+import { clearOfBubble, grownBounds, openingBounds, stepsAsideFor } from "../../app/main/ask";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const shaper: OverlayShaper = { setInputRegion: () => false, release() {}, forward: false, floating: () => ({ options: {}, allWorkspaces: null }) };
@@ -95,6 +97,22 @@ describe("what Ember keeps off, with more than one display", () => {
     const both = await manager([primary, upper], [cardsOn(primary), cardsOn(upper)], handle);
     const withCards = both.settle({ x: 1800, y: 500 });
     expect(Math.abs(withCards.y - free.y)).toBeLessThan(1);
+  });
+
+  it("tells the open Ask box where every display's cards are, so what it shows keeps off them too, and again as they change (companion-r5-1)", async () => {
+    const left = display(2, -1920, 0);
+    const c = cardsOn(primary), d = cardsOn(left);
+    const { m } = await manager([primary, left], [c, d], handle);
+    expect(m.cardsRects()).toEqual([c, d]);
+    const { m: one } = await manager([primary, left], [null, d], handle);
+    expect(one.cardsRects()).toEqual([d]);
+    // Ember hidden: no cards show.
+    one.setHidden(true);
+    expect(one.cardsRects()).toEqual([]);
+    const { readFileSync } = await import("node:fs");
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("cards: () => overlay?.cardsRects() ?? [],");
+    expect(main).toMatch(/overlay\.setCards\(event\.sender, rect\);\n(\s+\/\/[^\n]*\n)+\s+askWindow\.keepClear\(\);/);
   });
 
   it("still keeps off the cards of the display it is on", async () => {
@@ -304,5 +322,503 @@ describe("Ember near the seam between two displays", () => {
     const frame = { ember: { x: 1430, y: 400 } };
     expect(bubbleHere(frame, 1, a.bounds)).toBe(true);
     expect(bubbleHere(frame, 2, b.bounds)).toBe(false);
+  });
+});
+
+describe("where Ember's bubble is, for the Ask box to open beside it (companion-1)", () => {
+  it("is what the display showing it last said, none once it goes, and none while Ember is hidden", async () => {
+    const a = display(1, 0, 0), b = display(2, 1920, 0);
+    const { m } = await manager([a, b], [null, null], null);
+    const [first, second] = [...(m as unknown as { overlays: Map<number, { win: { webContents: Electron.WebContents } }> }).overlays.values()].map(o => o.win.webContents);
+    expect(m.bubbleRect()).toBeNull();
+    const answer = { x: 2585, y: 155, width: 330, height: 123 };
+    m.setBubble(first, null);
+    m.setBubble(second, answer);
+    expect(m.bubbleRect()).toEqual(answer);
+    m.setHidden(true);
+    expect(m.bubbleRect()).toBeNull();
+    m.setHidden(false);
+    expect(m.bubbleRect()).toEqual(answer);
+    m.setBubble(second, null);
+    expect(m.bubbleRect()).toBeNull();
+  });
+
+  it("is told by the overlay page only, as a box or null (main.ts checks the sender before it reads the report, then its shape: companion-y6-2)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toMatch(/ipcMain\.on\(OVERLAY\.bubble, \(event, raw: unknown\) => \{\n\s+if \(!overlay\?\.owns\(event\.sender\)\) return;\n\s+const rect = bubbleBoxOf\(raw\);\n\s+if \(rect === undefined\) return;/);
+    expect(main).toContain("bubble: () => overlay?.bubbleRect() ?? null,");
+  });
+});
+
+describe("the open Ask box, for a bubble that comes up while it is open (companion-c1-1)", () => {
+  const box = { x: 407, y: 149, width: 560, height: 188 };
+  const moved = { x: 97, y: 149, width: 560, height: 188 };
+  const none = { box: null, question: "" };
+  /** How much of `a` lies over `b`, in px². */
+  const area = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+
+  it("is kept off by a bubble that comes up while it is open, wherever main says the box is now", () => {
+    // No question up: the box where main says it is, as it moves and when it closes.
+    expect(askKeepOff(box, "", none)).toEqual({ box, question: "" });
+    expect(askKeepOff(moved, "", { box, question: "" })).toEqual({ box: moved, question: "" });
+    expect(askKeepOff(null, "", { box: moved, question: "" })).toEqual(none);
+    // A question that comes up while the box is open is placed clear of it, where it is then.
+    expect(askKeepOff(box, "q1:once,q1:deny", { box, question: "" })).toEqual({ box, question: "q1:once,q1:deny" });
+  });
+
+  it("never moves a question already shown: it keeps off the box where the box was when it came", () => {
+    const held = askKeepOff(box, "q1:once,q1:deny", none);
+    // The box steps aside, grows or closes while the same question shows: the question stays where it is.
+    expect(askKeepOff(moved, "q1:once,q1:deny", held)).toBe(held);
+    expect(askKeepOff(null, "q1:once,q1:deny", held)).toBe(held);
+    // The question answered, or the next one: the box where it is now.
+    expect(askKeepOff(moved, "", held)).toEqual({ box: moved, question: "" });
+    expect(askKeepOff(moved, "q2:once,q2:deny", held)).toEqual({ box: moved, question: "q2:once,q2:deny" });
+    // A question that was up before the box opened: the box opens clear of it (ask.ts), and it doesn't move for the box.
+    const before = askKeepOff(null, "q3:once", none);
+    expect(askKeepOff(box, "q3:once", before)).toBe(before);
+  });
+
+  it("never moves an answer already shown for the box opening, growing or closing: only one that comes while it is open keeps off it (companion-c2-4)", () => {
+    const answer = { visible: true, mood: "idle" as const, title: "Ember", actions: [] as { id: string; label: string }[] };
+    // An answer on screen when the box opens: it keeps off nothing of the box, so it is never thrown across the screen
+    // (it went 678 px to the far edge for a box that grew 1 px into it); the box keeps clear of it instead (ask.ts).
+    const shown = askKeepOff(null, askKeepOffKey(answer), none);
+    expect(askKeepOff(box, askKeepOffKey(answer), shown)).toBe(shown);
+    expect(askKeepOff(moved, askKeepOffKey(answer), shown).box).toBeNull();
+    // However its words stream in, it is one bubble from when it shows until it goes.
+    expect(askKeepOffKey({ ...answer, thought: "Tokyo" } as typeof answer)).toBe(askKeepOffKey(answer));
+    // One that comes while the box is open keeps off it where the box was then, and doesn't follow it after.
+    const result = { ...answer, mood: "done" as const, title: "Tidy up" };
+    const came = askKeepOff(box, askKeepOffKey(result), shown);
+    expect(came.box).toEqual(box);
+    expect(askKeepOff(moved, askKeepOffKey(result), came)).toBe(came);
+    expect(askKeepOff(null, askKeepOffKey(result), came)).toBe(came);
+    // "Read all" opened in full is a new bubble (it is larger): it keeps off the box where it is now.
+    expect(askKeepOff(moved, askKeepOffKey({ ...answer, expanded: true } as typeof answer), shown).box).toEqual(moved);
+    // Gone: nothing is held.
+    expect(askKeepOffKey({ ...answer, visible: false })).toBe("");
+    // A question is held by its answers' ids, as before.
+    expect(askKeepOffKey({ ...answer, mood: "attention", actions: [{ id: "q1:once", label: "Allow" }, { id: "ui:more", label: "More" }] })).toBe("q1:once");
+  });
+
+  it("keeps an answer still streaming when the box opened out from under the field as it grows into it; once it has finished it holds still (companion-c3-1)", () => {
+    const answer = { visible: true, mood: "idle" as const, title: "Ember", streaming: true, actions: [] as { id: string; label: string }[] };
+    // Shown before the box opened: it held off nothing of the box, and the box opened clear of it, beside it.
+    const shown = askKeepOff(null, askKeepOffKey(answer), none);
+    const at = { x: 490, y: 102, width: 330, height: 123 };
+    const opened = { x: 232, y: 233, width: 560, height: 140 };
+    expect(askGrownInto(shown, opened, at, askGrows(answer))).toBe(shown);
+    // Its words go on streaming in and it grows into the box: from then on it keeps off the box where it is now, so
+    // the field never covers its last lines, its Read all and its hint (22,776 to 41,250 px² of it were covered).
+    const grown = { ...at, height: 200 };
+    const kept = askGrownInto(shown, opened, grown, askGrows(answer));
+    expect(kept).toEqual({ box: opened, question: askKeepOffKey(answer), grew: true });
+    // ... and it is placed clear of the box, by Ember (Ember at the top of a 1024 x 768 screen: beside it).
+    const spot = bubbleFit({ x: 512, y: 84 }, { width: 330, height: 200 }, { width: 1024, height: 768 }, 60, [opened], () => 200);
+    expect(spot).toMatchObject({ x: 563, y: 8 });
+    const clear = (r: Box, b: Box) => r.x >= b.x + b.width || r.x + r.width <= b.x || r.y >= b.y + b.height || r.y + r.height <= b.y;
+    expect(clear(spot!, opened)).toBe(true);
+    // The same box again: nothing changes (it doesn't re-place on every drawing).
+    expect(askGrownInto(kept, opened, grown, askGrows(answer))).toBe(kept);
+    // Finished at the size it streamed to: it holds still where it is, for the box growing or closing (companion-c2-4).
+    const done = { ...answer, streaming: false };
+    expect(askGrows(done)).toBe(false);
+    expect(askGrew(done, grown, grown)).toBe(false);
+    expect(askGrownInto(shown, opened, grown, askGrew(done, grown, grown))).toBe(shown);
+    expect(askKeepOff(null, askKeepOffKey(done), kept)).toBe(kept);
+    // A question never moves for the box, even one whose words come in a line at a time: nothing near it moves.
+    const question = { ...answer, mood: "attention" as const, actions: [{ id: "q1:once", label: "Allow" }] };
+    expect(askGrows(question)).toBe(false);
+    // Its own Stop or More is not a question: an acting step streaming in grows like an answer.
+    const step = { ...answer, mood: "acting" as const, actions: [{ id: "ui:more", label: "More" }] };
+    expect(askGrows(step)).toBe(true);
+    // No box, nothing on screen, or not into the box: what it held.
+    expect(askGrownInto(shown, null, grown, true)).toBe(shown);
+    expect(askGrownInto(shown, opened, null, true)).toBe(shown);
+    expect(askGrownInto(shown, opened, at, true)).toBe(shown);
+  });
+
+  it("keeps an answer that streamed in clear of the field as it finishes: its Read all, its hint and its suggestions grow it into the box, and it keeps off the box from there (companion-c3-1)", () => {
+    const streaming = { visible: true, mood: "idle" as const, title: "Ember", streaming: true, actions: [] as { id: string; label: string }[] };
+    // As measured live: Ember at the top centre of a 1024 x 768 screen at Larger text, the box opened under the answer
+    // while it streamed. Capped at three lines as it streams, the answer sat beside Ember and never grew into the box,
+    // so it kept off nothing of it.
+    const shown = askKeepOff(null, askKeepOffKey(streaming), none);
+    const capped = { x: 610, y: 46, width: 330, height: 134 };
+    const opened = { x: 195, y: 245, width: 728, height: 173 };
+    expect(askGrownInto(shown, opened, capped, askGrew(streaming, capped, capped))).toBe(shown);
+    // It finishes: the same bubble (its key doesn't change), laid out in full with Read all and its hint, 277 px tall,
+    // under Ember and down over the field (50,490 px² of the field covered it, for as long as the box was open).
+    const finished = { ...streaming, streaming: false, actions: [{ id: "ui:more", label: "Read all" }] };
+    expect(askKeepOffKey(finished)).toBe(askKeepOffKey(streaming));
+    const laidOut = { x: 537, y: 155, width: 330, height: 277 };
+    expect(askGrows(finished)).toBe(false);
+    expect(askGrew(finished, capped, laidOut)).toBe(true);
+    const kept = askGrownInto(shown, opened, laidOut, askGrew(finished, capped, laidOut));
+    expect(kept).toEqual({ box: opened, question: askKeepOffKey(finished), grew: true });
+    expect(askKeepOff({ ...opened, y: 200 }, askKeepOffKey(finished), kept)).toBe(kept);
+    // Nothing by Ember is clear of the box there: it goes below the box (it grew into it, so it may go across it), in
+    // Ember's column but for the slide past the handle, whole, with Read all where it can be clicked.
+    const anchor = { x: 559, y: 135 }, handle = { x: 752, y: 700, width: 260, height: 56 }, screen = { width: 1024, height: 768 };
+    const own = { width: 330, height: 277 };
+    expect(bubbleFit(anchor, own, screen, 60, [handle, opened], () => 277)).toBeNull();
+    expect(bubbleFit(anchor, own, screen, 60, [handle, opened], () => 277, [opened])).toEqual({ x: 416, y: 424, width: 330, height: 277 });
+    // Placed again clear of it: the same box, so nothing changes, and it doesn't dance.
+    const below = { x: 416, y: 424, width: 330, height: 277 };
+    expect(askGrownInto(kept, opened, below, askGrew(finished, laidOut, below))).toBe(kept);
+    // Ember's suggestions come under it a moment later: they grow it too, so they never land under the field either.
+    const answer = { ...streaming, streaming: false };
+    expect(askGrew(answer, capped, { ...capped, height: 190 })).toBe(true);
+    // The box growing into a finished answer (a reply of several lines) never moves the answer: its size is the same.
+    const taller = { ...opened, y: 200, height: 283 };
+    expect(askGrew(finished, laidOut, laidOut)).toBe(false);
+    expect(askGrownInto(shown, taller, laidOut, askGrew(finished, laidOut, laidOut))).toBe(shown);
+    // Smaller, first shown (nothing to grow from), or gone: no growth.
+    expect(askGrew(finished, laidOut, capped)).toBe(false);
+    expect(askGrew(finished, null, laidOut)).toBe(false);
+    expect(askGrew(finished, laidOut, null)).toBe(false);
+    expect(askGrew({ ...finished, visible: false }, capped, laidOut)).toBe(false);
+    // A question never moves for the box, however it grows (the box steps aside for it instead: ask.ts), and one that
+    // came while the box was open keeps off it without going across it.
+    const question = { ...finished, mood: "attention" as const, actions: [{ id: "q1:once", label: "Allow" }, { id: "q1:deny", label: "Not now" }] };
+    expect(askGrew(question, capped, laidOut)).toBe(false);
+    expect(askKeepOff(opened, askKeepOffKey(question), kept).grew).toBeUndefined();
+  });
+
+  it("keeps an answer whose first words came while the box was open clear of the field as it grows into the box and finishes (companion-v5-1)", () => {
+    // As measured live: Ember at the top centre of a 1024 x 768 screen at Larger text, Ask opened during "Thinking…".
+    // "Thinking…" showed before the box opened, so it held off nothing of it; the answer's first words are a new bubble
+    // that comes while the box is open, so it keeps off the box where it is.
+    const thinking = { visible: true, mood: "thinking" as const, title: "Thinking…", streaming: true, actions: [] as { id: string; label: string }[] };
+    const opened = { x: 195, y: 168, width: 728, height: 173 };
+    const before = askKeepOff(null, askKeepOffKey(thinking), none);
+    const streaming = { ...thinking, mood: "idle" as const, title: "Ember" };
+    const held = askKeepOff(opened, askKeepOffKey(streaming), before);
+    expect(held).toEqual({ box: opened, question: askKeepOffKey(streaming) });
+    // Two lines fit beside Ember clear of the box; a third doesn't, and nothing by Ember is clear of the box at that
+    // size: kept off the box without going across it, it went to its usual place under Ember, over the field (36,630
+    // px² as it streamed, 50,490 once it finished, with the key hint over its words).
+    const anchor = { x: 559, y: 135 }, handle = { x: 752, y: 700, width: 260, height: 56 }, screen = { width: 1024, height: 768 };
+    expect(bubbleFit(anchor, { width: 330, height: 82 }, screen, 60, [handle, opened], () => 82)).toEqual({ x: 610, y: 70, width: 330, height: 82 });
+    expect(bubbleFit(anchor, { width: 330, height: 108 }, screen, 60, [handle, opened], () => 108)).toBeNull();
+    const over = { x: 537, y: 155, width: 330, height: 108 };
+    // It grows into the box it keeps off as its words come in: from then on it may go across the box, below it here.
+    const grown = askGrownInto(held, opened, over, askGrows(streaming));
+    expect(grown).toEqual({ box: opened, question: askKeepOffKey(streaming), grew: true });
+    expect(bubbleFit(anchor, { width: 330, height: 108 }, screen, 60, [handle, opened], () => 108, [opened])).toEqual({ x: 537, y: 347, width: 330, height: 108 });
+    // Placed there, it is clear of the box: nothing changes as it streams on (it doesn't dance) ...
+    const below = { x: 537, y: 347, width: 330, height: 134 };
+    expect(askGrownInto(grown, opened, below, askGrows(streaming))).toBe(grown);
+    // ... and it finishes there, whole, with Read all and its hint clear of the field.
+    const finished = { ...streaming, streaming: false, actions: [{ id: "ui:more", label: "Read all" }] };
+    expect(askKeepOff(opened, askKeepOffKey(finished), grown)).toBe(grown);
+    expect(bubbleFit(anchor, { width: 330, height: 277 }, screen, 60, [handle, opened], () => 277, [opened])).toEqual({ x: 537, y: 347, width: 330, height: 277 });
+    expect(askGrownInto(grown, opened, { ...below, height: 277 }, askGrew(finished, below, { ...below, height: 277 }))).toBe(grown);
+    // Already free to go across, growing into the box again changes nothing.
+    expect(askGrownInto(grown, opened, over, true)).toBe(grown);
+    // So does "Listening…" (a wake heard while the box is open) with no room by Ember: above or below the box, not over
+    // its field (900 x 700 at Larger text, Ember near the bottom, it sat on the box at y 509).
+    const listening = { ...thinking, mood: "listening" as const, title: "Listening…" };
+    const heard = askKeepOff(opened, askKeepOffKey(listening), none);
+    expect(askGrownInto(heard, opened, { ...over, height: 50 }, askGrows(listening))).toEqual({ ...heard, grew: true });
+    // One that came while the box was open and doesn't grow (a task's result shown whole) keeps its place as before,
+    // and a question never moves for the box, however it grows.
+    const result = { ...streaming, streaming: false, mood: "done" as const, title: "Tidy up" };
+    const came = askKeepOff(opened, askKeepOffKey(result), none);
+    expect(askGrownInto(came, opened, over, askGrew(result, null, over))).toBe(came);
+    const question = { ...streaming, mood: "attention" as const, actions: [{ id: "q1:once", label: "Allow" }, { id: "q1:deny", label: "Not now" }] };
+    const asked = askKeepOff(opened, askKeepOffKey(question), none);
+    expect(askGrownInto(asked, opened, over, askGrew(question, { ...over, height: 80 }, over))).toBe(asked);
+  });
+
+  it("keeps an answer opened in full with Read all while the box is open clear of the field: above or below the box, or cut short to the room by Ember with its text scrolling inside (companion-c5-1)", () => {
+    // As measured live on a 1024 x 768 screen at Larger text: a cut answer beside the open box, and Read all clicked.
+    // The whole answer, 410 x 489, was laid under the field and its hint (46,359 to 57,528 px² of it), and nothing
+    // moved it off: it kept off the box but could go only beside Ember, where nothing was clear of it.
+    const cut = { visible: true, mood: "idle" as const, title: "Ember", actions: [{ id: "ui:more", label: "Read all" }] };
+    const full = { ...cut, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+    const handle = { x: 752, y: 700, width: 260, height: 56 }, screen = { width: 1024, height: 768 };
+    const own = { width: 410, height: 489 };
+    // Ember mid-screen, the box above it.
+    const mid = { x: 195, y: 242, width: 728, height: 173 }, midAnchor = { x: 559, y: 461 };
+    const shown = askKeepOff(mid, askKeepOffKey(cut), none);
+    // Read all is a new bubble that comes while the box is open: it keeps off the box where it is, and may go across it.
+    const opened = askKeepOff(mid, askKeepOffKey(full), shown, full.expanded);
+    expect(opened).toEqual({ box: mid, question: askKeepOffKey(full), grew: true });
+    // Whole, it fits nowhere clear of the box, across it or not.
+    expect(bubbleFit(midAnchor, own, screen, 60, [handle, mid], () => 489, [mid])).toBeNull();
+    // Cut short a line at a time (26 px at Larger text, never under three lines of it), it goes under Ember, slid
+    // past the handle, as tall as the room there: 281 px, its text scrolling inside and Close still in view.
+    const under = bubbleCut(midAnchor, own, screen, 60, [handle, mid], [mid], 26, 489 - 416 + 3 * 26);
+    expect(under).toEqual({ x: 336, y: 479, width: 410, height: 281 });
+    const clear = (r: Box, b: Box) => r.x >= b.x + b.width || r.x + r.width <= b.x || r.y >= b.y + b.height || r.y + r.height <= b.y;
+    expect(clear(under!, mid) && clear(under!, handle)).toBe(true);
+    // Ember low, the box above it: beside Ember under the box, cut to the room there (taller than above the box).
+    const low = { x: 195, y: 284, width: 728, height: 173 }, lowAnchor = { x: 559, y: 695 };
+    const beside = bubbleCut(lowAnchor, own, screen, 60, [handle, low], [low], 26, 151);
+    expect(beside).toEqual({ x: 98, y: 479, width: 410, height: 281 });
+    expect(clear(beside!, low) && clear(beside!, handle)).toBe(true);
+    // Ember at the top, the box under it: a shorter answer opened in full goes under the box whole.
+    const top = { x: 195, y: 202, width: 728, height: 173 }, topAnchor = { x: 559, y: 135 };
+    expect(bubbleFit(topAnchor, { width: 410, height: 307 }, screen, 60, [handle, top], () => 307, [top])).toEqual({ x: 537, y: 381, width: 410, height: 307 });
+    // Where three lines don't fit anywhere clear, it isn't cut (it goes where it always went).
+    expect(bubbleCut(midAnchor, own, screen, 60, [handle, mid], [mid], 26, 300)).toBeNull();
+    // Opened in full before the box opened: whole beside Ember, it keeps off nothing of the box. A box that opens clear
+    // of it, where it is (above it, three rows tall), never moves it (companion-c2-4); `mid` lies over it, and it keeps
+    // off that one from then on (companion-y6-1). Told where it is (`at`): without it nothing can ever move it, so
+    // "never moves it" pinned nothing (companion-z6-2).
+    const before = askKeepOff(null, askKeepOffKey(full), none, true);
+    expect(before).toEqual({ box: null, question: askKeepOffKey(full) });
+    const shownWhole = bubbleFit(midAnchor, own, screen, 60, [handle], () => 489, [])!;
+    expect(shownWhole).toEqual({ x: 98, y: 192.5, width: 410, height: 489 });
+    const above = openingBounds({ x: 559, y: 437, size: 60 }, { x: 0, y: 0, ...screen }, handle, 1.3, 3, shownWhole).bounds;
+    expect(above).toEqual({ x: 195, y: 12, width: 728, height: 173 });
+    expect(area(above, shownWhole)).toBe(0);
+    expect(askKeepOff(above, askKeepOffKey(full), before, true, false, shownWhole)).toBe(before);
+    expect(area(mid, shownWhole)).toBe(54_149);
+    expect(askKeepOff(mid, askKeepOffKey(full), before, true, false, shownWhole).box).toEqual(mid);
+    // And one opened while the box was open keeps what it held as the box moves clear of it, where it is (it is the same
+    // bubble); a box that comes over it is companion-z6-1's.
+    expect(area({ ...mid, y: 100 }, under!)).toBe(0);
+    expect(askKeepOff({ ...mid, y: 100 }, askKeepOffKey(full), opened, true, true, under)).toBe(opened);
+  });
+
+  it("shows an answer cut short for the open Ask box whole once the box closes, where all of it fits (companion-v6-3)", () => {
+    // As measured live on a 1024 x 768 screen at Larger text, Ember mid-screen: Read all with the box open cut a nine-line
+    // answer (410 x 307, 26 px lines) to seven under Ember; after Esc it stayed cut, its last two lines (the offer)
+    // behind the scroll bar for as long as it showed, because it still kept off the closed box's place.
+    const cut = { visible: true, mood: "idle" as const, title: "Ember", actions: [{ id: "ui:more", label: "Read all" }] };
+    const full = { ...cut, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+    const handle = { x: 752, y: 700, width: 260, height: 56 }, screen = { width: 1024, height: 768 };
+    const box = { x: 195, y: 242, width: 728, height: 173 }, anchor = { x: 559, y: 461 }, own = { width: 410, height: 307 };
+    const opened = askKeepOff(box, askKeepOffKey(full), askKeepOff(box, askKeepOffKey(cut), none), true);
+    expect(bubbleFit(anchor, own, screen, 60, [handle, box], () => 307, [box])).toBeNull();
+    // Cut short under Ember, its last lines scrolling inside.
+    expect(bubbleCut(anchor, own, screen, 60, [handle, box], [box], 26, 307 - 234 + 3 * 26)).toEqual({ x: 336, y: 479, width: 410, height: 281 });
+    // The box closes (state.askBox null): the cut answer keeps off it no more ...
+    const closed = askKeepOff(null, askKeepOffKey(full), opened, true, true);
+    expect(closed).toMatchObject({ box: null, question: askKeepOffKey(full) });
+    // ... and goes whole above Ember, where all of it fits clear of the handle.
+    const whole = bubbleFit(anchor, own, screen, 60, [handle], () => 307, [])!;
+    expect(whole).toEqual({ x: 537, y: 58, width: 410, height: 307 });
+    // Opened again (Ctrl+Alt+Space), the box opens clear of it, under Ember, and it holds still there: it keeps off
+    // nothing of the box, so nothing moves it (companion-c2-4). A box that can't open clear of it is
+    // companion-repairs-x6-1's, below.
+    const reopened = openingBounds({ x: 559, y: 437, size: 60 }, { x: 0, y: 0, ...screen }, handle, 1.3, 5, whole).bounds;
+    expect(area(reopened, whole)).toBe(0);
+    expect(askKeepOff(reopened, askKeepOffKey(full), closed, true, false, whole)).toBe(closed);
+    // One opened in full that shows whole (not cut) stays where it is as the box closes: nothing to gain by moving it.
+    expect(askKeepOff(null, askKeepOffKey(full), opened, true, false)).toBe(opened);
+    // Nor does any other bubble that kept off the box (an answer that grew into it; a question): companion-c2-4.
+    const grown = { box, question: askKeepOffKey(cut), grew: true as const };
+    expect(askKeepOff(null, askKeepOffKey(cut), grown, false, false)).toBe(grown);
+  });
+
+  it("keeps an answer opened in full that showed whole once the box closed clear of the box opening on it again: cut short or across, never under the field (companion-repairs-x6-1)", () => {
+    // As measured live on a 1024 x 768 screen at Larger text, Ember low: Read all with the box open cut a 13-line answer
+    // (410 x 411, 338 px of text in 26 px lines) clear of the box; after Esc it showed whole above Ember; opening the box
+    // again laid the field, Send and its hint over lines 9 to 11 of it (66,176 px² of the field), and nothing moved
+    // either window while the box was open.
+    const cut = { visible: true, mood: "idle" as const, title: "Ember", actions: [{ id: "ui:more", label: "Read all" }] };
+    const full = { ...cut, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+    const handle = { x: 752, y: 700, width: 260, height: 56 }, screen = { width: 1024, height: 768 }, wa = { x: 0, y: 0, ...screen };
+    const near = { x: 559, y: 613, size: 60 }, anchor = { x: 559, y: 637 }, own = { width: 410, height: 411 };
+    const least = own.height - 338 + 3 * 26;
+    /** Where the bubble goes keeping off what `held` keeps off, as ReasoningBubble.place picks: whole, else cut short. */
+    const placed = (held: { box: Box | null; grew?: true }) => {
+      const off = held.box ? [handle, held.box] : [handle], across = held.box && held.grew ? [held.box] : [];
+      return bubbleFit(anchor, own, screen, 60, off, () => own.height, across) ?? bubbleCut(anchor, own, screen, 60, off, across, 26, least);
+    };
+    const box = { x: 195, y: 226, width: 728, height: 173 };
+    const opened = askKeepOff(box, askKeepOffKey(full), askKeepOff(box, askKeepOffKey(cut), none), true);
+    // Read all with the box open: cut short beside Ember, clear of the box.
+    const cutShort = placed(opened)!;
+    expect(cutShort).toEqual({ x: 98, y: 427, width: 410, height: 333 });
+    expect(area(cutShort, box)).toBe(0);
+    // Esc: whole above Ember (companion-v6-3).
+    const closed = askKeepOff(null, askKeepOffKey(full), opened, true, true);
+    const whole = placed(closed)!;
+    expect(whole).toEqual({ x: 537, y: 130, width: 410, height: 411 });
+    // Ctrl+Alt+Space: nothing by Ember is clear of the whole answer, so the box opens on it, and an answer never makes
+    // the box step aside (stepsAsideFor). Live, it showed a row short (205 px tall, at y 386) and grew a row up 7 ms
+    // later, as its suggestions' row measured two of its rows.
+    const reopened = openingBounds(near, wa, handle, 1.3, 5, whole).bounds;
+    expect(reopened).toEqual({ x: 195, y: 355, width: 728, height: 236 });
+    expect(area(reopened, whole)).toBeGreaterThan(0);
+    expect(stepsAsideFor(full)).toBeNull();
+    const shown = { ...reopened, y: 386, height: 205 };
+    // So the answer keeps off the box again, as when Read all came with the box open: cut short above it, clear of the
+    // field, its text scrolling inside ...
+    const first = askKeepOff(shown, askKeepOffKey(full), closed, true, false, whole);
+    expect(first).toEqual({ box: shown, question: askKeepOffKey(full), grew: true, released: true });
+    const short = placed(first)!;
+    expect(area(short, shown)).toBe(0);
+    // ... and again as the box grows up into it: it would have kept off only where the box first showed, its last
+    // 25 px under the field (5,640 px² of it, live).
+    expect(area(short, reopened)).toBeGreaterThan(0);
+    const kept = askKeepOff(reopened, askKeepOffKey(full), first, true, true, short);
+    expect(kept).toEqual({ box: reopened, question: askKeepOffKey(full), grew: true, released: true });
+    const again = placed(kept)!;
+    expect(again).not.toBeNull();
+    expect(area(again, reopened)).toBe(0);
+    expect(area(again, handle)).toBe(0);
+    // A box clear of it never moves it (nothing dances): the box the same, or growing down, away from it ...
+    expect(askKeepOff(reopened, askKeepOffKey(full), kept, true, true, again)).toBe(kept);
+    expect(askKeepOff({ ...reopened, height: 260 }, askKeepOffKey(full), kept, true, true, again)).toBe(kept);
+    // ... and it shows whole again once the box closes.
+    expect(askKeepOff(null, askKeepOffKey(full), kept, true, true, again)).toEqual({ box: null, question: askKeepOffKey(full), released: true });
+    // So does one that never kept off the box (opened in full before the box opened) when the box opens on it
+    // (companion-y6-1, below).
+    const before = askKeepOff(null, askKeepOffKey(full), none, true);
+    expect(area(placed(askKeepOff(reopened, askKeepOffKey(full), before, true, false, whole))!, reopened)).toBe(0);
+  });
+
+  it("keeps an answer opened in full with the box closed clear of the box opening on it to reply: cut short above it, never under the field (companion-y6-1)", () => {
+    // As measured live on a 1024 x 768 screen at Larger text, Ember low: the question asked in the box (which closes on
+    // send), Read all clicked on the 13-line answer with the box closed, so it showed whole above Ember, and
+    // Ctrl+Alt+Space to reply: the box opened on it, its field, Send and hint over lines 9 to 11 (66,176 px² of the
+    // field), and nothing moved either window while it was open, nor after Esc and opening it again. companion-repairs-
+    // x6-1 kept it clear only when Read all came with the box open.
+    const cut = { visible: true, mood: "idle" as const, title: "Ember", actions: [{ id: "ui:more", label: "Read all" }] };
+    const full = { ...cut, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+    const handle = { x: 752, y: 700, width: 260, height: 56 }, screen = { width: 1024, height: 768 }, wa = { x: 0, y: 0, ...screen };
+    const near = { x: 559, y: 613, size: 60 }, anchor = { x: 559, y: 637 }, own = { width: 410, height: 411 };
+    const least = own.height - 338 + 3 * 26, key = askKeepOffKey(full);
+    const placed = (held: { box: Box | null; grew?: true }) => {
+      const off = held.box ? [handle, held.box] : [handle], across = held.box && held.grew ? [held.box] : [];
+      return bubbleFit(anchor, own, screen, 60, off, () => own.height, across) ?? bubbleCut(anchor, own, screen, 60, off, across, 26, least);
+    };
+    // Read all with the box closed: it keeps off nothing of the box, and shows whole above Ember.
+    const held = askKeepOff(null, key, askKeepOff(null, askKeepOffKey(cut), none), true);
+    expect(held).toEqual({ box: null, question: key });
+    const whole = placed(held)!;
+    expect(whole).toEqual({ x: 537, y: 130, width: 410, height: 411 });
+    // Ctrl+Alt+Space: nothing by Ember is clear of it, so the box opens on it (a row short at first, then a row up), and
+    // an answer never makes the box step aside.
+    const reopened = openingBounds(near, wa, handle, 1.3, 5, whole).bounds;
+    expect(reopened).toEqual({ x: 195, y: 355, width: 728, height: 236 });
+    expect(area(reopened, whole)).toBe(71_796);
+    expect(stepsAsideFor(full)).toBeNull();
+    const shown = { ...reopened, y: 386, height: 205 };
+    // So it keeps off the box from then on, as when Read all came with the box open: cut short above it ...
+    const first = askKeepOff(shown, key, held, true, false, whole);
+    expect(first).toEqual({ box: shown, question: key, grew: true, released: true });
+    const short = placed(first)!;
+    expect(area(short, shown)).toBe(0);
+    // ... and again as the box grows a row up into it.
+    const kept = askKeepOff(reopened, key, first, true, true, short);
+    expect(kept).toEqual({ box: reopened, question: key, grew: true, released: true });
+    const again = placed(kept)!;
+    expect(again).toEqual({ x: 537, y: 16, width: 410, height: 333 });
+    expect(area(again, reopened)).toBe(0);
+    expect(area(again, handle)).toBe(0);
+    // Esc: whole again, and opened again: clear of it again.
+    const closed = askKeepOff(null, key, kept, true, true, again);
+    expect(closed).toEqual({ box: null, question: key, released: true });
+    expect(placed(closed)).toEqual(whole);
+    const second = askKeepOff(reopened, key, askKeepOff(shown, key, closed, true, false, whole), true, true, short);
+    expect(area(placed(second)!, reopened)).toBe(0);
+    // Both ways: a box that opens clear of one opened in full with the box closed never moves it (mid-screen, a
+    // nine-line answer whole above Ember; companion-c2-4) ...
+    const midOwn = { width: 410, height: 307 }, midWhole = bubbleFit({ x: 559, y: 461 }, midOwn, screen, 60, [handle], () => 307, [])!;
+    expect(midWhole).toEqual({ x: 537, y: 58, width: 410, height: 307 });
+    const clearBox = openingBounds({ x: 559, y: 437, size: 60 }, wa, handle, 1.3, 5, midWhole).bounds;
+    expect(area(clearBox, midWhole)).toBe(0);
+    const midHeld = askKeepOff(null, key, none, true);
+    expect(askKeepOff(clearBox, key, midHeld, true, false, midWhole)).toBe(midHeld);
+    // ... and one not opened in full, or a question, never moves for the box opening on it (the box keeps clear of it).
+    const answer = askKeepOff(null, askKeepOffKey(cut), none);
+    expect(askKeepOff(reopened, askKeepOffKey(cut), answer, false, false, whole)).toBe(answer);
+    const asked = askKeepOff(null, "q1:once,q1:deny", none);
+    expect(askKeepOff(reopened, "q1:once,q1:deny", asked, false, false, whole)).toBe(asked);
+  });
+
+  it("keeps an answer opened in full with the box open clear of the box opened on it again to reply, and of the box growing into it, though it showed whole (companion-z6-1)", () => {
+    // As replayed on a 1280 x 720 screen at Larger text, Ember at 180,540: Ctrl+Alt+Space on the answer cut short (its
+    // offer under Read all, so no chips: one row), the box below Ember; Read all with the box open, whole above Ember and
+    // clear of the box; Esc, then Ctrl+Alt+Space to reply, a row taller for "Yes, please" and "No, thanks". Nothing by
+    // Ember is clear of it, so the box opened on its last lines, its offer and its Close (37,720 px² of it): it kept off
+    // only the first box's old place, as it showed whole. companion-y6-1 kept it clear only with Read all first.
+    const cut = { visible: true, mood: "idle" as const, title: "Ember", actions: [{ id: "ui:more", label: "Read all" }] };
+    const full = { ...cut, expanded: true, actions: [{ id: "ui:close", label: "Close" }, { id: "ui:conversation", label: "Open conversation" }] };
+    const key = askKeepOffKey(full);
+    /** Where the bubble goes keeping off what `held` keeps off, as ReasoningBubble.place picks: whole, else cut short. */
+    const placer = (screen: { width: number; height: number }, handle: Box, anchor: { x: number; y: number }, own: { width: number; height: number }, text: number) =>
+      (held: { box: Box | null; grew?: true }) => {
+        const off = held.box ? [handle, held.box] : [handle], across = held.box && held.grew ? [held.box] : [];
+        return bubbleFit(anchor, own, screen, 60, off, () => own.height, across) ?? bubbleCut(anchor, own, screen, 60, off, across, 26, own.height - text + 3 * 26);
+      };
+    const screen = { width: 1280, height: 720 }, wa = { x: 0, y: 0, ...screen }, handle = { x: 1008, y: 652, width: 260, height: 56 };
+    const near = { x: 180, y: 540, size: 60 }, anchor = { x: 180, y: 564 }, own = { width: 410, height: 411 };
+    const placed = placer(screen, handle, anchor, own, 338);
+    // The box opens on the cut answer below Ember, clear of it.
+    const cutAt = bubbleFit(anchor, { width: 410, height: 259 }, screen, 60, [handle], () => 259, [])!;
+    const first = openingBounds(near, wa, handle, 1.3, 1, cutAt).bounds;
+    expect(first).toEqual({ x: 8, y: 576, width: 728, height: 111 });
+    // Read all with the box open: whole above Ember, clear of it.
+    const opened = askKeepOff(first, key, askKeepOff(first, askKeepOffKey(cut), none), true);
+    const whole = placed(opened)!;
+    expect(whole).toEqual({ x: 158, y: 57, width: 410, height: 411 });
+    expect(area(whole, first)).toBe(0);
+    // Esc: it showed whole, so it stays where it is (companion-v6-3).
+    const closed = askKeepOff(null, key, opened, true, false, whole);
+    expect(closed).toBe(opened);
+    expect(placed(closed)).toEqual(whole);
+    // Ctrl+Alt+Space to reply, a row taller: the box opens on it, and an answer never makes the box step aside ...
+    const reopened = openingBounds(near, wa, handle, 1.3, 2, whole).bounds;
+    expect(reopened).toEqual({ x: 8, y: 376, width: 728, height: 142 });
+    expect(area(reopened, whole)).toBe(37_720);
+    expect(stepsAsideFor(full)).toBeNull();
+    // ... so it keeps off the box from then on, as in the other order: never under the field.
+    const kept = askKeepOff(reopened, key, closed, true, false, whole);
+    expect(kept).toEqual({ box: reopened, question: key, grew: true, released: true });
+    const again = placed(kept)!;
+    expect(area(again, reopened)).toBe(0);
+    expect(area(again, handle)).toBe(0);
+    // A box clear of it never moves it (companion-c2-4): the same box again, and one growing down, away from it.
+    expect(askKeepOff(reopened, key, kept, true, again.height < own.height, again)).toBe(kept);
+    expect(askKeepOff({ ...reopened, height: 173 }, key, kept, true, again.height < own.height, again)).toBe(kept);
+    // Within one opening: on a 1280 x 800 screen, Ember at 580,460, a nine-line answer opened in full with the box open
+    // goes across it, whole above it; once its end shows, the chips come and the box grows a row up into its last lines
+    // (9,650 px² of it).
+    const tall = { width: 1280, height: 800 }, twa = { x: 0, y: 0, ...tall }, tHandle = { x: 1008, y: 732, width: 260, height: 56 };
+    const tNear = { x: 580, y: 460, size: 60 }, tAnchor = { x: 580, y: 484 }, nine = { width: 410, height: 307 };
+    const tPlaced = placer(tall, tHandle, tAnchor, nine, 234);
+    const tCut = bubbleFit(tAnchor, { width: 410, height: 259 }, tall, 60, [tHandle], () => 259, [])!;
+    const tFirst = openingBounds(tNear, twa, tHandle, 1.3, 1, tCut);
+    const tOpened = askKeepOff(tFirst.bounds, key, askKeepOff(tFirst.bounds, askKeepOffKey(cut), none), true);
+    const tWhole = tPlaced(tOpened)!;
+    expect(tWhole.height).toBe(307);
+    expect(area(tWhole, tFirst.bounds)).toBe(0);
+    const grown = clearOfBubble(grownBounds(tFirst.bounds, 2, twa, tFirst.up, tHandle, 1.3), twa, tWhole, tHandle, tNear, false);
+    expect(area(grown, tWhole)).toBe(9_650);
+    // It keeps off the grown box there.
+    const tKept = askKeepOff(grown, key, tOpened, true, false, tWhole);
+    expect(tKept).toEqual({ box: grown, question: key, grew: true, released: true });
+    expect(area(tPlaced(tKept)!, grown)).toBe(0);
+    // Both ways: an answer not opened in full, or a question, still never moves for the box coming over it (companion-c2-4).
+    const answer = askKeepOff(first, askKeepOffKey(cut), none);
+    expect(askKeepOff(reopened, askKeepOffKey(cut), answer, false, false, whole)).toBe(answer);
+    const asked = askKeepOff(first, "q1:once,q1:deny", none);
+    expect(askKeepOff(reopened, "q1:once,q1:deny", asked, false, false, whole)).toBe(asked);
+  });
+
+  it("is a place the bubble keeps off where it can, never one it hides from (main sends it apart from the windows)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const overlayPage = readFileSync("app/renderer/overlay/main.ts", "utf8");
+    expect(overlayPage).toContain("bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff, askAcross)");
+    expect(overlayPage).toMatch(/askHeld = askKeepOff\(state\?\.askBox \?\? null, askKeepOffKey\(state\?\.bubble \?\? IDLE_BUBBLE\), askHeld, state\?\.bubble\.expanded === true, bubble\.clipped\(\), bubbleAt\(\)\);\n\s+const askAt = askHeld\.box && \{[^\n]+\};\n\s+if \(askAt\) list\.push\(askAt\);\n\s+askAcross = askAt && askHeld\.grew \? \[askAt\] : \[\];/);
+    // Grown into the box as it streams or finishes: placed again at once, clear of it (companion-c3-1).
+    expect(overlayPage).toContain("if (showBubble && grewIntoAsk() && bubble.place({ x: lx, y: ly + size * 0.4 }, viewport, size, avoid, asks ? [] : windows, focusOff, askAcross)) interactiveDirty = true;");
+    expect(overlayPage).toContain("const next = askGrownInto(askHeld, state?.askBox ?? null, at, askGrew(b, askSeen.key === key ? askSeen.at : null, at));");
+    // ... or as it finishes, larger than the last drawing showed it, which each drawing notes once it is placed.
+    expect(overlayPage).toMatch(/reportBubble\(showBubble \? bubble\.rect\(\) : null\);\n(\s+\/\/[^\n]*\n)\s+askSeen = \{ key: askKeepOffKey\(state\?\.bubble \?\? IDLE_BUBBLE\), at: showBubble \? bubbleAt\(\) : null \};\n\}/);
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toMatch(/onBounds: askBox => \{ if \(JSON\.stringify\(lastState\.askBox \?\? null\) !== JSON\.stringify\(askBox\)\) showState\(\{ askBox \}\); agent\?\.holdForAsk\(askBox !== null\); \},/);
+    expect(main).toMatch(/overlay\.setBubble\(event\.sender, rect\);\n(\s+\/\/[^\n]*\n)+\s+if \(\(overlay\.bubbleRect\(\)\?\.endShown === true\) !== ended\) askOffersChanged\(\);\n(\s+\/\/[^\n]*\n)+\s+askWindow\.bubbleChanged\(stepsAsideFor\(lastState\.bubble, manualCall\?\.source === "ask"\)\);/);
+    // Without a compositor, the corner card grows for a question: the open box moves off it.
+    expect(main).toMatch(/handle\.fit\(height\); deskViewRef\?\.handleMoved\(\); askWindow\.keepClear\(\);/);
   });
 });

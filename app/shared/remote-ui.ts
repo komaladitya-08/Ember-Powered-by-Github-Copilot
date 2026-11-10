@@ -31,9 +31,10 @@ export type PromptCard =
   | { id: string; kind: "host-key-changed"; host: string }
   /**
    * A password, a key's passphrase, a one-time code or another secret ssh asks for: `prompt` is ssh's own text
-   * (untrusted); `via` the jump hop the prompt names when it isn't `host` ("Sign in to bastion on the way to build-01").
+   * (untrusted); `via` the jump hop the prompt names when it isn't `host` ("Sign in to bastion on the way to build-01");
+   * `unmarked` when this computer's ssh (before 8.5) can't show whether ssh or the server asks (commands-remote-3).
    */
-  | { id: string; kind: "secret"; secret: "password" | "passphrase" | "code" | "other"; host: string; via?: string; login?: string; prompt: string }
+  | { id: string; kind: "secret"; secret: "password" | "passphrase" | "code" | "other"; host: string; via?: string; login?: string; prompt: string; unmarked?: true }
   /** Touch the security key. */
   | { id: string; kind: "touch"; host: string }
   /** A first-use consent card that is a Confirmer question (number n). */

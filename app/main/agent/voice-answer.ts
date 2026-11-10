@@ -276,10 +276,17 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
   "heard-over": "I heard you over my own voice, so I didn't take it. Say it again now that I've stopped.",
 };
 
+/** The lines that point to a click or the keys: said aloud, they name the keys Ember holds too (tasks-approvals-6). */
+const POINTS_TO_KEYS: ReadonlySet<VoiceAnswerNote> = new Set(["voice-match-off", "voice-match-unready", "unverified", "locked"]);
+
 /**
  * The same, as Ember says it aloud: "Settings › Voice" as "Settings, then Voice", without the quotes. Every line Ember
- * says here is one of these fixed sentences: what the user said is never repeated back.
+ * says here is one of these fixed sentences: what the user said is never repeated back. `keys`: the question keys Ember
+ * holds now, as said ("Control Alt Y to allow"; none when another app holds them), named after a line that points to
+ * a click or the keys, so someone answering without the mouse hears how (tasks-approvals-6).
  */
-export function voiceAnswerSaid(why: VoiceAnswerNote): string {
-  return VOICE_ANSWER_REFUSED[why].replace(/\s*›\s*/g, ", then ").replace(/[“”]/g, "");
+export function voiceAnswerSaid(why: VoiceAnswerNote, keys: readonly string[] = []): string {
+  const line = VOICE_ANSWER_REFUSED[why].replace(/\s*›\s*/g, ", then ").replace(/[“”]/g, "");
+  if (!keys.length || !POINTS_TO_KEYS.has(why)) return line;
+  return `${line} ${why === "locked" ? "Press" : "Or press"} ${keys.join(", or ")}.`;
 }

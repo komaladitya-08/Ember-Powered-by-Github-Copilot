@@ -3,14 +3,16 @@
  * newest first, from main's in-memory list (IPC.tasks, pushed again as the cards change, at most twice a second). Every
  * string is set as text: a plan's, a note's, a summary's and a view's words are the worker's own and may carry what it
  * read on the screen. Home never answers a question (the bubble, the card and the keys do): it only says how each was
- * answered. Groups are rebuilt only when what they show changed, and a row the user opened stays open.
+ * answered. Groups are rebuilt only when what they show changed, a row the user opened stays open, and keyboard focus
+ * stays on the control it was on (home-2).
  */
 
 import type { TaskControlAction, TaskEntry } from "../../shared/activity";
 import { PLAN_WORD, type PlanStep } from "../../shared/view";
-import { STATUS_WORDS, ROW_WORD } from "../../shared/activity";
+import { rowWord } from "../../shared/activity";
 import { renderView } from "../shared/view-dom";
-import { askedWhere, FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offsetText, offsetWords, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
+import { LIVE_SETTLE_MS } from "../shared/held-live";
+import { askedWhere, FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offersRetry, offsetText, offsetWords, stateWord, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
 
 const $ = (id: string) => document.getElementById(id)!;
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
@@ -73,7 +75,7 @@ function rowItem(taskId: string, r: TimelineRow): HTMLLIElement {
   const sym = el("i", "sym");
   sym.setAttribute("aria-hidden", "true");
   const what = el("span", r.model ? "what model" : "what");
-  what.append(el("span", "sr", ROW_WORD[r.state]));
+  what.append(el("span", "sr", rowWord(r)));
   if (r.model) what.append(el("span", "note-tag", NOTE_TAG), document.createTextNode(" "));
   what.append(document.createTextNode(r.words));
   if (r.asked) what.append(el("span", "asked", r.asked));
@@ -84,6 +86,7 @@ function rowItem(taskId: string, r: TimelineRow): HTMLLIElement {
   fold.open = opened.has(key);
   fold.addEventListener("toggle", () => { if (fold.open) opened.add(key); else opened.delete(key); });
   const summary = el("summary");
+  summary.dataset.control = `steps:${r.id}`;
   summary.append(what);
   const list = el("ol", "step-list");
   list.append(...r.steps.map(s => {
@@ -108,10 +111,10 @@ function taskControls(t: TaskEntry, result: HTMLElement | null): HTMLElement {
   status.id = `task-${t.id}-control-status`;
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
-  status.hidden = true;
   const action = (label: string, kind: TaskControlAction, available: boolean) => {
     const button = el("button", "btn quiet small", label);
     button.type = "button";
+    button.dataset.control = kind;
     button.setAttribute("aria-label", `${label}: ${t.title}`);
     button.disabled = !available;
     button.addEventListener("click", () => {
@@ -126,7 +129,6 @@ function taskControls(t: TaskEntry, result: HTMLElement | null): HTMLElement {
         if (account !== accountEpoch) return;
         const keepFocus = wasFocused && kind !== "window" && (document.activeElement === document.body || group.contains(document.activeElement));
         const feedback = document.getElementById(status.id) ?? status;
-        feedback.hidden = false;
         const stopped = latest.find(task => task.id === t.id)?.status === "stopped";
         feedback.textContent = accepted ? kind === "stop" ? stopped ? "This task stopped." : "Stopping this task…" : kind === "retry" ? "A new attempt started." : "App window opened." : "This action is no longer available.";
         if (keepFocus) {
@@ -137,17 +139,21 @@ function taskControls(t: TaskEntry, result: HTMLElement | null): HTMLElement {
         }
       }).catch(() => {
         if (account !== accountEpoch) return;
-        status.hidden = false; status.textContent = "I couldn't update this task. Try again."; button.disabled = !available;
+        status.textContent = "I couldn't update this task. Try again."; button.disabled = !available;
       }).finally(() => { if (focusedAction === focus) focusedAction = null; });
     });
     group.append(button);
   };
   if (!ended(t)) action("Stop task", "stop", t.controls?.stop === true);
-  if (t.status === "failed") action("Try again", "retry", t.controls?.retry === true);
+  // A failure, or a task whose question went unanswered while the user was away (tasks-approvals-c1-2): the card's
+  // Try again, here for the keyboard and screen readers, since the overlay and the handle take no focus. Only while it
+  // can be pressed (tasks-approvals-r3-5).
+  if (offersRetry(t)) action("Try again", "retry", true);
   if (t.controls?.window) action("Show app", "window", true);
   if (result) {
     const show = el("button", "btn quiet small", "View result");
     show.type = "button";
+    show.dataset.control = "view-result";
     show.setAttribute("aria-label", `View result: ${t.title}`);
     show.addEventListener("click", () => { result.scrollIntoView({ block: "nearest" }); result.focus({ preventScroll: true }); });
     group.append(show);
@@ -162,16 +168,18 @@ const ended = (t: TaskEntry) => t.status === "done" || t.status === "failed" || 
 function group(t: TaskEntry, now: number): { node: HTMLElement; meta: HTMLElement } {
   const node = el("article", "task-group");
   node.dataset.status = t.status;
+  node.dataset.task = t.id;
   const headId = `task-${t.id}-t`;
   node.setAttribute("aria-labelledby", headId);
   const fold = ended(t) ? el("details", "task-fold") : null;
   const head = el(fold ? "summary" : "div", "task-head");
+  if (fold) head.dataset.control = "fold";
   const sym = el("i", "sym");
   sym.setAttribute("aria-hidden", "true");
   const text = el("div", "task-text");
   const h = el("h3", "task-title");
   h.id = headId;
-  h.append(el("span", "sr", `${STATUS_WORDS[t.status]}: `), document.createTextNode(t.title));
+  h.append(el("span", "sr", `${stateWord(t)}: `), document.createTextNode(t.title));
   const meta = el("p", "task-meta", taskMeta(t, now));
   text.append(h, meta);
   const steps = stepsLine(t);
@@ -193,6 +201,7 @@ function group(t: TaskEntry, now: number): { node: HTMLElement; meta: HTMLElemen
   const said = t.activity.items.some(i => i.kind === "problem" && i.words === t.summary);
   if ((t.summary && !said) || t.view) {
     const result = el("div", "task-result");
+    result.dataset.control = "result";
     result.tabIndex = -1;
     result.setAttribute("role", "group");
     result.setAttribute("aria-label", `Result: ${t.title}`);
@@ -245,6 +254,33 @@ function renderFilter(all: readonly TaskEntry[]): void {
   }
 }
 
+/** Where keyboard focus was in Task activity before a list is drawn: the element, and the control and task it is. */
+interface HeldFocus { el: HTMLElement; task?: string; control?: string }
+function focusHeld(list: HTMLElement): HeldFocus | null {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !(list.contains(el) || askingNote.contains(el))) return null;
+  const group = el.closest<HTMLElement>(".task-group");
+  return { el, task: group?.dataset.task, control: el.closest<HTMLElement>("[data-control]")?.dataset.control };
+}
+/**
+ * Puts focus back after a list is drawn (home-2): a group whose task changed is a new node (main pushes every step, at
+ * most twice a second), so the control that had focus is found again in it by what it is (Stop task, a steps row…);
+ * one that is gone leaves focus on the task's own heading, never the top of the page.
+ */
+function keepFocus(held: HeldFocus): void {
+  if (document.activeElement === held.el) return;
+  if (held.el.isConnected) { held.el.focus({ preventScroll: true }); return; }
+  const node = held.task ? drawn.get(held.task)?.node : undefined;
+  if (!node?.isConnected) return;
+  const same = held.control ? node.querySelector<HTMLElement>(`[data-control="${CSS.escape(held.control)}"]`) : null;
+  if (same && !(same instanceof HTMLButtonElement && same.disabled)) same.focus({ preventScroll: true });
+  if (same && document.activeElement === same) return;
+  const summary = node.querySelector<HTMLElement>(":scope > details > summary");
+  if (summary) { summary.focus({ preventScroll: true }); return; }
+  const heading = node.querySelector<HTMLElement>(".task-title");
+  if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+}
+
 /** The list main sent last (the filter draws from it). */
 let given: TaskEntry[] = [];
 function render(sent: TaskEntry[]): void {
@@ -255,6 +291,7 @@ function render(sent: TaskEntry[]): void {
   const tasks = filterTasks(all, filter);
   const list = $("tasks");
   const now = Date.now();
+  const focus = focusHeld(list);
   if (!tasks.length) {
     drawn.clear();
     const empty = all.length ? FILTER_EMPTY : TASKS_EMPTY;
@@ -271,14 +308,12 @@ function render(sent: TaskEntry[]): void {
     });
     for (const id of [...drawn.keys()]) if (!tasks.some(t => t.id === id)) drawn.delete(id);
     // Remove changed groups first so adding their replacements leaves the unchanged groups in place.
-    const focused = document.activeElement;
     const keep = new Set<Element>(nodes);
     for (const child of [...list.children]) if (!keep.has(child)) child.remove();
     nodes.forEach((node, i) => {
       const at = list.children[i] ?? null;
       if (node !== at) list.insertBefore(node, at);
     });
-    if (focused instanceof HTMLElement && list.contains(focused) && document.activeElement !== focused) focused.focus({ preventScroll: true });
   }
   // A task waits for the user's answer: Home says where it is asked, and with which keys, in that task's own group (it
   // never answers itself); otherwise the note waits, hidden, above the list.
@@ -291,15 +326,39 @@ function render(sent: TaskEntry[]): void {
   for (const s of asking.querySelectorAll<HTMLElement>(":scope > [data-asked-in]")) s.hidden = s.dataset.askedIn !== where;
   if (body && asking.parentElement !== body) body.prepend(asking);
   else if (!body && asking.nextElementSibling !== list) list.before(asking);
-  // A task's state, said once when it changes (not on the first list).
+  if (focus) keepFocus(focus);
+  announce(all);
+  for (const fn of listeners) fn(all);
+}
+
+/** Home's microphone is open for a request (holdTaskNews), and the timer that says what changed once it closes. */
+let newsHeld = false;
+let newsSoon: ReturnType<typeof setTimeout> | undefined;
+/** A task's state, said once when it changes (not on the first list), and while news is held only once it is let go. */
+function announce(all: readonly TaskEntry[]): void {
   const live: string[] = [];
   for (const t of all) {
     const before = said.get(t.id);
-    if (before !== undefined && before !== t.status) live.push(taskAnnouncement(t.title, t.status));
+    // (Held, a task new since keeps its first state, so what it comes to is said once the microphone closes.)
+    if (newsHeld) { if (before === undefined) said.set(t.id, t.status); continue; }
+    if (before !== undefined && before !== t.status) live.push(taskAnnouncement(t.title, t.status, t.unanswered === true));
     said.set(t.id, t.status);
   }
   if (live.length) $("tasks-live").textContent = live.join(". ");
-  for (const fn of listeners) fn(all);
+}
+
+/**
+ * Home's microphone opens or is open for a request (a wake's window, a conversation's, Listen once's): a task's change
+ * of state is said only once it closes and that has held for LIVE_SETTLE_MS, then each task's state as it is by then,
+ * once. Said meanwhile, "<task>: Waiting for you" went through the speakers into the conversation held open while the
+ * task worked, and was sent as the next request; with Voice Match on, the screen reader's voice was turned away and
+ * locked the question's spoken yes (voice-listening-r4-2).
+ */
+export function holdTaskNews(on: boolean): void {
+  if (on === newsHeld) return;
+  newsHeld = on;
+  clearTimeout(newsSoon);
+  if (!on) newsSoon = setTimeout(() => { if (!newsHeld) announce(latest); }, LIVE_SETTLE_MS);
 }
 
 /** The clock of each task under way, written as text once a second while the window can be seen. */

@@ -127,8 +127,14 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
     await app.evaluate(() => (globalThis as unknown as { __ember: { showAsk(): void } }).__ember.showAsk());
     for (let t = 0; t < 50 && !(await askShown()); t++) await sleep(100);
     expect(await askShown()).toBe(true);
-    // The quick look's own update has come and gone: what follows is this test's.
+    // The quick look's own update has come and gone, and Copilot's status has settled (an open box hears it change and
+    // says why Ember can't answer: ask-renderer.test.ts): what follows is this test's.
     await sleep(1500);
+    for (let t = 0; t < 150; t++) {
+      const phase = await app.evaluate(() => (globalThis as unknown as { __ember: { agent(): { getStatus(): { phase: string } } | null } }).__ember.agent()?.getStatus().phase);
+      if (phase && phase !== "starting") break;
+      await sleep(100);
+    }
     const ssh = { id: "ssh:deploy@build-server-01", kind: "ssh", label: "deploy@build-server-01", state: "lost", can: "", active: true };
     const cases = {
       "a mail window, field text and three windows": { sees: "Firefox · Inbox (12) — Mail", carries: { selection: false, fieldText: true, windows: 3 }, history: ["a"] },
@@ -141,6 +147,8 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
       const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember")!;
       w.webContents.send("agent:ask-context", { sees: null, history: ["a"], opened: true });
       w.webContents.send("agent:ask-context", a.ctx);
+      // The line measured here is the window's: none of Ember's own "can't answer yet" (its own test is in ask-renderer).
+      w.webContents.send("agent:ask-unavailable", null);
       await new Promise(r => setTimeout(r, 150));
       await w.webContents.executeJavaScript(`{ const q = document.getElementById("q"); q.value = ${JSON.stringify(a.text)}; q.dispatchEvent(new Event("input")); }`);
       await new Promise(r => setTimeout(r, 400));
@@ -159,7 +167,7 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
         // The window's name keeps the room it aims for (or all it needs), and nothing is pushed off the line.
         expect.soft(r.name, label).toBeGreaterThanOrEqual(Math.min(160, r.nameWhole));
         expect.soft(r.overflow, label).toBe(0);
-        // The cut note gets a row and the comfortable Listen once group gets two under the four lines of text.
+        // The count gets a row and the comfortable Listen once group gets two under the four lines of text.
         expect.soft(r.cut, label).toBe(!!text);
         expect.soft(r.cutOnLine, label).toBe(false);
         if (text) expect.soft(r.height, label).toBe(askHeight("default", 7));

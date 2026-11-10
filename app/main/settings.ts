@@ -144,7 +144,9 @@ export const SettingsSchema = z.object({
     conversation: z.boolean().default(true),
     /** Hear me more clearly: the clearer recognizer writes requests (a 482 MB download, once this is on). */
     clearHearing: z.boolean().default(false),
-  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false })),
+    /** How fast Ember speaks, its own voice and the system's alike: 0.8 slower to 1.4 faster, 1 as made (voice-speaking-7). */
+    rate: z.number().min(0.8).max(1.4).default(1),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false, naturalModel: "kitten", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1 })),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),
@@ -160,6 +162,12 @@ export const SettingsSchema = z.object({
   privacy: z.object({
     neverLook: z.array(z.string().max(100)).max(100).default(neverLookDefault()),
   }).default({ neverLook: neverLookDefault() }),
+  /**
+   * Tasks may send screenshots of the window they work in (masked: CLAUDE.md "Screenshots"), on by default; off, they
+   * work from what apps tell them through accessibility only, a task already at work from its next look (Home › Apps &
+   * privacy; safety-privacy-7, -c1-1). The administrator's `features.screenImages: false` keeps it off, managed.
+   */
+  screenImages: z.boolean().default(true),
   /** Apps Ember may act in without asking first (lower-case app name → grant). */
   grants: z.record(z.string(), z.enum(["observe", "act"])).default({}),
   /** Preferred Copilot models; null lets Ember choose. */
@@ -267,12 +275,14 @@ export const SettingsSchema = z.object({
   /**
    * Telling the user a newer Ember is out (app/main/updates.ts): off until they turn it on and agree to its note in Home
    * (`consent`, FEATURE_CONSENT_VERSION.updates). `told`: the last version announced, so each one is announced once.
+   * `checkedAt`: when it last asked GitHub (ISO), so a restart keeps to once a day (integrations-v3).
    */
   updates: z.object({
     on: z.boolean().default(false),
     consent: ConsentRecord,
     told: z.string().max(32).nullable().default(null),
-  }).default({ on: false, consent: { version: 0, at: null }, told: null }),
+    checkedAt: z.string().max(40).nullable().default(null),
+  }).default({ on: false, consent: { version: 0, at: null }, told: null, checkedAt: null }),
   /**
    * "Work without asking" (app/main/policy/autonomy.ts, PLAN.md §2 Approvals): off until the user turns it on and agrees
    * to its card in Home (`consent`, FEATURE_CONSENT_VERSION.autonomy). While on, ordinary steps in the enabled `scopes`
@@ -339,6 +349,17 @@ export function withOwnProvider(patch: SettingsPatch, own: Settings["provider"])
   const sent = p as Record<string, unknown>;
   const picked = Object.fromEntries(PROVIDER_FIELDS.filter(k => Object.prototype.hasOwnProperty.call(sent, k)).map(k => [k, sent[k]]));
   return { ...patch, provider: { ...own, ...picked, consent: own.consent } as Settings["provider"] };
+}
+
+/**
+ * Home's change to the extensions switch, merged into the user's own: their card's record (`consent`) is always the
+ * one already kept, so a settings change can turn extensions on or off but never agree to them (integrations-i1).
+ */
+export function withOwnExtensions(patch: SettingsPatch, own: Settings["extensions"]): SettingsPatch {
+  const e = (patch as { extensions?: unknown }).extensions;
+  if (!e || typeof e !== "object" || Array.isArray(e)) return patch;
+  const on = (e as { on?: unknown }).on;
+  return { ...patch, extensions: { ...own, ...(typeof on === "boolean" ? { on } : {}), consent: own.consent } };
 }
 
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});

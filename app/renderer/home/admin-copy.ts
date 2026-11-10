@@ -11,11 +11,15 @@ import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 
 type Lockdown = Pick<Status["admin"], "error" | "held" | "retentionDays">;
 
-/** The notice at the top of the window while Ember is locked down, or null while the policy is in force. */
+/**
+ * The notice at the top of the window while Ember is locked down, or null while the policy is in force. It never quotes
+ * the policy's error (a file path and a parser's message, safety-privacy-4): `ember doctor` and the log name it for
+ * whoever manages the computer.
+ */
 export function lockdownNotice(a: Lockdown): string | null {
   if (a.error === null) return null;
   if (a.held) return "Your organisation changed Ember's policy. Restart Ember to use it.";
-  return `Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed (${a.error}).`;
+  return "Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed. Ask whoever manages this computer to fix it.";
 }
 
 /** Until when the lockdown lasts, in the data list's words. */
@@ -27,6 +31,24 @@ const until = (a: Lockdown) => (a.held ? "until you restart Ember" : "until your
  */
 export function lockdownSendLine(a: Lockdown): string | null {
   return a.error === null ? null : `, nothing is sent to a model service ${until(a)}, so Ember can't answer or act.`;
+}
+
+/** What Listen once does, as the data list says it, and as it is while locked down: nothing it hears is sent. */
+const LISTEN_ONCE_SENDS = ", sends the request as text, and closes temporary capture before Ember answers.";
+const LISTEN_ONCE_LOCKED = " and closes temporary capture once it has heard the request.";
+
+/**
+ * The data list's microphone line while Ember is locked down (safety-privacy-r4): the text around its recipient
+ * (`before` and `after` the "goes to …" span) with the sentence on what a conversation sends said as nothing sent
+ * anywhere, instead of "goes to no model service (…) as text", and Listen once's without "sends the request as text".
+ * Null when not locked down, or for words it doesn't know.
+ */
+export function lockdownMicWords(a: Lockdown, before: string, after: string): [string, string] | null {
+  if (a.error === null) return null;
+  const start = before.lastIndexOf("Once you call Ember");
+  const end = after.indexOf("seconds.");
+  if (start < 0 || end < 0) return null;
+  return [`${before.slice(0, start)}Nothing it hears is sent anywhere ${until(a)}.`, after.slice(end + "seconds.".length).replace(LISTEN_ONCE_SENDS, LISTEN_ONCE_LOCKED)];
 }
 
 /** How long the record of every action is kept, as the data list says it ("kept 30 days"). */

@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { idleLine, micAnnouncement, micBadge, MIC_PROBLEM_MENU } from "../../app/shared/mic";
 import type { MicState } from "../../app/shared/voice";
 import { HandleLive } from "../../app/renderer/handle/live";
+import { heardThrough } from "../../app/renderer/home/copy";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 const STATES: MicState[] = ["off", "needs-models", "downloading", "starting", "waiting", "active", "muted", "error"];
@@ -39,8 +40,10 @@ describe("the microphone badge", () => {
   });
 
   it("says its state in words, to the tooltip and to screen readers", () => {
-    expect(micBadge("waiting")!.label).toBe("Listening for “Hey Ember”");
-    expect(micBadge("active")!.label).toBe("Hearing you");
+    // The name alone, as settings' voice line says it ("Ember" and "Hey Ember" both work; voice-listening-8).
+    expect(micBadge("waiting")!.label).toBe("Listening for “Ember”");
+    expect(readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8")).toContain('waiting: "Listening for “Ember”"');
+    expect(micBadge("active")!.label).toBe("Listening");
     expect(micBadge("muted")!.label).toBe("Microphone off");
     expect(micBadge("error")!.label).toBe("Microphone problem");
     expect(micBadge("needs-models")!.label).toBe("Voice isn't set up: download the speech models in Settings");
@@ -50,6 +53,26 @@ describe("the microphone badge", () => {
     const tag = /<i id="mic"[^>]*>/.exec(read("app/renderer/handle/index.html"))![0];
     expect(tag).toContain('role="img"');
     expect(tag).not.toContain("aria-hidden");
+  });
+
+  it("says in Settings which microphone Ember listens through (voice-listening-v2)", () => {
+    expect(heardThrough("Listening for “Ember”", "waiting", null, "Built-in Audio Analog Stereo")).toBe("Listening for “Ember” through Built-in Audio Analog Stereo");
+    // Only while it listens for its name, and never over a detail (an error, Learning your voice…).
+    expect(heardThrough("Hearing you…", "active", null, "Headset")).toBe("Hearing you…");
+    expect(heardThrough("Learning your voice.", "waiting", "Learning your voice.", "Headset")).toBe("Learning your voice.");
+    expect(heardThrough("Listening for “Ember”", "waiting", null, undefined)).toBe("Listening for “Ember”");
+    const home = read("app/renderer/home/main.ts");
+    expect(home).toContain("const text = heardThrough(v.detail && v.state === \"error\" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);");
+    expect(read("app/main/main.ts")).toContain("...(voice?.micLabel ? { micLabel: voice.micLabel } : {}),");
+  });
+
+  it("says Ember is learning a voice, not listening for “Hey Ember”, while Voice Match is taught (voice-listening-v1)", () => {
+    expect(micBadge("waiting", true)).toEqual({ glyph: "mic", label: "Learning your voice" });
+    expect(micBadge("active", true)).toEqual({ glyph: "mic", label: "Learning your voice" });
+    // A problem or a muted microphone says so, teaching or not.
+    expect(micBadge("muted", true)!.label).toBe("Microphone off");
+    expect(micBadge("off", true)).toBeNull();
+    expect(read("app/renderer/handle/main.ts")).toContain("const micState = micBadge(s.mic, s.micLearning === true);");
   });
 
   it("says a microphone problem, or voice that isn't set up, on the handle instead of \"Ready\" (review #73)", () => {

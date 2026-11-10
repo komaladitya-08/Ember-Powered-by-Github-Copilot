@@ -113,7 +113,9 @@ export function reviewedDecision(d: CommandDecision, v: ReviewVerdict): CommandD
     verdict: "announce",
     requested: { intent: "ai-review", announce: `${does.charAt(0).toUpperCase()}${does.slice(1)}.` },
     rules: [...new Set([...d.rules, "ai-review"])],
-    reason: `Reviewed: routine for the request${v.why ? ` (${v.why})` : ""}.`,
+    // Ember's own words: the reviewer's (which can name the file and the request) go apart, never into the journal.
+    reason: "Reviewed: routine for the request.",
+    ...(v.why ? { review: v.why } : {}),
     says: [...d.says.filter(l => l !== "You didn't ask for this."), `Ember's review: ${v.why || "routine for what you asked"}.`],
     unasked: false,
   };

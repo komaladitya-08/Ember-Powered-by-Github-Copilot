@@ -173,6 +173,24 @@ describe("inspectPaths", () => {
     expect(got[MAX_INSPECT]).toEqual({ exists: null, real: null });
   });
 
+  it("says which paths are folders, or links to one, so a move into a folder asks only about the file in it (commands-remote-r1)", async () => {
+    const tree: Record<string, Node> = {
+      "/home": { kind: "dir" }, "/home/ana": { kind: "dir" }, "/home/ana/Documents": { kind: "dir" }, "/home/ana/notes.txt": { kind: "file" },
+      "/home/ana/docs": { kind: "link", to: "/home/ana/Documents" },
+    };
+    const base = fakeFs(tree, "posix");
+    const withStat: InspectFs = { ...base, stat: async p => { const r = await base.realpath(p); return { isDirectory: () => tree[r]?.kind === "dir" }; } };
+    await expect(inspectPaths(["/home/ana/Documents", "docs", "notes.txt", "missing"], "/home/ana", { os: "linux", fs: withStat })).resolves.toEqual([
+      { exists: true, real: "/home/ana/Documents", dir: true },
+      { exists: true, real: "/home/ana/Documents", dir: true },
+      { exists: true, real: "/home/ana/notes.txt" },
+      { exists: false, real: "/home/ana/missing" },
+    ]);
+    // A stat that fails says nothing about a folder; a filesystem without stat says nothing either.
+    await expect(inspectPaths(["/home/ana/Documents"], "/", { os: "linux", fs: { ...base, stat: () => Promise.reject(new Error("EIO")) } })).resolves.toEqual([{ exists: true, real: "/home/ana/Documents" }]);
+    await expect(inspectPaths(["/home/ana/Documents"], "/", { os: "linux", fs: base })).resolves.toEqual([{ exists: true, real: "/home/ana/Documents" }]);
+  });
+
   it("walks `..` through links as the kernel does, so `sub/../t.sh` is beside the link's target (§3.6, L25)", async () => {
     const tree: Record<string, Node> = {
       "/home": { kind: "dir" }, "/home/ana": { kind: "dir" }, "/home/ana/src": { kind: "dir" }, "/home/ana/src/t.sh": { kind: "file" },

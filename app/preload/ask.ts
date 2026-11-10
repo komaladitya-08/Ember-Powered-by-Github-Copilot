@@ -6,11 +6,15 @@ const api: EmberAskApi = {
   askSuggestion: text => ipcRenderer.send(IPC.askSuggestion, text),
   close: () => ipcRenderer.send(IPC.askClose),
   onContext: fn => { ipcRenderer.on(IPC.askContext, (_e, c: AskContext) => fn(c)); },
+  onUnavailable: fn => { ipcRenderer.on(IPC.askUnavailable, (_e, w: unknown) => fn(typeof w === "string" && w.length <= 80 ? w : null)); },
+  onSuggestions: fn => { ipcRenderer.on(IPC.askSuggestions, (_e, l: unknown) => fn(Array.isArray(l) ? l.filter((t): t is string => typeof t === "string" && t.length <= 200).slice(0, 3) : [])); },
   listenOnce: on => ipcRenderer.invoke(IPC.listenOnce, on),
   onListenOnce: fn => { ipcRenderer.on(IPC.listenOnceStatus, (_e, status: ListenOnceStatus) => fn(status)); },
   onTyped: fn => { ipcRenderer.on(IPC.askTyped, (_e, t: { text: string; submit: boolean; cancel: boolean }) => fn(t)); },
   onHidden: fn => { ipcRenderer.on(IPC.askHidden, () => fn()); },
   fit: rows => ipcRenderer.send(IPC.askFit, rows),
+  voiceSettings: () => ipcRenderer.send(IPC.askVoiceSettings),
+  shape: rects => ipcRenderer.send(IPC.askShape, rects),
 };
 
 contextBridge.exposeInMainWorld("emberAsk", api);

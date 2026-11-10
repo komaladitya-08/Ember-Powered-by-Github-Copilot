@@ -11,7 +11,7 @@ import { segmentLabel, visibleText } from "./visible";
 
 /** The window's title (it matches EMBER_WINDOW's "ember commands", so no task reads or acts in it). */
 export const WINDOW_TITLE = "Ember commands";
-export const EMPTY_TEXT = "No commands yet.";
+export const EMPTY_TEXT = "Commands Ember runs show here. You can watch them, type into them and stop them.";
 
 export const ASK_HEADING = "Ember wants to run this command";
 
@@ -22,9 +22,13 @@ export function askHeading(card: Pick<CommandCard, "target" | "targetLabel">): s
   return `${ASK_HEADING} ${kind === "wsl" ? "in" : "on"} ${outsideText(card.targetLabel, 64)}`;
 }
 
-/** A card for a command that deletes data (here or in a remote service): it gets a quiet marker and no prominent Allow (review #275). */
+/**
+ * A card for a dangerous command (any danger class: the bubble tags its question "Risky step" then): it gets a quiet
+ * marker and no prominent Allow, so nothing invites a reflex yes (review #275, commands-remote-v3). A card asked only by
+ * policy (the organisation, "ask every", root without a finding) has none and keeps the filled Allow.
+ */
 export function isRiskyCard(card: Pick<CommandCard, "classes">): boolean {
-  return Array.isArray(card.classes) && card.classes.some(c => c === "destroy" || c === "remote-delete");
+  return Array.isArray(card.classes) && card.classes.length > 0;
 }
 /** The announcement's heading: nothing runs yet, it starts when the countdown ends (review #269). */
 export const ANNOUNCE_HEADING = "About to run this, as you asked";
@@ -73,9 +77,13 @@ const SHELL_NAME: Readonly<Record<ShellId, string>> = { bash: "bash", zsh: "zsh"
 /** Between a number and its unit: a no-break space, so "3.2 s" never wraps into "3.2" and "s". */
 const NB = "\u00a0";
 
-/** A duration as the window says it: "3.2 s" under 10 s, "12 s" under a minute, then "2 min" or "2 min 5 s". */
+/**
+ * A duration as the window says it: "less than 0.1 s" (never "0 s", commands-remote-5), "3.2 s" under 10 s, "12 s"
+ * under a minute, then "2 min" or "2 min 5 s".
+ */
 export function durationText(ms: number): string {
   const s = Math.max(0, Number.isFinite(ms) ? ms : 0) / 1000;
+  if (s < 0.05) return `less than 0.1${NB}s`;
   if (s < 9.95) {
     const t = Math.round(s * 10) / 10;
     return `${Number.isInteger(t) ? t.toFixed(0) : t.toFixed(1)}${NB}s`;
@@ -91,12 +99,20 @@ export function durationText(ms: number): string {
  * Where a command runs, as the header says it: "On build-01 as deploy · bash · in ~/src/app", "On this computer ·
  * PowerShell · in C:\Users\ana\project", "In Ubuntu (WSL) · bash · in ~/project".
  */
-export function headerLine(card: Pick<CommandCard, "target" | "targetLabel" | "login" | "shell" | "cwd">): string {
+export function headerLine(card: Pick<CommandCard, "target" | "targetLabel" | "login" | "shell" | "cwd"> & { home?: string }): string {
   const kind = parseTargetId(card.target)?.kind;
   const place = kind === "local" ? "On this computer"
     : kind === "wsl" ? `In ${card.targetLabel}`
     : `On ${card.targetLabel}${kind === "ssh" && card.login ? ` as ${card.login}` : ""}`;
-  return `${place} · ${SHELL_NAME[card.shell] ?? card.shell} · in ${card.cwd}`;
+  return `${place} · ${SHELL_NAME[card.shell] ?? card.shell} · in ${shownFolder(card)}`;
+}
+
+/** The folder as the header says it: the home folder (a POSIX shell's) as ~, any other whole (commands-remote-8). */
+function shownFolder(card: Pick<CommandCard, "shell" | "cwd"> & { home?: string }): string {
+  const home = typeof card.home === "string" ? card.home.replace(/\/+$/, "") : "";
+  if (!home.startsWith("/") || !["bash", "zsh", "sh"].includes(card.shell)) return card.cwd;
+  if (card.cwd === home || card.cwd === `${home}/`) return "~";
+  return card.cwd.startsWith(`${home}/`) ? `~${card.cwd.slice(home.length)}` : card.cwd;
 }
 
 /** A tab's label: the first 40 characters of its command (one line: line breaks read as spaces), "…" when cut. */

@@ -3,10 +3,13 @@
  * the fact from the code or the packaging data and checks the docs say it, so a change on one side shows up here.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { announcement, type BubbleView } from "@ember/bubble";
+import { AdminPolicySchema } from "../../app/main/admin";
 import { GH_INSTALL } from "../../app/main/agent/github-app";
 import { readTimeOf } from "../../app/main/agent/presenter";
 import { ANNOUNCE_MS } from "../../app/main/commands/flow";
@@ -15,6 +18,7 @@ import { logLevel } from "../../app/main/logger";
 import { pagePrefs, prefsScript } from "../../app/main/page-prefs";
 import * as commandWindow from "../../app/main/commands/window";
 import { CHARACTERS, DEFAULT_SETTINGS } from "../../app/main/settings";
+import { naturalVoiceChoices } from "../../app/main/voice-choice";
 import { macVersionFromDarwin } from "../../app/main/platform/darwin/system/permissions";
 import type { TargetEntry } from "../../app/main/targets/registry";
 import { targetMenu } from "../../app/main/targets/menu";
@@ -24,9 +28,14 @@ import { cardsCorner } from "../../app/renderer/overlay/layout";
 import * as targetCopy from "../../app/renderer/overlay/target-copy";
 import { wslFirstSeen } from "../../app/renderer/overlay/target-copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
-import { MIC_PROBLEM_MENU } from "../../app/shared/mic";
+import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { MIC_PROBLEM_MENU, micBadge } from "../../app/shared/mic";
+import { SHORTCUTS } from "../../app/shared/shortcuts";
 import { ISSUES_URL } from "../../app/shared/support";
+import { STEP_TEXT, WELCOME_STEPS } from "../../app/renderer/home/welcome-copy";
+import { CLEAR_SPEECH, LISTENING_MODELS, MEMORY_MODEL, MEMORY_MODEL_BYTES, modelsBytes, NATURAL_VOICE, SUPERTONIC_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES } from "../../app/voice/models";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
+import { releaseNotes } from "../../scripts/package/release.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
 const packageVersion = (JSON.parse(read("package.json")) as { version: string }).version;
@@ -47,6 +56,12 @@ function section(text: string, heading: string): string {
   if (at < 0) throw new Error(`no section "${heading}"`);
   const end = level.findIndex((n, i) => i > at && n > 0 && n <= level[at]);
   return lines.slice(at, end < 0 ? undefined : end).join("\n");
+}
+/** Every key a zod object schema takes, at every level ("features.voice", "provider.azure.apiVersion"). */
+function policyKeys(schema: z.ZodType, at = ""): string[] {
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodDefault || schema instanceof z.ZodNullable) return policyKeys(schema.unwrap() as z.ZodType, at);
+  if (!(schema instanceof z.ZodObject)) return [at];
+  return Object.entries(schema.shape as Record<string, z.ZodType>).flatMap(([k, v]) => policyKeys(v, at ? `${at}.${k}` : k));
 }
 
 /**
@@ -98,6 +113,16 @@ describe("docs/DESIGN.md", () => {
 });
 
 describe("docs/DEVELOPING.md", () => {
+  it("gives the speech models' download size as the pinned models add up, as models.ts says it (voice-listening-11)", () => {
+    const mb = (bytes: number) => Math.round(bytes / 1e6);
+    const listening = VOICE_MODELS.filter(m => (LISTENING_MODELS as readonly string[]).includes(m.id)).reduce((n, m) => n + m.bytes, 0);
+    expect(read("docs/DEVELOPING.md")).toContain(`the standard speech models (about ${mb(VOICE_MODELS_BYTES)} MB of downloads, once;`);
+    const header = read("app/voice/models.ts").slice(0, 600).replace(/\n \* /g, " ");
+    expect(header).toContain(`(about ${mb(VOICE_MODELS_BYTES)} MB in all)`);
+    expect(header).toContain(`(LISTENING_MODELS, about ${mb(listening)} MB)`);
+    for (const id of ["tts", "speaker"] as const) expect(header).toContain(`(${mb(VOICE_MODELS.find(m => m.id === id)!.bytes)} MB)`);
+  });
+
   it("§10.5 says what every file Ember stages beside the Windows app is", () => {
     const table = section(read("docs/DEVELOPING.md"), "10.5 Packages");
     const win = layoutFor("win32", "x64");
@@ -140,6 +165,105 @@ describe("docs/DEVELOPING.md", () => {
     expect(flat(section(dev, "7. Packages"))).toContain(`\`~/.config/autostart/ember.desktop\` (marked \`${marker}\`); an \`ember.desktop\` you made yourself is left alone`);
   });
 
+  it("§3 leaves /opt/node22 owned by root and upgrades npm there as root, so a normal account can follow it (install-docs-8)", () => {
+    const dev = read("docs/DEVELOPING.md");
+    const s3 = section(dev, "3. Install Node 22 and npm 11");
+    // Node's tarball is owned by uid 1001, and tar run as root keeps its owners unless told not to.
+    const tar = s3.split("\n").find(l => /\btar -?\w*x/.test(l) || /\btar --/.test(l)) ?? "";
+    expect(tar).toMatch(/^sudo mkdir -p \/opt\/node22 && sudo tar --no-same-owner -xJf node-v[\d.]+-linux-x64\.tar\.xz -C \/opt\/node22 --strip-components=1$/);
+    // sudo's secure_path leaves /opt/node22/bin out, so npm runs through env with Node's PATH.
+    const root = "sudo env PATH=/opt/node22/bin:$PATH npm install -g npm@11.6.2";
+    expect(s3).toContain(`\n${root}\n`);
+    // The RHEL 8 sections (§1–§9) never upgrade npm there as the user, which fails with EACCES.
+    const rhel = dev.slice(dev.indexOf("## 1. "), dev.indexOf("## 10. Windows"));
+    expect(rhel.replaceAll(root, "").match(/npm install -g npm@/g) ?? []).toEqual([]);
+    expect(section(dev, "9. Troubleshooting")).toContain(`\`${root}\``);
+    expect(read("CLAUDE.md")).toContain(`\`${root}\``);
+  });
+
+  it("lists every development switch, files nothing under Repository layout, and says CI tests one RPM (install-docs-12)", () => {
+    const dev = read("docs/DEVELOPING.md");
+    // Every devEnv("…") switch the app reads (CLAUDE.md: list new ones in docs/DEVELOPING.md).
+    const files = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true })
+      .flatMap(e => e.isDirectory() ? files(path.join(dir, e.name)) : /\.ts$/.test(e.name) ? [path.join(dir, e.name)] : []);
+    const names = new Set(files("app").flatMap(f => [...read(f).matchAll(/devEnv\("([A-Z0-9_]+)"\)/g)].map(m => m[1])));
+    expect(names.size).toBeGreaterThan(10);
+    for (const n of names) expect(dev, n).toMatch(new RegExp(`\\b${n}\\b`));
+    // Repository layout holds the layout and nothing else.
+    const layout = section(dev, "Repository layout");
+    expect(layout.split("\n").filter(l => /^#{2,} /.test(l) && !l.startsWith("## Repository layout"))).toEqual([]);
+    expect(layout).not.toMatch(/\*\*Hear me more clearly\*\*/);
+    // One RPM, which carries the speech models (ci.yml's lifecycle step tests it alone).
+    const s7 = flat(section(dev, "7. Packages"));
+    expect(read(".github/workflows/ci.yml")).toContain("# The one RPM installed the speech models too (nothing is downloaded for voice).");
+    expect(s7).not.toMatch(/speech models RPM|the RPMs\b|on both\b|removes both|rebuilds both/);
+    // models.ts's header gives the standard set's sizes as its pins add up.
+    const head = read("app/voice/models.ts").split("*/")[0];
+    const mb = (n: number) => Math.round(n / 1e6);
+    const listening = modelsBytes(VOICE_MODELS.filter(m => LISTENING_MODELS.includes(m.id)));
+    expect(head).toContain(`about ${mb(modelsBytes())} MB in all`);
+    expect(head).toContain(`about ${mb(listening)} MB`);
+    expect(head).toContain(`Ember's own voice (${mb(VOICE_MODELS.find(m => m.id === "tts")!.bytes)} MB)`);
+    expect(head).toContain(`Voice Match (${mb(VOICE_MODELS.find(m => m.id === "speaker")!.bytes)} MB)`);
+  });
+
+  it("gives CI's renderer journeys and el8 suites with every switch CI sets, here and in CLAUDE.md's gate (install-docs-v2)", () => {
+    const ci = read(".github/workflows/ci.yml");
+    // The checks job's renderer step (its env block) and the el8 job's desktop suites (its sudo line), in CI's order.
+    const rendererEnv = /- name: [^\n]*renderer journeys\n {8}env:\n((?: {10}EMBER_\w+: "1"\n)+)/.exec(ci)?.[1] ?? "";
+    const renderer = [...rendererEnv.matchAll(/(EMBER_\w+): "1"/g)].map(m => `${m[1]}=1`).join(" ");
+    const el8 = /sudo -u ci env "PATH=\$PATH" HOME=\/home\/ci ((?:EMBER_\w+=1 )+)\\\n\s+dbus-run-session/.exec(ci)?.[1].trim() ?? "";
+    expect(renderer).toContain("EMBER_SIGNOUT_FORGET_TEST=1");
+    expect(el8).toContain("EMBER_ATSPI_TEST=1");
+    const dev = read("docs/DEVELOPING.md");
+    for (const line of [renderer, el8]) expect(dev, line).toContain(`\`${line}\``);
+    const claude = read("CLAUDE.md");
+    const gate = /The full gate[^]*?```sh\n([^]*?)```/.exec(claude)?.[1] ?? "";
+    const journeys = gate.split("\n").find(l => l.includes("EMBER_CHROMIUM_PATH")) ?? "";
+    expect(journeys).toContain(`${renderer} EMBER_CHROMIUM_PATH=`);
+    // After the build it needs, before the lab build, as CI runs it.
+    const order = gate.split("\n").map(l => l.trim().split(/\s+#/)[0]);
+    expect(order.indexOf(journeys.trim().split(/\s+#/)[0])).toBe(order.indexOf("npm run build") + 1);
+    const desktop = claude.split("\n").find(l => l.startsWith("- Linux desktop suites")) ?? "";
+    expect(desktop).toContain(`\`${el8} dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- <files>\``);
+  });
+
+  it("gives the checks job's launcher pack check and the el8 job's footprint budget, on the listening the packages run, in CLAUDE.md, as CI runs them (install-docs-r4-3, reliability-performance-c5-1)", () => {
+    const ci = read(".github/workflows/ci.yml");
+    const claude = read("CLAUDE.md");
+    // The checks job packs the npm launcher, after the unit tests and before the sidecar's self-test.
+    expect(ci).toMatch(/working-directory: packages\/npm\n {8}run: npm pack --dry-run\n/);
+    const gate = /The full gate[^]*?```sh\n([^]*?)```/.exec(claude)?.[1] ?? "";
+    const order = gate.split("\n").map(l => l.trim().split(/\s+#/)[0]);
+    const pack = order.indexOf("(cd packages/npm && npm pack --dry-run)");
+    expect(pack).toBe(order.indexOf("npm test") + 1);
+    expect(order.indexOf("npm run test:sidecar")).toBe(pack + 1);
+    // el8's last step: the awake-rest budget, with every flag CI gives it.
+    const footprint = /node scripts\/perf\/footprint\.mjs [^\n]*--max-cpu \d+ --max-pss \d+/.exec(ci)?.[0] ?? "";
+    expect(footprint).toContain("--compositor");
+    // On the listening backend the Linux packages run (sherpa-onnx's C API), and WebAssembly's as a run of its own after it
+    // (reliability-performance-c5-1).
+    expect(footprint).toContain("--native");
+    const runs = [...ci.matchAll(/node scripts\/perf\/footprint\.mjs [^\n]*--max-cpu \d+ --max-pss \d+/g)].map(m => m[0]);
+    expect(runs).toHaveLength(2);
+    expect(runs[1]).toBe(runs[1].replace(" --native", ""));
+    expect(runs[1]).toContain("--compositor");
+    const line = claude.split("\n").find(l => l.includes("scripts/perf/footprint.mjs")) ?? "";
+    expect(line).toContain(`\`dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" ${footprint}\``);
+    expect(line).toContain("xcompmgr");
+  });
+
+  it("keeps the C API's and WebAssembly's measured figures in the --native bullet, not in the one after it (reliability-y6-2)", () => {
+    const dev = read("docs/DEVELOPING.md");
+    const rest = dev.slice(dev.indexOf("**What Ember costs at rest.**"), dev.indexOf("### Connecting Copilot"));
+    // Markdown carries a two-space-indented line on as part of the bullet above it.
+    const bullets = rest.split(/\n(?=- )/).map(b => flat(b).trim());
+    const figures = bullets.find(b => /the listening process took [^.]* on the C API against [^.]* on WebAssembly/.test(b)) ?? "";
+    expect(figures).toMatch(/^- A development build listens on WebAssembly\. `--native` listens on sherpa-onnx's C API/);
+    const gap = bullets.find(b => b.startsWith("- The voice process must listen from the sample's start to its end")) ?? "";
+    expect(gap).toMatch(/it used to leave the run waiting for ever\.$/);
+  });
+
   it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {
     const paths = [...WINDOWS_MIC_FIX.matchAll(/Settings › [^()]+?microphone/g)].map(m => m[0]);
     expect(paths.length).toBe(2);
@@ -148,7 +272,9 @@ describe("docs/DEVELOPING.md", () => {
   });
 
   it("says a failed task card goes on its own after about a minute, as the task list times it (review #147)", () => {
-    const ms = Number(/status === "failed" \|\| task\.view \? this\.d\.failureCardMs \?\? ([\d_]+)/.exec(read("app/main/agent/tasks.ts"))?.[1].replace(/_/g, ""));
+    const tasks = read("app/main/agent/tasks.ts");
+    expect(tasks).toContain('const kept = status === "failed" || task.endedBy === "expired" || !!task.view;');
+    const ms = Number(/const duration = kept \? this\.d\.failureCardMs \?\? ([\d_]+)/.exec(tasks)?.[1].replace(/_/g, ""));
     expect(ms).toBe(60_000);
     const asking = flat(section(read("docs/DEVELOPING.md"), "Asking Ember to do things"));
     expect(asking).not.toMatch(/a failed card stays until you close it/);
@@ -194,8 +320,60 @@ describe("docs/DEVELOPING.md", () => {
   });
 });
 
+describe("what the docs say about consent versions and memory, against the code (install-docs-v3, memory-15)", () => {
+  const living = ["CLAUDE.md", "README.md", "STATUS.md", ...fs.readdirSync(".claude/rules").map(f => `.claude/rules/${f}`),
+    ...["DEVELOPING.md", "MEMORY.md", "ASSISTANT.md", "COMMANDS-WSL-SSH.md", "DESIGN.md"].map(f => `docs/${f}`)];
+
+  it("states each consent version as consent.ts has it, or as the version that added something", () => {
+    const current: Record<string, number> = { CONSENT_VERSION, ...Object.fromEntries(Object.entries(FEATURE_CONSENT_VERSION).map(([k, v]) => [`FEATURE_CONSENT_VERSION.${k}`, v])) };
+    let stated = 0;
+    for (const file of living) {
+      const text = flat(read(file));
+      for (const m of text.matchAll(/`?(FEATURE_CONSENT_VERSION\.\w+|CONSENT_VERSION)`?(?: \(now| is| stays)? (\d+)\b/g)) {
+        // "added in `CONSENT_VERSION` 2", "since …": history, not what it is now.
+        if (/\b(added in|since|went to)\s*$/.test(text.slice(Math.max(0, m.index - 12), m.index))) continue;
+        stated++;
+        expect(Number(m[2]), `${file}: "${m[0]}"`).toBe(current[m[1]]);
+      }
+    }
+    expect(stated).toBeGreaterThan(0);
+  });
+
+  it("puts memory's note and list in Settings › Memory, the intro in first run's detour, and pauses memory with a provider", () => {
+    // The memory switch and its list are in the settings window's memory pane (index.html), headed Memory.
+    const pane = /<section[^>]*data-pane="memory"[^]*?<\/section>/.exec(homePage)?.[0] ?? "";
+    expect(pane).toContain('id="memory-on"');
+    expect(pane).toMatch(/<h2 [^>]*>Memory<\/h2>/);
+    const memory = flat(read("docs/MEMORY.md"));
+    expect(memory).not.toMatch(/Settings › Conversation, and so is the list/);
+    expect(memory).toContain("The note is in Settings › Memory, and so is the list");
+    for (const f of ["app/main/memory/service.ts", "app/renderer/home/copy.ts"]) expect(read(f), f).not.toMatch(/Settings › Conversation's list|shown before it is first turned on \(Settings › Conversation/);
+    // "Tell Ember about you" is a detour from the welcome's Try me out step (welcome-copy.ts), not a numbered step.
+    expect(WELCOME_STEPS).not.toContain("about");
+    expect(memory).not.toMatch(/step 7 of 8/);
+    expect(memory).toContain(`first run's **${STEP_TEXT.try.title}** step`);
+    // With the user's own provider no GitHub account is verified (host.ts looks the account up only without one), so
+    // saved memory pauses (owner.ts: no account, no memory in force).
+    expect(read("app/main/agent/host.ts")).toContain("const lookUp = async () => !provider && token && login ?");
+    expect(read("app/main/memory/owner.ts")).toMatch(/if \(!this\.account\) \{\n\s+if \(this\.hasData\(\)\) this\.status = "locked";/);
+    const own = flat(section(read("docs/DEVELOPING.md"), "Your own model provider (\"bring your own key\")"));
+    expect(own).not.toMatch(/\(memory stays\)/);
+    expect(own).toContain("saved memory is kept but paused");
+    // The owner decision STATUS.md listed as open is made: every release attaches the voice's GPL sources.
+    expect(read("scripts/package/gpl-source.mjs")).toMatch(/file: "source-espeak-ng-[0-9a-f]+\.zip"/);
+    expect(read("STATUS.md")).not.toMatch(/Owner decision: whether releases should attach eSpeak NG source archives/);
+  });
+});
+
 describe("docs/COMMANDS-WSL-SSH.md", () => {
   const doc = read("docs/COMMANDS-WSL-SSH.md");
+
+  it("lists printf's escapes that Ember can't see as escapes, never a plain full stop (commands-y6-5)", () => {
+    const listed = /other than a line break, a tab and `\\0`\s*\(([^)]*)\)/.exec(flat(doc))?.[1] ?? "";
+    expect([...listed.matchAll(/`([^`]*)`/g)].map(m => m[1])).toEqual(["\\056", "\\x2e", "\\u002e"]);
+    // The classifier's own note lists them the same way.
+    expect(read("app/main/commands/classify.ts")).toContain("(`\\056`, `\\0056`, `\\x2e`, `\\u002e`, `\\e`, `\\\\`)");
+  });
 
   it("says a Wayland remote is commands only while packaged builds never use its desktop", () => {
     // app/remote/main.ts: a packaged agent never reads a Wayland desktop (only a development run with the test switch).
@@ -262,6 +440,201 @@ describe("README.md", () => {
     const files = [`ember-${version}-1.el8.x86_64.rpm`, `Ember-${version}-x86_64.AppImage`, ...artifactNames(layoutFor("win32", "x64"), version), artifactNames(layoutFor("darwin", "arm64"), version)[1]];
     for (const f of files) expect(readme).toContain(f);
     for (const os of ["Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)", "Install on Windows", "Install on macOS"]) expect(flat(section(readme, os)), os).toMatch(/Releases page/);
+  });
+
+  it("sends readers to the published release's own README while this version isn't out, naming what it changes (install-docs-1)", () => {
+    const download = flat(section(readme, "Download"));
+    // The release the Download section links to by tag: an earlier one while this version isn't published yet.
+    const published = /\/releases\/tag\/v(\d+\.\d+\.\d+)\)/.exec(download)?.[1] ?? version;
+    if (published === version) return;
+    // Its own README has its own steps and file names; this one's don't fit it.
+    expect(download).toContain(`(https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/blob/v${published}/README.md)`);
+    expect(download).not.toMatch(/use that release's version/);
+    // The RPM that takes over the separate speech models RPM (the spec obsoletes it): an earlier release still has it.
+    expect(read("packaging/rpm/ember.spec")).toMatch(/^Obsoletes:\s+ember-voice-models\b/m);
+    expect(download).toContain("`ember-voice-models`");
+    // DEVELOPING.md §15 says to change that line when the release is published.
+    expect(flat(section(read("docs/DEVELOPING.md"), "15. Publishing a release"))).toContain("the README's **Download** line");
+  });
+
+  it("says the npm launcher isn't on npm until this version is published, and what to use meanwhile (install-docs-2)", () => {
+    const published = /\/releases\/tag\/v(\d+\.\d+\.\d+)\)/.exec(flat(section(readme, "Download")))?.[1] ?? version;
+    // packages/npm, which npm.yml publishes after a release's ci run, is new since the published release (it has no
+    // launcher), so `npm i -g ember-copilot` answers 404 until this version's release is out.
+    if (published === version) return;
+    const npm = flat(section(readme, "From npm (beta)"));
+    expect(npm).toContain(`\`ember-copilot\` isn't on npm until ${version} is published`);
+    expect(npm).toMatch(/install from the \[Releases page\]/);
+    // Its own README (npm's page for it) says which version it starts from, and what it says when a release is missing.
+    const own = flat(read("packages/npm/README.md"));
+    expect(own).toContain(`published from Ember ${version} on`);
+    expect(own).toContain("isn't on GitHub Releases yet");
+  });
+
+  it("says the AppImage carries the speech models as CI builds it, what it needs to start, and how to update it (install-docs-5)", () => {
+    // ci.yml builds the release's AppImage with the models inside, and appimage.sh puts them in when they were staged.
+    expect(read(".github/workflows/ci.yml")).toMatch(/name: Build the AppImage \(its speech models inside\)/);
+    expect(read("scripts/package/appimage.sh")).toMatch(/cp -a "\$stage\/voice-models" "\$app\/ember\/resources\/voice-models"/);
+    const linux = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"));
+    expect(linux).not.toMatch(/The AppImage downloads the speech models/);
+    expect(linux).not.toMatch(/the models RPM needs Ember's RPM/);
+    expect(linux).toContain("The AppImage carries the speech models too");
+    // The type2 runtime it is built with mounts itself with fusermount (it has no libfuse2 of its own).
+    expect(read("scripts/package/appimage.sh")).toMatch(/RUNTIME_URL=https:\/\/github\.com\/AppImage\/type2-runtime\//);
+    expect(linux).toContain("needs `fusermount` to start (`sudo dnf install fuse`");
+    expect(linux).toContain("`APPIMAGE_EXTRACT_AND_RUN=1 ./Ember-");
+    const npm = flat(read("packages/npm/README.md"));
+    expect(npm).toContain("`fusermount`");
+    expect(npm).not.toMatch(/libfuse2/);
+    // Updating: Ember points its login entry at the AppImage it runs from each time it starts with the switch on
+    // (loginItemFollower in autostart.ts), so starting the new one once is enough.
+    expect(read("app/main/autostart.ts")).toMatch(/const appImage = runningAppImage\(env, o\.execPath\);\n {2}if \(appImage\) return \[appImage\];/);
+    expect(linux).toMatch(/To update the AppImage, quit Ember[^.]*\. Start the new one once: Ember then points \*\*Start Ember when I log in\*\* at it/);
+  });
+
+  it("lists each optional download an offline computer goes without, with its size and host, and Linux's models folder (install-docs-6)", () => {
+    const offline = flat(section(readme, "Computers without internet access"));
+    expect(offline).not.toMatch(/The one thing it fetches from a third party/);
+    // Each optional model, as Settings names it, at the size Settings shows (whole MB) and from its pinned URL's host.
+    const extras = [
+      { name: "**Hear me more clearly**", bytes: CLEAR_SPEECH.bytes, url: CLEAR_SPEECH.url },
+      { name: "the Kokoro voice", bytes: NATURAL_VOICE.bytes, url: NATURAL_VOICE.url },
+      { name: "the Supertonic voice", bytes: SUPERTONIC_VOICE.bytes, url: SUPERTONIC_VOICE.url },
+      { name: "Better recall", bytes: MEMORY_MODEL_BYTES, url: MEMORY_MODEL[0].url },
+    ];
+    for (const x of extras) {
+      expect(offline, x.name).toMatch(new RegExp(`${x.name.replace(/\*/g, "\\*")} \\(${Math.round(x.bytes / 1e6)} MB[^)]*\\)`));
+      expect(offline, x.name).toContain(`\`${new URL(x.url).host}\``);
+    }
+    // GitHub hands its release files over from another host, which an allow-list needs too.
+    expect(offline).toContain("`release-assets.githubusercontent.com`");
+    // Where IT puts the models zip on Linux, as the setup check's advice says (doctor.ts) and Linux looks (system.ts).
+    expect(read("app/main/platform/linux/system.ts")).toContain('bundledModelDirs: resourcesPath => ["/usr/share/ember/voice-models"');
+    expect(offline).toContain("`/usr/share/ember/voice-models` (Linux,");
+    // The intro and the developer guide's voice section name Supertonic and Hear me more clearly too.
+    const intro = flat(readme.slice(0, readme.indexOf("## Download")));
+    for (const w of ["Supertonic", "**Hear me more clearly**"]) expect(intro, w).toContain(w);
+    const speech = flat(section(read("docs/DEVELOPING.md"), "How speech runs (native synthesis, native or WebAssembly listening)"));
+    expect(speech).toContain("Supertonic 3");
+    expect(speech).toContain("**Hear me more clearly** (`voice.clearHearing`, Settings › Voice)");
+  });
+
+  it("offers the Kokoro and Supertonic voices only on Windows and macOS, where Ember has them, never to RHEL (install-docs-r2)", () => {
+    // Linux runs speech on sherpa-onnx's C API, whose only neural voice is Kitten (main.ts asks naturalVoiceChoices).
+    expect(read("app/main/platform/linux/system.ts")).toMatch(/\n {6}naturalVoice: false,\n/);
+    expect(naturalVoiceChoices(false, true)).toEqual(["kitten"]);
+    expect(naturalVoiceChoices(true, false)).toEqual(["kitten", "kokoro", "supertonic"]);
+    const intro = flat(readme.slice(0, readme.indexOf("## What you need")));
+    expect(intro).toContain("the Kokoro and Supertonic voices are explicit optional downloads on Windows and macOS");
+    const linux = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"));
+    expect(linux).not.toMatch(/Kokoro remains/);
+    expect(linux).toContain("Kitten is Ember's neural voice on RHEL: the optional Kokoro and Supertonic voices are Windows and macOS only");
+    const offline = flat(section(readme, "Computers without internet access"));
+    for (const voice of ["Kokoro", "Supertonic"]) expect(offline, voice).toMatch(new RegExp(`the ${voice} voice \\(\\d+ MB, Windows and macOS\\)`));
+    // The developer guide's speech table and its paragraph on Kokoro.
+    const speech = section(read("docs/DEVELOPING.md"), "How speech runs (native synthesis, native or WebAssembly listening)");
+    const replies = /^\| Spoken replies \| ([^|]+) \| ([^|]+) \|$/m.exec(speech);
+    expect(replies?.[1].trim()).toBe("Default Kitten or the installed local system voice");
+    expect(replies?.[2]).toMatch(/optional Kokoro or Supertonic 3/);
+    expect(flat(speech)).toContain("Kokoro v1.0 FP32 (`af_heart`, Apache-2.0, about 350 MB) is an explicit optional download in Voice settings on Windows and macOS");
+    // The spec's own notes: the models RPM went with 0.1.1, and the size it installs.
+    const spec = read("packaging/rpm/ember.spec");
+    expect(spec).not.toMatch(/before 0\.2\b|142 MB/);
+    // 0.1.0 shipped the separate ember-voice-models RPM, which the spec now obsoletes.
+    expect(spec).toContain("before 0.1.1 they were a");
+    expect(flat(spec)).toContain(`(about ${Math.round(modelsBytes() / 1e6)} MB downloaded`);
+  });
+
+  it("says what you need before the downloads, and what happens at first start after the installs (install-docs-7)", () => {
+    const headings = readme.split("\n").filter(l => /^## /.test(l));
+    const at = (h: string) => headings.indexOf(h);
+    expect(at("## What you need")).toBeGreaterThan(-1);
+    expect(at("## What you need")).toBeLessThan(at("## Download"));
+    const need = flat(section(readme, "What you need"));
+    for (const w of ["**GitHub account with Copilot**", "**Copilot CLI**", "your own model provider", "**GNOME on Xorg**", "MB of memory", "GB of disk"]) expect(need, w).toContain(w);
+    // First steps come after every install section, and follow the first window's steps in its own words.
+    expect(at("## First steps")).toBeGreaterThan(at("## Install on macOS"));
+    const first = flat(section(readme, "First steps"));
+    expect(first).toContain(`${WELCOME_STEPS.length} steps`);
+    for (const step of ["consent", "sign-in", "checks", "try"] as const) expect(first, step).toContain(`**${STEP_TEXT[step].title}**`);
+    // The keys a first-time person needs, every OS's: Ember holds only its own OS's, so Linux's alone is wrong on the
+    // others (install-docs-7).
+    for (const os of ["linux", "win32", "darwin"] as const) for (const id of ["ask", "stop", "settings"] as const) expect(first, `${os} ${id}`).toContain(SHORTCUTS[os][id].label);
+    expect(first).toContain("`ember doctor`");
+  });
+
+  it("says how to start the AppImage, which adds nothing to the apps menu, and how to reach settings from it (install-docs-r3)", () => {
+    // Only the RPM installs a desktop entry: the AppImage's is inside the image, and Ember writes none of its own.
+    expect(read("packaging/rpm/ember.spec")).toContain("%{_datadir}/applications/ember.desktop");
+    expect(read("scripts/package/appimage.sh")).toMatch(/cp "\$root\/packaging\/ember\.desktop" "\$app\/ember\.desktop"/);
+    const linux = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"));
+    expect(linux).toContain(`Start Ember with \`./Ember-${version}-x86_64.AppImage\``);
+    expect(linux).toContain("It adds no entry to your apps menu, so run the file again to start Ember again or to open its settings while it runs");
+    // First steps and the keyboard routes name it beside the apps menu, and the npm launcher's `ember`.
+    expect(flat(section(readme, "First steps"))).toContain("the AppImage by running the file, and the npm launcher with `ember`");
+    expect(flat(section(readme, "Shortcuts"))).toMatch(/start Ember again \(from your apps, the AppImage, `ember`, the Start menu or Applications\)/);
+    expect(flat(section(readme, "Shortcuts"))).toContain("right-click Ember in the dash or the app grid (Linux, with the RPM)");
+    expect(flat(section(readme, "Accessibility"))).toContain("or start Ember again from your apps, the AppImage, `ember`, the Start menu or Applications");
+  });
+
+  it("says where Ember's log is for a report, and points to the troubleshooting tables, which match the windows (install-docs-c1-2)", () => {
+    const report = flat(section(readme, "Report a problem"));
+    // About this build's facts (home/main.ts): the log file, with Copy and the file manager's Show in ….
+    const home = read("app/renderer/home/main.ts");
+    expect(home).toContain('["Log file", status.logFile, "log"]');
+    expect(report).toContain("**About this build** also shows Ember's **Log file** (`ember.log`), with **Copy** and **Show in Files**");
+    // Each OS's troubleshooting section, by the anchor GitHub gives its heading.
+    const dev = read("docs/DEVELOPING.md");
+    const anchors = new Set(dev.split("\n").filter(l => /^#{2,3} /.test(l)).map(l => l.replace(/^#+ /, "").toLowerCase().replace(/[^\w\- ]/g, "").replace(/ /g, "-")));
+    const links = [...report.matchAll(/\(docs\/DEVELOPING\.md#([\w-]+)\)/g)].map(m => m[1]);
+    expect(links).toEqual(["9-troubleshooting", "109-troubleshooting", "118-troubleshooting"]);
+    for (const a of links) expect([...anchors], a).toContain(a);
+    // The Develop list says the developer guide has them.
+    expect(flat(section(readme, "Develop"))).toMatch(/troubleshooting/i);
+    // §9's wake-word row: the words Settings and the handle show while listening, and the models the packages carry.
+    const row = section(dev, "9. Troubleshooting").split("\n").find(l => l.startsWith("| Ember doesn't react to “Hey Ember”")) ?? "";
+    expect(row).toContain(`the state must say “${micBadge("waiting")?.label}”`);
+    expect(row).not.toMatch(/the models must be downloaded/);
+    // §5: a first `npm run dev` opens first run, whose checking step is the setup check.
+    const run = flat(section(dev, "5. Run it"));
+    expect(run).not.toMatch(/opens with a \*\*Setup check\*\*/);
+    expect(run).toContain(`opens first run (“${STEP_TEXT.hello.title}”)`);
+    expect(run).toContain(`**${STEP_TEXT.checks.title}**`);
+  });
+
+  it("dates the pickup list no earlier than the product audit, and points to where the audit's rounds are recorded (install-docs-r2-4)", () => {
+    const status = flat(read("STATUS.md"));
+    const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const m = /^# Ember status Updated (\d{1,2}) (\w+) (\d{4})\./.exec(status);
+    expect(m).not.toBeNull();
+    const updated = Date.UTC(Number(m![3]), months.indexOf(m![2]), Number(m![1]));
+    // PLAN.md §10 records each round under "Product audit fixes…"; STATUS.md is no older than the first of them.
+    const rounds = [...read("PLAN.md").matchAll(/^### Product audit fixes[^\n(]*\((\d{4})-(\d{2})-(\d{2})\)$/gm)].map(r => Date.UTC(Number(r[1]), Number(r[2]) - 1, Number(r[3])));
+    expect(rounds.length).toBeGreaterThan(0);
+    expect(updated).toBeGreaterThanOrEqual(Math.min(...rounds));
+    expect(status).toContain("PLAN.md §10's **Product audit fixes** entries");
+    expect(status).toContain("each ends with what it left");
+  });
+
+  it("says `npm run package` makes the RPM and the AppImage, as the spec builds one RPM (install-docs-c1-2)", () => {
+    // The spec has no subpackage: the speech models moved into Ember's own RPM in 0.1.1.
+    expect(read("packaging/rpm/ember.spec")).not.toMatch(/^%package\b/m);
+    const claude = flat(read("CLAUDE.md"));
+    expect(claude).toContain("`npm run package` (the RPM and AppImage, on EL8 or in `rockylinux:8`)");
+    for (const doc of ["CLAUDE.md", ".claude/rules/packaging-and-ci.md", "packages/npm/README.md"]) expect(flat(read(doc)), doc).not.toMatch(/\bRPMs\b/);
+  });
+
+  it("names only sections and steps Ember's windows have, never the old Copilot section (first-run-v3)", () => {
+    const page = read("app/renderer/home/index.html").replace(/&amp;/g, "&");
+    const headings = new Set([...page.matchAll(/<h[23][^>]*>([^<]+)<\/h[23]>/g)].map(m => m[1].trim()));
+    // Ember's own settings, as the README writes them: Settings › **Section › Subsection**, or "open **Section**".
+    const refs = [...readme.matchAll(/Settings › \*\*([^*]+)\*\*/g)].flatMap(m => m[1].split(" › "));
+    refs.push(...[...readme.matchAll(/\bopen \*\*([^*]+)\*\*/g)].map(m => m[1]));
+    expect(refs.length).toBeGreaterThan(4);
+    for (const r of refs) expect([...headings], r).toContain(r);
+    expect(readme).not.toMatch(/in its Copilot section|open \*\*Copilot\*\*/);
+    // First run's steps and buttons, as its words name them.
+    for (const words of ["**Sign in to GitHub** step", "**Use my own provider** on the **Sign in to GitHub** step", "**Agree and check the models**"]) expect(flat(readme)).toContain(words);
   });
 
   it("says how to remove Ember on every OS, with the folders it leaves behind", () => {
@@ -720,7 +1093,7 @@ describe("round 2's docs lines (typeahead2)", () => {
     expect(ask).toContain("return !holds && opened < WAIT_TIP_OPENINGS;");
     expect(read("app/renderer/ask/field.ts")).toContain('export const WAIT_TIP = "Wait for this box before you type: letters typed sooner go to the app underneath.";');
     expect(read("app/main/ask-open.ts")).toMatch(/o\.show\(\);\n {2}o\.read\(active, /);
-    expect(read("app/renderer/ask/main.ts")).toContain("window.emberAsk.onHidden(() => input.select());");
+    expect(read("app/renderer/ask/main.ts")).toContain("window.emberAsk.onHidden(() => { input.select(); dropNews(); });");
     const main = read("app/main/main.ts");
     expect(main).toContain('log.info("ask.keyboard", { ms: Date.now() - askAsked })');
     expect(main).toContain('log.info("ask.open", { source, ms: Date.now() - asked });');
@@ -824,6 +1197,37 @@ describe("CHANGELOG.md", () => {
     // Voice's restart (voice.ts's RESTART_MS), in those words.
     expect(read("app/main/voice.ts")).toMatch(/const RESTART_MS = \[1000, 5000, 30_000\];/);
     expect(flat(changelog)).toContain("Voice starts again by itself when it stops answering or its speech recognition keeps failing (after 1, 5, then 30 seconds).");
+  });
+
+  it("names for administrators every policy key the published Ember doesn't know, which locks it down (install-docs-v1)", () => {
+    // Every key of the newest published release's policy, at every level, frozen from its admin.ts (`git show
+    // v0.1.0:app/main/admin.ts`). The schema is strict throughout, so that Ember reads a policy with any other key as
+    // broken and locks down: the notes the release publishes (release.mjs) must name each one under "For administrators"
+    // and tell them to update Ember first. Once this version is published, freeze its keys here instead.
+    const published = {
+      version: "0.1.0",
+      keys: [
+        "features.voice", "features.speak", "features.actions", "features.cursor", "features.desk", "features.screenImages",
+        "features.wsl", "features.ssh", "neverLook", "confirmEveryAction", "allowGrants", "maxActionsPerMinute",
+        "models.allowed", "models.conductor", "models.worker", "provider.type", "provider.baseUrl", "provider.apiKeyFile",
+        "provider.wireApi", "provider.azure.apiVersion", "auditRetentionDays", "commands.local", "commands.wsl",
+        "commands.ssh", "ssh.allowedHosts", "ssh.desktop", "ssh.requireConsoleConsent", "ssh.runtimeMirror",
+        "ssh.commandGraceSeconds",
+      ],
+    };
+    const keys = policyKeys(AdminPolicySchema);
+    expect(keys).toEqual(expect.arrayContaining(published.keys));
+    const newer = keys.filter(k => !published.keys.includes(k));
+    const admins = flat(section(releaseNotes(changelog, version, { repo: "o/r", ref: `v${version}` }), "For administrators"));
+    expect(newer.filter(k => !admins.includes(`\`${k}\``)), `named in ${version}'s notes for administrators`).toEqual([]);
+    if (newer.length) expect(admins).toContain(`Ember ${published.version} doesn't know them: it reads a policy with one as broken and locks down`);
+  });
+
+  it("keeps the published 0.1.0's notes word for word (install-docs-4)", () => {
+    // `git show v0.1.0:CHANGELOG.md` from its heading on: a release's notes stay what it was published with, and what a
+    // later version changes goes in that version's own section.
+    const published = section(changelog, "0.1.0 (2026-10-31)").replace(/\r\n/g, "\n").trimEnd();
+    expect(createHash("sha256").update(published).digest("hex")).toBe("5277a56b459959d94a200f51f02477aebc9d9d65358c1d3fcc875b275442e4c6");
   });
 
   it("names the same best-effort computers as the README", () => {

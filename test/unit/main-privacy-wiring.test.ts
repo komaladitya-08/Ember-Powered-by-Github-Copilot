@@ -39,6 +39,8 @@ describe("main.ts's privacy wiring (critique integration-1)", () => {
     expect(MAIN).toContain("isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),");
     expect(MAIN).toContain("keys: sys.keys, os: platform.os, isSecurityWindow: privacy.isSecurityWindow,");
     expect(MAIN).toContain("words: sys.words, isSecurityWindow: privacy.isSecurityWindow,");
+    // Perception is given the platform's prompt-window check (Linux's pinentry, ssh-askpass, polkit agents; safety-privacy-3).
+    expect(MAIN).toContain("words: sys.words, isSecurityWindow: privacy.isSecurityWindow, isPromptWindow: sys.privacy.isPromptWindow,");
     // Today's direct wiring is gone: nothing judges a window around the union.
     expect(MAIN).not.toContain("isTerminalApp: name => isTerminalWindowApp(");
     expect(MAIN).not.toMatch(/isSecurityWindow: sys\.privacy\.isSecurityWindow,? (?!isTerminalApp)/);
@@ -151,7 +153,8 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
   });
 
   it("opens settings from the keyboard at Ask Ember… while another app holds the ask shortcut and its fallback (review #45, D-45b)", () => {
-    expect(MAIN).toContain("const showHomeFromKeys = () => { showHome(); const at = keyboardRoute(shortcutsTaken ?? [], sc, fb); if (at) sendToHome(IPC.focusSection, at); };");
+    // While the bubble says Ember is still waiting, at Stop response instead (accessibility-visual-2).
+    expect(MAIN).toContain('const showHomeFromKeys = () => { showHome(); const at = keysLanding(agent?.conversationTurn ?? "idle", keyboardRoute(shortcutsTaken ?? [], sc, fb)); if (at) sendToHome(IPC.focusSection, at); };');
     // Ember started again, the Dock, and the settings shortcut; not the handle menu's Settings… (a pointer's way).
     expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings"; if (view === "ask") openAsk({ source: "launcher" }); else showHomeFromKeys(); });');
     expect(MAIN).toContain('app.on("activate", () => showHomeFromKeys());');

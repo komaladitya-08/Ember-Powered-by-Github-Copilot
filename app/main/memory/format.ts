@@ -18,10 +18,14 @@ const FROM: Record<Source, string> = {
 
 const day = (iso: string) => iso.slice(0, 10);
 
-/** One line for a fact: `- [f…] (you told me, 2026-10-03) Prefers dark mode.` (closed facts say until when). */
+/**
+ * One line for a fact: `- [f…] (you told me, 2026-10-03) Prefers dark mode.` (closed facts say until when). Ember's
+ * own notes say so ("Ember's own summary", "Ember's own guess"), never "from our conversation" (memory-3).
+ */
 export function factLine(f: Fact): string {
   const until = f.invalidAt ? `, no longer true since ${day(f.invalidAt)}` : "";
-  return `- [${f.id}] (${FROM[f.source]}, ${day(f.validAt)}${until}) ${f.text.replace(/</g, "‹")}`;
+  const from = f.predicate === "summary" ? "Ember's own summary" : f.predicate === "reflection" ? "Ember's own guess" : FROM[f.source];
+  return `- [${f.id}] (${from}, ${day(f.validAt)}${until}) ${f.text.replace(/</g, "‹")}`;
 }
 
 /** The `<memory>` element for these facts, or "" for none. */

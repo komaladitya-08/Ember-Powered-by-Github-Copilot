@@ -2090,6 +2090,38 @@ class Windows(unittest.TestCase):
         finally:
             e.SHELL_ACTORS, e.SHELL_BUDGET_S = saved
 
+    def test_a_desktop_that_cant_be_listed_is_incomplete(self):
+        # The registry errored: GNOME Shell's prompts can't be ruled out, so the answer says so (fail closed,
+        # safety-privacy-r1).
+        class Broken(object):
+            @property
+            def childCount(self):
+                raise RuntimeError("The AT-SPI registry is not available")
+        FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: Broken())
+        self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": False})
+        # libatspi's answer when the registry's call timed out.
+        FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: types.SimpleNamespace(childCount=-1))
+        self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": False})
+
+    def test_an_app_the_desktop_cant_give_is_incomplete(self):
+        # The registry lists an app it can't then hand over: it may be the shell, so its prompts can't be ruled out
+        # (fail closed, safety-privacy-3).
+        desktop = self.desktop
+        listed = len(desktop.kids)
+
+        class OneLost(object):
+            childCount = listed + 1
+
+            def getChildAtIndex(self, i):
+                if i == listed:
+                    raise RuntimeError("The application no longer exists")
+                return desktop.kids[i]
+        FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: OneLost())
+        self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": False})
+        # Every app handed over, none of them the shell: nothing to look through.
+        FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: desktop)
+        self.assertEqual(e.shell_overlays({}), {"overlays": [], "complete": True})
+
     def test_shell_overview_and_switcher(self):
         stage = Acc("window", "", states=("showing", "visible", "focused"),
                     kids=[Acc("panel", "overviewGroup", states=("visible",)), Acc("panel", "Top bar")])
@@ -2996,11 +3028,76 @@ class Protocol(unittest.TestCase):
     def test_without_pyatspi(self):
         saved = e.pyatspi
         e.pyatspi = None
+        sys.modules["pyatspi"] = None  # not installed: importing it fails
         try:
             self.assertIn("result", e.handle('{"id": 1, "method": "ping"}'))
             self.assertIn("pyatspi is not installed", e.handle('{"id": 2, "method": "list_windows"}')["error"]["message"])
         finally:
+            sys.modules["pyatspi"] = FAKE
             e.pyatspi = saved
+
+    def test_uses_pyatspi_installed_after_it_started(self):
+        """The setup check's fix, installing python3-pyatspi, works without restarting Ember, and is looked for at most
+        every LOAD_AGAIN_S (reliability-performance-c2-1)."""
+        saved = (e.pyatspi, e.Atspi, e.configure_atspi, e.LOAD_TRIED["at"])
+        configured = []
+        e.configure_atspi = lambda: configured.append(1) or True
+        e.METHODS["echo"] = lambda p: p
+        e.pyatspi = None
+        e.LOAD_TRIED["at"] = None
+        sys.modules["pyatspi"] = None  # not installed: importing it fails
+        try:
+            echo = '{"id": 1, "method": "echo", "params": {"a": 1}}'
+            self.assertIn("pyatspi is not installed", e.handle(echo)["error"]["message"])
+            sys.modules["pyatspi"] = FAKE  # installed now
+            # Not looked for again straight away: a request a moment later still says it is missing.
+            self.assertIn("pyatspi is not installed", e.handle(echo)["error"]["message"])
+            e.LOAD_TRIED["at"] -= e.LOAD_AGAIN_S + 1
+            self.assertEqual(e.handle(echo)["result"], {"a": 1})
+            self.assertIs(e.pyatspi, FAKE)
+            self.assertEqual(configured, [1])
+        finally:
+            sys.modules["pyatspi"] = FAKE
+            del e.METHODS["echo"]
+            e.pyatspi, e.Atspi, e.configure_atspi, e.LOAD_TRIED["at"] = saved
+
+    def test_pyatspi_installed_after_it_started_acts_on_links(self):
+        """Bindings installed while Ember runs also bring Gio and GLib, so a click or typed text after the late install
+        goes on a link, never on Ember's own connection, which hangs a GTK app in a modal dialog
+        (reliability-performance-r3-1)."""
+        names = ("gi", "gi.repository")
+        saved = (e.pyatspi, e.Atspi, e.Gio, e.GLib, e.configure_atspi, e.LOAD_TRIED["at"])
+        saved_modules = dict((n, sys.modules.get(n)) for n in names)
+        gi = types.ModuleType("gi")
+        repository = types.ModuleType("gi.repository")
+        repository.Atspi = types.ModuleType("Atspi")
+        repository.Gio = types.ModuleType("Gio")
+        repository.GLib = types.ModuleType("GLib")
+        gi.repository = repository
+        e.configure_atspi = lambda: True
+        e.pyatspi = e.Atspi = e.Gio = e.GLib = None  # as at a start without the bindings
+        e.LOAD_TRIED["at"] = None
+        sys.modules["pyatspi"] = None
+        for n in names:
+            sys.modules[n] = None
+        try:
+            self.assertFalse(e.load_atspi_again())
+            self.assertIsNone(e.open_link(object()))
+            sys.modules["pyatspi"] = FAKE  # installed now, with libatspi's own bindings
+            sys.modules["gi"], sys.modules["gi.repository"] = gi, repository
+            e.LOAD_TRIED["at"] -= e.LOAD_AGAIN_S + 1
+            self.assertTrue(e.load_atspi_again())
+            self.assertIs(e.Atspi, repository.Atspi)
+            self.assertIs(e.Gio, repository.Gio)
+            self.assertIs(e.GLib, repository.GLib)
+        finally:
+            sys.modules["pyatspi"] = FAKE
+            for n in names:
+                if saved_modules[n] is None:
+                    sys.modules.pop(n, None)
+                else:
+                    sys.modules[n] = saved_modules[n]
+            e.pyatspi, e.Atspi, e.Gio, e.GLib, e.configure_atspi, e.LOAD_TRIED["at"] = saved
 
 
 class Links(unittest.TestCase):

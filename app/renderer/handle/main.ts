@@ -1,13 +1,13 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
-import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
-import { AUTONOMOUS_TAG, RISKY_TAG, WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
+import { Rig, FACTORIES, frameSeconds, restingGap, type Character, type Emotion } from "@ember/characters";
+import { AUTONOMOUS_TAG, RISKY_TAG, WHOLE_READ_HINT, announcement, onPress, plainStream, stepParts, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
 import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type WholeText } from "../../shared/overlay";
 import { cardAutonomous, cardRisky, cardTask, cardText } from "./card";
-import { cardClear, cardNeed, linesKept, type CardMeasure, type CardRow } from "./fit";
+import { cardClear, cardNeed, linesKept, waitsForRoom, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
-import { STATE_WORD, cardLines } from "../overlay/stack";
+import { cardLines, cardStateWord } from "../overlay/stack";
 import type { Settings } from "../../main/settings";
 import { micBadge } from "../../shared/mic";
 import { presenceOf } from "../../shared/presence";
@@ -98,7 +98,7 @@ function announce(b: BubbleState, status: string | null, micNews: string | null)
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
-    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}), ...(b.risky ? { risky: true } : {}) };
+    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}), ...(b.risky ? { risky: true } : {}), ...(b.stalled ? { stalled: true } : {}) };
     const text = announcement(view, name);
     // The same question, its whole text now all shown: only that news, not the question and its text again.
     if (text && text !== announced) { parts.push(wholeReadNews(announcedView, view) ?? text); announced = text; announcedView = view; }
@@ -123,13 +123,19 @@ function showWhole(next: WholeText | null): void {
   // Seen here and main doesn't say so yet (just now, or a word that was lost): told (again).
   if (wholeUnreported(whole, next)) api.bubbleAction(wholeSeenAction(whole.n));
 }
-/** The read hint, and Allow taking no press, while the whole text hasn't all been in view. */
+/**
+ * The read hint, and Allow taking no press, while the whole text hasn't all been in view, or while the question's
+ * sentence doesn't show beside it on the card (a layout read; accessibility-visual-1: Allow stayed live under
+ * "Type “Dear team, the" at Larger text).
+ */
 function paintWhole(): void {
   const unread = !!whole && !whole.seen;
   wholeHintEl.hidden = !unread;
   wholeHintEl.textContent = unread ? WHOLE_READ_HINT : "";
+  const cramped = fallback && document.body.classList.contains("asking") && !wordsClear();
   for (const el of $("actions").querySelectorAll<HTMLElement>("button")) {
-    if (unread && el.dataset.whole === "wait") el.setAttribute("aria-disabled", "true"); else el.removeAttribute("aria-disabled");
+    if ((unread && el.dataset.whole === "wait") || (cramped && el.dataset.room === "wait")) el.setAttribute("aria-disabled", "true");
+    else el.removeAttribute("aria-disabled");
   }
 }
 /** A length in a computed style, in CSS px (0 for none or auto). */
@@ -164,8 +170,31 @@ function judgeWhole(): void {
   api.bubbleAction(wholeSeenAction(view.n));
 }
 wholeEl.addEventListener("scroll", judgeWhole, { passive: true });
-window.addEventListener("resize", judgeWhole);
+// Fitted by main (or squeezed by a short work area): the question's sentence may show whole now, or no longer.
+window.addEventListener("resize", () => { paintWhole(); judgeWhole(); });
 document.fonts.addEventListener("loadingdone", judgeWhole);
+
+// ── An answer opened in full ("Read all") on the card: main told once its last line has been in view (all of it, or
+// its text scrolled to its end), as the overlay's bubble tells it (endShown), so the Ask box offers what answers those
+// words (companion-repairs-x6-3: without a compositor it never offered "Yes, please" after Read all) ──
+/** The words of the answer opened in full on the card (null: none), and whether main was told its end showed. */
+let opened: { words: string; told: boolean } | null = null;
+/** Measured (a layout read) until it is told: on the shown card, with room for its words, at its end. */
+function judgeAnswerEnd(): void {
+  if (!opened || opened.told) return;
+  const r = thoughtEl.getBoundingClientRect();
+  const shown = fallback && document.visibilityState === "visible" && wordsClear();
+  if (!wholeInView(
+    { scrollTop: thoughtEl.scrollTop, scrollHeight: thoughtEl.scrollHeight, clientHeight: thoughtEl.clientHeight, top: r.top, bottom: r.bottom, viewportHeight: window.innerHeight },
+    { shown, fontsLoaded: document.fonts.status === "loaded" },
+  )) return;
+  opened.told = true;
+  api.answerEnd(opened.words);
+}
+thoughtEl.addEventListener("scroll", judgeAnswerEnd, { passive: true });
+// Fitted by main (or squeezed): all of it may show now.
+window.addEventListener("resize", judgeAnswerEnd);
+document.fonts.addEventListener("loadingdone", judgeAnswerEnd);
 
 /** The picker's target beside Ember's name (§8.1): nothing for this computer. The corner card gives its own (cardBadge). */
 let badgeKey = "";
@@ -183,6 +212,31 @@ function renderTarget(s: EmberState, given?: TargetBadge | null): void {
   $("target-text").textContent = badge.text;
 }
 
+/**
+ * The card's step row: the keys a question's hint names as keycaps beside their words, as the bubble draws them
+ * (stepParts; accessibility-visual-r3: one grey run of text here), each chord on a line of its own with its word and no
+ * " · " between them (the card's column always wrapped the two and left "allow ·" ending the first line:
+ * accessibility-visual-r2-2), its keycaps kept together and its words free to wrap under them (accessibility-visual-c3-1:
+ * on one unbroken line, "Ctrl Alt Shift Y shows the next part" ran off the card at Larger), anything else as words.
+ * Drawn again only on a change.
+ */
+let stepShown: string | null = null;
+function drawStep(step: string | null): void {
+  const el = $("step");
+  el.hidden = !step;
+  if (step === stepShown) return;
+  stepShown = step;
+  const { lead, keys } = stepParts(step);
+  if (!keys) { el.textContent = step ?? ""; return; }
+  el.replaceChildren(...(lead ? [document.createTextNode(lead)] : []), ...keys.map(k => {
+    const hint = Object.assign(document.createElement("span"), { className: "key-hint" });
+    const caps = Object.assign(document.createElement("span"), { className: "key-caps" });
+    caps.append(...k.keys.map(key => Object.assign(document.createElement("kbd"), { textContent: key })));
+    hint.append(caps, Object.assign(document.createElement("span"), { className: "key-word", textContent: k.word }));
+    return hint;
+  }));
+}
+
 api.onState(s => {
   if (!fallback) renderTarget(s);
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
@@ -193,7 +247,7 @@ api.onState(s => {
   const b = s.bubble;
   // The microphone: a shape and words for its state (never colour alone), whenever listening is on.
   const mic = $("mic");
-  const micState = micBadge(s.mic);
+  const micState = micBadge(s.mic, s.micLearning === true);
   mic.hidden = !micState;
   mic.dataset.state = s.mic ?? "off";
   mic.dataset.glyph = micState?.glyph ?? "";
@@ -247,21 +301,22 @@ api.onState(s => {
   // mouse…", "I only caught the first part…") takes the step's place: without a compositor it has nowhere else to
   // show. A question keeps its keyboard hint there. A step the task row already shows isn't repeated.
   const step = b.visible && s.status && !asks ? s.status : b.visible && b.step !== task?.detail ? b.step : null;
-  $("step").hidden = !step;
-  $("step").textContent = step ?? "";
+  drawStep(step);
 
   document.body.classList.toggle("asking", actions.length > 0);
   $("actions").hidden = actions.length === 0;
   buttons($("actions"), actions, a => a.label);
   // Allow (never Not now) waits for the question's whole text to have all been in view; main refuses it before, too.
   [...$("actions").querySelectorAll<HTMLElement>("button")].forEach((el, i) => { el.dataset.whole = actions[i] && waitsForWhole(actions[i].id, b.whole) ? "wait" : ""; });
+  // So does every answer but Not now while the question's sentence can't show beside it (fit.ts waitsForRoom).
+  [...$("actions").querySelectorAll<HTMLElement>("button")].forEach((el, i) => { el.dataset.room = actions[i] && waitsForRoom(actions[i].id) ? "wait" : ""; });
   paintWhole();
 
   $("task").hidden = !task;
   if (task) {
     $("task").dataset.status = task.status;
     // The task row's state in words for screen readers (its symbol says it to the eye), from the cards' one table.
-    $("task-state").textContent = STATE_WORD[task.status];
+    $("task-state").textContent = cardStateWord(task);
     const at = whereText(task.where);
     $("task-title").textContent = at ? `${task.title} (${at})` : task.title;
     // Under it, what it is doing now in Ember's words ("Clicking in Text Editor…"), else what it last said.
@@ -274,6 +329,10 @@ api.onState(s => {
   requestAnimationFrame(fitCard);
   // Judged once laid out (and again when the card is fitted to it: resize).
   if (whole && !whole.seen) requestAnimationFrame(judgeWhole);
+  // An answer opened in full, judged afresh for new words (a new one, or the same one opened again).
+  const words = b.visible && b.expanded && !b.streaming && b.thought ? b.thought : null;
+  if (words !== (opened?.words ?? null)) opened = words === null ? null : { words, told: false };
+  if (opened && !opened.told) requestAnimationFrame(judgeAnswerEnd);
 });
 
 /**
@@ -342,6 +401,8 @@ let last = performance.now();
 /** Talking or streaming, or a lively face: full frame rate; a calm face ~30 fps; a still one ~15 (the page sleeps in between). */
 let busy = false;
 let resting = false;
+/** The resting gap the last frame waited for (restingGap's, else 0): its time passes in full (frameSeconds). */
+let planned = 0;
 /** Something may have changed: draws again if the loop had stopped. */
 function resume(): void {
   if (!resting) return;
@@ -354,11 +415,13 @@ const next = () => {
   // loop cost 3.4-6.3 % of a core at idle (docs/ASSISTANT.md), drawing a picture that didn't change.
   if (mayRest(rig.asleep, rig.settled, busy)) { resting = true; return; }
   const motion = rig.motion;
-  const gap = busy || motion === "brisk" ? 0 : motion === "gentle" ? 33 : 66;
+  // An awake Ready face with nothing passing: about 6 frames a second, waking for its next blink (rp-4).
+  const gap = busy || motion === "brisk" ? 0 : motion === "gentle" ? 33 : restingGap(rig, 66);
+  planned = gap > 66 ? gap : 0;
   if (gap) setTimeout(() => requestAnimationFrame(frame), gap); else requestAnimationFrame(frame);
 };
 function frame(now: number): void {
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.1));
+  const dt = frameSeconds(now - last, planned);
   last = now;
   const dpr = window.devicePixelRatio || 1;
   const size = canvas.clientWidth;

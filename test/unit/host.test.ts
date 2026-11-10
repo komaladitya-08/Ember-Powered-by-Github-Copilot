@@ -4,7 +4,7 @@
  * The real runtime is covered by the integration tests.
  */
 
-import { TaskManager } from "../../app/main/agent/tasks";
+import { ASK_AGAIN_ELSEWHERE, TaskManager, type Task } from "../../app/main/agent/tasks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -48,6 +48,11 @@ const sim = vi.hoisted(() => ({
   modelsError: null as Error | null,
   /** The runtime never says which tools a session has (verifySessionTools times out). */
   toolsHang: false,
+  /** client.start() and client.listModels() never settle (a runtime that stalls in its handshake, a black-holed network). */
+  startHangs: false,
+  modelsHang: false,
+  /** client.start() waits for this (a runtime that takes a moment to start, as a real one does). */
+  startGate: null as Promise<void> | null,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -86,11 +91,11 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     stopped = false;
     forced = false;
     constructor(public opts: any) { sim.clients.push(this); }
-    async start() { if (sim.startError) throw sim.startError; }
+    async start() { if (sim.startGate) await sim.startGate; if (sim.startHangs) await hang(); if (sim.startError) throw sim.startError; }
     async stop() { if (sim.stopHangs) await hang(); this.stopped = true; return []; }
     async forceStop() { this.forced = true; }
     getAuthStatus() { return sim.auth(); }
-    async listModels() { if (sim.modelsError) throw sim.modelsError; return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
+    async listModels() { if (sim.modelsHang) await hang(); if (sim.modelsError) throw sim.modelsError; return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return sim.taskSessions.map(sessionId => ({ sessionId })); }
     async deleteSession(id: string) { const gate = sim.deleteGate; const fails = sim.deleteFails; sim.deleted.push(id); if (sim.deleteHangs) await hang(); if (gate) await gate; if (fails) throw new Error("delete failed"); }
     ping() { return sim.ping(); }
@@ -100,19 +105,22 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, CUT_OFF, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import type { ActiveProvider } from "../../app/main/provider";
+import { unavailableLine } from "../../app/renderer/ask/chips";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
-import { Presenter, expandedBubble } from "../../app/main/agent/presenter";
+import { LOST_GAVE_UP, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { HISTORY_FILE, HistoryStore } from "../../app/main/agent/conversation-store";
 import { MemoryOwner } from "../../app/main/memory/owner";
+import { MemoryLearning } from "../../app/main/memory/learning";
 import { LOCKED_DESCRIBE } from "../../app/main/screen-lock";
 import { CONVERSATION_LIMIT, CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
+import { RoutineBook, routinesFile } from "../../app/main/agent/routines";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const TOKEN = "gho_" + "t".repeat(36); // not a real token
@@ -155,6 +163,9 @@ beforeEach(() => {
   sim.startError = null;
   sim.modelsError = null;
   sim.toolsHang = false;
+  sim.startHangs = false;
+  sim.modelsHang = false;
+  sim.startGate = null;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -178,6 +189,127 @@ describe("connecting and signing in", () => {
     expect(host.getTranscript().at(-1)?.truncated).toBe(true);
     await host.forgetConversation();
     expect(host.getTranscript()).toEqual([]);
+    await host.stop();
+  });
+  it("tells Home when the bubble says Ember is still waiting for the model service, and when it is heard from again (home-c1-1)", async () => {
+    const turns: string[] = [];
+    const { host } = makeHost({ onConversationTurn: t => { turns.push(t); }, turnSlowMs: 30 });
+    await host.start(TOKEN, "stored");
+    await host.ask("What's the weather?");
+    await vi.waitFor(() => expect(host.conversationTurn).toBe("slow"));
+    conductorSession().emit("assistant.message_delta", { deltaContent: "Rain" });
+    expect(host.conversationTurn).toBe("thinking");
+    conductorSession().emit("assistant.message", { content: "Rain later." });
+    conductorSession().emit("session.idle");
+    await vi.waitFor(() => expect(turns).toEqual(["thinking", "slow", "thinking", "idle"]));
+    await host.stop();
+  });
+  it("tells Home a turn ended only after the Problem line that says how, for a model error and for no answer at all (home-r2-1)", async () => {
+    const told: string[] = [];
+    const { host } = makeHost({ onConversationTurn: t => { told.push(`turn ${t}`); }, onTranscript: e => { told.push(`line ${e.at(-1)?.who ?? "none"}`); } });
+    await host.start(TOKEN, "stored");
+    told.length = 0;
+    await host.ask("What's the weather?");
+    conductorSession().emit("session.error", { errorType: "query", statusCode: 400, message: "Bad request" });
+    await vi.waitFor(() => expect(told).toContain("turn idle"));
+    expect(told).toEqual(["line you", "turn thinking", "line problem", "turn idle"]);
+    // A turn that ends with neither words nor a step: its "No answer" line comes before its end too.
+    told.length = 0;
+    await host.ask("And tomorrow?");
+    conductorSession().emit("session.idle");
+    await vi.waitFor(() => expect(told).toContain("turn idle"));
+    expect(told).toEqual(["line you", "turn thinking", "line problem", "turn idle"]);
+    await host.stop();
+  });
+  it("never tells Home a request waiting for a reconnect is over before its turn has run, as after Stop everything (home-r2-2)", async () => {
+    let generation = 1;
+    const told: string[] = [];
+    const { host } = makeHost({ extensions: { forSession: () => undefined, get generation() { return generation; } }, onConversationTurn: t => { told.push(t); } });
+    await host.start(TOKEN, "stored");
+    // The kill switch's extensions part stopped the extension servers: the next request reconnects first.
+    generation = 2;
+    const first = conductorSession();
+    expect(await host.ask("Q9 after")).toBe(true);
+    expect(conductorSession()).not.toBe(first);
+    expect(conductorSession().sent.at(-1)).toMatch(/Q9 after$/);
+    expect(told).toEqual(["thinking"]);
+    conductorSession().emit("assistant.message", { content: "Here is my answer." });
+    conductorSession().emit("session.idle");
+    await vi.waitFor(() => expect(told).toEqual(["thinking", "idle"]));
+    await host.stop();
+  });
+  it("never tells Home the conversation stopped answering while a spoken request cuts in on a reply (home-r2-2)", async () => {
+    const told: string[] = [];
+    const { host } = makeHost({ onConversationTurn: t => { told.push(t); } });
+    await host.start(TOKEN, "stored");
+    await host.ask("What's the weather?");
+    expect(await host.ask("Actually, tomorrow's", null, undefined, { spoken: true, replaces: true })).toBe(true);
+    expect(conductorSession().sent.at(-1)).toMatch(/Actually, tomorrow's/);
+    await Promise.resolve();
+    expect(told).toEqual(["thinking"]);
+    await host.stop();
+  });
+  it("tells Home a request that waited for a reconnect in vain ended only after its Problem line (home-r2-2)", async () => {
+    let generation = 1;
+    const told: string[] = [];
+    const { host } = makeHost({ connectWaitMs: 50, extensions: { forSession: () => undefined, get generation() { return generation; } },
+      onConversationTurn: t => { told.push(`turn ${t}`); }, onTranscript: e => { told.push(`line ${e.at(-1)?.who ?? "none"}`); } });
+    await host.start(TOKEN, "stored");
+    generation = 2;
+    // The reconnect hangs: the request waits a moment, then says Ember is still connecting.
+    sim.startHangs = true;
+    told.length = 0;
+    expect(await host.ask("Q9 after")).toBe(false);
+    await vi.waitFor(() => expect(told).toContain("turn idle"));
+    expect(told).toEqual(["turn thinking", "line you", "line problem", "turn idle"]);
+    // (The hung start never lets the runtime go: the stop isn't waited for.)
+    void host.stop();
+  });
+  it("ends a request waiting for a reconnect at once when Stop or Stop everything ends it, never still thinking (home-r3-1)", async () => {
+    let generation = 1;
+    const told: string[] = [];
+    const { host } = makeHost({ connectWaitMs: 60_000, extensions: { forSession: () => undefined, get generation() { return generation; } },
+      onConversationTurn: (t, ended) => { told.push(ended ? `${t} ${ended}` : t); }, stopEverything: () => undefined });
+    await host.start(TOKEN, "stored");
+    // An extension changed: the next request reconnects first, and the reconnect takes its time.
+    generation = 2;
+    sim.startHangs = true;
+    const asked = host.ask("Q2 during reconnect");
+    await vi.waitFor(() => expect(told).toEqual(["thinking"]));
+    expect(await host.stopAnswer()).toBe(true);
+    // Over at once, and said to be stopped: not after the wait for the connection runs out.
+    await vi.waitFor(() => expect(told).toEqual(["thinking", "idle stopped"]), { timeout: 500 });
+    expect(host.conversationTurn).toBe("idle");
+    expect(await asked).toBe(false);
+    // Pressed again: nothing is under way, as the status says.
+    expect(await host.stopAnswer()).toBe(false);
+    // The same for Stop everything.
+    told.length = 0;
+    const again = host.ask("Q3 during reconnect");
+    await vi.waitFor(() => expect(told).toEqual(["thinking"]));
+    await host.abortAll();
+    await vi.waitFor(() => expect(told).toEqual(["thinking", "idle stopped-everything"]), { timeout: 500 });
+    expect(await again).toBe(false);
+    // Neither went to the model, nor became a line of the conversation.
+    expect(host.getTranscript().filter(e => e.who === "you").map(e => e.text)).toEqual([]);
+    // (The hung start never lets the runtime go: the stop isn't waited for.)
+    void host.stop();
+  });
+  it("tells Home its turn ended because Stop ended it, from the bubble's Stop as from Home's (home-c2-2)", async () => {
+    const told: string[] = [];
+    const { host } = makeHost({ onConversationTurn: (t, ended) => { told.push(ended ? `${t} ${ended}` : t); }, turnSlowMs: 30 });
+    await host.start(TOKEN, "stored");
+    await host.ask("What's the weather?");
+    // Stopped while the bubble says Ember is still waiting: never "thinking" again on the way.
+    await vi.waitFor(() => expect(told).toEqual(["thinking", "slow"]));
+    expect(await host.stopAnswer()).toBe(true);
+    expect(told).toEqual(["thinking", "slow", "idle stopped"]);
+    // Nothing under way: nothing is told, and a later turn's own end says nothing of a stop.
+    expect(await host.stopAnswer()).toBe(false);
+    await host.ask("And tomorrow?");
+    conductorSession().emit("assistant.message", { content: "Sunny." });
+    conductorSession().emit("session.idle");
+    await vi.waitFor(() => expect(told).toEqual(["thinking", "slow", "idle stopped", "thinking", "idle"]));
     await host.stop();
   });
   it("keeps a manually opened spoken request with its own queued turn", async () => {
@@ -279,6 +411,25 @@ describe("connecting and signing in", () => {
     session.emit("assistant.message_delta", { messageId: "m", deltaContent: "Starting to say" });
     session.emit("session.error", { message: "boom", errorType: "query" });
     expect(order.slice(order.indexOf("stream:streaming"))).toEqual(["stream:streaming", "lines:ember", "stream:interrupted", "lines:problem"]);
+    await host.stop();
+  });
+
+  it("Stop response with nothing under way stops nothing and says nothing; with a turn under way it says it stopped (home-3)", async () => {
+    const { host, patches } = makeHost();
+    await host.start(TOKEN, "stored");
+    await host.ask("What's the weather?");
+    conductorSession().emit("assistant.message", { content: "Sunny." });
+    conductorSession().emit("session.idle", {});
+    const shown = patches.length;
+    expect(await host.stopAnswer()).toBe(false);
+    expect(patches.slice(shown).filter(p => p.bubble?.title === "Stopped")).toEqual([]);
+    // Speech still playing (main says so): that is something to stop.
+    expect(await host.stopAnswer({ speaking: true })).toBe(true);
+    expect(patches.at(-1)?.bubble).toMatchObject({ title: "Stopped", thought: "Okay, I've stopped." });
+    // A turn under way: stopped, and the bubble says so.
+    await host.ask("And tomorrow?");
+    expect(await host.stopAnswer()).toBe(true);
+    expect(patches.at(-1)?.bubble).toMatchObject({ title: "Stopped" });
     await host.stop();
   });
 
@@ -675,6 +826,45 @@ describe("live test: what Ember says when it can't take a request", () => {
     expect(idleWord({ phase: "error", reason: "not-answering", waitingForTasks: true })).toBe("Waiting for tasks");
   });
 
+  it("names why a request would go unanswered now, in the handle's word, only when it would (companion-6)", () => {
+    // Ready answers; still connecting waits a moment for the connection, so it may answer too.
+    expect(unansweredWord({ phase: "ready" })).toBeNull();
+    expect(unansweredWord({ phase: "starting" })).toBeNull();
+    expect(unansweredWord(undefined)).toBeNull();
+    expect(unansweredWord({ phase: "signed-out" })).toBe("Not connected");
+    expect(unansweredWord({ phase: "error", reason: "network" })).toBe("Offline");
+    expect(unansweredWord({ phase: "error", reason: "not-answering" })).toBe("Reconnecting…");
+    expect(unansweredWord({ phase: "error", reason: "policy" })).toBe("Locked down");
+  });
+
+  it("never blames Copilot in the handle or the Ask box while another model service is in use (accessibility-visual-c1-2)", () => {
+    const own = { kind: "user" as const, host: "localhost" }, org = { kind: "admin" as const, host: "models.example.com" };
+    expect(idleWord({ phase: "error", reason: "other" })).toBe("Copilot problem");
+    expect(unansweredWord({ phase: "error", reason: "other", service: own })).toBe("Provider problem");
+    expect(unansweredWord({ phase: "error", reason: "other", service: org })).toBe("Service problem");
+    expect(idleWord({ phase: "error", reason: "no-access" })).toBe("No Copilot access");
+    expect(idleWord({ phase: "error", reason: "no-access", service: own })).toBe("Access refused");
+    expect(idleWord({ phase: "error", reason: "sign-in", service: org })).toBe("Access refused");
+    expect(idleWord({ phase: "error", reason: "sign-in" })).toBe("Sign-in refused");
+    // What the Ask box says under its field.
+    expect(unavailableLine(unansweredWord({ phase: "error", reason: "other", service: own }) ?? undefined)).toBe("Provider problem: I can't answer yet");
+    expect(unavailableLine(unansweredWord({ phase: "error", reason: "other" }) ?? undefined)).toBe("Copilot problem: I can't answer yet");
+  });
+
+  it("says Reconnecting… while Ember starts the Copilot runtime again by itself, and never blames a provider for the runtime (reliability-performance-c2-3)", () => {
+    const own = { kind: "user" as const, host: "localhost" }, org = { kind: "admin" as const, host: "models.example.com" };
+    const lost = "Copilot stopped unexpectedly. Reconnecting…", stops = "Copilot keeps stopping. Press Check again to retry, or restart Ember.";
+    for (const service of [undefined, own, org]) {
+      expect(idleWord({ phase: "error", reason: "runtime", detail: lost, ...(service ? { service } : {}) })).toBe("Reconnecting…");
+      expect(unavailableLine(unansweredWord({ phase: "error", reason: "runtime", detail: lost, ...(service ? { service } : {}) }) ?? undefined)).toBe("Reconnecting: I can't answer yet");
+    }
+    // Given up (or it couldn't start): the runtime is Copilot's whatever the service, so no provider is blamed.
+    expect(idleWord({ phase: "error", reason: "runtime", detail: stops })).toBe("Copilot problem");
+    expect(idleWord({ phase: "error", reason: "runtime", detail: stops, service: own })).toBe("Connection problem");
+    expect(idleWord({ phase: "error", reason: "runtime", service: org })).toBe("Connection problem");
+    expect(unavailableLine(unansweredWord({ phase: "error", reason: "runtime", detail: stops, service: own }) ?? undefined)).toBe("Connection problem: I can't answer yet");
+  });
+
   it("the reason goes once Ember is connected again", async () => {
     sim.auth = async () => ({ isAuthenticated: false });
     const { host } = makeHost();
@@ -775,7 +965,7 @@ describe("new conversation", () => {
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
     const realStop = host.stopAnswer.bind(host);
-    vi.spyOn(host, "stopAnswer").mockImplementation(async () => { await gate; await realStop(); });
+    vi.spyOn(host, "stopAnswer").mockImplementation(async () => { await gate; return realStop(); });
     const reset = host.newConversation();
     await host.forgetConversation();
     expect(await host.start(TOKEN, "stored")).toBe("ready");
@@ -1102,6 +1292,42 @@ describe("asking", () => {
   });
 });
 
+describe("a runtime that dies under a request (rp-6)", () => {
+  it("offers Try again for the request that never went, and says Copilot is back once it is, not that it is reconnecting", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    await host.start(TOKEN, "stored");
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    sim.onSend = () => undefined;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(host.getStatus().phase).toBe("ready");
+    // Reconnected in a tenth of a second: the bubble says so (it said "I'm reconnecting; ask me again" for 12 s, with no
+    // button), and offers the request again, which never reached the model (no tool ran).
+    expect(screen().bubble).toMatchObject({ visible: true, thought: RECONNECTED_RETRY, actions: [TRY_AGAIN] });
+    expect(screen().bubble?.thought).not.toMatch(/reconnecting/i);
+    expect(host.takeRetry()).toBe("Hello after the kill");
+    const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
+  });
+
+  it("says in the conversation that Ember is connected again, not that it is still reconnecting (reliability-performance-c1-1)", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    sim.onSend = () => undefined;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(host.getStatus().phase).toBe("ready");
+    // Home's conversation showed "I'm reconnecting; ask me again in a moment." for good, under its own "Connected."
+    const problems = host.getTranscript().filter(e => e.who === "problem");
+    expect(problems).toHaveLength(1);
+    expect(problems[0].text).toBe(LOST_RECONNECTED);
+    expect(LOST_RECONNECTED).toBe("Copilot stopped unexpectedly. I'm connected again: send it again.");
+    const done = host.stop(); await vi.advanceTimersByTimeAsync(15_000); await done;
+  });
+});
+
 describe("a runtime that dies or hangs", () => {
   it("a hung runtime is noticed, the cut-off answer says so, and reconnecting doesn't wait on it", async () => {
     vi.useFakeTimers();
@@ -1140,6 +1366,201 @@ describe("a runtime that dies or hangs", () => {
     expect(statuses.map(s => s.detail)).toContain("Copilot stopped unexpectedly. Reconnecting…");
     expect(statuses.map(s => s.detail)).not.toContain("Copilot keeps stopping. Press Check again to retry, or restart Ember.");
     expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("says Copilot stopped within 3 s when the runtime dies mid-answer, not 20 s later (rp-2)", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses, patches } = makeHost();
+    await host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(1000);
+    await host.ask("Explain this");
+    conductorSession().emit("assistant.message_delta", { messageId: "m", deltaContent: "Half an answer so far" });
+    expect(screen().bubble?.streaming).toBe(true);
+    const before = patches.length;
+    // The runtime exits: the SDK drops the session's handlers, so only the health check can hear it.
+    sim.ping = async () => { throw new Error("Connection is disposed."); };
+    await vi.advanceTimersByTimeAsync(3000);
+    // Said within 3 s; the pretend runtime then reconnects at once, so the problem may already offer Try again (rp-6).
+    const bubbles = patches.slice(before).map(p => p.bubble).filter(Boolean);
+    expect(bubbles).toContainEqual(expect.objectContaining({ mood: "error", thought: expect.stringMatching(/Copilot stopped unexpectedly/) }));
+    expect(statuses.map(s => s.detail)).toContain("Copilot stopped unexpectedly. Reconnecting…");
+    sim.ping = async () => ({});
+    await host.stop();
+  });
+
+  it("checks a runtime at rest only every 20 s, as before (rp-2)", async () => {
+    vi.useFakeTimers();
+    let pings = 0;
+    sim.ping = async () => { pings++; return {}; };
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(pings).toBe(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(pings).toBe(1);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(pings).toBe(2);
+    await host.stop();
+  });
+
+  it("keeps checking a runtime at rest after the clock is set back an hour (reliability-performance-c1-2)", async () => {
+    vi.useFakeTimers();
+    const { host, statuses } = makeHost();
+    await host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(1000);
+    // Resumed with a clock that was ahead, a VM snapshot restored, a manual change: the wall clock steps back.
+    vi.setSystemTime(Date.now() - 3_600_000);
+    sim.ping = async () => { throw new Error("Connection is disposed."); };
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(statuses.map(s => s.detail)).toContain("Copilot stopped unexpectedly. Reconnecting…");
+    sim.ping = async () => ({});
+    await host.stop();
+  });
+
+  it("a task at work is checked on every few seconds too (rp-2)", async () => {
+    vi.useFakeTimers();
+    const { host, statuses } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    host.tasks!.start("turn on night light");
+    await vi.advanceTimersByTimeAsync(50);
+    sim.ping = async () => { throw new Error("Connection is disposed."); };
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(statuses.map(s => s.detail)).toContain("Copilot stopped unexpectedly. Reconnecting…");
+    sim.ping = async () => ({});
+    const stopped = host.stop();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await stopped;
+  });
+
+  it("a runtime that never answers its start says so and tries again, never Connecting… for ever (reliability-performance-v1)", async () => {
+    vi.useFakeTimers();
+    sim.startHangs = true;
+    const { host } = makeHost();
+    void host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(host.getStatus().phase).toBe("starting");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering", detail: START_TIMEOUT_DETAIL });
+    expect(idleWord(host.getStatus())).toBe("Reconnecting…");
+    expect(sim.clients[0].forced).toBe(true);
+    sim.startHangs = false;
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(sim.clients).toHaveLength(2);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a model list that never comes is timed out and retried too (reliability-performance-v1)", async () => {
+    vi.useFakeTimers();
+    sim.modelsHang = true;
+    const { host } = makeHost();
+    void host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering", detail: START_TIMEOUT_DETAIL });
+    sim.modelsHang = false;
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a conversation the runtime never opens is timed out and retried (reliability-performance-v1)", async () => {
+    vi.useFakeTimers();
+    sim.createGate = new Promise<void>(() => undefined);
+    const { host } = makeHost();
+    void host.start(TOKEN, "stored");
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "not-answering", detail: START_TIMEOUT_DETAIL });
+    sim.createGate = null;
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("says in the conversation and the bubble that Ember stopped reconnecting once it gives up, not that it still is (reliability-performance-c2-3)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const { host, screen } = makeHost({ healthMs: 1000 });
+    await host.start(TOKEN, "stored");
+    sim.ping = async () => { if (crashes < 5) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(crashes).toBe(5);
+    expect(host.getStatus().phase).toBe("ready");
+    // The sixth stop comes under a request: Ember says it is reconnecting, then gives up.
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(host.getStatus().detail).toBe("Copilot keeps stopping. Press Check again to retry, or restart Ember.");
+    const problems = host.getTranscript().filter(e => e.who === "problem").map(e => e.text);
+    expect(problems.at(-1)).toBe(LOST_GAVE_UP);
+    expect(problems).not.toContain(LOST_RECONNECTING);
+    expect(LOST_GAVE_UP).toBe("Copilot stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.");
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "error", thought: "Copilot keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.", actions: [{ id: "ui:settings", label: "Open settings" }] });
+    await host.stop();
+  });
+
+  it("says it stopped reconnecting to my model connection, never Copilot, once it gives up under my own provider (reliability-performance-c2-3, integrations-v1)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const own: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example.com/v1", apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } };
+    const { host, screen } = makeHost({ healthMs: 1000, provider: () => own });
+    await host.start(null);
+    sim.ping = async () => { if (crashes < 5) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(crashes).toBe(5);
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(host.getStatus().detail).toBe("Ember's model connection keeps stopping. Press Check again to retry, or restart Ember.");
+    // The line and the bubble that said "My model connection … I'm reconnecting" say Ember stopped trying.
+    const problems = host.getTranscript().filter(e => e.who === "problem").map(e => e.text);
+    expect(problems.at(-1)).toBe("My model connection stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.");
+    expect(problems.join("\n")).not.toMatch(/reconnecting; ask me again|Copilot/);
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "error", thought: "My model connection keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.", actions: [{ id: "ui:settings", label: "Open settings" }] });
+    await host.stop();
+  });
+
+  it("says it is connected again, in the bubble and the conversation, once Check again brings Copilot back after Ember gave up (reliability-performance-r3-2)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const { host, screen } = makeHost({ healthMs: 1000 });
+    await host.start(TOKEN, "stored");
+    sim.ping = async () => { if (crashes < 5) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(10_000);
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(host.getTranscript().filter(e => e.who === "problem").at(-1)?.text).toBe(LOST_GAVE_UP);
+    // Check again, with a runtime that works now.
+    sim.onSend = () => undefined;
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    // The bubble no longer says Ember stopped reconnecting, nor offers settings that no longer help.
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "idle", title: "Connected again", thought: "I'm connected again. Ask me again.", actions: [] });
+    const problems = host.getTranscript().filter(e => e.who === "problem").map(e => e.text);
+    expect(problems.at(-1)).toBe(LOST_RECONNECTED);
+    expect(problems).not.toContain(LOST_GAVE_UP);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(host.getTranscript().filter(e => e.who === "problem").map(e => e.text)).not.toContain(LOST_GAVE_UP);
+    await host.stop();
+  });
+
+  it("says my model connection is back, never Copilot, once Check again reconnects after Ember gave up under my own provider (reliability-performance-r3-2, integrations-v1)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const own: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example.com/v1", apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } };
+    const { host, screen } = makeHost({ healthMs: 1000, provider: () => own });
+    await host.start(null);
+    sim.ping = async () => { if (crashes < 5) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(10_000);
+    sim.onSend = () => { throw new Error("Connection is disposed."); };
+    await host.ask("Hello after the kill");
+    await vi.advanceTimersByTimeAsync(1000);
+    sim.onSend = () => undefined;
+    expect(await host.start(null)).toBe("ready");
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "idle", title: "Connected again", thought: "I'm connected again. Ask me again.", actions: [] });
+    const problems = host.getTranscript().filter(e => e.who === "problem").map(e => e.text);
+    expect(problems.at(-1)).toBe("My model connection stopped unexpectedly. I'm connected again: send it again.");
+    expect(problems.join("\n")).not.toMatch(/stopped reconnecting|Copilot/);
     await host.stop();
   });
 
@@ -1364,7 +1785,7 @@ describe("review round 3", () => {
     sim.ping = async () => { if (once) { once = false; throw new Error("Connection is disposed."); } return {}; };
     await vi.advanceTimersByTimeAsync(5000);
     expect(host.getStatus().phase).toBe("ready");
-    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `turn on night light: failed. ${CUT_OFF}` })]);
+    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `turn on night light: didn't finish. ${CUT_OFF}` })]);
     expect(screen().bubble).toMatchObject({ visible: true, mood: "error", title: "turn on night light", thought: CUT_OFF });
     await vi.advanceTimersByTimeAsync(20_000);
     expect(screen().bubble?.visible).toBe(false);
@@ -1372,6 +1793,23 @@ describe("review round 3", () => {
     expect(conductorSession().sent.at(-1)).toContain(`Task "turn on night light" failed: ${CUT_OFF}`);
     await host.ask("and now?");
     expect(conductorSession().sent.at(-1)).not.toContain("task_results");
+    await host.stop();
+  });
+
+  it("a task cut off under my own provider ends in the bubble and the conversation with my model connection, as the bubble's title says it (first-run-w5-1)", async () => {
+    vi.useFakeTimers();
+    const finished: { status: string; text: string }[] = [];
+    const own: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example.com/v1", apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } };
+    const { host, screen } = makeHost({ hands: hands(), healthMs: 1000, provider: () => own, onTaskFinished: t => finished.push(t) });
+    await host.start(null);
+    host.tasks!.start("turn on night light");
+    await vi.advanceTimersByTimeAsync(50);
+    let once = true;
+    sim.ping = async () => { if (once) { once = false; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(5000);
+    const cut = "My model connection stopped unexpectedly; the task didn't finish.";
+    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `turn on night light: didn't finish. ${cut}` })]);
+    expect(screen().bubble).toMatchObject({ visible: true, mood: "error", title: "turn on night light", thought: cut });
     await host.stop();
   });
 
@@ -1866,7 +2304,7 @@ describe("review round 5: the bubble main covers, a reply behind a question, ano
     await vi.advanceTimersByTimeAsync(20_000);
     expect(host.tasks!.list()).toEqual([]);
     await host.ask("what did I miss?");
-    expect(screen().bubble?.thought).toBe("One task finished. “turn on night light”: done. Night light is on.");
+    expect(screen().bubble?.thought).toBe("One task ended. “turn on night light”: done. Night light is on.");
     await host.ask("status?");
     expect(screen().bubble?.thought).toBe("Nothing's running right now. The last thing was “turn on night light”: done.");
     await host.forgetConversation();
@@ -2133,7 +2571,8 @@ describe("review round 6: a request sent while the conversation is busy waits fo
         ["use the Extensions app to turn off a shell extension", "Turn off Dash to Dock in the Extensions app"],
       ]) {
         await host.ask(words, mail);
-        expect(await tool("start_task")({ goal }), words).toMatch(/started/);
+        // (Not refused: it starts, or from the third, waits its turn: tasks-approvals-7.)
+        expect(await tool("start_task")({ goal }), words).toMatch(/started|is waiting/);
       }
       for (const [words, goal] of [
         ["open up a new terminal and list my files", "List my files in the Files app"],
@@ -2405,6 +2844,319 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     expect(ends).toEqual([[first, "steered"]]);
     await host.stop();
   });
+
+  it("stops everything at once on a typed “stop” while a task is at work, with no Copilot turn (tasks-approvals-v2)", async () => {
+    let stops = 0;
+    const { host, session, tool } = await withTasks({ stopEverything: () => { stops++; } });
+    await host.ask("tidy my desktop", mail);
+    await tool("start_task")({ goal: "tidy my desktop" });
+    const sent = session.sent.length;
+    expect(await host.ask("stop everything", mail)).toBe(true);
+    expect(stops).toBe(1);
+    expect(session.sent).toHaveLength(sent);
+    // Stopping something else is the conversation's.
+    await host.ask("stop the music", mail);
+    expect(stops).toBe(1);
+    expect(session.sent.length).toBe(sent + 1);
+    await host.stop();
+  });
+
+  it("tells Home the conversation answers from a request until its turn ends, also a turn that only starts a task (home-c1-1)", async () => {
+    const turns: string[] = [];
+    const { host, session, tool } = await withTasks({ onConversationTurn: t => { turns.push(t); }, stopEverything: () => undefined });
+    expect(host.conversationTurn).toBe("idle");
+    await host.ask("tidy my desktop", mail);
+    expect(host.conversationTurn).toBe("thinking");
+    await tool("start_task")({ goal: "tidy my desktop" });
+    expect(host.conversationTurn).toBe("thinking");
+    // The turn said nothing (start_task alone): its end is the end of the wait all the same.
+    session.emit("session.idle");
+    expect(host.conversationTurn).toBe("idle");
+    // (Told once what came with its end has been: home-r2-1.)
+    await vi.waitFor(() => expect(turns).toEqual(["thinking", "idle"]));
+    // A spoken request is answering too (Home's status panel says so for the Ask box and voice), and Stop ends it at once.
+    await host.ask("what's on my calendar?", null, undefined, { spoken: true });
+    expect(host.conversationTurn).toBe("thinking");
+    const stopping = host.stopAnswer();
+    expect(host.conversationTurn).toBe("idle");
+    await stopping;
+    expect(turns).toEqual(["thinking", "idle", "thinking", "idle"]);
+    await host.stop();
+  });
+
+  it("keeps a typed “stop” that stopped everything in the conversation, and that everything stopped, with no turn (home-c1-1)", async () => {
+    const turns: string[] = [];
+    let stops = 0;
+    const { host, session, tool } = await withTasks({ onConversationTurn: t => { turns.push(t); }, stopEverything: () => { stops++; } });
+    await host.ask("tidy my desktop", mail);
+    await tool("start_task")({ goal: "tidy my desktop" });
+    session.emit("session.idle");
+    expect(host.stopsWith("stop")).toBe(true);
+    expect(host.stopsWith("stop the music")).toBe(false);
+    await vi.waitFor(() => expect(turns.at(-1)).toBe("idle"));
+    turns.length = 0;
+    expect(await host.ask("stop", mail, undefined, { heardId: 7, voiceUnchecked: true })).toBe(true);
+    expect(stops).toBe(1);
+    expect(host.getTranscript().slice(-2).map(e => [e.who, e.text, e.heardId])).toEqual([["you", "stop", 7], ["ember", "Okay, I've stopped everything.", undefined]]);
+    expect(turns).toEqual([]);
+    expect(host.conversationTurn).toBe("idle");
+    await host.stop();
+  });
+
+  it("leaves a typed “stop” with nothing at work to the conversation (tasks-approvals-v2)", async () => {
+    let stops = 0;
+    const { host, session } = await withTasks({ stopEverything: () => { stops++; } });
+    await host.ask("stop", mail);
+    expect(stops).toBe(0);
+    expect(session.sent.at(-1)).toContain("stop");
+    await host.stop();
+  });
+
+  it("says a third task waits for one of the two at work, never that it started (tasks-approvals-7)", async () => {
+    const { host, tool } = await withTasks();
+    await host.ask("tidy my desktop", mail);
+    expect(await tool("start_task")({ goal: "tidy my desktop" })).toMatch(/started/);
+    await host.ask("rename the report", mail);
+    expect(await tool("start_task")({ goal: "rename the report" })).toMatch(/started/);
+    await host.ask("empty the trash", mail);
+    const third = await tool("start_task")({ goal: "empty the trash" });
+    expect(third).not.toMatch(/started|on it/i);
+    expect(third).toMatch(/is waiting: two tasks are already at work, and it starts when one of them ends/);
+    expect(host.tasks!.list().map(t => t.status)).toEqual(["running", "running", "queued"]);
+    await host.stop();
+  });
+
+  it("keeps Home's Task activity through a reconnect between turns, as “Kept until you quit Ember” says, but not past a sign-out (tasks-approvals-c2-1)", async () => {
+    let generation = 1;
+    const { host, results } = await withTasks({ extensions: { forSession: () => undefined, get generation() { return generation; } } });
+    results.set("Tidy the desktop", "Moved 3 files.");
+    host.tasks!.start("Tidy the desktop");
+    await vi.waitFor(() => expect(host.taskActivities()).toEqual([expect.objectContaining({ title: "Tidy the desktop", status: "done" })]));
+    const before = host.tasks;
+    // Something changed the conversation's tools (as a stop of a loaded extension does): the next request reconnects.
+    generation = 2;
+    await host.ask("thanks");
+    await vi.waitFor(() => expect(host.tasks).not.toBe(before));
+    await vi.waitFor(() => expect(host.getStatus().phase).toBe("ready"));
+    // The row is still there, with what it found; its card went with the old connection, so it offers nothing.
+    expect(host.taskActivities()).toEqual([expect.objectContaining({ title: "Tidy the desktop", status: "done", summary: "Moved 3 files.",
+      controls: { stop: false, retry: false, window: false } })]);
+    // Signing out forgets it with the conversation.
+    await host.forgetConversation();
+    await host.start(TOKEN, "stored");
+    expect(host.taskActivities()).toEqual([]);
+    await host.stop();
+  });
+
+  describe("“try again” after a task that didn't finish asks for that task again (tasks-approvals-1)", () => {
+    /** The host with tasks whose workers end as `outcomes` say, in turn (then as withTasks's do). */
+    async function retrying(outcomes: { success: boolean; summary: string; stopped?: boolean; declined?: boolean; expired?: boolean }[]) {
+      const made = await withTasks();
+      const d = (made.host.tasks as any).d;
+      const make = d.makeWorker;
+      d.makeWorker = (spec: { goal: string }) => { const w = make(spec); const r = outcomes.shift(); return r ? { ...w, run: async () => r } : w; };
+      const say = (text: string) => { made.session.emit("assistant.message_delta", { deltaContent: text }); made.session.emit("assistant.message", { content: text }); made.session.emit("session.idle", {}); };
+      const ended = async (n: number) => vi.waitFor(() => expect(made.host.getTranscript().filter(e => e.who === "task")).toHaveLength(n));
+      return { ...made, say, ended };
+    }
+    const engine = new PolicyEngine({ neverLook: () => [], grants: () => ({ thunderbird: "act" }) });
+    const send = (words?: string) => engine.decide({ taskId: "x", kind: "click", app: "thunderbird", window: "W", element: { role: "push button", name: "Send" }, goal: words });
+
+    it("carries the failed task's own words, so the Send the user asked for isn't called unasked, but not after their “Not now”", async () => {
+      const { host, specs, tool, say, ended } = await retrying([
+        { success: false, summary: "I couldn't find the Send button." },
+        { success: false, stopped: true, declined: true, summary: "You said not now, so I left it." },
+      ]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      await host.ask("Ember, try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      // The user's words, never the goal the model wrote.
+      expect(specs[1].userWords).toBe("send the report to Ana.\nEmber, try again");
+      expect(send(specs[1].userWords).aligned).toBeUndefined();
+      expect(send(specs[1].userWords).prompt).not.toMatch(/didn't ask/);
+      // That one ended on the user's "Not now": asking again doesn't make the step theirs (it asks, saying so).
+      await ended(2);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      expect(specs[2].userWords).toBe("try again");
+      expect(send(specs[2].userWords).aligned).toBe(false);
+      await host.stop();
+    });
+
+    it("never for words heard where Ember can't tell the user from its speakers, or anything more than a retry", async () => {
+      const { host, specs, tool, say, ended } = await retrying([
+        { success: false, summary: "I couldn't find the Send button." },
+        { success: false, summary: "I couldn't find the Send button." },
+      ]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      await host.ask("try again", mail, undefined, { voiceUnchecked: true });
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].userWords).toBe("try again");
+      await ended(2);
+      await host.ask("try again and delete the draft", mail);
+      await tool("start_task")({ goal: "Send the report to Ana and delete the draft" });
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      expect(specs[2].userWords).toBe("try again and delete the draft");
+      await host.stop();
+    });
+
+    /** As `retrying`, but the first worker typed (or only read) before it ended as `first`. */
+    async function retryingAfter(first: { success: boolean; summary: string; limit?: boolean }, typed: boolean) {
+      const made = await withTasks();
+      const d = (made.host.tasks as any).d;
+      const make = d.makeWorker;
+      let n = 0;
+      d.makeWorker = (spec: { goal: string }, _progress: unknown, _update: unknown, activity?: (e: unknown) => void) => {
+        const w = make(spec);
+        if (n++ > 0) return w;
+        return { ...w, run: async () => {
+          for (const [id, tool] of [["1", "perceive_window"], ...(typed ? [["2", "type_text"]] : [])]) { activity?.({ type: "tool-start", id, tool }); activity?.({ type: "tool-end", id, ok: true }); }
+          return first;
+        } };
+      };
+      const ended = async (k: number) => vi.waitFor(() => expect(made.host.getTranscript().filter(e => e.who === "task")).toHaveLength(k));
+      return { ...made, ended };
+    }
+
+    it("takes the place of the card's Try again: the old card goes, and a try that did part of it says so (tasks-approvals-r2)", async () => {
+      const LIMIT = { success: false, summary: "I stopped after 150 steps without finishing, to be safe.", limit: true };
+      const { host, specs, tool, ended } = await retryingAfter(LIMIT, true);
+      await host.ask("add these rows to the sheet", mail);
+      await tool("start_task")({ goal: "Add the rows to the sheet" });
+      await ended(1);
+      const old = host.tasks!.list()[0];
+      expect(host.tasks!.canRetry(old.id)).toBe(true);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Add the rows to the sheet" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1]).toMatchObject({ userWords: "add these rows to the sheet.\ntry again", partWay: true });
+      // Its card's Try again can't start a second attempt beside this one.
+      expect(host.tasks!.get(old.id)).toBeUndefined();
+      expect(host.tasks!.list().map(t => t.status)).toEqual(["running"]);
+      await host.stop();
+      // A try that only looked did none of it: the new one isn't told otherwise.
+      const looked = await retryingAfter({ success: false, summary: "I couldn't find the sheet." }, false);
+      await looked.host.ask("add these rows to the sheet", mail);
+      await looked.tool("start_task")({ goal: "Add the rows to the sheet" });
+      await looked.ended(1);
+      await looked.host.ask("try again", mail);
+      await looked.tool("start_task")({ goal: "Add the rows to the sheet" });
+      await vi.waitFor(() => expect(looked.specs).toHaveLength(2));
+      expect((looked.specs[1] as { partWay?: boolean }).partWay).toBeUndefined();
+      expect(looked.host.tasks!.list().map(t => t.status)).toEqual(["running"]);
+      await looked.host.stop();
+    });
+
+    it("hears “yes” to the task's own “Want me to try again?”, “can you try again?” and a retry after asking why (tasks-approvals-c1-3)", async () => {
+      const FAILED = { success: false, summary: "I couldn't find the Send button. Want me to try again?" };
+      const { host, specs, tool, say, ended } = await retrying([FAILED, FAILED, FAILED, FAILED]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      await host.ask("yes please", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("Trying again.");
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].userWords).toBe("send the report to Ana.\nyes please");
+      expect(send(specs[1].userWords).aligned).toBeUndefined();
+      await ended(2);
+      await host.ask("why didn't it work?", mail);
+      say("The Send button was greyed out while the draft saved.");
+      await host.ask("ok try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      expect(specs[2].userWords).toMatch(/^send the report to Ana\.\n/);
+      expect(send(specs[2].userWords).aligned).toBeUndefined();
+      await ended(3);
+      await host.ask("can you try again?", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(4));
+      expect(specs[3].userWords).toMatch(/^send the report to Ana\.\n/);
+      expect(send(specs[3].userWords).aligned).toBeUndefined();
+      await host.stop();
+    });
+
+    it("carries the words of a task whose question went unanswered for as long as its card offers Try again, past ten minutes (tasks-approvals-4)", async () => {
+      const EXPIRED = { success: false, stopped: true, expired: true, summary: "My question ran out of time with no answer, so I didn't do it." };
+      const { host, specs, tool, say, ended } = await retrying([EXPIRED, EXPIRED]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      // The user was away for a quarter of an hour: the card waited for them (userAway), and so does a typed "try again".
+      const age = () => { for (const e of (host as any).transcript) e.t = new Date(Date.parse(e.t) - 15 * 60_000).toISOString(); };
+      age();
+      const first = host.tasks!.list()[0];
+      expect(host.tasks!.canRetry(first.id)).toBe(true);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].userWords).toBe("send the report to Ana.\ntry again");
+      expect(send(specs[1].userWords).aligned).toBeUndefined();
+      // Its card closed, and over ten minutes on: "try again" carries nothing of it.
+      await ended(2);
+      age();
+      host.tasks!.dismiss(host.tasks!.list()[0].id);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      expect(specs[2].userWords).toBe("try again");
+      await host.stop();
+    });
+
+    it("carries what the user agreed to for the task, as its card's Try again does (tasks-approvals-c1-3)", async () => {
+      const { host, specs, tool, say, ended } = await retrying([{ success: false, summary: "I couldn't find the Send button." }]);
+      await host.ask("the report for Ana is ready", mail);
+      say("Shall I send the report to Ana?");
+      await host.ask("Sure, go ahead.", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      expect(specs[0].agreed).toEqual([{ asked: "Shall I send the report to Ana?", answer: "Sure, go ahead." }]);
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].agreed).toEqual(specs[0].agreed);
+      await host.stop();
+    });
+
+    it("never after a request of the user's own in between, or a “yes” to a question that offers no retry (tasks-approvals-c1-3)", async () => {
+      const { host, specs, tool, say, ended } = await retrying([
+        { success: false, summary: "I couldn't find the Send button. Want me to open Thunderbird first?" },
+        { success: false, summary: "I couldn't find the Send button." },
+      ]);
+      await host.ask("send the report to Ana", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      say("On it.");
+      await ended(1);
+      await host.ask("yes please", mail);
+      await tool("start_task")({ goal: "Open Thunderbird" });
+      say("On it.");
+      await vi.waitFor(() => expect(specs).toHaveLength(2));
+      expect(specs[1].userWords).toBe("yes please");
+      await ended(2);
+      await host.ask("open the calendar", mail);
+      say("Which calendar?");
+      await host.ask("try again", mail);
+      await tool("start_task")({ goal: "Send the report to Ana" });
+      await vi.waitFor(() => expect(specs).toHaveLength(3));
+      // (It answers Ember's "Which calendar?", so those words go with it; the failed Send's don't.)
+      expect(specs[2].userWords).toBe("open the calendar.\ntry again");
+      expect(send(specs[2].userWords).aligned).toBe(false);
+      await host.stop();
+    });
+  });
 });
 
 describe("review round 6: a task's bubbles say whose they are", () => {
@@ -2588,7 +3340,7 @@ describe("review round 7: a request the runtime takes but never begins", () => {
     const session = sim.sessions.find(s => s.sessionId === `ember-task-${stuck.id}`);
     expect(session.aborted).toBeGreaterThan(0);
     expect(session.disconnected).toBe(true);
-    expect(host.getTranscript().at(-1)?.text).toBe(`the stuck one: failed. ${TASK_NOT_ANSWERING}`);
+    expect(host.getTranscript().at(-1)?.text).toBe(`the stuck one: didn't finish. ${TASK_NOT_ANSWERING}`);
     expect(host.tasks!.get(fine.id)?.status).toBe("running");
     expect(sim.clients).toHaveLength(1);
     expect(host.getStatus().phase).toBe("ready");
@@ -2914,7 +3666,7 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     expect(host.tasks!.get(t.id)?.status).toBe("running");
     // The task's model goes quiet as well: its own watch ends it, and then Copilot is reconnected.
     await vi.advanceTimersByTimeAsync(165_000);
-    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `tidy my desktop: failed. ${TASK_NO_ANSWER}` })]);
+    expect(finished).toEqual([expect.objectContaining({ status: "failed", text: `tidy my desktop: didn't finish. ${TASK_NO_ANSWER}` })]);
     sim.stall = () => false;
     await vi.advanceTimersByTimeAsync(10_000);
     expect(sim.clients).toHaveLength(2);
@@ -3571,6 +4323,344 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     await host.stop();
   });
 
+  it("switches once the turn under way ends, with no request asked meanwhile, and says till then that the switch waits (first-run-v4-1)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    await host.ask("tell me a long story");
+    await vi.waitFor(() => expect(before.sent.join("\n")).toContain("tell me a long story"));
+    // "Use GitHub Copilot instead" while the answer comes: nothing cuts it off, and the status says the switch waits.
+    now = null;
+    expect(host.providerChanged()).toBeNull();
+    expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "a.example" }, switchPending: true });
+    expect(before.disconnected).toBe(false);
+    // The turn ends: Ember moves to Copilot without waiting for another request (no sign-in yet, so signed out).
+    before.emit("assistant.turn_end");
+    before.emit("session.idle", {});
+    await vi.waitFor(() => expect(host.getStatus().phase).toBe("signed-out"), { timeout: 3000 });
+    expect(before.disconnected).toBe(true);
+    expect(host.getStatus().service).toBeUndefined();
+    expect(host.getStatus().switchPending).toBeUndefined();
+    await host.stop();
+  });
+
+  it("never says a switch waits when nothing is under way, though main tells it twice (first-run-v4-1)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host, statuses } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const seen = statuses.length;
+    now = null;
+    // Main tells the host from the settings' change and from the provider service's, one after the other.
+    const switching = host.providerChanged();
+    expect(switching).not.toBeNull();
+    expect(host.providerChanged()).toBeNull();
+    expect(await switching).toBe("signed-out");
+    expect(statuses.slice(seen).filter(s => s.switchPending)).toEqual([]);
+    await host.stop();
+  });
+
+  it("switches once the turn under way is stopped, though the runtime never confirms the stop (first-run-v4-1)", async () => {
+    sim.abortEnds = false;
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    await host.ask("tell me a long story");
+    await vi.waitFor(() => expect(before.sent.join("\n")).toContain("tell me a long story"));
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    await host.stopAnswer();
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "b.example" } }), { timeout: 3000 });
+    expect(before.disconnected).toBe(true);
+    await host.stop();
+  });
+
+  it("switches once the last task ends, and a switch undone meanwhile reconnects nothing (first-run-v4-1)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    expect(host.getStatus().switchPending).toBe(true);
+    // Put back before the task ends: nothing waits any more.
+    now = at("a.example");
+    expect(host.providerChanged()).toBeNull();
+    expect(host.getStatus().switchPending).toBeUndefined();
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    host.tasks!.cancel(t.id);
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 });
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "b.example" } }), { timeout: 3000 });
+    expect(conductorSession().config.provider.baseUrl).toBe("https://b.example/v1");
+    expect(host.getStatus().switchPending).toBeUndefined();
+    await host.stop();
+  });
+
+  const taskSession = (id: string) => sim.sessions.find(s => s.sessionId === `ember-task-${id}`);
+  const taskSessions = () => sim.sessions.filter(x => x.sessionId.startsWith("ember-task-"));
+  const tool = (session: any, name: string) => session.config.tools.find((t: { name: string }) => t.name === name);
+  const cardOf = (screen: () => Partial<EmberState>, id: string) => (screen().tasks ?? []).find(c => c.id === id);
+
+  it("keeps a task's card, its Try again and Close, when the switch that waited for it is made, and Try again then starts it on the new service (tasks-approvals-r4-2)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host, screen } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("turn on night light", { userWords: "turn on night light", alone: true });
+    await vi.waitFor(() => expect(taskSession(t.id)).toBeDefined());
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    await tool(taskSession(t.id), "finish_task").handler({ success: false, summary: "The switch wasn't there." });
+    taskSession(t.id).emit("session.idle", {});
+    // The switch is made as the task ends: its card is still there afterwards, as are Try again and Close.
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "b.example" } }), { timeout: 3000 });
+    expect(conductorSession()).not.toBe(before);
+    await vi.waitFor(() => expect(cardOf(screen, t.id)?.actions?.map(a => a.label)).toEqual(["Try again", "Close"]));
+    const rows = host.taskActivities().filter(e => e.id === t.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].controls?.retry).toBe(true);
+    // Try again starts it on the new service, never refused for the switch.
+    expect(host.retryTask(t.id)).toBe(true);
+    await vi.waitFor(() => expect(taskSessions().length).toBe(2));
+    const retried = host.tasks!.list().find(x => x.id !== t.id)!;
+    expect(retried.result?.summary).not.toBe(PROVIDER_MOVED_TASK);
+    expect(cardOf(screen, t.id)).toBeUndefined();
+    await host.stop();
+  });
+
+  it("offers no Try again while a switch waits, so it never starts a task refused at once, and offers it once the switch is made (tasks-approvals-c4-1)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host, screen } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const a = host.tasks!.start("turn on night light", { userWords: "turn on night light", alone: true });
+    const b = host.tasks!.start("tidy my desktop", { userWords: "tidy my desktop", alone: true });
+    await vi.waitFor(() => expect(taskSession(a.id) && taskSession(b.id)).toBeDefined());
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    expect(host.getStatus().switchPending).toBe(true);
+    await tool(taskSession(a.id), "finish_task").handler({ success: false, summary: "The switch wasn't there." });
+    taskSession(a.id).emit("session.idle", {});
+    await vi.waitFor(() => expect(host.tasks!.get(a.id)?.status).toBe("failed"));
+    // While the other task keeps the switch waiting: Close only, and no Try again in Home's row.
+    expect(cardOf(screen, a.id)?.actions?.map(x => x.label)).toEqual(["Close"]);
+    expect(host.taskActivities().find(e => e.id === a.id)?.controls?.retry).toBe(false);
+    const rows = host.taskActivities().length;
+    expect(host.retryTask(a.id)).toBe(false);
+    expect(host.taskActivities()).toHaveLength(rows);
+    expect(host.tasks!.list().some(x => x.result?.summary === PROVIDER_MOVED_TASK)).toBe(false);
+    // The other task ends, the switch is made, and Try again is back on the card.
+    host.tasks!.cancel(b.id);
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "b.example" } }), { timeout: 3000 });
+    await vi.waitFor(() => expect(cardOf(screen, a.id)?.actions?.map(x => x.label)).toEqual(["Try again", "Close"]));
+    await host.stop();
+  });
+
+  /**
+   * The user asks (`words`, each a turn of its own after Ember's `between` line), and the conversation's `act` starts its
+   * tasks; then the model service moves from a.example to `to` while they run, and `fail` of them fails: its card as the
+   * switch is made (integrations-w5-1).
+   */
+  const askAndFail = async (o: { words: string[]; between?: string; act: (talk: any) => Promise<void>; fail: (tasks: Task[]) => Task; to: string; routines?: RoutineBook; dir?: string }) => {
+    let now: ActiveProvider | null = at("a.example");
+    const made = makeHost({ hands: hands(), provider: () => now, ...(o.routines ? { routines: o.routines, userData: o.dir } : {}) });
+    if (o.routines) made.settings.update({ routines: { on: true, consent: { version: FEATURE_CONSENT_VERSION.routines, at: "2026-11-08T00:00:00.000Z" } } });
+    const { host, screen } = made;
+    expect(await host.start(null)).toBe("ready");
+    const talk = conductorSession();
+    for (const [i, w] of o.words.entries()) {
+      await host.ask(w);
+      if (i < o.words.length - 1) { talk.emit("assistant.message", { content: o.between ?? "" }); talk.emit("session.idle", {}); await vi.waitFor(() => expect(host.getTranscript().some(e => e.who === "ember")).toBe(true)); }
+    }
+    await o.act(talk);
+    talk.emit("assistant.message", { content: "On it." });
+    talk.emit("session.idle", {});
+    const all = host.tasks!.list();
+    await vi.waitFor(() => expect(all.every(t => taskSession(t.id)?.sent.length)).toBeTruthy());
+    const failed = o.fail(all);
+    if (o.to !== "a.example") { now = at(o.to); expect(host.providerChanged()).toBeNull(); }
+    for (const t of all) {
+      await tool(taskSession(t.id), "finish_task").handler(t === failed ? { success: false, summary: "The calendar wouldn't open." } : { success: true, summary: "Done." });
+      taskSession(t.id).emit("session.idle", {});
+    }
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { host: o.to } }), { timeout: 3000 });
+    await vi.waitFor(() => expect(cardOf(screen, failed.id)?.status).toBe("failed"));
+    if (o.to !== "a.example") await vi.waitFor(() => expect(conductorSession()).not.toBe(talk), { timeout: 3000 });
+    await new Promise(r => setTimeout(r, 50));
+    return { host, screen, failed };
+  };
+  const startTasks = (...goals: string[]) => async (talk: any) => { for (const goal of goals) expect(await tool(talk, "start_task").handler({ goal })).toMatch(/^Task \S+ started/); };
+
+  it("starts a card's Try again on another model service from the request that asked for it alone, never the goal or screen text the conversation before wrote, and doesn't list it there (integrations-v5-1, integrations-w5-1)", async () => {
+    // The conductor on the service before wrote the goal from the conversation; the user's request was short.
+    const goal = "Reply to Dr Smith confirming the biopsy appointment on 12 Nov (results discussed earlier: benign)";
+    const { host, screen, failed } = await askAndFail({ words: ["Reply to my last email saying yes"], act: startTasks(goal), fail: ([t]) => t, to: "cloud.example" });
+    // The card and its Try again stay (tasks-approvals-r4-2), and its title on screen, but the new conversation isn't told of it.
+    await vi.waitFor(() => expect(cardOf(screen, failed.id)?.actions?.map(a => a.label)).toEqual(["Try again", "Close"]));
+    expect(cardOf(screen, failed.id)?.title).toContain("Dr Smith");
+    expect(await tool(conductorSession(), "list_tasks").handler({})).toBe("No tasks.");
+    const n = taskSessions().length;
+    expect(host.retryTask(failed.id)).toBe(true);
+    await vi.waitFor(() => expect(taskSessions().length).toBe(n + 1));
+    const retried = taskSessions().at(-1);
+    await vi.waitFor(() => expect(retried.sent.length).toBeGreaterThan(0));
+    expect(retried.config.provider.baseUrl).toBe("https://cloud.example/v1");
+    const sent = [retried.sent.join("\n"), JSON.stringify(retried.config.systemMessage ?? "")].join("\n");
+    for (const word of ["Dr Smith", "biopsy", "benign"]) expect(sent).not.toContain(word);
+    expect(retried.sent[0]).toMatch(/^Task: Reply to my last email saying yes\b/);
+    await host.stop();
+  });
+
+  for (const to of ["b.example", "a.example"]) it(`retries only the card's own task of a request split into two, ${to === "a.example" ? "on the same model service" : "and on another offers Close only and says to ask again"} (integrations-w5-1)`, async () => {
+    const said = "Reply to Dr Smith saying yes, and put the appointment in my calendar.";
+    const { host, screen, failed } = await askAndFail({
+      words: [said], to, fail: ([, cal]) => cal,
+      act: startTasks("Reply to Dr Smith's email saying yes to the 12 Nov appointment", "Add the 12 Nov appointment with Dr Smith to the calendar"),
+    });
+    if (to === "a.example") {
+      // On the same service Try again is the card's own task, under its own title, as before.
+      await vi.waitFor(() => expect(cardOf(screen, failed.id)?.actions?.map(a => a.label)).toEqual(["Try again", "Close"]));
+      const n = taskSessions().length;
+      expect(host.retryTask(failed.id)).toBe(true);
+      await vi.waitFor(() => expect(taskSessions().length).toBe(n + 1));
+      const retried = taskSessions().at(-1);
+      await vi.waitFor(() => expect(retried.sent.length).toBeGreaterThan(0));
+      expect(retried.sent[0]).toMatch(/^Task: Add the 12 Nov appointment with Dr Smith to the calendar\b/);
+      await host.stop();
+      return;
+    }
+    // On another, the request's words would start both halves again (the reply sent twice): Close only, and why.
+    expect(cardOf(screen, failed.id)?.actions?.map(a => a.label)).toEqual(["Close"]);
+    expect(cardOf(screen, failed.id)?.detail).toBe(`The calendar wouldn't open. ${ASK_AGAIN_ELSEWHERE}`);
+    expect(host.taskActivities().find(e => e.id === failed.id)?.controls?.retry).toBe(false);
+    const n = taskSessions().length;
+    expect(host.retryTask(failed.id)).toBe(false);
+    await new Promise(r => setTimeout(r, 50));
+    expect(taskSessions().length).toBe(n);
+    await host.stop();
+  });
+
+  it("offers Close only on another model service for the task of a routine, whose steps are in the turn's words (integrations-w5-1)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-"));
+    const routines = new RoutineBook({ file: routinesFile(dir) });
+    routines.save("start my day", ["open Mail", "show today's calendar"], "when I say start my day, open Mail and show today's calendar");
+    const { host, screen, failed } = await askAndFail({
+      words: ["start my day"], to: "b.example", routines, dir, fail: ([t]) => t,
+      act: async talk => { expect(await tool(talk, "run_routine").handler({ name: "start my day" })).toContain("show today's calendar"); await startTasks("Show today's calendar")(talk); },
+    });
+    expect(cardOf(screen, failed.id)?.actions?.map(a => a.label)).toEqual(["Close"]);
+    expect(cardOf(screen, failed.id)?.detail).toContain(ASK_AGAIN_ELSEWHERE);
+    expect(host.retryTask(failed.id)).toBe(false);
+    await host.stop();
+  });
+
+  for (const [first, reply, between, goal] of [
+    ["Check my mail from Dr Smith.", "yes do that", "There's one from Dr Smith about your appointment on 12 Nov. Shall I reply to confirm it?", "Reply to Dr Smith confirming the appointment on 12 Nov"],
+    // A risky reply isn't joined to the words before it, but it still answers Ember's question.
+    ["Tidy my Downloads folder.", "delete them", "I found 3 old installers in Downloads. Shall I delete them?", "Delete the 3 old installers in Downloads"],
+  ]) it(`offers Close only on another model service for a task asked by answering Ember ("${reply}"), whose words don't say what it is (integrations-w5-1)`, async () => {
+    const { host, screen, failed } = await askAndFail({ words: [first, reply], between, act: startTasks(goal), fail: ([t]) => t, to: "b.example" });
+    expect(cardOf(screen, failed.id)?.actions?.map(a => a.label)).toEqual(["Close"]);
+    expect(cardOf(screen, failed.id)?.title).toBe(goal);
+    expect(cardOf(screen, failed.id)?.detail).toContain(ASK_AGAIN_ELSEWHERE);
+    expect(host.retryTask(failed.id)).toBe(false);
+    await host.stop();
+  });
+
+  /** Two tasks fail while a switch waits for them, and the switch's connect waits for `gate`: the cards on screen as it begins. */
+  const failBoth = async (host: AgentHost, gate: Promise<void>, now: (p: ActiveProvider) => void) => {
+    const t = host.tasks!.start("turn on night light", { userWords: "turn on night light", alone: true });
+    const u = host.tasks!.start("tidy my desktop", { userWords: "tidy my desktop", alone: true });
+    await vi.waitFor(() => expect(taskSession(t.id) && taskSession(u.id)).toBeDefined());
+    now(at("b.example"));
+    expect(host.providerChanged()).toBeNull();
+    sim.startGate = gate;
+    for (const [x, why] of [[u, "No desktop."], [t, "The switch wasn't there."]] as const) {
+      await tool(taskSession(x.id), "finish_task").handler({ success: false, summary: why });
+      taskSession(x.id).emit("session.idle", {});
+    }
+    // The switch is made: Ember is connecting to the new service.
+    await vi.waitFor(() => expect(sim.clients.length).toBe(2));
+    return { t, u };
+  };
+
+  it("keeps a finished task's card on screen, with Close that closes it, for the whole reconnect of the switch it waited for (integrations-v5-2)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host, screen, patches } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    let open!: () => void;
+    const { t, u } = await failBoth(host, new Promise<void>(r => { open = r; }), p => { now = p; });
+    const mark = patches.length;
+    await new Promise(r => setTimeout(r, 300));
+    expect(host.getStatus().phase).toBe("starting");
+    // While Ember connects: both cards, Close only (Try again would start on the connection that went), and Close works.
+    expect(cardOf(screen, t.id)?.actions?.map(a => a.label)).toEqual(["Close"]);
+    expect(host.taskActivities().find(e => e.id === t.id)?.controls?.retry).toBe(false);
+    expect(host.retryTask(t.id)).toBe(false);
+    host.tasks!.dismiss(u.id);
+    expect(cardOf(screen, u.id)).toBeUndefined();
+    open();
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "b.example" } }), { timeout: 3000 });
+    await vi.waitFor(() => expect(cardOf(screen, t.id)?.actions?.map(a => a.label)).toEqual(["Try again", "Close"]));
+    // Never off the screen meanwhile, and the one closed doesn't come back.
+    expect(patches.slice(mark).filter(p => p.tasks !== undefined).every(p => p.tasks!.some(c => c.id === t.id))).toBe(true);
+    expect(cardOf(screen, u.id)).toBeUndefined();
+    expect(host.taskActivities().filter(e => e.id === t.id)).toHaveLength(1);
+    await host.stop();
+  });
+
+  it("takes the cards off when the switch's connect fails, or a sign-out comes while it connects (integrations-v5-2)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const made = makeHost({ hands: hands(), provider: () => now });
+    expect(await made.host.start(null)).toBe("ready");
+    let open!: () => void;
+    const failing = await failBoth(made.host, new Promise<void>(r => { open = r; }), p => { now = p; });
+    sim.startError = new Error("spawn copilot ENOENT");
+    open();
+    await vi.waitFor(() => expect(made.host.getStatus().phase).toBe("error"), { timeout: 3000 });
+    expect(made.screen().tasks).toEqual([]);
+    expect(made.host.tasks).toBeNull();
+    await made.host.stop();
+    sim.startError = null;
+    sim.clients = [];
+    now = at("a.example");
+    const again = makeHost({ hands: hands(), provider: () => now });
+    expect(await again.host.start(null)).toBe("ready");
+    const signingOut = await failBoth(again.host, new Promise<void>(r => { open = r; }), p => { now = p; });
+    await again.host.forgetConversation();
+    expect(again.screen().tasks).toEqual([]);
+    open();
+    await vi.waitFor(() => expect(again.host.getStatus().phase).toBe("ready"), { timeout: 3000 });
+    expect(cardOf(again.screen, signingOut.t.id)).toBeUndefined();
+    expect(failing.t.id).toBeDefined();
+    await again.host.stop();
+  });
+
+  it("tells Home a request held for the new service waits for the switch, never that Ember is thinking, until it is sent (home-r4-4)", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const turns: string[] = [];
+    const { host } = makeHost({ hands: hands(), provider: () => now, onConversationTurn: t => { turns.push(t); } });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    expect(await host.ask("summarise my inbox")).toBe(true);
+    expect(host.conversationTurn).toBe("held");
+    expect(turns).toEqual(["held"]);
+    // The task ends: Ember switches and sends it, and only then is it answering.
+    host.tasks!.cancel(t.id);
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 });
+    await vi.waitFor(() => expect(conductorSession().sent.join("\n")).toContain("summarise my inbox"), { timeout: 3000 });
+    expect(host.conversationTurn).toBe("thinking");
+    expect(turns.at(-1)).toBe("thinking");
+    await host.stop();
+  });
+
   it("drops the held requests on Stop: none is sent afterwards", async () => {
     let now: ActiveProvider | null = at("a.example");
     const { host } = makeHost({ hands: hands(), provider: () => now });
@@ -3664,15 +4754,15 @@ describe("the user's own model service changed while a task runs (PR #136 B2)", 
     sim.createGate = new Promise<void>(() => undefined);
     host.tasks!.cancel(t.id);
     await vi.waitFor(() => expect(before.disconnected).toBe(true), { timeout: 3000 });
-    // After the release's wait and the usual one, the held question is told Ember is still connecting, and the
-    // release is over: a later question isn't held behind it.
-    await vi.waitFor(() => expect(patches.some(p => p.bubble?.title === "I'm still connecting to Copilot")).toBe(true), { timeout: 3000 });
+    // After the release's wait and the usual one, the held question is told Ember is still connecting (to the user's
+    // own provider, never called Copilot: integrations-3), and the release is over: a later question isn't held behind it.
+    await vi.waitFor(() => expect(patches.some(p => p.bubble?.title === "I'm still connecting to your model provider")).toBe(true), { timeout: 3000 });
     const h = host as unknown as { releasing: boolean; held: unknown[] };
     await vi.waitFor(() => expect(h.releasing).toBe(false), { timeout: 3000 });
     const shown = patches.length;
     await host.ask("later question");
     expect(h.held).toEqual([]);
-    expect(patches.slice(shown).some(p => p.bubble?.title === "I'm still connecting to Copilot")).toBe(true);
+    expect(patches.slice(shown).some(p => p.bubble?.title === "I'm still connecting to your model provider")).toBe(true);
     // Stop everything during a release that hangs ends it too.
     h.held.push({ text: "x", context: null, epoch: 0, how: {} });
     h.releasing = true;
@@ -3714,6 +4804,74 @@ describe("memory hears whose words a request was (review of PR #142, B2)", () =>
 });
 
 
+describe("“remember…” while memory is off (memory-c1-1, memory-i1)", () => {
+  it("sends the request to the conversation, which keeps it until Ember closes, and says after the answer that memory won't", async () => {
+    vi.useFakeTimers();
+    try {
+      const learning = new MemoryLearning({ memory: { learn: () => ({ kind: "refused" }) } as never, inForce: () => false, questionsOn: () => false, askedAt: () => null, setAskedAt: () => undefined, idle: () => true, locked: () => false, say: () => true, openMemory: () => { throw new Error("Settings opened"); }, log: quiet });
+      const memory = { remember: () => "", context: () => "", forget: () => false, forgetAll: () => undefined, intent: (t: string, how: { own: boolean }) => learning.intent(t, how), rememberNote: (t: string) => learning.rememberNote(t) };
+      let bubble: any = null;
+      const { host } = makeHost({ memory, setState: (p: any) => { if (p.bubble) bubble = p.bubble; } });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      await host.ask("Keep in mind the file is in Downloads");
+      expect(conductorSession().sent.at(-1)).toContain("Keep in mind the file is in Downloads");
+      conductorSession().emit("assistant.message", { content: "Noted: the file is in Downloads." });
+      conductorSession().emit("session.idle", {});
+      const said = host.getTranscript().map(e => [e.who, e.text]);
+      expect(said.slice(-3)).toEqual([["you", "Keep in mind the file is in Downloads"], ["ember", "Noted: the file is in Downloads."], ["ember", "Memory is off, so I won't keep this after Ember closes."]]);
+      // The answer is read first; the note follows it, with Open Memory, never Settings opened on its own.
+      expect(bubble.title).not.toBe("Memory is off");
+      let seen: any = null;
+      for (let i = 0; i < 30 && !seen; i++) { await vi.advanceTimersByTimeAsync(1000); if (bubble?.title === "Memory is off" && bubble?.visible) seen = bubble; }
+      expect(seen).toMatchObject({ visible: true, title: "Memory is off", thought: "Memory is off, so I won't keep this after Ember closes.", actions: [{ id: "ui:memory", label: "Open Memory" }] });
+      // An ordinary request that starts with "forget" reaches the conversation too, with no note.
+      await host.ask("Forget what I said, open Firefox instead");
+      expect(conductorSession().sent.at(-1)).toContain("Forget what I said, open Firefox instead");
+      conductorSession().emit("assistant.message", { content: "Opening Firefox." });
+      conductorSession().emit("session.idle", {});
+      expect(host.getTranscript().at(-1)).toMatchObject({ who: "ember", text: "Opening Firefox." });
+      // "Clear all" after a list, and the system's own "forget" for a network, are the conversation's too: nothing is
+      // answered in code, nothing opens and no note follows (memory-r3-1, memory-c1-1).
+      for (const [text, answer] of [["Clear all", "Cleared your notifications."], ["Forget my home Wi-Fi network", "I'll forget it in Settings."]]) {
+        await host.ask(text);
+        expect(conductorSession().sent.at(-1), text).toContain(text);
+        conductorSession().emit("assistant.message", { content: answer });
+        conductorSession().emit("session.idle", {});
+        expect(host.getTranscript().at(-1), text).toMatchObject({ who: "ember", text: answer });
+      }
+      // "Forget my last request and open Firefox instead" is about the conversation: it reaches it whole, with no note
+      // (memory-c1-1).
+      await host.ask("Forget my last request and open Firefox instead");
+      expect(conductorSession().sent.at(-1)).toContain("Forget my last request and open Firefox instead");
+      conductorSession().emit("assistant.message", { content: "Opening Firefox instead." });
+      conductorSession().emit("session.idle", {});
+      expect(host.getTranscript().at(-1)).toMatchObject({ who: "ember", text: "Opening Firefox instead." });
+      // A forget request with another after it: the conversation does the other, and Ember says memory can't change
+      // what's saved, never leaving the model's answer to stand for the forget.
+      await host.ask("Forget my address and open Firefox");
+      expect(conductorSession().sent.at(-1)).toContain("Forget my address and open Firefox");
+      conductorSession().emit("assistant.message", { content: "Opening Firefox." });
+      conductorSession().emit("session.idle", {});
+      expect(host.getTranscript().slice(-2).map(e => [e.who, e.text])).toEqual([["ember", "Opening Firefox."], ["ember", "Memory is off, so I can't change what's saved."]]);
+      // Its Open Memory opens Settings › Memory at the list and its Forget, never at the note (memory-r3-4).
+      seen = null;
+      for (let i = 0; i < 30 && !seen; i++) { await vi.advanceTimersByTimeAsync(1000); if (bubble?.thought === "Memory is off, so I can't change what's saved." && bubble?.visible) seen = bubble; }
+      expect(seen).toMatchObject({ visible: true, title: "Memory is off", actions: [{ id: "ui:memory-list", label: "Open Memory" }] });
+      // A fact said with any verb, and one with a request after it: the answer, then the truth (memory-r3-2).
+      for (const [text, answer] of [["Remember my wife likes tulips", "Tulips it is."], ["Remember that I'm vegetarian and book a table", "Booking a table."]]) {
+        await host.ask(text);
+        expect(conductorSession().sent.at(-1), text).toContain(text);
+        conductorSession().emit("assistant.message", { content: answer });
+        conductorSession().emit("session.idle", {});
+        expect(host.getTranscript().slice(-2).map(e => [e.who, e.text]), text).toEqual([["ember", answer], ["ember", "Memory is off, so I won't keep this after Ember closes."]]);
+      }
+      await host.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("memory erasure at account boundaries", () => {
   function failingMemory() {
     return { remember: vi.fn(() => ""), context: vi.fn(() => ""), forget: vi.fn(() => false), forgetAll: vi.fn((): void => { throw new Error("EROFS"); }) };
@@ -3744,6 +4902,51 @@ describe("memory erasure at account boundaries", () => {
       await host.stop();
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+  it("tells memory why it can't check the owner: signed out, a model provider in force, or GitHub not answering (memory-2, integrations-2)", async () => {
+    const why: string[] = [];
+    const memory = {
+      ...failingMemory(), resolveAccountId: async () => null,
+      verifyAccount: (id: number | null, reason?: string) => { why.push(id === null ? `verify:${reason}` : "verify:id"); },
+      pauseAccount: (reason?: string) => { why.push(`pause:${reason ?? "checking"}`); },
+    };
+    const own: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "https://models.example/v1", apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } };
+    let provider: ActiveProvider | null = null;
+    const { host } = makeHost({ memory, accountRetryMs: [], provider: () => provider });
+    try {
+      expect(await host.start(null)).toBe("signed-out");
+      expect(why.at(-1)).toBe("pause:signed-out");
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(why.at(-1)).toBe("verify:unverified");
+      provider = own;
+      expect(await host.start(null)).toBe("ready");
+      // Connecting under the own provider waits for it, never for a GitHub account check (integrations-r5).
+      expect(why.slice(-2)).toEqual(["pause:own-provider", "verify:own-provider"]);
+      provider = { ...own, kind: "admin" };
+      expect(await host.start(null)).toBe("ready");
+      expect(why.at(-1)).toBe("verify:org-provider");
+      provider = null;
+      sim.auth = async () => { throw new Error("getaddrinfo ENOTFOUND api.github.com"); };
+      expect(await host.start(TOKEN, "stored")).toBe("error");
+      expect(why.at(-1)).toBe("pause:unverified");
+    } finally { await host.stop(); }
+  });
+  it("says in the conversation when another account signing in made Ember forget the previous one's memory (memory-11)", async () => {
+    let erased = true;
+    const memory = { ...failingMemory(), forgetAll: vi.fn((): boolean => erased) };
+    const { host } = makeHost({ memory });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      sim.auth = async () => ({ isAuthenticated: true, login: "other" });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(host.getTranscript().map(e => [e.who, e.text])).toEqual([["ember", ACCOUNT_CHANGED_FORGOT]]);
+      expect(ACCOUNT_CHANGED_FORGOT).toBe("You're signed in to another GitHub account now, so I've forgotten the previous account's memory, reminders and routines.");
+      // Memory never verified as the previous account's wasn't erased (Memory says it is another account's): no line.
+      erased = false;
+      sim.auth = async () => ({ isAuthenticated: true, login: "third" });
+      expect(await host.start(TOKEN, "stored")).toBe("ready");
+      expect(host.getTranscript()).toEqual([]);
+    } finally { await host.stop(); }
   });
   it("keeps memory when a verified account changes its login", async () => {
     const memory = { ...failingMemory(), resolveAccountId: async () => 100 };
@@ -3846,6 +5049,25 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     expect(sends).toEqual([]);
     expect(heard.at(-1)).toHaveLength(2);
     await second.host.stop();
+  });
+
+  it("marks the lines it brought back as restored for Home, and none said since (home-8)", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("What's the weather like?");
+    say("Sunny, about 20 degrees.");
+    await first.host.stop();
+    const second = kept(dir);
+    await second.host.start(TOKEN, "stored");
+    await second.host.ask("And tomorrow?");
+    say("Rain in the afternoon.");
+    expect(second.host.getTranscript().map(e => [e.text, e.restored ?? false])).toEqual([
+      ["What's the weather like?", true], ["Sunny, about 20 degrees.", true], ["And tomorrow?", false], ["Rain in the afternoon.", false],
+    ]);
+    // The mark is Home's only: the copy saved again holds none.
+    await second.host.stop();
+    expect(fs.readFileSync(second.file, "utf8")).not.toContain("restored");
   });
 
   it("is inert: a restored question is not agreed to by a later yes, and restored words are not the task's", async () => {
@@ -4241,8 +5463,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
         { handle: (_c: string, h: () => Promise<void>) => { run = h; } }, { signOut: "s", memoryForgetAll: "m" }, (fn: unknown) => fn, ...names.map(n => deps[n]));
       return run;
     };
+    /** What Sign out told Projects to forget (integrations-c2-1: from the handler, never from the status after it). */
+    let projectForgot: string[] = [];
     const signOutHandler = (agent: AgentHost) => handlerOf(slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,"), {
       agent, tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} }, resetAnswerSpeech() {},
+      forgetProject: (what: string) => { projectForgot.push(what); },
     });
 
     it("Sign out deletes conversation.json although the switch is off by then", async () => {
@@ -4254,7 +5479,9 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await k.store.flush();
       expect(fs.existsSync(k.file)).toBe(true);
       k.flag.on = false; // the setting turned off, the listener not yet run
+      projectForgot = [];
       await signOutHandler(k.host)();
+      expect(projectForgot).toEqual(["all"]);
       expect(fs.existsSync(k.file)).toBe(false);
       await k.store.flush();
       expect(fs.existsSync(k.file)).toBe(false);

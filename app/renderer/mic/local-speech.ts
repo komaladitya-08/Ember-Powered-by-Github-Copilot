@@ -5,7 +5,8 @@ import { bestVoice, type VoiceInfo } from "./voices";
 export interface LocalSpeechDeps<V extends VoiceInfo> {
   voices(): V[];
   busy(): boolean;
-  speak(text: string, voice: V): void;
+  /** `lang`: a reply in another language, said in that language. */
+  speak(text: string, voice: V, lang?: string): void;
   unavailable(): void;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(timer: unknown): void;
@@ -13,21 +14,26 @@ export interface LocalSpeechDeps<V extends VoiceInfo> {
 
 /** Never submits an utterance with an unrestricted default voice; cancelled words cannot revive on voiceschanged. */
 export class LocalSpeech<V extends VoiceInfo> {
-  private pending: string[] = [];
+  private pending: { text: string; lang?: string }[] = [];
   private timer: unknown = null;
   constructor(private d: LocalSpeechDeps<V>, private lang: string) {}
 
-  enqueue(text: string): void { this.pending.push(text); this.drain(); }
+  /** `lang`: a reply in another language (voice-speaking-11), said only by a local voice for it. */
+  enqueue(text: string, lang?: string): void { this.pending.push({ text, ...(lang ? { lang } : {}) }); this.drain(); }
 
   /** Called after neural audio ends and whenever the operating system's voice list changes. */
   drain(): void {
     if (!this.pending.length || this.d.busy()) return;
-    const voice = bestVoice(this.d.voices(), this.lang);
-    if (!voice) {
+    const voices = this.d.voices();
+    const voice = bestVoice(voices, this.lang);
+    // Words in another language wait only for the voices to load: with none for that language, they aren't said (the
+    // bubble shows them), and that isn't speech failing, also on a computer with no voices at all (voice-speaking-r1).
+    if (!voices.length || (!voice && this.pending.some(p => !p.lang))) {
       if (this.timer === null) this.timer = this.d.setTimer(() => {
         this.timer = null;
+        const failed = this.pending.some(p => !p.lang);
         this.pending = [];
-        this.d.unavailable();
+        if (failed) this.d.unavailable();
       }, 3000);
       return;
     }
@@ -35,7 +41,10 @@ export class LocalSpeech<V extends VoiceInfo> {
     this.timer = null;
     const pending = this.pending;
     this.pending = [];
-    for (const text of pending) this.d.speak(text, voice);
+    for (const p of pending) {
+      const v = p.lang ? bestVoice(voices, p.lang) : voice;
+      if (v) this.d.speak(p.text, v, p.lang);
+    }
   }
 
   cancel(): void {

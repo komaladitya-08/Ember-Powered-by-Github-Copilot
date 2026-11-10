@@ -1,18 +1,28 @@
 /**
  * Which section of the settings window main asked for, and the control in it to focus: "computers" (its heading), or
- * "computers:host" / "computers:wsl" (the field to add a computer, the WSL switch), "access:ask" / "access:stop" (Ask
+ * "computers:host" / "computers:wsl" (the field to add a computer, the WSL switch), "conversation:latest" (the newest
+ * answer), "conversation:stop" (Stop response, while the bubble says Ember is still waiting), "access:ask" / "access:stop" (Ask
  * Ember… and Stop everything, the keyboard's way to them while another app holds their shortcut). A section can still
  * be hidden when the request comes (Computers shows only once the computers list and the status have both arrived,
  * after the page has loaded): the request then waits until it shows, unless the user has moved on first. Pure and
  * renderer-safe.
  */
 
+/**
+ * Not an element's id: the newest answer's row in the conversation ("Read the last answer", the bubble's "Open
+ * conversation": main asks for "conversation:latest", home-v1), which Home finds when the request comes.
+ */
+export const LATEST_ANSWER = "latest-answer";
+
 /** The controls a request may focus, by the name main uses (main's openSettings). */
 const CONTROLS: Readonly<Record<string, string>> = {
+  "conversation:latest": LATEST_ANSWER, "conversation:message": "conversation-message", "conversation:stop": "conversation-stop",
   "computers:host": "host-add", "computers:wsl": "wsl-on", "access:ask": "p-ask", "access:stop": "p-stop",
   // "Work without asking" by voice (autonomy-intent.ts): its switch, or its card's agree button (the card shown first).
   "privacy:autonomy-on": "autonomy-on", "privacy:autonomy-yes": "autonomy-yes",
-  "memory:memory-yes": "memory-yes",
+  // Memory: its search for a forget request, its note's words for "get to know me" or Open Memory, never the note's
+  // "I agree, remember", where a stray Enter or Space would agree; asked for by that name, the words (memory-r7).
+  "memory:memory-query": "memory-query", "memory:memory-consent-text": "memory-consent-text", "memory:memory-yes": "memory-consent-text",
 };
 
 /** A request as the page acts on it: the section's id (its heading is `${section}-h`) and the control's id, if any. */

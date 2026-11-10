@@ -24,7 +24,8 @@ const NOTE = /^(?:remember|note|forget)\b/;
 export function afterAck(chunk: string, ack: string | null): string {
   if (!ack) return chunk;
   const words = ack.replace(/[.!…]+$/u, "").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-  const m = new RegExp(`^\\s*${words}(?:[.!,…:;-]+|\\s*$)\\s*`, "iu").exec(chunk);
+  // The words then a stop, a comma or a dash ("On it — opening Mail.", spaced or not), or nothing more.
+  const m = new RegExp(`^\\s*${words}(?:\\s*[.!,…:;—–-]+|\\s*$)\\s*`, "iu").exec(chunk);
   return m ? chunk.slice(m[0].length) : chunk;
 }
 

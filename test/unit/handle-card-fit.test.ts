@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { cardClear, cardNeed, linesKept, type CardMeasure } from "../../app/renderer/handle/fit";
+import { cardClear, cardNeed, linesKept, waitsForRoom, type CardMeasure } from "../../app/renderer/handle/fit";
 
 /** The card at the default text size with a whole text's question and its task row, as the verifier measured it. */
 const card = (o: Partial<CardMeasure["text"]> = {}): CardMeasure => ({
@@ -75,6 +75,18 @@ describe("room for a whole text to count as seen", () => {
   });
 });
 
+describe("a question's answers on a card too small for its sentence", () => {
+  it("holds every answer but Not now, and none of Ember's own buttons (accessibility-visual-1)", () => {
+    expect(waitsForRoom("q4:once")).toBe(true);
+    expect(waitsForRoom("q4:always")).toBe(true);
+    expect(waitsForRoom("q12:allow")).toBe(true);
+    expect(waitsForRoom("q4:deny")).toBe(false);
+    expect(waitsForRoom("ui:panel:4")).toBe(false);
+    expect(waitsForRoom("ui:retry")).toBe(false);
+    expect(waitsForRoom("task:t1:stop")).toBe(false);
+  });
+});
+
 describe("the card's page", () => {
   const css = readFileSync("app/renderer/handle/styles.css", "utf8");
   const page = readFileSync("app/renderer/handle/main.ts", "utf8");
@@ -90,6 +102,12 @@ describe("the card's page", () => {
     expect(page).toContain("const h = cardNeed(cardMeasure());");
     expect(page).toContain("keepLines();");
     expect(page).toContain("const shown = fallback && document.visibilityState === \"visible\" && wordsClear();");
+  });
+
+  it("holds a question's Allow while its sentence can't show, and looks again when the card is fitted (accessibility-visual-1)", () => {
+    expect(page).toContain("const cramped = fallback && document.body.classList.contains(\"asking\") && !wordsClear();");
+    expect(page).toContain("el.dataset.room = actions[i] && waitsForRoom(actions[i].id) ? \"wait\" : \"\";");
+    expect(page).toMatch(/window\.addEventListener\("resize", \(\) => \{ paintWhole\(\); judgeWhole\(\); \}\);/);
   });
 
   it("is checked on a real X server in CI's RHEL 8 job", () => {

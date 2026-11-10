@@ -23,8 +23,8 @@ import { redactGitHubTokens, type SaveResult, type SecretBox } from "./agent/aut
 import { friendlyError } from "./agent/presenter";
 import type { Fields, Logger } from "./logger";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
-import { endpointHost, MAX_API_KEY } from "../shared/provider";
-import type { ProviderState } from "../shared/ipc";
+import { endpointHost, MAX_API_KEY, MODEL_ID } from "../shared/provider";
+import type { ProviderDraft, ProviderMove, ProviderState, RetryResult } from "../shared/ipc";
 
 /** The user's provider settings (SettingsSchema `provider`). */
 export type UserProviderSettings = Settings["provider"];
@@ -69,6 +69,16 @@ export function userProviderInForce(s: Settings, loaded: LoadedAdminPolicy): Use
   const p = s.provider;
   if (!p.on || !providerAgreed(p)) return null;
   return p;
+}
+
+/**
+ * The host whose card the user's own provider waits for: on and allowed, with a usable address that isn't agreed to;
+ * null otherwise. Signed out then, agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1).
+ */
+export function providerWaitingHost(s: Settings, loaded: LoadedAdminPolicy): string | null {
+  if (loaded.error !== undefined || !userProviderAllowed(loaded.policy)) return null;
+  const host = endpointHost(s.provider.baseUrl);
+  return s.provider.on && host && !providerAgreed(s.provider) ? host : null;
 }
 
 /**
@@ -128,6 +138,19 @@ export function activeProvider(o: { fixed: ActiveProvider | null; settings: Sett
   if (!p) return null;
   const config = userProviderConfig(p, o.key);
   return { kind: "user", config, models: { conductor: p.conductor, worker: p.worker }, ...(config.apiKey && o.key?.keyId ? { keyId: o.key.keyId } : {}) };
+}
+
+/**
+ * Check again (integrations-c1-1): with a model provider in force (`provider`: its host) it connects to that provider
+ * again and says whether it is ready, and never looks for or names a GitHub sign-in, which that service doesn't use.
+ * Not ready, it says why (`reason`: the status's, integrations-c2-2), so a missing model isn't told as "can't connect".
+ * With GitHub Copilot in force, it looks for a GitHub sign-in (`github`), as it always did.
+ */
+export async function checkAgain(provider: { host: string } | null, o: { reconnect(): Promise<string | undefined>; reason?(): string | undefined; github(): Promise<RetryResult> }): Promise<RetryResult> {
+  if (!provider) return o.github();
+  const ready = await o.reconnect() === "ready";
+  const reason = ready ? undefined : o.reason?.();
+  return { found: false, source: null, provider: { host: provider.host, ready, ...(reason ? { reason } : {}) } };
 }
 
 /** Whose endpoint `p` is and its host, for the setup check and Home (null: GitHub Copilot). */
@@ -401,6 +424,35 @@ export function createProviderService(d: ProviderServiceDeps) {
     return pending;
   };
 
+  /**
+   * Checks details typed but not saved (first run's provider step, editing a provider in use: first-run-r2-1), so a
+   * failed or abandoned check leaves the details in use as they are. The card's yes for exactly the address's host
+   * comes with the same press (`draft.host`); nothing goes to any other host. Nothing is saved or recorded: a key just
+   * typed goes only to that host and is kept nowhere (and is refused, unsent, where it couldn't be kept on adopting the
+   * details), and without one the saved key goes only when it was entered for that very host.
+   */
+  const testDraft = async (draft: ProviderDraft): Promise<TestResult> => {
+    const host = endpointHost(draft.baseUrl);
+    if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
+    if (draft.host !== host) return { ok: false, why: PROVIDER_HOST_CHANGED };
+    let key: StoredKey | null = null;
+    if (draft.key !== undefined) {
+      const problem = apiKeyProblem(draft.key);
+      if (problem) return { ok: false, why: problem };
+      if (!(await d.keys.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
+      key = { key: draft.key.trim(), host };
+    } else if (hostNow() === host && providerAgreed(d.settings.get().provider)) {
+      await readKey(true);
+      key = stored;
+    }
+    // Consent or the policy may have changed while the keyring answered.
+    if (!d.consented() || !allowed()) return { ok: false, why: PROVIDER_HOST_CHANGED };
+    const consent = { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host };
+    const r = await testConnection({ ...d.settings.get().provider, type: draft.type, baseUrl: draft.baseUrl, consent }, key, d.fetch);
+    d.log.info("provider.tested", { ok: r.ok, draft: true });
+    return r;
+  };
+
   return {
     /** The saved key and its host, once read (null: none, or not needed yet). */
     key: (): StoredKey | null => stored,
@@ -469,17 +521,23 @@ export function createProviderService(d: ProviderServiceDeps) {
         d.changed();
         return { ok: true };
       },
-      agree: (host: string): KeySave => {
+      /**
+       * The card's yes for `host`, the endpoint's in settings; or, with `move` (Home's edit of the provider in force,
+       * held until its card was agreed and it answered: integrations-c3-1), the host those details name, written with
+       * the yes in one change, so the provider in force never leaves force for Copilot between the two.
+       */
+      agree: (host: string, move?: ProviderMove): KeySave => {
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
         const own = d.settings.own().provider;
-        if (endpointHost(own.baseUrl) !== host) return { ok: false, why: PROVIDER_HOST_CHANGED };
-        d.settings.update({ provider: { ...own, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host } } });
+        if (endpointHost(move?.baseUrl ?? own.baseUrl) !== host) return { ok: false, why: PROVIDER_HOST_CHANGED };
+        d.settings.update({ provider: { ...own, ...move, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host } } });
         d.log.info("provider.agreed", {});
         return { ok: true };
       },
-      test: async (): Promise<TestResult> => {
+      test: async (draft?: ProviderDraft): Promise<TestResult> => {
         if (!d.consented()) return { ok: false, why: PROVIDER_NO_CONSENT };
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
+        if (draft) return testDraft(draft);
         const started = revision;
         const p = d.settings.get().provider;
         // Checked before the keyring is asked: nothing at all for a host whose card isn't agreed.
@@ -520,8 +578,37 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
   return { url: `${base}/models`, headers: key ? { authorization: `Bearer ${key}` } : {} };
 }
 
-/** What the test found: the service answered (and how many models it lists, when it says), or why not in one sentence. */
-export type TestResult = { ok: true; host: string; models: number | null } | { ok: false; why: string };
+/**
+ * What the test found: the service answered (and how many models it lists, when it says), or why not in one sentence.
+ * `cause` says when nothing answered at all: "refused" (nothing listens there, as when a model server on this computer
+ * isn't running), "timeout", or "unreachable" (any other network failure). Absent for an answer that refused the
+ * request, a certificate or a redirect: something is there.
+ */
+/**
+ * What a test of the endpoint found. `cause`, for a failure: nothing answered (refused, timed out, unreachable: the
+ * provider is down), or it answered but has no model list at that address (`no-list`: 404, 405 or 501 on GET /models,
+ * as some gateways that answer chat only do), which a held edit's check takes as an answer (integrations-r4-2).
+ */
+export type TestResult = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
+
+/** The most model ids the test passes on for the model fields' suggestions. */
+export const TEST_IDS_MAX = 50;
+
+/**
+ * The model ids a model list names (`data[].id`, as OpenAI, Azure and Anthropic write them; `models[].name` or `.model`,
+ * as Ollama does), each a MODEL_ID, without repeats, at most TEST_IDS_MAX (integrations-9). Anything else is left out:
+ * they are shown as suggestions, never run.
+ */
+export function listedModelIds(list: readonly unknown[]): string[] {
+  const out: string[] = [];
+  for (const m of list) {
+    if (out.length >= TEST_IDS_MAX) break;
+    const o = m && typeof m === "object" ? m as { id?: unknown; name?: unknown; model?: unknown } : null;
+    const id = typeof o?.id === "string" ? o.id : typeof o?.name === "string" ? o.name : typeof o?.model === "string" ? o.model : null;
+    if (id && MODEL_ID.test(id) && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
 
 /**
  * Makes testRequest's request and says what came of it, in plain words (never the service's raw text). Nothing at all is
@@ -538,20 +625,37 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
   try {
     const res = await fetch(url, { method: "GET", headers, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
     if (res.status === 401 || res.status === 403) return { ok: false, why: key ? `${host} didn't accept the API key. Check it, or replace it.` : `${host} needs an API key.` };
-    if (res.status === 404) return { ok: false, why: `${host} answered, but has no model list at that address. Check the endpoint and the provider.` };
+    if (res.status === 404 || res.status === 405 || res.status === 501) return { ok: false, why: `${host} answered, but has no model list at that address. Check the endpoint and the provider.`, cause: "no-list" };
     if (!res.ok) return { ok: false, why: friendlyError(`HTTP ${res.status}`, undefined, { statusCode: res.status, provider: "user", settingsKey: null }) };
     let models: number | null = null;
+    let ids: string[] = [];
     try {
       const body = await res.json() as { data?: unknown; models?: unknown };
       const list = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
       models = list ? list.length : null;
+      if (list) ids = listedModelIds(list);
     } catch { /* answered, with a body that isn't a list: still connected */ }
-    return { ok: true, host, models };
+    return { ok: true, host, models, ...(ids.length ? { ids } : {}) };
   } catch (err) {
     const msg = err instanceof Error ? `${err.name} ${err.message} ${(err as { cause?: { code?: string } }).cause?.code ?? ""}` : String(err);
-    if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.` };
+    if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`, cause: "timeout" };
     if (/redirect/i.test(msg)) return { ok: false, why: `${host} sent Ember to another address. Enter the address it moved to.` };
     if (/certificate|self.signed|ERR_CERT_/i.test(msg)) return { ok: false, why: `Ember can't verify ${host}'s certificate.` };
-    return { ok: false, why: `Ember can't reach ${host}. Check the address and the network.` };
+    // Electron's fetch says net::ERR_CONNECTION_REFUSED (ERR_ADDRESS_UNREACHABLE for an ::1 with no IPv6), Node's ECONNREFUSED.
+    const refused = /ECONNREFUSED|ERR_CONNECTION_REFUSED|ERR_ADDRESS_UNREACHABLE/.test(msg);
+    return { ok: false, why: `Ember can't reach ${host}. Check the address and the network.`, cause: refused ? "refused" : "unreachable" };
   }
+}
+
+/**
+ * Why the user's own provider can't take a request now, from a connection test (integrations-1): one sentence for the
+ * status, or null when something answered (a refused key or a missing model list is the request's to say, not
+ * this). `local`: the endpoint is on this computer (shared/provider.ts keyNeeded false), where nothing listening means
+ * the model server (Ollama, LM Studio) isn't running. Each says Ember tries again: the host does (retryLater).
+ */
+export function providerDown(r: TestResult, host: string, local: boolean): string | null {
+  if (r.ok || !r.cause || r.cause === "no-list") return null;
+  if (r.cause === "timeout") return `${r.why} Ember will try again in a moment.`;
+  if (local) return `Ember can't reach the model server on this computer (${host}). Start it, and Ember will connect in a moment.`;
+  return `Ember can't reach ${host}. Check the address and the network: Ember will try again in a moment.`;
 }

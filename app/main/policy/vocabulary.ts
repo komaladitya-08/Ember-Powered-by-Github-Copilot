@@ -60,6 +60,20 @@ export const SECURITY_APP: Readonly<Record<OS, RegExp | null>> = {
 };
 
 /**
+ * The programs of SECURITY_APP that are only a password prompt, up while they ask (Linux: polkit agents, gcr's
+ * prompter, GnuPG's pinentry and SSH's askpass helpers), tested on each part of a window's class: while one's window is
+ * on screen, focused or not, Ember reads, captures and sends nothing and takes no step (CLAUDE.md "Never";
+ * safety-privacy-3). Never an app that stays open (firewall-config, a password manager, GNOME Shell, whose own prompts
+ * the accessibility helper reports): those are only left out themselves. Windows and macOS: null, their prompts come
+ * from the accessibility host's list (shell_overlays) instead.
+ */
+export const PROMPT_APP: Readonly<Record<OS, RegExp | null>> = {
+  linux: /polkit|gcr-prompter|pinentry|ssh-askpass|ksshaskpass/i,
+  win32: null,
+  darwin: null,
+};
+
+/**
  * Titles of authentication prompts, by how such a title starts (tested on the normalised title): never words that
  * turn up in ordinary titles too ("firewall-notes.txt", a page about sudo), so those windows are read and used as
  * usual. Windows and macOS match whole titles. Windows: its prompts, and the security pages of Settings and Control

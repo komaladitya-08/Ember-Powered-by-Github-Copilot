@@ -53,6 +53,8 @@ const isGrey = (p: number[]) => p.every(c => c > 160 && c < 240);
  */
 function desktop(o: {
   window?: AxWindow | null; nodes?: AxNode[]; listed?: AxWindow[];
+  /** Every window read fails with this (the helper answers it to every read). */
+  readFails?: Error;
   shell?: { overlays: ShellOverlay[]; complete?: boolean } | Error;
   stack?: StackedWindow[]; active?: Win | null; focus?: Win | null; clients?: Win[];
   capture?: PerceptionWindows["capture"]; systemDialogOpen?: () => boolean; systemDialogReason?: () => string | null;
@@ -64,7 +66,10 @@ function desktop(o: {
   const captures: number[][] = [];
   let shellAsked = 0;
   const sidecar = {
-    readWindow: async () => ({ window: o.window ?? null, nodes: o.window ? o.nodes ?? [] : [], ms: 1 }),
+    readWindow: async () => {
+      if (o.readFails) throw o.readFails;
+      return { window: o.window ?? null, nodes: o.window ? o.nodes ?? [] : [], ms: 1 };
+    },
     listWindows: async () => ({ windows: o.listed ?? [] }),
     scaleElements: () => undefined,
     markSecret: async () => undefined,
@@ -332,9 +337,9 @@ describe("Perception and the window system's system-dialog check (fails closed)"
     const failing = desktop({ systemDialogOpen: () => { throw new Error("gone"); } });
     expect(await failing.perception.systemDialogOpen()).toBe(true);
     expect(failing.warnings).toContain("perception.system_dialog_check_failed");
-    // GNOME Shell's check stays best effort, as before; the window system's answer still counts.
-    expect(await desktop({ shell: new Error("no shell"), systemDialogOpen: () => false }).perception.systemDialogOpen()).toBe(false);
-    expect(await desktop({ shell: new Error("no shell"), systemDialogOpen: () => true }).perception.systemDialogOpen()).toBe(true);
+    // A GNOME Shell check that fails counts as one Ember couldn't make (fail closed, safety-privacy-r1).
+    expect(await desktop({ shell: new Error("request timed out"), systemDialogOpen: () => false }).perception.systemDialogOpen()).toBe(true);
+    expect(await desktop({ shell: new Error("request timed out"), systemDialogOpen: () => true }).perception.systemDialogOpen()).toBe(true);
   });
 });
 
@@ -345,19 +350,74 @@ describe("Perception's words for each OS", () => {
     (await desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), shell, words }).perception.perceive({ image: true, scope: "screen" })).text;
 
   it("keeps today's GNOME words by default", async () => {
-    expect(await shot(unchecked)).toContain("(No screenshot: GNOME Shell didn't answer in time, so Ember can't tell whether a system dialog (a password prompt) is open; try again in a moment.)");
+    // (A shell that can't be looked through stops the read itself now, not only the picture: safety-privacy-3.)
+    expect(await shot(unchecked)).toContain("Ember read nothing: GNOME Shell didn't answer in time, so Ember can't tell whether a system dialog (a password prompt) is open; try again in a moment.");
     expect(await shot(overview)).toContain("(No screenshot: the Activities overview or the window switcher is open (it shows every window), so Ember looks away until it's closed.)");
   });
 
   it("names Windows' and macOS's own surfaces there", async () => {
     for (const os of ["win32", "darwin"] as const) {
       const text = await shot(unchecked, PLATFORM_WORDS[os]);
-      expect(text).toContain(`(No screenshot: ${PLATFORM_WORDS[os].shellUnchecked}.)`);
+      expect(text).toContain(`Ember read nothing: ${PLATFORM_WORDS[os].shellUnchecked}.`);
       expect(text).not.toContain("GNOME");
       expect(await shot(overview, PLATFORM_WORDS[os])).toContain(`(No screenshot: ${PLATFORM_WORDS[os].overviewOpen}.)`);
     }
     expect(await shot(overview, PLATFORM_WORDS.win32)).toContain("Task View");
     expect(await shot(overview, PLATFORM_WORDS.darwin)).toContain("Mission Control");
+  });
+});
+
+describe("Perception when the accessibility helper can't run at all", () => {
+  /** What the conversation is told, on every OS, when the helper can't read anything here. */
+  const HELPER_DOWN_SAID = "Ember read nothing: Ember's accessibility helper isn't working, so Ember can't read apps or tell whether a password prompt is open. Don't describe the screen; tell the user Ember can't read their apps until that's fixed, and that the setup check in Ember's settings (Setup & about) says what's wrong.";
+  const RETRY = /in a moment|look again|didn't answer in time/;
+  const CANT_RUN = [
+    "python3-pyatspi is not installed",
+    "no session bus",
+    "Ember needs the Accessibility permission (System Settings › Privacy & Security › Accessibility).",
+    "accessibility helper could not run (spawn /usr/libexec/platform-python ENOENT)",
+    "accessibility helper not running",
+    "Ember's accessibility helper is out of date or not matching this Ember (it speaks protocol 2; Ember needs 3). Reinstall or update Ember.",
+    "the accessibility bridge could not start (Add-Type failed: CS0246)",
+    "the accessibility bridge could not run (spawn powershell.exe ENOENT)",
+    "the macOS accessibility API couldn't be loaded (koffi is missing)",
+  ];
+
+  it.each(CANT_RUN)("reads nothing, and says the helper isn't working and where the setup check is, never to try again in a moment: %s (reliability-performance-r2-1, safety-privacy-r5)", async message => {
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      const { perception } = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), shell: new Error(message), words: PLATFORM_WORDS[os] });
+      // Still fail closed: it counts as open, and nothing is read.
+      expect(await perception.promptOpen()).toBe("helper");
+      expect(await perception.describe()).toBe(HELPER_DOWN_SAID);
+      const p = await perception.perceive({ image: true, scope: "window" });
+      expect(p).toMatchObject({ authPrompt: "helper", nodes: [], capture: null });
+      expect(p.text).toContain("open the setup check in Ember's settings (Setup & about)");
+      expect(p.text).not.toMatch(RETRY);
+      expect(await perception.systemDialogOpen()).toBe(true);
+      expect(await perception.quickContext()).toEqual({ target: {}, text: `<context untrusted="true">Ember read nothing: Ember's accessibility helper isn't working, so Ember can't read apps or tell whether a password prompt is open.</context>` });
+    }
+  });
+
+  it.each([
+    "accessibility helper did not answer shell_overlays in 5000 ms",
+    "accessibility helper was restarted (an earlier request took too long)",
+    "accessibility helper stopped",
+    "the accessibility bridge is still starting (Windows PowerShell compiles it on its first start); try again in a moment",
+  ])("still says the desktop didn't answer in time when the helper was only slow, restarted or starting: %s (safety-privacy-c2-1)", async message => {
+    const { perception } = desktop({ window: gedit, shell: new Error(message) });
+    expect(await perception.promptOpen()).toBe("unchecked");
+    expect(await perception.describe()).toContain(PLATFORM_WORDS.linux.shellUnchecked);
+    expect((await perception.perceive({ image: false, scope: "window" })).authPrompt).toBe("unchecked");
+  });
+
+  it("says the helper isn't working, not that the accessibility service didn't answer, when the shell was checked but no app can be read (reliability-performance-c2-2)", async () => {
+    // macOS without the Accessibility permission: the window server's list answers the prompt check, every read refuses.
+    const denied = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), words: PLATFORM_WORDS.darwin, readFails: new Error("Ember needs the Accessibility permission (System Settings › Privacy & Security › Accessibility).") });
+    expect(await denied.perception.promptOpen()).toBe(false);
+    expect(await denied.perception.describe()).toBe(HELPER_DOWN_SAID);
+    // A read that only timed out keeps today's words.
+    const slow = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), readFails: new Error("accessibility helper did not answer read_window in 5000 ms") });
+    expect(await slow.perception.describe()).toBe("Ember could not read the screen right now (the accessibility service did not answer).");
   });
 });
 
@@ -385,8 +445,9 @@ describe("Perception with the OS's security-window check", () => {
     expect((await desktop(consent).perception.focused()).blocked).toBe(false);
   });
 
+  // describe_screen's list of open windows (the request's context lists none: safety-privacy-r2).
   const quick = async (clients: Win[], check?: PerceptionOptions["isSecurityWindow"]) =>
-    (await desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit gedit"), clients, isSecurityWindow: check }).perception.quickContext())!.text;
+    desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit gedit"), clients, isSecurityWindow: check }).perception.describe();
 
   it("leaves a security window out of the open-window lines, by its program and title", async () => {
     const clients = [win(5, 42, "notes.txt", "gedit gedit"), win(6, 50, "Windows Security", "explorer")];
@@ -427,7 +488,8 @@ describe("Perception's window screenshots when the window can't be found", () =>
     const p = await perception.perceive({ image: true, scope: "window", target: { pid: 42, title: "gone" } });
     expect(p.capture).toBeNull();
     expect(captures).toEqual([]);
-    expect(shellAsked()).toBe(0);
+    // Asked once, before anything is read (safety-privacy-3), and never again for a picture there is none of.
+    expect(shellAsked()).toBe(1);
     // One plain sentence: nothing says "use the screenshot" or "the focused window" (a window was named).
     expect(p.text).toBe("That window can't be found (it may have closed, or its app isn't answering).");
   });

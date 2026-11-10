@@ -19,12 +19,31 @@ export interface Printer {
   print(samples: Float32Array): Promise<Float32Array>;
 }
 
+/**
+ * Why teaching ended without a voiceprint, when it wasn't the user's Cancel: `timeout` (ENROL_LIMITS), `stopped` ("Ember,
+ * stop"), `gave-up` (too many phrases unlike the others).
+ */
+export type EnrolEnd = "timeout" | "stopped" | "gave-up";
+
+/**
+ * Why a phrase is asked for again: too short, unlike the others, not heard clearly, or (`over`, while a screen reader
+ * runs) said while the screen reader was still reading its prompt, so the two came as one.
+ */
+export type EnrolAgain = "short" | "unlike" | "failed" | "over";
+
 /** What enrolment tells main: `got` of `of` phrases kept; `again`: the last one wasn't kept (`why`). */
 export type EnrolState =
   | { state: "listening" | "heard"; got: number; of: number }
-  | { state: "again"; got: number; of: number; why: "short" | "unlike" | "failed" }
+  | { state: "again"; got: number; of: number; why: EnrolAgain }
   | { state: "done"; got: number; of: number; print: Float32Array }
-  | { state: "cancelled"; got: number; of: number };
+  | { state: "cancelled"; got: number; of: number; why?: EnrolEnd };
+
+/**
+ * How long teaching waits (ms): `quietMs` with no phrase heard, `totalMs` in all. It had no limit: someone who walked
+ * away from Settings left Ember deaf to its name for good, and whatever was said next became the voiceprint
+ * (voice-listening-v1). Four phrases and a few said again take well under a minute.
+ */
+export const ENROL_LIMITS = { quietMs: 45_000, totalMs: 180_000 } as const;
 
 /**
  * The least voice what follows the wake phrase needs for Voice Match to vouch for it (`verified`, what a spoken yes and
@@ -162,7 +181,7 @@ export class VoiceGate {
     const generation = this.revision;
     const owner = this.owner;
     // Over a song with no name said: only a voice that can be told apart from it is heard.
-    if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) return;
+    if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) { this.send({ type: "dropped", reason: "over-sound" }); return; }
     if (e.type !== "utterance" || e.overEmber || !owner || !audio?.length) { this.send(e); return; }
     // Capture one immutable configuration for the whole request, including its post-wake check.
     const anchor = this.anchor;
@@ -185,7 +204,7 @@ export class VoiceGate {
         if (!e.overSound) this.send(e);
         return;
       }
-      if (e.overSound && score < OVER_SOUND_MATCH) return;
+      if (e.overSound && score < OVER_SOUND_MATCH) { if (generation === this.revision) this.send({ type: "dropped", reason: "over-sound" }); return; }
       // Matched: said so, so a spoken yes to a question can be taken (main's voice-answer.ts). A request heard without a
       // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
       // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its
@@ -238,22 +257,89 @@ export class VoiceGate {
 
 }
 
-/** Enrolment: the owner says `of` phrases (any speech the VAD hands over counts as one); their voiceprint comes at the end. */
+/**
+ * A segment that began this soon after a prompt showed (ms) is a screen reader reading it aloud: the owner has to hear
+ * which phrase to say first (the shortest prompt read at 400 words a minute takes over a second). The VAD says speech
+ * began about 0.2 s after it did.
+ */
+export const READER_LEAD_MS = 1500;
+/**
+ * A segment dropped for READER_LEAD_MS that says the phrase once, in none of a prompt's words, is the owner's own when
+ * nothing follows it for this long (ms): on headphones nothing is read into the microphone, and one who reads the prompt
+ * may speak at once. It is asked for again ("over"), never dropped without a word (voice-listening-r5-2). Over speakers
+ * the owner begins their phrase well within it after a reading the recognizer wrote without its first word.
+ */
+export const QUICK_PHRASE_WAIT_MS = 5000;
+/** What a screen reader reads of a prompt (match-copy.ts), as the recognizer writes it: never how a phrase begins. */
+const PROMPT_WORDS = /^\W*(?:say|says|said|heard|that|your\s+screen|wait|finish|learning)\b/i;
+
+/**
+ * While a screen reader runs, what it reads aloud of each prompt reaches the teaching microphone over speakers: `said`
+ * (the recognizer), and `now` for when each prompt showed (ms, the clock `heard`'s `startedAt` counts on).
+ */
+export interface EnrolReader {
+  said(samples: Float32Array): string;
+  now?(): number;
+}
+
+/** How many times the phrase's own longer words (not the name) were said, at most: twice when the owner's ran on from the reading. */
+function timesSaid(words: string, phrase: string): number {
+  const heard = words.toLowerCase().replace(/whether/g, "weather");
+  return Math.max(0, ...phrase.toLowerCase().split(/[^a-z']+/).filter(w => w.length >= 5 && w !== "ember").map(w => heard.split(w).length - 1));
+}
+
+/**
+ * Enrolment: the owner says `of` phrases (any speech the VAD hands over counts as one, but for a screen reader's reading
+ * of a prompt while one runs: `reader`); their voiceprint comes at the end.
+ */
 export class Enrolment {
   private prints: Float32Array[] = [];
   private tries = 0;
   private finished = false;
   /** Gives up after this many phrases heard (some kept, some said again). */
   private readonly maxTries: number;
+  private quiet: ReturnType<typeof setTimeout> | null = null;
+  private readonly total: ReturnType<typeof setTimeout>;
 
-  constructor(private printer: Printer, private tell: (s: EnrolState) => void, readonly of = ENROL_PHRASES.length) {
+  /** When the prompt now showing showed (`reader`'s clock). */
+  private promptAt: number;
+  /** A phrase said as its prompt showed, asked for again unless speech follows it (QUICK_PHRASE_WAIT_MS). */
+  private quick: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(private printer: Printer, private tell: (s: EnrolState) => void, readonly of = ENROL_PHRASES.length, private limits: { quietMs: number; totalMs: number } = ENROL_LIMITS, private reader?: EnrolReader) {
     this.maxTries = of * 3;
+    this.total = setTimeout(() => this.cancel("timeout"), limits.totalMs);
+    this.total.unref?.();
+    this.waitQuietly();
+    this.promptAt = this.now();
     tell({ state: "listening", got: 0, of });
   }
 
-  /** A phrase the VAD heard. */
-  async heard(samples: Float32Array): Promise<void> {
+  private now(): number {
+    return this.reader?.now?.() ?? Date.now();
+  }
+
+  /**
+   * A phrase the VAD heard; `startedAt`: when its speech began (`reader`'s clock). While a screen reader runs, one begun
+   * as a prompt showed, or in a prompt's words, is the screen reader's reading, and teaches nothing: a voiceprint learnt
+   * from it was mostly the screen reader's, which Voice Match then took for the owner (voice-listening-r4-1).
+   */
+  async heard(samples: Float32Array, startedAt?: number): Promise<void> {
     if (this.finished) return;
+    this.waitQuietly();
+    this.speechBegan();
+    if (this.reader) {
+      const words = this.reader.said(samples);
+      const prompted = PROMPT_WORDS.test(words);
+      if ((startedAt !== undefined && startedAt - this.promptAt < READER_LEAD_MS) || prompted) {
+        // (Its own reading says the phrase once; said twice, the owner's ran on from it, and is asked for again. Said
+        // once with none of a prompt's words, it may be the owner's, said at once: asked for again if nothing follows.)
+        const times = timesSaid(words, ENROL_PHRASES[Math.min(this.prints.length, ENROL_PHRASES.length - 1)]);
+        if (times > 1) { this.tries++; this.again("over"); }
+        else if (times === 1 && !prompted) this.askSoon();
+        return;
+      }
+    }
     if (samples.length < ENROL_MIN_SECONDS * 16_000) { this.again("short"); return; }
     this.tries++;
     let print: Float32Array;
@@ -269,25 +355,56 @@ export class Enrolment {
     this.prints = keep.map(i => this.prints[i]);
     if (dropped !== null) { this.again("unlike"); return; }
     if (this.prints.length >= this.of) {
-      this.finished = true;
+      this.finish();
       this.tell({ state: "done", got: this.prints.length, of: this.of, print: averagePrint(this.prints) });
       return;
     }
+    this.promptAt = this.now();
     this.tell({ state: "heard", got: this.prints.length, of: this.of });
   }
 
-  cancel(): void {
+  /** Speech began (the VAD): a phrase said as its prompt showed is followed by more, so nothing is asked for it. */
+  speechBegan(): void {
+    if (this.quick) clearTimeout(this.quick);
+    this.quick = null;
+  }
+
+  /** A phrase said as its prompt showed: asked for again once nothing has followed it for QUICK_PHRASE_WAIT_MS. */
+  private askSoon(): void {
+    this.speechBegan();
+    this.quick = setTimeout(() => { this.quick = null; if (this.finished) return; this.tries++; this.again("over"); }, QUICK_PHRASE_WAIT_MS);
+    this.quick.unref?.();
+  }
+
+  /** Teaching stops: the user's Cancel (no `why`), or why it gave up (EnrolEnd). */
+  cancel(why?: EnrolEnd): void {
     if (this.finished) return;
-    this.finished = true;
-    this.tell({ state: "cancelled", got: this.prints.length, of: this.of });
+    this.finish();
+    this.tell({ state: "cancelled", got: this.prints.length, of: this.of, ...(why ? { why } : {}) });
   }
 
   get done(): boolean {
     return this.finished;
   }
 
-  private again(why: "short" | "unlike" | "failed"): void {
-    if (this.tries >= this.maxTries) { this.cancel(); return; }
+  private finish(): void {
+    this.finished = true;
+    this.speechBegan();
+    clearTimeout(this.total);
+    if (this.quiet) clearTimeout(this.quiet);
+    this.quiet = null;
+  }
+
+  /** Nothing heard for `quietMs` from now ends teaching. */
+  private waitQuietly(): void {
+    if (this.quiet) clearTimeout(this.quiet);
+    this.quiet = setTimeout(() => this.cancel("timeout"), this.limits.quietMs);
+    this.quiet.unref?.();
+  }
+
+  private again(why: EnrolAgain): void {
+    if (this.tries >= this.maxTries) { this.cancel("gave-up"); return; }
+    this.promptAt = this.now();
     this.tell({ state: "again", got: this.prints.length, of: this.of, why });
   }
 }

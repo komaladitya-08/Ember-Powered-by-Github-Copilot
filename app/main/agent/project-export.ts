@@ -15,7 +15,7 @@ export function exportProjectText(destination: string, text: string, privateDir:
   })) throw new ProjectInputError("Export to a different file. Selected project files are changed only by an approved patch.");
   const relative = path.relative(fs.realpathSync.native(privateDir), target);
   if (!relative || (!relative.startsWith(".." + path.sep) && relative !== ".." && !path.isAbsolute(relative))) {
-    throw new ProjectInputError("Export outside Ember’s data folder.");
+    throw new ProjectInputError("Export outside Ember's data folder.");
   }
   const snapshot = () => {
     try { return fs.lstatSync(target); }

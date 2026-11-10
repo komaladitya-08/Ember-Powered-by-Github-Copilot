@@ -117,7 +117,8 @@ describe("the ask box's page (review #78)", () => {
     expect(onContext).toContain("history.context(");
     // Selected as the box opened, the text selected was the letters already typed, and the next letter replaced them.
     expect(onContext).not.toContain(".select()");
-    expect(PAGE).toMatch(/window\.emberAsk\.onHidden\(\(\) => input\.select\(\)\);/);
+    // (What its live region held for the microphone to close goes with it: voice-listening-i5.)
+    expect(PAGE).toMatch(/window\.emberAsk\.onHidden\(\(\) => \{ input\.select\(\); dropNews\(\); \}\);/);
   });
 
   it("hears the box going away through its preload", () => {
@@ -162,8 +163,8 @@ describe("the ask box's tip to wait for it (review #78, owner decision D-78)", (
     expect(MAIN).toContain("tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened)");
     expect(MAIN).toContain("settings.update({ askOpened: opened + 1 }, { soon: true })");
     const HTML = readFileSync(new URL("../../app/renderer/ask/index.html", import.meta.url), "utf8");
-    expect(HTML).toMatch(/<p id="cut" class="cut" role="status" hidden><\/p>\s*(<!--[^>]*-->\s*)?<p id="tip" class="tip" hidden><\/p>/);
-    expect(HTML).toMatch(/aria-describedby="where cut tip hint sees"/);
+    expect(HTML).toMatch(/<p id="cut" class="cut" hidden><\/p>\s*(<!--[^>]*-->\s*)?<p id="tip" class="tip" hidden><\/p>/);
+    expect(HTML).toMatch(/aria-describedby="unavailable where cut tip hint sees"/);
   });
 });
 

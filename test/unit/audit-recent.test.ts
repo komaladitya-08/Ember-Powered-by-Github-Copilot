@@ -45,6 +45,20 @@ describe("recent audit activity", () => {
     expect(log.recent(2).map(e => e.task)).toEqual(["just added", "newest"]);
   });
 
+  it("reads further back than the newest 500 for What Ember did's Show earlier, across months, keeping only 500 (safety-privacy-5)", () => {
+    const log = new AuditLog(dir, () => new Date("2026-11-07T12:00:00Z"));
+    fs.writeFileSync(file("10"), Array.from({ length: 300 }, (_, i) => record(`oct-${i}`)).join("\n") + "\n");
+    fs.writeFileSync(file("11"), Array.from({ length: 400 }, (_, i) => record(`nov-${i}`)).join("\n") + "\n");
+    expect(log.recent(500)).toHaveLength(500);
+    log.write({ event: "task", task: "just added" });
+    const older = log.recent(1000).map(e => e.task);
+    expect(older).toHaveLength(701);
+    expect(older.slice(0, 2)).toEqual(["just added", "nov-399"]);
+    expect(older.at(-1)).toBe("oct-0");
+    // The newest 500 stay what is kept in memory.
+    expect(log.recent(500).map(e => e.task)).toEqual(older.slice(0, 500));
+  });
+
   it("closes the file when a read fails and can retry without caching partial history", () => {
     const log = new AuditLog(dir);
     fs.writeFileSync(file("11"), record("newest") + "\n");

@@ -48,13 +48,15 @@ glibc 2.28):
 
 ```bash
 curl -fsSLO https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-x64.tar.xz
-sudo mkdir -p /opt/node22 && sudo tar -xJf node-v22.22.0-linux-x64.tar.xz -C /opt/node22 --strip-components=1
+sudo mkdir -p /opt/node22 && sudo tar --no-same-owner -xJf node-v22.22.0-linux-x64.tar.xz -C /opt/node22 --strip-components=1
 echo 'export PATH=/opt/node22/bin:$PATH' >> ~/.bashrc && source ~/.bashrc
-npm install -g npm@11.6.2
+sudo env PATH=/opt/node22/bin:$PATH npm install -g npm@11.6.2
 ```
 
 npm 10 crashes while resolving the test tools (`Cannot read properties of null (reading
-'edgesOut')`), so npm 11 is required.
+'edgesOut')`), so npm 11 is required. Node's tarball is owned by uid 1001, which tar run as root would keep
+(`--no-same-owner` makes root the owner instead), so /opt/node22 is root's and npm upgrades itself there as root;
+`sudo env PATH=…` is needed because sudo's `secure_path` leaves /opt/node22/bin out.
 
 ## 4. Turn on accessibility
 
@@ -78,8 +80,8 @@ npm ci
 npm run dev
 ```
 
-The Ember window opens with a **Setup check**. Every row should be green on RHEL 8.4
-with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
+The Ember window opens first run (“Hi, I'm Ember.”); its **Checking this computer** step is the setup check, and every
+row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 `npx install-electron` and try again.
 
 | Command | What it does |
@@ -112,11 +114,13 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 Each test run works in a temporary folder of its own (`ember-run-…`), which it removes at the end with vitest's module
 cache (test/temp-folder.ts).
 
-After building, CI also runs the Ask, conversation, memory, reminders/desk and natural-voice renderer journeys with
-`EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
-and `EMBER_CHROMIUM_PATH` pointing to Chrome or Chromium. The exact file list is in `.github/workflows/ci.yml`.
-The same workflow enables `EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1` for native approval and task-card
-journeys on X11. `EMBER_KITTEN_TEST=1` requires actual synthesis with the verified default Kitten model in native
+After building, CI also runs the Ask, conversation, first-run (home-first-run-renderer: Copilot, own provider, failures, models), memory, sign-out and forget, microphone, speech-consent, reminders/desk, natural-voice, integrations and panes renderer journeys with
+`EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_FIRST_RUN_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_SIGNOUT_FORGET_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
+and `EMBER_CHROMIUM_PATH` pointing to Chrome or Chromium (each journey skips without its switch, so leave none out).
+The exact file list is in `.github/workflows/ci.yml`. Its `el8` job runs the Linux desktop suites with
+`EMBER_PROJECT_TEST=1 EMBER_CONVERSATION_LIVE=1 EMBER_ATSPI_TEST=1 EMBER_APPROVAL_TEST=1 EMBER_TASK_CONTROLS_TEST=1`
+(the last two for native approval and task-card journeys on X11; without the first two, project-live and
+conversation-history-live skip), under `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24"`. `EMBER_KITTEN_TEST=1` requires actual synthesis with the verified default Kitten model in native
 speech integration tests. `node scripts/voice/prepare.mjs` includes it; the gate needs a supported native sherpa
 runtime. It does not change the app's consent or speaking settings.
 
@@ -124,22 +128,37 @@ runtime. It does not change the app's consent or speaking settings.
 
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
-  lines, the full text under **Read the full text**) and **Agree and continue**, or **Not now**, which keeps Ember off
-  and offers **Quit Ember**; you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service, or under its lockdown, there is nothing to sign in to and the step only goes on; or **Skip for now**); the setup check shows only
-  the rows that need you, in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission) (**Show the details** has every
+  lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
+  provider while it is in force, or the organisation's model service) and **Agree and continue**, or **Not now**, which keeps Ember off
+  and offers **Quit Ember** (a press on either within half a second of its appearing is dropped, so a double click
+  agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Your Ember** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on, only **Use GitHub Copilot instead** switches it off (pressed while Ember is still answering or at a task, the step says Ember will switch once it has finished, and lets you go on), and an edit is checked as typed before it replaces the details in use, so one that fails, or that you leave or change while it is checked, changes nothing and the step says Ember is still using the old host, with **Keep using** it to go on; once switched off, the step opens again as one to set up, and a check there that fails leaves it off; or **Skip for now**); the setup check shows only
+  the rows that need you (and, once **Turn on** has switched screen reading on, that apps already open need a restart), in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission), and
+  **Check again**, which reads the rows anew once you have run the command or changed the setting yourself (Home's
+  setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s, in the background, so Ember
+  keeps answering while that import takes up to 5 s) (**Show the details** has every
   row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
   request in the ask box; and **Your Ember** sums it up before **Start Ember**. Nothing is read, heard or sent before
   **Agree and continue** (it saves the consent; the steps after it can't be reached without it). Back works on every
-  step but the first. A run that agreed but didn't finish opens at sign-in next time. Everything chosen here stays in
+  step but the first. A run that agreed but didn't finish opens at sign-in next time. After an update that changed the consent
+  (`CONSENT_VERSION`), someone who agreed to an earlier version opens at the consent step, titled “What's changed since
+  you last agreed”, with what changed since their version listed above the usual lines (`CONSENT_CHANGES` in
+  app/shared/consent.ts, each line checked against the full text); the rest of the steps follow as before. Everything chosen here stays in
   settings for later.
 - Ember appears beside your cursor; its handle sits in the bottom-right corner, or the bottom-left one with
-  **Handle position** in settings' **Your Ember**. Click the handle for **Ask Ember…**, **Stop everything**,
-  **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer** (once Ember has answered),
+  **Handle position** in settings' **Your Ember**. Click the handle for **Ask Ember…**, **Stop speaking** (while Ember
+  talks: its voice stops, the answer's words and its tasks go on), **Stop everything**,
+  **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer** (once Ember has answered: Home opens at that answer),
   **Settings…**, **Stay put / Follow my cursor**, **Hide / Show Ember**, **Move to the other side** (the handle and its
-  task cards go to the other bottom corner) and **Quit Ember** (Quit asks first while a task is running).
+  task cards go to the other bottom corner) and **Quit Ember** (Quit asks first while a task is running). Until first
+  run is done, the handle says "Finish setting up" and its menu starts with **Finish setting up…**, which opens it again.
 - The shortcuts here are Linux's: Windows uses Win+Alt+… and macOS Control+Shift+Command+… with the same letters.
-- **Ctrl+Alt+E** opens settings from anywhere. **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
-  will look at, and ↑/↓ bring back earlier questions.
+- **Ctrl+Alt+E** opens settings from anywhere (while the bubble says Ember is still waiting for the model service, at
+  **Stop response**, so Enter stops that reply). **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
+  will look at, and ↑/↓ bring back earlier questions. It opens above Ember (below it near the top of the screen),
+  clear of Ember's handle and of the answer or question Ember shows: on the other side of Ember from it, else beside
+  it, else over or under it; a question that comes up while it is open shows beside it too. While Ember can't answer
+  a request (not connected, offline), the line under its field says so first, in the handle's words ("Not connected:
+  I can't answer yet"), and follows the connection while the box is open.
 - **The settings window** shows one pane at a time, picked in its sidebar as System Settings does: **Home**, **Projects**, **Models & connections**,
   **Voice**, **Your Ember** (character, size, start at login, and **Ember on screen**: **Handle position**, **Follow my
   cursor**, **Hide Ember until it needs me**, **Quit Ember**), **Memory** (with routines and reminders), **Apps &
@@ -154,9 +173,11 @@ runtime. It does not change the app's consent or speaking settings.
     (steps of one kind folded, each listed when opened), its questions with how they were answered, and how it ended
     (the worker's summary and view). A finished task folds to its head. A task waiting for your answer says where it is
     asked and with which keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
-    filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, and gone at
-    quit; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most twice a second,
-    only to the settings window.
+    filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, through a
+    reconnect (a finished task's row then offers nothing to press, its card having gone, except after a switch of model
+    service that waited for the tasks: their cards go on), and gone at quit, sign-out
+    or an account change; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most
+    twice a second, only to the settings window.
   - Once Ember is set up, starting it on Linux, Windows or macOS (the app menu entry, `ember`, the Start menu, Ember.app
     from the Dock or Finder) only greets you, unless a setup row needs you (`startView`'s `setupNeeded`): then settings
     opens. Starting it again while it runs, the
@@ -167,8 +188,9 @@ runtime. It does not change the app's consent or speaking settings.
     latest 60 messages (at most 2 MiB) in `conversation.json` in the data folder (mode 0600, folder 0700; written
     atomically through a temp file, fsync and rename, last state wins), and shows them again after a restart once the
     signed-in account is known and is the one that saved them (a file of another account, or while the account can't be
-    told, is never shown; another account's file is deleted). The saved lines are for the person to read: the model starts a
-    fresh session at every launch and never sees them, a restored question is not one a later "yes" agrees to, and nothing
+    told, is never shown; another account's file is deleted). The saved lines are for the person to read, and Home says
+    so under the last of them, with their day beside their time: the model starts a fresh session at every launch and
+    never sees them, a restored question is not one a later "yes" agrees to, and nothing
     is spoken, sent or run again. A file that can't be read (not JSON, another version, too large) is moved to
     `conversation.json.broken` and Ember starts empty. Turning the switch off, **New conversation**, **Sign out** and
     **Forget everything** (Memory) delete `conversation.json` (and `.broken`), and a write queued before any of them can't
@@ -209,11 +231,32 @@ runtime. It does not change the app's consent or speaking settings.
   - A fact counts as yours only when it is mostly your own words. Otherwise it is the model's inference, and context
     only.
   - It never keeps passwords, codes, keys or card numbers.
+  - If `memory.json` can't be read (it is left as it was), isn't memory (it is set aside as `memory.json.broken`) or
+    can't be saved (a full or read-only disk), Settings › Memory says so under the list. While it can't be read,
+    Home's status line says "Memory paused" and the line says to check that your account can open `memory.json` in
+    Ember's data folder (a file left by running Ember as root is the usual cause), then restart Ember.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
-    signing out forgets it all. The list says where each fact came from (you, our conversation, a task).
+    signing out forgets it all. The list says where each fact came from (you, our conversation, a task, Ember's
+    summary or guess). After Forget, focus goes to a line saying what went, with **Undo** for a minute, never to the
+    next row's Forget, so a second Enter forgets nothing more; so does forgetting one learnt word in Settings › Voice,
+    whose **Forget all words** asks first.
+  - Ember forgets a memory in conversation only when your own words ask it to and name what to forget; the
+    conversation then says "Ember forgot: …" with Undo. With memory off or paused, "Forget that I…" or "Forget
+    my…" gets a plain answer saying so, never a promise; "Remember that…" goes to the conversation as usual, which
+    knows it until Ember closes, and Ember then says memory won't keep it, with **Open Memory**. Any other request
+    that starts with "forget" or "remember" ("Forget what I said, open Firefox instead") is answered as usual.
+  - Memory belongs to the verified GitHub account. While Ember can't open it, the pane says why instead of the list:
+    "Checking your GitHub account…" while connecting, that memory works only with GitHub Copilot while your own
+    model provider (or your organisation's model service) is in force, or that Ember couldn't check the account.
+    Forget everything is offered then only for another account's memory or memory with no owner, and Home's status
+    line says "Memory paused". When a reconnect finds the same account again, a correction you were typing, the
+    search, a "Forgotten: …" line with its Undo and where focus was come back with the list, and a Better recall
+    download carries on.
   - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
-  - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so, `FEATURE_CONSENT_VERSION.memory` 2, so
-    someone who agreed to the first note is asked again and memory stays off until they do). After conversation
+  - **It learns on its own** (docs/MEMORY.md steps 3–5; its note says so since `FEATURE_CONSENT_VERSION.memory` went to
+    2, and each bump asks again: someone who agreed to an earlier note has memory off until they agree to this one). With
+    each request, what you asked Ember to call you and how you like answers go too, whatever you ask; and the idle tidy
+    sends up to 40 saved facts to Copilot, at most 6 times a day. Both are in the note. After conversation
     turns and finished tasks, a short session of its own on the conversation's model, hardened and with no tools,
     picks out lasting facts as JSON (zod-checked, dropped whole if invalid): at most one call per three turns or a
     minute, 12 an hour, 60 a day. A fact is yours only when you were heard to say it and every word of it is yours,
@@ -222,11 +265,14 @@ runtime. It does not change the app's consent or speaking settings.
     in. After 5 idle minutes (no turn, no task,
     the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
     idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
-    fact shows in the conversation as "Ember learned: …" with **Undo**. The kill switch stops all of it (`memory`).
+    fact shows in the conversation as "Ember learned: …" with **Undo**; once forgotten the line says "Ember forgot: …"
+    with an Undo that puts it back, and focus stays on it. The kill switch stops all of it (`memory`).
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
-    from its speakers isn't kept.
+    from its speakers isn't kept. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
+    (your own model provider or your organisation's model service in force), both places say why instead of asking,
+    and first run's step offers only Continue.
   - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model
     (all-MiniLM-L6-v2, int8, pinned by SHA-256 in `app/voice/models.ts`) that runs on this computer, so Ember finds a
     fact when you ask in other words ("Who is my manager?" finds "Priya leads the platform team"). It comes from
@@ -241,13 +287,30 @@ runtime. It does not change the app's consent or speaking settings.
 - **Extensions** (Settings › **Extensions**): plugins and extensions from marketplaces the user adds, and connectors
   (GitHub-hosted services such as Slack or Notion). Only the user adds, turns off, removes, connects or disconnects,
   and only here.
+  - **Use extensions** (shown once extensions are agreed to: the first add's card turns them on) turns them off as a
+    whole (`settings.extensions.on`): every server stops, no session gets their tools, and each item says **Off:
+    extensions are off** while what was added stays listed. An item's own switch shows off until it is agreed to. The
+    agreement is recorded only by the card's yes (main's `agree`): Home's general settings changes can't carry it
+    (`settingsFromHome` drops `extensions.consent`, and `withOwnExtensions` keeps the record already there).
   - **Added** lists each item with its status in words beside a dot, a switch to turn it off, its tools (each badged
     **Read-only**, **Can change things** or **Changed**), and **Remove** (a connector: **Disconnect**). A tool whose
     name, description, schema or annotations changed since the user agreed shows **Changed since you agreed** with
     **Agree again**; Ember stops using the changed tools until then.
   - **Marketplaces** takes a GitHub repository (`owner/repo`, or its `https://github.com/…` address) or any `https://`
     address (no `http`, user names or passwords); **Browse** shows its entries as cards (name, kind, description,
-    publisher, source, version, and **Added** once added).
+    publisher, source, version, and **Added** once added). Copilot's own marketplace (`awesome-copilot`, the runtime's
+    `isDefault`) is listed as **Built into Copilot** and one the organisation's managed settings provide as **Set by
+    your organisation**, neither with **Remove** (the runtime refuses to remove them, and main says so in a sentence
+    rather than nothing); a plugin from Copilot's own says it is listed in a marketplace built into Copilot, never
+    one "you added" (`FEATURE_CONSENT_VERSION.extensions` 3). Browsing fetches the list from GitHub (Copilot's own) or
+    from the address the user added. A list Ember couldn't fetch or read says so (`browseFailed`: "Ember couldn't
+    reach “<name>”. Check the network, then press Browse again." when git couldn't reach it, a proxy refused or TLS
+    inspection got in the way) with **Browse again**, never "This marketplace lists nothing yet.", which is only for a
+    catalogue that really lists nothing. A marketplace that couldn't be added says why with its address
+    (`addMarketplaceFailed`): out of reach ("Check the address and the network, then press Add again."), or reached but
+    no marketplace came ("Check that it's a marketplace repository you can open, then press Add again."). While Ember isn't connected (signed out, connecting), the runtime can list none:
+    the section says "Marketplaces appear once Ember is connected to Copilot or your model provider.", holds **Add**
+    with that reason, says **Ready once Ember connects** for what was added, and reads them again once it connects.
   - **Connectors** lists GitHub's catalog. **Connect** opens GitHub's consent page in the system browser (main opens
     only `https://github.com` and its subdomains), shows **Waiting for you to finish in your browser** with **Check
     again**, then **Connected**; one whose sign-in lapsed says **Needs you to sign in again**.
@@ -304,26 +367,62 @@ answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N** (not now)
 question shows the keys). **Always** is a click only: a global key could take an app's own shortcut and grant for good
 by accident. A hidden Ember shows itself to ask, and with **Speak replies, questions and results out loud** set to
 **Always** (the default), or a screen reader running and it set to **When a screen reader runs**, it says the question
-out loud; **Never** keeps it quiet even for a screen reader. Buttons that send, delete, pay and the like, risky
+out loud; **Never** keeps it quiet even for a screen reader, and chosen while Ember talks it stops at once (as does a
+screen reader turned off, at the answer's next sentence). Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
 for them. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
-"Waiting for you" while it asks), how long it has worked and which step of its plan it is on, and shows what it did
+"Waiting for you" while it asks, "Starts when another task ends" while two others are at work), how long it has worked and which step of its plan it is on, and shows what it did
 under **Details**; a failed card goes on its own after about a minute when not being read (Home's Conversation keeps
-what went wrong). More time multiplies the lifetime by ten; expanded Details, hover or keyboard focus pauses expiry,
+what went wrong). So does the card of a task whose question ran out of time while you were away: it says so ("No
+answer in time", on the card and in Home's Task activity, where its **Try again** is too), offers **Try again**, the
+bubble's note says the card offers it if Ember can't finish without the answer (otherwise, to say or type the request
+again), and a notification says Ember couldn't finish it. While you are away (idle for 30 s, or
+Ember hidden) neither kind of card goes, nor one showing a result: each waits, and has its whole time again once you
+are back. **Stop everything** clears both kinds of card at once; "What did I miss?" says the question wasn't answered
+in time, never "you stopped it". More time multiplies the lifetime by ten; expanded Details, hover or keyboard focus pauses expiry,
 with at least five seconds to move on after the last reader leaves. Its **Try again** starts the latest accepted request again, retaining any changed instructions,
-restrictions and the original computer and window, and asking every question again. A change the worker could not accept
+restrictions and the original computer and window, and asking every question again. Saying or typing “try again” right
+after such a task (or “can you try again?”, “yes” to its “Want me to try again?”, or “try again” after asking why it
+didn't work) asks for it again in your words then, as the button does, within ten minutes or while its card still
+offers **Try again**: its card goes, and a try that did part of the work is told so. A change the worker could not accept
 does not replace that retry request. Conversation requests are dispatched in order even when memory recall finishes out
 of order; each turn keeps its own words, screen context and voice provenance. An unmatched runtime message cannot start
 or steer a task. If an app can't be operated through accessibility, Ember asks to **borrow
 your mouse**: it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse, turn
 the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
 acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
-take screenshots or press keys. If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
+take screenshots or press keys (nor asks to borrow your mouse or keyboard, or says it's borrowing them without asking,
+while one such as pinentry or ssh-askpass has the keyboard); while GNOME Shell's own prompt is up, or the window of a
+prompt program (pinentry, ssh-askpass, a polkit agent or gcr's prompter) is open, focused or not (or Ember can't tell,
+because the shell is too busy or didn't answer, the window list can't be read, or the accessibility helper isn't
+working: then Ember says so and points to the setup check),
+it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
+it's going ahead without asking), until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
+windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
 still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
-**Ctrl+Alt+X** (or “Ember, stop”, or **Stop everything** in the handle menu) stops every task, question, borrowed mouse,
+**Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop”, “stop typing” or “abort” in
+the Ask box while a task is at work) stops every task, question, borrowed mouse,
 desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for
 are listed in **Apps & privacy** in the settings window (with **Remove**), next to the never-look list, which you can
-edit there too. **What Ember did** lists every request, question, action and refusal, by day. Text the keyboard can't
+edit there too; each Remove says what it changed. **Send screenshots for tasks** there (on by default) turns tasks'
+screenshots off at once, for a task already at work too (from its next look): Ember then works only from what apps
+tell it through accessibility. **What Ember
+reads, sends and keeps**, at the top of that pane, is
+first run's "Before Ember starts" again, word for word as it reads now (Search finds it by "data", "screenshot",
+"audit" and the like), but for pointing to the never-look list below and saying when screenshots are off, when Work
+without asking is on (ordinary steps are said instead of asked) or apps were let in without asking (each as the policy
+in force allows it: while Ember holds itself locked down after a policy change, it says screenshots are off and Ember
+asks before acting in an app, and every switch the lockdown turns off shows off, there and in the other panes:
+screenshots, Work without asking, working in an app you asked for help with, listening for the name, memory, routines
+and update notices), and which of other
+computers, WSL and commands you turned on or your organisation turned off; while open it follows where requests go, the
+policy and those settings, and isn't drawn again for an unrelated change.
+**What Ember did** lists every request, question, action and refusal, by day: 80 lines at first and 80
+more for each **Show earlier**, back through all the audit keeps (its note counts all of today's), including each
+screenshot of a window a task sent to the model, by its app ("Sent a picture of the window in Firefox to the model");
+the task's card says so too ("Sent the model a picture of the window in Firefox"), and names it first in its summary.
+If the record can't
+be read, it keeps what it showed and says so, instead of an empty list. Text the keyboard can't
 type (accents, other layouts) is pasted, and your clipboard is put back afterwards. With commands turned on (settings'
 **Commands** section), a task can also run commands, in Ember's own **Ember commands** window rather than a terminal of
 yours; it asks before dangerous ones ([COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md)).
@@ -342,7 +441,8 @@ Ember runs as an administrator or as root every command asks, and the hint under
 computer that asks only because it carries text read elsewhere runs after its Stop countdown (WSL and SSH commands ask
 as before). Steps in the system's Settings and security apps always ask. It says each such step in its bubble and on
 the task's card by its kind, app and size ("Clicking in Text Editor, without asking as you let me."), never with
-typed text or words from the screen, and **What Ember did** lists it as "Without asking" (the audit entry has
+typed text or words from the screen, once the check for a password prompt right before the step has passed (a step that
+check stops is said and listed only as refused), and **What Ember did** lists it as "Without asking" (the audit entry has
 `autonomy: true`), and lists turning the mode on or off with how (Home, voice, typed). Risky steps ask every time as before, with no "Always", and so do dangerous
 commands; a task that text on screen tried to steer, that went off-task or where you said no (at any point in it) goes
 back to asking.
@@ -429,7 +529,9 @@ it builds on:
   (the SDK passes it as `COPILOT_SDK_AUTH_TOKEN`). Install only extensions you would run yourself. `node` is Ember's own
   Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
 - **Hot reload.** Installing, removing, turning an item on or off, agreeing again and the kill switch move
-  `generation`; the host reconnects between turns (the conversation resumed), as memory does.
+  `generation`; the host reconnects between turns (the conversation resumed), as memory does. The kill switch moves
+  it only when the conversation had extension tools loaded or a server launched, so a stop with none installed or
+  with extensions off reconnects nothing.
 - **The kill switch** part `extensions` refuses every call from sessions loaded before it, drops their questions and
   ends every server the launcher recorded.
 - **Off for now:** connectors (`connectors()` is empty, `connect()` says they aren't available: they need GitHub's
@@ -481,14 +583,34 @@ the reply remains readable in the bubble. It never submits speech to an unspecif
 
 
 In settings, turn on **Listen for “Hey Ember”**, read and accept the microphone note, and download
-the standard speech models (about 138.5 MB of downloads, once; agreeing to the microphone note starts the download).
-Then say “Ember, …” (or “Hey Ember, …”) with your request. You can say it in one breath, or pause after the name.
+the standard speech models (about 220 MB of downloads, once; agreeing to the microphone note starts the download, and
+the note says so). Listening needs 130 MB of that, Ember's Kitten voice 64 MB and Voice Match 27 MB. **Cancel download**
+beside its progress stops it, as turning listening off does; what was half fetched is removed.
+While it listens, the voice line names the microphone it hears through (“Listening for “Ember” through Built-in Audio
+Analog Stereo”): Ember uses the system's default input, so choose another in the system's sound settings.
+Then say “Ember, …” (or “Hey Ember, …”) with your request. You can say it in one breath, or pause after the name; a
+pause to think after a word such as “the” or “and” waits 0.9 s more for the rest, said in your voice (a TV's or
+someone else's talk well under it isn't joined to it).
 Ember answers out loud in the default Kitten voice when its native runtime and model are ready, or a local system
 voice otherwise, sentence by sentence as the answer
-arrives. To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
-the four phrases it shows. It decides only what a voice may approve: every voice is heard, and a request it doesn't
+arrives. **Speaking speed** in Settings › Voice (`voice.rate`, Slower 0.8 to Faster 1.3, Normal 1; settings keep 0.8
+to 1.4) sets how fast it speaks, in its own voice and the system's, and **Hear Ember** says one fixed sentence the way
+replies are said and, once it is heard, which voice said it ("Getting Ember's voice ready…" until then, and "Ember
+couldn't speak just now" when no voice spoke it within 12 s; not with **Never**, while the screen is locked or when the
+organisation has turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
+the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
+“Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
+stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted),
+after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases that don't sound alike; settings says which.
+While a screen reader runs, which reads each prompt aloud, teaching takes nothing it reads: speech that begins within
+1.5 s of a prompt showing, or in a prompt's own words ("Say…", "Heard 2 of 4…", "That was too short…"), teaches
+nothing, and a phrase said so soon after the reading that the two ran together is asked for again ("Your screen reader
+was still reading. Wait for it to finish, then say: …"), as is one said as soon as its prompt showed (on headphones
+nothing is read into the microphone) when nothing follows it for 5 s: never dropped without a word. Listen once's line
+then isn't announced either.
+It decides only what a voice may approve: every voice is heard, and a request it doesn't
 match simply can't approve anything (owner decision of 2026-11-05: on a laptop's microphone the owner's own requests
-scored 0.50–0.74 against the 0.75 bar, in the range of other people's). **Forget my voice** deletes your voiceprint. With **Keep learning my voice** (on by default once Voice Match knows you), the
+scored 0.50–0.74 against the 0.75 bar, in the range of other people's). **Forget my voice** deletes your voiceprint and the words Ember learnt (the button says so). With **Keep learning my voice** (on by default once Voice Match knows you), the
 voiceprint follows your voice slowly, from requests it is sure are yours: never from Ember's own voice, a request with
 two voices in it, an answer to a question, or for two minutes after it turned another voice away or you stopped
 Ember; at most one request a minute (with 2 s of voice or more), a small step at a time, and never far from what you
@@ -505,7 +627,7 @@ call, tell, invite…), keeps every name as heard, and a person's name from Memo
 something up (find, who, what, where…). **Suggest what I might say next** shows two or three likely next requests under
 Ember's answers and in Ask Ember, made on this computer; choosing one asks Ember as typing it would, but never counts
 as your own words for a command (a dangerous one always asks), and nothing risky is suggested unless built from what
-you just asked. Both are in “Before Ember starts” (`CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
+you just asked. Both are in “Before Ember starts” (added in `CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
 (**Keep listening after I call Ember**, on by default): what you say next needs no name, also while Ember speaks and works,
 until “That's all” or 30 seconds after everything has gone quiet (`CONVERSATION_IDLE_MS`, app/voice/engine.ts). Speech over
 Ember drops its voice at once (`duck`, 0.15 of its level: without it the echo canceller left almost nothing of the user's
@@ -513,7 +635,9 @@ words), and stops it when what the recognizer made of it isn't Ember's own words
 (`BACKCHANNEL`). What is said then replaces the reply on its way (`AgentHost.ask` `replaces`); tasks go on. It never
 approves anything (`overEmber`). With other sound playing, only what is said by name counts: Windows reads the output's
 level while a conversation is open (app/renderer/mic/output-watch.ts: Chromium gives system audio only with a screen's
-video, which is stopped at once), Linux uses the speakers' stream, macOS can't tell yet. With the switch off, after Ember
+video, which is stopped at once), Linux uses the speakers' stream, macOS can't tell yet. The first time something said
+then without the name isn't heard, the status line says “Music or a video is playing: say “Ember” first.” for 5 s
+(engine.ts `dropped`), once a conversation. With the switch off, after Ember
 answers you have 8 seconds (12 when it asked you something) for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). While Ember is talking, “Hey Ember” stops it and listens; on Windows, macOS and Linux without
@@ -569,7 +693,7 @@ Neural synthesis needs the native runtime; otherwise replies use an installed lo
 | Listening fallback | WebAssembly (`sherpa-onnx`: one thread, no GPU) | WebAssembly if the addon cannot load |
 | Threads | As on Windows and macOS (WebAssembly listening: 1) | Moonshine 2, Kitten 1, Kokoro up to 4 leaving a core free; the per-frame models 1 |
 | GPU | None required | macOS may probe CoreML for optional Kokoro and keep it only when faster than CPU; Kitten and Moonshine use CPU. Windows has no supported DirectML backend in the pinned addon. |
-| Spoken replies | Default Kitten, explicitly selected optional Kokoro, or the installed local system voice | The same choices |
+| Spoken replies | Default Kitten or the installed local system voice | Default Kitten, explicitly selected optional Kokoro or Supertonic 3, or the installed local system voice |
 
 **Which build on Linux.** At start, main asks `capiChoice()` (app/voice/runtime.ts) and logs its answer as
 `voice.backend` (`backend`, `why`); `ember doctor` shows it under **Speech**. The native libraries must be present
@@ -600,20 +724,38 @@ speech capability where that runtime is supported.
 
 **Default and optional voices.** Kitten Nano 0.8 FP32 downloads 63.8 MB as part of the standard model manifest. Its
 complete Apache-2.0 archive includes the matching style tables and phonemiser data. It uses one CPU thread and the
-measured `NATURAL_MAX_RTF` <= 0.5 gate; a slow verdict is kept for a week per model/provider/thread configuration.
-Corrupt, future and expired verdicts are ignored. A failed gate uses the local system voice.
+measured `NATURAL_MAX_RTF` <= 0.5 gate, timed afresh at every start (an optional voice's slow verdict is kept for a
+week per model/provider/thread configuration; corrupt, future and expired verdicts are ignored). A failed gate, a reply
+Kitten couldn't make or its process ending uses the local system voice, and Settings › Voice says which ("too slow
+just now", "stopped working", "couldn't load") with **Try again**, which loads and times Kitten again at once. After a
+failed gate or a stop once it had spoken (a busy moment may pass), Kitten is also timed again by itself, once a
+session, at the first request 5 minutes or more later (`KITTEN_RECHECK_MS`, `voice.kitten_recheck`); one that
+couldn't load at all waits for **Try again**.
 
-Kokoro v1.0 FP32 (`af_heart`, Apache-2.0, about 350 MB) remains an explicit optional download in Voice settings. Saving
+Kokoro v1.0 FP32 (`af_heart`, Apache-2.0, about 350 MB) is an explicit optional download in Voice settings on Windows
+and macOS (the native addon: on Linux's C API `naturalVoiceChoices()` offers Kitten alone). Saving
 a choice while off does not enable speech or start that download. Enabling or changing the optional model names the
 download size and waits for confirmation. Kokoro uses the same real-time gate and falls back to Kitten when unavailable
 or too slow; if Kitten cannot run either, the system voice speaks. Saved preferences remain inspectable. Policy,
 consent and speaking controls still apply, and a late or obsolete download cannot restart a cancelled choice.
 
+Supertonic 3 (int8, about 129 MB, `SUPERTONIC_VOICE`) is the other optional voice, chosen in the same **Voice**
+list. It runs only on the native addon (Windows and macOS: the C API binding can't pass its generation config), and its
+weights are under the BigScience Open RAIL-M licence, whose use restrictions pass on to users.
+
+**Hear me more clearly** (`voice.clearHearing`, Settings › Voice) fetches `CLEAR_SPEECH` (Parakeet TDT 0.6B v2, 482 MB) on Windows, macOS and Linux's C API, and starts the voice process again with it; the log says `voice.clear_wanted`, `voice.clear_ready`, and `clear: true` on `voice.ready`. An organisation's `features.voice: false` turns it off.
+
+Kokoro, Supertonic and Parakeet come from sherpa-onnx's GitHub releases (served from
+`release-assets.githubusercontent.com`) only when the user turns them on; no package or models zip carries them.
+
 The standard `VOICE_MODELS` manifest and bundled-model staging include Kitten; optional Kokoro is not packaged.
 Pinned Piper Amy/Ryan voices may still generate ASR/evaluation test fixtures, but are not production voices or shipped
 speech models. Keep the bundled sherpa, eSpeak NG and phonemiser licence notices: removing Piper as a model does not
 remove those transitive library obligations. The neural synthesis utility releases after two minutes without pending
-generation and rewarms on the next wake; queued playback retains its own ownership. Captured audio remains in memory
+generation and rewarms on the next wake, when the ask box opens and when a typed request starts (`warmSpeech`, which
+with listening off opens the speak-only page too: a cold voice put the first sound 2.7 s after Send, a warm one
+0.8 s); a voice already on stays on in Settings › Voice as it loads again, so nothing there changes or is said to a
+screen reader then; queued playback retains its own ownership. Captured audio remains in memory
 and on the device.
 
 `node scripts/voice/bench.mjs --kokoro <models-directory>` compares default Kitten with explicitly requested Kokoro in
@@ -684,10 +826,60 @@ request that fits none of these (or isn't in English) gets no acknowledgement: a
 (app/main/acknowledge.ts).
 
 A streamed answer is spoken from its first clause once that has at least 18 characters and 4 words ("I can't do that
-one,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
+one,"), on the answer's first line only, or on its second after a line break or a short first line with no label or
+colon ("OK", "Here's what I found"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts), and a
 first sentence of more than 48 characters said whole is cut at its first such clause: the voice takes about 18 ms a
 character in WebAssembly. A list can be split after its first item that way ("The bench has a name field, a password
-field…" starts with "The bench has a name field,").
+field…" starts with "The bench has a name field,"). A first sentence of more than 90 characters with no comma is cut
+before its first joining word ("and", "which", "because"…, never "to", "for", "from" or "with", which follow verbs;
+"until", "after" and "before" only before a clause, and never "between two | and four") once it has 4 words
+("I looked through the folder you mentioned | and found…"), or else before its last preposition before 90 ("is free |
+from two until four", never just after "is" or "going"), or else at its last space before 90, streamed or whole, and never inside a code span or a link's words; a cut inside bold or italic words leaves no star
+or underscore to be said. No piece of speech is longer than 120
+characters (`CHUNK_MAX`), and the speech process makes at most about 8 s of speech ahead of what has played
+(`AHEAD_MS`, app/voice/tts-process.ts): a piece being made can't be stopped, so a new answer that cuts in waits for
+it. A Markdown list is said item by item: each item, a heading (a line that is all bold too), the line that leads into
+a list, three or more short lines in a row that each start with a capital (a list without its markers; streamed, a
+last one cut after a full stop is judged whole, so a piece waits for the rest of that line while it is still short:
+"Downloads\nDocuments\nPictures. Done."), two or more
+such lines of any length after a line ending with a colon ("Here is the plan:\nStep one is…\nStep two is…", also
+after a blank line, and when that line was said on its own as the answer streamed), two or more lines in a row that
+each start with a short label and its colon or a spaced dash ("Step 1: Open Settings", "**Option A:** Keep it",
+"**Option A** – keep both", also when a streamed step was cut at its comma: "Step 1: Open Settings,", then "then go
+to Privacy."), the line before a heading or a label line ("Keep both copies.", then "Option B.") and a
+paragraph end with a full stop where they have none (`spokenText`, app/voice/spoken.ts), a numbered step starts its own piece with
+its number ("2. Choose Privacy", never "Open Settings 2."), a line ending with a colon ends its piece, so a label is
+never cut from its step ("To do this:", then "Step 1: Open Settings…"), but for one too short to be said on its own
+after the answer's first piece ("Pros:\n…\nCons:\nIt costs more" says "Cons: It costs more."; streamed, only that
+label waits for its step, and what is before it is said once its line has come), and a streamed list,
+its labelled steps too, is said as each item's line ends, not after the whole answer, each line ending as the whole
+answer's would (a colon line's run goes on past a label line among its lines: "Note: this can take a while."). What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
+times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
+last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
+"Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", an arrow key by its name ("Press the →
+key" as "the right arrow key", "Press ← or →" as "left arrow or right arrow") or, before the word "arrow", by its
+direction ("the ← and → arrow keys" as "the left and right arrow keys"), in a chord as the other keys are ("Win+←" as
+"Windows key left arrow"), an arrow between two words as "to" (after its own direction too, before any word but "to",
+a preposition and the like, and before a name in quotes or brackets: "top right → Settings" and "top right → “Settings”"
+with "to", "Swipe right → to go back" and "Swipe right → (twice)" with "right" once), an arrow starting a line as its bullet, a range's dash as "to" ("$5-$10", "$5-10", "$50 - $100", "10:30–11:00", "9am–5pm", "5–10"; a spaced
+hyphen between amounts that go down is a sum, said as written, or "minus" before "=": "$2,000 - $1,500 = $500"; never a
+run of numbers, "0800–123–456"; no piece is cut at a dash between two amounts), and other emoji and typed
+smileys not at all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
+reply that is clearly in another language (mostly another script, or two or more different short words of a European
+language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`) is said by
+a local system voice for that language, or not at all when there is none, which isn't reported as Ember failing to
+speak, even with no voices installed; a Chinese reply was 7 s of "Chinese letter". An answer's language is decided
+once, from its first 60 letters (`AnswerLanguage`, app/voice/spoken.ts), and kept for every piece of it: an English
+list's "1. La La Land." is Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters
+English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
+typed in another language (three different short words of it outside quotes, and none only English writes:
+`requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer, unless its words outside quotes are clearly English. A reply too short to tell follows that
+request's language unless it has as many English short words outside its quotes ("It means that's life.", never "Ça
+veut dire « I don't know »."); one that quotes something follows it only where its own words have more of that
+language's short words than English's, or as many and a letter or mark of that language ("Abrí "Ventas.xlsx".",
+"Voilà « Ventes.xlsx »."; "Literally, "I don't know"." and "In English: "thank you"." are Kitten's), and a message that ends before
+a tool call ("Sure, one moment.") decides nothing for the messages after it. Words for the system voice wait until the
+pieces Kitten is still making are done.
 
 **When a request ends.** The VAD ends a request after 0.6 s of silence (about 0.72 s after the voice, with Silero's own
 lag). At a quiet pause of 0.35 s in it, what was said so far is transcribed ahead (`SPECULATE_FRAMES`,
@@ -722,9 +914,38 @@ regression alongside the Electron smoke.
 - It starts the built app with a throwaway data folder, consent and voice on, and silence for a microphone (`--sound`
   plays a tone instead).
 - It prints each process's memory (PSS) and CPU, and each page's main-thread CPU, then the same as JSON.
-- Compare a change against `main` on the same computer: Xvfb has no GPU or compositor.
-- On 4 vCPUs at 2.1 GHz it measured 741 MB and 35 % of one core. The setup page was open (no sign-in) and cost 10.6 %;
-  the speech process cost 1.1 % in silence.
+- Compare a change against `main` on the same computer: Xvfb has no GPU or compositor. Without a compositor the
+  overlay beside the cursor falls back to the handle card; `--compositor` starts xcompmgr on the display first
+  (EPEL's `xcompmgr` on EL8), so the overlay is measured too, and the run fails if the overlay didn't start.
+- It agrees to the consent version the build asks for (it used to agree to an older one, which kept the microphone
+  shut). Awake at rest, listening in silence on WebAssembly, with Home open (no sign-in), it measured 758 MB and 11.3 %
+  of one core on 4 vCPUs (2026-11-08): the listening process 384 MB, Home 1.6 % and the handle 1.8 % of their main
+  threads. Most of the drawing is the idle blinks and fidgets; the resting rate and the fidgets' pace are open
+  decisions (docs/ASSISTANT.md).
+- A development build listens on WebAssembly. `--native` listens on sherpa-onnx's C API, as the Linux packages do: it
+  runs `scripts/voice/fetch-capi.mjs` (which checks the libraries by SHA-256, fetching them first when they aren't
+  there) and fails unless the voice process ran on them, every model included. Either way the first line and the JSON
+  (`backend`, and `backendFrom` for the line it came from) say which backend the voice process listened on, from
+  `voice.ready` in Ember's log: main's `voice.backend` is only its choice (the libraries are there), and a library that
+  doesn't load falls back to WebAssembly in the voice process without it stopping. A `voice.model_wasm_fallback` (a
+  model made on WebAssembly) fails `--native` too, and so does a run whose voice process never got ready. A caller's own
+  `EMBER_SHERPA_CAPI` or `EMBER_VOICE_BACKEND` is never passed on.
+  With `--compositor --settle 70 --sample 30` on 4 shared vCPUs (2026-11-08), the listening process took 238–244 MB on
+  the C API against 402–403 MB on WebAssembly: 695–785 MB and 14.2–15.4 % of a core in all, against 942–947 MB and
+  14.3–15.5 % (Ember's other processes vary by about 90 MB from run to run).
+- The voice process must listen from the sample's start to its end, or the total leaves it out: the script takes the
+  process list as the sample begins and reads each process's memory as it ends, and reads Ember's log at both points.
+  The first line then says "not throughout the sample" and the JSON's `listeningGap` says why in three cases. No voice
+  process was ready as the sample began. One stopped or was replaced meanwhile (`voice.exit`, `voice.restart`,
+  `voice.unresponsive`, `voice.error`, `voice.mic_error` or a new `voice.ready`: a crash, or a restart after the
+  microphone went quiet). Or none is in the rows at the end. `--native` fails then, and so does any run with a budget;
+  without one the run only says so. A page that closes during the sample (a restart closes the microphone's) is left
+  out of the pages; it used to leave the run waiting for ever.
+- `--max-cpu 16 --max-pss 850` with `--native`, and `--max-cpu 16 --max-pss 950` without it, are the budget for a
+  change: past either figure it says so and exits 1. Each sits above what CI measures so that only a large regression
+  fails it, never noise; the target is docs/ASSISTANT.md's. CI's `el8` job runs both as its last steps, past the first
+  minute and with the overlay counted (`--compositor --settle 70 --sample 30`; at 73554c2, before `--native`, it
+  measured 899 MB and 10.8 % on WebAssembly, the listening process 390 MB of it).
 
 ### Connecting Copilot
 
@@ -758,8 +979,9 @@ app/main/agent/credential-env.ts: `COPILOT_SDK_AUTH_TOKEN`, `GITHUB_TOKEN`, `GH_
 `*_ENTERPRISE_TOKEN`s, `COPILOT_CONNECTION_TOKEN` and the two `COPILOT_PROVIDER_*` credentials) to an empty string in the
 `env` of every stdio MCP server it gives a session (`hardenedSessionConfig`): the runtime merges that `env` over its own
 environment, so the launcher and any other stdio server start with those variables empty, not holding the sign-in. Any
-GitHub-token-shaped text, `Bearer` or `token=` value and URL password is replaced in the finished line of every Ember
-log (logger.ts, `redactSecretText`) and in the sentence a failed start shows; the user's provider key is replaced by
+GitHub-token-shaped text, any token the commands redactor knows by its shape (`TOKEN_SHAPES`: AWS, Slack, Google, npm,
+OpenAI, Anthropic, Stripe, Hugging Face, GitLab), `Bearer` or `token=` value and URL password is replaced in the
+finished line of every Ember log (logger.ts, `redactSecretText`) and in the sentence a failed start shows; the user's provider key is replaced by
 exact match in messages, scopes, keys and fields (`redactingLogger`). Observed on the real runtime with
 `scripts/runtime-env-live.sh` (a network namespace with only loopback, dummy tokens, not in CI): before this blanking
 both the directly started server and the launcher held the dummy token in their environment; now neither does, nor does
@@ -774,7 +996,7 @@ Then press **Ctrl+Alt+Space** and type a question.
 
 To try Ember offline without Copilot, run the mock model and point Ember at it (development checkouts only: an
 installed Ember ignores every `EMBER_TEST_*`, `EMBER_ADMIN_POLICY`, `EMBER_VOICE_MODELS`, `EMBER_BENCH_LOG`,
-`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG`, `EMBER_AX_PROVIDER`, `EMBER_TTS_OUTPUT`, `EMBER_NO_OUTPUT_WATCH` (a test that speaks through the speakers as the user would count as other sound) and `EMBER_SHERPA_CAPI` switch):
+`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG`, `EMBER_AX_PROVIDER`, `EMBER_TTS_OUTPUT`, `EMBER_NO_OUTPUT_WATCH` (a test that speaks through the speakers as the user would count as other sound) and `EMBER_SHERPA_CAPI` switch; `EMBER_TEST_HOOKS=1` puts main's objects on `globalThis.__ember` for the demo tours and the live suites that drive Ember from inside):
 
 ```bash
 node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &
@@ -791,12 +1013,14 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Conversation (Copilot session state), only while Ember runs: resumed if Ember reconnects, deleted when it quits (one left by a crash is deleted at the next start) | `~/.config/ember/copilot/`, id in `~/.config/ember/agent.json` |
 | GitHub token (encrypted with your keyring) | `~/.config/ember/github-token.bin` |
 | Logs (JSON lines, rotated at 5 MB) | `~/.config/ember/logs/ember.log` |
+| While Ember runs: its process id, when it started and its version (0600), removed as it quits or as you log out (the X server ending under it); one left at the next start means the last run ended unexpectedly | `~/.config/ember/run.json` |
 | Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days) | `~/.config/ember/audit/audit-YYYY-MM.jsonl` |
 | Speech models and Better recall's model (downloaded once, SHA-256 checked) | `~/.config/ember/models/` |
 | Long-term memory, and Better recall's vectors of it (0600) | `~/.config/ember/memory.json`, `~/.config/ember/memory-vectors.json` |
 | What Ember made on its desk | `~/Ember/` |
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
+| When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
 | Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`) |
@@ -843,20 +1067,78 @@ Anthropic), **Endpoint** (https, or plain http only for a server on this compute
 such as Ollama at `http://localhost:11434/v1` or LM Studio at `http://localhost:1234/v1`), **API key**, the
 **Conversation model** and **Model for tasks** (the conversation's when empty; it must take images), and under
 **Advanced** the wire API (`completions` or `responses`) and Azure's API version. **Test connection** makes one GET of the
-service's model list with the saved key and says in one sentence what came of it. It is disabled, and main refuses it,
+service's model list with the saved key and says in one sentence what came of it, naming one or two of the models it
+lists; up to 50 of their ids (`listedModelIds`: `data[].id`, or Ollama's `models[].name`, each a `MODEL_ID`) are
+offered as suggestions in both model fields, set as option values only. It is disabled, and main refuses it,
 until the card below is agreed for the endpoint's host: nothing at all goes to a host the user hasn't agreed to, with
-or without a key. It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
+or without a key. A line under it says why it waits (its `aria-describedby`), and when the card comes up for an
+address just entered, the status line says "Read the note above: Ember sends nothing to <host> until you agree."
+(focus has moved on to the next field by then), and once agreed "Agreed. Ember now sends your requests to <host>.". It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
 headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever address the service named.
+First run's provider step, opened for a provider already in use, checks edited details before any of them replaces the
+details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the
+card's yes for exactly its host given by the same press, with a key just typed (refused, unsent, where it couldn't be
+kept) or, without one, the saved key only when it was entered for that very host. Nothing is saved or recorded until it
+answers; then the details are written with the card's yes for their host in one change (`agree(host, move)`, as Home's
+held edit is), so the provider in use never leaves force for Copilot between, and a typed key is saved after
+(first-run-r4-3).
+Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
+held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
+answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
+up for the new host, the status line says "Read the note above: Ember still uses <host in force>, and sends nothing to
+<new host> until you agree.", the hint "Ember still uses <host in force>. Agree to use <new host> to switch.", the card's
+quiet button reads "Keep using <host in force>" (it puts the details in force back, saving nothing), and a key typed for
+the new host waits in its field. "I agree" checks the held details with the same GET ("Checking <new host>…"); one that
+fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
+names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
+main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
+A host that answers but has no model list at that address (404, 405 or 501 on GET /models, as some gateways that answer
+chat only do: the test's `cause: "no-list"`, which the start probe doesn't count as down either) is adopted the same
+way, and the line says "Agreed. <new host> answered but lists no models, so Ember asks it for <model> as typed."
+(integrations-r4-2); one that can't be reached, times out, has a certificate Ember can't verify, refuses the key or
+answers with another error changes nothing.
+An edit back to the host in force, or of the same host, is saved at once as before. The held card's text has no
+sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
+provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so
+the address in force and its saved key are kept and come back with the switch (integrations-v4-1).
 
+- **Is it there?** Nothing else contacts the endpoint before the first request, so the same GET (`probeProvider`,
+  main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn or a
+  project request there fails without an answer from it (no status code; Projects keeps the request's own reason in
+  view as Ember leaves Ready: integrations-r2-5). Where nothing answers (`providerDown`: refused, timed out or
+  unreachable), Ember leaves Ready for that reason: the status says "Ember can't reach the model server on this computer
+  (127.0.0.1:11434). Start it, and Ember will connect in a moment.", the handle "Can't connect", and the next request
+  says why at once instead of waiting about 24 s. The failed request's own bubble (and a project request's line) asks
+  "I can't reach the model server on this computer. Is it running? Start it, then ask again." rather than to check
+  the network (`friendlyError`'s `local`). It tries again as an offline start does (15 s, 30 s, then every
+  minute, and at once on the next request), each try only that GET, and a background try leaves the status as it is
+  while nothing answers, so no "Connecting…" comes and goes every minute (integrations-c1-2). A remote host isn't asked at a start: Electron's
+  fetch follows the system's proxy settings, which can differ from the runtime's, so its test may not veto a connect.
+  So a server on this computer that answered reads "Connected to <host>.", and a remote host only "Using <host>.",
+  or "Using <host>, with no API key saved. If it needs one, save it under Model provider." when no key is saved for
+  it (a keyless gateway still works); the setup check's model row then warns rather than says OK (integrations-r3).
+  An answer that refuses the key or has no model list never counts as down: the request says that itself.
 - **Consent.** Turning it on with an address shows a card naming the endpoint's host and everything that goes there
   instead of to Copilot, screenshots for tasks included. Nothing goes there until the user agrees, and the yes holds
   only for that host (`provider.consent.host`, `FEATURE_CONSENT_VERSION.provider`): another address asks again. The
   yes is recorded only by main (`PROVIDER_IPC.agree`, for the host the endpoint in settings names); Home's general
-  settings changes can't carry it (`settingsFromHome` drops `provider.consent`), and they merge into the user's own
+  settings changes can't carry it (`settingsFromHome` drops `provider.consent`, as it does `extensions.consent`), and they merge into the user's own
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
   pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees
-  to nothing (`AgreeGuard`).
+  to nothing (`AgreeGuard`). While the card waits with no GitHub sign-in, nothing is connected, and Models &
+  connections says "Not connected: Ember is waiting for you to agree to use <host>." and points to the card or the
+  switch, with no "Sign in with GitHub" or "Use my own provider" (`homeConnectionView`'s `own`: integrations-c2-3).
+  Nothing else points to Copilot then (integrations-r3-1): a request from the Ask box, by voice or from Home is
+  answered "Your provider needs your OK: Agree to use <host> in settings, or turn off “Use my own model provider”,
+  then ask me again." (main's `providerWaiting`, `providerWaitingHost`), Home's tagline says "Agree to use <host> in
+  Models & connections to start asking.", Home's composer refuses a send with "Agree to use <host> in Models &
+  connections, then send again." (`composerSendRefusal`'s `waiting`, integrations-r4-3), the status panel's button is
+  "Check my provider…", and the hint under the
+  group "Ember can't answer until you agree to use <host>." (with a GitHub sign-in it says Ember uses GitHub Copilot
+  until then, as it does). Ember's hello at start and at login says "I need your OK for <host> first. Open settings
+  (<settings key>) and agree to use it in Models & connections, or turn off “Use my own model provider”." with Open
+  settings (hello.ts `providerWaiting`, integrations-v4-3).
 - **The key** is sealed with the OS keyring (`safeStorage`) in `provider-key.bin` in Ember's data folder (0600), apart
   from `settings.json`, together with the host it was entered for (also in `provider-key.host`, which isn't secret, so
   no keyring is asked to know it). It goes only to that host: moving the endpoint to another host deletes it, and the
@@ -865,20 +1147,52 @@ headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever a
   context). A key replaced or removed stays redacted from the log for the rest of the run, as a task may still run on it. The keyring is asked only once the provider is on with a key saved for its host (never at a
   start otherwise), and on macOS only asynchronously: a synchronous Keychain check on the main thread can block on a
   headless Mac, and a second Ember handing over to a blocked first one hangs. Where the keyring is `basic_text` (no GNOME Keyring or KWallet), Ember refuses to keep a key and
-  says why; a local server that needs no key still works. The key is never logged, audited, shown again (Home says
+  says why and to set one up (GNOME Keyring or KWallet); a local server that needs no key still works, in Home and in first run's provider step alike (which asks
+  for a key only from a service that isn't on this computer, `keyNeeded`). The key is never logged, audited, shown again (Home says
   "Key saved", with **Replace** and **Remove**) or put in any process's environment: it reaches only the Copilot
   runtime's provider config. **Remove** and **Sign out** delete it. Another GitHub account signing in leaves it in
   place: the key belongs to the user's model service, not to a GitHub account, so an account change has nothing to do
   with it (Sign out deletes it only because signing out forgets everything the user set up).
+- **When it fails** (no model named, a refused key, a host that doesn't answer), the status names the provider from the
+  moment Ember starts connecting to it, so Home's Models & connections leads with **Check my provider's details**
+  (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
+  title names the provider ("No model set for your provider", "I'm still connecting to your model provider").
+  Ember's Copilot runtime, which still carries the requests, is "Ember's model connection" then ("My model connection
+  stopped unexpectedly. I'm reconnecting…", "Ember's model connection keeps stopping…", and the file watchers running
+  out: `runtimeWords`, `lostWords`), never Copilot; a task cut off by it ends, in the bubble and the conversation, with
+  "My model connection stopped unexpectedly; the task didn't finish."
+  **Check again** connects to the provider (or the organisation's service) again and never looks for or names a GitHub
+  sign-in (`checkAgain`, app/main/provider.ts): connected, the status line says so; out of reach, it says "Checked
+  again: Ember still can't connect to <host>."; reached but still unusable (no model named, a refused key), "Checked
+  again: Ember still can't use <host>. The line above says why."; either goes once the provider connects.
 - **Switching** applies from the next message, without a restart; tasks already running finish on the service they
-  started with. A request asked while a turn or a task is still under way on the service before is held, with a bubble
-  saying so ("Switching model service", up for as long as anything is held), and sent to the new one once they are
+  started with. While a turn or a task is under way, Ember's status says the switch waits (`switchPending`; first
+  run's sign-in step: "I'll switch to Copilot once I've finished what I'm doing.", with Continue open and **Use my own
+  provider** still offered; once the switch is made and Continue has become its sign-in, a focus on it moves to the
+  title and the line says "I've switched to Copilot. Sign in with GitHub to go on, or skip for now.": first-run-r4-1,
+  first-run-c4-1), and Ember
+  reconnects to the new service as soon as they are done (the turn's end, a Stop, the last task's end), not at the
+  next request. A request asked while a turn or a task is still under way on the service before is held, with a bubble
+  saying so ("Switching model service", up for as long as anything is held; Home's composer and status word say it waits
+  for the switch, never "Thinking…": the `held` turn, home-r4-4), and sent to the new one once they are
   done, in the order asked (one asked during the switch goes behind them); it never goes to the one before, and no new
-  task starts on it (a queued one ends saying the service changed). "Done" is the runtime's own word for the turn, not
+  task starts on it (a queued one ends saying the service changed). A finished task's card stays through the switch's
+  reconnect with the time it had left (`TaskManager.keptCards`), on screen and with a Close that closes it while Ember
+  connects (the manager before keeps it until the next one lists it: integrations-v5-2); it goes if the connect fails or
+  a sign-out or an account change comes first. Its Try again is held back while the switch waits and while Ember
+  connects (a try then would start on the service before) and offered again once the switch is made. On another service
+  the conversation isn't resumed, so neither is the goal it wrote nor what it read on the screen, and the new
+  conversation isn't told of the card (`handedElsewhere`, integrations-v5-1). There Try again is offered only for a task
+  whose request asked for it alone (`StartOptions.alone`: that turn's words only, no answer to Ember's question, no
+  routine's steps, no other task asked for, steered or stopped in that turn, never steered since), and starts from those
+  words; any other card (a request split into several tasks, a routine's task, a "yes do that") offers Close only and
+  says to ask again, since its words would start all of it again or say nothing of what it was (integrations-w5-1).
+  "Done" is the runtime's own word for the turn, not
   the bubble's; after a Stop the turn is over at once. The switch's connect is waited on for at most 15 s, as a
   request waits for any connect: then they go on, and are told Ember is still connecting. Stop, Stop everything and
   quitting drop the held requests and end the switch's wait. A
-  conversation isn't carried to another service: a new one starts (memory stays). While the user's
+  conversation isn't carried to another service: a new one starts, and saved memory is kept but paused (it belongs to
+  a verified GitHub account, so Ember neither recalls nor saves memory until a GitHub sign-in is in force again). While the user's
   provider is in force, no GitHub sign-in is passed to the runtime, and the setup check's model row says
   "Your own model provider (host)". The runtime gets the address as the URL parser writes it, and the agent's log has
   the key replaced by `[key]` wherever an error quotes it.
@@ -894,11 +1208,14 @@ On Windows the same JSON goes in the registry (§10.7), on a Mac in `/Library/Ap
 
 An optional file that makes Ember stricter for everyone on the machine. Its values override users' settings, and
 users can't loosen them. If the file exists but can't be read or has a mistake, Ember locks down until it is fixed,
-and says so in its settings window: no actions, commands or listening, nothing sent to any model service (neither
+and says so in its settings window (Home's status panel reads "Locked by your organisation", with no Connect button,
+and the notice asks the user to have the computer's manager fix it; `ember doctor` and the log name the problem):
+no actions, commands or listening, nothing sent to any model service (neither
 GitHub Copilot nor the organisation's own endpoint), and nothing deleted from the audit log. Ember reads the policy
 again every 10 seconds. Once it changes (tightened, repaired, added or removed, and the next read says so too), Ember
 stops everything and stays locked down until the user restarts it (the bubble offers **Restart Ember**, and the
-settings window says so), and the restart reads the new policy whole. Every key is optional:
+settings window says so at once, already open or not: its notice, what it says Ember reads and sends, and the switches
+the lockdown turns off), and the restart reads the new policy whole. Every key is optional:
 
 ```json
 {
@@ -918,9 +1235,10 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the optional native voice off and its model download from starting, shown as managed |
 | `features.actions` | Ember answers and guides ("show me") but never acts in apps |
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
-| `features.screenImages` | Accessibility text only; no screenshots go to the model |
+| `features.screenImages` | Accessibility text only; no screenshots go to the model ("Send screenshots for tasks" off, managed) |
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
 | `confirmEveryAction` | A click before every action and every command, every time |
+| `maxActionsPerMinute` | At most this many actions a minute across all tasks together (1 to 40; Ember's own limit is 40). A step past it pauses until the minute frees a slot, its card saying "Pausing to keep to 20 steps a minute…", rather than ending the task |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
 | `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it). Better recall's model isn't downloaded or run either |
 | `features.updates` | `false`: Ember never asks GitHub about new versions ("Tell me when a new version is out" off, managed) |
@@ -938,7 +1256,10 @@ settings window says so), and the restart reads the new policy whole. Every key 
 
 The last three are explained in [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md) §6. A policy that exists but doesn't
 mention `commands` turns commands off. An Ember older than the release that added these keys reads them as a mistake
-and locks down, so update Ember before deploying a policy that uses them.
+and locks down, so update Ember before deploying a policy that uses them. Ember 0.1.0 knows only `features.voice`,
+`features.speak`, `features.actions`, `features.cursor`, `features.desk`, `features.screenImages`, `features.wsl` and
+`features.ssh`: every other `features` key above is new in 0.1.1 and locks a 0.1.0 Ember down (the RPM's
+`/usr/share/doc/ember/policy.README` lists them).
 
 Audit lines also go to the system journal: `journalctl -t ember-audit`. `/etc/ember/policy.json` must belong to root
 and be writable only by root, or Ember locks down. In a development checkout, `EMBER_ADMIN_POLICY=/path/to/policy.json`
@@ -970,12 +1291,12 @@ node_modules (fetching them first with `scripts/voice/fetch-capi.mjs`), and CI c
 ## 7. Packages
 
 ```bash
-npm run package            # dist/package: the RPMs and the AppImage
+npm run package            # dist/package: the RPM and the AppImage
 ```
 
 This section is Linux's. The Windows zip is in §10.5, Ember.app and its dmg in §11.5.
 
-The RPMs carry the build machine's dist tag (`.el8` when built on RHEL 8 or `rockylinux:8`, as CI does).
+The RPM carries the build machine's dist tag (`.el8` when built on RHEL 8 or `rockylinux:8`, as CI does).
 
 | Output | What it is |
 |---|---|
@@ -992,14 +1313,17 @@ staged binary's Electron fuses so the installed Ember ignores `--inspect` and `N
 for its helpers, the desk helper and SSH's askpass helper, where Node's own `--inspect` still works but reaches only
 that new process, not the running Ember: `node scripts/package/fuses.mjs <binary>` lists them; see §11.5 for what
 plain-Node mode allows), `scripts/package/rpm.sh` and `scripts/package/appimage.sh` (pinned, checksummed appimagetool
-and runtime). CI builds Ember's RPM, the speech models RPM (from the cached, checksum-verified models) and the AppImage
-on `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's
-fuses (no debugger, `NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user. It
-then installs the speech models RPM, runs `rpm -V` on both, writes an administrator's `/etc/ember/policy.json`, rebuilds
-both as Release 2 (`EMBER_RPM_RELEASE=2 scripts/package/rpm.sh`), upgrades to them with `dnf upgrade`, runs `rpm -V`
-again, checks `chrome-sandbox` is still setuid root and removes both with `rpm -e`. It fails if `/opt/ember`,
-`/usr/share/ember`, `/usr/bin/ember`, the menu entry or `/usr/share/doc/ember` is left, or if the policy changed or
-belongs to a package. It uploads Release 1's packages only when asked (§13): **Actions › ci › Run workflow** with
+and runtime). CI builds Ember's RPM with the speech models inside (`EMBER_RPM_MODELS=required`, from the cached,
+checksum-verified models), the models zip and the AppImage, with the models inside it too, on `rockylinux:8`, checks
+every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's fuses (no debugger,
+`NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user. It then checks the models
+are in `/usr/share/ember/voice-models` and that the RPM provides `ember-voice-models`, runs `rpm -V`, writes an
+administrator's `/etc/ember/policy.json`, rebuilds the RPM as Release 2 (`EMBER_RPM_RELEASE=2
+scripts/package/rpm.sh`), upgrades to it with `dnf upgrade`, runs `rpm -V` again, checks `chrome-sandbox` is still
+setuid root and removes it with `rpm -e`. It fails if `/opt/ember`, `/usr/share/ember`, `/usr/bin/ember`, the menu
+entry or `/usr/share/doc/ember` is left, or if the policy changed or belongs to a package. Last, it starts the AppImage
+as a normal user (unpacked: a container has no FUSE) and checks that it runs speech natively. It uploads Release 1's
+packages only when asked (§13): **Actions › ci › Run workflow** with
 **packages** ticked (kept 3 days), and on a `v*` tag for the release (§15); at about 450 MB a run with the speech
 models, uploading them every time filled the account's artifact storage. Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the
 RPM); staging stops if the spec's `License:` tag doesn't cover a bundled package's licence or a library it bundles
@@ -1016,10 +1340,15 @@ Ember that **Ask Ember** started doesn't open the ask box again when it restarts
 
 `ember doctor` (or `npm run doctor` in a checkout) prints "Ember <v> setup check" with the settings window's rows: the
 session, **Transparent windows** (the compositor), **Screen reading**, **Mouse and keyboard** (XTest), Copilot sign-in
-or the organisation's endpoint, the admin policy, the microphone, speech models, **Speaking** (speech-dispatcher),
-Ember's desk, **Window sandbox** and **Copilot's file watchers** (inotify), and says what to do about each problem. On a
+or the organisation's endpoint, the admin policy, the microphone, speech models, **Speaking** (Ember's own Kitten
+voice where it runs natively, with speech-dispatcher as its fallback; it warns only when neither can speak), Ember's
+desk, **Window sandbox** and **Copilot's file watchers** (inotify; **Ember's file watchers** while another model
+service is in use: integrations-r3-3), and says what to do about each problem. On a
 Linux other than the RHEL 8 family, the operating system row says Ember is tested on RHEL 8 and may work but isn't
-supported. It exits 1 if Ember can't work. **Start Ember when I log in** in the settings window adds
+supported. It exits 1 if Ember can't work. A warning that keeps Ember from reading or using apps (Screen reading
+missing, say) is counted as one to fix and named in its last line ("1 thing to fix so Ember can read and use your apps
+(Screen reading), and 7 worth a look."), as first run and the settings window's setup check, its badge and Home's link
+say it. **Start Ember when I log in** in the settings window adds
 `~/.config/autostart/ember.desktop` (marked `X-Ember-Managed=true`); an `ember.desktop` you made yourself is left alone,
 and the settings window says it is there.
 
@@ -1106,12 +1435,17 @@ On Linux (Windows: §10.9, macOS: §11.8):
 |---|---|
 | Setup check says "Wayland session" | Log in with **GNOME on Xorg** (§1) |
 | `The SUID sandbox helper binary was found, but is not configured correctly` | User namespaces are disabled (common on STIG-hardened machines; check `sysctl user.max_user_namespaces`, 0 means disabled). For development only: `npx electron . --no-sandbox`. The RPM installs the setuid sandbox helper, so installed Ember works there; `ember doctor` checks it. |
-| `npm ci` fails with `edgesOut` | Upgrade npm: `npm install -g npm@11.6.2` |
+| `npm ci` fails with `edgesOut` | Upgrade npm: `sudo env PATH=/opt/node22/bin:$PATH npm install -g npm@11.6.2` for the Node in /opt/node22 (§3); a Node of your own (nvm, a user prefix) upgrades without sudo. `EACCES` there means /opt/node22 isn't root's: `sudo chown -R root:root /opt/node22` |
 | Electron download fails | `npx install-electron` |
-| Ember doesn't react to “Hey Ember” | Check the **Voice** section: the models must be downloaded and the state must say “Listening for ‘Hey Ember’”. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
+| Ember doesn't react to “Hey Ember” | Check the **Voice** section: the speech models must be there (the packages carry them; a development build downloads them) and the state must say “Listening for “Ember””. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
 | "Copilot isn't answering. Reconnecting…", or "this computer has run out of file watchers" | Each Copilot conversation holds a file watcher (an inotify instance) and the per-user limit is often 128. Run `ember doctor`; raise the limit with `sudo sysctl -w fs.inotify.max_user_instances=512` and keep it with `fs.inotify.max_user_instances = 512` in `/etc/sysctl.d/90-ember.conf` |
-| Ember says it can't read the screen | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Apps started before it was turned on must be restarted |
-| "Ember couldn't start: Ember can't write to its data folder" | Make the folder yours again, for example `sudo chown -R $USER ~/.config/ember` (starting Ember with `sudo` can leave it owned by root); when the dialog says the disk is full or can only be read, free some space or start Ember where your home folder can be written to |
+| "Copilot isn't answering. Ember will try again in a moment." | The Copilot runtime started but didn't answer a step of connecting in time (30 s to start or open the conversation, 20 s for the sign-in check or the model list). Ember stops it and tries again after 15 s, 30 s, then every minute; `ember.log` has `agent.start_failed` with `why: "timeout"` and the step. A proxy or VPN that drops GitHub's traffic without refusing it does this: check `HTTPS_PROXY` and the system proxy |
+| Home says "Ember closed unexpectedly last time" | Ember's main process ended without quitting (a crash, `kill -9`, the computer losing power): the log says `app.previous_run_ended` with when that run started, and its last lines are what it was doing. Logging out isn't this: on Linux the X server ending under Ember is the session ending, logged as `app.session_end` with `"source":"display-gone"`, and the next login says nothing. That run's conversation is deleted at this start, as after any crash. If it keeps happening, report it with `ember.log` (see "Sharing a log") |
+| Ember is slow, or uses a lot of the processor | Awake with nothing happening, Ember's processes together use about 7–10 % of one core on a computer with no GPU (Xvfb with a compositor, listening off), most of it drawing the character in the overlay and the handle (Home open in front adds about 3 %; behind other windows it draws nothing); listening for “Hey Ember” adds about 5 % more. After 3 minutes with the pointer still Ember dozes and draws nothing: about 2 %, or 6 % while listening. `node scripts/perf/footprint.mjs` (a development build, Linux) measures each process and page (docs/ASSISTANT.md phase 0). In `ember.log` (`EMBER_LOG_LEVEL=debug` for more), a line that repeats many times a minute points to the part at fault: `sidecar.revive_backoff` the accessibility helper, `agent.runtime_lost` the Copilot runtime, `window.renderer_gone` or `app.child_process_gone` one of Ember's windows or its GPU process |
+| Sharing a log | **Setup & about › About this build** lists the log file with **Copy** and **Show in Files** (Finder, File Explorer). Attach `ember.log`, and `ember.log.1` too if the problem was a while ago (each is rotated at 5 MB). It says what Ember did and what failed, with app names and error messages; it isn't meant to hold what you typed or said, window titles or keys (tokens are taken out), but read it before you share it |
+| Ember says it can't read the screen, or that its accessibility helper isn't working | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Bindings installed while Ember runs are used within a couple of seconds, without restarting it; apps started before accessibility was turned on must be restarted |
+| "Ember couldn't start: Ember can't write to its data folder" | Make the folder yours again, for example `sudo chown -R $USER ~/.config/ember` (starting Ember with `sudo` can leave it owned by root); when the dialog says the disk is full or can only be read, free some space or start Ember where your home folder can be written to; when it says a path in the folder "isn't a folder" (a file or a broken link where Ember keeps one, such as `audit`), move that away. The dialog never shows the error's own text: `ember.log` has it as `app.start_failed` |
+| "Ember couldn't start: Something went wrong while Ember was starting" | Nothing in the data folder was in the way. Start Ember again; if it keeps happening, a file is missing from a damaged install or it is a bug: reinstall Ember, and if it still happens, report it at the address the dialog gives, with `ember.log` (see "Sharing a log"), whose `app.start_failed` line says what failed |
 
 ## 10. Windows
 
@@ -1247,7 +1581,8 @@ borrowed mouse.
 | `AllSigned` or `Restricted`, or scripts turned off | Says "Your organisation allows only signed PowerShell scripts…". The helper isn't signed (PLAN.md §9), so an administrator has to allow it |
 | `RemoteSigned`, and the helper's files carry the Mark-of-the-Web (a zip downloaded by a browser and extracted by Explorer) | Says "Windows blocked Ember's accessibility helper because it came from the internet" and offers **Unblock it**, which removes the `Zone.Identifier` stream from exactly `ember_uia.ps1` and `ember_uia.cs` (what `Unblock-File` does), only when the user presses it. The host starts the bridge again on its next request |
 | Constrained Language Mode (AppLocker, WDAC, `__PSLockdownPolicy`) | Says "Windows PowerShell is restricted on this computer…". `Add-Type` can't run, and the host doesn't try again until Ember restarts |
-| Any other failed start | The host tries again after 5 s, 30 s and 2 min, then every 10 min |
+| `powershell.exe` itself blocked (AppLocker or Software Restriction Policies, or its permissions) | Says "Windows didn't let Ember run Windows PowerShell. Ask your administrator to allow it." (Node throws spawn's `EPERM` or `UNKNOWN`), and tries again only on the back-off below, so each request doesn't add an AppLocker block event |
+| Any other failed start | The host tries again after 5 s, 30 s and 2 min, then every 10 min. A bridge that stopped before it was ready once (an antivirus scan, a crash) is said as a stop that may pass; twice in a row, Ember says its helper isn't working and points to the setup check until a start works |
 
 For an endpoint-protection or application-control allow-list, the setup check's **Helper command line** row prints the
 exact command line, the script's path, and the compiled DLL's path and SHA-256. When Group Policy turns on PowerShell
@@ -1300,6 +1635,7 @@ sets its AppUserModelId, `io.github.komaladitya08.ember`.
 | Conversation (Copilot session state), only while Ember runs | `%LOCALAPPDATA%\ember\copilot\`, id in `%LOCALAPPDATA%\ember\agent.json` |
 | GitHub token (encrypted for your Windows account with DPAPI) | `%LOCALAPPDATA%\ember\github-token.bin` |
 | Logs | `%LOCALAPPDATA%\ember\logs\ember.log` |
+| While Ember runs (removed as it quits; one left means the last run ended unexpectedly) | `%LOCALAPPDATA%\ember\run.json` |
 | Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days; the file only: no copy goes to a system log) | `%LOCALAPPDATA%\ember\audit\audit-YYYY-MM.jsonl` |
 | Speech models | `%LOCALAPPDATA%\ember\models\`, or bundled: `Ember\resources\voice-models`, then `%ProgramData%\Ember\voice-models` |
 | The compiled accessibility helper | `%LOCALAPPDATA%\ember\uia-cache\` |
@@ -1437,7 +1773,7 @@ Ember can't work.
 | Operating system | Windows 10 before 22H2 (warns), before 1809 (fails) | Update Windows |
 | Desktop session | Ember runs in a service's session | Sign in to Windows and start Ember from the Start menu |
 | Transparent windows, Mouse and keyboard | Windows' window or input functions didn't load | Reinstall Ember |
-| Accessibility helper | The helper didn't answer, or can't read apps; the row says what it reported (PowerShell's language mode, its display scaling) | Check the PowerShell row; if it is fine, reinstall Ember |
+| Accessibility helper | The helper didn't answer, or can't read apps; the row says what it reported (PowerShell's or the compiler's own words, PowerShell's language mode, its display scaling) | Check the PowerShell row; if it is fine, reinstall Ember |
 | Microphone | Windows doesn't let desktop apps use the microphone | **Settings › Privacy & security › Microphone › Let desktop apps access your microphone** (on Windows 10: **Settings › Privacy › Microphone › Allow desktop apps to access your microphone**); in the settings window, the row and the Voice section have **Open Settings** for it |
 | Administrator | Ember runs as administrator | Start it from the Start menu, not with **Run as administrator** |
 | PowerShell | A policy stops Windows PowerShell running the helper | §10.4: **Unblock it**, or ask your administrator |
@@ -1446,14 +1782,20 @@ Ember can't work.
 | Organisation policy | The registry policy can't be trusted, so Ember is locked down | Fix `PolicyJson` (§10.7) |
 | Speech models, Speaking | As on Linux; speech runs on sherpa-onnx's native addon (§5, How speech runs) | — |
 
-The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**), **Display
-scaling** (the helper and Ember disagree on scaling, so a click may land in the wrong place on some monitors: set every
+The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**, and why it didn't
+start when it says, in plain words by why: Windows PowerShell stopped before it was ready, couldn't set it up, couldn't
+be found or wasn't allowed to run, or the helper is out of date; PowerShell's own words are only in `ember doctor`'s
+**Accessibility helper** row; asked about 10 s after start, 60 s at login, again on **Check again**, which waits up to
+6 s for it, and in the background when a read finds the helper can't work while the row says it does, or works while
+the row says it doesn't), **Display scaling** (the helper and
+Ember disagree on scaling, so a click may land in the wrong place on some monitors: set every
 monitor to the same scale in **Settings › System › Display**, then restart Ember; if it still clicks in the wrong
 place, report it at https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues) and **Keyboard
 shortcuts**.
 
 | Symptom | Fix |
 |---|---|
+| "Ember couldn't start: Ember can't write to its data folder" | Check that you can write to `%LOCALAPPDATA%\ember` and what is in it (the folder's **Properties › Security**), and that security software (an antivirus, or Controlled folder access with that folder protected) isn't keeping Ember out of it; a full disk is said as such. As on Linux, `ember.log` has the error as `app.start_failed` |
 | The first question about an app takes several seconds | The helper compiles once per version (§10.4); later starts take about a second |
 | Task Manager lists a dozen Ember processes | Electron runs each window's page in a renderer of its own, plus the GPU, network and audio services, the voice process ("Ember voice", mostly the speech models) and the accessibility helper. Compare their private bytes (Task Manager's Details tab, **Memory (private working set)**), not the working set, which counts shared pages in every process. Chromium's video capture service runs inside the main process (the mic page's device listing starts it; Ember opens no camera), and the prompt window and the speech-only window close after a minute unused. `EMBER_MEMORY_LOG` (§5) names each renderer in a checkout |
 | A shortcut is taken | PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar Win+Alt+M by default: change theirs, or use Ember's handle |
@@ -1626,6 +1968,7 @@ Gatekeeper does on first start.
 | Conversation (Copilot session state), only while Ember runs | `~/Library/Application Support/ember/copilot/`, id in `agent.json` beside it |
 | GitHub token (encrypted with a key kept in your login Keychain) | `~/Library/Application Support/ember/github-token.bin` |
 | Logs | `~/Library/Application Support/ember/logs/ember.log` |
+| While Ember runs (removed as it quits; one left means the last run ended unexpectedly) | `~/Library/Application Support/ember/run.json` |
 | Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days; the file only: no copy goes to the system log) | `~/Library/Application Support/ember/audit/audit-YYYY-MM.jsonl` |
 | Speech models | `~/Library/Application Support/ember/models/`, or bundled: `Ember.app/Contents/Resources/voice-models`, then `/Library/Application Support/Ember/voice-models` |
 | SSH's password helper, and Node.js downloaded for other computers | `~/Library/Application Support/ember/ssh/`, `~/Library/Application Support/ember/remote/runtime/` |
@@ -1828,7 +2171,7 @@ downloads it on first use per target and checks it before sending.
 - **Nothing changes without them**: with commands off everywhere and only this computer, the prompts are today's
   exact texts (`persona-commands.test.ts`), the terminal words are unchanged unless WSL is on, and Linux, Windows and
   macOS behave as before.
-- **Consent**: `CONSENT_VERSION` stays 1. The three cards (WSL, SSH per host, commands per target) carry their own
+- **Consent**: none of this changed `CONSENT_VERSION`. The three cards (WSL, SSH per host, commands per target) carry their own
   versions in `FEATURE_CONSENT_VERSION` (`app/shared/consent.ts`): changing a card's text means bumping its version,
   which asks that card again and nothing else. A card's text is hashed with the OS's stop chord already in it, and a
   yes counts only with that hash.
@@ -1842,7 +2185,10 @@ system, `/proc`, koffi, timers and the environment come in as fakes or parameter
 renderer logic through exported pure modules (state reducers, option objects), never a DOM or xterm. Name the files
 `test/unit/{sshwsl,commands,wsl,ssh,remote,targets,command,prompt,askpass,visible-text}*`: those are what the
 `unit-matrix` job runs on every OS. The classifier's cases live in `test/fixtures/commands/{posix,powershell,cmd,wsl}.json`;
-add one with every fix.
+add one with every fix. An option table lists only the options that take the next word (a switch listed there hides the
+command or file after it), and a value that names a file is judged as that file (`optionFiles()` in classify.ts);
+commands-classify.test.ts's option-table test runs each switch in front of a dangerous operand and each such value as a
+dangerous path, so add a row when you change a table.
 
 **Integration suites** that need a real `script`, sshd, WSL or desktop are in `test/integration/`, skip without their
 variable, and fail when it is 1 and what they need is missing. `.github/workflows/remote.yml` runs them; `ci.yml` is
@@ -1935,8 +2281,41 @@ confirm the destination. If the source has changed since you sent it, draft the 
 LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or
 unsupported diff formats remain available as text.
 
-Open **Run a project command** to choose a local starting folder and enter a command. Ember applies the
-same settings, classifier and stop controls as its command window. Each run waits for approval of the
+Files, requests, patched files and an answer kept as the next send's context go through memory's secret guard
+(`memoryRefusal`, docs/MEMORY.md), which passes over code for a secret-named key's value, never a literal (a hash's
+entry, a mapping or a JSON section under the key, a property such as `secrets.db`). A chosen file that still
+looks like it holds a password, token or key is named with its line (`secretLine`, `projectSecretFiles`): every such
+file at once, so the person removes only those. An exact patch whose patched file looks like it holds one isn't
+offered, and the status says which line (`readProjectPatch`'s `withheld`), never that the diff couldn't be verified; an
+answer that looks like it holds one isn't offered as context, and the status says so (`projectAnswerText`).
+
+A request the model service refuses or can't finish says why in the conversation's words (`projectFailureText`): a
+refused key points at the key in settings, a usage limit says to try later, files over the model's limit say to choose
+fewer or smaller ones, and the two-minute wait says so. "Try again" is left for a failure nothing says more about. The
+log keeps the error's type and status code only, never its words (the service may quote the files).
+
+A request or a project command under way goes on while the settings window is minimised or hidden, and its answer is
+there when it shows again. Closing the window, the screen locking, the policy changing, Stop everything and the
+page crashing still end it, and closing the window clears the answer and an unapplied patch (save a workspace to keep
+them).
+
+While Ember reconnects or can't connect for now (the runtime restarted, a model or the provider changed, the model
+service out of reach, or, with no GitHub sign-in, your own provider turned off or waiting for its card),
+Projects keeps the chosen files, the request being typed, the answer and its unapplied diff,
+says "Ember isn't connected right now. Your work here stays, and you can send once it connects.", and only what
+reaches the model service waits: choosing files, sending, saved workspaces and the command (`projectAfterStatus`,
+app/main/agent/project.ts). **Export answer…**, **Export diff…**, **Apply patch…** and a file's **Remove** work on
+what is kept here and send nothing, so they go on working (`projectMay`'s `local`, integrations-r3-2); consent, the
+screen lock, the organisation's actions switch and the settings window in view still hold. A request under way then stops and
+says the connection dropped; Apply patch…'s confirmation stays up through Copilot's reconnect tries while offline, and
+only Stop everything, the screen lock, Sign out and the lockdown close it (`projectJobStops`, integrations-v4-2). Sign out, another account and the organisation's lockdown clear it all. Once another
+model service, address, key or GitHub account is in force, the previous request and answer stay in view but are no
+longer offered as context, so an answer from one service is never sent to another.
+
+Open **Run a project command** to choose a local starting folder and enter a command. While commands are off on
+this computer (the default), the form says so with **Open Commands** before anything is typed, and the command field
+and **Review command…** wait. Where the organisation's policy turned them off, it says "Your organisation has turned
+off commands on this computer." with no **Open Commands**. Ember applies the same settings, classifier and stop controls as its command window. Each run waits for approval of the
 exact command and folder. Output stays in the command window. The connected model does not receive it.
 
 **Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or connected
@@ -1955,7 +2334,14 @@ The README sends users to the Releases page and tells them to check each file ag
 needs both. CI publishes them when a `v<v>` tag is pushed:
 
 1. On `main`, set `version` in package.json to `<v>` and give CHANGELOG.md a `## <v> (<date>)` section: its text
-   becomes the release's notes.
+   becomes the release's notes. While `<v>` isn't published, the README's **Download** line sends readers to the
+   newest published release's own README (`blob/v<that version>/README.md`) and names what `<v>` packages differently,
+   and **From npm** says `ember-copilot` isn't on npm until `<v>` is published (docs.test.ts checks both while `<v>`
+   isn't out). In the commit you tag, replace that line with one that says the README describes `<v>`, and drop
+   **From npm**'s note: the release's notes link the README at the tag, and **See what's new…** opens those notes, so
+   the tag's README is the one everyone who updates reads, for good. `node scripts/package/release.mjs --readme v<v>`
+   checks it; the tag's checks job runs that first and the release job again, and both refuse a README that still
+   says `<v>` isn't out or sends readers to another version.
 2. Tag that commit and push the tag: `git tag v<v> && git push origin v<v>`.
 3. The tag runs every job of `ci.yml`, the Intel Mac's included, and each platform's job uploads its packages
    (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Once all of them pass, the **release** job,
@@ -2049,11 +2435,14 @@ test/fixtures       GTK3 test bench and hostile windows, the Windows bench (win_
 eval/               task suite (eval/tasks), runner, checkers, release gates, report
 ```
 
+## Implementation notes
+
+How three behaviours work inside, for whoever changes them: approvals (§5, "Asking Ember to do things"), voice requests
+(§5, "Talking to Ember") and the npm launcher (§15).
+
 ### Action approval freshness
 
 An approval applies to the window, control and contents shown when Ember asked. Before input, Ember checks them again after waiting for a lease or moving the pointer. If the dialog, text being replaced, controls or window change, or the check cannot read them, nothing is entered: use a fresh `perceive_window` and let policy decide again. Window movement and focus changes alone do not invalidate the check. Ember's own focus click may collapse the target text selection before append/replace; it still checks the text itself, and insert-at-caret keeps its original selection binding. If clicking Allow closes a menu, reopening it is a new policy attempt; risky menu actions require another approval. No consent is cached by app and menu label.
-
-**Hear me more clearly** (`voice.clearHearing`, Settings › Voice) fetches `CLEAR_SPEECH` (Parakeet TDT 0.6B v2, 482 MB) on Windows, macOS and Linux's C API, and starts the voice process again with it; the log says `voice.clear_wanted`, `voice.clear_ready`, and `clear: true` on `voice.ready`. An organisation's `features.voice: false` turns it off.
 
 Action-context reads use separate baselines for the quick accessibility tree and the detailed target read. AT-SPI omits empty and object-placeholder text from the tree and limits its text more tightly; the detailed target text is compared exactly against its own pre-approval value, never by prefix. Each action refreshes policy context before approval, preserving original actionable ids only when the tree structure and target identity still match. Repeated role/name targets (such as two dialogs' OK buttons) are ambiguous and are refused before approval; positions are never used to choose between them. A web page lives on its own (a video playing, a hover preview), so a control of one, in no dialog and with no risky word in its name, is the exception (`livingPage()`, worker.ts; owner's report of 2026-11-05: every click on YouTube was refused): a step that asks nothing needs only its window, no modal over it and the object itself to hold (`checkPageTarget()`), and a link or button may share its name with a twin, since the click goes to the object by id (`PAGE_TWIN`). A question still binds its answer to the whole tree, and pressed keys likewise (`focusShell`). This lets a completed form step update its status and contents without carrying its approval into the next step.
 
@@ -2071,6 +2460,51 @@ Answer speech belongs to the request that actually starts, including queued type
 
 The npm launcher serialises installs of a version with a cache-adjacent directory lock, keeps the previous install
 as a backup until publication succeeds, and restores it after a failed publication rename. If rollback fails too,
-both the backup and checked stage are retained and their paths reported. See `packages/npm/README.md` for manual
-recovery after an interrupted installer; locks are never automatically stolen. Tests in
+both the backup and checked stage are retained and their paths reported. The lock holds an `owner` file (`<pid>
+<hostname>`); SIGINT, SIGTERM and SIGHUP while it is held abort the download, or the unpacking (`unzip()` runs tar.exe,
+ditto or unzip, and a Mac's `xattr -dr com.apple.quarantine` runs after it, asynchronously, so a stop is heard and said
+as one; the installer lets the event loop turn once more before publishing, so a stop that landed during its last
+synchronous steps publishes nothing), and remove the work folder and the lock (exit 128 +
+the signal), and a later installer takes over a lock only when its owner was on this computer and that pid
+is gone (`takeLock()`, through a `taken-<pid>` folder only one installer can make), removing the stopped one's work
+folders unless they hold a saved `previous` copy. `packages/npm/README.md` says what a person sees. Downloads use
+node:http and node:https, not fetch, through the proxy npm would use (`proxyFor()`: npm's `https-proxy` or `proxy`
+from `npm_config_*` or the `.npmrc` files, then `HTTPS_PROXY` or `HTTP_PROXY`, never for `NO_PROXY`'s hosts or this
+computer; https by a CONNECT tunnel), and a network failure, or an error status from a proxy or server, is one
+sentence naming the host that answered and the next steps (`cantReach()`), never Node's "fetch failed" or a bare HTTP
+status (inside a tunnel a status is the host's own, so only a 403 or 451 there, or a refused CONNECT, sends the person
+to whoever runs the proxy, and a server's 5xx says to run it again later; a 502 or 504 there names the proxy too, since
+one that inspects HTTPS answers inside the tunnel, and adds asking whoever runs it if it keeps happening); a full disk or quota (`ENOSPC`, `EDQUOT`, or the unpacker's words for them, `roomSaid()`), from making the
+cache folder and the lock to writing the marker, names the cache folder and, once known, the download's size instead
+(`noRoom()`); a cache folder this user can't write in (`EACCES`, `EPERM`, `EROFS` as the cache folder, the lock or the
+work folder is made, not later, where Windows' `EPERM` is a file in use) is `cantWrite()`'s sentence; both say when a
+`--npm-reinstall` kept the copy it started from. What came for `SHA256SUMS` that isn't a list of hashes (a web page:
+a Wi-Fi's or a proxy's sign-in, never repeated), no line for the file, and a hash that doesn't match are
+`notChecked()`'s sentences, each with a next step.
+`ember doctor` and `ember --doctor`
+run attached (`runMode()`, `start()`: the report and the exit code reach the terminal; on a Mac through `open -W
+--stdout`), and a plain start is watched for 3 s with its stderr in `ember-npm/.<v>-start.log` (mode 0600), so an
+Ember that stops at once is reported with what it said and its exit code. The log's `pid` line is written best-effort,
+so a disk that filled since the install neither fails a start that worked nor holds the terminal until Ember quits; a
+disk too full to make the log is `noRoom()`'s sentence. A log it can't open (`EACCES`, `EPERM`, `EROFS`) doesn't stop
+the start, so the copy there still starts, as a `--npm-reinstall` that stopped there says (`openStartLog()`): an old
+log of another user's in this user's own folder (left by `sudo -E ember`) is removed and made again; in a folder this
+user can't write in (another user's, an administrator's shared one, a read-only disk) the watch's log is `start.log` in
+a private `mkdtemp` folder in the temporary folder (0700, the log 0600), removed once the watch has ended; and where
+not even that can be made, an Ember that stops at once is said with "Run '<name> doctor' to see what it says."
+This computer refusing to start Ember's program (`EPERM` or `EACCES` from starting it: a security policy such as
+fapolicyd, antivirus, a `noexec` disk) is `cantRun()`'s sentence, never `cantWrite()`'s.
+The AppImage's AppRun and the RPM's `ember`
+take `--doctor` as well as `doctor`, and `--help`/`-h` (the launcher answers those itself with `usage()`, since Ember.exe
+and Ember.app have none). On Linux without `DISPLAY`, a plain start says so in the launcher's own words (`noDisplay()`,
+naming the command as it was run) before downloading anything. Once a plain start has kept running past its 3 s watch
+(or, as on a Mac, where open(1) ends at once, its folder is in `ps -axo command=`), `pruneVersions()` removes the
+cache's other complete versions (renamed aside first, so a Windows Ember running from one
+keeps it), never one whose installer holds its lock or whose folder a running program's command line
+(`ps -axo command=`) names; the setup check and `--npm-install-only` remove nothing, because only a running Ember points
+**Start Ember when I log in** at itself. A start that ended at once with 0 and isn't what runs has handed over to an
+Ember already running (`startWatched()`): it removes nothing and says so (`afterHandover()`: `handedOver()`, naming
+the cache's version that runs when `ps` shows it; where `ps` isn't read, on Windows, the advice to quit an older Ember
+installed from the zip, which shares the single-instance lock, or any older one when the cache holds another version).
+Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.

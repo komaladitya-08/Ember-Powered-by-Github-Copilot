@@ -86,6 +86,42 @@ describe("Test connection and a host the card wasn't agreed for (B1)", () => {
     expect(userProviderConfig(provider({ baseUrl: "https://b.example/v1" }), { key: KEY, host: "a.example" }).apiKey).toBeUndefined();
   });
 
+  it("checks typed details without saving any of them: their host only, a key just typed only there, the saved key only for its own host (first-run-r2-1)", async () => {
+    const { s, settings, keys, fetch } = service({ settings: { baseUrl: "https://a.example/v1" } });
+    expect(s.api.agree("a.example")).toEqual({ ok: true });
+    expect(await s.api.saveKey(KEY)).toEqual({ ok: true });
+    const before = JSON.stringify(settings.get().provider);
+    const NEW = "sk-" + "n".repeat(40); // not a real key
+    // Another host with a key just typed: that key goes there, the saved one never does, and nothing is kept.
+    expect(await s.api.test({ type: "openai", baseUrl: "https://b.example/v1", host: "b.example", key: NEW })).toMatchObject({ ok: true, host: "b.example" });
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toBe("https://b.example/v1/models");
+    expect(init.headers.authorization).toBe(`Bearer ${NEW}`);
+    expect(JSON.stringify(vi.mocked(fetch).mock.calls)).not.toContain(KEY);
+    // Another host without a key: no key at all.
+    await s.api.test({ type: "openai", baseUrl: "https://b.example/v1", host: "b.example" });
+    expect(vi.mocked(fetch).mock.calls[1]![1].headers.authorization).toBeUndefined();
+    // The host in use without a key: its own saved key.
+    await s.api.test({ type: "openai", baseUrl: "https://a.example/v2", host: "a.example" });
+    expect(vi.mocked(fetch).mock.calls[2]![1].headers.authorization).toBe(`Bearer ${KEY}`);
+    // The details in use, their agreement and their key are untouched.
+    expect(JSON.stringify(settings.get().provider)).toBe(before);
+    expect(keys.savedHost()).toBe("a.example");
+    expect(s.key()?.key).toBe(KEY);
+  });
+
+  it("sends a typed draft nowhere unless its address names the host whose card was agreed, consent is given and a key could be kept (first-run-r2-1)", async () => {
+    const { s, fetch } = service({ settings: { baseUrl: "https://a.example/v1" } });
+    expect(await s.api.test({ type: "openai", baseUrl: "https://b.example/v1", host: "a.example", key: KEY })).toEqual({ ok: false, why: PROVIDER_HOST_CHANGED });
+    expect(await s.api.test({ type: "openai", baseUrl: "http://b.example/v1", host: "b.example" })).toMatchObject({ ok: false });
+    expect(await s.api.test({ type: "openai", baseUrl: "https://b.example/v1", host: "b.example", key: "has a space" })).toMatchObject({ ok: false });
+    const noKeyring = service({ settings: { baseUrl: "https://a.example/v1" }, keyring: box({ getSelectedStorageBackend: () => "basic_text" }) });
+    expect(await noKeyring.s.api.test({ type: "openai", baseUrl: "https://b.example/v1", host: "b.example", key: KEY })).toMatchObject({ ok: false, why: expect.stringContaining("keyring") });
+    const noConsent = service({ settings: { baseUrl: "https://a.example/v1" }, consented: false });
+    expect(await noConsent.s.api.test({ type: "openai", baseUrl: "https://b.example/v1", host: "b.example" })).toMatchObject({ ok: false });
+    for (const f of [fetch, noKeyring.fetch, noConsent.fetch]) expect(f).not.toHaveBeenCalled();
+  });
+
   it("keeps Home's Test connection button disabled until the card is agreed for the endpoint", () => {
     const page = readFileSync("app/renderer/home/provider.ts", "utf8");
     expect(page).toContain("test.disabled = !agreedFor(p, host) || !!managed;");
@@ -99,6 +135,25 @@ describe("the card's yes (S1, S4)", () => {
     expect(settings.own().provider.consent.version).toBe(0);
     expect(s.api.agree("a.example")).toEqual({ ok: true });
     expect(settings.own().provider).toMatchObject({ on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, host: "a.example" } });
+  });
+
+  it("comes with the details an edit of the provider in force moved to, all written in one change only for the host they name, so it never leaves force between (integrations-c3-1)", async () => {
+    const { s, settings, keys } = service({ settings: { baseUrl: "https://a.example/v1" } });
+    expect(s.api.agree("a.example")).toEqual({ ok: true });
+    expect(await s.api.saveKey(KEY)).toEqual({ ok: true });
+    const inForce: (string | null)[] = [];
+    settings.onChange(next => inForce.push(next.provider.on && next.provider.consent.host === new URL(next.provider.baseUrl).host ? next.provider.consent.host : null));
+    // Details that name another host than the one agreed to: nothing is written.
+    expect(s.api.agree("c.example", { type: "openai", baseUrl: "https://b.example/v1" })).toEqual({ ok: false, why: PROVIDER_HOST_CHANGED });
+    expect(settings.own().provider).toMatchObject({ baseUrl: "https://a.example/v1", consent: { host: "a.example" } });
+    expect(inForce).toEqual([]);
+    expect(s.api.agree("b.example", { type: "anthropic", baseUrl: "https://b.example/v1", conductor: "claude-x", worker: null, wireApi: null, azureApiVersion: null })).toEqual({ ok: true });
+    expect(settings.own().provider).toMatchObject({ on: true, type: "anthropic", baseUrl: "https://b.example/v1", conductor: "claude-x", consent: { version: FEATURE_CONSENT_VERSION.provider, host: "b.example" } });
+    expect(inForce).toEqual(["b.example"]);
+    // The key entered for a.example never goes with it.
+    s.settingsChanged();
+    expect(keys.savedHost()).toBeNull();
+    expect(s.key()).toBeNull();
   });
 
   it("can't be sent with Home's general settings changes", () => {

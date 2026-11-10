@@ -8,21 +8,24 @@
 import path from "node:path";
 import type { PlatformDeps, SystemPlatform } from "../types";
 import { which } from "../which";
-import { linuxEnvironment, execSync, type ExecSync } from "./environment";
+import { linuxEnvironment, execAsync, execSync, type ExecAsync, type ExecSync } from "./environment";
 import { linuxDoctorProbes } from "./doctor-probes";
 import { SETTINGS, changeSetting, findApp, hasBuiltInShell, isTerminalApp, launchApp, listApps, programsOf } from "../../hands/system";
 import { ADMIN_POLICY_FILE, loadAdminPolicy, providerApiKey } from "../../admin";
 import { autostartFile, foreignAutostartNote, launchCommand, syncAutostart } from "../../autostart";
 import { journalAvailable, journalSink } from "../../policy/audit";
-import { isSecurityWindow } from "../../policy/policy";
+import { isPromptWindow, isSecurityWindow } from "../../policy/policy";
 import { CLIPBOARD_FORMATS } from "../../agent/clipboard-formats";
 import { NEVER_LOOK_DEFAULTS } from "../../../shared/never-look";
 import { KEYS, SHORTCUTS } from "../../../shared/shortcuts";
 import { PLATFORM_WORDS } from "../../../shared/words";
+import { watchDisplayGone } from "../../x11";
 
 /** The machine's state as the adapters read it; tests pass fakes, Ember the real thing. */
 export interface LinuxSystemIO {
   exec?: ExecSync;
+  /** The setup check's background look for pyatspi; default the real one, but only with the real `exec`. */
+  run?: ExecAsync;
   exists?: (file: string) => boolean;
   /** For the screen-reader cache (60 s, as before). */
   setTimeout?: (fn: () => void, ms: number) => { unref?(): unknown };
@@ -36,6 +39,7 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
   const exec = io.exec ?? execSync;
   const later = io.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const whichLinux = (cmd: string) => which(cmd, { os: "linux", env: deps.env });
+  const environment = linuxEnvironment({ env: deps.env, exec, run: io.run ?? (io.exec ? undefined : execAsync) });
 
   let screenReader: boolean | null = null;
   /** Orca running (GNOME's screen-reader switch, asked at most once a minute), or anything else using Chromium's accessibility. */
@@ -94,7 +98,8 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
     spawnDefaults: {},
     // Chromium on Linux speaks (speechSynthesis) only through speech-dispatcher, and only with this switch.
     chromiumSwitches: ["enable-speech-dispatcher"],
-    environment: linuxEnvironment({ env: deps.env, exec }),
+    environment,
+    lookAgain: () => environment.again(),
     fixes: {
       ids: ["enable-accessibility"],
       apply: async fix => {
@@ -120,14 +125,17 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
       nativeSpeechDir: resourcesPath => path.join(resourcesPath, "voice-native"),
       naturalVoice: false,
     },
-    privacy: { neverLookDefaults: NEVER_LOOK_DEFAULTS.linux, isSecurityWindow: w => isSecurityWindow(w) },
+    // A pinentry, ssh-askpass or polkit agent's window stops all reading and every step while it is up (safety-privacy-3).
+    privacy: { neverLookDefaults: NEVER_LOOK_DEFAULTS.linux, isSecurityWindow: w => isSecurityWindow(w), isPromptWindow: w => isPromptWindow(w) },
     clipboardFormats: CLIPBOARD_FORMATS.linux,
     lifecycle: {
       appUserModelId: null,
       ensureShortcut() { /* only Windows' toasts need a Start Menu shortcut */ },
       appMenu: false,
       reopenShowsSettings: false,
-      sessionEnd: null,
+      // Logging out of GNOME on Xorg ends the X server under Ember: Electron quits by itself (no will-quit).
+      sessionEnd: "display-gone",
+      watchDisplay: ended => watchDisplayGone(ended),
       focusOwnApp() { /* GNOME lets Ember's own windows take focus */ },
       activateOwnWithInput: true,
       activateForAsk: true,

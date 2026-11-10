@@ -123,6 +123,7 @@ describe("the ask context on Windows and macOS, end to end through Perception an
     const log = { debug() {}, info() {}, warn() {}, error() {}, child() { return log; } } as unknown as Logger;
     const sidecar = {
       readWindow: (p: Record<string, unknown>) => call("read_window", p),
+      shellOverlays: () => call("shell_overlays", {}),
       markSecret: async () => undefined,
       scaleElements: () => undefined,
     } as unknown as AtspiSidecar;

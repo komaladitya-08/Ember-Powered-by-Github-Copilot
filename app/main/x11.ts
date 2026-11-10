@@ -119,6 +119,56 @@ export function chordHeld(mask: number | null, held: readonly number[], symOf: (
   };
 }
 
+/** This process's display watch (Xlib's IO error handler is global to the process): installed once, told once. */
+const DISPLAY_WATCH: { restore: (() => void) | null; ended: (() => void) | null } = { restore: null, ended: null };
+
+/**
+ * Tells `ended` once, synchronously, when the connection to the X server breaks (reliability-performance-r1). A GNOME
+ * on Xorg logout ends the X server under Ember, and when one of the process's Xlib connections notices first (Ember's
+ * own pointer read, or GTK's), Xlib's IO error handler ends the process there and then: no will-quit, no quit. `ended`
+ * must not touch the display. Then the handler that was in place (GTK's ends the process at once) runs, as before.
+ * Returns a function that puts that handler back (as Ember quits, so its teardown goes as before), or null where koffi
+ * or libX11 can't load (never a throw). `load`, `state`: tests pass fakes.
+ */
+export function watchDisplayGone(
+  ended: () => void,
+  load: () => typeof import("koffi") = () => requireCjs("koffi") as typeof import("koffi"),
+  state = DISPLAY_WATCH,
+): (() => void) | null {
+  if (state.restore) { state.ended = ended; return state.restore; }
+  try {
+    const koffi = load();
+    const lib = koffi.load("libX11.so.6");
+    const proto = koffi.proto("int EmberXIOErrorHandler(void *dpy)");
+    const XSetIOErrorHandler = lib.func("void *XSetIOErrorHandler(EmberXIOErrorHandler *handler)");
+    let previous: unknown = null;
+    let told = false;
+    // Registered for good: Xlib may call it at any moment for as long as the process lives.
+    const handler = koffi.register((dpy: unknown) => {
+      const tell = state.ended;
+      if (!told && tell) {
+        told = true;
+        try { tell(); } catch { /* the process ends either way: the handler below still runs */ }
+      }
+      // Never returns when it is GTK's or Xlib's own: both end the process.
+      if (previous) koffi.call(previous, proto, dpy);
+      return 0;
+    }, koffi.pointer(proto));
+    previous = XSetIOErrorHandler(handler);
+    state.ended = ended;
+    let restored = false;
+    state.restore = () => {
+      state.ended = null;
+      if (restored) return;
+      restored = true;
+      try { XSetIOErrorHandler(previous); } catch { /* left in place: it tells no one now and still hands on */ }
+    };
+    return state.restore;
+  } catch {
+    return null;
+  }
+}
+
 export function openX11(displayName?: string): X11 | null {
   try {
     const koffi = requireCjs("koffi") as typeof import("koffi");

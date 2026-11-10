@@ -80,7 +80,8 @@ export class Host {
   async call(method: unknown, params: Record<string, unknown>): Promise<unknown> {
     const run = typeof method === "string" && Object.prototype.hasOwnProperty.call(METHODS, method) ? METHODS[method] : undefined;
     if (!run) throw new KeyError(`unknown method: ${typeof method === "string" ? method : String(method)}`);
-    if (WITHOUT_PROVIDER.has(method as string)) {
+    // shell_overlays needs no start where the provider lists the system's windows on their own (macOS: no permission).
+    if (WITHOUT_PROVIDER.has(method as string) || (method === "shell_overlays" && this.provider.systemWindows)) {
       try {
         return await run(this, params);
       } finally {

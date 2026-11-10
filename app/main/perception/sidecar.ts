@@ -7,7 +7,8 @@
  * process; answers on stdout), started on demand. The sidecar answers one request at a time, so a request that
  * doesn't come back in time holds up every other one: that process is killed,
  * and a fresh one starts at once (as after any exit or crash), so one stays
- * connected (see revive). Element ids are only valid in the process that issued
+ * connected (see revive); while each new one answers nothing past its ping,
+ * the next waits longer (reviveDelay). Element ids are only valid in the process that issued
  * them; what it knows about secret fields is kept here too and handed to every
  * new process.
  */
@@ -31,6 +32,22 @@ export class SidecarVersionError extends Error {
     this.name = "SidecarVersionError";
     this.detail = `it is ${reason}. ${fix}`;
   }
+}
+
+/**
+ * The helper's answers that it can't work at all on this computer, whatever is asked, until the user fixes something
+ * (the setup check says what): Linux's Python bindings missing (ember_atspi.py) or no session bus (inside WSL), macOS
+ * not having given Ember the Accessibility permission or its AX API not loading (app/sidecar-host/providers), the
+ * helper or Windows' bridge unable to run or start (also one that stopped before it was ready twice in a row: uia.ts,
+ * reliability-performance-i3), or out of date (SidecarVersionError, uia.ts). Never a request that only timed out, a
+ * helper restarted because another request took too long, one that stopped once (it starts again), or a bridge still
+ * starting: those may work in a moment (safety-privacy-c2-1).
+ */
+const CANT_RUN = /python3-pyatspi is not installed|^no session bus$|\bAccessibility permission\b|accessibility API couldn't be loaded|accessibility (helper|bridge)\b.*?\b(could not (run|start)|not running|is out of date|doesn't match)/i;
+
+/** Is this error the helper's answer that it can't work at all here (CANT_RUN), not one that may pass? */
+export function helperCantRun(err: unknown): boolean {
+  return CANT_RUN.test(err instanceof Error ? err.message : String(err));
 }
 
 /** What a ping's answer said, for the error (a number, a short string, or what kind of thing it wasn't). Never more than 20 characters. */
@@ -206,9 +223,10 @@ export interface ActionResult { ok: boolean; action?: string; option?: string; b
 
 /**
  * The helper's `status`. The sidecar host (Windows, macOS) also says why its provider couldn't start (`detail`, with
- * `toolkitAccessibility` false; null while it is still starting), the Windows bridge's `languageMode` from its fatal
- * line ("ConstrainedLanguage"), and the DPI awareness of the bridge's UI Automation threads (`dpi`) and of its process
- * (`processDpi`). The Python sidecar sends none of these.
+ * `toolkitAccessibility` false; null while it is still starting; and `cause`, the same in PowerShell's, the compiler's
+ * or Node's own words, for `ember doctor` only: reliability-performance-w5-1), the Windows bridge's `languageMode`
+ * from its fatal line ("ConstrainedLanguage"), and the DPI awareness of the bridge's UI Automation threads (`dpi`) and
+ * of its process (`processDpi`). The Python sidecar sends none of these.
  */
 export interface SidecarStatus {
   version: number;
@@ -216,6 +234,7 @@ export interface SidecarStatus {
   toolkitAccessibility: boolean | null;
   apps: number;
   detail?: string;
+  cause?: string;
   languageMode?: string;
   dpi?: string;
   processDpi?: string;
@@ -373,6 +392,18 @@ export const MAX_LINE_BYTES = 8 * 1024 * 1024;
 /** The longest stderr line kept (only its start is ever logged). */
 const MAX_STDERR_LINE_BYTES = 64 * 1024;
 
+/** The longest a revive waits (reviveDelay). */
+const REVIVE_MAX_MS = 60_000;
+/**
+ * How long a revive waits once `streak` helpers in a row answered nothing past their ping (rp-3): the first at once, as
+ * after a helper that worked, then 2 s, 4 s, 8 s … up to a minute. Measured before: a helper that crashed on every
+ * request was started 29 times a second, and one whose status hung every 5 s, for as long as Ember ran. A request of
+ * the user's still starts one at once, and any answer ends the streak.
+ */
+export function reviveDelay(streak: number): number {
+  return streak <= 1 ? 0 : Math.min(REVIVE_MAX_MS, 1000 * 2 ** (streak - 1));
+}
+
 /**
  * Splits a stream into lines (LF or CR LF) as readline does, but never holds more than `max` bytes of one: a line past
  * that calls `tooLong` once and its bytes up to the next newline are dropped. The last line without a newline comes at
@@ -455,6 +486,8 @@ export class AtspiSidecar {
   /** stop() was called: no helper is started again on its own (see revive). */
   private stopped = false;
   private reviving = false;
+  /** Revived helpers in a row that answered nothing past their ping (reviveDelay); an answer to any request ends it. */
+  private fruitless = 0;
   /** A process of this client reported another protocol version: none is started again by this client (a new one is made to try again). */
   private incompatible: SidecarVersionError | null = null;
   /** The id blocks this instance's processes were given (ownsId): every one, across restarts. */
@@ -563,6 +596,7 @@ export class AtspiSidecar {
     const p = id !== null ? h.pending.get(id) : undefined;
     if (!p) return;
     h.warm = true;
+    this.fruitless = 0;
     clearTimeout(p.timer);
     h.pending.delete(id!);
     if (msg.error) p.reject(new Error(msg.error.message)); else p.resolve(msg.result);
@@ -607,7 +641,7 @@ export class AtspiSidecar {
     h.held = [];
     for (const p of h.pending.values()) { clearTimeout(p.timer); p.reject(typeof why === "string" ? new Error(why) : why); }
     h.pending.clear();
-    if (current && h.answered) this.revive();
+    if (current && h.answered) this.revive(h.warm);
   }
 
   /**
@@ -615,19 +649,25 @@ export class AtspiSidecar {
    * away and asked for its status, so one stays connected to the accessibility bus. LibreOffice (24.2) aborts, losing
    * unsaved work, when a client that read it has left, a document is opened while no client is connected, and then a
    * new client lists the desktop; one staying connected while the document opens prevents it. Never after stop(); and
-   * a helper that never answered isn't started over and over (the next request starts one).
+   * a helper that never answered isn't started over and over (the next request starts one). `worked`: the one that went
+   * answered a request; while none does, each revive waits longer (reviveDelay).
    */
-  private revive(): void {
+  private revive(worked: boolean): void {
     if (this.stopped || this.reviving || this.launch?.noRevive) return;
+    this.fruitless = worked ? 0 : this.fruitless + 1;
+    const wait = reviveDelay(this.fruitless);
+    // Once a streak, not every lap: the log keeps only 4 × 5 MB, and the lines that matter come at the streak's start.
+    if (wait && this.fruitless === 2) this.log.warn("sidecar.revive_backoff", { failed: this.fruitless, waitMs: wait });
     this.reviving = true;
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       this.reviving = false;
       if (this.stopped || this.helper) return;
       // (A launch that may not start now, a stopped WSL distro, isn't started by a revive either.)
       if (!this.mayStartNow()) return;
       this.log.info("sidecar.revive", {});
       this.request("status").catch(() => undefined);
-    }, 0);
+    }, wait);
+    if (wait) timer.unref?.();
   }
 
   /** SidecarLaunch.mayStart now (yes without one); a check that throws says no, so nothing starts (fail closed). */

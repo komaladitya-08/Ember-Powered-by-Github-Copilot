@@ -12,7 +12,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import { memoryRefusal } from "./guard";
-import { nameKey, negated, similarity } from "./text";
+import { fold, nameKey, negated, similarity, terms } from "./text";
 
 export const ENTITY_KINDS = ["person", "organisation", "project", "app", "place", "topic", "thing"] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
@@ -31,6 +31,8 @@ export const MAX_FACT_CHARS = 400;
 export const MAX_FACTS = 5000;
 /** Facts with the same polarity at least this alike (./text.ts similarity) about the same entities are one fact. */
 export const DUPLICATE = 0.8;
+/** The most facts one of Ember's own notes (a summary or a reflection) records it was made from: a pass reads 40. */
+export const MAX_DERIVED = 40;
 
 const Iso = z.string().min(10).max(40);
 const Id = z.string().min(1).max(40);
@@ -68,6 +70,11 @@ export const FactSchema = z.object({
   /** Explicit local corrections change the sentence, never its source or authority. Legacy facts omit these. */
   revision: z.number().int().safe().min(0).optional(),
   correctedAt: Iso.optional(),
+  /**
+   * The facts one of Ember's own notes was made from (a `summary` or `reflection`, ./refine.ts): forgetting or
+   * correcting one of them forgets the note too, since it holds their words (memory-3). Older notes omit it.
+   */
+  derivedFrom: z.array(Id).max(MAX_DERIVED).optional(),
 });
 export type Fact = z.infer<typeof FactSchema>;
 
@@ -88,13 +95,16 @@ export interface NewFact {
   predicate?: string;
   /**
    * The predicate holds one value at a time ("lives_in", "works_at", "prefers_editor"): a new fact closes the open
-   * ones with the same subject and predicate that say something else.
+   * ones with the same subject and predicate that say something else. Without it, a fact still closes one that says
+   * the same thing the other way round, or the same preference with another value (memory-4).
    */
   single?: boolean;
   source: Source;
   confidence?: number;
   /** When it became true, if not now. */
   validAt?: string;
+  /** What it was made from, when Ember wrote it (a summary or a reflection): see Fact.derivedFrom. */
+  derivedFrom?: string[];
 }
 
 export type AddResult =
@@ -199,29 +209,41 @@ export class MemoryGraph {
     const polarity = negated(text);
     const same = this.allFacts(true).find(f => sameEntities(f.entities, entities) && similarity(f.text, text) >= DUPLICATE && negated(f.text) === polarity);
     if (same) {
-      // Said again: surer (the stronger source wins), and fresh.
-      const fact: Fact = { ...same, confidence: Math.max(same.confidence, confidence), uses: same.uses + 1, lastUsedAt: now, source: stronger(same.source, input.source) };
+      // Said again: surer (the stronger source wins), and fresh. A note made again records what it rests on now too.
+      const from = mergeDerived(same.derivedFrom, input.derivedFrom);
+      const fact: Fact = { ...same, confidence: Math.max(same.confidence, confidence), uses: same.uses + 1, lastUsedAt: now, source: stronger(same.source, input.source), ...(from ? { derivedFrom: from } : {}) };
       this.facts.set(fact.id, fact);
       return { kind: "reinforced", fact };
     }
 
+    const from = mergeDerived(undefined, input.derivedFrom);
     const fact: Fact = {
       id: this.clock.id("f"), text, entities, predicate, source: input.source, confidence,
       validAt: input.validAt ?? now, invalidAt: null, supersededBy: null, createdAt: now, lastUsedAt: null, uses: 0,
+      ...(from ? { derivedFrom: from } : {}),
     };
     const closed: Fact[] = [];
-    if (input.single && predicate) {
-      for (const f of this.allFacts(true)) {
-        // A weaker source never overrules what the user said; it is kept beside it until they say otherwise.
-        if (f.entities[0] === entities[0] && f.predicate === predicate && rank(input.source) <= rank(f.source)) {
-          const c: Fact = { ...f, invalidAt: fact.validAt, supersededBy: fact.id };
-          this.facts.set(c.id, c);
-          closed.push(c);
-        }
+    for (const f of this.allFacts(true)) {
+      // A weaker source never overrules what the user said; it is kept beside it until they say otherwise.
+      if (f.entities[0] !== entities[0] || rank(input.source) > rank(f.source)) continue;
+      // The same single relation with another value; or the same statement now said the other way round ("Likes
+      // Teams" → "Doesn't like Teams any more"), or a preference that changed ("Prefers dark mode" → "…light mode"):
+      // both can't hold, so the older is closed, kept as history (memory-4).
+      const replaces = (input.single && predicate && f.predicate === predicate)
+        || (negated(f.text) !== polarity && similarity(withoutPolarity(f.text), withoutPolarity(text)) >= DUPLICATE)
+        || preferenceChanged(f.text, text);
+      if (replaces) {
+        const c: Fact = { ...f, invalidAt: fact.validAt, supersededBy: fact.id };
+        this.facts.set(c.id, c);
+        closed.push(c);
       }
     }
-    this.facts.set(fact.id, fact);
-    return { kind: "added", fact, closed };
+    // A preference that changed says what the one it closed said ("Prefers long answers" after About you's "Prefers short
+    // answers": the answer length), so it takes that one's place in the profile sent with every request (memory-r1).
+    const takes = predicate ? undefined : closed.find(c => c.predicate && preferenceChanged(c.text, text))?.predicate;
+    const kept: Fact = takes ? { ...fact, predicate: takes } : fact;
+    this.facts.set(kept.id, kept);
+    return { kind: "added", fact: kept, closed };
   }
 
   /** Recall returned these facts: they count as used now. */
@@ -231,6 +253,32 @@ export class MemoryGraph {
       const f = this.facts.get(id);
       if (f) this.facts.set(id, { ...f, lastUsedAt: now, uses: f.uses + 1 });
     }
+  }
+
+  /**
+   * Ember's own notes that hold `id`'s words, open or closed, and the notes made from those in turn: every fact whose
+   * `derivedFrom` names one of them, and an older summary with no such record about the same subject written after
+   * it (memory-3). Never `id` itself, and never a fact the user said.
+   */
+  notesFrom(id: string): string[] {
+    const root = this.facts.get(id);
+    if (!root) return [];
+    const out = new Set<string>();
+    const queue = [id];
+    while (queue.length) {
+      const from = queue.shift()!;
+      for (const f of this.facts.values()) {
+        if (f.id === id || out.has(f.id) || f.source === "user" || !f.derivedFrom?.includes(from)) continue;
+        out.add(f.id);
+        queue.push(f.id);
+      }
+    }
+    // Summaries from before notes recorded their sources: any about one of its entities, written after it.
+    for (const f of this.facts.values()) {
+      if (f.id === id || out.has(f.id) || f.source === "user" || f.predicate !== "summary" || f.derivedFrom) continue;
+      if (f.createdAt >= root.createdAt && f.entities.some(e => root.entities.includes(e))) out.add(f.id);
+    }
+    return [...out];
   }
 
   /** Forgets one fact for good (not closed: gone). True if it was there. */
@@ -282,6 +330,33 @@ export class MemoryGraph {
     return n;
   }
 
+  /**
+   * Puts back what a Forget removed (Undo: MemoryService.restore): the entities first, then the facts, each only if
+   * nothing has its id now. An entity whose name another one has taken since gives its facts to that one.
+   */
+  putBack(entities: Entity[], facts: Fact[]): void {
+    const moved = new Map<string, string>();
+    for (const e of entities) {
+      if (this.entities.has(e.id)) continue;
+      const taken = [e.name, ...e.aliases].map(n => this.names.get(nameKey(n))).find(Boolean);
+      if (taken) moved.set(e.id, taken);
+      else this.putEntity(e);
+    }
+    for (const f of facts) {
+      if (this.facts.has(f.id)) continue;
+      const ids = [...new Set(f.entities.map(id => moved.get(id) ?? id))];
+      if (ids.every(id => this.entities.has(id))) this.facts.set(f.id, { ...f, entities: ids });
+    }
+  }
+
+  /** Closes a reopened fact again as it was (Undo of the Forget that reopened it), if it is still open and unchanged. */
+  reclose(id: string, invalidAt: string, supersededBy: string | null): boolean {
+    const f = this.facts.get(id);
+    if (!f || f.invalidAt || f.supersededBy) return false;
+    this.facts.set(id, { ...f, invalidAt, supersededBy: supersededBy && this.facts.has(supersededBy) ? supersededBy : null });
+    return true;
+  }
+
   /** Replaces a fact in place (consolidation's merges). */
   replaceFact(f: Fact): void {
     const current = this.facts.get(f.id);
@@ -331,6 +406,58 @@ export class MemoryGraph {
 }
 
 const sameEntities = (a: string[], b: string[]) => a.length === b.length && a.every(id => b.includes(id));
+
+/** The words that only turn a statement round or date it ("doesn't", "any more"), left out to compare what it says. */
+const POLARITY_WORDS = /\b(?:not|no|never|doesn['’]?t|don['’]?t|didn['’]?t|isn['’]?t|aren['’]?t|wasn['’]?t|weren['’]?t|won['’]?t|can['’]?t|cannot|any\s*more|no\s+longer|now|again)\b/giu;
+const withoutPolarity = (s: string) => fold(s).replace(POLARITY_WORDS, " ");
+
+/**
+ * "Prefers dark mode" then "Prefers light mode": two preferences that differ in one word each, with something more
+ * than "prefers" in common, are one preference that changed. "Prefers tea" and "Prefers coffee" may both hold.
+ */
+function preferenceChanged(before: string, after: string): boolean {
+  const a = preference(before), b = preference(after);
+  if (!a || !b || negated(before) || negated(after)) return false;
+  // The same thing (its last word: "mode", "answers") in the same place ("in Slack", "at work"), with one word before it
+  // changed ("dark" → "light"). "Dark mode" and "dark chocolate", or dark mode in Slack and in Outlook, both hold
+  // (memory-r1).
+  if (a.what.length < 2 || a.what.length !== b.what.length || a.what.at(-1) !== b.what.at(-1) || a.where !== b.where) return false;
+  const changed = a.what.flatMap((w, i) => (w !== b.what[i] ? [[w, b.what[i]!] as const] : []));
+  // And the word that changed says the same kind of thing: "short" → "long" answers is a change, "short" → "bulleted"
+  // answers is another preference beside it, so About you's answer length stays in the profile (memory-r1).
+  return changed.length === 1 && kindOf(changed[0]![0]) === kindOf(changed[0]![1]);
+}
+/**
+ * Kinds of preference, by the word that says it (as `terms` gives it: folded, singular): how long, how set out, in what
+ * tone, light or dark, when, how often, by what. Two words of one kind, or two of none ("green" → "black" tea), are one
+ * preference that changed; two of different kinds are two preferences (memory-r1).
+ */
+const PREFERENCE_KINDS: readonly (readonly string[])[] = [
+  ["short", "shorter", "brief", "concise", "terse", "succinct", "long", "longer", "lengthy", "detailed", "thorough", "full", "verbose", "quick", "small", "large", "big"],
+  ["bulleted", "bullet", "numbered", "written", "spoken", "plain", "formatted", "prose", "markdown", "tabular", "table", "list", "paragraph"],
+  ["casual", "formal", "informal", "direct", "friendly", "polite", "blunt", "gentle", "warm", "professional", "playful", "serious"],
+  ["dark", "light"],
+  ["morning", "afternoon", "evening", "night", "early", "late", "midday", "lunchtime", "weekday", "weekend"],
+  ["daily", "weekly", "monthly", "hourly", "yearly", "quarterly", "fortnightly"],
+  ["email", "slack", "team", "phone", "text", "sms", "chat", "zoom", "video", "voice", "call", "whatsapp", "signal", "letter"],
+];
+const kindOf = (w: string) => PREFERENCE_KINDS.findIndex(k => k.includes(w));
+/** Where a preference's place or occasion begins: "…in Slack", "…for calls", "…at work", "…over tabs". */
+const PREFERENCE_PLACE = /\s(?:in|on|at|for|with|during|when|while|over|to|from|by|before|after|instead)\s/i;
+/** "Prefers dark mode in Slack": what is preferred (["dark", "mode"]) and where (its terms), or null for no preference. */
+function preference(text: string): { what: string[]; where: string } | null {
+  const m = /^\s*prefer(?:s|red)?\s+(.+)$/i.exec(fold(text).replace(/[.!]+$/, ""));
+  if (!m) return null;
+  const cut = PREFERENCE_PLACE.exec(` ${m[1]} `);
+  const what = cut ? m[1].slice(0, Math.max(0, cut.index)) : m[1];
+  const where = cut ? m[1].slice(cut.index) : "";
+  return { what: terms(what), where: terms(where).join(" ") };
+}
+/** Two records of what a note was made from, together (MAX_DERIVED at most), or undefined for none. */
+const mergeDerived = (a: string[] | undefined, b: string[] | undefined): string[] | undefined => {
+  const all = [...new Set([...(a ?? []), ...(b ?? [])])].slice(0, MAX_DERIVED);
+  return all.length ? all : undefined;
+};
 /** 0 is most trusted. */
 const rank = (s: Source) => SOURCES.indexOf(s);
 const stronger = (a: Source, b: Source): Source => (rank(a) <= rank(b) ? a : b);

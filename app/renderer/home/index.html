@@ -41,10 +41,13 @@
         </div>
         <p class="stop-hint"><span data-key-held="stop">Or press <span class="chord" data-shortcut="stop"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> to stop everything at once.</span><span data-key-taken="stop" hidden>Another app has the stop shortcut: use Stop everything, here or in Ember's handle menu.</span></p>
       </div>
+      <p class="status-jumps after-setup"><button type="button" id="p-write" class="link">Write to Ember</button><button type="button" id="p-tasks" class="link">Task activity</button></p>
     </section>
 
     <p id="managed" class="managed" hidden></p>
-    <p id="settings-notice" class="managed error" role="status" hidden></p>
+    <p id="settings-notice" class="managed error" role="status"></p>
+    <p id="run-notice" class="managed" role="status"></p>
+    <p id="provider-off" class="managed error" role="alert" hidden><span id="provider-off-text"></span> <button type="button" class="btn quiet small" id="provider-off-retry"></button></p>
 
     <section id="welcome" class="welcome" aria-labelledby="w-title" data-step="hello" hidden>
       <div class="w-arc" id="w-arc" aria-hidden="true"></div>
@@ -63,6 +66,10 @@
       </div>
 
       <div class="w-pane" data-pane="consent" hidden>
+        <div class="w-changes" id="w-changes" role="group" aria-labelledby="w-changes-h" hidden>
+          <h3 id="w-changes-h">What's new</h3>
+          <ul id="w-changes-list"></ul>
+        </div>
         <ul class="terms w-points" id="w-points" aria-label="What Ember does, in short"></ul>
         <details class="w-more" id="w-full">
           <summary>Read the full text</summary>
@@ -76,20 +83,47 @@
             <li data-icon="plug"><b>Other computers and commands</b><span id="targets-note"> are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.</span></li>
           </ul>
         </details>
-        <p class="w-note" id="w-consent-note" role="status"></p>
+        <p class="w-note" id="w-consent-note" role="status" tabindex="-1"></p>
       </div>
 
       <div class="w-pane" data-pane="sign-in" hidden>
         <p class="w-status" id="w-signin-line" role="status"></p>
-        <div class="w-code" id="w-code" aria-live="polite" hidden></div>
+        <div class="w-code" id="w-code" aria-live="polite"></div>
         <p class="w-code-row" id="w-signin-more" hidden><button type="button" class="btn quiet small" id="w-open-page" hidden></button><button type="button" class="btn quiet small" id="w-check-again">Check again</button></p>
+        <p class="hint" id="w-signin-help" hidden></p>
+        <p class="w-code-row" id="w-signin-actions" hidden></p>
         <p class="hint" id="w-signin-later" hidden></p>
+        <section class="w-models" id="w-models" aria-labelledby="w-models-h" hidden>
+          <h3 id="w-models-h">Models I'll use</h3>
+          <dl class="w-card" id="w-models-list"></dl>
+          <p class="hint" id="w-models-note"></p>
+          <p class="w-code-row"><button type="button" class="btn quiet small" id="w-models-change" aria-expanded="false" aria-controls="w-models-edit">Change</button></p>
+          <div id="w-models-edit" hidden>
+            <div class="field-row"><label for="w-m-conductor">Conversation model</label><select id="w-m-conductor"></select></div>
+            <div class="field-row"><label for="w-m-worker" id="w-m-worker-label">Model for tasks</label><select id="w-m-worker" aria-describedby="w-m-worker-note"></select></div>
+            <p class="hint" id="w-m-worker-note" hidden></p>
+            <p class="hint">A new choice applies from your next message.</p>
+          </div>
+        </section>
+      </div>
+
+      <div class="w-pane" data-pane="provider" hidden>
+        <ul class="w-needs" id="w-p-needs" aria-label="What you need"></ul>
+        <div class="field-row"><label for="w-p-type">Provider</label><select id="w-p-type"><option value="openai">OpenAI-compatible</option><option value="azure">Azure OpenAI</option><option value="anthropic">Anthropic</option></select></div>
+        <div class="field-row"><label for="w-p-url">Address</label><input id="w-p-url" type="url" maxlength="2048" spellcheck="false" autocomplete="off" placeholder="https://api.openai.com/v1" aria-describedby="w-p-result"></div>
+        <div class="field-row"><label for="w-p-key">API key</label><input id="w-p-key" type="password" maxlength="8192" spellcheck="false" autocomplete="off" placeholder="Paste your key" aria-describedby="w-p-result"></div>
+        <div class="field-row"><label for="w-p-conductor">Conversation model</label><input id="w-p-conductor" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="e.g. gpt-4.1" aria-describedby="w-p-result"></div>
+        <div class="field-row"><label for="w-p-worker">Model for tasks (optional, must understand images)</label><input id="w-p-worker" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Same as the conversation" aria-describedby="w-p-result"></div>
+        <p class="hint" id="w-p-consent"></p>
+        <p class="w-status" id="w-p-result" role="status"></p>
+        <p class="w-code-row" id="w-p-keep-row" hidden><button type="button" class="btn quiet small" id="w-p-keep"></button></p>
       </div>
 
       <div class="w-pane" data-pane="checks" hidden>
         <p class="w-status" id="w-checks-head" role="status"></p>
         <ul class="w-checks" id="w-checks" aria-labelledby="w-checks-head"></ul>
         <p class="hint" id="w-checks-later"></p>
+        <p class="w-code-row" id="w-checks-again-row" hidden><button type="button" class="btn quiet small" id="w-checks-again">Check again</button></p>
         <p class="sr" id="w-checks-msg" role="status"></p>
         <details class="w-more" id="w-checks-more">
           <summary>Show the details</summary>
@@ -142,18 +176,23 @@
     <section class="after-setup" data-pane="home" aria-labelledby="conversation-h">
       <h2 id="conversation-h" tabindex="-1">Conversation</h2>
       <div class="convo">
-        <div class="conversation-search"><label for="conversation-search">Search this session</label><input id="conversation-search" type="search" maxlength="200" autocomplete="off" placeholder="Find a message"><span id="conversation-search-status" class="hint" role="status"></span></div>
+        <div class="conversation-search"><label for="conversation-search">Search this conversation</label><input id="conversation-search" type="search" maxlength="200" autocomplete="off" placeholder="Find a message"><span id="conversation-search-status" class="hint" role="status"></span></div>
         <button type="button" id="conversation-earlier" class="btn quiet small earlier" hidden>Show earlier messages</button>
         <ol class="conversation" id="conversation" aria-labelledby="conversation-h" data-empty="No messages yet. Write to Ember below, or press Ctrl+Alt+Space to open Ask Ember."></ol>
         <form id="conversation-compose" class="conversation-compose">
           <label for="conversation-message">Message Ember</label>
           <p id="conversation-scope" class="hint"></p>
-          <textarea id="conversation-message" rows="3" maxlength="2000" placeholder="What would you like help with?" aria-describedby="conversation-scope conversation-send-hint conversation-compose-status"></textarea>
-          <div class="conversation-compose-actions"><button type="submit" id="conversation-send" class="btn primary">Send</button><button type="button" id="conversation-cancel-edit" class="btn quiet" hidden>Cancel edit</button><button type="button" id="conversation-stop" class="btn quiet" aria-describedby="conversation-stop-hint">Stop response</button><button type="button" id="conversation-new" class="btn quiet" aria-describedby="conversation-new-hint">New conversation</button></div>
-          <p id="conversation-send-hint" class="hint">Up to 2,000 characters. Enter adds a new line. Ctrl+Enter or ⌘+Enter sends.</p>
+          <textarea id="conversation-message" rows="3" placeholder="What would you like help with?" aria-describedby="conversation-scope conversation-count conversation-send-hint conversation-compose-status"></textarea>
+          <p id="conversation-count" class="hint" hidden></p>
+          <div class="conversation-compose-actions"><button type="submit" id="conversation-send" class="btn primary">Send</button><button type="button" id="conversation-cancel-edit" class="btn quiet" hidden>Cancel edit</button><button type="button" id="conversation-stop" class="btn quiet" aria-describedby="conversation-stop-hint">Stop response</button><button type="button" id="conversation-new" class="btn quiet" aria-describedby="conversation-new-hint" aria-controls="conversation-new-confirm">New conversation</button></div>
+          <p id="conversation-compose-status" class="hint" role="status"></p>
+          <div id="conversation-new-confirm" class="consent" role="group" aria-labelledby="conversation-new-question" hidden>
+            <p id="conversation-new-question"></p>
+            <div class="conversation-compose-actions"><button type="button" id="conversation-new-yes" class="btn quiet danger">Start a new conversation</button><button type="button" id="conversation-new-no" class="btn quiet">Keep this conversation</button></div>
+          </div>
+          <p id="conversation-send-hint" class="hint">Up to 2,000 characters. Enter adds a new line. Ctrl+Enter sends.</p>
           <p id="conversation-stop-hint" class="hint">Stop response ends the current reply and queued messages. Running tasks continue; use Stop everything to end those too.</p>
           <p id="conversation-new-hint" class="hint">New conversation starts a fresh chat. Saved memory, reminders and running tasks stay, and you stay signed in.</p>
-          <p id="conversation-compose-status" class="hint" role="status"></p>
         </form>
       </div>
       <p id="conversation-retention" class="hint"></p>
@@ -174,6 +213,7 @@
     <section class="after-setup fold-section" data-pane="home" aria-labelledby="activity-h">
       <details class="fold" id="activity-fold" aria-labelledby="activity-h">
         <summary><h2 id="activity-h">What Ember did</h2><span class="fold-note" id="activity-note"></span></summary>
+        <p class="hint" id="activity-problem" role="status"></p>
         <ol class="activity" id="activity"></ol>
         <p class="hint">Every decision and action is also in <code id="audit-dir">~/.config/ember/audit/</code><span id="journal-hint"> and in the system journal (<code>journalctl -t ember-audit</code>)</span>.</p>
       </details>
@@ -212,21 +252,26 @@
         <p class="agent-line" role="status"><i id="agent-dot" class="dot" aria-hidden="true"></i><span id="agent-text">Checking…</span></p>
         <div class="agent-actions">
           <button type="button" id="sign-in" class="btn" hidden>Sign in with GitHub</button>
+          <button type="button" id="own-provider" class="btn quiet" hidden>Use my own provider</button>
+          <button type="button" id="provider-details" class="btn quiet" hidden>Check my provider's details</button>
+          <button type="button" id="switch-account" class="btn quiet" hidden>Try a different GitHub account</button>
           <button type="button" id="retry" class="btn quiet" hidden>Check again</button>
           <button type="button" id="cancel-sign-in" class="btn quiet" hidden>Cancel</button>
           <button type="button" id="sign-out" class="btn quiet" hidden>Sign out</button>
         </div>
+        <p id="connection-help" class="hint" hidden></p>
         <div id="sign-out-confirm" class="consent" role="alertdialog" aria-modal="true" aria-labelledby="sign-out-title" aria-describedby="sign-out-scope" hidden>
           <p id="sign-out-title"><b>Sign out</b></p>
           <p id="sign-out-scope" role="status" aria-live="polite"></p>
           <div class="agent-actions"><button type="button" id="sign-out-yes" class="btn quiet danger">Sign out</button><button type="button" id="sign-out-no" class="btn quiet">Stay signed in</button></div>
         </div>
-        <div id="sign-in-msg" class="sign-in-msg" role="status" aria-live="polite" hidden></div>
+        <div id="sign-in-msg" class="sign-in-msg" role="status" aria-live="polite"></div>
         <div class="models" id="models" hidden>
           <label for="m-conductor">Conversation model</label>
           <select id="m-conductor"></select>
-          <label for="m-worker">Model for tasks (must understand images)</label>
-          <select id="m-worker"></select>
+          <label for="m-worker" id="m-worker-label">Model for tasks (must understand images)</label>
+          <select id="m-worker" aria-describedby="m-worker-note"></select>
+          <p class="hint models-hint" id="m-worker-note" hidden></p>
           <label for="m-worker-effort" id="m-worker-effort-label" hidden>Thinking effort for tasks</label>
           <select id="m-worker-effort" aria-describedby="m-worker-effort-hint" hidden></select>
           <p class="hint models-hint" id="m-worker-effort-hint" hidden>Higher effort can take longer. Changes apply to new tasks.</p>
@@ -250,14 +295,16 @@
           <p class="row-note" id="byok-no-keyring" hidden></p>
           <div class="key-saved" id="byok-key-saved" hidden><span class="key-state">Key saved</span><button type="button" id="byok-key-replace" class="btn quiet small">Replace</button><button type="button" id="byok-key-remove" class="btn quiet small remove">Remove</button></div>
         </div>
-        <div class="field-row byok-field"><label for="byok-conductor">Conversation model</label><input id="byok-conductor" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="e.g. gpt-4.1"></div>
-        <div class="field-row byok-field"><label for="byok-worker">Model for tasks (must understand images)</label><input id="byok-worker" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Same as the conversation"></div>
+        <div class="field-row byok-field"><label for="byok-conductor">Conversation model</label><input id="byok-conductor" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="e.g. gpt-4.1" list="byok-models"></div>
+        <div class="field-row byok-field"><label for="byok-worker">Model for tasks (must understand images)</label><input id="byok-worker" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Same as the conversation" list="byok-models"></div>
+        <datalist id="byok-models"></datalist>
         <details class="fold byok-advanced byok-field" id="byok-fold">
           <summary>Advanced</summary>
           <label class="choice"><span>Wire API</span><select id="byok-wire"><option value="">Chat completions</option><option value="responses">Responses</option></select></label>
           <div class="field-row" id="byok-azure-row"><label for="byok-azure">Azure API version</label><input id="byok-azure" type="text" maxlength="40" spellcheck="false" autocomplete="off" placeholder="2024-10-21"></div>
         </details>
-        <div class="agent-actions byok-field"><button type="button" id="byok-test" class="btn quiet">Test connection</button></div>
+        <div class="agent-actions byok-field"><button type="button" id="byok-test" class="btn quiet" aria-describedby="byok-test-why">Test connection</button></div>
+        <p class="row-note byok-field" id="byok-test-why" hidden></p>
       </div>
       <p class="hint byok-msg" id="byok-msg" role="status" aria-live="polite"></p>
       <p class="hint" id="byok-hint"></p>
@@ -289,22 +336,23 @@
         <p id="project-previous-question" class="hint" hidden></p>
         <div id="project-answer" class="project-answer" role="region" aria-label="Project answer" tabindex="0" hidden></div>
         <div id="project-answer-actions" class="agent-actions" hidden><button type="button" id="project-copy-answer" class="btn quiet">Copy answer</button><button type="button" id="project-export-answer" class="btn quiet">Export answer…</button></div>
-        <details id="project-patch" hidden>
+        <details class="disclose" id="project-patch" hidden>
           <summary id="project-patch-summary">Review changes before applying</summary>
           <pre id="project-diff" class="project-answer" aria-label="Changes to apply" tabindex="0"></pre>
-          <div class="agent-actions"><button type="button" id="project-apply" class="btn">Apply patch…</button><button type="button" id="project-copy-diff" class="btn quiet">Copy diff</button><button type="button" id="project-export-diff" class="btn quiet">Export diff…</button></div>
+          <div class="agent-actions"><button type="button" id="project-apply" class="btn quiet">Apply patch…</button><button type="button" id="project-copy-diff" class="btn quiet">Copy diff</button><button type="button" id="project-export-diff" class="btn quiet">Export diff…</button></div>
         </details>
         <p id="project-output-status" class="hint" role="status"></p>
         <p id="project-export-hint" class="hint" hidden>Export saves plain text to the destination you choose. Exported files stay there after Ember closes.</p>
       </form>
-      <details class="group" id="project-commands">
+      <details class="group disclose" id="project-commands">
         <summary>Run a project command</summary>
         <form id="project-command-form">
           <p class="hint" id="project-command-hint">Choose the starting folder and enter a command for this computer. Ember shows the exact command and folder for approval before running it.</p>
-          <button type="button" class="btn quiet" id="project-folder-pick" disabled>Choose command folder…</button>
+          <p class="row-note" id="project-commands-off" hidden><span id="project-commands-off-text">Commands are off on this computer. Turn them on in Commands to run one here.</span> <button type="button" class="link" id="project-commands-open" hidden>Open Commands</button></p>
+          <div class="agent-actions"><button type="button" class="btn quiet" id="project-folder-pick" disabled>Choose command folder…</button></div>
           <p id="project-folder" class="hint">No command folder selected.</p>
           <div class="field-row"><label for="project-command-text">Command</label>
-          <input type="text" id="project-command-text" maxlength="2000" required spellcheck="false" autocomplete="off" aria-describedby="project-command-hint project-folder"></div>
+          <input type="text" id="project-command-text" maxlength="2000" required spellcheck="false" autocomplete="off" aria-describedby="project-commands-off-text project-command-hint project-folder"></div>
           <div class="agent-actions">
             <button type="submit" class="btn" id="project-command-send" disabled>Review command…</button>
             <button type="button" class="btn quiet" id="project-command-stop" hidden>Stop command</button>
@@ -312,7 +360,7 @@
           <p class="hint" id="project-command-status" role="status"></p>
         </form>
       </details>
-      <details class="group" id="project-workspaces">
+      <details class="group disclose" id="project-workspaces">
         <summary>Saved workspaces</summary>
         <p id="project-workspace-hint" class="hint">Ember encrypts saved paths and the last completed request and answer on this computer. Saving with the same name updates that workspace.</p>
         <div class="field-row">
@@ -322,7 +370,7 @@
         <div class="agent-actions"><button type="button" id="project-workspace-save" class="btn" disabled>Save workspace</button></div>
         <label class="choice"><span>Saved workspace</span><select id="project-workspace-list" disabled></select></label>
         <div class="agent-actions">
-          <button type="button" id="project-workspace-open" class="btn" disabled>Open workspace</button>
+          <button type="button" id="project-workspace-open" class="btn quiet" disabled>Open workspace</button>
           <button type="button" id="project-workspace-forget" class="btn quiet" disabled>Forget workspace…</button>
         </div>
         <p class="hint" id="project-workspace-status" role="status"></p>
@@ -335,7 +383,7 @@
         <label class="switch-row"><input type="checkbox" id="memory-on" role="switch" aria-describedby="memory-hint"><span>Remember what I tell you</span></label>
         <div id="memory-consent" class="consent" role="group" aria-label="Before Ember remembers" hidden>
           <p id="memory-paused" class="row-note" hidden></p>
-          <p id="memory-consent-text"></p>
+          <p id="memory-consent-text" tabindex="-1"></p>
           <div class="agent-actions"><button type="button" id="memory-yes" class="btn" aria-describedby="memory-consent-text">I agree, remember</button><button type="button" id="memory-no" class="btn quiet">Not now</button></div>
         </div>
         <label class="switch-row" id="memory-questions-row"><input type="checkbox" id="memory-questions" role="switch" aria-describedby="memory-questions-hint"><span>Ask me questions now and then</span></label>
@@ -358,9 +406,11 @@
       </div>
       <p class="hint" id="memory-count" role="status"></p>
       <ul class="plain-list memory-list" id="memory-list" aria-labelledby="memory-h"></ul>
+      <div class="agent-actions memory-forgotten" id="memory-forgotten" hidden><p class="hint" id="memory-forgotten-text" role="status" tabindex="-1"></p><button type="button" id="memory-undo" class="btn quiet small">Undo</button></div>
       <div class="agent-actions"><button type="button" id="memory-more" class="btn quiet" hidden></button></div>
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember learns from what you say and from the tasks it finishes, and uses what bears on each request; say “Forget that” or use Forget here.</p>
-      <p class="hint" id="memory-owner" role="status" hidden></p>
+      <p class="hint" id="memory-owner" role="status"></p>
+      <p class="hint" id="memory-trouble" role="status"></p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
       <div id="forget-all-confirm" class="consent" role="alertdialog" aria-modal="true" aria-labelledby="forget-all-title" aria-describedby="forget-all-scope" hidden>
         <p id="forget-all-title"><b>Forget everything</b></p>
@@ -385,11 +435,11 @@
           <div class="agent-actions"><button type="button" id="routines-yes" class="btn" aria-describedby="routines-consent-text">I agree, keep them</button><button type="button" id="routines-no" class="btn quiet">Not now</button></div>
         </div>
       </div>
+      <p class="hint" id="routines-hint">Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps, and Ember still asks before anything risky.</p>
       <ul class="plain-list" id="routines-list" aria-labelledby="routines-h"></ul>
       <h3 class="sub" id="reminders-h">Upcoming reminders</h3>
-      <button type="button" id="reminders-refresh" class="btn quiet small">Refresh list</button>
+      <div class="agent-actions"><button type="button" id="reminders-refresh" class="btn quiet small">Refresh list</button></div>
       <ul class="plain-list" id="reminders-list" aria-labelledby="reminders-h" tabindex="-1"></ul>
-      <p class="hint" id="routines-hint">Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps, and Ember still asks before anything risky.</p>
       <div class="agent-actions"><button type="button" id="routines-forget-all" class="btn quiet" hidden>Delete all routines and reminders</button></div>
       <div id="routines-delete-confirm" class="consent" role="group" aria-labelledby="routines-delete-scope" hidden>
         <p id="routines-delete-scope"></p>
@@ -403,22 +453,24 @@
       <div class="group voice">
         <label class="switch-row"><input type="checkbox" id="wake" role="switch"><span>Listen for “Hey Ember”</span></label>
         <div id="consent" class="consent" role="group" aria-label="Before Ember listens" hidden>
-          <p id="consent-text">Ember will keep the microphone open while it runs, listening only for its name (“Ember”, or “Hey Ember”) and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Ember”, what you say next is turned into text on this computer, and only that text is sent to <span class="model-recipient">Copilot</span>. After that the microphone stays open for the conversation: what you say next, without its name and also while Ember talks or works, is turned into text and sent too, until you say “That's all” or 30 seconds after everything has gone quiet. Voice settings can turn this off. If you teach Ember your voice, it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct when it mishears you, on this computer until you forget them. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens.</span> <span id="output-note" hidden>During a conversation Ember also checks how loud your computer's sound is (nothing else, and only on this computer), so a song or a video isn't taken for you.</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span data-key-held="mute"><span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</span><span data-key-taken="mute" hidden>Mute microphone, in Ember's handle menu, turns the microphone off and on.</span></p>
+          <p id="consent-text">Ember will keep the microphone open while it runs, listening only for its name (“Ember”, or “Hey Ember”) and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Ember”, what you say next is turned into text on this computer, and only that text is sent to <span class="model-recipient">Copilot</span>. After that the microphone stays open for the conversation: what you say next, without its name and also while Ember talks or works, is turned into text and sent too, until you say “That's all” or 30 seconds after everything has gone quiet. Voice settings can turn this off. <span id="consent-models" hidden>Agreeing also downloads the speech models (<span id="consent-models-size"></span>), once.</span> If you teach Ember your voice, it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct when it mishears you, on this computer until you forget them. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens.</span> <span id="output-note" hidden>During a conversation Ember also checks how loud your computer's sound is (nothing else, and only on this computer), so a song or a video isn't taken for you.</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span data-key-held="mute"><span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</span><span data-key-taken="mute" hidden>Mute microphone, in Ember's handle menu, turns the microphone off and on.</span></p>
           <p id="consent-error" class="error" role="alert" hidden></p>
           <div class="agent-actions"><button type="button" id="consent-yes" class="btn" aria-describedby="consent-text">I agree, start listening</button><button type="button" id="consent-no" class="btn quiet">Not now</button></div>
         </div>
         <p class="agent-line"><i id="voice-dot" class="dot" aria-hidden="true"></i><span id="voice-text">Off</span></p>
         <p class="sr" id="voice-live" role="status"></p>
         <div class="agent-actions"><button type="button" id="voice-listen-once" class="btn quiet" aria-describedby="voice-listen-once-detail" aria-disabled="true">Listen once</button></div>
-        <p class="hint" id="voice-listen-once-detail" role="status" aria-atomic="true"></p>
+        <p class="hint" id="voice-listen-once-detail"></p>
+        <p class="sr" id="voice-listen-once-live" role="status" aria-atomic="true"></p>
         <div class="agent-actions"><button type="button" id="voice-download" class="btn quiet" hidden>Download speech models</button><button type="button" id="voice-fix" class="btn quiet" hidden>Open Settings</button></div>
         <progress id="voice-progress" max="1" value="0" aria-label="Speech models downloaded" hidden></progress>
+        <div class="agent-actions"><button type="button" id="voice-download-cancel" class="btn quiet" hidden>Cancel download</button></div>
         <div id="match" class="match" role="group" aria-labelledby="match-label" hidden>
           <label class="switch-row"><input type="checkbox" id="match-on" role="switch" aria-describedby="match-text"><span id="match-label">Answer questions with my voice (Voice Match)</span></label>
           <p class="hint" id="match-text"></p>
           <p class="match-prompt" id="match-prompt" hidden></p>
           <progress id="match-progress" max="4" value="0" aria-label="Phrases Ember has heard" hidden></progress>
-          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" hidden>Forget my voice</button><button type="button" id="match-reset" class="btn quiet" aria-describedby="match-learnt" hidden>Reset to my enrolment</button></div>
+          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="Also forgets the words Ember learnt from what you said." hidden>Forget my voice</button><span id="match-forget-hint" hidden>Also forgets the words Ember learnt from what you said.</span><button type="button" id="match-reset" class="btn quiet" aria-describedby="match-learnt" hidden>Reset to my enrolment</button></div>
           <div class="noted-row" id="match-learn-row" hidden>
             <label class="switch-row"><input type="checkbox" id="match-learn" role="switch" aria-describedby="match-learn-hint match-learnt"><span id="match-learn-label">Keep learning my voice</span></label>
             <p class="row-note" id="match-learn-hint"></p>
@@ -440,7 +492,8 @@
         <div>
           <label class="switch-row"><input type="checkbox" id="clear-on" role="switch" aria-describedby="clear-hint clear-text"><span>Hear me more clearly</span></label>
           <p class="row-note" id="clear-hint"></p>
-          <p class="hint" id="clear-text" role="status" hidden></p>
+          <p class="hint" id="clear-text"></p>
+          <p class="sr" id="clear-live" role="status"></p>
         </div>
         <div id="natural-row">
           <label class="choice"><span>Voice</span><select id="natural-model" aria-describedby="natural-model-hint natural-choice-status"><option value="kitten">Kitten Nano (default)</option><option value="kokoro">Kokoro · 350 MB</option><option value="supertonic">Supertonic · 129 MB</option></select></label>
@@ -450,23 +503,41 @@
           <p class="hint" id="natural-text">Kitten Nano is selected. Checking voice availability…</p>
           <div class="agent-actions" id="natural-download-row" hidden><button type="button" id="natural-download" class="btn quiet">Show speech model download</button></div>
           <div class="agent-actions"><button type="button" id="natural-retry" class="btn quiet" aria-describedby="natural-text" hidden>Try again</button></div>
+          <p class="sr" id="natural-live" role="status"></p>
         </div>
         <div class="choice">
           <label for="speak">Speak replies, questions and results out loud</label>
           <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>
         </div>
+        <div class="choice">
+          <label for="speak-rate">Speaking speed</label>
+          <select id="speak-rate"><option value="0.8">Slower</option><option value="0.9">A little slower</option><option value="1">Normal</option><option value="1.15">A little faster</option><option value="1.3">Faster</option></select>
+        </div>
+        <div>
+          <div class="agent-actions"><button type="button" id="voice-hear" class="btn quiet" aria-describedby="voice-hear-status">Hear Ember</button></div>
+          <p class="hint" id="voice-hear-status" role="status"></p>
+        </div>
         <label class="switch-row"><input type="checkbox" id="speak-results" role="switch"><span>Read finished tasks out loud, not only on screen</span></label>
       </div>
-      <p class="hint" id="speak-note" role="status" hidden></p>
+      <p class="hint" id="speak-note"></p>
+      <p class="sr" id="speak-live" role="status"></p>
       <h3 class="sub" id="words-h">Words Ember learnt</h3>
       <ul class="plain-list" id="words-list" aria-labelledby="words-h"></ul>
       <p class="hint" id="words-note" role="status"></p>
       <div class="agent-actions"><button type="button" id="words-forget-all" class="btn quiet" hidden>Forget all words</button></div>
+      <div id="words-forget-confirm" class="consent" role="group" aria-labelledby="words-forget-title" hidden>
+        <p id="words-forget-title"></p>
+        <div class="agent-actions"><button type="button" id="words-forget-yes" class="btn quiet danger">Forget all words</button><button type="button" id="words-forget-no" class="btn quiet">Keep them</button></div>
+      </div>
       <p class="hint">Say “Ember, …” (or “Hey Ember, …”) and your request, or “Ember, stop” to stop everything. “Ember?” on its own tells you what Ember is doing, “What did I miss?” what finished while you were away, and “Ember, just show me” keeps results on screen.</p>
     </section>
 
     <section class="after-setup" data-pane="privacy" aria-labelledby="privacy-h">
       <h2 id="privacy-h" tabindex="-1">Apps &amp; privacy</h2>
+      <details class="fold" id="privacy-terms-fold" aria-labelledby="privacy-terms-h">
+        <summary><h3 class="sub" id="privacy-terms-h">What Ember reads, sends and keeps</h3></summary>
+        <div class="privacy-terms" id="privacy-terms"></div>
+      </details>
       <div class="stack">
         <h3 class="sub">When Ember asks first</h3>
         <span id="trust-managed" hidden>Managed by your organisation</span>
@@ -492,6 +563,7 @@
         <p class="hint grants-off" id="grants-off" hidden>Not in effect: your organisation has Ember ask before every action, in these apps too.</p>
         <ul class="plain-list" id="grants" aria-label="Apps Ember may act in without asking"></ul>
         <p class="hint" id="grants-hint">You add an app here by choosing “Always in …” when Ember asks. Ember still asks every time before anything hard to undo.</p>
+        <p class="hint" id="grants-msg" role="status"></p>
         <h3 class="sub">Never look at</h3>
         <ul class="plain-list" id="never-look" aria-label="Apps and windows Ember never reads"></ul>
         <form class="add-row" id="never-look-form" autocomplete="off">
@@ -501,6 +573,13 @@
         </form>
         <p class="hint never-look-msg" id="never-look-msg" role="status"></p>
         <p class="hint">Ember never reads, captures or acts in an app or window whose name contains one of these. <button type="button" id="never-look-defaults" class="link">Restore defaults</button></p>
+        <h3 class="sub">What tasks may send</h3>
+        <div class="group">
+          <div class="noted-row">
+            <label class="switch-row"><input type="checkbox" id="screen-images" role="switch" aria-describedby="screen-images-hint"><span>Send screenshots for tasks</span></label>
+            <p class="row-note" id="screen-images-hint">A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.</p>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -540,8 +619,10 @@
       <h2 id="extensions-h" tabindex="-1">Extensions</h2>
       <div class="stack">
         <p class="intro" id="extensions-intro">Extensions give Ember more tools through plugins from marketplaces you add. Only you can add them, here.</p>
-        <p class="managed" id="extensions-blocked" role="status" hidden></p>
+        <p class="managed" id="extensions-blocked" role="status"></p>
         <div class="stack" id="extensions-body" hidden>
+          <div class="group" id="ext-on-group" hidden><label class="switch-row"><input type="checkbox" id="ext-on" role="switch" aria-describedby="ext-on-hint"><span id="ext-on-label">Use extensions</span></label></div>
+          <p class="hint" id="ext-on-hint" hidden></p>
           <h3 class="sub" id="ext-installed-h">Added</h3>
           <ul class="plain-list ext-list" id="ext-installed" aria-labelledby="ext-installed-h"></ul>
           <h3 class="sub" id="ext-markets-h">Marketplaces</h3>
@@ -551,9 +632,9 @@
             <input id="ext-market-add" type="text" maxlength="2048" spellcheck="false" placeholder="owner/repo or https://…" aria-describedby="extensions-msg ext-markets-hint">
             <button type="submit" class="btn quiet" data-key="market-add">Add</button>
           </form>
-          <p class="hint" id="ext-markets-hint">Ember fetches each marketplace's list from the address you add, and nothing from it runs until you add an item and agree.</p>
+          <p class="hint" id="ext-markets-hint">Browse fetches a marketplace's list: from GitHub for one built into Copilot, else from the address you added. Nothing from it runs until you add an item and agree.</p>
           <div class="ext-browse" id="ext-browse" role="region" aria-labelledby="ext-browse-h" hidden>
-            <div class="ext-browse-head"><h3 class="sub" id="ext-browse-h" tabindex="-1"></h3><button type="button" id="ext-browse-done" class="btn quiet small">Done</button></div>
+            <div class="ext-browse-head"><h3 class="sub" id="ext-browse-h" tabindex="-1"></h3><span class="ext-browse-actions"><button type="button" id="ext-browse-again" class="btn quiet small" hidden>Browse again</button><button type="button" id="ext-browse-done" class="btn quiet small">Done</button></span></div>
             <p class="hint" id="ext-browse-status" role="status"></p>
             <ul class="ext-cards" id="ext-cards" aria-labelledby="ext-browse-h"></ul>
           </div>
@@ -607,6 +688,7 @@
         <summary><h2 id="checks-h">Setup check</h2><span class="fold-note" id="checks-note"></span></summary>
         <ul class="checks" id="checks"></ul>
         <p class="sr" id="checks-msg" role="status"></p>
+        <p class="checks-again" id="checks-again-row" hidden><button type="button" class="btn quiet small" id="checks-again">Check again</button></p>
       </details>
     </section>
 
@@ -620,7 +702,8 @@
         </div>
       </div>
       <p class="hint" id="updates-status" role="status"></p>
-      <div class="agent-actions"><button type="button" id="updates-open" class="btn small" hidden>See what's new…</button><button type="button" id="updates-check" class="btn quiet small" hidden>Check now</button></div>
+      <p class="hint" id="updates-how" aria-live="polite"></p>
+      <div class="agent-actions"><button type="button" id="updates-open" class="btn small" aria-describedby="updates-how" hidden>See what's new…</button><button type="button" id="updates-check" class="btn quiet small" hidden>Check now</button></div>
       <p class="hint" id="updates-hint">Off, Ember never asks. On, it tells you once when a new version is out, and you install it yourself.</p>
     </section>
 

@@ -22,6 +22,10 @@ function harness(old = true) {
     disk, downloads: 0, cleanupFail: (_path: string) => false, fail: (_from: string, _to: string) => false,
     beforeDownload: async () => {},
     ensure: null as unknown as (o: Options) => Promise<Installed>,
+    /** The pids of processes running on this fake computer (the launcher's own is 4242). */
+    alive: new Set([4242]),
+    /** The signal handlers the installer holds while it works. */
+    signals: new Map<string, (sig: string) => void>(),
   };
   const fake = {
     existsSync: (p: string) => disk.has(p),
@@ -41,14 +45,34 @@ function harness(old = true) {
       }
     },
     chmodSync() {}, writeFileSync: (p: string, value: string) => disk.set(p, value),
+    readFileSync(p: string) {
+      const value = disk.get(p);
+      if (value === undefined || value === "dir") throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      return value;
+    },
+    readdirSync: (p: string) => [...disk.keys()].filter(k => k.startsWith(`${p}/`) && !k.slice(p.length + 1).includes("/")).map(k => k.slice(p.length + 1)),
+  };
+  const proc = {
+    platform: "linux", arch: "x64", env: {}, pid: 4242,
+    kill(pid: number) { if (!h.alive.has(pid)) throw Object.assign(new Error("no such process"), { code: "ESRCH" }); },
+    once: (sig: string, fn: (sig: string) => void) => { h.signals.set(sig, fn); },
+    removeListener: (sig: string, fn: (sig: string) => void) => { if (h.signals.get(sig) === fn) h.signals.delete(sig); },
   };
   const context = vm.createContext({
-    fs: fake, pathPosix, pathWin32, process: { platform: "linux", arch: "x64", env: {} },
-    os: { homedir: () => "/home/fake" }, MARKER: marker, say() {},
+    // setImmediate: the installer lets a stop be heard before it publishes (install-docs-v4-2).
+    fs: fake, pathPosix, pathWin32, process: proc, AbortController, setImmediate,
+    os: { homedir: () => "/home/fake", hostname: () => "box" }, MARKER: marker, say() {},
     assetFor: () => ({ asset: "Ember.AppImage", exe: "Ember.AppImage", app: "Ember.AppImage", kind: "appimage" }),
-    cacheDir: () => dir, downloadUrl: () => "fake", parseSha256Sums: () => new Map([["Ember.AppImage", "hash"]]),
+    cacheDir: () => dir, downloadUrl: () => "fake", releaseSource: () => "GitHub Releases", parseSha256Sums: () => new Map([["Ember.AppImage", "hash"]]),
     get: async () => ({ text: async () => "sums" }),
-    download: async (_url: string, file: string) => { h.downloads++; await h.beforeDownload(); disk.set(file, "new"); return "hash"; },
+    download: async (_url: string, file: string, o: { signal: AbortSignal }) => {
+      h.downloads++;
+      disk.set(file, "part");
+      await h.beforeDownload();
+      if (o.signal.aborted) throw o.signal.reason;
+      disk.set(file, "new");
+      return "hash";
+    },
   });
   h.ensure = vm.runInContext(`${body.replace("export async", "async")}\nensureInstalled`, context);
   return h;
@@ -85,7 +109,7 @@ describe("npm reinstall publication", () => {
     h.beforeDownload = () => h.downloads === 1 ? new Promise<void>(resolve => { release = resolve; }) : Promise.resolve();
     const first = h.ensure({ version: "1", force: true });
     for (let i = 0; i < 5; i++) await Promise.resolve();
-    await expect(h.ensure({ version: "1", force: true })).rejects.toThrow(/another installer/);
+    await expect(h.ensure({ version: "1", force: true })).rejects.toThrow(/^Another 'ember' is already downloading Ember 1\./);
     if (old) await expect(h.ensure({ version: "1" })).resolves.toMatchObject({ fresh: false });
     release(); await first;
     expect(h.disk.get(exe)).toBe("new");
@@ -120,12 +144,100 @@ describe("npm reinstall publication", () => {
     await expect(h.ensure({ version: "1" })).resolves.toMatchObject({ fresh: true });
   });
 
-  it("reports a stale lock without stealing it and still allows an offline cached launch", async () => {
+  it("never takes a lock whose owner it can't name, and still allows an offline cached launch (install-docs-c2-1)", async () => {
     const h = harness(); h.disk.set("/cache/.1-install-lock", "dir");
-    await expect(h.ensure({ version: "1", force: true })).rejects.toThrow(/remove the lock only when no installer is running/);
+    await expect(h.ensure({ version: "1", force: true })).rejects.toThrow("Another 'ember' is already downloading Ember 1. Wait for it to finish, then run 'ember' again; if none is running, delete /cache/.1-install-lock and run 'ember' again.");
     expect(h.disk.has("/cache/.1-install-lock")).toBe(true);
     await expect(h.ensure({ version: "1" })).resolves.toMatchObject({ fresh: false });
     expect(h.downloads).toBe(0);
+    expect(h.signals.size).toBe(0);
+  });
+
+  it("names itself in its lock, and takes over one whose installer has stopped, removing what that one half made (install-docs-c2-1)", async () => {
+    const h = harness();
+    // An installer that was killed (pid 77, no longer running) mid-download left its lock and work folder, and an
+    // older failed rollback left a saved previous copy, which is the person's to restore.
+    h.disk.set("/cache/.1-install-lock", "dir"); h.disk.set("/cache/.1-install-lock/owner", "77 box\n");
+    h.disk.set("/cache/.1-Ab3dEf", "dir"); h.disk.set("/cache/.1-Ab3dEf/Ember.AppImage", "part");
+    h.disk.set("/cache/.1-Saved1", "dir"); h.disk.set("/cache/.1-Saved1/previous", "dir");
+    let owner = "";
+    h.beforeDownload = async () => { owner = h.disk.get("/cache/.1-install-lock/owner") ?? ""; };
+    await expect(h.ensure({ version: "1", force: true })).resolves.toMatchObject({ exe, fresh: true });
+    expect(owner).toBe("4242 box\n");
+    expect(h.disk.get(exe)).toBe("new");
+    expect([...h.disk.keys()].filter(p => p.startsWith("/cache/."))).toEqual(["/cache/.1-Saved1", "/cache/.1-Saved1/previous"]);
+  });
+
+  it.each([
+    ["is still running", "77 box\n", [77]],
+    ["was on another computer", "77 other-box\n", []],
+  ])("never takes a lock whose installer %s (install-docs-c2-1)", async (_why, text, alive) => {
+    const h = harness(); for (const pid of alive) h.alive.add(pid);
+    h.disk.set("/cache/.1-install-lock", "dir"); h.disk.set("/cache/.1-install-lock/owner", text);
+    await expect(h.ensure({ version: "1", force: true })).rejects.toThrow(/^Another 'ember' is already downloading Ember 1\./);
+    expect(h.disk.get("/cache/.1-install-lock/owner")).toBe(text);
+    expect(h.downloads).toBe(0);
+  });
+
+  it("lets only one launcher take over a stopped installer's lock (install-docs-c2-1)", async () => {
+    const h = harness();
+    h.disk.set("/cache/.1-install-lock", "dir"); h.disk.set("/cache/.1-install-lock/owner", "77 box\n");
+    // Another launcher has just claimed it, and hasn't named itself yet.
+    h.disk.set("/cache/.1-install-lock/taken-77", "dir");
+    await expect(h.ensure({ version: "1", force: true })).rejects.toThrow(/^Another 'ember' is already downloading/);
+    expect(h.downloads).toBe(0);
+  });
+
+  it("removes its lock and half-made download when it is stopped by Ctrl+C or a closed terminal (install-docs-c2-1)", async () => {
+    for (const sig of ["SIGINT", "SIGHUP", "SIGTERM"]) {
+      const h = harness(false);
+      let stopped!: () => void;
+      h.beforeDownload = () => new Promise<void>(resolve => { stopped = resolve; });
+      const run = h.ensure({ version: "1" }).catch((e: Error & { exitCode?: number }) => e);
+      while (!h.downloads) await new Promise(resolve => setTimeout(resolve, 0));
+      expect([...h.disk.keys()].some(p => p.endsWith("/Ember.AppImage"))).toBe(true);
+      h.signals.get(sig)?.(sig);
+      stopped();
+      const err = await run as Error & { exitCode?: number };
+      expect(err.message, sig).toBe("Stopped before Ember 1 was installed, and nothing was kept. Run 'ember' again to download it.");
+      expect(err.exitCode, sig).toBe(128 + ({ SIGHUP: 1, SIGINT: 2, SIGTERM: 15 } as Record<string, number>)[sig]);
+      expect([...h.disk.keys()], sig).toEqual(["/cache"]);
+      expect(h.signals.size, sig).toBe(0);
+    }
+  });
+
+  it("says the copy already installed is kept, and starts with 'ember', when a reinstall is stopped (install-docs-r3-2)", async () => {
+    const h = harness();
+    let stopped!: () => void;
+    h.beforeDownload = () => new Promise<void>(resolve => { stopped = resolve; });
+    const run = h.ensure({ version: "1", force: true }).catch((e: Error) => e);
+    while (!h.downloads) await new Promise(resolve => setTimeout(resolve, 0));
+    h.signals.get("SIGINT")?.("SIGINT");
+    stopped();
+    const err = await run as Error & { exitCode?: number };
+    expect(err.message).toBe("Stopped before Ember 1 was downloaded again, and the copy you had is kept. Run 'ember' to start it, or 'ember --npm-reinstall' to download it again.");
+    expect(err.exitCode).toBe(130);
+    expect(h.disk.get(exe)).toBe("old");
+    expect([...h.disk.keys()].filter(p => p.startsWith("/cache/."))).toEqual([]);
+  });
+
+  it("publishes nothing when a stop that landed during its last steps is heard just before publishing (install-docs-v4-2)", async () => {
+    for (const old of [false, true]) {
+      const h = harness(old);
+      // A signal is heard when the event loop next turns: here, one that arrives as the marker is written.
+      const write = h.disk.set.bind(h.disk);
+      h.disk.set = (p: string, value: string) => {
+        if (p.endsWith(`/app/${marker}`)) setImmediate(() => h.signals.get("SIGTERM")?.("SIGTERM"));
+        return write(p, value);
+      };
+      const err = await h.ensure({ version: "1", force: old }).then(() => null, (e: Error & { exitCode?: number }) => e);
+      expect(err?.message, `old=${old}`).toBe(old
+        ? "Stopped before Ember 1 was downloaded again, and the copy you had is kept. Run 'ember' to start it, or 'ember --npm-reinstall' to download it again."
+        : "Stopped before Ember 1 was installed, and nothing was kept. Run 'ember' again to download it.");
+      expect(err?.exitCode, `old=${old}`).toBe(143);
+      expect(h.disk.get(exe), `old=${old}`).toBe(old ? "old" : undefined);
+      expect([...h.disk.keys()].filter(p => p.startsWith("/cache/.")), `old=${old}`).toEqual([]);
+    }
   });
 
   it("keeps recovery paths and the primary failure when lock cleanup also fails", async () => {

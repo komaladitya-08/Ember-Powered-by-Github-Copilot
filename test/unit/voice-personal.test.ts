@@ -23,7 +23,7 @@ import { wordsStore } from "../../app/main/personal/words-store";
 import { isRiskyLabel } from "../../app/main/policy/policy";
 import { suggestOf, suggestionsShown, suggestAction, IDLE_BUBBLE } from "../../app/shared/overlay";
 import { boxRows } from "../../app/renderer/ask/field";
-import { PERSONAL_TEXT, learntText, personalView, teachOutcomeText, wordRowText, forgetWordLabel } from "../../app/renderer/home/copy";
+import { PERSONAL_TEXT, learntText, personalView, teachOutcomeText, wordRowText, forgetWordLabel, wordForgottenText } from "../../app/renderer/home/copy";
 
 /** A seeded random unit voiceprint of 256 numbers. */
 function randomPrint(seed: number): Float32Array {
@@ -374,6 +374,25 @@ describe("what the user might say next (predict.ts)", () => {
     expect(predictNext({ ...base, lastRequest: "Archive the first email", task: { status: "done" } }, risky).map(s => s.text)).toContain("Do the same for the next one");
   });
 
+  it("marks the ones that answer or follow the reply, which mean something only while it shows (companion-c2-2)", () => {
+    const follows = (p: Partial<PredictInput>) => Object.fromEntries(predictNext({ ...base, ...p }, risky).map(s => [s.text, s.follows === true]));
+    expect(follows({ lastRequest: "Shall I?", lastReply: "Want me to add a world clock?" })).toMatchObject({ "Yes, please": true, "No, thanks": true });
+    expect(follows({ lastRequest: "Open my notes", lastReply: "Opened Notes." })).toMatchObject({ "Close it": true });
+    expect(follows({ lastRequest: "Summarise this email", lastReply: "x".repeat(80), spoken: false })).toMatchObject({ "Read it out": true });
+    expect(follows({ lastRequest: "Tidy up", task: { status: "failed" } })).toMatchObject({ "What went wrong?": true });
+    // A request said twice and the time of day's stand on their own; so does turning off what was turned on, by name.
+    expect(follows({ lastRequest: "Check the weather", lastReply: "Sunny.", history: ["Open the report", "Open the report"], hour: 18 })).toEqual({ "Open the report": false, "Turn on night light": false, "Remind me in an hour": false });
+    expect(follows({ lastRequest: "Turn on night light", lastReply: "Night light is on." })).toMatchObject({ "Turn night light off": false });
+  });
+
+  it("marks only the plain answers to the reply's own question as answering its last words, so the rest stay for an answer cut short (companion-v6-1)", () => {
+    const answers = (p: Partial<PredictInput>) => Object.fromEntries(predictNext({ ...base, ...p }, risky).map(s => [s.text, s.answers === true]));
+    expect(answers({ lastRequest: "Shall I?", lastReply: "Want me to add a world clock?" })).toEqual({ "Yes, please": true, "No, thanks": true });
+    expect(answers({ lastRequest: "Open my notes", lastReply: "Opened Notes." })).toMatchObject({ "Close it": false });
+    expect(answers({ lastRequest: "Summarise this email", lastReply: "x".repeat(80), spoken: false })).toMatchObject({ "Read it out": false });
+    expect(answers({ lastRequest: "Tidy up", task: { status: "failed" } })).toMatchObject({ "What went wrong?": false });
+  });
+
   it("never suggests a risky step unless the user's own last words were about it", () => {
     const people = ["Priya"];
     expect(predictNext({ ...base, lastRequest: "Draft a reply to Sam", people }, risky).some(s => risky(s.text))).toBe(false);
@@ -572,6 +591,7 @@ describe("Settings › Voice's personalisation words", () => {
     expect(learntText(5)).toBe("Learnt from 5 of your requests since you taught it.");
     expect(wordRowText({ heard: "jeera", meant: "Jira" })).toBe("“jeera” → “Jira”");
     expect(forgetWordLabel({ meant: "Jira" })).toBe("Forget “Jira”");
+    expect(wordForgottenText({ heard: "jeera", meant: "Jira" })).toBe("Forgotten: “jeera” → “Jira”.");
     expect(teachOutcomeText("learnt", " Jira ")).toBe("Got it: Ember will hear that as “Jira” from now on.");
     expect(teachOutcomeText("off", "x")).toBe("Learn my words is off (Settings › Voice), so Ember didn't keep that.");
     expect(teachOutcomeText("same", "x")).toBe("That's what Ember heard, so there's nothing to learn.");
@@ -680,7 +700,7 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
     expect(MAIN).toContain('if (rejectionEndsTrust(e.reason)) voiceTrust.endAll("other-voice");');
     expect(MAIN).toContain('personal.forgetVoice();\n    // A task\'s voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).\n    voiceTrust.endAll("voice-changed");');
     expect(MAIN).toContain("...(voice ? { natural: voice.naturalStatus } : {}),");
-    expect(MAIN).toContain("enrolling, learnt: voiceprints.learnt().clips },");
+    expect(MAIN).toContain("enrolling, learnt: voiceprints.learnt().clips, ...(enrolEnded ? { ended: enrolEnded } : {}) },");
   });
   it("holds learning while a question Voice Match locked is up (review of #145)", () => {
     expect(MAIN).toContain("locked: confirmer?.voiceLocked ?? false");
@@ -694,7 +714,8 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
     expect(start).toContain("lastAskByVoice = turn.spoken && !turn.manual;");
   });
   it("takes an Ask box suggestion only if it offers it now, and sends it as Ember's words the user chose (review of #145)", () => {
-    expect(MAIN).toContain('if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;\n    askWindow.hide();\n    log.info("ask.suggestion");\n    void askEmber(text, { suggested: true });');
+    // (And never while a question is up, nor one that followed an answer no longer shown: companion-r2-1, companion-c2-2.)
+    expect(MAIN).toContain('if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text) || !askOffers().includes(text)) return;\n    askWindow.hide();\n    log.info("ask.suggestion");\n    void askEmber(text, { suggested: true });');
   });
   it("keeps a retried suggestion (or one heard unchecked) what it was: Try again resubmits it with its provenance (review of #145)", () => {
     expect(MAIN).toContain("let recentAsks: { text: string; voiceUnchecked?: boolean; suggested?: boolean }[] = [];");

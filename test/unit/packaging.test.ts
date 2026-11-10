@@ -174,6 +174,26 @@ describe("the RPM", () => {
       expect(fs.readFileSync(path.resolve("scripts/package/rpm.sh"), "utf8")).toMatch(new RegExp(`"\\$root/packaging/${f.replace(".", "\\.")}"`));
     }
   });
+  it("names every features switch in the notes the RPM installs and in the guide, and which ones lock down 0.1.0 (install-docs-9)", () => {
+    const readme = fs.readFileSync(path.resolve("packaging/policy.README"), "utf8").replace(/\s+/g, " ");
+    const dev = fs.readFileSync(path.resolve("docs/DEVELOPING.md"), "utf8");
+    const admins = dev.slice(dev.indexOf("### For administrators: `/etc/ember/policy.json`"), dev.indexOf("## 6. Native modules and RHEL 8"));
+    // The features keys the published 0.1.0 knows (its admin.ts); any other locks a 0.1.0 Ember down.
+    const v010 = ["voice", "speak", "actions", "cursor", "desk", "screenImages", "wsl", "ssh"];
+    const features = Object.keys(AdminPolicySchema.shape.features.unwrap().shape);
+    expect(features).toEqual(expect.arrayContaining(v010));
+    const entry = readme.split('"features"')[1]?.split('"neverLook"')[0] ?? "";
+    for (const key of features) {
+      expect(entry, key).toContain(`"${key}"`);
+      expect(admins, key).toMatch(new RegExp(`\`features\\.${key}\`|/ \`${key}\``));
+    }
+    const older = /Ember 0\.1\.0 doesn't know [^:]*\(([^)]+)\): it reads them as mistakes and locks down/.exec(readme)?.[1] ?? "";
+    const newer = features.filter(k => !v010.includes(k));
+    expect(newer.length).toBeGreaterThan(0);
+    for (const key of newer) expect(older, key).toContain(`"features.${key}"`);
+    for (const key of v010) expect(older, key).not.toContain(`"features.${key}"`);
+    expect(admins.replace(/\s+/g, " ")).toContain(`Ember 0.1.0 knows only ${v010.slice(0, -1).map(k => `\`features.${k}\``).join(", ")} and \`features.${v010.at(-1)}\``);
+  });
   it("puts speech models where Ember looks for them", () => {
     expect(spec).toContain("%{_datadir}/ember/voice-models");
     expect(fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")).toContain('"/usr/share/ember/voice-models"');
@@ -249,15 +269,15 @@ describe.skipIf(process.platform === "win32")("the launchers", () => {
     fs.writeFileSync(path.join(d, "launcher"), script.replace("APP=/opt/ember/ember", `APP=${d}/ember/ember`), { mode: 0o755 });
     return d;
   };
-  const env = (d: string, display?: string) => ({ PATH: `${d}/bin:/usr/bin:/bin`, ...(display ? { DISPLAY: display } : {}) });
+  const env = (d: string, display?: string, more: Record<string, string> = {}) => ({ PATH: `${d}/bin:/usr/bin:/bin`, ...(display ? { DISPLAY: display } : {}), ...more });
   const run = (script: string, args: string[], uid: number, display?: string) => {
     const d = stage(script, uid);
     return execFileSync("/bin/sh", [path.join(d, "launcher"), ...args], { encoding: "utf8", env: env(d, display) }).trim();
   };
   /** As run, but keeps the exit status and stderr. */
-  const attempt = (script: string, args: string[], uid: number, display?: string) => {
+  const attempt = (script: string, args: string[], uid: number, display?: string, more?: Record<string, string>) => {
     const d = stage(script, uid);
-    return spawnSync("/bin/sh", [path.join(d, "launcher"), ...args], { encoding: "utf8", env: env(d, display) });
+    return spawnSync("/bin/sh", [path.join(d, "launcher"), ...args], { encoding: "utf8", env: env(d, display, more) });
   };
   const launcher = fs.readFileSync(path.resolve("packaging/ember"), "utf8");
   const appRun = /<<'RUN'\n([\s\S]*?)\nRUN\n/.exec(fs.readFileSync(path.resolve("scripts/package/appimage.sh"), "utf8"))![1];
@@ -269,6 +289,11 @@ describe.skipIf(process.platform === "win32")("the launchers", () => {
     expect(run(appRun, ["doctor"], 0)).toBe("--doctor --ozone-platform=headless --disable-gpu --no-sandbox");
     const noUserNs = (() => { try { return fs.readFileSync("/proc/sys/user/max_user_namespaces", "utf8").trim() === "0"; } catch { return true; } })();
     expect(run(appRun, ["doctor"], 1000).includes("--no-sandbox")).toBe(noUserNs);
+  });
+  it("take --doctor as the check-up too, without a display, as the npm launcher passes it on (install-docs-3)", () => {
+    expect(run(launcher, ["--doctor"], 1000)).toBe("--doctor --ozone-platform=headless --disable-gpu");
+    expect(run(appRun, ["--doctor"], 0)).toBe("--doctor --ozone-platform=headless --disable-gpu --no-sandbox");
+    expect(run(appRun, ["--doctor"], 0, ":0")).toBe("--doctor --ozone-platform=x11 --disable-gpu --no-sandbox");
   });
   it("start the AppImage without Chromium's sandbox where either switch the doctor reads turns user namespaces off (review #202)", () => {
     // A stand-in /proc/sys: the AppRun reads the same two files as the Linux doctor probe (doctor-probes.ts).
@@ -287,15 +312,33 @@ describe.skipIf(process.platform === "win32")("the launchers", () => {
     expect(appRun.match(/\/proc\/sys\/[\w/]+/g)?.sort()).toEqual(["/proc/sys/kernel/unprivileged_userns_clone", "/proc/sys/user/max_user_namespaces"]);
   });
   it("say Ember needs the desktop session when there is no display, instead of starting into Chromium's error", () => {
-    for (const [script, doctor] of [[launcher, "ember doctor"], [appRun, "Ember.AppImage doctor"]]) {
+    // The AppImage names itself by its whole path (install-docs-3): its bare file name isn't a command anyone can run.
+    const image = "/home/k/Downloads/Ember-1.2.3-x86_64.AppImage";
+    for (const [script, doctor] of [[launcher, "ember doctor"], [appRun, `${image} doctor`]]) {
       for (const args of [[], ["--show-settings"]]) {
-        const r = attempt(script, args, 1000);
+        const r = attempt(script, args, 1000, undefined, { APPIMAGE: image });
         expect(r.status, `${doctor} ${args.join(" ")}`).toBe(1);
         // The stand-in Ember never ran.
         expect(r.stdout).toBe("");
         expect(r.stderr).toBe(`Ember needs your desktop session (no display here). Run it from a terminal inside GNOME, or run '${doctor}'.\n`);
       }
       expect(attempt(script, [], 1000, ":0")).toMatchObject({ status: 0, stdout: expect.stringMatching(/--ozone-platform=x11/) });
+    }
+  });
+  it("print their usage for --help or -h instead of starting Ember, as the RPM's ember does (install-docs-3)", () => {
+    const image = "/home/k/Downloads/Ember-1.2.3-x86_64.AppImage";
+    for (const [script, name] of [[launcher, "ember"], [appRun, image]]) {
+      for (const flag of ["--help", "-h"]) {
+        const r = attempt(script, [flag], 1000, ":0", { APPIMAGE: image });
+        expect(r.status, `${name} ${flag}`).toBe(0);
+        // The stand-in Ember, which prints its arguments, never ran.
+        expect(r.stdout).not.toMatch(/--ozone-platform/);
+        expect(r.stdout).toContain(`usage: ${name} [doctor | --show-settings | --ask]`);
+        expect(r.stdout).toContain("check this computer and explain anything that needs fixing");
+        // No shortcut: another app may hold Ctrl+Alt+E, and then Ember holds its fallback (install-docs-r2-3).
+        expect(r.stdout, `${name} ${flag}`).toContain("start Ember (it stays beside your cursor; run it again for its settings)");
+        expect(r.stdout, `${name} ${flag}`).not.toMatch(/Ctrl\+|Alt\+/);
+      }
     }
   });
 });

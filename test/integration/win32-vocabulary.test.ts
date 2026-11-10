@@ -95,7 +95,7 @@ async function startHost(): Promise<AtspiSidecar> {
   const s = new AtspiSidecar("unused.py", quiet, "unused-python", process.env, { ...launch, firstRequestMs: 90_000 });
   await waitForAsync(async () => {
     const st = await s.status().catch(() => null);
-    if (st?.toolkitAccessibility === false) throw new Error(`the bridge didn't start: ${String(st.detail)}`);
+    if (st?.toolkitAccessibility === false) throw new Error(`the bridge didn't start: ${String(st.cause ?? st.detail)}`);
     return st?.toolkitAccessibility === true;
   }, 120_000, "the accessibility host and its bridge");
   return s;
