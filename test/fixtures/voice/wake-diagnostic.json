@@ -1,0 +1,28 @@
+{
+  "finding": "listening-ci-r7-1",
+  "scratchAlias": "listening-diagnostic-r7-1",
+  "captured": "2026-11-10",
+  "sourceHead": "1ee46d6900d5573547deb3e0100c7dfec62d026c",
+  "speaker": "Piper en_US-amy-low (test-only)",
+  "speakerArchiveSha256": "c70f5284a09a7fd4ed203b39b2ff51cac1432b422b852eb647b481dade3cf639",
+  "licence": "CC-BY-SA-4.0",
+  "sampleRate": 16000,
+  "sid": 0,
+  "speed": 0.9,
+  "leadingSilenceSamples": 9600,
+  "text": "Hey Ember, what's on my screen?",
+  "files": [
+    {
+      "file": "wake_question.wav",
+      "capture": "hey-0_9-0-1",
+      "rendering": 0,
+      "sha256": "c6b09e17eebbe3de9108bbd4f607f29addcf00c0be922bea70ef13501baa170d"
+    },
+    {
+      "file": "wake_question_repeat.wav",
+      "capture": "hey-0_9-2-1",
+      "rendering": 2,
+      "sha256": "ab88c89b2cbae0521d4ab8c2253328c798c848b791a0b4b5fc903b6d9e180347"
+    }
+  ]
+}

@@ -2102,7 +2102,7 @@ windows on GNOME 3.32 with platform-python 3.6; real screen readers for every li
 teaching on headphones; AppLocker's block and the start-up dialog on a real Windows PC; the resting cost on the RHEL 8
 target with the C API; and the first CI runs of el8's two footprint budgets.
 
-### Product audit fixes, seventh round (2026-11-09)
+### Product audit fixes, seventh round (2026-11-09 to 2026-11-10)
 
 **Scope and method.** Rechecked main at `36451257` after reading all six preceding records, the shipping notes and
 [#204](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/204). Every one of the 13 areas received
@@ -2146,6 +2146,20 @@ The later full renderer gate exposed “Starting…” in Home's automatic voice
 the voice line now shares the existing microphone-held guard for startup, recording and teaching. Visible state,
 deliberate prompts, post-microphone delay and exact-once behaviour remain. The isolated controls are not a passing
 full renderer stage; its aggregate failures remain recorded for the final gate.
+
+Fresh CI then exercised the pinned fixture speaker's generated wake corpus. Its green evaluation job still reported
+14/46 missed bare-name wakes and an inconclusive 5/78 ordinary-wake result; neither is relabelled a passing metric.
+An isolated causal capture found an ordinary question rejected because the partial decode added punctuation or a
+hyphenated repeat after “Hey, Amber” although the full audio said “Hey Ember” (listening-ci-r7-1, P2).
+Frozen synthetic clips fail first through the production engine. The bounded partial check now waits for the whole
+segment, retaining the existing name/near-miss patterns and keyword-spotter configuration.
+
+The adversarial design check also reproduced an unintended engine utterance: an ambiguous partial name followed by
+an empty or garbled full segment cleared its uncertainty, then “Open the calendar” was emitted as a request
+(listening-ci-r7-2, P1; a scripted engine reproduction, not a claim of an observed external model send).
+The finished segment must now confirm the name by the existing rules, or stop; otherwise its window ends before
+later words. Finding-named tests fail on the preceding source and pass after the repair. Residual spotter misses
+and genuinely ambiguous full transcripts remain fail-closed limitations, with no claim that listening has reached 9.
 
 **Speaking and activity (M8.8, M9).** Suggested, typed and spoken “Read it out” requests read the retained answer
 through the existing speech-policy path, without an SDK turn or a future task-result speech change
