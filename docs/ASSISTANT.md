@@ -526,6 +526,8 @@ Replaying those same fixed generated inputs plus the original clips in evaluatio
 | WebAssembly | 5/78 → 1/78 | 7/46 → 7/46 | 0/96 → 0/96 |
 | Linux C API | 4/78 → 0/78 | 8/46 → 8/46 | 0/96 → 0/96 |
 
-The unchanged spotter produces no hit on each remaining bare-name miss. The remaining ordinary WebAssembly miss
-still reads “Pay amber” when heard whole, and stays rejected. These controlled pairs preserve the failed CI result
-above and do not prove a general false-wake rate or real-device recognition quality.
+Seven remaining bare-name cases produce no spotter hit on either backend. The C API's eighth bare-name miss is
+spotted, then rejected because both full checks read “Amber opened the terminal.”; the existing bounded alias accepts
+“open”, not “opened”. The remaining ordinary WebAssembly miss still reads “Pay amber” when heard whole, and stays
+rejected. These controlled pairs preserve the failed CI result above and do not prove a general false-wake rate or
+real-device recognition quality (listening-ci-review-1).
