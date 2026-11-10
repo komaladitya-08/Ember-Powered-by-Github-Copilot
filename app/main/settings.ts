@@ -540,7 +540,7 @@ export class SettingsStore {
   /** The file on disk isn't JSON (a hand edit): where the user's version was kept ("" if it couldn't be). */
   private broken: string | null = null;
   /** The file as Ember last read or wrote it: anything newer was edited by hand. */
-  private seen: number | null = null;
+  private seen: string | null = null;
   /** A change applied in memory whose save is due shortly (a slider being dragged), or once the file reads again. */
   private pending: SettingsPatch | null = null;
   /** The file is there but couldn't be read at start-up: nothing is saved over it until it reads (review #83). */
@@ -563,8 +563,13 @@ export class SettingsStore {
     return { ...r, settings: this.effective };
   }
 
-  private mtime(): number | null {
-    try { return fs.statSync(this.file).mtimeMs; } catch { return null; }
+  /**
+   * The file's version: modified time, size and inode together. The time alone can be equal for two writes (a filesystem's
+   * timestamp tick is coarse: ~4 ms on Linux, 1–2 s on some others), so a hand edit made just after Ember's own write was
+   * missed; a different size or a replaced file (an editor's rename) is a change too.
+   */
+  private mtime(): string | null {
+    try { const st = fs.statSync(this.file); return `${st.mtimeMs}:${st.size}:${st.ino}`; } catch { return null; }
   }
 
   /** Onboarding isn't finished until the current consent is given (older files are asked again). */
@@ -655,7 +660,7 @@ export class SettingsStore {
   }
 
   /** The version of a repairable hand edit being waited on (its time stamp), and since when it has looked the same. */
-  private settling: { mtime: number | null; since: number } | null = null;
+  private settling: { mtime: string | null; since: number } | null = null;
   /** The last read left a repairable hand edit for later (it may still be changing): nothing changed in memory. */
   private deferred = false;
 
@@ -667,7 +672,7 @@ export class SettingsStore {
   }
 
   /** A copy of the file as it is now (once per version of it), before Ember writes over it. */
-  private kept: number | null = null;
+  private kept: string | null = null;
   private lastBackup = 0;
   private keep(): string | null {
     const m = this.mtime();
@@ -761,14 +766,15 @@ export class SettingsStore {
     // A hand edit since Ember last looked comes first (or the file that couldn't be read): the patch goes on top of it.
     // (A repairable edit is repaired now, not waited on: Ember saves anyway.)
     if (this.unread || this.mtime() !== this.seen) { try { this.read(true, false); } catch { /* keep what is in memory */ } }
-    // A change not saved yet (held while the file couldn't be read, or a slider's) goes on top of what was just read,
+    // A change not saved yet (a slider's) goes on top of what was just read,
     // as reloadIfChanged() does it, and is saved with this one (review #83).
     const next = SettingsSchema.parse({ ...this.current, ...this.pending, ...patch });
     if (next.onboarded && !hasConsent(next)) throw new Error("onboarding can't finish before the user gives consent");
     if (this.unread) {
-      // Saving would replace the user's unreadable file with defaults: the change is used now and saved on top of
-      // their settings once the file reads again (review #83).
-      this.pending = { ...this.pending, ...patch };
+      // Saving would replace the user's unreadable file with defaults, and a change used from memory only would be in
+      // force (a consent, a feature) with nothing on disk to say so, so the change is refused: fail closed. Nothing is
+      // held; the file is read again with the next change and the watcher (review #83).
+      throw new Error(`Ember couldn't save your settings: it can't read ${path.basename(this.file)}, and won't write over it. Your change wasn't kept.`);
     } else if (opts.soon) {
       this.pending = { ...this.pending, ...patch };
       if (!this.pendingTimer) {

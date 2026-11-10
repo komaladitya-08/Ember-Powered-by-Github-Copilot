@@ -42,11 +42,24 @@ export const autonomyPermitted = (admin: AutonomyAdmin | null | undefined): bool
   !admin || (admin.features.autonomy !== false && admin.allowGrants !== false && !admin.confirmEveryAction && admin.features.actions !== false);
 
 /**
+ * Held off in memory (PR #193 review): "on" that couldn't be audited and couldn't be turned off on disk either (disk full,
+ * folder unwritable) must not be in force, whatever settings.json says. Every consumer goes through autonomyInForce, so
+ * none can miss it. SettingsStore stays as it is (it never invents a value it didn't save).
+ */
+let held = false;
+/** Keep "Work without asking" out of force in this process until {@link releaseAutonomyHold}. */
+export const holdAutonomyOff = (): void => { held = true; };
+/** Called once the setting is seen off (the next turn on is audited afresh). */
+export const releaseAutonomyHold = (): void => { held = false; };
+/** Is it held off now? */
+export const autonomyHeld = (): boolean => held;
+
+/**
  * The scopes in force now, or null: it is off, its card hasn't been agreed to (or was agreed to in an older wording),
  * or the administrator doesn't allow it. A setting that can't be read is off.
  */
 export function autonomyInForce(s: AutonomySetting | undefined, admin?: AutonomyAdmin | null): AutonomyScopes | null {
-  if (!s || s.on !== true || !autonomyConsented(s) || !autonomyPermitted(admin)) return null;
+  if (held || !s || s.on !== true || !autonomyConsented(s) || !autonomyPermitted(admin)) return null;
   const scopes: AutonomyScopes = { apps: s.scopes?.apps === true, commands: s.scopes?.commands === true, cursor: s.scopes?.cursor === true, crossWindow: s.scopes?.crossWindow === true };
   return Object.values(scopes).some(Boolean) ? scopes : null;
 }

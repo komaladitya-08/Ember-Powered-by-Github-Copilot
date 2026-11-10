@@ -67,7 +67,7 @@ describe.skipIf(process.env.EMBER_SPEECH_CONSENT_TEST !== "1")("Home speech cons
     await page.evaluate(() => { const b = document.getElementById("voice-download") as HTMLButtonElement; b.hidden = false; });
     const calls = (prefix: string) => page.evaluate(p => window.__calls.filter(c => c.startsWith(p)).length, prefix);
     const open = async () => { await page.locator('a[href="#voice-h"]').click(); await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).click()); await expect.poll(() => page.locator("#consent").isVisible()).toBe(true); };
-    const settle = (i: number, how: "ok" | "reject") => page.evaluate(([i, how]) => { const s = window.__saves[i as number]; if (how === "ok") s.resolve({}); else s.reject(new Error("Error invoking remote method 'ember:update-settings': Error: Ember couldn't save your settings: the disk is full.")); }, [i, how] as const);
+    const settle = (i: number, how: "ok" | "reject" | "false") => page.evaluate(([i, how]) => { const s = window.__saves[i as number]; if (how === "ok") s.resolve({}); else if (how === "false") s.resolve(false); else s.reject(new Error("Error invoking remote method 'ember:update-settings': Error: Ember couldn't save your settings: the disk is full.")); }, [i, how] as const);
     return { page, errors, calls, open, settle, error: () => page.locator("#consent-error") };
   }
 
@@ -89,6 +89,20 @@ describe.skipIf(process.env.EMBER_SPEECH_CONSENT_TEST !== "1")("Home speech cons
     expect(await page.locator("#consent-yes").getAttribute("aria-busy")).toBeNull();
     expect(await page.locator("#consent-yes").isEnabled()).toBe(true);
     expect(await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).checked)).toBe(false);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  it("treats a response that is not a Settings object (a literal false) as a refused save: no download, Agree ready again", async () => {
+    const { page, errors, calls, open, settle, error } = await freshHome();
+    await open();
+    await page.locator("#consent-yes").click();
+    await expect.poll(() => calls("save:")).toBe(1);
+    await settle(0, "false");
+    await expect.poll(() => error().isVisible()).toBe(true);
+    await page.waitForTimeout(150);
+    expect(await calls("download")).toBe(0);
+    expect(await page.locator("#consent").isVisible()).toBe(true);
+    expect(await page.locator("#consent-yes").isEnabled()).toBe(true);
     expect(errors).toEqual([]);
   }, 60_000);
 
