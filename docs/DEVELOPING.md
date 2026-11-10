@@ -758,6 +758,13 @@ listens. A request ends
 when your voice stops, even with a TV or colleagues talking behind you, and is at most 10 s long (20 s in a
 quiet room); when a longer one is cut, Ember says it only caught the first part.
 
+A short ambiguous name from an early wake check waits for the finished phrase, even if the partial recognizer wrote
+punctuation or repeated a fragment. The full check must confirm the name through the existing rules, or stop.
+An empty, garbled or unrelated full check closes the window rather than carrying its uncertainty into later speech;
+existing rejected near-miss forms stay rejected. The spotter's thresholds and name spellings are unchanged.
+The fixed synthetic `wake_question*.wav` regression clips document this mid-word check in
+`test/fixtures/voice/wake-diagnostic.json`; they are test speech, never recorded microphone audio.
+
 ### How speech runs (native synthesis, native or WebAssembly listening)
 
 Listening (the wake word, the two voice detectors and Moonshine) and neural synthesis use sherpa-onnx 1.13.8,

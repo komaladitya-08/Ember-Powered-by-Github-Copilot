@@ -919,6 +919,48 @@ describe("VoiceEngine idle CPU with a voice check", () => {
 });
 
 describe("second-stage wake check", () => {
+  const checkedPhrase = (early: string, whole: string, later?: string) => {
+    const b = fake([early, whole, ...(later === undefined ? [] : [later])]);
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+    const feed = (f: Float32Array) => { e.feed(f); c.t += 32; };
+    feed(frame(0));
+    feed(frame(1, true));
+    for (let i = 0; i < 20; i++) feed(frame(0, true));
+    expect(events.filter(ev => ev.type === "utterance")).toEqual([]);
+    feed(frame(0));
+    if (later !== undefined) {
+      for (let i = 0; i < 20; i++) feed(frame(0, true));
+      feed(frame(0));
+    }
+    return events;
+  };
+
+  it.each(["Hey, Amber, what?", "Hey, Amber, what's up?", "Hey, Amber, what's-what's-what's-what's-what'"])("judges a partial ambiguous check from the finished named question (%s, listening-ci-r7-1)", early => {
+    const events = checkedPhrase(early, "Hey Ember, what's on my screen?");
+    expect(events.filter(ev => ev.type === "rejected")).toEqual([]);
+    expect(events.filter(ev => ev.type === "utterance")).toEqual([expect.objectContaining({ text: "What's on my screen?" })]);
+  });
+
+  it.each(["", "...", "What's on my screen?"])("ends an unresolved check before later unrelated words can become a request (%j, listening-ci-r7-2)", whole => {
+    const events = checkedPhrase("Hey Amber, what", whole, "Open the calendar.");
+    expect(events.filter(ev => ev.type === "utterance")).toEqual([]);
+    expect(events).toContainEqual({ type: "rejected", keyword: "hey_ember", reason: "check", heard: whole });
+  });
+
+  it.each(["Hey, Amber, what's up?", "Hey, Amber, what's-what's-what's-what's-what'"])("still rejects a finished phrase for another person (%s, listening-ci-r7-1)", early => {
+    const events = checkedPhrase(early, "Hey Amber, what's on my screen?");
+    expect(events.filter(ev => ev.type === "utterance")).toEqual([]);
+    expect(events).toContainEqual({ type: "rejected", keyword: "hey_ember", reason: "check", heard: "Hey Amber, what's on my screen?" });
+  });
+
+  it("still stops when the finished ambiguous phrase asks it to stop (listening-ci-r7-1)", () => {
+    const events = checkedPhrase("Hey Amber, what", "Hey Amber, stop.");
+    expect(events).toContainEqual({ type: "stop" });
+    expect(events.filter(ev => ev.type === "utterance")).toEqual([]);
+  });
+
   it("rejects clear near-misses only", async () => {
     const { heardOtherWord } = await import("../../app/voice/engine");
     expect(heardOtherWord("Hey Amber, what time is it?")).toBe(true);

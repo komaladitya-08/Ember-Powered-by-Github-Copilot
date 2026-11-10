@@ -435,7 +435,7 @@ describe("README.md", () => {
   it("gives the measured listening footprint and dates every completed audit round (install-docs-r7-1)", () => {
     expect(flat(readme)).toContain("790–930 MB of memory while Ember is idle and listening");
     expect(flat(readme)).not.toContain("600 MB of memory");
-    expect(flat(read("STATUS.md"))).toContain("7 to 9 November");
+    expect(flat(read("STATUS.md"))).toContain("7 to 10 November");
     expect(flat(read("CHANGELOG.md"))).not.toContain("1 GB of disk and 600 MB of memory");
   });
 

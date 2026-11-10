@@ -236,7 +236,7 @@ the automated tests don't stand in for them.
 - **Not yet**: connectors (GitHub-hosted services), Copilot `extension.mjs` extensions, extensions in tasks (only the
   conversation uses them), programs from extensions on macOS, and servers that need you to sign in to them.
 
-### Product audit fixes, 7 to 9 November
+### Product audit fixes, 7 to 10 November
 
 #### First run
 
@@ -452,6 +452,10 @@ the automated tests don't stand in for them.
 
 #### Voice
 
+- **An ambiguous partial wake check waits for the full question.** A short unfinished decode, including its
+  punctuation or repeated fragment, waits for the full phrase's existing name check. If that check can't confirm the
+  name, Ember closes the listening window; later unrelated speech never becomes a request from that uncertain wake.
+  Existing near-miss rejection rules remain, and Stop still works.
 - **“Read it out” reads the retained answer**, from a suggestion or a typed or spoken request, without changing
   **Read finished tasks out loud**. It stays local while another reply is under way, explains when speaking or an
   approval holds it back, and keeps the original answer selected after that notice, including after a restart when
