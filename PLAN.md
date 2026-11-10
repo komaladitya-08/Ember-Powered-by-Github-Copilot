@@ -2290,6 +2290,35 @@ steps and deadlines are retained. The full 44-case conversation file and 151 rel
 reviews accepted. Three separate default-deadline failures passed unchanged in quiet individual runs on both the
 candidate and shipping main; they are recorded as timeouts, not silently converted into full-stage passes.
 
+**Post-publication refresh and CI repair.** A fresh independent re-rater and challenger found a remaining shared
+P2 in Home's controlled native/document title (listening-refresh-1, also accessibility-refresh-1). The focused
+RootWebArea still said Ember; a production WebAssembly synthetic reading could wake it and send an unintended
+request. Both titles now say “Companion home”, while visible branding and the safe Home heading remain. The
+own-window list adds that unique title without removing legacy names or changing process-id rules. Failure-first
+constructor, actual AX, actual Electron close/reopen/privacy and production native/WASM recogniser checks cover
+this repair, with ordinary wake-positive controls retained. The first review caught an unrelated macOS Handle
+readiness selector changed to Home's title (home-title-review-1); the repair restores that file byte-for-byte.
+The second reviewer accepted it. Native application-name and screen-reader ordering remain unverified; no
+universal reader guarantee is claimed.
+
+Initial draft-PR CI passed its complete unit suites on Linux, Windows and macOS, but four speech stages failed
+because the default preparation downloaded only production models, leaving the new acoustic regressions with
+zero test speakers (voice-ci-r7-1). Default preparation now also fetches the already SHA-pinned Amy fixture;
+explicit optional fixture flags remain compatible. Test-only assets remain outside production model staging.
+A fresh production-model-only cache demonstrated the failure first; the repaired default fetch and actual WASM
+and C API checks pass with a nonzero fixture count. The new fast contract refuses empty/incomplete assets when
+speech tests are required, and retains the optional skip otherwise. Both independent reviews accepted the
+minimal preparation fix. No speech test, backend assertion, eval gate or production model manifest is weakened.
+The follow-up integrated gate and final CI results are recorded separately in the review and pull request.
+
+The final integrated local test/build gate on `e8642b28` completes on 10 November: all 12 stages pass in CI's
+order, with 13,377 unit passes and 10 skips, two isolated Stop checks, 141 sidecar checks, 250 voice/mock-provider
+integration passes and 474 capability/platform skips, all 194 required renderer cases, build/lab/package checks and
+three actual-Electron smoke checks. Original deadlines remain. Older failed runs and isolated controls remain in
+the review. A later unchanged-budget WASM pair passes at 14.7%/886 MB on main and 13.8%/885 MB on candidate827,
+without reproducing the earlier increase; eight older CPU failures remain failed and unexplained. Native/WASM EL8
+budget CI, both automated reviews and final reviewed-head assessment remain pending, so this is not release acceptance.
+
 **Consent and departures.** No new kind of data is read, sent or persistently kept; no consent text or version
 changes. Existing host, memory, microphone and approval boundaries remain. No §2 departure, no weaker safety or
 privacy rule, and no new exception to the command comparison. Keeping a draft in this run's existing renderer does
@@ -2299,7 +2328,7 @@ not write it to disk or send it automatically.
 running them would violate this task's hard rule, which permits only the exact job-count loosenings. This round
 does not call that fixed or award a 9 while it remains. P3s include awk's `NR>1` write wording, unknown-download
 build-tool wording, Windows Test-Path of Ember's folder, held-lockdown refusal guidance, not-answering status's
-wording dependency, duplicate “Request heard.”, constrained-screen polish, the recorded memory phrasings and
+wording dependency, duplicate “Request heard.”, the narrow Ask history-key capsule edge overflow, the recorded memory phrasings and
 over-refusals, stale comments describing delayed memory writes, launcher error wording and crash-log actions.
 Native Windows/macOS and target RHEL validation,
 real screen readers/microphones/speakers, signing/update/device checks and the recorded owner decisions remain

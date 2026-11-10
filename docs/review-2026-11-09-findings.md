@@ -295,3 +295,76 @@ regressions and their repairs are recorded separately in PLAN §10.
   release/credential owner choices; copy polish and native validation do not lower it. Initial report's broad
   suite totals remain historical evidence, not newly rerun counts.
 
+
+## Post-publication refresh and CI findings
+
+The initial post-publication title and fixture findings were discovered on candidate `a6d0cfa7` and repaired at
+`8279381f`. Later discoveries and repair heads are identified separately below; a new discovery is distinguished
+from a regression caused by the round. Final gate and reviewed-head status remain separate.
+
+- **listening-refresh-1 / accessibility-refresh-1 — P2, fixed at the controlled title boundary.**
+  `app/main/windows.ts:37` and `app/renderer/home/index.html:7` still called the focused Home window/document
+  Ember. Consented Home activation focuses it while wake listening remains on. A fresh actual AX probe observed
+  the focused/focusable Ember RootWebArea; production WASM with the Amy fixture emitted a wake and unintended
+  utterance for a synthetic title/Home/Ready reading. Other voice/short-title controls emitted none, so this is
+  a demonstrated supported path, not a claim about every native reader's announcement. Both titles now say
+  Companion home. `app/main/policy/policy.ts:604` adds only this exact own-title alias, retaining legacy names,
+  own-pid protection and the known-foreign-pid distinction. Actual current AX, constructor/policy, Electron
+  close/reopen/privacy and native/WASM recogniser regressions pass with ordinary wake-positive controls.
+  The independent re-rater and separate challenger closed the shared Home/Companion/Listening/Trust/Accessibility
+  P2. Native reader ordering and application-name announcements remain device validation.
+- **home-title-review-1 — P2 regression, repaired before integration.** The initial title package changed a
+  macOS startup selector that observes the Handle, not Home. Review identified the mismatch; the repair restores
+  the entire native macOS test file byte-for-byte to the published base. The second review verifies that restoration
+  and the exact three-line runtime diff. No native macOS execution is claimed.
+- **voice-ci-r7-1 — required speech verification blocked, repaired.** Initial draft CI failed four speech stages
+  because default `scripts/voice/prepare.mjs` stopped after production assets. The new phrase regressions correctly
+  refused a zero-speaker check. Removing the early exit fetches the existing SHA-pinned Amy test fixture by default;
+  test assets stay outside production staging. A fresh production-only cache is red before repair, while actual
+  required fixture/WASM/C API checks pass afterwards. Empty or incomplete required fixtures fail the new fast
+  contract; optional absent fixtures still skip. Both regression reviews accepted it without reducing assertions.
+- **voice-listening-refresh-2 — P2, fixed after two independent regression reviews.**
+  `app/renderer/home/main.ts:2608` and `:2613` used active-only checks for the automatic voice live region,
+  while `:2570` already defined starting/Listen once/enrolment ownership for the adjacent status holders.
+  The full renderer stage observed Starting… during the protected interval. Five affected journeys then passed
+  unchanged on current/main, but a controlled 1,400 ms starting hold reproduced the extra live announcement on
+  both trees. The named in-repository actual renderer regression failed before the two conditions adopted
+  `micHeld(v)`. Visible status, deliberate teaching prompts, post-microphone settling and exact-once behaviour
+  remain. The signed repair `3a0a2b3d`, integrated at `d8feb328`, passes 145 related checks and the affected
+  renderer journey; its full Natural file has six passes and an unchanged failed Mic sample poll, then only that
+  sample passes unchanged in package/root controls. No deadline was changed or full-file pass manufactured.
+  Listening and Accessibility received separate current-source re-ratings and challenges after both reviews.
+- **integrations-refresh-c1 / extensions-refresh-consent-1 — P1, fixed and accepted after re-review.**
+  On `8279381f`, `app/main/extensions/service.ts:193` checked only policy, the saved on switch and feature consent.
+  Main called startup refresh before the general-consent brain gate. A valid persisted state with general version 6
+  and current extension feature version 3 therefore probed saved HTTP/stdio servers and exposed cached tools before
+  `hasConsent`. No ordinary historical migration into that state is claimed. Actual settings/store/service tests
+  with injected probers fail before the fix, without a real server request or process. The integrated `e8642b28`
+  service requires the current general agreement for initiating operations and session exposure, keeps later
+  revocation/continuation barriers, and preserves Browse before the feature card after general agreement. The
+  first review's cleanup regression and second review's late-output discovery were repaired before acceptance.
+- **extensions-consent-review-2 — P1, fixed and accepted after re-review.** The second review of `fea91375` confirms
+  that an actual hardened SDK post-tool hook still returns a late result after global revocation. This is an
+  SDK-facing payload proof, not a claimed external send. Failed-tool hooks cannot rewrite the raw error and
+  hook exceptions are swallowed, so unsupported output fields or throwing would not close the boundary.
+  Further actual private-runtime/offline-model controls exercise retirement before either post-hook returns,
+  renewed-agreement recovery and old-client ownership. A no-extension held describe_screen control separately
+  proves the parallel global-loss path can send another model request (one to two) before its repair. The
+  signed `ffb6ad6c` package therefore covers general runtime retirement as well as extension output and token renewal.
+  The independent re-review accepts it: 13 unit and five actual SDK controls pass, in addition to the implementer's
+  seven complete real-runtime journeys and 603 unique related controls. Transport closure precedes fallible observers;
+  main-side pending work stops synchronously and agreement epochs fence held startup reads. The exact source is
+  integrated at `e8642b28`. The final full gate, separate area scores and CI/review acceptance remain required.
+- **reliability-refresh-c1 — measured P2 cap lifted after a new controlled pair, with historical failures retained.**
+  The eight earlier raw CPU failures remain failed and their cause is unresolved. A later quiet pair using the
+  unchanged WASM fixture passes its original limits on both main (14.7%, 886 MB) and `8279381f` (13.8%, 885 MB).
+  An external observer captures all 13 actual counter intervals near 30 seconds and comparable thread costs,
+  with no observation errors. The earlier current increase is not reproduced; no product patch, arithmetic
+  adjustment or budget relaxation creates these raw passes. The independent challenger lifts the current
+  journey cap on that evidence, with lower performance confidence and required EL8 native/WASM acceptance pending.
+- **companion-refresh-1 — P3, open.** At 320 px/Larger the history-key capsule reaches about x328.5 and the page's
+  scroll width is 329. The inspected render keeps Esc and the close words readable; no lost or inaccessible text
+  was demonstrated. Record the bounded edge overflow rather than alleging clipping the evidence does not show.
+
+Final fresh scores, six dimensions and all gate exceptions are in the companion review. CI and automated-review
+completion must be assessed at the actual final head; these package results do not establish release readiness.

@@ -386,6 +386,10 @@ the automated tests don't stand in for them.
 
 #### Ask and the companion
 
+- **Opening Home removes the wake name from its controlled window and document titles.** Both say
+  “Companion home”; the visible brand remains Ember and the focused heading says “Home”. Current and legacy
+  own-window titles remain protected. Synthetic production-recogniser checks cover the replacement title and
+  ordinary wake controls; native screen-reader ordering and application-name announcements still need device checks.
 - **Opening Ask doesn't automatically read the wake name.** Its focused field says “Ask or tell me” and the window
   is called “Companion request”; Ember still refuses to read or act in its own window. The short visible “Ask…”
   prompt keeps the empty field on one line at narrow widths and Larger text.
@@ -1025,6 +1029,8 @@ the automated tests don't stand in for them.
 
 #### Install and docs
 
+- **The default voice test preparation includes its SHA-pinned fixture speaker.** Required acoustic checks fail
+  when test assets are absent or incomplete; the test-only voice is never staged as a production model.
 - **Developers can compare command decisions against the pinned safety baseline.** The maintained comparison bundles
   both the classifier and the full command flow, preserves each sequence stage, rejects incomplete or unknown
   results, and permits only the documented exact job-count exceptions. It executes no corpus shell commands.
