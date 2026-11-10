@@ -89,6 +89,8 @@ async function open(seed: Seed = {}): Promise<Page> {
         for (const [k, v] of Object.entries(patch)) s[k] = v && typeof v === "object" && !Array.isArray(v) && typeof s[k] === "object" ? { ...(s[k] as object), ...v } : v;
         if (keyHost && keyHost !== hostOf(s.provider.baseUrl)) keyHost = null;
         window.__frEmit("onSettingsChanged", copy(s));
+        // The real IPC contract: main returns the Settings it kept, or throws.
+        return copy(s);
       };
       if (name === "signIn") return () => { window.__frCalls.push("signIn"); return defer("signIn"); };
       if (name === "retrySignIn") return () => { window.__frCalls.push("retry"); return defer("retry"); };

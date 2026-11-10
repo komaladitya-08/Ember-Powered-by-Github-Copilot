@@ -239,12 +239,14 @@ size.addEventListener("input", () => {
  * top) and the controls go back to the settings still in use, instead of nothing happening (review #84).
  */
 function save(patch: SettingsPatch): Promise<boolean> {
-  return window.ember.updateSettings(patch).then(() => true, err => {
+  const failed = (err: unknown): false => {
     renderSettingsNotice(saveFailedText(err));
     if (settings) { applySettings(settings); applyVoiceSettings(settings); }
     if (agent) renderAgent(agent);
     return false;
-  });
+  };
+  // Only the Settings main returns after a save counts: anything else (a literal false) is not a saved choice.
+  return window.ember.updateSettings(patch).then(r => (r !== null && typeof r === "object" ? true : failed(undefined)), failed);
 }
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
