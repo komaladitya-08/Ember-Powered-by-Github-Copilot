@@ -49,7 +49,10 @@ function breakStorage(fault: "ENOSPC" | "permissions", ctx: { dir: string; file:
 const engineFor = (settings: SettingsStore) => new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => autonomyInForce(settings.get().autonomy) });
 const click = { taskId: "t", kind: "click" as const, app: "mousepad", window: "notes", element: { role: "push button", name: "Bold" } };
 
-describe.each(["ENOSPC", "permissions"] as const)("autonomy when the audit and the save both fail (%s)", fault => {
+// Real permissions need POSIX modes and a non-root user (Windows and root ignore chmod); the injected ENOSPC faults run on
+// every OS and exercise the same two failing writes.
+const canChmod = process.platform !== "win32" && process.getuid?.() !== 0;
+describe.each(canChmod ? (["ENOSPC", "permissions"] as const) : (["ENOSPC"] as const))("autonomy when the audit and the save both fail (%s)", fault => {
   it("found on at start: nothing is done without asking (PR #193 review, startup catch)", () => {
     const c = setup(true);
     const block = slice("    if (autonomyWasOn) {", "    // Nothing is pruned while the policy");

@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { plainSaveError, SettingsStore } from "../../app/main/settings";
 import { CONSENT_VERSION } from "../../app/shared/consent";
 import { saveFailedText } from "../../app/renderer/home/copy";
@@ -77,5 +77,36 @@ describe.skipIf(!canChmod)("update while settings.json is unreadable", () => {
     expect(store.get().voice.consent).toBe(false);
     fs.chmodSync(f, 0o600);
     expect(JSON.parse(fs.readFileSync(f, "utf8")).voice?.consent ?? false).toBe(false);
+  });
+});
+
+// The same safety on every OS (Windows and root ignore chmod): the read of settings.json fails by injection.
+describe("update while settings.json can't be read (injected EACCES, any OS)", () => {
+  it("rejects with a plain sentence, keeps nothing in memory, tells nobody, and never rewrites the file", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-unread-inj-"));
+    const f = path.join(dir, "settings.json");
+    const bytes = JSON.stringify(good, null, 2);
+    fs.writeFileSync(f, bytes);
+    const real = fs.readFileSync;
+    const spy = vi.spyOn(fs, "readFileSync").mockImplementation(((p: unknown, ...a: unknown[]) => {
+      if (String(p) === f) throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      return (real as (...x: unknown[]) => unknown)(p, ...a);
+    }) as typeof fs.readFileSync);
+    try {
+      const store = new SettingsStore(f);
+      store.load();
+      const told: unknown[] = [];
+      store.onChange(s => told.push(s));
+      let thrown: unknown;
+      try { store.update({ voice: { ...store.get().voice, consent: true } }); } catch (e) { thrown = e; }
+      expect(thrown).toBeInstanceOf(Error);
+      expect(saveFailedText(plainSaveError(thrown))).toMatch(/^Ember couldn't save /);
+      expect(store.get().voice.consent).toBe(false);
+      expect(told).toEqual([]);
+      expect(() => store.update({ size: 70 }, { soon: true })).toThrow();
+      store.flush();
+    } finally { spy.mockRestore(); }
+    expect(fs.readFileSync(f, "utf8")).toBe(bytes);
+    expect(fs.readdirSync(dir)).toEqual(["settings.json"]);
   });
 });
