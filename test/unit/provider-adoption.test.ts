@@ -197,14 +197,18 @@ describe("atomic provider adoption", () => {
       if (String(args[0]) === h.settings.file) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
       return read(...args);
     });
-    const unread = new SettingsStore(h.settings.file); unread.load(); unread.update({ provider: before });
+    const unread = new SettingsStore(h.settings.file); unread.load();
+    // An unreadable file refuses every change (fail closed) and holds nothing in memory.
+    expect(() => unread.update({ provider: before })).toThrow(/couldn't save your settings/);
     const service = createProviderService({ settings: unread, keys: h.keys, admin: () => ({ source: null, policy: AdminPolicySchema.parse({}) }),
       consented: () => true, fetch: async () => ({ ok: true, status: 200, json: async () => ({ data: [] }) }), log: { info() {}, warn() {} }, changed() {} });
     await service.ensureKey();
     expect(await service.api.adopt(request)).toMatchObject({ ok: false });
-    expect(unread.own().provider).toEqual(before);
+    // Nothing was adopted or held: the unread store still has only its defaults, and the sealed key is untouched.
+    expect(unread.own().provider).toEqual(SettingsSchema.parse({}).provider);
     expect(await h.keys.load()).toMatchObject({ host: "a.example", key: OLD });
-    expect(service.key()).toMatchObject({ host: "a.example", key: OLD });
+    // With the settings unreadable no provider is in force, so the service doesn't use the key (it stays sealed on disk).
+    expect(service.key()).toBeNull();
     vi.restoreAllMocks();
     expect(JSON.parse(fs.readFileSync(h.settings.file, "utf8")).provider).toEqual(before);
   });

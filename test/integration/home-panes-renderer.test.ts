@@ -85,7 +85,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return async () => status();
       if (name === "updates" && updates) return async () => updates;
-      if (name === "updateSettings") return async (patch: Record<string, unknown>) => { h.calls.push(`save:${JSON.stringify(patch)}`); };
+      if (name === "updateSettings") return async (patch: Record<string, unknown>) => { h.calls.push(`save:${JSON.stringify(patch)}`); return {}; };
       if (name === "conversation") return async () => [];
       if (name === "tasks") return async () => tasks;
       if (name === "taskControl") return async (id: string, kind: string) => { h.calls.push(`taskControl:${id}:${kind}`); return true; };

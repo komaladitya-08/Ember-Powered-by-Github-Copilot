@@ -285,7 +285,7 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("says why saved memory is pause
       window.ember = new Proxy({}, { get: (_target, name: string) => {
         if (name.startsWith("on")) return (fn: (value: unknown) => void) => { listeners[name] = fn; return () => { delete listeners[name]; }; };
         if (name === "getStatus") return async () => seed.status;
-        if (name === "updateSettings") return async (patch: unknown) => { patches.push(patch); };
+        if (name === "updateSettings") return async (patch: unknown) => { patches.push(patch); return {}; };
         if (name === "introduceMe") return async (answers: Record<string, unknown>) => Object.keys(answers).length;
         if (name === "memory") return async () => ({ rows: [], ownership: "locked", reason: "own-provider" });
         if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
@@ -596,7 +596,7 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps a correction draft, the 
         if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
         if (name === "forgetMemory") return async (id: string) => ({ text: seed.rows.find(r => r.id === id)!.text, derived: 0, undo: `token-${id}-0001` });
         // Every settings save is recorded: a key typed while the list is out of sight must change nothing (memory-c2-1).
-        if (name === "updateSettings") return async (patch: unknown) => { ((window as unknown as { __saves: unknown[] }).__saves ??= []).push(patch); };
+        if (name === "updateSettings") return async (patch: unknown) => { ((window as unknown as { __saves: unknown[] }).__saves ??= []).push(patch); return {}; };
         return () => new Promise(() => undefined);
       } }) as EmberHomeApi;
     }, { status, rows });
@@ -713,7 +713,7 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("never lands a forget or rememb
         if (name === "getStatus") return async () => seed.status;
         if (name === "memory") return async () => ({ rows: [], ownership: "ready", reason: null, epoch: 1 });
         if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
-        if (name === "updateSettings") return async (patch: unknown) => { w.__saves.push(patch); };
+        if (name === "updateSettings") return async (patch: unknown) => { w.__saves.push(patch); return {}; };
         return () => new Promise(() => undefined);
       } }) as EmberHomeApi;
     }, { status });
