@@ -191,6 +191,14 @@ export function whatsOn(f: WhatsOnFacts): WhatsOn {
 }
 
 /**
+ * The Features line: "Checking…" until a status has told what the settings and the organisation's policy are, never the
+ * defaults as if they were the truth (home-r7-2); then what is on in fact.
+ */
+export function whatsOnLine(f: WhatsOnFacts): string {
+  return f.settings && f.admin ? whatsOnText(whatsOn(f)) : "Checking…";
+}
+
+/**
  * The main capabilities and whether each is on, in a few words ("Listening on · Memory on · Commands off"), then the
  * other computers Ember can work on, when there are any ("2 computers over SSH", "WSL").
  */

@@ -7,9 +7,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOn, whatsOnText } from "../../app/renderer/home/status-copy";
+import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOn, whatsOnLine, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage, shownText, type ShownNode } from "../../app/renderer/home/search-copy";
-import { checksNote, COMPOSER_HELD, COMPOSER_THINKING, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
+import { checksNote, STATUS_FAILED, COMPOSER_HELD, COMPOSER_THINKING, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import { formatDoctor } from "../../app/main/doctor";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
@@ -182,6 +182,18 @@ describe("Home's status panel", () => {
     // Memory paused stays paused; before the first status nothing is on.
     expect(line({ memory: "paused" })).toContain("Memory paused");
     expect(line({ settings: null, admin: null, mic: null, memory: false })).toBe("Listening off · Memory off · Commands off");
+  });
+
+  it("says Checking… on the Features line until a status has arrived, never the defaults as if they were the truth (home-r7-2)", () => {
+    const admin = { source: null, error: null, features: {} };
+    expect(whatsOnLine({ settings: null, admin: null, mic: null, memory: false })).toBe("Checking…");
+    // Settings pushed before the first status: what the organisation allows isn't known yet.
+    expect(whatsOnLine({ settings: DEFAULT_SETTINGS, admin: null, mic: null, memory: false })).toBe("Checking…");
+    expect(whatsOnLine({ settings: DEFAULT_SETTINGS, admin, mic: null, memory: false })).toBe("Listening off · Memory off · Commands off");
+    expect(fs.readFileSync("app/renderer/home/index.html", "utf8")).toContain('<dd id="whats-on">Checking…</dd>');
+    // After the last failed try the caption says so, without the name (it is said aloud), and offers the way on.
+    expect(STATUS_FAILED).toBe("The settings couldn't be loaded. Try again, or restart if it keeps happening.");
+    expect(STATUS_FAILED).not.toMatch(/Ember/);
   });
 
   it("says memory is paused, not on, while its owner isn't verified (memory-2)", () => {

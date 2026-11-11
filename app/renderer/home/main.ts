@@ -50,12 +50,12 @@ import { keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOf
 import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { holdTaskNews, startTasks } from "./tasks";
-import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOn, whatsOnText } from "./status-copy";
+import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnLine } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { problemInHome, PROBLEM_SETTINGS, composerCount, composerDraftBack, composerGivenBack, composerLineBase, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, LISTEN_CONSENT_NOT_SAVED, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
-import { composerEditAgain, composerEditCancelled, composerLineFits } from "./copy";
+import { composerEditAgain, composerEditCancelled, composerLineFits, STATUS_FAILED } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -256,11 +256,15 @@ const waitingFor = (): string | null => {
   return agent?.phase === "signed-out" && own.on ? own.card : null;
 };
 let failing = 0;
+/** Home's first status never arrived, after every retry (startStatus): said, with Try again, until one does (home-r7-2). */
+let statusFailed = false;
 /** Setup rows that don't fail but need the user: the status panel's link under the tagline names them (it opens the pane). */
 let toLook = 0;
 /** Setup rows that hold Ember back (failing, or it can't read or use apps): to fix, as first run says (first-run-5). */
 let toFix = 0;
 function renderTagline(): void {
+  // Every try to read the first status failed: that is what the caption says until Try again (home-r7-2).
+  if (statusFailed) { if ($("tagline").textContent !== STATUS_FAILED) $("tagline").textContent = STATUS_FAILED; return; }
   // The tagline leaves the rows worth a look to the link under it, which goes to them (owner review).
   const text = tagline({
     failing, look: 0, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
@@ -285,10 +289,10 @@ function renderStatus(): void {
   $("ring").dataset.ring = s.ring;
   $("state-word").dataset.ring = s.ring;
   // What is in force, not what the switches ask for: policy, a lockdown and the microphone's real state (home-r6-1).
-  setText("whats-on", whatsOnText(whatsOn({
+  setText("whats-on", whatsOnLine({
     settings, admin: lastAdmin, mic: voice?.state ?? null,
     memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner, memoryTrouble),
-  })));
+  }));
   setText("today", todaySummary(tasksNow, today));
   // Copilot not connected: connecting it is the one prominent action here, and Ask steps back.
   const notConnected = (agent?.phase === "signed-out" || agent?.phase === "error") && agent?.waitingForTasks !== true;
@@ -454,6 +458,7 @@ function render(status: Status): void {
   // A policy main sent since this status was read is the newer: the held lockdown lasts until a restart.
   if (pushedAdmin) status = { ...status, admin: pushedAdmin };
   statusNow = status;
+  if (statusFailed) { statusFailed = false; $("p-retry").hidden = true; }
   renderPlatform(status.platform);
   renderChecks(status.environment);
   renderAdmin(status.admin);
@@ -1091,10 +1096,22 @@ function loadStatus(): Promise<Status> {
 }
 function startStatus(attempt = 0): void {
   loadStatus().then(render, () => {
-    if (attempt < STATUS_RETRIES) setTimeout(() => startStatus(attempt + 1), STATUS_RETRY_MS * (attempt + 1));
+    if (attempt < STATUS_RETRIES) { setTimeout(() => startStatus(attempt + 1), STATUS_RETRY_MS * (attempt + 1)); return; }
+    // The last try failed: say so and offer another, instead of the defaults for good with no word (home-r7-2).
+    if (statusNow) return;
+    statusFailed = true;
+    $("p-retry").hidden = false;
+    renderTagline();
   });
 }
 startStatus();
+$("p-retry").addEventListener("click", () => {
+  statusFailed = false;
+  $("p-retry").hidden = true;
+  $("tagline").textContent = "Starting…";
+  $("home-h").focus({ preventScroll: true });
+  startStatus();
+});
 window.ember.onSettingsChanged(s => statusFence.pushedSettings(s));
 window.ember.onSettingsChanged(applySettings);
 // Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.

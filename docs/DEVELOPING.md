@@ -167,8 +167,9 @@ runtime. It does not change the app's consent or speaking settings.
   to a selected labelled result (ArrowDown/Tab enters results; Escape clears them). The window reopens on the pane you last viewed (kept in the page's own storage).
   - **Home** is a status panel (Ember's still presence ring, its state in a few words, which of listening, memory and
     commands are on in fact (`whatsOn`: what the organisation's policy or a lockdown turned off reads off, and
-    listening that can't run reads "Listening needs its speech models" or "Microphone problem", never "on"), today's
-    tasks and approvals, **Ask Ember…** and **Stop everything** with the stop chord), then the
+    listening that can't run reads "Listening needs its speech models" or "Microphone problem", never "on"; "Checking…"
+    until the first status arrives, and if every try for it fails the caption says "The settings couldn't be loaded.
+    Try again, or restart if it keeps happening." with **Try again**), today's tasks and approvals, **Ask Ember…** and **Stop everything** with the stop chord), then the
     **Conversation**, **Task activity** and the folded **What Ember did**.
   - **Task activity** shows each task of this session, newest first and the one that needs you on top: its state and
     clock, its steps in one line, its plan as a checklist, a row for each thing it did with the time after it started

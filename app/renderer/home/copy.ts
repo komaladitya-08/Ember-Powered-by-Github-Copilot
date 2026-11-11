@@ -401,6 +401,12 @@ export function presenceLine(p: { overlay: boolean; hidden: boolean }, corner: H
 }
 
 /**
+ * The caption once every try to read Home's first status has failed (status-fence.ts STATUS_RETRIES), beside Try again
+ * (home-r7-2): the window showed its defaults for good, with no word and no way on. Without the name: it is said aloud.
+ */
+export const STATUS_FAILED = "The settings couldn't be loaded. Try again, or restart if it keeps happening.";
+
+/**
  * The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. Worded under the
  * heading, without the name, wherever Ember can listen: a screen reader says it as it changes (a reconnect, Hide), and
  * "Ember is beside your cursor. …" said into the wake word's microphone woke Ember and was sent as a request in 39 of

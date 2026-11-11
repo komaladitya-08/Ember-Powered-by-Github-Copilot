@@ -147,6 +147,32 @@ describe.skipIf(process.env.EMBER_STATUS_RACE_TEST !== "1")("Home startup snapsh
     expect(errors.filter(e => !/Main is busy/.test(e))).toEqual([]);
   }, 30_000);
 
+  it("says the settings couldn't be loaded once every try has failed, shows no defaults as the state, and Try again loads them (home-r7-2)", async () => {
+    const { page, errors } = await openHome(A);
+    await expect.poll(() => held(page)).toBeGreaterThan(0);
+    expect(await page.locator("#whats-on").textContent()).toBe("Checking…");
+    // Every request fails, the retries too (1 s, 2 s, 3 s and 4 s apart).
+    let done = 0;
+    const failAll = async () => { for (const n = await held(page); done < n; done++) await settle(page, done, "reject"); return page.locator("#p-retry").isVisible(); };
+    await expect.poll(failAll, { timeout: 20_000, interval: 250 }).toBe(true);
+    await page.evaluate(() => { document.body.classList.remove("loading"); });
+    expect(await page.locator("#tagline").innerText()).toBe("The settings couldn't be loaded. Try again, or restart if it keeps happening.");
+    expect(await page.locator("#whats-on").innerText()).toBe("Checking…");
+    // The agent's status arriving meanwhile doesn't put a first-run or connect line over it.
+    await page.evaluate(() => window.__emit("onAgentStatus", { phase: "ready", detail: "", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 } }));
+    expect(await page.locator("#tagline").innerText()).toBe("The settings couldn't be loaded. Try again, or restart if it keeps happening.");
+    const before = await held(page);
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect.poll(() => held(page)).toBeGreaterThan(before);
+    expect(await page.locator("#p-retry").isHidden()).toBe(true);
+    await settle(page, before, "resolve", statusOf(B));
+    await expect.poll(() => page.locator("#whats-on").innerText()).toBe("Listening off · Memory off · Commands off");
+    expect(await page.locator("#tagline").innerText()).not.toContain("couldn't be loaded");
+    expect((await shown(page)).size).toBe(String(B.size));
+    await page.close();
+    expect(errors.filter(e => !/Main is busy/.test(e))).toEqual([]);
+  }, 60_000);
+
   it("restores the saved microphone switch and consent after every initial status request fails", async () => {
     const { page, errors } = await openHome(A);
     await expect.poll(() => held(page)).toBeGreaterThan(0);
