@@ -172,6 +172,18 @@ export function composerSaysOver(line: string): boolean {
 export function composerLineFits(line: string, editing: boolean): string | null {
   return composerSaysOver(line) ? (editing ? CONVERSATION_EDIT : "") : null;
 }
+/** What the composer says once Ember is connected again after it refused a send for want of a connection. */
+export const COMPOSER_CONNECTED = "Connected again. Your message is still here: send it now.";
+/**
+ * The composer's line once Ember is connected again, or null to leave it (reliability-c7-2): a refused send's reason
+ * (`refused`, "Reconnecting to Copilot. … send it again in a moment.") stayed after Ember had reconnected, until the next
+ * send. While the line still says it, it becomes that the message can go now; with the message gone from the composer
+ * (`hasDraft` false) it just goes. Any other line since is left alone.
+ */
+export function composerLineConnected(line: string, refused: string | null, hasDraft: boolean): string | null {
+  if (!refused || line !== refused) return null;
+  return hasDraft ? COMPOSER_CONNECTED : "";
+}
 /** The composer's lines that say how something earlier went: they give way to a wait of the Ask box's or voice's. */
 const COMPOSER_OUTCOMES: ReadonlySet<string> = new Set([
   COMPOSER_SAYS.copied, COMPOSER_SAYS.copyFailed, COMPOSER_SAYS.replyFailed, COMPOSER_SAYS.notAnswered, COMPOSER_SAYS.replied, COMPOSER_SAYS.loadFailed, COMPOSER_SAYS.started,

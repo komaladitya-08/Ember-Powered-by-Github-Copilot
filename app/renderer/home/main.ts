@@ -55,7 +55,7 @@ import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./searc
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { problemInHome, PROBLEM_SETTINGS, composerCount, composerGivenBack, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
-import { composerEditAgain, composerEditCancelled, composerLineFits } from "./copy";
+import { composerEditAgain, composerEditCancelled, composerLineConnected, composerLineFits } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -892,6 +892,8 @@ function renderTaskReasoning(): void {
 const projectReady = mountProject();
 function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
+  // Connected again after a send was refused for want of a connection: its reason no longer holds (reliability-c7-2).
+  if (a.phase === "ready" && agent && agent.phase !== "ready") composerConnected();
   agent = a;
   projectReady(a.phase === "ready", a.service?.host ?? "GitHub Copilot", a.conductorModel);
   const had = document.activeElement;
@@ -1120,6 +1122,14 @@ let shownConversation: Entry[] = [];
 const conversationMessage = $("conversation-message") as HTMLTextAreaElement;
 const conversationSearch = $("conversation-search") as HTMLInputElement;
 const conversationComposeStatus = $("conversation-compose-status");
+/** The reason the last refused send gave, while the composer's line may still say it (reliability-c7-2). */
+let conversationRefused: string | null = null;
+/** Ember is connected again: a refused send's reason still on the composer's line becomes that the message can go now. */
+function composerConnected(): void {
+  const next = composerLineConnected(conversationComposeStatus.textContent ?? "", conversationRefused, !!conversationMessage.value.trim());
+  conversationRefused = null;
+  if (next !== null) keepingComposer(() => { conversationComposeStatus.textContent = next; });
+}
 let conversationAwaitingReply = false;
 /**
  * Whether the conversation answers a request now, as main says (home-c1-1): from the composer, the Ask box or voice.
@@ -1650,7 +1660,7 @@ $("conversation-compose").addEventListener("submit", event => {
       syncComposerCount(true);
     }
     awaitingReply(false);
-    keepingComposer(() => { conversationComposeStatus.textContent = ipcErrorText(error) || COMPOSER_SAYS.sendFailed; });
+    keepingComposer(() => { conversationComposeStatus.textContent = conversationRefused = ipcErrorText(error) || COMPOSER_SAYS.sendFailed; });
   }).finally(() => { if (generation === conversationGeneration) { send.removeAttribute("aria-disabled"); send.textContent = "Send"; } });
 });
 $("conversation-cancel-edit").addEventListener("click", () => {

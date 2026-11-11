@@ -1180,6 +1180,22 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     for (const said of Object.values(conv.COMPOSER_SAYS)) expect(home).not.toContain(`"${said}"`);
   });
 
+  it("takes a refused send's reason away once Ember is connected again, and says the message can go now (reliability-c7-2)", () => {
+    const refused = composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot stopped unexpectedly. Reconnecting…" });
+    expect(refused).toBe("Reconnecting to Copilot. Your message is still here: send it again in a moment.");
+    // Connected again with the message still in the composer: the line stayed "Reconnecting…" for as long as it was watched.
+    expect(conv.composerLineConnected(refused, refused, true)).toBe("Connected again. Your message is still here: send it now.");
+    expect(conv.COMPOSER_CONNECTED).toBe("Connected again. Your message is still here: send it now.");
+    // The message was cleared meanwhile: nothing is "still here", so the line just goes.
+    expect(conv.composerLineConnected(refused, refused, false)).toBe("");
+    // Any other line since (Edit's caution, a reply's outcome, nothing) is left as it is, and so is a send never refused.
+    expect(conv.composerLineConnected(conv.CONVERSATION_EDIT, refused, true)).toBeNull();
+    expect(conv.composerLineConnected("", refused, true)).toBeNull();
+    expect(conv.composerLineConnected(refused, null, true)).toBeNull();
+    // A wait of the Ask box's or voice's never takes its place: it is about the draft.
+    expect(conv.composerLineYields(conv.COMPOSER_CONNECTED)).toBe(false);
+  });
+
   it("refuses a message sent while Ember isn't connected by why, and says it is still there (reliability-performance-v2)", () => {
     expect(composerRefusal({ phase: "signed-out" })).toBe("Connect Copilot in Models & connections, then send again.");
     expect(composerRefusal({ phase: "starting" })).toBe("Still connecting to Copilot. Your message is still here: send it again in a moment.");

@@ -1606,6 +1606,13 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe(refused);
       expect(await inView()).toBe(true);
       expect(await page.locator("#conversation-message").inputValue()).toBe("Q2 while offline");
+      // Ember connects again: the line no longer says it can't be reached, and the message is still there (reliability-c7-2).
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), { ...READY, phase: "error", reason: "network", detail: "Can't reach the model service." });
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe(refused);
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Connected again. Your message is still here: send it now.");
+      expect(await inView()).toBe(true);
+      expect(await page.locator("#conversation-message").inputValue()).toBe("Q2 while offline");
       // A message copied, then a request from the Ask box came and went, leaving the line empty; then a send that waits for
       // a reconnect (no line of its own yet): its "Thinking…" shows, and so does how Stop everything ended it.
       await page.evaluate(() => { window.__home.sendError = undefined; });
