@@ -616,6 +616,22 @@ describe("README.md", () => {
     expect(status).toContain("each ends with what it left");
   });
 
+  it("names every day the product audit's rounds ran, as PLAN.md §10 dates them, and is dated no earlier than the last (reliability-r7-2)", () => {
+    const status = flat(read("STATUS.md"));
+    const sentence = /Since 4 November a product audit[^.]*\./.exec(status)?.[0] ?? "";
+    // The days STATUS.md gives: "from 7 to 9 November" and "on 11 November".
+    const named = new Set<number>();
+    for (const r of sentence.matchAll(/from (\d{1,2}) to (\d{1,2}) November/g)) for (let d = Number(r[1]); d <= Number(r[2]); d++) named.add(d);
+    for (const r of sentence.matchAll(/ on (\d{1,2}) November/g)) named.add(Number(r[1]));
+    // PLAN.md §10's headings: one day, or "first to last".
+    const days = [...read("PLAN.md").matchAll(/^### Product audit fixes[^\n(]*\(2026-11-(\d{2})(?: to 2026-11-(\d{2}))?\)$/gm)]
+      .flatMap(r => [Number(r[1]), Number(r[2] ?? r[1])]);
+    expect(days.length).toBeGreaterThanOrEqual(12);
+    for (const d of days) expect([...named], `${d} November`).toContain(d);
+    const updated = /^# Ember status Updated (\d{1,2}) November 2026\./.exec(status);
+    expect(Number(updated?.[1])).toBeGreaterThanOrEqual(Math.max(...days, ...named));
+  });
+
   it("says `npm run package` makes the RPM and the AppImage, as the spec builds one RPM (install-docs-c1-2)", () => {
     // The spec has no subpackage: the speech models moved into Ember's own RPM in 0.1.1.
     expect(read("packaging/rpm/ember.spec")).not.toMatch(/^%package\b/m);
