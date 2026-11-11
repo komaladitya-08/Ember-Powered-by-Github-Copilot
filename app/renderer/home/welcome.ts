@@ -88,7 +88,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let switchedSaid = false;
   let voice: VoiceStatus | null = null;
   let signingIn = false;
-  let signInMessage: { text: string; tone: string } | null = null;
+  /** `github`: what a GitHub sign-in said, which says nothing about the user's own provider once that is in use (first-run-c7-3). */
+  let signInMessage: { text: string; tone: string; github?: boolean } | null = null;
   let saving = false;
   let navigation = 0;
   /** The page main offers while it waits for a sign-in made elsewhere ("Open cli.github.com"), or null. */
@@ -313,8 +314,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     }
     if (signingIn || v.primary !== "sign-in") switchedSaid = false;
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
-    const detail = signInMessage?.text ?? (agent?.phase === "error" && !signingIn ? agent.detail : switchedSaid ? switchedLine(agent?.signInWith) : v.line);
-    line.className = `w-status ${signInMessage?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
+    // A GitHub sign-in's outcome isn't the line under "Your own model provider": it is kept for Copilot's step (first-run-c7-3).
+    const said = signInMessage?.github && ownInUse() && !signingIn ? null : signInMessage;
+    const detail = said?.text ?? (agent?.phase === "error" && !signingIn ? agent.detail : switchedSaid ? switchedLine(agent?.signInWith) : v.line);
+    line.className = `w-status ${said?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
     $("w-signin-later").hidden = v.primary === "continue" && !v.why;
     // The user's own provider has nothing to sign in to, later or now (first-run-1).
     $("w-signin-later").textContent = ownInUse() ? SKIP_OWN : SKIP_SIGN_IN;
@@ -929,7 +932,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     next.focus();
     window.ember.signIn().catch(err => {
       signingIn = false;
-      signInMessage = { text: ipcErrorText(err), tone: "error" };
+      signInMessage = { text: ipcErrorText(err), tone: "error", github: true };
       render();
       leaveAlt();
     });
@@ -946,7 +949,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     waitLink = null;
     $("w-code").replaceChildren();
     // Main's sign-in words, as mine (first-run-r4-2).
-    signInMessage = p.message ? { text: inMyVoice(p.message), tone: p.state === "error" || p.state === "unavailable" ? "error" : "warn" } : null;
+    signInMessage = p.message ? { text: inMyVoice(p.message), tone: p.state === "error" || p.state === "unavailable" ? "error" : "warn", github: true } : null;
     render();
     // Signed in: Continue takes focus, so the next step is one key away.
     if (p.state === "done" && step === "sign-in") next.focus();

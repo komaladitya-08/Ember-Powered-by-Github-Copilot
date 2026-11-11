@@ -284,6 +284,29 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(an) a failed GitHub sign-in's error doesn't stay under “Your own model provider” once that provider is connected (first-run-c7-3)", async () => {
+    const p = await open();
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("signIn");
+    await emit(p, "onSignInProgress", { state: "error", message: "Ember can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember." });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toContain("I can't verify GitHub's certificate.");
+    // The user's own provider is set up and connected instead: the step is its own, and so is the line under it.
+    const provider = (on: boolean) => p.evaluate(v => {
+      window.__frState.settings.provider = { ...window.__frState.settings.provider, on: v, baseUrl: "http://localhost:11434/v1", conductor: "llama3.2:3b" };
+      window.__frEmit("onSettingsChanged", JSON.parse(JSON.stringify(window.__frState.settings)));
+    }, on);
+    await provider(true);
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, readyAgent({ login: undefined, models: [], conductorModel: "llama3.2:3b", workerModel: null, service: { kind: "user", host: "localhost:11434" } }));
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await p.locator("#w-signin-line").innerText()).not.toMatch(/GitHub|certificate/);
+    expect(await p.locator("#w-signin-line").getAttribute("class")).not.toContain("error");
+    // Back with Copilot (the provider put away), the sign-in's failure is still what the step says.
+    await provider(false);
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, SIGNED_OUT);
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toContain("I can't verify GitHub's certificate.");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(c) an entitlement failure offers account, access and provider remedies, not signing in again", async () => {
     for (const [detail, word] of [["Copilot isn't available to this account.", "github.com/features/copilot"], ["Copilot is disabled by your organisation's policy.", "administrator"]] as const) {
       const p = await open({ agent: { ...SIGNED_OUT, phase: "error", reason: "no-access", detail } });

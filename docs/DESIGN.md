@@ -591,6 +591,8 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   wherever nothing else on it does that check (a refused token, the organisation's service), keeping Check again only
   where the GitHub CLI's button is shown; the in-use provider step, which has neither, says “Go back and press Try
   again” (`signInWays`, `pressOnStep`, first-run-w5-2).
+  What a GitHub sign-in said (a failure's sentence) is the line only on Copilot's step: once the user's own provider
+  is in use, the step “Your own model provider” shows that provider's state, never a GitHub error (first-run-c7-3).
   A failed connection offers what its reason calls for (`failureView`): an entitlement failure leads with the user's own
   provider or a different GitHub account, never the same sign-in. A failure of the user's own provider leads with
   “Check my provider's details” (or Try again for the network), with no GitHub account, sign-in or Copilot words, in
