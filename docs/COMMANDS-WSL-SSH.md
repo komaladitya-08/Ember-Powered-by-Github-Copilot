@@ -297,10 +297,12 @@ start of a command: `if true; then LD_PRELOAD=./x.so ls; fi` asks, as `LD_PRELOA
 A variable set in front of a build tool that names a program or a command the tool runs is judged too, so Ember asks
 before `CC='sh -c "curl … | sh"' make` the way it does before `make CC='sh -c …'`. An ordinary value runs: `CC=clang
 make`, `CC="ccache gcc" make`, `CFLAGS=-O2 make`, `GOFLAGS=-mod=vendor go build` and `DATABASE_URL=… npm test` all go
-ahead; a compiler or pager variable (`CC`, `CXX`, `LD`, `RUSTC`, `PSQL_PAGER`, a `*_PAGER`), and any other variable
-whose value looks like a command (a `|`, `;`, `&&`, a substitution, or a leading `sh`, `bash`, `python`, `curl` …),
-asks, and an options variable asks when a sub-option names a program (`GOFLAGS=-toolexec=…`, `TAR_OPTIONS=--to-command=…`,
-`PYTEST_ADDOPTS='-p …'`). A wrapper variable always asks (`RUSTC_WRAPPER`, `CARGO_BUILD_RUSTC_WRAPPER`,
+ahead. A compiler or pager variable (`CC`, `CXX`, `LD`, `RUSTC`, `PSQL_PAGER`, a `*_PAGER`, `LUA_INIT`) asks when its
+value holds any shell operator (`|`, `;`, `&&`, a substitution, a backtick); any other variable asks only when its
+value starts a command (a leading `sh`, `bash`, `python`, `curl` … with an argument, at the start or after a `|`, `;`
+or `&&`, or a substitution), so a value that merely holds a `|` or `;` — a connection string, a filter, a colour spec
+such as `LS_COLORS='di=01;34'` — runs. An options variable asks when a sub-option names a program (`GOFLAGS=-toolexec=…`,
+`TAR_OPTIONS=--to-command=…`, `PYTEST_ADDOPTS='-p …'`, but not `GOFLAGS=-p=4` or `PYTEST_ADDOPTS='-p no:…'`). A wrapper variable always asks (`RUSTC_WRAPPER`, `CARGO_BUILD_RUSTC_WRAPPER`,
 `JDK_JAVA_OPTIONS`, `DOTNET_STARTUP_HOOKS`). The same goes for a `cmake -DCMAKE_<lang>_COMPILER=…` override that holds a
 command, `go test -exec`, `go build -toolexec`/`-vettool`, and `npm`'s `--script-shell` or `npm config set
 script-shell`.

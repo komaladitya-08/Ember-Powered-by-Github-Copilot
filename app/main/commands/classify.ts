@@ -1509,17 +1509,24 @@ const COMPILERS = new Set(["gcc", "g++", "cc", "c++", "clang", "clang++", "rustc
  */
 const PROGRAM_CMD_VARS = new Set([
   "CC", "CXX", "CPP", "LD", "RUSTC", "OBJC", "OBJCXX", "HOSTCC", "HOSTCXX", "AS", "AR", "NM", "RANLIB", "STRIP",
-  "PSQL_PAGER", "GH_PAGER", "AWS_PAGER", "GCLOUD_PAGER", "DELTA_PAGER", "KUBECTL_EXTERNAL_DIFF", "CLOUDSDK_PYTHON",
+  "PSQL_PAGER", "GH_PAGER", "AWS_PAGER", "GCLOUD_PAGER", "DELTA_PAGER", "KUBECTL_EXTERNAL_DIFF", "CLOUDSDK_PYTHON", "LUA_INIT",
 ]);
 /** Variables holding a tool's options where a sub-option names a program it runs (`GOFLAGS=-toolexec=…`). */
 const PROGRAM_OPT_VARS = /^(GOFLAGS|GOTESTFLAGS|CGO_[A-Z]*FLAGS|TAR_OPTIONS|RUSTFLAGS|CARGO_[A-Z_]*RUSTFLAGS|PYTEST_ADDOPTS)$/;
 /**
- * A value that looks like a shell command, not a plain word: an operator that chains or substitutes (`|`, `;`, `&&`, a
- * substitution, a backtick, a newline — never a lone `&`, `<`, `>` or parenthesis, which a URL or a flag holds), or a
- * leading shell or interpreter with an argument after it (`sh -c …`, never a bare `python3`): commands-remote-c8-1.
+ * A listed program variable's value that looks like a shell command: any operator that chains or substitutes (`|`, `;`,
+ * `&&`, a substitution, a backtick, a newline — never a lone `&`, `<`, `>` or parenthesis, which a URL or a flag holds),
+ * or a leading shell or interpreter with an argument after it (`sh -c …`, never a bare `python3`): commands-remote-c8-1.
  */
 const SHELL_SHAPE = /[|;`\n]|&&|\$\(/;
-const SHELL_LEAD = /^\s*(sh|bash|zsh|dash|ksh|fish|ash|busybox|env|eval|exec|command|xargs|python[0-9.]*|perl|ruby|node|nodejs|php|lua|awk|sed|curl|wget)\s+\S/;
+const SHELL_WORD = String.raw`(?:sh|bash|zsh|dash|ksh|fish|ash|busybox|env|eval|exec|command|xargs|python[0-9.]*|perl|ruby|node|nodejs|php|lua|awk|sed|curl|wget)`;
+const SHELL_LEAD = new RegExp(String.raw`^\s*${SHELL_WORD}\s+\S`);
+/**
+ * A value that STARTS a shell command: a shell or interpreter with an argument at the start or right after a `|`, `;` or
+ * `&&`, or a substitution. An ordinary value that merely holds a `|` or `;` (a connection string, a colour spec, a
+ * filter) is not a command, so `TEST_FILTER='unit|integration' npm test` runs (commands-remote-c8-1).
+ */
+const SHELL_START = new RegExp(String.raw`(?:^|[|;]|&&)\s*${SHELL_WORD}\s+\S`);
 /** Whether an options variable's value names a program its tool runs, by that tool's own sub-option (never a shared list). */
 function optNamesProgram(name: string, value: string): boolean {
   if (/^(GOFLAGS|GOTESTFLAGS|CGO_[A-Z]*FLAGS)$/.test(name)) return /(^|[\s,'"=])-(toolexec|exec|vettool)(=|\s)/.test(value);
@@ -1536,7 +1543,10 @@ function optNamesProgram(name: string, value: string): boolean {
 function namesProgram(name: string, value: string | null): boolean {
   if (value === null) return PROGRAM_CMD_VARS.has(name);
   if (PROGRAM_OPT_VARS.test(name)) return optNamesProgram(name, value);
-  return SHELL_SHAPE.test(value) || SHELL_LEAD.test(value);
+  // A listed compiler or pager variable holds a command, so any shell operator counts; any other name only when the
+  // value plainly starts a command (a leading shell, or one after a pipe or `;`), or holds a substitution.
+  if (PROGRAM_CMD_VARS.has(name)) return SHELL_SHAPE.test(value) || SHELL_LEAD.test(value);
+  return SHELL_START.test(value) || /\$\(|`/.test(value);
 }
 
 /**
@@ -3075,14 +3085,15 @@ class Engine extends Classifier {
         if (m) { cp.push(m[1]); continue; }
         const agent = /^-(?:javaagent|agentpath):([^=]+)/.exec(v);
         if (agent) { if (hit(agent[1])) return true; continue; }
+        if (v === "--source" || v === "--release") { k++; continue; }
         if (v.startsWith("-")) continue;
+        // A source or jar given anywhere (`java --source 21 X.java`) runs, so every file operand is checked, and the
+        // first bare word is also tried as a main class (commands-remote-r8-2).
+        if (/\.(jar|java|class)$/i.test(v)) { if (hit(v)) return true; continue; }
         if (main === null) main = v;
       }
       for (const entry of cp.flatMap(c => c.split(win ? ";" : ":"))) if (entry && entry !== "." && hit(entry)) return true;
-      if (main !== null) {
-        if (/\.(jar|java|class)$/i.test(main)) return hit(main);
-        return hit(`${main.replace(/\./g, "/")}.class`) || hit(`${main.replace(/\./g, "/")}.java`);
-      }
+      if (main !== null) return hit(`${main.replace(/\./g, "/")}.class`) || hit(`${main.replace(/\./g, "/")}.java`);
       return false;
     }
     if (key === "mono" || key === "wine" || key === "wine64") {
@@ -5168,6 +5179,8 @@ reg(NATIVE, ["env"], h => {
   if (assigns.length || has(p, "u", "unset", "i") || h.args.some(a => a.v === "-")) h.e.envChanged = true;
   for (const a of assigns) {
     if (RISKY_ASSIGNMENTS.has(a.name) || RISKY_ASSIGNMENT_PREFIX.test(a.name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+    // A variable env sets whose value names a command the program runs, as in front of a command (commands-remote-c8-1).
+    else if (namesProgram(a.name, a.value.v)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
   }
   // A Mac's -P looks for the program in those folders, as a PATH assignment does; each is judged as the folder it runs a
   // program from (commands-remote-v5-3).
