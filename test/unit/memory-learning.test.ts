@@ -494,6 +494,59 @@ describe("the conversation's memory lines after Undo (memory-c1-3)", () => {
   });
 });
 
+describe("a Forget and the turns still waiting to be learned from (memory-c7-1)", () => {
+  const VEG = answer([{ from: 1, fact: "Is vegetarian", about: [{ name: "User", kind: "person" }], predicate: "diet", single: true, confidence: 0.9, evidence: "I'm vegetarian" }]);
+  const TEA = { from: 2, fact: "Likes green tea", about: [{ name: "User", kind: "person" }], confidence: 0.9, evidence: "I like green tea" };
+
+  it("never brings back a fact forgotten within a minute of being said when the waiting turns are read, and still learns the rest (memory-c7-1)", async () => {
+    const { l, s, learned, advance } = learning({ model: async () => answer([JSON.parse(VEG).facts[0], TEA]) });
+    const tools = l.conductorMemory();
+    expect(tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian")).toContain("Remembered");
+    tools.heard("Remember that I'm vegetarian", "Got it.", true);
+    advance(5000);
+    // The "Ember learned" line's Undo.
+    expect(l.forgetCounted(s.list()[0].id)).toMatchObject({ text: "Is vegetarian" });
+    tools.heard("I like green tea", "Noted.", true);
+    advance(61_000);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text)).toEqual(["Likes green tea"]);
+    expect(learned.filter(t => t.includes("vegetarian"))).toHaveLength(1);
+  });
+
+  it("holds for “forget that”, and for a Forget while the turn that said it is still under way (memory-c7-1)", async () => {
+    const { l, s, advance } = learning({ model: async () => VEG });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian");
+    // Undo before the turn has ended: the turn is queued only afterwards.
+    expect(l.intent("forget that", { own: true })).toContain("Forgotten");
+    advance(3000);
+    tools.heard("Remember that I'm vegetarian", "Got it.", true);
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list()).toEqual([]);
+  });
+
+  it("learns it again from a later turn, keeps it when the Forget is undone, and holds nothing back once the waiting turns are read (memory-c7-1)", async () => {
+    const { l, s, advance } = learning({ model: async () => VEG });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian");
+    tools.heard("Remember that I'm vegetarian", "Got it.", true);
+    const gone = l.forgetCounted(s.list()[0].id)!;
+    // Undo of the Forget: it is back, and reading the turn changes nothing.
+    expect(l.restore(gone.undo)).toBe(true);
+    advance(61_000);
+    await l.flush();
+    expect(s.list().map(i => i.text)).toEqual(["Is vegetarian"]);
+    // Forgotten again; the turns from before it are read, and ten minutes on the user says it once more.
+    l.forgetCounted(s.list()[0].id);
+    advance(600_000);
+    tools.heard("By the way, I'm vegetarian", "Noted.", true);
+    advance(61_000);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text)).toEqual(["Is vegetarian"]);
+  });
+});
+
 describe("“forget that”, the instruction check and the conversation's line", () => {
   it("forgets what was kept just now, and says so when nothing was, rather than leaving it to a model that can't (memory-v1)", () => {
     const { l, s, advance } = learning();

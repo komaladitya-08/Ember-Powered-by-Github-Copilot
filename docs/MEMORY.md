@@ -368,6 +368,11 @@ download, so English-only MiniLM is the trade-off for now.
      where it was and says "Ember forgot: …" (with the notes that went and what holds again), with the Undo that puts
      it back; that Undo makes it "Ember remembers “…” again". Focus moves to the line's new words, never to the page
      (memory-c1-3). **Forget everything** clears the lines too.
+     A Forget is never undone by the turn that said the fact: every turn waits up to a minute (longer at the hourly
+     cap) to be read for facts, so what was forgotten is held in RAM, never on disk, while a batch that began before
+     the Forget (or within two minutes of it, `FORGOTTEN_TURN_MS`: the turn may still be under way) waits, and an
+     extracted fact at least `DUPLICATE` like it with the same polarity is skipped; the batch's other facts are still
+     learned, Undo of the Forget lifts it, and a later turn that says it again is learned from (memory-c7-1).
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
      only for Ember to forget something about the user ("forget that I…", "forget my address", "forget my wife's

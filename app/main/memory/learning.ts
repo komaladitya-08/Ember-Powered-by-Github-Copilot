@@ -14,7 +14,7 @@
  */
 
 import { memoryPausedReply } from "../../shared/memory-owner";
-import type { Fact, NewFact, Source } from "./graph";
+import { DUPLICATE, type AddResult, type Fact, type NewFact, type Source } from "./graph";
 import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
 import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
@@ -25,12 +25,19 @@ import {
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
 import { ownFact, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
-import { fold } from "./text";
+import { fold, negated, similarity } from "./text";
 
 /** Idle this long (no turn, no task, screen unlocked) before the sleep-time pass or a question (ms). */
 export const IDLE_MS = 5 * 60_000;
 /** How often idleness is checked (ms). */
 export const IDLE_CHECK_MS = 60_000;
+/**
+ * How long after a Forget a turn that began before it may still end and be queued (ms): a fact forgotten in that time,
+ * or while a batch from before then waits, is never learned back from it (memory-c7-1).
+ */
+export const FORGOTTEN_TURN_MS = 2 * 60_000;
+/** The most forgotten facts held for that at once. */
+const FORGOTTEN_MAX = 50;
 /** Refinement passes a day, at most (and one per idle stretch). */
 export const REFINE_PER_DAY = 6;
 /** The interview lets go after this long without an answer (ms). */
@@ -117,11 +124,16 @@ export class MemoryLearning {
   private question: { name: string; at: number } | null = null;
   /** The facts kept lately, newest last, for "forget that". */
   private recent: { id: string; text: string; at: number }[] = [];
+  /**
+   * What was forgotten while turns said before it may still be read (memory-c7-1): its words, when, and its Undo's
+   * token. In RAM only, and dropped as soon as no such turn is left (`forgottenStill`).
+   */
+  private forgotten: { text: string; at: number; undo: string }[] = [];
 
   constructor(private d: LearningDeps) {
     this.lastActive = this.now();
     this.learner = new Learner({
-      model: () => this.model, keep: f => d.memory.learn(f), inForce: d.inForce, log: d.log, now: d.now, budget: d.budget,
+      model: () => this.model, keep: (f, since) => this.keepLearned(f, since), inForce: d.inForce, log: d.log, now: d.now, budget: d.budget,
       onLearned: facts => this.learned(facts),
     });
   }
@@ -237,6 +249,8 @@ export class MemoryLearning {
     const gone = this.d.memory.forgetCounted(id, !!kept && this.now() - kept.at <= FORGET_THAT_MS);
     this.recent = this.recent.filter(r => r.id !== id);
     if (gone) {
+      // Nor may the turn that said it, still waiting to be read (or still under way), put it back (memory-c7-1).
+      this.forgotten = [...this.forgottenStill(), { text: gone.text, at: this.now(), undo: gone.undo }].slice(-FORGOTTEN_MAX);
       try { this.d.onForgot?.(id, gone); } catch { this.d.log.warn("memory.delete_notice_failed"); }
     }
     return gone;
@@ -250,7 +264,34 @@ export class MemoryLearning {
   restore(token: string, open = this.d.inForce()): boolean {
     if (!open) return false;
     ++this.recallRevision;
-    return this.d.memory.restore(token);
+    const back = this.d.memory.restore(token);
+    if (back) this.forgotten = this.forgotten.filter(f => f.undo !== token);
+    return back;
+  }
+
+  /**
+   * The forgotten facts a waiting turn could still bring back: those forgotten less than FORGOTTEN_TURN_MS ago (the
+   * turn that said one may not have ended yet), and those a batch that began before then is still waiting with.
+   */
+  private forgottenStill(): { text: string; at: number; undo: string }[] {
+    const now = this.now();
+    const since = this.learner.waitingSince;
+    return this.forgotten.filter(f => now - f.at < FORGOTTEN_TURN_MS || (since !== null && since <= f.at + FORGOTTEN_TURN_MS));
+  }
+
+  /**
+   * Keeps a fact extraction found, unless the user forgot the same thing after the batch it was read from began: a
+   * Forget that Ember confirmed is never undone by the turn that said the fact (memory-c7-1). A later turn that says
+   * it again is learned from as usual.
+   */
+  private keepLearned(f: NewFact, since: number): AddResult {
+    this.forgotten = this.forgottenStill();
+    const polarity = negated(f.text);
+    if (this.forgotten.some(g => since <= g.at + FORGOTTEN_TURN_MS && negated(g.text) === polarity && similarity(g.text, f.text) >= DUPLICATE)) {
+      this.d.log.info("memory.learn_skipped", { why: "forgotten" });
+      return { kind: "refused", reason: "it was just forgotten" };
+    }
+    return this.d.memory.learn(f);
   }
 
   /** An explicit local correction retires readers and learned lines that still describe the old wording. */
@@ -272,6 +313,7 @@ export class MemoryLearning {
     this.d.memory.forgetAll();
     this.gaps.clear();
     this.recent = [];
+    this.forgotten = [];
     // The "Ember learned" lines and their Undo go too.
     try { this.d.onForgotAll?.(); } catch { this.d.log.warn("memory.delete_notice_failed"); }
   }

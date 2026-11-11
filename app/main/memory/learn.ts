@@ -273,8 +273,11 @@ export class CallBudget {
 export interface LearnerDeps {
   /** The model to ask, or null while Ember isn't connected. */
   model: () => OneShot | null;
-  /** Keeps one fact (MemoryService.learn). */
-  keep: (f: NewFact) => AddResult;
+  /**
+   * Keeps one fact (MemoryService.learn). `since`: when the first turn or result of the batch it was read from came
+   * (ms), so a fact forgotten after that isn't learned back from it (memory-c7-1).
+   */
+  keep: (f: NewFact, since: number) => AddResult;
   /** Memory is on, agreed to and allowed now: checked again before every call and every fact kept. */
   inForce: () => boolean;
   log: MemoryLog;
@@ -290,6 +293,8 @@ export class Learner {
   private firstAt = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running: AbortController | null = null;
+  /** When the batch being read began (its first item's time), while a call is under way. */
+  private runningSince: number | null = null;
   private readonly b: LearnBudget;
   private readonly calls: CallBudget;
 
@@ -317,6 +322,11 @@ export class Learner {
 
   /** Model calls made in the last day. */
   get callsToday(): number { return this.calls.used; }
+
+  /** When the oldest turn or result still to be learned from came (being read now, or waiting), or null with none. */
+  get waitingSince(): number | null {
+    return this.runningSince ?? (this.items.length ? this.firstAt : null);
+  }
 
   private add(item: LearnItem): void {
     if (!this.items.length) this.firstAt = this.now();
@@ -347,10 +357,12 @@ export class Learner {
     const now = this.now();
     if (!this.calls.allows(now)) { this.schedule(); return 0; }
     const items = this.items;
+    const since = this.firstAt;
     this.items = [];
     this.calls.spend(now);
     const run = new AbortController();
     this.running = run;
+    this.runningSince = since;
     const kept: Fact[] = [];
     try {
       const raw = await model(EXTRACT_SYSTEM, extractPrompt(items), run.signal);
@@ -360,7 +372,7 @@ export class Learner {
       // Turned off, or forgotten, while the model thought: nothing is kept.
       if (!this.d.inForce()) return 0;
       for (const f of learnedFacts(x, items)) {
-        const r = this.d.keep(f);
+        const r = this.d.keep(f, since);
         if (r.kind === "added") kept.push(r.fact);
       }
       this.d.log.info("memory.extracted", { items: items.length, offered: x.facts.length, kept: kept.length });
@@ -370,7 +382,7 @@ export class Learner {
       this.d.log.warn("memory.extract_failed", { err: err instanceof Error ? err.message : String(err) });
       return 0;
     } finally {
-      if (this.running === run) this.running = null;
+      if (this.running === run) { this.running = null; this.runningSince = null; }
       this.schedule();
     }
   }
@@ -381,5 +393,6 @@ export class Learner {
     this.items = [];
     this.running?.abort();
     this.running = null;
+    this.runningSince = null;
   }
 }
