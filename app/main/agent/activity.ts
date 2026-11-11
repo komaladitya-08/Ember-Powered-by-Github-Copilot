@@ -140,7 +140,7 @@ export class ActivityLog {
         const group = STEP_GROUP[e.tool] ?? "other";
         const words = doingWords(e.step, e.app);
         this.push({ id: e.id, kind: "step", at, state: "running", words, group, ...(e.app ? { app: e.app } : {}) });
-        this.setDoing(words);
+        this.setDoing(this.atWork());
         return true;
       }
       case "tool-end": {
@@ -152,7 +152,7 @@ export class ActivityLog {
         a.steps++;
         a.counts[it.group ?? "other"] = (a.counts[it.group ?? "other"] ?? 0) + 1;
         if (!e.ok) a.failedSteps++;
-        this.setDoing("Thinking…");
+        this.setDoing(this.atWork());
         return true;
       }
       case "picture": {
@@ -208,7 +208,7 @@ export class ActivityLog {
           // it), it goes last, at its own time: never a refusal above the user's Allow (tasks-approvals-v5-1).
           if (i < a.items.length - 1) { a.items.splice(i, 1); step.at = at; a.items.push(step); }
         } else this.push({ id: this.id("r"), kind: "refused", at, state: "stopped", words });
-        this.setDoing("Thinking…");
+        this.setDoing(this.atWork());
         return true;
       }
       case "denied": {
@@ -216,7 +216,7 @@ export class ActivityLog {
         const step = a.items[this.running(e.id)];
         if (!step) return false;
         Object.assign(step, { state: "stopped", words: triedWords(step.group ?? "other", 1, step.app), endedAt: at });
-        this.setDoing("Thinking…");
+        this.setDoing(this.atWork());
         return true;
       }
       case "hand":
@@ -283,6 +283,15 @@ export class ActivityLog {
    */
   private running(id: string | undefined): number {
     return this.a.items.findIndex(x => x.kind === "step" && x.state === "running" && (id === undefined || x.id === id));
+  }
+
+  /**
+   * The live line's words for what is done now: the first step under way, or thinking. A reply's calls all begin at
+   * once and run in the order called, so the first is the one at work (or asked about); the ones queued behind it
+   * take the line as their turn comes (tasks-approvals-r7-1).
+   */
+  private atWork(): string {
+    return this.a.items[this.running(undefined)]?.words ?? "Thinking…";
   }
 
   private setDoing(words: string): boolean {

@@ -242,6 +242,22 @@ describe("the details' rows", () => {
     expect(old.card().rows.map(r => [r.state, r.words])).toEqual([["stopped", "Tried to click in Mail"], ["done", "Typed text in Notes"]]);
   });
 
+  it("name the step at work on the live line, not the one queued behind it in the same reply (tasks-approvals-r7-1)", () => {
+    const { l } = log();
+    l.add({ type: "tool-start", id: "a", tool: "click", step: stepOf("click"), app: "Mail" }, T0);
+    l.add({ type: "tool-start", id: "b", tool: "type_text", step: stepOf("type_text"), app: "Notes" }, T0 + 1);
+    expect(l.card().live).toBe("Clicking in Mail…");
+    // Asked about the first and allowed: still the first.
+    l.add({ type: "question" }, T0 + 5);
+    l.add({ type: "answer", answer: "allowed" }, T0 + 10);
+    expect(l.card().live).toBe("Clicking in Mail…");
+    // The first ends: the second is the one at work, then nothing is.
+    l.add({ type: "tool-end", id: "a", ok: true }, T0 + 20);
+    expect(l.card().live).toBe("Typing in Notes…");
+    l.add({ type: "denied", id: "b" }, T0 + 30);
+    expect(l.card().live).toBe("Thinking…");
+  });
+
   it("keep an app's name short, and quote one another computer named over SSH (UI audit)", () => {
     expect(cardApp("Text Editor")).toBe("Text Editor");
     const long = cardApp("A window title that some app put in its WM_CLASS to look official");
