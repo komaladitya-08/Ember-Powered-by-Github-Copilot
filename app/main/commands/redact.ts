@@ -63,8 +63,11 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   /(Authorization:\s*(?:Bearer|Basic|token)\s+)\S+/gi,
   // A Docker config's `"auth": "<base64 of user:password>"`, and a .netrc entry written on one line
   // (`machine host login bob password …`); a password on a line of its own is not told from prose (safety-privacy-r7-3).
+  // An entry is told by its login, or with none by a dotted host: "the default password is admin" and "machine learning
+  // password reset" are sentences, and hiding their next word made commands and notes that say them hold a secret
+  // (regression review of round seven, safety-privacy-x7-2).
   /("auth"\s{0,8}:\s{0,8}")[A-Za-z0-9+/]{16,}={0,2}(?=")/g,
-  /(\b(?:machine[ \t]+\S+|default)(?:[ \t]+(?:login|account)[ \t]+\S+){0,2}[ \t]+password[ \t]+)\S+/g,
+  /(\b(?:(?:machine[ \t]+\S+|default)(?:[ \t]+(?:login|account)[ \t]+\S+){1,2}|machine[ \t]+[\w-]+(?:\.[\w-]+)+)[ \t]+password[ \t]+)\S+/g,
   // The same secret-named options OPTION_SECRET notices (`--db-pass=x`): the option name with its `=` stays, the
   // value is hidden. The leading space or quote is kept too, prose words like "compass" never reach a value this way.
   /((?:^|[\s"'])--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)=)[^\s"',;]+/gi,
