@@ -195,7 +195,9 @@ Ember stops and asks before a command that:
   "$URL"`, `curl -O "https://example.com/$NAME"`, addresses `xargs`, `parallel` or a loop hands over, `xargs -n1 curl
   -sO < urls.txt`, curl's `file[1-3].sh` and `{a,b}.sh`, which name several files, and httpie's `http -d`, where the
   server may pick the name) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
-  saved into or below, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the
+  saved into or below, or that folder's build tools and test runners, asks too, and while Ember has no name for
+  anything the task downloaded the card says the file may be one ("May run a file downloaded in this task: Ember
+  can't tell which files an earlier command downloaded or changed."), not that it is (anywhere, when Ember can't tell the
   folder either, as for a file saved by name in a folder Ember can't tell: `cd "$d" && curl … > x.py`); a listing or a
   read never does; a download a program run through `env -C` or `sudo -D` writes with the shell's `>` is the file in
   the shell's own folder, so `env -C src curl -s … > x.py` and then `python3 x.py` asks; and a patch this task downloaded or fetched applied with `patch`,

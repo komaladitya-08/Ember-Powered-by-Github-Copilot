@@ -203,6 +203,7 @@ export const SAYS = {
   downloadsAndRuns: "Downloads code and runs it.",
   opensProgram: "Opens a program that keeps running after Ember stops.",
   runsDownloaded: "Runs a file downloaded in this task.",
+  mayRunDownloaded: "May run a file downloaded in this task: Ember can't tell which files an earlier command downloaded or changed.",
   downloadsUnnamed: "Downloads to a file Ember can't name.",
   guardedWord: "It uses a ${…:?} word, which Ember reads as the folder it names but can't be sure of.",
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
@@ -477,6 +478,9 @@ class Classifier {
 
   add(cls: DangerClass, rule: string, said: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string; inFolder?: { says: string; objects: Obj[]; ifExists: string } } = {}): void {
     const program = o.program ?? this.program;
+    // When no download of this task has a name Ember knows, it can't say the file that runs is one: it may be
+    // (commands-remote-r6-4). It asks all the same.
+    if (rule === "escape.run-downloaded" && said === SAYS.runsDownloaded && this.noNamedDownload()) return this.add(cls, rule, SAYS.mayRunDownloaded, o);
     const wrappers = this.commands[this.at]?.wrappers ?? [];
     // A POSIX shell's home folder is said as ~, as the card's header says it (commands-remote-r2-3).
     const home = this.topShell === "bash" || this.topShell === "zsh" || this.topShell === "sh" ? this.ctx.home : null;
@@ -1271,6 +1275,13 @@ class Classifier {
   carryUnnamed(dest: string, intoFolder: boolean, sc: Scope): void {
     if (!intoFolder) this.carryDownload(dest, sc, true);
     this.carryDownload((sc.path.flavour === "win32" ? win32 : posix).join(dest, UNNAMED_COPY), sc);
+  }
+
+  /** Whether every download of this task so far is one Ember couldn't name (UNNAMED_DOWNLOAD, UNNAMED_COPY). */
+  noNamedDownload(): boolean {
+    const all = [...this.ctx.downloaded, ...this.downloads];
+    const name = (d: string): string => d.slice(Math.max(d.lastIndexOf("/"), d.lastIndexOf("\\")) + 1);
+    return all.length > 0 && all.every(d => name(d) === UNNAMED_COPY || name(d) === UNNAMED_DOWNLOAD);
   }
 
   /**

@@ -1996,7 +1996,7 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
       expect((await call(h, { target: "this computer", ...(shell ? { shell } : {}), command: fetch })).resultType, fetch).toBe("success");
       expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, fetch).toContain("Downloads to a file Ember can't name.");
       expect((await call(h, { target: "this computer", ...(shell ? { shell } : {}), command: run })).resultType, `${fetch} / ${run}`).toBe("denied");
-      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toEqual(expect.arrayContaining([expect.stringMatching(/^(Runs|May run) a file downloaded in this task/)]));
     }
     // A download Ember names runs as before, and a listing or a read after one it can't name asks nothing.
     const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: ["once"] });
@@ -2006,6 +2006,24 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     const asked = h.asked.length;
     for (const cmd of ["ls", "cat notes.txt", "git status"]) expect((await call(h, { target: "this computer", command: cmd })).resultType, cmd).toBe("success");
     expect(h.asked.length).toBe(asked);
+  });
+
+  it("says a file may be a download, not that it is, when Ember couldn't name anything the task downloaded, and asks all the same (commands-remote-r6-4)", async () => {
+    setCommandJudge(null);
+    const MAY = "May run a file downloaded in this task: Ember can't tell which files an earlier command downloaded or changed.";
+    for (const run of ["npm test", "make", "python3 analyze.py", "bash run.sh"]) {
+      const h = harness({ binding: LOCAL, answers: ["once", "deny"], paths: p => ({ exists: true, real: p }), state: { cwd: "/home/ana/proj", downloaded: new Set(), running: false } });
+      expect((await call(h, { target: "this computer", command: "wget -i urls.txt" })).resultType, run).toBe("success");
+      expect((await call(h, { target: "this computer", command: run })).resultType, run).toBe("denied");
+      const says = (h.asked.at(-1)?.panel as { card: CommandCard }).card.says;
+      expect(says, run).toContain(MAY);
+      expect(says, run).not.toContain("Runs a file downloaded in this task.");
+    }
+    // A download Ember can name is still said as one.
+    const h = harness({ binding: LOCAL, answers: ["once", "deny"], paths: p => ({ exists: true, real: p }), state: { cwd: "/home/ana/proj", downloaded: new Set(), running: false } });
+    await call(h, { target: "this computer", command: "curl -fsSLo run.sh https://example.com/run.sh" });
+    expect((await call(h, { target: "this computer", command: "bash run.sh" })).resultType).toBe("denied");
+    expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says).toContain("Runs a file downloaded in this task.");
   });
 
   it("asks before running what aria2c, axel, fetch or lwp-download saved under a name or in a folder Ember can't see (commands-remote-x6-3)", async () => {
@@ -2042,7 +2060,7 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
       for (const cmd of cmds.slice(0, -1)) expect((await call(h, { target: "this computer", command: cmd })).resultType, cmd).toBe("success");
       const run = cmds[cmds.length - 1];
       expect((await call(h, { target: "this computer", command: run })).resultType, cmds.join(" / ")).toBe("denied");
-      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toEqual(expect.arrayContaining([expect.stringMatching(/^(Runs|May run) a file downloaded in this task/)]));
     }
   });
 
@@ -2109,7 +2127,7 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
       for (const cmd of cmds.slice(0, -1)) expect((await call(h, { target: "this computer", command: cmd })).resultType, cmd).toBe("success");
       const run = cmds[cmds.length - 1];
       expect((await call(h, { target: "this computer", command: run })).resultType, cmds.join(" / ")).toBe("denied");
-      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toContain("Runs a file downloaded in this task.");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says, run).toEqual(expect.arrayContaining([expect.stringMatching(/^(Runs|May run) a file downloaded in this task/)]));
     }
     // What the task wrote itself the same way, and a fetch only shown on the terminal, leave the run as it was.
     const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }), run: () => ({ output: ["done\n"] }), answers: [] });

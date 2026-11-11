@@ -458,7 +458,8 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
       ] as const) {
         const [fetched, ran] = steps(ctx, "bash", get, run);
         expect(fetched, `${ctx}: ${get}`).toContain(UNNAMED);
-        expect(ran, `${ctx}: ${get} / ${run}`).toContain(RUNS);
+        // Said as a file that may be the download when Ember couldn't name any (commands-remote-r6-4).
+        expect(ran.some(l => l === RUNS || l.startsWith("May run a file downloaded in this task")), `${ctx}: ${get} / ${run}`).toBe(true);
       }
       // A listing, a read or a run elsewhere asks nothing after it; a download Ember names says only what it overwrites.
       for (const then of ["ls", "cat notes.txt", "grep -r x ."]) expect(steps(ctx, "bash", "curl -fsSLOJ https://e.com/download", then)[1], then).toEqual([]);
@@ -472,7 +473,7 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     ] as const) {
       const [fetched, ran] = steps("win32", "powershell", get, run);
       expect(fetched, get).toContain(UNNAMED);
-      expect(ran, `${get} / ${run}`).toContain(RUNS);
+      expect(ran.some(l => l === RUNS || l.startsWith("May run a file downloaded in this task")), `${get} / ${run}`).toBe(true);
     }
     // Start-BitsTransfer with no destination saves the address's name in the current folder.
     expect(steps("win32", "powershell", "Start-BitsTransfer https://e.com/x.exe", ".\\x.exe")[1]).toContain(RUNS);
