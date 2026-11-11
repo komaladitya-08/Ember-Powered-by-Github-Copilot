@@ -3631,6 +3631,31 @@ function clientWords(h: H, rest: string, use: PathUse = "write"): void {
 }
 
 /**
+ * psql's backslash commands in its text, each with the words after it up to the line's end or the next backslash. psql
+ * takes any backslash outside quotes as one, straight after SQL too (`select 1\g out.txt`, `select 'x'\gexec`:
+ * commands-remote-x7-7); one after a blank or `;` counts whatever the quotes around it seem to be, since Ember's
+ * reading of them is only a guess (`E'…\'…'`, `$$…$$`).
+ */
+function psqlCommands(t: string): { name: string; rest: string }[] {
+  const out = new Map<number, { name: string; rest: string }>();
+  const command = /\\([A-Za-z!?][\w!?+]*)[ \t]*([^\n\\]*)/y;
+  const take = (at: number): number => {
+    command.lastIndex = at;
+    const m = command.exec(t);
+    if (!m) return at;
+    out.set(at, { name: m[1], rest: m[2] });
+    return at + m[0].length - 1;
+  };
+  for (const m of t.matchAll(/(?:^|[\s;])(?=\\[A-Za-z!?])/g)) take(m.index + m[0].length);
+  let quote: string | null = null;
+  for (let k = 0; k < t.length; k++) {
+    const c = t[k];
+    if (quote !== null) { if (c === quote) quote = null; } else if (c === "'" || c === "\"") quote = c; else if (c === "\\") k = take(k);
+  }
+  return [...out.entries()].sort((a, b) => a[0] - b[0]).map(e => e[1]);
+}
+
+/**
  * A database client's own commands in its text (commands-remote-c7-1): any that isn't on its short list of ones that
  * only show things asks, and the shell command or the files it names are judged, so Ember's own are refused.
  */
@@ -3645,14 +3670,15 @@ function clientCommands(h: H, client: SqlClient, t: string): void {
     }
     if (SQLITE_FUNCTIONS.test(t)) h.e.unclear("unclear.sql", SAYS_CLIENT);
   } else if (client === "psql") {
-    for (const m of t.matchAll(/(?:^|[\s;])\\([A-Za-z!?][\w!?+]*)[ \t]*([^\n\\]*)/g)) {
+    for (const m of psqlCommands(t)) {
       // A backquoted word in any of them runs a program.
-      if (PSQL_SHOWS.test(m[1]) && !m[2].includes("`")) continue;
-      if (m[1] === "!") clientShell(h, m[2]);
-      else clientWords(h, m[2]);
+      if (PSQL_SHOWS.test(m.name) && !m.rest.includes("`")) continue;
+      if (m.name === "!") clientShell(h, m.rest);
+      else clientWords(h, m.rest);
     }
   } else {
-    for (const m of t.matchAll(/(?:^|;)\s*(source|tee|pager|edit|system)\b[ \t]*([^;\n]*)|\\([.!TPe])[ \t]*([^;\n\\]*)/gi)) {
+    // A client word starts a statement: after `;`, or on a line of its own (`use app` ends at its line: x7-7).
+    for (const m of t.matchAll(/(?:^|;)\s*(source|tee|pager|edit|system)\b[ \t]*([^;\n]*)|\\([.!TPe])[ \t]*([^;\n\\]*)/gim)) {
       const word = (m[1] ?? "").toLowerCase();
       const rest = m[2] ?? m[4] ?? "";
       if (word === "system" || word === "pager" || m[3] === "!" || m[3] === "P") clientShell(h, rest);
@@ -3699,7 +3725,9 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
     // -cmd's and -init's values are not the database or its SQL.
     const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));
-    databaseText(h, [...ops.slice(1).map(a => a.v), ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))], "sqlite");
+    // duckdb's -c and -s take the text to run, with a database named or not (commands-remote-x7-7).
+    const given = k === "duckdb" ? h.args.flatMap((a, j) => (a.v === "-c" || a.v === "-s" ? [h.args[j + 1]?.v ?? null] : [])) : [];
+    databaseText(h, [...ops.slice(1).map(a => a.v), ...given, ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))], "sqlite");
     // -init FILE runs the file's commands first, as `.read FILE` does (review #166): stdin is judged as below, another
     // descriptor can't be read first, and any other file asks.
     const init = h.args.flatMap((a, j) => (/^--?init$/.test(a.v ?? "") ? [h.args[j + 1]?.v ?? null] : []));

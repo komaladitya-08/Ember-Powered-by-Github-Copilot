@@ -139,8 +139,10 @@ Ember stops and asks before a command that:
   it, asks; so is the file `psql -o` writes its results to, which asks when it is there, the one `psql -L` or
   `mysql --tee` logs to, and Ember's own files are refused there too; a client's own commands that can run a
   program or write a file ask, with the shell command or file they name judged as if written out: psql's `\!`,
-  `\o`, `\copy` and any other backslash command that doesn't only describe or show, mysql's `system`, `source`,
-  `tee` and `pager`, `--pager` and `--init-command`, and every sqlite3 or duckdb dot-command but the ones that only
+  `\o`, `\copy` and any other backslash command that doesn't only describe or show, written straight after SQL too
+  (`select 1\g out.txt`; a backslash inside a quoted string is text), mysql's `system`, `source`,
+  `tee` and `pager` after a `;` or at the start of a line, `--pager` and `--init-command`, and every sqlite3 or
+  duckdb dot-command (in duckdb's `-c` and `-s` text as well) but the ones that only
   show things written whole, `.tables`, `.schema`, `.mode`, `.headers` and the like, because sqlite3 takes any
   shortening: `.sh` is `.shell`, `.o` is `.output`), and package scripts, make targets and SQL or command files named clean, wipe, purge,
   reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`);

@@ -2006,6 +2006,33 @@ describe("database clients' own commands and the files their options write (comm
   });
 });
 
+describe("database client commands written where Ember didn't look (commands-remote-x7-7)", () => {
+  const cls = (cmd: string) => classifyCommand(cmd, "bash", contextOf("linux"));
+  const decided = (cmd: string) => runCase({ cmd, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" }).decision;
+
+  it("reads psql's backslash command straight after SQL, mysql's client word at the start of a line and duckdb's -c and -s (commands-remote-x7-7)", () => {
+    for (const cmd of [
+      "psql app <<'EOF'\nselect 1\\g ~/.config/ember/settings.json\nEOF", "psql app <<'EOF'\nselect 1\\o ~/.config/ember/settings.json\nEOF", "psql app -c 'select 1\\g /home/ana/.config/ember/settings.json'",
+      "psql app -c \"select 'x'\\! rm -rf ~/.config/ember\"", "mysql app <<'EOF'\nuse app\ntee /home/ana/.config/ember/settings.json\nEOF", "mysql app <<'EOF'\nuse app\nsystem rm -rf ~/.config/ember\nEOF",
+      "duckdb -c '.sh rm -rf ~/.config/ember'", "duckdb -s '.sh rm -rf ~/.config/ember'", "duckdb a.db -c '.sh rm -rf ~/.config/ember'",
+    ]) expect(cls(cmd).refuse?.rule, cmd).toBe("ember.path");
+    for (const cmd of [
+      "psql app <<'EOF'\nselect 'rm -rf /'\\gexec\nEOF", "psql app <<'EOF'\nselect 1\\w ~/.bashrc\nEOF", "psql app <<'EOF'\nselect 1\\g |sh\nEOF", "psql app -c 'select 1\\gexec'",
+      "psql app -c \"select 'a''b'\\gexec\"", "mysql app <<'EOF'\nuse app\ntee out.txt\nEOF", "mysql app <<'EOF'\nuse app\nsource evil.sql\nEOF", "duckdb -c '.sh id'", "duckdb -s '.sh id'",
+      "duckdb -c \"select writefile('x', 1)\"",
+    ]) {
+      expect(decided(cmd).verdict, cmd).toBe("ask");
+      expect(decided(cmd).rules, cmd).toContain("unclear.sql");
+    }
+    expect(decided("psql app <<'EOF'\nselect 1\\w ~/.bashrc\nEOF").rules).toContain("path.startup");
+    // A backslash inside a quoted string is text, and a command that only shows things still runs.
+    for (const cmd of [
+      "psql app -c \"select 'a\\nb'\"", "psql app -c \"select E'a\\tb' as \\\"c\\\"\"", "psql app <<'EOF'\nselect 1\\x\nEOF", "psql app -c 'select 1\\dt'", "mysql app <<'EOF'\nuse app\nselect 1;\nEOF",
+      "duckdb -c 'select 1'", "duckdb a.db -s 'select 42'", "duckdb -c '.tables'",
+    ]) expect(decided(cmd).verdict, cmd).toBe("run");
+  });
+});
+
 describe("downloads saved under a name Ember can't read off the command (commands-remote-r6-1, c7-3)", () => {
   // Each step of a task in turn, the downloads carried from one to the next as the flow carries them: each step's rules.
   const steps = (...cmds: string[]): string[][] => {
