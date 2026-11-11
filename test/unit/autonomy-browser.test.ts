@@ -131,5 +131,7 @@ describe("what still asks in a browser, whatever is on", () => {
 
   it("any button on a payment page", () => {
     asks(edge({ kind: "click", inPage: true, window: "Billing - Example", element: { role: "push button", name: "Continue" } }));
+    // As the worker says it for a click: `onPage`, from the tree (safety-privacy-c7-2).
+    for (const kind of ["click", "cursor_click"] as const) asks(edge({ kind, onPage: true, window: "Billing - Example", element: { role: "push button", name: "Continue" } }));
   });
 });

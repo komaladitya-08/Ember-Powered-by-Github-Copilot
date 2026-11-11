@@ -116,7 +116,8 @@ export interface ActionRequest {
   inPage?: boolean;
   /**
    * For clicks and toggles: the element is in a web page, as the worker found it in the tree. Only ever a reason to ask
-   * (a button with no name there, BARE_BUTTON); `inPage` stays the keys' and the typing's.
+   * (a button with no name there, BARE_BUTTON; any button of a page that takes payment, PAYMENT_PAGE); `inPage` stays
+   * the keys' and the typing's, and a page's link is judged as content only by it.
    */
   onPage?: boolean;
   /**
@@ -2489,7 +2490,7 @@ export class PolicyEngine {
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
         if (named && !lone) return { reason: "this action may be hard to undo or visible to others", about: name };
-        if (ACTIVATING_ROLES.test(role) && r.inPage && PAYMENT_PAGE.test(normalizeLabel(r.window))) return { reason: "this button is on a payment page, where it may buy something", about: name };
+        if (ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) && PAYMENT_PAGE.test(normalizeLabel(r.window))) return { reason: "this button is on a payment page, where it may buy something", about: name };
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
         if (around) return BARE_IN(around);

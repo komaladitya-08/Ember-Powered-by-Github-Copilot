@@ -2815,7 +2815,8 @@ export class Worker {
       taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
       ...(kind === "text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + (value ?? "") } : {}), ...this.formulaOf(node, value, judged), ...this.ownText(field, node.text) } : {}),
       ...((kind === "click" || kind === "toggle") && selects ? { clickSelects: true } : {}),
-      // A page's button with no name is asked about (policy's BARE_BUTTON): the policy is told where the click lands.
+      // A page's button with no name, and any button of a page that takes payment, is asked about (policy's BARE_BUTTON,
+      // PAYMENT_PAGE): the policy is told where the click lands.
       ...((kind === "click" || kind === "toggle") && inWebPage(node, i => this.known.get(i)) ? { onPage: true } : {}),
       ...(dialog ? { dialog } : {}),
       ...this.placeOf(id, element),

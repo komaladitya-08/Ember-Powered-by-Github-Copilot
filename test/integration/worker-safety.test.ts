@@ -1888,6 +1888,19 @@ describe("review round 9: policy and selections", () => {
     }
   });
 
+  it("any button of a page on a payment site is asked about by a click, as the policy says, and the same button elsewhere isn't (safety-privacy-c7-2)", async () => {
+    const nodes: FakeNode[] = [{ id: 1, role: "document web", name: "Plans" }, { id: 2, role: "push button", name: "Continue", parent: 1 }];
+    for (const [title, asks] of [["Billing - Example", true], ["Plans - Example", false]] as const) {
+      const goal = `Look at the plans (${title})`;
+      plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }]);
+      const screen = fakeScreen(nodes, { title });
+      const asked: string[] = [];
+      await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
+      expect(asked, title).toEqual(asks ? ["Click the “Continue” button in Testapp?"] : []);
+      expect(screen.log.length, title).toBe(asks ? 0 : 1);
+    }
+  });
+
   it("a control whose name the reader withheld is asked about, in a page where names were withheld too; one simply unnamed is asked about as Ember's doubt (P10-1, safety-privacy-c7-2)", async () => {
     const page = { id: 1, role: "document web", name: "Checkout" };
     for (const [goal, nodes, asks] of [
