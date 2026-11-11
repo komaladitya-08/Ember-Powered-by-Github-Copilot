@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { friendlyError } from "../../app/main/agent/presenter";
+import { friendlyError, problemTitle } from "../../app/main/agent/presenter";
 
 describe("friendlyError: what used to show raw", () => {
   it("a timeout is Copilot taking too long, not a code error", () => {
@@ -22,6 +22,23 @@ describe("friendlyError: what used to show raw", () => {
     }
     expect(friendlyError("odd", undefined, { provider: true })).toMatch(/ reported a problem\. Try again/);
     expect(friendlyError("odd", undefined, { provider: true })).not.toMatch(/odd/);
+  });
+
+  it("a conversation the runtime couldn't write to disk is this computer's disk, not the model service (reliability-c7-3)", () => {
+    // What the runtime reports with the data folder's disk full (errorType "persistence"); the cause may or may not be in it.
+    const persist = "Failed to persist session events: GenericFailure, Failed to append to JSONL file /home/u/.config/ember/copilot/session-state/ember-conductor-1/events.jsonl: Failed to back up recoverable JSONL";
+    const full = "I couldn't save this conversation: the disk (or your storage quota) is full. Free some space, then ask again.";
+    for (const provider of [false, true, "user"] as const) {
+      expect(friendlyError(`${persist}: ENOSPC: no space left on device, write`, "persistence", { provider })).toBe(full);
+      expect(friendlyError("No space left on device (os error 28)", undefined, { provider })).toBe(full);
+      expect(friendlyError("EDQUOT: disk quota exceeded, write", undefined, { provider })).toBe(full);
+      const said = friendlyError(persist, "persistence", { provider });
+      expect(said).toBe("I couldn't save this conversation on this computer. Check that its disk has free space, then ask again.");
+      // No path, and nothing sends the person to the model's settings.
+      expect(said).not.toMatch(/events\.jsonl|model service|Copilot/);
+      expect(problemTitle(said, provider)).toBe("I couldn't save this conversation");
+      expect(problemTitle(full, provider)).toBe("I couldn't save this conversation");
+    }
   });
 
   it("a long conversation's token limit says so", () => {

@@ -85,6 +85,11 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   const status = ctx.statusCode ?? Number(/\b(?:HTTP|status|code)?\s*\(?(40[1-4]|429)\b/i.exec(raw)?.[1] ?? 0);
   const mine = ctx.provider === "user";
   const service = mine ? "your model service" : ctx.provider ? "your organisation's model service" : "Copilot";
+  // The runtime couldn't write the conversation's events in Ember's data folder (a full disk, live: reliability-c7-3):
+  // this computer's trouble, not the model service's, whatever words the file's path holds. Never the path itself.
+  const full = /\b(ENOSPC|EDQUOT)\b|no space left on device|disk quota exceeded|os error (28|122)\b/i.test(raw);
+  if (full) return "I couldn't save this conversation: the disk (or your storage quota) is full. Free some space, then ask again.";
+  if (errorType === "persistence" || /failed to persist session events/i.test(raw)) return "I couldn't save this conversation on this computer. Check that its disk has free space, then ask again.";
   // Before the policy rule: a filtered prompt mentions a "content management policy", not the user's seat.
   if (/content.?(management|filter)|content_filter|filtered due to|responsible ?ai/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} content filter blocked that request. Try asking in other words.`;
   // A model that takes no images was sent a screenshot (the user's own provider's models are taken to read them unless
@@ -169,6 +174,7 @@ export function settingsHelps(said: string): boolean {
  */
 export function problemTitle(said: string, provider: ServiceKind = false): string {
   const service = provider ? "The model service" : "Copilot";
+  if (/couldn't save this conversation/i.test(said)) return "I couldn't save this conversation";
   if (/content filter/i.test(said)) return "Request blocked";
   if (/didn't accept the sign-in/i.test(said)) return "Copilot didn't accept the sign-in";
   if (/\brefused\b/i.test(said)) return `${service} refused it`;
