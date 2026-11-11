@@ -246,19 +246,13 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(w.audit.find(e => e.phase === "decided")).toMatchObject({ verdict: "run", command: "ls build && echo zq9-$((40+2))" });
   }, 20_000);
 
-  it("runs an ordinary if, a read of written-out text and a short written-out for loop without asking, asks before any other loop as main does, and before reading a file (commands-remote-2, commands-a7-2, commands-c7-1, commands-remote-r6-2)", async () => {
+  it("runs an ordinary if and a read of written-out text without asking, asks before any loop as main does, and before reading a file (commands-remote-2, commands-a7-2, commands-c7-1)", async () => {
     const { result } = await run("if [ -d build ]; then echo built; fi; read -r a b <<'EOF'\nzq3 got-b\nEOF\necho \"$a $b\"", "");
     expect(w.cards).toEqual([]);
     expect(result.resultType).toBe("success");
     for (const want of ["zq3", "built", "got-b"]) expect(result.textResultForLlm).toContain(want);
-    // A short `for` over written-out words is judged pass by pass and runs (commands-remote-r6-2); a loop Ember can't
-    // write out asks, as on main.
-    const passes = await run("for i in 1 2 3; do echo zq$i; done", "");
-    expect(w.cards).toEqual([]);
-    expect(passes.result.resultType).toBe("success");
-    for (const want of ["zq1", "zq2", "zq3"]) expect(passes.result.textResultForLlm).toContain(want);
     w.verdicts = () => "deny";
-    const loop = await run("for i in $(seq 3); do echo zq$i; done", "");
+    const loop = await run("for i in 1 2 3; do echo zq$i; done", "");
     expect(w.cards).toHaveLength(1);
     expect(w.cards[0].says).toContain("Ember can't tell exactly what this does.");
     expect(loop.result.resultType).toBe("denied");

@@ -146,9 +146,9 @@ export interface ClassificationExtra extends Classification {
    */
   holdsFlow?: boolean;
   /**
-   * The line was judged as its written-out form (unroll.ts: a short `for` loop pass by pass, a simple `[[ … ]]` as
-   * `[ … ]`): it runs, asks or is refused as that form is, but never runs with a Stop because the user's words asked
-   * for what it does (commands-b7-2 stands; decide.ts).
+   * The line was judged as its written-out form (unroll.ts: a simple `[[ … ]]` as `[ … ]`): it runs, asks or is
+   * refused as that form is, but never runs with a Stop because the user's words asked for what it does
+   * (commands-b7-2 stands; decide.ts).
    */
   writtenOut?: boolean;
   /**
@@ -1384,8 +1384,8 @@ function internalUnclear(shell: ShellId, cwd: string): ClassificationExtra {
  */
 export function classifyCommand(text: string, shell: ShellId, ctx: ClassifyContext): Classification {
   try {
-    // A command line's short written-out `for` loop is judged as the sequence of its passes, and its simple `[[ … ]]`
-    // as `[ … ]` (unroll.ts, commands-remote-r6-2); anything else, loops and a script's text included, as written.
+    // A command line's simple `[[ … ]]` is judged as `[ … ]` (unroll.ts, commands-remote-r6-2); anything else, every
+    // loop and a script's text included, as written.
     const judged = SHELL_FAMILY[shell] === "posix" && ctx.script !== true ? judgedText(text) : text;
     const cls = new Engine(ctx, shell).run(judged);
     return judged === text ? cls : ({ ...cls, writtenOut: true } as ClassificationExtra);

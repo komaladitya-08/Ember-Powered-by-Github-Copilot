@@ -1,34 +1,19 @@
 /**
- * Writing a short `for` loop out pass by pass, and a simple `[[ … ]]` test as `[ … ]`, before a POSIX command line is
- * judged (commands-remote-r6-2). Pure text in, text out; the command that runs is never changed.
+ * Writing a simple `[[ … ]]` test as `[ … ]` before a POSIX command line is judged (commands-remote-r6-2). Pure text
+ * in, text out; the command that runs is never changed.
  *
- * The constraint: nothing here may decide less safely than the classifier already does for the written-out text. A loop
- * is judged once per body by the classifier, so a value from its list could reach an option nothing looked at (`for f in
- * --hard; do git reset $f; done` is `git reset --hard`: commands-c7-1), and every loop asks. This module finds the one
- * kind of loop whose passes can be written out exactly: `for NAME in` a short list of plain words, with a body in which
- * each `$NAME` stands where putting the word itself means the same to bash, zsh and sh. It returns the line with each
- * pass written out (`NAME=word; body`, the word in place of every `$NAME`), so the classifier judges the sequence the
- * shell runs: the folder, the variables and the downloads carry from pass to pass, and every word reaches the judging
- * of the command it lands in. Anything it isn't sure of returns null, and the line is judged as written (a loop asks).
+ * The constraint: nothing here may decide less safely than the classifier already does for the written-out text. Only
+ * a test `[` reads exactly as `[[` does is written out (plainTests), on a line that holds nothing this module doesn't
+ * read: a backslash, a backtick, `$(…)`, any parenthesis or brace, a comment, a here-document or here-string, `&` on
+ * its own, `!`, a `$` that isn't `$name` or `${name}`, or any reserved word but `[[` (an `if`, a loop, `time`) leaves
+ * the line judged as written.
  *
- * What makes a line unsure (each returns null for the whole line): a backslash, a backtick, `$(…)`, any parenthesis or
- * brace, a comment, a here-document or here-string, `&` on its own, `!`, a `$` that isn't `$name` or `${name}`; any
- * reserved word but the loop's own (`if`, `while`, `case`, `[[`, a nested loop, `time`); a word that can change what a
- * variable holds or how words are read behind the classifier's back (`eval`, `source`, `read`, `export`, `set`, `IFS`
- * and the like, DENIED); `break` or `continue`; the loop's name anywhere but its own `$NAME` (set, read, exported, used
- * after the loop, or inside single quotes); a `$NAME` as the command word, beside a `~`, `[`, `=`, `<` or `>` that would
- * read differently with the word written in, or followed by `:` or `[` (zsh's modifiers and subscripts); a list word
- * that is quoted, a pattern, a variable, a reserved word or holds `=` or `~`; more than MAX_PASSES passes in the line.
- * And, from the seventh round's regression review: any character outside ASCII (zsh reads a letter such as `é` as part
- * of a name, so `"$fé"` is another variable: commands-remote-x7-1); a shell command that sets a variable it is given
- * by name, an option of `print` or `printf` that could be `-v` (`print -vf` sets `f`), or `-` in front of a command
- * (commands-remote-x7-2); an assignment with a subscript (`BASH_ALIASES[p]=…`, zsh's `functions[p]=…` make `p` a
- * command that can set the variable: commands-remote-x7-3); `$_`, or a loop's body that uses a variable the line
- * itself sets (one pass would carry what another set into a command, as no loop did before: commands-remote-x7-5).
+ * A `for` loop is never written out: every loop is judged as written, and asks. The seventh round wrote a short loop
+ * out pass by pass (`NAME=word; body`), and its reviews kept finding lines whose written-out text was not what bash or
+ * zsh runs (a redirection in front of the body's first command, an option of `print` or `printf` made up from the
+ * list's word, bash's `BASH_ALIASES=…` with no subscript: commands-remote-y7-1 to y7-3), so that was taken out again.
  */
 
-/** The most passes written out on one line (every loop's together); longer lists ask as before. */
-export const MAX_PASSES = 12;
 /** The longest written-out line (classify.ts's MAX_COMMAND_CHARS: a longer one would ask as too long anyway). */
 const MAX_CHARS = 8000;
 
@@ -37,45 +22,7 @@ const RESERVED: ReadonlySet<string> = new Set([
   "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac", "select", "function", "time", "coproc", "in",
   "[[", "]]", "{", "}", "!", "repeat", "foreach", "end", "always", "nocorrect", "noglob",
 ]);
-/**
- * Words that can change a variable, how words are split or what a later word means without the name being written
- * where the classifier looks: a line holding one, in any place, quoted or not, is judged as written.
- */
-const DENIED: ReadonlySet<string> = new Set([
-  "eval", "source", "read", "mapfile", "readarray", "getopts", "let", "declare", "typeset", "local", "readonly", "export", "unset", "set",
-  "shift", "trap", "exec", "alias", "unalias", "shopt", "setopt", "unsetopt", "emulate", "enable", "builtin", "command", "integer", "float",
-  "autoload", "zmodload", "break", "continue", "wait", "IFS",
-]);
-/**
- * Shell commands that set a variable they are given by name, sometimes in a word that looks like an option (zsh's
- * `zparseopts -af`, bash's `compgen -Vf`), or that change what a later word is (`functions`, `disable`); `-` runs
- * the command after it. A line with one as a command's program is judged as written (commands-remote-x7-2).
- */
-const SETS_BY_NAME: ReadonlySet<string> = new Set([
-  "-", "zparseopts", "zformat", "zregexparse", "zstyle", "vared", "getln", "private", "functions", "unfunction", "disable", "compgen", "complete",
-  "compopt", "compadd", "compset", "compquote", "compvalues", "comparguments", "compdescribe", "compfiles", "compgroups", "comptags", "comptry",
-  "compcall", "compctl", "zle", "bindkey", "zcompile", "sched", "fc",
-]);
-/** An assignment with a subscript: bash's `BASH_ALIASES[p]=…` and zsh's `functions[p]=…` define a command (commands-remote-x7-3). */
-const SUBSCRIPT_SET = /^[A-Za-z_][A-Za-z0-9_]*\[.*\]\+?=/;
-/** A list word written out whole: nothing for the shell to expand, split, or read as an assignment. */
-const VALUE = /^[A-Za-z0-9_./:@%+,-]+$/;
-/** A word of plain characters (a program's name, an option, a file). */
-const PLAIN = /^[A-Za-z0-9_./:@%+,=-]+$/;
-/**
- * The names a written-out loop may use: one lower-case letter, or a common lower-case word. Setting a name the shell
- * itself reads changes what later words mean (`HOME` moves `~`, `CDPATH` moves `cd`, zsh's `path` is `PATH`), and the
- * shells' lists of such names are long, so only names known to be nobody's are written out.
- */
-const NAMES: ReadonlySet<string> = new Set([
-  "file", "files", "dir", "folder", "item", "name", "pkg", "package", "num", "arg", "src", "dst", "target", "branch", "repo", "ext", "ver",
-  "version", "lib", "task", "img", "image", "tag", "key", "val", "value", "entry", "pattern", "script", "url", "port", "db", "table", "ns",
-  "pod", "app", "service", "project", "filename", "fname", "word", "step", "kind", "env", "lang", "test", "suite", "spec",
-]);
-const loopName = (n: string): boolean => /^[a-z]$/.test(n) || NAMES.has(n);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
-/** An option word (`-f`, `--force`): its letters are never a variable's name. */
-const OPTION = /^--?[A-Za-z0-9][A-Za-z0-9-]*$/;
 
 /** A `$name` or `${name}` in the text. */
 interface Ref { s: number; e: number; name: string; braced: boolean; quoted: boolean }
@@ -193,41 +140,6 @@ function scan(t: string): Tok[] | null {
   return toks;
 }
 
-/** Whether a word holds `name` as a name of its own (set, read or used), apart from the `$NAME`s in `ok`. */
-function namesIt(w: Tok, name: string, ok: ReadonlySet<Ref>): boolean {
-  if (OPTION.test(w.raw)) return false;
-  let text = "";
-  let at = w.s;
-  for (const r of w.refs) {
-    if (!ok.has(r)) continue;
-    text += `${w.raw.slice(at - w.s, r.s - w.s)}\u0000`;
-    at = r.e;
-  }
-  text += w.raw.slice(at - w.s);
-  return new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`).test(text);
-}
-
-/** Whether writing the word in place of this `$NAME` means the same to the shell (the header's list of places). */
-function standsPlain(t: string, w: Tok, r: Ref, afterProgram: boolean): boolean {
-  const next = t[r.e];
-  // Straight after another `$name` the word would lengthen that name (`$g$f` is not `$ga`).
-  if (/\$[A-Za-z_][A-Za-z0-9_]*$/.test(t.slice(Math.max(0, r.s - 80), r.s))) return false;
-  if (r.quoted) return next !== "[" && (r.braced || next !== ":") && !/[*?[]/.test(w.raw);
-  // A pattern matches a `/` it is given by a variable differently from one written in it.
-  if (!afterProgram || /[*?[\]]/.test(w.raw)) return false;
-  const before = t.slice(w.s, r.s);
-  if (before !== "") {
-    const prev = before[before.length - 1];
-    if (!/[A-Za-z0-9_./:,@%+"'-]/.test(prev) && !(prev === "=" && before.length > 1)) return false;
-    const tilde = before.lastIndexOf("~");
-    if (tilde >= 0 && !before.slice(tilde).includes("/")) return false;
-  }
-  // A number in front of `<` or `>` would become the descriptor (`echo $n>out` is not `echo 2>out`).
-  if (next === "<" || next === ">") return false;
-  if (r.e >= w.e) return true;
-  return /["'./,-]/.test(next) || (r.braced && /[A-Za-z0-9_:]/.test(next));
-}
-
 /** The simple commands of a run of tokens: each one's words, and the operator in front of it. */
 function simples(toks: readonly Tok[]): { words: Tok[]; before: Tok | null }[] {
   const out: { words: Tok[]; before: Tok | null }[] = [];
@@ -245,146 +157,6 @@ function simples(toks: readonly Tok[]): { words: Tok[]; before: Tok | null }[] {
 
 /** A simple command's program word: the first word that isn't an assignment or a redirection's file. */
 const programOf = (words: readonly Tok[]): Tok | undefined => words.find(w => !w.target && !ASSIGNMENT.test(w.raw));
-/** The same for a command that may stand straight after a loop's `do` (`do . ./x.sh`). */
-const programAfterDo = (words: readonly Tok[]): Tok | undefined => programOf(words[0]?.raw === "do" && !words[0].target ? words.slice(1) : words);
-
-/** Whether the line holds nothing that changes variables or word reading behind the classifier (DENIED). */
-function settled(toks: readonly Tok[]): boolean {
-  for (const k of toks) {
-    if (k.k !== "word") continue;
-    if (DENIED.has(k.value) || /(?<![A-Za-z0-9_])IFS(?![A-Za-z0-9_])/.test(k.raw) || SUBSCRIPT_SET.test(k.raw)) return false;
-    // `$_` is the last word of the command before it, which the written-out assignment changes (commands-remote-x7-5).
-    if (k.refs.some(r => r.name === "_")) return false;
-  }
-  for (const c of simples(toks)) {
-    const p = programAfterDo(c.words);
-    if (p === undefined) continue;
-    // A command Ember can't name (`$X args`) could be any of them; `.` is `source`.
-    if (p.refs.length > 0 || p.value === "." || SETS_BY_NAME.has(p.value)) return false;
-    // `printf -v name` and zsh's `print -v name` set a variable, with the name in the same word too (`print -rvf`
-    // sets `f`: commands-remote-x7-2). So no word that may be an option holds a `v` or starts with a variable: for
-    // printf the word after it (its format), for print every word up to `--`.
-    const at = c.words.findIndex(w => w.value === "printf" || w.value === "print");
-    if (at < 0) continue;
-    const rest = c.words.slice(at + 1).filter(w => !w.target);
-    const end = rest.findIndex(w => w.raw === "--");
-    const options = c.words[at].value === "printf" ? rest.slice(0, 1) : end < 0 ? rest : rest.slice(0, end);
-    if (options.some(w => /^[-+].*v/.test(w.value) || w.refs.some(r => r.s === w.s || (r.s === w.s + 1 && w.raw[0] === "\"")))) return false;
-  }
-  return true;
-}
-
-/** A `for` loop found at a token: its name, its list, its body's tokens and the index of its `done`. */
-interface Loop { name: Tok; list: Tok[]; body: Tok[]; done: number }
-
-/** Reads `for NAME in words (; | newlines) do body (; | newlines) done` from the `for` at toks[at], or null. */
-function loopAt(toks: readonly Tok[], at: number): Loop | null {
-  let i = at + 1;
-  const name = toks[i++];
-  const kw = toks[i++];
-  if (name?.k !== "word" || name.target || !loopName(name.raw) || kw?.k !== "word" || kw.target || kw.raw !== "in") return null;
-  const list: Tok[] = [];
-  while (toks[i]?.k === "word") list.push(toks[i++]);
-  if (list.length === 0 || list.some(w => w.target || !VALUE.test(w.raw) || RESERVED.has(w.raw) || DENIED.has(w.raw))) return null;
-  // One `;`, or newlines, then `do`.
-  if (toks[i]?.raw === ";") i++;
-  else if (toks[i]?.raw === "\n") { while (toks[i]?.raw === "\n") i++; }
-  else return null;
-  const kwDo = toks[i++];
-  if (kwDo?.k !== "word" || kwDo.target || kwDo.raw !== "do") return null;
-  while (toks[i]?.raw === "\n") i++;
-  const start = i;
-  if (toks[start]?.k !== "word") return null;
-  // `done` as a command of its own, after `;` or a newline, with `;`, a newline or the end after it.
-  let done = -1;
-  for (let j = start + 1; j < toks.length; j++) {
-    if (toks[j].k !== "word" || toks[j].target || toks[j].raw !== "done" || toks[j - 1].k !== "op") continue;
-    done = j;
-    break;
-  }
-  if (done < 0) return null;
-  const after = toks[done + 1];
-  if (after !== undefined && after.raw !== ";" && after.raw !== "\n") return null;
-  let end = done;
-  while (toks[end - 1].k === "op") end--;
-  if (!/^(;\n*|\n+)$/.test(toks.slice(end, done).map(o => o.raw).join(""))) return null;
-  return { name, list, body: toks.slice(start, end), done };
-}
-
-/**
- * The line with every `for NAME in words; do body; done` written out pass by pass, or null when it has no loop or
- * anything in it isn't certain (the header's list): then the line is judged as written, and a loop asks.
- */
-export function unrollLoops(text: string): string | null {
-  if (text.length > MAX_CHARS || !/(^|[;\n])[ \t]*for[ \t]/.test(text)) return null;
-  // zsh reads a letter outside ASCII as part of a variable's name: `"$fé"` is the variable `fé`, not `$f` and then `é`,
-  // so the written-out word would not be what zsh runs (commands-remote-x7-1).
-  // eslint-disable-next-line no-control-regex -- the range of ASCII, to find any character outside it
-  if (/[^\x00-\x7f]/.test(text)) return null;
-  const toks = scan(text);
-  if (toks === null || !settled(toks)) return null;
-  // The variables the line sets anywhere: a body that uses one asks, as every loop did (commands-remote-x7-5).
-  const sets = new Set<string>();
-  for (const k of toks) {
-    const m = k.k === "word" ? /^([A-Za-z_][A-Za-z0-9_]*)\+?=/.exec(k.raw) : null;
-    if (m !== null) sets.add(m[1]);
-  }
-  const edits: { s: number; e: number; text: string; name: Tok; refs: Set<Ref> }[] = [];
-  let passes = 0;
-  let from = 0;
-  for (const c of simples(toks)) {
-    const p = programOf(c.words);
-    if (p === undefined || p.s < from || !RESERVED.has(p.raw)) continue;
-    // Only a loop that starts the line or follows `;` or a newline; any other reserved word leaves the line as written.
-    if (p.raw !== "for" || p !== c.words[0] || (c.before !== null && c.before.raw !== ";" && c.before.raw !== "\n")) return null;
-    const at = toks.indexOf(p);
-    // Newlines after `&&`, `||` or `|` only carry the line on: the loop would be that command's other half.
-    let prev = at - 1;
-    while (prev >= 0 && toks[prev].raw === "\n" && toks[prev].k === "op") prev--;
-    if (prev >= 0 && toks[prev].k === "op" && toks[prev].raw !== ";") return null;
-    const loop = loopAt(toks, at);
-    if (loop === null) return null;
-    passes += loop.list.length;
-    if (passes > MAX_PASSES) return null;
-    // Every `$NAME` in the body stands where the word itself means the same, after a plainly written program; no
-    // command in the body starts with a reserved word (a nested loop, an `if`, `[[`).
-    const refs = new Set<Ref>();
-    for (const b of simples(loop.body)) {
-      const prog = programOf(b.words);
-      if (prog !== undefined && RESERVED.has(prog.raw)) return null;
-      for (const w of b.words) {
-        for (const r of w.refs) {
-          if (sets.has(r.name)) return null;
-          if (r.name !== loop.name.raw) continue;
-          if (prog === undefined || !standsPlain(text, w, r, w.s > prog.s && PLAIN.test(prog.raw))) return null;
-          refs.add(r);
-        }
-      }
-    }
-    const bodyStart = loop.body[0].s;
-    const bodyEnd = loop.body[loop.body.length - 1].e;
-    const sep = text.slice(bodyStart, bodyEnd).includes("\n") ? "\n" : "; ";
-    const ordered = [...refs].sort((a, b) => a.s - b.s);
-    const written = loop.list.map(v => {
-      let out = "";
-      let at = bodyStart;
-      for (const r of ordered) { out += text.slice(at, r.s) + v.raw; at = r.e; }
-      return `${loop.name.raw}=${v.raw}${sep}${out}${text.slice(at, bodyEnd)}`;
-    }).join(sep);
-    edits.push({ s: p.s, e: toks[loop.done].e, text: written, name: loop.name, refs });
-    from = toks[loop.done].e;
-  }
-  if (edits.length === 0) return null;
-  // The loop's name is nowhere else: not set, read or used but by its own `$NAME`s, in any loop's body or after it.
-  for (const e of edits) {
-    for (const w of toks) if (w.k === "word" && w !== e.name && namesIt(w, e.name.raw, e.refs)) return null;
-  }
-  let out = "";
-  let at = 0;
-  for (const e of edits) { out += text.slice(at, e.s) + e.text; at = e.e; }
-  out += text.slice(at);
-  return out.length > MAX_CHARS ? null : out;
-}
 
 /** `[[ … ]]`'s tests of one file or text, which `[ … ]` reads the same way. */
 const UNARY: ReadonlySet<string> = new Set(["-e", "-f", "-d", "-r", "-w", "-x", "-s", "-L", "-h", "-p", "-S", "-b", "-c", "-n", "-z"]);
@@ -432,7 +204,7 @@ export function plainTests(text: string): string | null {
   return out + text.slice(at);
 }
 
-/** The text a POSIX command line is judged by: its loops written out, or its simple `[[ … ]]` tests as `[ … ]`, or itself. */
+/** The text a POSIX command line is judged by: its simple `[[ … ]]` tests as `[ … ]`, or itself (a loop as written). */
 export function judgedText(text: string): string {
-  return unrollLoops(text) ?? plainTests(text) ?? text;
+  return plainTests(text) ?? text;
 }

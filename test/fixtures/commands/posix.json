@@ -6330,34 +6330,52 @@
   },
   {
    "cmd": "for i in 1 2 3; do echo $i; done",
-   "verdict": "run"
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
+   ]
   },
   {
    "cmd": "for f in a.txt b.txt; do wc -l \"$f\"; done",
-   "verdict": "run"
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
+   ]
   },
   {
    "cmd": "for i in 1 2\ndo\n  echo \"pass ${i}\"\ndone",
-   "verdict": "run"
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
+   ]
   },
   {
    "cmd": "for f in --hard; do git reset $f; done",
    "verdict": "ask",
    "classes": [
-    "destroy"
+    "unclear"
    ],
    "rules": [
-    "git.reset.hard"
+    "unclear.for"
    ]
   },
   {
    "cmd": "for f in -delete; do find . $f; done",
    "verdict": "ask",
    "classes": [
-    "destroy"
+    "unclear"
    ],
    "rules": [
-    "posix.find.delete"
+    "unclear.for"
    ]
   },
   {
@@ -6367,7 +6385,7 @@
     "unclear"
    ],
    "rules": [
-    "unclear.folder"
+    "unclear.for"
    ]
   },
   {
@@ -6375,10 +6393,12 @@
    "words": "delete build and dist",
    "verdict": "ask",
    "classes": [
-    "destroy"
+    "destroy",
+    "unclear"
    ],
    "rules": [
-    "posix.rm"
+    "posix.rm",
+    "unclear.for"
    ]
   },
   {
@@ -6432,6 +6452,86 @@
    "verdict": "ask",
    "classes": [
     "unclear"
+   ]
+  },
+  {
+   "cmd": "for f in a; do >~/.bashrc echo $f; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
+   ]
+  },
+  {
+   "cmd": "for f in a; do 2>~/.profile ls $f; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
+   ]
+  },
+  {
+   "cmd": "for f in a; do >src/main.c echo $f; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
+   ]
+  },
+  {
+   "cmd": "for f in a; do >printf printf -vf %s --hard; git reset $f; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
+   ]
+  },
+  {
+   "cmd": "for f in vf; do printf -$f %s --hard; git reset $f; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
+   ]
+  },
+  {
+   "cmd": "for f in -vf; do printf ''$f %s --hard; git reset $f; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
+   ]
+  },
+  {
+   "cmd": "for i in v v; do git reset $x; printf -$i x %s --hard; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
+   ]
+  },
+  {
+   "cmd": "BASH_ALIASES='printf -vf %s --hard'\nfor f in a; do 0; git reset $f; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.for"
    ]
   },
   {

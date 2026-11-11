@@ -99,9 +99,8 @@ export function decideCommand(i: DecideInput): CommandDecision {
   if (!policyAsk && F.length === 0) {
     return { verdict: "run", reason: "An ordinary command.", classes: [], rules: [], says: windowsLine, unasked: false, armMs: 0 };
   }
-  // 10. The user's own words asked for exactly this. Never a line judged as its written-out form (a loop's passes, a
-  // `[[ … ]]` test as `[ … ]`: unroll.ts): what it does more than once or behind a test asks, as every loop did
-  // (commands-b7-2).
+  // 10. The user's own words asked for exactly this. Never a line judged as its written-out form (a `[[ … ]]`
+  // test as `[ … ]`: unroll.ts): what it does behind a test asks, as every `[[ … ]]` did (commands-b7-2).
   if (!policyAsk && i.userWords.trim() !== "" && (cls as Partial<ClassificationExtra>).writtenOut !== true) {
     const extra = cls as Partial<ClassificationExtra>;
     const m = matchIntent({ ...cls, findings: F }, i.userWords, {

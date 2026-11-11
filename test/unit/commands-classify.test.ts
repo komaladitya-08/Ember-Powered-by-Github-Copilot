@@ -14,7 +14,6 @@ import { lexPowerShell } from "../../app/main/commands/lex-powershell";
 import { lexCmd } from "../../app/main/commands/lex-cmd";
 import { lit, type Arg } from "../../app/main/commands/words";
 import { withoutReadFlow, withRealPaths } from "../../app/main/commands/scripts";
-import { judgedText } from "../../app/main/commands/unroll";
 import { contextOf, loadCorpus, problemsOf, runCase, type ContextName, type Family } from "../fixtures/commands/corpus";
 
 const FAMILIES: Family[] = ["posix", "powershell", "cmd", "wsl"];
@@ -1036,8 +1035,7 @@ describe("the card's words from the classifier (review #214)", () => {
     const flowWord = /^unclear\.(for|while|until|do|done|in)$/;
     const says = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.filter(f => f.rule !== "unclear.read-text" && !flowWord.test(f.rule)).map(f => f.says);
     expect(says("for f in *.log; do rm \"$f\"; done")).toEqual(["Deletes each file the loop names."]);
-    // A short list of written-out words is judged pass by pass (commands-remote-r6-2): each pass says its own.
-    expect(says("for f in a b; do rm -r ${f}; done")).toEqual(["Deletes a and everything in it.", "Deletes b and everything in it."]);
+    expect(says("for f in a b; do rm -r ${f}; done")).toEqual(["Deletes a and b and everything in them."]);
     expect(says("for f in 'a' b; do rm -r ${f}; done")).toEqual(["Deletes a and b and everything in them."]);
     // A list of names is said by its names, so a loop over folders never reads as harmless (commands-remote-c2-3).
     expect(says("for f in ~/Documents ~/Pictures; do rm -rf \"$f\"; done")).toEqual(["Deletes ~/Documents and ~/Pictures and everything in them."]);
@@ -1164,10 +1162,9 @@ describe("loops and ifs (commands-remote-2)", () => {
     ]) expect(flow(cmd).findings, cmd).toEqual([]);
     // With a variable set in front of it the read asks inside an if as it does alone, and as main did (commands-remote-x7-5).
     expect(flow("if IFS= read -r l <<< 'a'; then echo \"$l\"; fi").findings.map(f => f.rule)).toContain("unclear.assignment-program");
-    // A loop over written-out words or text asks for nothing more than its own words, which every loop Ember can't write
-    // out pass by pass keeps (commands-c7-1).
+    // A loop over written-out words or text asks for nothing more than its own words, which every loop keeps (commands-c7-1).
     for (const cmd of [
-      "for i in 1 2 3; do echo $i; done | cat", "for n in 'a b' \"c\" d-e; do echo \"$n\"; done", "while read -r l; do echo \"$l\"; done <<< 'a b'",
+      "for i in 1 2 3; do echo $i; done", "for i in 1 2 3; do echo $i; done | cat", "for n in 'a b' \"c\" d-e; do echo \"$n\"; done", "while read -r l; do echo \"$l\"; done <<< 'a b'",
       "while IFS= read -r l; do echo \"$l\"; done <<EOF\na\nb\nEOF", "until false; do break; done", "while true; do sleep 1; break; done",
       "while true; do while read -r b; do echo \"$b\"; done; done <<< 'x'",
     ]) expect(flow(cmd).findings.map(f => f.rule).filter(r => !/^unclear\.(for|while|until|do|done)$/.test(r)), cmd).toEqual([]);
@@ -1180,10 +1177,7 @@ describe("loops and ifs (commands-remote-2)", () => {
 
   it("keeps a loop's or an if's own words, as main did, when it changes the folder, sets a variable or anything in the line asks (commands-b7-1, b7-2, b7-3)", () => {
     const flow = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash");
-    const flowWords = (cmd: string) => flow(cmd).findings.map(f => f.rule).filter(r => /^unclear\.(for|while|until|if|do|done|then|fi)$/.test(r));
-    // A short `for` over written-out words is judged as its passes written out (commands-remote-r6-2): it asks for what
-    // they ask for (the folder Ember can't follow, the delete), without the loop's words.
-    const loopWords = (cmd: string) => (judgedText(cmd) === cmd ? flowWords(cmd) : flow(cmd).findings.map(f => f.rule));
+    const loopWords = (cmd: string) => flow(cmd).findings.map(f => f.rule).filter(r => /^unclear\.(for|while|until|if|do|done|then|fi)$/.test(r));
     for (const cmd of [
       // The body is judged once, in the folder the line starts in: a folder change makes the next pass another folder's
       // (commands-b7-1).
@@ -1193,7 +1187,7 @@ describe("loops and ifs (commands-remote-2)", () => {
       "for d in /home/ana/.config proj; do ls ember; cd $d; done", "for i in 1 2; do cat ember/settings.json && cd ~/.config; done",
       "for i in 1 2; do cat ember/settings.json; for j in 1; do cd ~/.config; done; done", "for i in 1 2; do cat ember/settings.json; if true; then cd ~/.config; fi; done",
       "while cat ember/settings.json; do cd ~/.config; done", "while true; do cat ember/settings.json; command cd ~/.config; done",
-      "for i in 1 2; do ls; time cd ..; done", "for i in *; do ls; chdir ..; done", "if [ -d x ]; then cd x; fi",
+      "for i in 1 2; do ls; time cd ..; done", "for i in 1 2; do ls; chdir ..; done", "for i in *; do ls; chdir ..; done", "if [ -d x ]; then cd x; fi",
       // A dangerous command the user's words could announce (commands-b7-2).
       "while true; do rm -rf build; done", "for i in 1 2; do rm -rf build; done", "if [ -d build ]; then rm -rf build; fi", "for i in 1 2; do echo $i; done; rm -rf build",
       // A variable set, from text Ember can't see or not, or a file sourced (commands-b7-3).
@@ -1201,7 +1195,7 @@ describe("loops and ifs (commands-remote-2)", () => {
       "for i in 1; do local x=$(cat f); echo $x; done", "for i in 1; do export X=$(cat f); echo $X; done", "for i in 1; do typeset x=$(cat f); echo $x; done",
       "for i in 1; do readonly x=$(cat f); echo $x; done", "for i in 1; do declare x=$(cat f); echo $x; done", "for i in 1; do set -- $(cat f); echo $1; done",
       "for i in 1; do printf -v x '%s' \"$(cat f)\"; echo $x; done", "for i in 1; do wait -p x; echo $x; done", "for i in 1; do exec {fd}< f; echo $fd; done",
-      "for i in 1 2; do ls {fd}< f; done", "for i in *; do ls; x=1; done", "for i in 1 2; do x=$i; done; echo $x", "if [ -f x ]; then y=1; fi",
+      "for i in 1 2; do ls {fd}< f; done", "for i in 1 2; do ls; x=1; done", "for i in *; do ls; x=1; done", "for i in 1 2; do x=$i; done; echo $x", "if [ -f x ]; then y=1; fi",
       "for i in 1; do : ${x:=a}; done", "for i in 1 2; do ls; unset x; done", "for i in 1 2; do ls \"$i\"; shift; done", "for i in 1 2; do ls; set -f; done",
       "for i in 1 2; do ls; source x; done", "for i in 1 2; do ls; . x; done", "for i in 1 2; do ls; exec 3< f; done", "x=$(cat f); for i in 1 2; do echo $i; done",
     ]) expect(loopWords(cmd), cmd).not.toEqual([]);
@@ -1216,21 +1210,24 @@ describe("loops and ifs (commands-remote-2)", () => {
       expect(flow(cmd).findings, cmd).toEqual([]);
     }
     for (const cmd of [
-      "for i in $(seq 3); do echo $i; done", "while read -r l; do echo \"$l\"; done <<< 'a b'", "while IFS= read -r l; do echo \"$l\"; done <<EOF\na\nb\nEOF",
-      "until [ -f x ]; do sleep 1; done", "while true; do echo x; break; done", "for f in a b; do echo \"$f\"; done | cat", "for i in *; do ls; umask 022; done",
-    ]) expect(flowWords(cmd), cmd).not.toEqual([]);
+      "for i in 1 2 3; do echo $i; done", "for i in $(seq 3); do echo $i; done", "while read -r l; do echo \"$l\"; done <<< 'a b'", "while IFS= read -r l; do echo \"$l\"; done <<EOF\na\nb\nEOF",
+      "until [ -f x ]; do sleep 1; done", "while true; do echo x; break; done", "for f in a b; do echo \"$f\"; done | cat", "for i in 1 2; do ls; umask 022; done",
+    ]) expect(loopWords(cmd), cmd).not.toEqual([]);
   });
 
-  it("keeps the own words of every bash loop on a command line that Ember can't write out pass by pass, as main did, whatever its body, and reads a plain if through (commands-c7-1)", () => {
+  it("keeps every bash loop's own words on a command line, as main did, whatever its body, and reads a plain if through (commands-c7-1, commands-remote-y7-1, y7-2, y7-3)", () => {
     const flow = (cmd: string) => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash");
-    // Written out, the list's word is judged where it lands (commands-remote-r6-2).
-    expect(flow("for f in --hard; do git reset $f; done").findings.map(f => f.rule)).toEqual(["git.reset.hard"]);
     // A script's text, and a shell the line starts, are judged as written, as on main.
     expect(classifyCommand("for i in 1 2 3; do echo $i; done", "bash", { ...contextOf("linux"), script: true }).findings.map(f => f.rule)).toContain("unclear.for");
     expect(flow("bash -c 'for i in 1 2 3; do echo $i; done'").findings.map(f => f.rule)).toContain("unclear.for");
     for (const cmd of [
-      "for f in --hard; do git reset $f; done > log", "for i in 1 2; do git reset $f; for f in --hard; do :; done; done",
-      "for i in 1 2; do git reset $l; read -r l <<< '--hard'; done", "for i in $(seq 3); do echo $i; done", "for n in {2,4}; do echo $n; done",
+      "for f in --hard; do git reset $f; done", "for f in --hard; do git reset $f; done > log", "for i in 1 2; do git reset $f; for f in --hard; do :; done; done",
+      "for i in 1 2; do git reset $l; read -r l <<< '--hard'; done", "for i in 1 2 3; do echo $i; done", "for n in 2 4; do echo $n; done", "for i in $(seq 3); do echo $i; done",
+      // A redirection in front of the body's first command; printf's or print's option made up from the list's word; bash's
+      // alias table set with no subscript: none is what a pass-by-pass reading would judge (commands-remote-y7-1, y7-2, y7-3).
+      "for f in a; do >~/.bashrc echo $f; done", "for f in a; do 2>~/.profile ls $f; done", "for f in a; do >printf printf -vf %s --hard; git reset $f; done",
+      "for f in vf; do printf -$f %s --hard; git reset $f; done", "for f in vf; do print -n$f -- --hard; git reset $f; done", "for i in v v; do git reset $x; printf -$i x %s --hard; done",
+      "BASH_ALIASES='printf -vf %s --hard'\nfor f in a; do 0; git reset $f; done", "for i in 1 2\ndo echo $i\ndone",
       "while true; do sleep 1; break; done", "until [ -f x ]; do sleep 1; done", "while read -r l; do echo \"$l\"; done <<< 'a b'",
       "for i in *\ndo echo $i\ndone", "if true; then for i in 1; do echo $i; done; fi", "for f in a b; do echo \"$f\"; done | cat",
     ]) expect(flow(cmd).findings.map(f => f.rule), cmd).toEqual(expect.arrayContaining(["unclear.do", "unclear.done"]));

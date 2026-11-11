@@ -88,15 +88,14 @@ describe("gate 2 for commands (§3.16)", () => {
     const real = (command: string, shell: RunSpec["shell"] = "bash") =>
       gateCommand(input({ spec: spec({}, { command, shell }), classify: classifyCommand, facts: facts({ shells: ["bash", "zsh"], shellPaths: { bash: "/usr/bin/bash", zsh: "/usr/bin/zsh" } }) }));
     expect((await real("if [ -f package.json ]; then npm test; fi")).status).toBe("ok");
-    // A short `for` over written-out words is judged pass by pass, as on the PC (commands-remote-r6-2); every other loop
-    // keeps its own words, as on main and on the PC (commands-c7-1).
-    expect((await real("for i in 1 2 3; do echo $i; done")).status).toBe("ok");
+    // Every loop keeps its own words, as on main and on the PC (commands-c7-1).
+    expect(await real("for i in 1 2 3; do echo $i; done")).toMatchObject({ status: "needs_confirm", rules: ["unclear.for", "unclear.do", "unclear.done"] });
     expect(await real("for i in *; do echo $i; done")).toMatchObject({ status: "needs_confirm", rules: ["unclear.for", "unclear.read-text", "unclear.do", "unclear.done"] });
     expect(await real("while read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ status: "needs_confirm", rules: ["unclear.while", "unclear.do", "unclear.done"] });
     // A read over a file is text Ember can't see, on both machines (commands-a7-2), and its loop keeps its own words, as
     // on main (commands-b7-2).
     expect(await real("while read -r l; do echo \"$l\"; done < list.txt")).toMatchObject({ status: "needs_confirm", rules: ["unclear.while", "unclear.do", "unclear.done", "unclear.read-text"] });
-    expect(await real("for i in *; do echo $i; done", "zsh")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
+    expect(await real("for i in 1 2; do echo $i; done", "zsh")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
     expect(await real("zsh -c 'while true { rm -rf ~ }'")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree });
   });
 
@@ -135,20 +134,20 @@ describe("gate 2 for commands (§3.16)", () => {
     expect(await real("while IFS= read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ status: "needs_confirm", rules: ["unclear.while", "unclear.do", "unclear.done"] });
   });
 
-  it("asks for what a written-out loop's passes do, whatever stamp the PC sent short of the user's yes (commands-remote-r6-2)", async () => {
+  it("asks for what follows a `[[ … ]]` test judged as `[ … ]`, whatever stamp the PC sent short of the user's yes (commands-remote-r6-2)", async () => {
     const real = (command: string, stamp: Parameters<typeof spec>[0] = {}) => gateCommand(input({ spec: spec(stamp, { command, shell: "bash" }), classify: classifyCommand }));
-    expect(await real("for f in --hard; do git reset $f; done")).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["git.reset.hard"] });
-    // The PC never announces such a loop: an "announce" stamp covers nothing of it, the user's yes does.
-    const loop = "for d in build dist; do rm -rf $d; done";
-    expect(await real(loop, { verdict: "announce", classes: ["destroy"], rules: ["posix.rm"] })).toMatchObject({ status: "needs_confirm", rules: ["posix.rm"] });
-    expect((await real(loop, { verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], approval: { ageMs: 1000 } })).status).toBe("ok");
+    // The PC never announces such a line: an "announce" stamp covers nothing of it, the user's yes does.
+    const line = "[[ -d build ]] && rm -rf build";
+    expect(await real(line, { verdict: "announce", classes: ["destroy"], rules: ["posix.rm"] })).toMatchObject({ status: "needs_confirm", rules: ["posix.rm"] });
+    expect((await real(line, { verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], approval: { ageMs: 1000 } })).status).toBe("ok");
     expect((await real("rm -rf build", { verdict: "announce", classes: ["destroy"], rules: ["posix.rm"] })).status).toBe("ok");
   });
 
-  it("asks, as the PC does, before any bash loop Ember can't write out, whatever its body, and still runs an ordinary if (commands-c7-1)", async () => {
+  it("asks, as the PC does, before any bash loop, whatever its body, and still runs an ordinary if (commands-c7-1, commands-remote-y7-1, y7-2, y7-3)", async () => {
     const real = (command: string) => gateCommand(input({ spec: spec({}, { command, shell: "bash" }), classify: classifyCommand }));
     for (const command of [
-      "for f in --hard; do git reset $f; done | cat", "for i in 1 2; do git reset $l; read -r l <<< '--hard'; done", "for i in $(seq 3); do echo $i; done",
+      "for f in --hard; do git reset $f; done", "for i in 1 2; do git reset $l; read -r l <<< '--hard'; done", "for i in 1 2 3; do echo $i; done",
+      "for f in a; do >~/.bashrc echo $f; done", "for f in vf; do printf -$f %s --hard; git reset $f; done", "BASH_ALIASES='printf -vf %s --hard'\nfor f in a; do 0; git reset $f; done",
       "while read -r l; do echo \"$l\"; done <<< 'a b'", "until [ -f x ]; do sleep 1; done",
     ]) expect(await real(command), command).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: expect.arrayContaining(["unclear.do", "unclear.done"]) });
     expect((await real("if [ -f package.json ]; then npm test; fi")).status).toBe("ok");

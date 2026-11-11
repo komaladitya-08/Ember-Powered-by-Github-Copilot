@@ -783,7 +783,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   }
   where = whereWords(binding) ?? (others.length || places.length ? here : undefined);
   const tainted = ctx.task.tainted();
-  // A loop judged pass by pass carries what its written-out passes hold too (`file$n` is file1: unroll.ts).
+  // A line judged as its written-out form (unroll.ts) carries what that form holds too.
   const judged = SHELL_FAMILY[shell] === "posix" ? judgedText(a.command) : a.command;
   const carried = carriedText(judged === a.command ? a.command : `${a.command}\n${judged}`, ctx.task.readFrom(), words, binding.shellOs);
   const mode = svc.mode();

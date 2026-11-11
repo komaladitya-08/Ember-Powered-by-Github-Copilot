@@ -177,8 +177,8 @@ export interface ClassifyContext {
   /** Extra folders that count as temporary on this target (POSIX /tmp and /var/tmp, Windows %TEMP% are built in). */
   tempDirs?: string[];
   /**
-   * The text is a script's (scripts.ts): it is judged as written, as on main. Only a command line's own short `for`
-   * loop is written out pass by pass, and its simple `[[ … ]]` read as `[ … ]` (unroll.ts, commands-remote-r6-2).
+   * The text is a script's (scripts.ts): it is judged as written, as on main. Only a command line's own simple
+   * `[[ … ]]` is read as `[ … ]` (unroll.ts, commands-remote-r6-2).
    */
   script?: boolean;
 }
