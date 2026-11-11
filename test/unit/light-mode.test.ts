@@ -61,6 +61,29 @@ describe.each([["light windows", light], ["light windows with Increase Contrast"
   });
 });
 
+describe("the approval window's “Risky step” tag", () => {
+  const rule = /^\.risk \{([^}]*)\}/m.exec(read("app/renderer/prompt/styles.css"))![1];
+  const tokenOf = (prop: string) => new RegExp(`(?:^|; | )${prop}: var\\((--[\\w-]+)\\);`).exec(rule)?.[1];
+  /** The dark values: ember.css's first :root block, and Increase Contrast's over it. */
+  const block = (open: string) => {
+    const at = css.indexOf(open);
+    expect(at, open).toBeGreaterThanOrEqual(0);
+    return Object.fromEntries([...css.slice(at, css.indexOf("\n}", at)).matchAll(/(--[\w-]+): ([^;]+);/g)].map(m => [m[1], m[2]]));
+  };
+  const dark = block(":root {");
+  const darkFirm = { ...dark, ...block("@media (prefers-contrast: more) {\n  :root {") };
+
+  it("takes its words and its fill from tokens that change together, so its words read at 4.5:1 or more in dark, light and with Increase Contrast (accessibility-r7-1, WCAG 1.4.3)", () => {
+    const [word, fill] = [tokenOf("color"), tokenOf("background")];
+    // A literal colour here stayed dark while the light windows' --yellow became a dark text colour: 2.9:1, and 2.2:1 firm.
+    expect(word, rule).toBeDefined();
+    expect(fill, rule).toBe("--yellow");
+    for (const [name, t] of [["dark", dark], ["dark with Increase Contrast", darkFirm], ["light", light], ["light with Increase Contrast", firm]] as const) {
+      expect(contrast(hex(t[word!]), hex(t[fill!])), name).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
 describe("which windows are light", () => {
   it("is the content windows alone: the floating layer stays dark over any app", () => {
     for (const page of ["home", "command", "prompt"]) expect(read(`app/renderer/${page}/index.html`), page).toContain('<html lang="en" class="content">');

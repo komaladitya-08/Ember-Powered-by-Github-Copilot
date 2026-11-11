@@ -118,7 +118,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - Never fill a second button with it in the same group, or in a view with no groups.
   - Mood colours (`--eb-mood`) mark only the bubble's state tag (its dot, and its tint behind the word in the colour's `-text` tint), the streaming caret and the step arrow.
   - Severity stays apart from identity: a problem is `--red` (`--red-text` for words, a notch in the ring), a risky question's tag, brackets and Allow edge are `--yellow`, done is `--green`. Needs you is purple in the tag and is otherwise coded by shape (brackets, the full still ring) and words.
-- **Text on fills.** Filled buttons (and the checkbox tick) carry `--on-accent` text, never white (white on system orange is 2.2:1). Tags are tints and carry their words in a `-text` colour (below). The white glyphs on Home's sidebar tiles and the switch knob are decorative exceptions.
+- **Text on fills.** Filled buttons (and the checkbox tick) carry `--on-accent` text, never white (white on system orange is 2.2:1). Tags are tints and carry their words in a `-text` colour (below). The white glyphs on Home's sidebar tiles and the switch knob are decorative exceptions. The approval window's "Risky step" tag is filled with `--yellow`, so its words are `--on-accent` too. Never pair a literal text colour with a token fill: a light window changes the token, and the pair with it (the tag was 2.9:1 there; light-mode.test.ts measures it in dark, light and Increase Contrast).
 - **Which colours can be text.**
   - `--accent`, `--green` and `--yellow` pass 4.5:1 as text.
   - `--red`, `--blue`, `--purple` and `--gray` only mark things (3:1). Red or purple words use `--red-text` or `--purple-text`.

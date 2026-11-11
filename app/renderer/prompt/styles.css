@@ -32,8 +32,10 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
   font: var(--type-body); color: var(--label); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--control-edge); caret-color: var(--accent);
 }
 .form input:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
-/* A risky step (DESIGN.md, as the bubble): its tag, caution-yellow brackets, and an Allow that is bordered, not filled. */
-.risk { margin: 0; font: var(--type-footnote); font-weight: 600; color: #1d1d1f; background: var(--yellow); border-radius: var(--r-xs); padding: 1px 8px; align-self: flex-start; }
+/* A risky step (DESIGN.md, as the bubble): its tag, caution-yellow brackets, and an Allow that is bordered, not filled.
+   The tag is filled, so its words are --on-accent: dark on dark windows' bright yellow, white on light windows' deep
+   one (a fixed dark colour was 2.9:1 there). */
+.risk { margin: 0; font: var(--type-footnote); font-weight: 600; color: var(--on-accent); background: var(--yellow); border-radius: var(--r-xs); padding: 1px 8px; align-self: flex-start; }
 .card[data-risky="true"] { box-shadow: inset 0 0 0 2px var(--yellow); }
 .btn.caution { background: transparent; color: var(--label); box-shadow: inset 0 0 0 1.5px var(--yellow); }
 .notice { flex: none; margin: 0; padding: 0 16px 12px; font: var(--type-footnote); color: var(--label); }
