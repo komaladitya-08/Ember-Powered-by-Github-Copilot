@@ -2062,13 +2062,26 @@ const REACHES_OUT: Risk = { reason: "this formula can fetch from the internet or
 const TEXT_FIELD = /^(entry|text|paragraph|section|document text|document web|document frame|spin button|combo box|heading|block quote|static)$/;
 const ENTER_IN_FIELD: Risk = { reason: "Enter in a text field can send or submit what is in it", note: "Enter there may send or submit it." };
 /**
- * A one-line field that only looks something up or goes somewhere: a browser's address bar, a page's search box. Enter
- * there can't send what it holds to anyone, so what asks is only Ember's doubt, which "Work without asking" may cover (an
- * allow-list that fails closed: by role and name, never in a dialog, and it never makes another field's Enter any safer).
- * Without it, Enter in Edge's address bar asked on every task (owner report of 2026-11-05).
+ * A one-line field that only looks something up or goes somewhere: a browser's own address bar, a page's search box.
+ * Enter there can't send what it holds to anyone, so what asks is only Ember's doubt, which "Work without asking" may
+ * cover. Without it, Enter in Edge's address bar asked on every task (owner report of 2026-11-05). An allow-list that
+ * fails closed, and never makes another field's Enter any safer:
+ * - the bar (`addressBar`): a browser's (BROWSER) own field, outside any page, named as a search, address, URL or location;
+ * - a page's search box (`searchBox`): known to be in a page, named as a search and nothing risky ("Search people to
+ *   share with"), and not on a page that takes payment.
+ * A page's own "Email address", "Delivery address", "Webhook URL" or "Location" is a form's field, where Enter submits
+ * the form: it asks like any other (audit of 2026-11-11, safety-privacy-c7-1). Never a multi-line field or one in a dialog.
  */
 const GOES_SOMEWHERE = /(^|[^\p{L}\p{N}])(search|address|url|location)(?![\p{L}\p{N}])/iu;
-const goesSomewhere = (r: ActionRequest, role: string, name: string): boolean => /^(entry|combo box|text)$/.test(role) && !r.multiLine && !r.dialog && GOES_SOMEWHERE.test(name);
+const SEARCHES = /(^|[^\p{L}\p{N}])search(?![\p{L}\p{N}])/iu;
+const oneLineField = (r: ActionRequest, role: string): boolean => /^(entry|combo box|text)$/.test(role) && !r.multiLine && !r.dialog;
+/** A word that acts on others anywhere in a name, not only leading it ("Search and invite"). */
+const actsAnywhere = (name: string): boolean => name.trim().split(/\s+/).some((_, i, words) => isRiskyActLabel(words.slice(i).join(" ")));
+const addressBar = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
+  oneLineField(r, role) && !r.inPage && BROWSER.test(r.app) && tabbed(r.app, os) && GOES_SOMEWHERE.test(name);
+const searchBox = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
+  oneLineField(r, role) && r.inPage === true && SEARCHES.test(name) && !isRiskyLabel(name, os) && !actsAnywhere(name) && !PAYMENT_PAGE.test(normalizeLabel(r.window));
+const goesSomewhere = (r: ActionRequest, role: string, name: string, os: OS): boolean => addressBar(r, role, name, os) || searchBox(r, role, name, os);
 /**
  * Keys that only move a browser between its pages and tabs, or reload one (an allow-list, for browsers alone: an app that
  * merely has a page in it may use them otherwise). Any other shortcut Ember doesn't know keeps asking.
@@ -2475,7 +2488,7 @@ export class PolicyEngine {
         // What this task typed there itself is no one else's: rewriting it is no loss.
         if (r.mode === "replace" && !r.ownText && (current.length > 80 || current.includes("\n"))) {
           // (A browser's own address bar holds a long address, which is no one's work: only Ember's doubt.)
-          const bar = !r.inPage && tabbed(r.app, os) && goesSomewhere(r, role, name);
+          const bar = addressBar(r, role, name, os);
           return { reason: `this replaces ${howMany(current.length)} already there`, note: `This replaces ${howMany(current.length)} there.`, ...(bar ? { plain: true as const } : {}) };
         }
         // A rich-text editor's paragraphs (or a picture) stand in its text as U+FFFC: how much it holds can't be told.
@@ -2519,7 +2532,7 @@ export class PolicyEngine {
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };
           // Enter in a text field is a typed line break (as type_text's is): where it may send a chat message or submit a
           // form, it is asked about (enterMaySend).
-          if (!/space$/.test(k) && enterMaySend(r, role, os)) return goesSomewhere(r, role, name) ? { ...ENTER_IN_FIELD, plain: true } : ENTER_IN_FIELD;
+          if (!/space$/.test(k) && enterMaySend(r, role, os)) return goesSomewhere(r, role, name, os) ? { ...ENTER_IN_FIELD, plain: true } : ENTER_IN_FIELD;
           return null;
         }
         if (MNEMONIC_KEY.test(k)) return { reason: "this shortcut presses whichever button has that letter, and Ember can't tell which" };
