@@ -498,6 +498,21 @@ describe("AnswerLanguage says an English answer's own closing words in Ember's v
   });
 });
 
+describe("speechLanguage finds a whole sentence of French, Italian, Portuguese or German (voice-speaking-r7-1)", () => {
+  it.each([
+    ["Bonjour, comment ça va aujourd'hui ? Je peux vous aider à ouvrir vos fichiers.", "fr"],
+    ["Ho aperto la cartella Download. Vuoi che ordini i file per data?", "it"],
+    ["Hai tre nuove email. Vuoi che te le legga?", "it"],
+    ["Tem três emails novos. Quer que eu os leia?", "pt"],
+    ["Du hast drei neue E-Mails.", "de"],
+  ])("says %j with a voice for %j, not Ember's English one (voice-speaking-r7-1)", (text, lang) => expect(speechLanguage(text)).toBe(lang));
+
+  it.each([
+    "Um, the den is at the back, ma.", "Al and Ti are in the den.", "Ho ho ho! Merry Christmas to you.", "Open the La Scala page, Al.", "Mon to Fri, um, it is open.",
+    "The du Pont file is in the den.", "I moved Aus Open to Mon.", "Tem and Quer are the two folders.", "Ma, the ho-hum report is in La Jolla.",
+  ])("still takes %j as English (voice-speaking-r7-1)", text => expect(speechLanguage(text)).toBeNull());
+});
+
 describe("AnswerLanguage: an answer is said in one language, decided once from enough of it (voice-speaking-r1, voice-speaking-11)", () => {
   const said = (pieces: string[], o: { request?: string } = {}) => {
     const a = new AnswerLanguage();

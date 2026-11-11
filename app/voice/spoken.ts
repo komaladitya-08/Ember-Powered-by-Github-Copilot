@@ -400,11 +400,11 @@ const SCRIPTS: readonly [RegExp, string][] = [
  */
 const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   en: new Set("the a an and is are was were to of in on at by or from as do no he she it i you we they my your that this with for not have has what can will if so but all just there here".split(" ")),
-  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces ça cela".split(" ")),
-  de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe es sind des im nur noch dir mich mir kann wird".split(" ")),
+  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces ça cela à vos votre mon ma mes".split(" ")),
+  de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe es sind des im nur noch dir mich mir kann wird du hast den bei aus".split(" ")),
   es: new Set("el la los las del que y en un una es por para con se está como pero muy yo de lo al eso esto hay su sus mi te le".split(" ")),
-  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle".split(" ")),
-  pt: new Set("os que e é uma para não da em na por se eu você de dos das ao às mas isso seu sua ele ela foi".split(" ")),
+  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle la ho hai ti ci vuoi tua tuo al".split(" ")),
+  pt: new Set("os que e é uma para não da em na por se eu você de dos das ao às mas isso seu sua ele ela foi um já são tem está nas quer".split(" ")),
   nl: new Set("de het een en niet ik je van dat op te met zijn voor maar ook wat om naar uit bij nog aan heb kan".split(" ")),
 };
 
