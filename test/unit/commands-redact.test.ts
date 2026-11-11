@@ -208,6 +208,28 @@ describe("redactSecrets", () => {
     expect(redactSecrets(text)).toBe(text);
   });
 
+  // An option named like a secret that a source file declares, switches off or gives a file, a word or a count
+  // (memory-x7-1): Projects refused the whole file.
+  it.each([
+    ['@click.option("--api-key", "api_key", help="The key to use")'], ["@click.option('--token', 'token', envvar='APP_TOKEN')"],
+    ['@click.option(\n    "--api-key",\n    "api_key",\n)'], ['fs.StringVar(&token, "--token", "default", "API token")'],
+    ['args = ["--no-password", "true"]'], ['subprocess.run(["psql", "--no-password", "mydb"])'], ['cmd = ["pg_dump", "--no-password", "--file", "out.sql"]'],
+    ['const argv = ["--private-key", "path/to/key.pem"];'], ['spawn("ssh-keygen", ["--private-key", "id_ed25519"])'], ['yargs.option("--secret", "describe")'],
+    ['cmd.Flags().String("--token", "none", "auth token")'], ['run(["rsync", "--single-pass", "enabled"])'], ['["--token", "none"]'], ['["--max-pass", "100"]'],
+    ['parse(["--password", "prompt"])'], ['["wget", "-u", "http://a:8080"]'], ['["curl", "-u", "https://example.com:8443/x"]'],
+  ])("leaves %j alone: a declared option, one that switches a password off, a file, a stock word or an address (memory-x7-1)", text => {
+    expect(redactSecrets(text)).toBe(text);
+  });
+  it.each([
+    ['exec.Command("vault", "login", "--token", "hvs.abc123")', `exec.Command("vault", "login", "--token", "${SECRET_HIDDEN}")`],
+    ['["deploy", "--db-pass", "Wint3r!Sh0p"]', `["deploy", "--db-pass", "${SECRET_HIDDEN}"]`],
+    ['["cast", "send", "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478"]', `["cast", "send", "--private-key", "${SECRET_HIDDEN}"]`],
+    ['["app", "--api-key", "swordfish"]', `["app", "--api-key", "${SECRET_HIDDEN}"]`],
+    ['run(\n  "app",\n  "--password",\n  "hunter2",\n)', `run(\n  "app",\n  "--password",\n  "${SECRET_HIDDEN}",\n)`],
+  ])("still hides the value in %j (memory-x7-1)", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+
   it("leaves ordinary text alone", () => {
     for (const text of ["sk-learn is scikit-learn", "risk-assessment-for-the-quarterly-planning-2026", "task-1234567890abcdefghijklmnopqrstuvwxyz", "hf_short", "sk_live_short", "build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value", "--compass=north", "--max-passes=3"]) {
       expect(redactSecrets(text)).toBe(text);
@@ -293,6 +315,8 @@ describe("redactSecrets on long output (review #26)", () => {
     ["a run of quoted clients in a list (memory-q6-1)", repeat('"mysql", ')], ["a run of list elements (memory-q6-1)", repeat('"a", ')],
     ["a run of bare clients in a list (memory-q6-1)", repeat("mysql, ")], ["a YAML list of clients (memory-q6-1)", repeat("  - mysql\n")],
     ["a run of secret-named options in a list (memory-q6-1)", repeat('"--password", ')], ["a run of sshpass elements (memory-q6-1)", repeat('"sshpass", "-p", ')],
+    ["a run of declared options (memory-x7-1)", repeat('("--token", ')], ["a bracket and a run of spaces before an option (memory-x7-1)", `(${" ".repeat(1 << 20)}"--token", "abc"`],
+    ["a run of options with spaces between (memory-x7-1)", repeat('   "--token"')],
   ])("takes linear time on %s (1 MiB)", (_name, text) => {
     const t0 = performance.now();
     redactSecrets(text);
