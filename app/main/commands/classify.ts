@@ -3894,36 +3894,76 @@ reg(NATIVE, ["xargs"], h => {
   // A bare -i or --replace replaces {}.
   const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
-  const shell = POSIX_SHELLS[(ops[0].v ?? "").split("/").pop() ?? ""];
   // A here-string whose variables Ember follows (`xargs rm -rf <<< "$d"`): its pieces stand where the input goes, so the
   // command judges the variable's values as it uses them (commands-remote-w5-5).
   const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
+  // Input Ember sees whole (a here-string, a here-document, what echo or printf prints) with no quotes or backslashes
+  // for xargs to read.
+  const text = h.s.stdinText;
+  const seen = typeof text === "string" && !/['"\\]/.test(text) && !values(p, "a", "arg-file", "d", "delimiter").length && !has(p, "0", "null") ? text : null;
+  // The command as main read it (its options, and input it never saw), judged apart: where that asks, this asks, so no
+  // way of writing an option decides less safely than it did (`xargs -l chmod +x`, `xargs -i npm`: commands-remote-x7-5);
+  // a job count is the one thing read as now.
+  const askedOnMain = h.e.asksApart(() => {
+    const m = parseOpts(h.args, {
+      shortValue: "adEILlnPs", longValue: ["arg-file", "delimiter", "eof", "replace", "max-lines", "max-args", "max-procs", "max-chars", "process-slot-var"], stopAtOperand: true,
+      jobCounts: ["P", "max-procs"],
+    });
+    const was = xargsUnseen(m.operands.length ? m.operands : [lit("echo")], values(m, "I", "replace", "i")[0] ?? undefined, undefined);
+    if (was.intoCode) h.e.unclear("unclear.input-in-code", "It puts its input into shell text, where it can run as code.");
+    h.e.payload(was.words, h.sc, "xargs", { stdin: null });
+  });
+  const from = h.e.findings.length;
+  const judge = (repl: string | undefined): void => {
+    const { words: unseen, intoCode } = xargsUnseen(ops, repl, fed);
+    if (intoCode) h.e.unclear("unclear.input-in-code", "It puts its input into shell text, where it can run as code.");
+    // The commands xargs builds from input Ember sees (commands-remote-v4-4), one per batch (commands-remote-r7-1).
+    // Where it can't tell the batches (-x, -s, -E, a count that is no number), what it read is still judged, as one
+    // command or with a placeholder line by line, as before it read batches (commands-remote-x7-1).
+    const built = seen === null || intoCode ? null : xargsBuilds(p, seen, repl, ops) ?? xargsWhole(seen, repl, ops);
+    if (built === null) { h.e.payload(unseen, h.sc, "xargs", { stdin: null }); return; }
+    // Never decided less safely than with input Ember can't see, which is how these forms were judged before Ember read
+    // what is printed: where that asks, what Ember read asks too, in its own words (commands-remote-r7-2).
+    const asked = h.e.asksApart(() => h.e.payload(unseen, h.sc, "xargs", { stdin: null }));
+    const before = h.e.findings.length;
+    for (const b of built) h.e.payload(b, h.sc, "xargs", { stdin: null });
+    if (asked) h.e.asksAtLeast(before, "unclear.xargs-input", "xargs builds this command from its input.");
+  };
+  judge(repl);
+  // GNU's xargs takes the last of -I (or -i) and -L, -l or -n and ignores the others, so with both written the input
+  // may be added in batches after all (`xargs -I{} -L1 git` runs git with each line's words): judged that way too
+  // (commands-remote-x7-3).
+  if (repl !== undefined && has(p, "n", "max-args", "L", "l", "max-lines")) judge(undefined);
+  if (askedOnMain) h.e.asksAtLeast(from, "unclear.xargs-input", "xargs builds this command from its input.");
+});
+
+/**
+ * xargs's command with input Ember can't see standing as one unknown word: with a placeholder where it is, otherwise
+ * after the words. The input put into shell text (`sh -c 'rm {}'`) is still read, the input standing as an unknown
+ * word, and it is unclear (a name holding `;` or `$(…)` runs as code): intoCode.
+ */
+function xargsUnseen(ops: readonly Arg[], repl: string | undefined, fed: Arg["parts"]): { words: Arg[]; intoCode: boolean } {
+  const shell = POSIX_SHELLS[(ops[0].v ?? "").split("/").pop() ?? ""];
   let intoCode = false;
   const words = ops.map((w, k) => {
     if (!repl || w.v === null || !w.v.includes(repl)) return w;
-    // The input put into shell text (`sh -c 'rm {}'`): the text is still read, the input standing as an unknown
-    // word, and it is unclear (a name holding `;` or `$(…)` runs as code).
     if (shell && k > 0 && /^-[a-zA-Z]*c$/.test(ops[k - 1].v ?? "")) { intoCode = true; return { ...w, v: w.v.split(repl).join("\"$XARGS_INPUT\"") }; }
     const a: Arg = { v: null, raw: w.raw, glob: false };
     if (fed) a.parts = w.v.split(repl).flatMap((piece, j) => (j === 0 ? [piece] : [...fed, piece]));
     return a;
   });
-  if (intoCode) h.e.unclear("unclear.input-in-code", "It puts its input into shell text, where it can run as code.");
-  // Input Ember can't see stands as one unknown word: with -I where the placeholder is, otherwise after the words.
-  const unseen: Arg[] = repl ? words : [...words, { v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }];
-  // Input Ember sees whole (a here-string, a here-document, what echo or printf prints) with no quotes or backslashes
-  // for xargs to read: the commands xargs builds from it (commands-remote-v4-4), one per batch (commands-remote-r7-1).
-  const text = h.s.stdinText;
-  const seen = typeof text === "string" && !/['"\\]/.test(text) && !values(p, "a", "arg-file", "d", "delimiter").length && !has(p, "0", "null") ? text : null;
-  const built = seen === null || intoCode ? null : xargsBuilds(p, seen, repl, ops);
-  if (built === null) { h.e.payload(unseen, h.sc, "xargs", { stdin: null }); return; }
-  // Never decided less safely than with input Ember can't see, which is how these forms were judged before Ember read
-  // what is printed: where that asks, what Ember read asks too, in its own words (commands-remote-r7-2).
-  const asked = h.e.asksApart(() => h.e.payload(unseen, h.sc, "xargs", { stdin: null }));
-  const before = h.e.findings.length;
-  for (const b of built) h.e.payload(b, h.sc, "xargs", { stdin: null });
-  if (asked) h.e.asksAtLeast(before, "unclear.xargs-input", "xargs builds this command from its input.");
-});
+  return { words: repl ? words : [...words, { v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }], intoCode };
+}
+
+/** The input Ember sees with no batches told apart: with a placeholder one command per line, otherwise one with every word. */
+function xargsWhole(seen: string, repl: string | undefined, ops: readonly Arg[]): Arg[][] | null {
+  if (repl) {
+    const lines = seen.split("\n").map(l => l.trim()).filter(l => l !== "").slice(0, MAX_FORMS);
+    return lines.length ? lines.map(l => ops.map(w => (w.v !== null && w.v.includes(repl) ? lit(w.v.split(repl).join(l)) : w))) : null;
+  }
+  const all = seen.split(/\s+/).filter(w => w !== "").map(w => lit(w));
+  return all.length ? [[...ops, ...all]] : null;
+}
 
 /**
  * The commands xargs builds from input Ember sees whole: with -I one per line, the line where the placeholder is;

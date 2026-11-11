@@ -2151,3 +2151,46 @@ describe("printed input, decided no less safely than before Ember read it (round
     expect(decided("echo soft | xargs git reset").decision.verdict).toBe("run");
   });
 });
+
+describe("xargs with options Ember can't batch by, decided no less safely than before (round seven's review)", () => {
+  const decided = (cmd: string) => runCase({ cmd, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" }).decision;
+
+  it("still judges the input it read when xargs has -x, -s, -E, a count that is no number or both -n and -L (commands-remote-x7-1)", () => {
+    for (const cmd of [
+      "xargs -x cargo <<< publish", "echo publish | xargs -x cargo", "xargs -x pip <<< 'install evil'", "xargs -x systemctl <<< 'stop sshd'", "echo publish | xargs --exit cargo",
+      "echo publish | xargs -s 2000 cargo", "echo publish | xargs -E END cargo", "echo publish | xargs -n $N cargo", "echo publish | xargs -n1 -L1 cargo", "echo publish | xargs -e cargo",
+    ]) expect(decided(cmd).verdict, cmd).toBe("ask");
+    expect(decided("xargs -x cargo <<< publish").rules).toContain("cargo.publish");
+    expect(decided("xargs -x pip <<< 'install evil'").rules).toContain("pkg.language");
+    expect(decided("xargs -x systemctl <<< 'stop sshd'").rules).toContain("service.unit");
+    // Ember's own folder and files are refused, not asked about.
+    for (const cmd of [
+      "xargs -x rm -rf <<< ~/.config/ember", "echo ~/.config/ember | xargs -x rm -rf", "echo ~/.config/ember/settings.json | xargs -x cat", "echo ~/.config/ember/settings.json | xargs -s 100 cat",
+      "echo ~/.config/ember/settings.json | xargs -E END cat", "echo ~/.config/ember/settings.json | xargs -n $N cat", "echo ~/.config/ember | xargs -x -I{} rm -rf {}",
+      "echo ~/.config/ember | xargs -n1 -L1 rm -rf",
+    ]) expect(decided(cmd).verdict, cmd).toBe("refuse");
+  });
+
+  it("judges the batches too when -L or -n is written with -I or -i, where the later one wins (commands-remote-x7-3)", () => {
+    for (const cmd of [
+      "printf 'status\\npush --force\\n' | xargs -i -L1 git", "printf 'test\\npublish\\n' | xargs -i -L1 npm", "printf 'get pods\\ndelete ns prod\\n' | xargs -i -l1 kubectl",
+      "echo test publish | xargs -i -n2 npm", "printf 'status\\npush --force\\n' | xargs -I{} -L1 git", "xargs -I{} -L1 git <<< $'status\\npush --force'",
+      "printf 'status\\npush --force\\n' | xargs -I{} -l git", "printf 'status\\npush --force\\n' | xargs --replace --max-lines=1 git", "echo status push --force | xargs -I{} -n2 git",
+      "cat list.txt | xargs -I{} -L1 git", "printf 'status\\npush --force\\n' | xargs -L1 -I{} git",
+    ]) expect(decided(cmd).verdict, cmd).toBe("ask");
+    expect(decided("printf 'status\\npush --force\\n' | xargs -I{} -L1 git").rules).toContain("git.push.force");
+    expect(decided("printf 'a\\n/home/ana/.config/ember\\n' | xargs -I{} -n1 rm -rf").verdict).toBe("refuse");
+    // The placeholder alone is still read line by line.
+    expect(decided("printf 'a\\nb\\n' | xargs -I{} rm {}").says).toContain("Deletes a.");
+    expect(decided("printf 'a\\nb\\n' | xargs -I{} rm {}").says).not.toContain("Deletes a and b.");
+  });
+
+  it("asks where main asked for xargs's -l, -i, --replace, --max-lines and --eof written with no value (commands-remote-x7-5)", () => {
+    for (const cmd of [
+      "echo a b | xargs -l chmod +x", "echo a b | xargs --max-lines chmod +x", "echo a b | xargs -n1 --eof chmod +x", "echo test publish | xargs -i npm", "echo status push --force | xargs -i{} git",
+      "echo test publish | xargs --replace env FOO=1 npm", "echo test publish | xargs -n1 -i npm",
+    ]) expect(decided(cmd).verdict, cmd).toBe("ask");
+    // Ember's own reading still decides the stricter cases.
+    expect(decided("echo ~/.config/ember | xargs -i rm -rf {}").verdict).toBe("refuse");
+  });
+});

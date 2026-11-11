@@ -497,7 +497,11 @@ Ember can't see, so the command after it asks (`printf '\056\056\057\056netrc' |
 it likes, so the command after it is judged as given input Ember can't see, and Ember's own folder handed to it that
 way is still refused. A command `xargs`
 builds from text Ember reads is judged batch by batch (`echo test publish | xargs -n1 npm` asks about `npm publish`,
-`printf 'status\nclean -fdx\n' | xargs -L1 git` about the clean), and reading the text never makes it run or announce
+`printf 'status\nclean -fdx\n' | xargs -L1 git` about the clean); with an option Ember can't batch by (`-x`, `-s`,
+`-E`, a count that is no number) the text is still judged, as one command (`echo publish | xargs -x cargo` asks,
+`echo ~/.config/ember | xargs -x rm -rf` is refused), and with `-I` or `-i` beside `-L` or `-n`, where xargs keeps
+only the later one, both ways are judged (`xargs -I{} -L1 git` given `push --force` asks). Reading the text, or an
+option's value, never makes it run or announce
 where it asked before (a database client, `make -f -` or `awk -f -` given printed text asks too, "It runs the text
 another command prints into it.", saying as well when the text changes data: `echo 'drop table users;' | psql app`): `echo build | xargs ls` asks ("xargs builds this command from its input."), and `echo build |
 xargs rm -rf` asks whatever you said. Handed to a program that
