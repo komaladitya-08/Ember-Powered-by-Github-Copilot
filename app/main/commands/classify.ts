@@ -478,9 +478,10 @@ class Classifier {
 
   add(cls: DangerClass, rule: string, said: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string; inFolder?: { says: string; objects: Obj[]; ifExists: string } } = {}): void {
     const program = o.program ?? this.program;
-    // When no download of this task has a name Ember knows, it can't say the file that runs is one: it may be
-    // (commands-remote-r6-4). It asks all the same.
-    if (rule === "escape.run-downloaded" && said === SAYS.runsDownloaded && this.noNamedDownload()) return this.add(cls, rule, SAYS.mayRunDownloaded, o);
+    // When nothing on this line was found to be a download the task saved under a name Ember knows, it can't say the
+    // file that runs is one: it may be (commands-remote-r6-4; whatever else the task saved by name, a `> /dev/null`
+    // included: x7-4). It asks all the same.
+    if (rule === "escape.run-downloaded" && said === SAYS.runsDownloaded && !this.namedHit) return this.add(cls, rule, SAYS.mayRunDownloaded, o);
     const wrappers = this.commands[this.at]?.wrappers ?? [];
     // A POSIX shell's home folder is said as ~, as the card's header says it (commands-remote-r2-3).
     const home = this.topShell === "bash" || this.topShell === "zsh" || this.topShell === "sh" ? this.ctx.home : null;
@@ -1277,12 +1278,12 @@ class Classifier {
     this.carryDownload((sc.path.flavour === "win32" ? win32 : posix).join(dest, UNNAMED_COPY), sc);
   }
 
-  /** Whether every download of this task so far is one Ember couldn't name (UNNAMED_DOWNLOAD, UNNAMED_COPY). */
-  noNamedDownload(): boolean {
-    const all = [...this.ctx.downloaded, ...this.downloads];
-    const name = (d: string): string => d.slice(Math.max(d.lastIndexOf("/"), d.lastIndexOf("\\")) + 1);
-    return all.length > 0 && all.every(d => name(d) === UNNAMED_COPY || name(d) === UNNAMED_DOWNLOAD);
-  }
+  /**
+   * Whether a check on this line found a file to be a download the task saved under a name Ember knows (isDownloaded,
+   * downloadedProjectFile), not only one that may be, by a mark for a download or copy Ember couldn't name
+   * (UNNAMED_DOWNLOAD, UNNAMED_COPY). It only chooses the card's words (`add`).
+   */
+  private namedHit = false;
 
   /**
    * Whether this task downloaded, under `folder`, a file a build tool, test runner or package manager there runs
@@ -1291,6 +1292,11 @@ class Classifier {
    */
   downloadedProjectFile(folder: string, sc: Scope): boolean {
     const all = [...this.ctx.downloaded, ...this.downloads];
+    // One of the tool's files, saved under its name.
+    if (all.some(d => d !== folder && unnamedFolder(d, sc.path) === null && isUnder(d, folder, sc.path) && PROJECT_FILE.test(baseName(d, sc.path.flavour)))) {
+      this.namedHit = true;
+      return true;
+    }
     // A download of a name Ember can't tell may be any of the tool's files, in its folder or one it works in.
     if (all.some(d => {
       const f = baseName(d, sc.path.flavour) === UNNAMED_DOWNLOAD ? unnamedFolder(d, sc.path) : null;
@@ -1343,13 +1349,19 @@ class Classifier {
     const phys = this.physical(a.v, "exec", sc);
     const names = [abs, this.ctx.real?.get(abs), phys === null ? undefined : this.ctx.real?.get(phys)].filter((n): n is string => typeof n === "string");
     // Downloaded by an earlier command of this task, or earlier in this same command (`curl -o x … && sh x`).
-    if (all.some(d => names.some(n => inDownload(n, d, sc.path)))) return true;
+    const hits = all.filter(d => names.some(n => inDownload(n, d, sc.path)));
+    if (hits.length > 0) {
+      if (hits.some(d => unnamedFolder(d, sc.path) === null)) this.namedHit = true;
+      return true;
+    }
     // A Windows path in cmd or PowerShell reached from a distro: the distro recorded it under the drive mount.
     if (sc.fromWsl && /^[A-Za-z]:[\\/]/.test(abs) && this.ctx.wsl) {
       const mount = this.ctx.wsl.mountRoot;
       const env = pathEnv({ flavour: "posix", os: "linux", home: null, cwd: null, mountRoot: mount });
       const m = toMount(abs, mount);
-      return all.some(d => inDownload(m, d, env));
+      const under = all.filter(d => inDownload(m, d, env));
+      if (under.some(d => unnamedFolder(d, env) === null)) this.namedHit = true;
+      return under.length > 0;
     }
     return false;
   }
@@ -2898,15 +2910,19 @@ class Engine extends Classifier {
     const runner = PROJECT_RUNNERS.has(key) || ((key === "docker" || key === "podman") && /^(compose|build|buildx)$/.test(args[0]?.v ?? ""));
     if (!runner || !known) return;
     const folderOf = (v: string): string | null => (sc.cwd ? resolveTargetPath(v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd }) : null);
-    const inDownloaded = this.isDownloaded(lit("."), sc) || args.some(a => {
+    // Every check is made, not only up to the first that holds: one of them may find a download saved by name, which
+    // the card then says as a fact (`namedHit`: commands-remote-x7-4).
+    const hits = [this.isDownloaded(lit("."), sc), ...args.map(a => {
       if (a.v === null || URL_LIKE.test(a.v)) return false;
       const v = a.v.replace(/^--?[A-Za-z][A-Za-z-]*=/, "");
       if (v === "" || v.startsWith("-")) return false;
       // A file it is given, or a folder it works in (`make -C sub`) holding a project file this task downloaded.
       const f = folderOf(v);
-      return this.isDownloaded({ ...a, v }, sc, false) || (f !== null && this.downloadedProjectFile(f, sc));
-    }) || (sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc));
-    if (inDownloaded) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      const file = this.isDownloaded({ ...a, v }, sc, false);
+      const project = f !== null && this.downloadedProjectFile(f, sc);
+      return file || project;
+    }), sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc)];
+    if (hits.some(Boolean)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   }
 
   /** Classifies a nested shell text (sh -c, cmd /c, powershell -Command) in a child scope. */
