@@ -588,8 +588,10 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
  * What a test of the endpoint found. `cause`, for a failure: nothing answered (refused, timed out, unreachable: the
  * provider is down), or it answered but has no model list at that address (`no-list`: 404, 405 or 501 on GET /models,
  * as some gateways that answer chat only do), which a held edit's check takes as an answer (integrations-r4-2).
+ * `more`, for an answer: the list says it goes on past this page (listSaysMore), so a model it doesn't name may
+ * still be one the service has (first-run-x7-1).
  */
-export type TestResult = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
+export type TestResult = { ok: true; host: string; models: number | null; ids?: string[]; more?: true } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
 /** The most model ids the test passes on for the model fields' suggestions. */
 export const TEST_IDS_MAX = 50;
@@ -611,6 +613,17 @@ export function listedModelIds(list: readonly unknown[]): string[] {
 }
 
 /**
+ * A model list's answer says more models follow on another page (first-run-x7-1): Anthropic's and OpenAI's `has_more`,
+ * or a next page's token, cursor or address (`next_page_token`, Google's `nextPageToken`, `next_cursor`, `next`). The
+ * test asks for one page only, so such a list was not read whole.
+ */
+export function listSaysMore(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const o = body as Record<string, unknown>;
+  return o.has_more === true || ["next_page_token", "nextPageToken", "next_cursor", "next"].some(k => typeof o[k] === "string" && o[k] !== "");
+}
+
+/**
  * Makes testRequest's request and says what came of it, in plain words (never the service's raw text). Nothing at all is
  * sent to a host whose card the user hasn't agreed to, and the key goes only to the host it was entered for. Redirects
  * are refused: a redirected fetch keeps custom headers such as x-api-key and api-key (only Authorization is dropped
@@ -629,13 +642,15 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
     if (!res.ok) return { ok: false, why: friendlyError(`HTTP ${res.status}`, undefined, { statusCode: res.status, provider: "user", settingsKey: null }) };
     let models: number | null = null;
     let ids: string[] = [];
+    let more = false;
     try {
       const body = await res.json() as { data?: unknown; models?: unknown };
       const list = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
       models = list ? list.length : null;
       if (list) ids = listedModelIds(list);
+      more = !!list && listSaysMore(body);
     } catch { /* answered, with a body that isn't a list: still connected */ }
-    return { ok: true, host, models, ...(ids.length ? { ids } : {}) };
+    return { ok: true, host, models, ...(ids.length ? { ids } : {}), ...(more ? { more: true as const } : {}) };
   } catch (err) {
     const msg = err instanceof Error ? `${err.name} ${err.message} ${(err as { cause?: { code?: string } }).cause?.code ?? ""}` : String(err);
     if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`, cause: "timeout" };

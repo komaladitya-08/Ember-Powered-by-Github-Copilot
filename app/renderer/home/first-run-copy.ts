@@ -275,13 +275,14 @@ function namesListed(id: string, typed: string): boolean {
 /**
  * A model name typed on the provider step that the service, which answered, doesn't list: the check fails on that
  * field and names what is listed, instead of passing a name the first request then fails on ("That model isn't
- * available.", first-run-c7-1). Only where the list was read whole (every model's id, at most main's 50) and holds
+ * available.", first-run-c7-1). Only where the list was read whole (every model's id, at most main's 50, and no word
+ * from the service that more follow on another page: `more`, first-run-x7-1) and holds
  * model names: Azure asks for a deployment's name, which its list doesn't hold. A name the service may still take
  * (namesListed) passes. Null when nothing is known to be missing.
  */
-export function providerModelMissing(r: { host: string; models: number | null; ids?: string[] }, typed: { type: ProviderType; conductor: string; worker: string }): { field: "conductor" | "worker"; line: string } | null {
+export function providerModelMissing(r: { host: string; models: number | null; ids?: string[]; more?: true }, typed: { type: ProviderType; conductor: string; worker: string }): { field: "conductor" | "worker"; line: string } | null {
   const ids = r.ids ?? [];
-  if (typed.type === "azure" || !ids.length || r.models !== ids.length) return null;
+  if (typed.type === "azure" || !ids.length || r.models !== ids.length || r.more) return null;
   const field = (["conductor", "worker"] as const).find(f => typed[f] && !ids.some(id => namesListed(id, typed[f])));
   if (!field) return null;
   const all = (names: readonly string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0]);

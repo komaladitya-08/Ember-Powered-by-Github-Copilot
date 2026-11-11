@@ -139,6 +139,24 @@ describe("first run: the provider check says only what it found (FE #2)", () => 
     // Still a different model: a longer name that only starts the same.
     expect(providerModelMissing({ host: "a.b", models: 1, ids: ["gpt-4.1-mini"] }, typed)?.field).toBe("conductor");
   });
+  it("never fails a name on one page of a list that says more follows (first-run-x7-1)", async () => {
+    // Anthropic's GET /v1/models: 20 models a page, with has_more and last_id; the name typed is on the next page.
+    const page = Array.from({ length: 20 }, (_, i) => ({ type: "model", id: `claude-model-${i}-20250101` }));
+    const agreedFor = (host: string) => ({ ...DEFAULT_SETTINGS.provider, on: true, type: "anthropic" as const, baseUrl: `https://${host}`, consent: { version: FEATURE_CONSENT_VERSION.provider, at: "2026-11-08T12:00:00Z", host } });
+    const typed = { type: "anthropic" as const, conductor: "claude-haiku-4-5", worker: "" };
+    const answers = (body: unknown) => (async () => ({ ok: true, status: 200, json: async () => body })) as unknown as Parameters<typeof testConnection>[2];
+    for (const rest of [{ has_more: true, last_id: "claude-model-19-20250101" }, { next_page_token: "abc" }, { nextPageToken: "abc" }, { next: "https://a.example/v1/models?page=2" }, { next_cursor: "abc" }]) {
+      const r = await testConnection(agreedFor("a.example"), null, answers({ data: page, ...rest }));
+      expect(r).toMatchObject({ ok: true, models: 20, more: true });
+      if (r.ok) expect(providerModelMissing(r, typed)).toBeNull();
+    }
+    // A list that says it ends there is read whole, and still fails a name it doesn't hold.
+    for (const rest of [{}, { has_more: false, last_id: "x" }, { next_page_token: "" }, { next: null }]) {
+      const r = await testConnection(agreedFor("a.example"), null, answers({ data: page, ...rest }));
+      expect(r).not.toHaveProperty("more");
+      if (r.ok) expect(providerModelMissing(r, typed)?.field).toBe("conductor");
+    }
+  });
 });
 
 describe("first run: the models Ember chose (FE #4, #5)", () => {
