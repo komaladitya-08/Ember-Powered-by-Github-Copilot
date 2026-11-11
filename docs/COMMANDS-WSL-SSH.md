@@ -187,7 +187,10 @@ Ember stops and asks before a command that:
   a download whose saved name Ember can't tell (one the server or a list picks: `curl -OJ`, `wget
   --content-disposition`, `wget -r`, `wget -i`, `aria2c -i`; one in a variable or an expression: `curl -o "$f"`,
   `aria2c -o "$f"` or `-d "$d"`, `axel -o "$f"`, `fetch -o "$f"`, `lwp-download … "$f"`, `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
-  `DownloadFile`) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
+  `DownloadFile`; one named after an address Ember can't see the end of: `curl -O "$URL"`, `wget $URL`, `aria2c
+  "$URL"`, `curl -O "https://example.com/$NAME"`, addresses `xargs`, `parallel` or a loop hands over, `xargs -n1 curl
+  -sO < urls.txt`, curl's `file[1-3].sh` and `{a,b}.sh`, which name several files, and httpie's `http -d`, where the
+  server may pick the name) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
   saved into or below, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the
   folder either, as for a file saved by name in a folder Ember can't tell: `cd "$d" && curl … > x.py`); a listing or a
   read never does; a download a program run through `env -C` or `sudo -D` writes with the shell's `>` is the file in
@@ -195,7 +198,15 @@ Ember stops and asks before a command that:
   `git apply` or `git am`, in whichever folder it is applied in (`patch -d src -p1 < x.patch`, `env -C src patch -p1 <
   x.patch`, `git -C sub am < x.patch`), or code pulled or fetched from an address rather than the repository's own
   remote (`git pull https://…`), marks the files it changes the same way, so the next `make`, `npm test` or `bash
-  build.sh` asks),
+  build.sh` asks). An address a variable holds only the start of still ends in a name Ember can read, so `curl -LO
+  "$BASE/run.sh"` records run.sh, and a variable the command line sets is followed (`V=1.2; curl -LO
+  https://example.com/tool-$V.sh` records tool-1.2.sh); `wget -x` records the file under the host's folder
+  (`example.com/dir/a.py`); text a fetch printed that a variable carries into a file is the download too (`x=$(curl -s
+  …); echo "$x" > a.py`); a repository cloned from an address or into a folder Ember can't see (`git clone $REPO`)
+  makes the folder it is cloned in count, so building there asks; and `node .` or `python3 tool` asks when the
+  folder's entry file (`index.js`, `package.json`, `__main__.py`) is a download. A download Ember can name never
+  makes the project's own tools ask: after `curl -LO https://example.com/data.csv`, `python3 analyze.py` and `npm
+  test` run as before),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),

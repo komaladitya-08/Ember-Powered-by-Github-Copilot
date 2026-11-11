@@ -273,6 +273,8 @@ interface Simple {
   pipedOn?: boolean;
   /** What it prints is the next simple command's input, which judges what echo or printf printed (printedBy). */
   carriedOn?: boolean;
+  /** Its words or here-string hold text a substitution fetched, as written or through a variable (commands-remote-c7-3). */
+  fetched?: boolean;
   /** PowerShell: the parsed command (for cmdlet parameters). */
   ps?: PsCommand;
 }
@@ -437,6 +439,8 @@ class Classifier {
   protected payloadWords = new WeakSet<Arg>();
   /** A loop's or `if`'s closer given text that uses variables (`done <<< "$d"`), for the reads in it (feedReads). */
   protected hereVarsAt = new Map<number, HereVars>();
+  /** POSIX variables set from a substitution that fetched (`x=$(curl …)`): written to a file, the file is a download (commands-remote-c7-3). */
+  protected fetchedVars = new Set<string>();
   /** `set -a`: every variable set after it is exported to the programs that run (commands-remote-v5-2). */
   allExport = false;
   /** The same for a PowerShell variable (lower case, `env:` kept): only for Ember's own refusal (commands-remote-c3-2). */
@@ -1160,6 +1164,27 @@ class Classifier {
   }
 
   /**
+   * The names a download may be saved under when it takes the name its address ends in (`curl -O`, wget, aria2c), for
+   * an address Ember sees or one a variable holds part of (commands-remote-r6-1): the last part of each form the text
+   * gives the word, before any `?` or `#` (`fallback` for an address that ends in `/`). `unnamed`: a form whose last
+   * part Ember can't see (`$URL`, `…/tool-$V.sh` with V unset in the text), or with `patterns` one that holds curl's
+   * `[1-3]` or `{a,b}`, which name several files; the caller records those as unnamed in the folder it saves into.
+   */
+  addressNames(a: Arg, o: { fallback?: string; patterns?: boolean } = {}): { names: string[]; unnamed: boolean } {
+    const names: string[] = [];
+    let unnamed = false;
+    for (const f of this.knownForms(a, true)) {
+      const form = f ?? UNSEEN;
+      const q = form.search(/[?#]/);
+      const path = q >= 0 ? form.slice(0, q) : form;
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      if (name.includes(UNSEEN) || (o.patterns === true && /[[\]{}]/.test(name))) unnamed = true;
+      else if (name !== "" || o.fallback !== undefined) names.push(name || (o.fallback ?? ""));
+    }
+    return { names: [...new Set(names)], unnamed };
+  }
+
+  /**
    * A download saved as a word Ember can't see all of (`-o "$f"`, `-OutFile $f`, `-OutFile (Join-Path …)`): judged as
    * the file it writes (Ember's own refusal), each name the text gives the word recorded as the download, and a name
    * with a part Ember can't see recorded as unnamed in the folder its seen start names (downloadUnnamed). It asks
@@ -1371,6 +1396,9 @@ function lonePsLocation(list: PsStatement[]): boolean {
 const STDIN_NAME = /^(-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/(self|\d+)\/fd\/0)$/;
 /** A file name that is one of the program's open descriptors (`/dev/fd/3`, `/proc/self/fd/3`); fd 0 is STDIN_NAME. */
 const STREAM_NAME = /^(\/dev\/fd\/\d+|\/proc\/(self|\d+)\/fd\/\d+)$/;
+
+/** Programs that print the text they are given: fetched text they print on is still the download (afterRun). */
+const PRINTS_TEXT = new Set(["echo", "printf", "print", "cat"]);
 
 /** A URL (`https://…`, `file:///…`, `s3://…`, `git@host:…`). */
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -1982,6 +2010,9 @@ class Engine extends Classifier {
     for (const w of allWords) for (const sub of w.subs) if (this.subList(sub, sc)) fetchOf.set(w, true);
     for (const r of c.redirs) for (const sub of r.heredoc?.subs ?? []) this.subList(sub, sc);
     const words = c.words.map(w => this.posixWord(w, sc, fetchOf.get(w) ?? false));
+    // Text a substitution fetched, kept in a variable (`x=$(curl …)`, `export x=$(curl …)`): commands-remote-c7-3.
+    for (const a of c.assigns) if (fetchOf.get(a.value)) this.fetchedVars.add(a.name);
+    for (const w of c.words) { const m = /^([A-Za-z_]\w*)=/.exec(w.raw); if (m && fetchOf.get(w)) this.fetchedVars.add(m[1]); }
     const redirs = c.redirs.map(r => this.posixRedir(r, sc));
     const stdin: Simple["stdin"] = c.redirs.some(r => r.op === "<<" || r.op === "<<-" || r.op === "<<<") ? "heredoc"
       : c.redirs.some(r => r.op === "<") ? "file" : o.stdinPipe ? "pipe" : null;
@@ -2001,7 +2032,8 @@ class Engine extends Classifier {
     }
     // What it prints reaches the next command only without a redirection of its output.
     const carried = o.pipedOn === true && o.carriedOn === true && !redirs.some(r => r.kind !== "none" && r.kind !== "read" && !r.op.startsWith("2"));
-    this.simple({ words, redirs, stdin, stdinText, stdinVars, ownInput, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried }, sc, () => {
+    const fetched = words.some(w => w.fetch === true || varNames(w).some(n => this.fetchedVars.has(n))) || (stdinVars?.names ?? []).some(n => this.fetchedVars.has(n));
+    this.simple({ words, redirs, stdin, stdinText, stdinVars, ownInput, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried, ...(fetched ? { fetched } : {}) }, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
     return carried ? printedBy(words) : null;
@@ -2728,7 +2760,11 @@ class Engine extends Classifier {
     const known = this.ctx.downloaded.size > 0 || this.downloads.length > 0;
     const carried = known && (this.pipe.carried === true || args.some(a => !isOption(a) && this.isDownloaded(a, sc)) || s.redirs.some(r => r.kind === "read" && r.target !== null && this.isDownloaded(r.target, shellSc)));
     if (carried) this.pipe.carried = true;
-    if (s.fetchBefore || FETCHERS.has(key) || carried) {
+    // Fetched text that echo, printf or cat prints on (`x=$(curl …); echo "$x" > a.py`, `… | tee a.py`) is the download
+    // still (commands-remote-c7-3).
+    const prints = s.fetched === true && PRINTS_TEXT.has(key);
+    if (prints) this.pipe.fetch = true;
+    if (s.fetchBefore || FETCHERS.has(key) || carried || prints) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
       if (/^(tee|tee-object|out-file|set-content|add-content)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
@@ -4411,10 +4447,15 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   }
   if (script.v === "-" || script.v === "/dev/stdin") { intoInterpreter(h); return; }
   h.e.usePath(script, "exec", h.sc);
-  if (h.e.isDownloaded(script, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  // A folder given as the program (`node .`, `python3 tool`) runs its entry file (commands-remote-c7-3).
+  const folder = script.v.replace(/\/+$/, "") || "/";
+  const entry = /(^|\/)\.{1,2}$|\/$/.test(script.v) || !/\.[^./]+$/.test(folder) ? ENTRY_FILES.some(n => h.e.isDownloaded(lit(`${folder}/${n}`), h.sc)) : false;
+  if (h.e.isDownloaded(script, h.sc) || entry) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   else if (readAs !== undefined) h.e.recordScript(script, readAs, h.sc);
   nameCheck(h, script.v, script.v);
 }
+/** The files node or python runs when given a folder (package.json names node's). */
+const ENTRY_FILES = ["index.js", "index.mjs", "index.cjs", "index.json", "index.node", "package.json", "__main__.py"];
 
 /** Inline code: unclear, and refused when it names Ember's own paths (§3.5.8). */
 function emberText(h: H, code: string): void {
@@ -5252,9 +5293,19 @@ git(["clone"], h => {
   if (values(p, "template", "u", "upload-pack").length) h.e.unclear("unclear.git-template", "Runs code from a git setting.");
   const [url, dir] = p.operands;
   if (url && url.v && !URL_LIKE.test(url.v) && !SCP_LIKE.test(url.v)) h.e.usePath(url, "readTree", h.sc);
-  const name = dir?.v ?? (url?.v ? url.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop()?.replace(/\.git$/, "") ?? null : null);
   if (dir) h.e.usePath(dir, "write", h.sc);
-  h.e.download(name, h.sc);
+  // The folder it makes: the one named, else the address's last part; with a part Ember can't see, the names the text
+  // gives it, else a folder of no name Ember knows, here (the address's) or anywhere (`git clone … "$d"`), so building
+  // in it later asks (commands-remote-r6-1).
+  const from = dir ?? url;
+  if (!from) return;
+  for (const f of h.e.knownForms(from, true)) {
+    const form = (f ?? UNSEEN).replace(/[\\/]+$/, "");
+    const name = dir ? form : (form.split(/[\\/:]/).pop() ?? "").replace(/\.git$/, "");
+    if (!name.includes(UNSEEN)) h.e.download(name || null, h.sc);
+    else if (!dir) h.e.markUnnamed(".", h.sc);
+    else { const seen = name.slice(0, name.indexOf(UNSEEN)); h.e.markUnnamed(seen.includes("/") ? seen.slice(0, seen.lastIndexOf("/") + 1) : seen === "" ? null : ".", h.sc); }
+  }
 });
 git(["archive"], h => {
   const p = opts(h, { shortValue: "o", longValue: ["output", "format", "prefix", "remote", "exec", "add-file", "add-virtual-file"] });
@@ -6386,14 +6437,21 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
   // -J saves under the name the server sends, when it sends one (commands-remote-c5-2).
   if (has(p, "O", "remote-name", "remote-name-all") && has(p, "J", "remote-header-name")) h.e.downloadUnnamed(outDir ?? ".", h.sc);
   if (has(p, "O", "remote-name", "remote-name-all")) {
-    for (const u of urls) {
-      const name = u.replace(/[?#].*$/, "").split("/").pop();
-      if (!name) continue;
-      const path = outDir ? `${outDir}/${name}` : name;
-      const obj = h.e.usePath(lit(path), "write", h.sc);
-      if (obj.abs) h.e.add("destroy", "download.output", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
-      h.e.download(path, h.sc);
+    // The name each address ends in; an address a variable holds part of gives the names the text gives it, and one
+    // whose name Ember can't see, or that curl's `[1-3]` or `{a,b}` makes several of, is a download of no name Ember
+    // knows in the folder it saves into (commands-remote-r6-1).
+    let unnamed = false;
+    for (const w of [...p.operands, ...optionWords(h.args, p, "url")]) {
+      const got = h.e.addressNames(w, { patterns: !has(p, "g", "globoff") });
+      unnamed ||= got.unnamed;
+      for (const name of got.names) {
+        const path = outDir ? `${outDir}/${name}` : name;
+        const obj = h.e.usePath(lit(path), "write", h.sc);
+        if (obj.abs) h.e.add("destroy", "download.output", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
+        h.e.download(path, h.sc);
+      }
     }
+    if (unnamed && !values(p, "output-dir").some(d => d === null)) h.e.downloadUnnamed(outDir ?? ".", h.sc);
   }
   for (const f of values(p, "c", "cookie-jar", "D", "dump-header", "trace", "trace-ascii", "stderr", "etag-save", "hsts", "alt-svc")) if (f && f !== "-") h.e.usePath(lit(f), "write", h.sc);
 });
@@ -6406,8 +6464,7 @@ reg(NATIVE, ["wget", "wget2"], h => {
       "regex-type", "reject-regex", "rejected-log", "remote-encoding", "report-speed", "retry-on-http-error", "secure-protocol", "start-pos", "use-askpass",
       "waitretry", "warc-dedup", "warc-file", "warc-header", "warc-max-size", "warc-tempdir"],
   });
-  const urls = p.operands.map(a => a.v ?? "").filter(u => u);
-  const host = hostOf(urls[0] ?? "") || "another computer";
+  const host = hostOf(p.operands.map(a => a.v ?? "").filter(u => u)[0] ?? "") || "another computer";
   const method = (values(p, "method")[0] ?? "").toUpperCase();
   for (const f of values(p, "post-file", "body-file", "i", "input-file", "load-cookies", "certificate", "private-key")) if (f && f !== "-") h.e.usePath(lit(f), "read", h.sc);
   if (values(p, "post-data", "post-file", "body-data", "body-file").length || /^(POST|PUT|PATCH|DELETE)$/.test(method)) h.e.add("publish", "send.http", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }], program: "wget" });
@@ -6428,10 +6485,27 @@ reg(NATIVE, ["wget", "wget2"], h => {
     // included (review #169); wget may pick another name (a redirect, -r's folders), so the folder is judged too.
     if (dir === null) h.e.downloadUnnamed(null, h.sc);
     else if (dir !== undefined) writeInto(h, dir);
-    for (const u of urls) {
-      const name = u.replace(/[?#].*$/, "").split("/").pop() || "index.html";
-      saveAs(h, dir ? `${dir}/${name}` : name);
+    // -x keeps the address's folders, under the host's: the file lands at host/path (commands-remote-c7-3).
+    const tree = has(p, "x", "force-directories");
+    const flat = !tree || h.args.some(a => a.v === "-nd" || a.v === "--no-directories");
+    const noHost = h.args.some(a => a.v === "-nH" || a.v === "--no-host-directories");
+    const cut = Number((values(p, "cut-dirs").pop() ?? "0") || "0");
+    let unnamed = false;
+    for (const u of p.operands) {
+      // An address a variable holds part of gives the names the text gives it; a name Ember can't see is a download
+      // of no name it knows, in the folder it saves into (commands-remote-r6-1).
+      const got = h.e.addressNames(u, { fallback: "index.html" });
+      unnamed ||= got.unnamed;
+      if (flat) for (const name of got.names) saveAs(h, dir ? `${dir}/${name}` : name);
+      if (!tree) continue;
+      const m = u.v === null ? null : /^(?:([a-z][a-z0-9+.-]*):\/\/)?(?:[^@/]*@)?([^/?#]+)(\/[^?#]*)?/i.exec(u.v);
+      if (!m || !Number.isInteger(cut) || cut < 0) { unnamed = true; continue; }
+      const dirs = (m[3] ?? "/").split("/").slice(1);
+      const name = dirs.pop() || "index.html";
+      const under = [...(has(p, "protocol-directories") ? [m[1] ?? "http"] : []), ...(noHost ? [] : [m[2].replace(/:\d+$/, "")]), ...dirs.slice(cut), name].join("/");
+      saveAs(h, dir ? `${dir}/${under}` : under);
     }
+    if (unnamed && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
     // Names the server or a list picks, and a recursion's or a page's files (commands-remote-c5-2).
     const picked = has(p, "r", "recursive", "m", "mirror", "p", "page-requisites", "content-disposition", "trust-server-names") || values(p, "i", "input-file").length > 0;
     if (picked && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
@@ -6446,6 +6520,15 @@ reg(NATIVE, ["http", "https", "xh", "xhs", "httpie"], h => {
   const items = ops.slice(hasMethod ? 2 : 1);
   if (hasMethod || items.some(i => /^[^=:@]+(:?=|@)/.test(i)) || h.args.some(a => /^(-f|--form|--raw)$/.test(a.v ?? ""))) h.e.add("publish", "send.http", `Sends data to ${hostOf(url ?? "")}.`);
   for (const i of items) { const m = /^[^=:@]+(?:=@|:=@|@)(.+)$/.exec(i); if (m) h.e.usePath(lit(m[1]), "read", h.sc); }
+  // -o saves the answer to a file; -d (--download) without one saves it under the name the server or the address
+  // gives, which Ember can't be sure of (commands-remote-c7-3).
+  const k = h.args.findIndex(a => a.v === "-o" || a.v === "--output");
+  const attached = h.args.find(a => /^--output=/.test(a.v ?? ""));
+  const out = k >= 0 ? h.args[k + 1] : attached?.v ? lit(attached.v.slice("--output=".length)) : undefined;
+  if (out !== undefined) {
+    if (out.v === null) h.e.downloadTo(out, h.sc);
+    else { overwrites(h, out, "download.output"); h.e.download(out.v, h.sc); }
+  } else if (h.args.some(a => a.v === "--download" || /^-[A-Za-z]*d[A-Za-z]*$/.test(a.v ?? ""))) h.e.downloadUnnamed(".", h.sc);
 });
 /**
  * A folder a program saves files into by names Ember can't be sure of (wget -P, aria2c -d, git checkout-index
@@ -6475,6 +6558,13 @@ reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
   else if (dir !== undefined) writeInto(h, dir);
   const at = (name: string): string => (dir ? `${dir}/${name}` : name);
   const named = (u: Arg): string | null => (u.v ? u.v.replace(/[?#].*$/, "").split("/").pop() || "index.html" : null);
+  // An address a variable holds part of: the names the text gives it, else a download of no name Ember knows in the
+  // folder it saves into (commands-remote-r6-1).
+  const byAddress = (u: Arg): void => {
+    const got = h.e.addressNames(u, { fallback: "index.html" });
+    for (const name of got.names) saveAs(h, at(name));
+    if (got.unnamed && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
+  };
   const outs = optionWords(h.args, p, "o", "out", "output");
   for (const w of outs) {
     if (w.v === null) h.e.downloadTo(dir ? { ...w, parts: [`${dir}/`, ...(w.parts ?? [{ name: null }])] } : w, h.sc);
@@ -6489,7 +6579,7 @@ reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
     if (name) h.e.usePath(lit(`${to.v.replace(/[\\/]+$/, "")}/${name}`), "write", h.sc);
     return;
   }
-  if (outs.length === 0) for (const u of p.operands) { const name = named(u); if (name) saveAs(h, at(name)); }
+  if (outs.length === 0) for (const u of p.operands) byAddress(u);
   // aria2c's list of addresses (-i): names Ember can't see, in its folder (commands-remote-c5-2).
   if (h.key === "aria2c" && values(p, "i", "input-file").length && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
 });
