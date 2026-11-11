@@ -16,7 +16,8 @@ const blocked = (s: ListenOnceStatus | undefined): boolean => s?.phase === "bloc
  * never reads a line that no longer holds beside the one shown, such as "Checking the microphone…" (voice-listening-v4-2).
  * Nor is a line said again that comes back while the control stays ready, with nothing pressed, heard or blocked since:
  * main keeps "Request heard." as the line, "Stops the answer on its way, …" took its place while the answer came, and
- * as the answer ended a screen reader said "Request heard." a second time (voice-listening-r6-4).
+ * as the answer ended a screen reader said "Request heard." a second time (voice-listening-r6-4). However many lines
+ * came between: a spoken answer adds "Stops speaking first, …" while its last sentences are said (voice-listening-x7-1).
  */
 export function mountListenOnce(
   button: HTMLButtonElement,
@@ -32,8 +33,8 @@ export function mountListenOnce(
   let error = "";
   /** The line `live` last settled on (never a press's own "Checking the microphone…"), kept while `live` is emptied. */
   let told = live?.textContent ?? "";
-  /** The line said before `told`, while the control has stayed ready since: one that comes back to it is old news. */
-  let before = "";
+  /** The line the control was at as it became ready, while it has stayed ready since: coming back to it is old news. */
+  let home = "";
   const draw = () => {
     const label = listening(status) ? "Cancel listening" : "Listen once";
     if (button.textContent !== label) button.textContent = label;
@@ -46,16 +47,17 @@ export function mountListenOnce(
       : error || (status ? status.detail || ready : "Checking the microphone…");
     if (detail.textContent !== text) detail.textContent = text;
     const settled = pending?.revision !== revision;
-    // Ready, and no press in flight: only what a press would do changes the line now.
-    const calm = settled && !pending && status?.phase === "ready";
-    if (!calm) before = "";
+    // Ready, and no press in flight or failed: only what a press would do changes the line now.
+    const calm = settled && !pending && !error && status?.phase === "ready";
+    if (!calm) home = "";
     const quiet = settled && !error && status?.phase === "blocked" && status.reason === "listening";
     // (An emptied status line says nothing; what it said before is what the next line is compared with.)
     if (live && quiet) { if (live.textContent) live.textContent = ""; }
     else if (live && (live.textContent || told) !== text) {
-      if (calm && text === before) { if (live.textContent) live.textContent = ""; told = text; before = ""; }
-      else { live.textContent = text; if (settled) { before = calm ? told : ""; told = text; } }
+      if (calm && text === home) { if (live.textContent) live.textContent = ""; told = text; }
+      else { live.textContent = text; if (settled) told = text; }
     }
+    if (calm && !home) home = text;
     fit?.();
   };
   const update = (next: ListenOnceStatus | undefined) => {
