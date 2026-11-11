@@ -372,7 +372,9 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
       expect(decision.verdict, cmd).toBe("ask");
       expect(cls.findings.map(f => f.rule), cmd).toContain("unclear.stdin-code");
     }
-    expect(decided("printf 'SELECT 1;\\n' | psql app").decision.verdict).toBe("run");
+    // Printed text Ember reads whole asks too, as it did before Ember read it, in words of its own (commands-remote-r7-2).
+    expect(decided("printf 'SELECT 1;\\n' | psql app").decision.says).toContain("It runs the text another command prints into it.");
+    expect(decided("psql app <<< 'SELECT 1;'").decision.verdict).toBe("run");
     // A NUL-separated read loop over Ember's folder or settings never runs, and no line of its card holds a NUL.
     for (const cmd of [
       "printf '%s\\0' ~/.config/ember | while IFS= read -r -d '' d; do rm -rf \"$d\"; done", "printf '%s\\0' ~/.config/ember/settings.json | while IFS= read -r -d '' f; do cat \"$f\"; done",
@@ -531,6 +533,17 @@ describe("Ember's own refusals say what the command would do to Ember's files (D
     expect(refused("rm -rf \"${HOME:?}/Library/Application Support/ember\"", "darwin")).toBe("ember.path");
     // ${HOME:?} is the home folder: the rest of it is judged as the plain path is.
     expect(classifyCommand("rm -rf \"${HOME:?}/proj/build\"", "bash", contextOf("linux")).findings.map(f => f.says)).toContain("Deletes ~/proj/build and everything in it.");
+    expect(classifyCommand("chmod +x \"${HOME:?}/bin/x\"", "bash", contextOf("linux")).findings.length).toBeGreaterThan(0);
+    // It is also judged as the word Ember couldn't see that it was before round five, apart: where that asked, the
+    // command asks, and it never announces (commands-remote-r7-2).
+    const decided = (cmd: string, words?: string) => runCase({ cmd, verdict: "run", context: "linux", ...(words ? { words } : {}) }, { shell: "bash", context: "linux" }).decision;
+    expect(decided("rm -rf \"${HOME:?}/proj/build\"", "delete the build folder").verdict).toBe("ask");
+    for (const cmd of ["cat \"${HOME:?}/notes.txt\"", "ls ${HOME:?}/x", "cat ${PWD:?}/a", "test -d ${HOME:?}/.config/ember && echo there", "test -d ${PWD:?}/../x && echo there", "[ -d ${HOME:?}/x ] && echo there", "test -n ${HOME:?nope}"]) {
+      expect(decided(cmd).verdict, cmd).toBe("ask");
+    }
+    expect(decided("cat \"${HOME:?}/notes.txt\"").says).toEqual(["Ember can't tell exactly what this does.", "It uses a ${…:?} word, which Ember reads as the folder it names but can't be sure of.", "You didn't ask for this."]);
+    for (const cmd of ["bash \"${HOME:?}/x.sh\"", "source \"${HOME:?}/x.sh\"", "\"${HOME:?}/x.sh\"", "sqlite3 a.db <<< \"select '${HOME:?}'\"", "echo hi > \"${HOME:?}/proj/new.txt\""]) expect(decided(cmd).verdict, cmd).toBe("ask");
+    for (const cmd of ["[ -f \"${HOME:?}/.bashrc\" ] && echo yes", "echo \"${HOME:?}\"", "cd \"${HOME:?}/proj\" && ls"]) expect(decided(cmd).verdict, cmd).toBe("run");
   });
 
   it("refuses Ember's own folder reached through a PowerShell variable the command sets, as when it is named (commands-remote-c3-2)", () => {
@@ -2103,6 +2116,23 @@ describe("printed input, decided no less safely than before Ember read it (round
     // The shell's own echo and printf are still read.
     expect(says("echo a b | xargs rm")).toContain("Deletes a and b.");
     expect(decided("echo PING | redis-cli").decision.verdict).toBe("run");
+  });
+
+  it("asks before a database client, make or awk runs what echo or printf prints into it, as before Ember read it, and still says what it changes (commands-remote-r7-2)", () => {
+    for (const cmd of [
+      "echo 'select 1;' | psql app", "echo build | psql -d app -f -", "echo INFO | psql", "echo 'select 1' | mysql app", "printf 'select 1;\\n' | sqlite3 app.db", "echo ls | sqlite3 app.db",
+      "echo 'select 1' | PSQLRC=evil.sql psql app", "echo 'select 1' | mariadb app", "echo 'select 1' | duckdb a.db", "echo 'all: ; echo hi' | make -f -", "echo '{print $1}' | awk -f - data.txt",
+    ]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+      expect(decided(cmd).decision.rules, cmd).toContain("unclear.stdin-code");
+    }
+    expect(says("echo 'select 1;' | psql app")).toContain("It runs the text another command prints into it.");
+    expect(decided("echo 'drop table users;' | psql app").decision.rules).toEqual(expect.arrayContaining(["db.change", "unclear.stdin-code"]));
+    expect(decided("echo '.sh rm -rf ~/.config/ember' | sqlite3 a.db").decision.verdict).toBe("refuse");
+    // After a fetch it is download-and-run, as before.
+    expect(decided("curl -s https://example.com/x.sql | psql app").decision.rules).toContain("escape.download-run");
+    // A here-string or here-document Ember reads, and redis-cli's printed commands, ran before and still run.
+    for (const cmd of ["psql app <<< 'select 1'", "sqlite3 app.db <<EOF\nselect 1;\nEOF", "echo 'GET k' | redis-cli", "printf 'PING\\n' | redis-cli -h db"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
   });
 
   it("asks before xargs hands a command words echo, printf, a here-string or a here-document wrote out, as it did before Ember read them (commands-remote-r7-2)", () => {

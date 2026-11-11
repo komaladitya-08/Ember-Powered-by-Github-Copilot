@@ -197,6 +197,7 @@ export const SAYS = {
   opensProgram: "Opens a program that keeps running after Ember stops.",
   runsDownloaded: "Runs a file downloaded in this task.",
   downloadsUnnamed: "Downloads to a file Ember can't name.",
+  guardedWord: "It uses a ${…:?} word, which Ember reads as the folder it names but can't be sure of.",
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
   unclear: "Ember can't tell exactly what this does.",
@@ -1788,6 +1789,29 @@ function child(sc: Scope, o: Partial<Scope> = {}, m?: ScopeMore): Scope {
 class Engine extends Classifier {
   /** The folder a `cd` just set (undefined: the command wasn't a cd). */
   cdTarget: string | null | undefined = undefined;
+
+  /**
+   * asksApart for a whole command judged a second way: the commands it registers, and where it leaves the pipeline, the
+   * current command and the folder, are taken back too, so the command proper is judged as if this never ran.
+   */
+  asksApartWhole(judge: () => void): boolean {
+    const n = this.commands.length;
+    const kept = { count: this.simpleCount, at: this.at, program: this.program, pipe: this.pipe, state: { ...this.pipe }, cd: this.cdTarget, top: this.topCd };
+    try {
+      return this.asksApart(judge);
+    } finally {
+      this.commands.length = n;
+      this.simpleCount = kept.count;
+      this.at = kept.at;
+      this.program = kept.program;
+      this.pipe = kept.pipe;
+      this.pipe.fetch = kept.state.fetch;
+      this.pipe.program = kept.state.program;
+      if (kept.state.carried === undefined) delete this.pipe.carried; else this.pipe.carried = kept.state.carried;
+      this.cdTarget = kept.cd;
+      this.topCd = kept.top;
+    }
+  }
   /** The single top-level cd, for cdOnly. */
   topCd: { at: number; abs: string | null } | null = null;
 
@@ -2011,33 +2035,54 @@ class Engine extends Classifier {
     const allWords: PWord[] = [...c.words, ...c.assigns.map(a => a.value), ...c.redirs.flatMap(r => (r.target ? [r.target] : []))];
     for (const w of allWords) for (const sub of w.subs) if (this.subList(sub, sc)) fetchOf.set(w, true);
     for (const r of c.redirs) for (const sub of r.heredoc?.subs ?? []) this.subList(sub, sc);
-    const words = c.words.map(w => this.posixWord(w, sc, fetchOf.get(w) ?? false));
     // Text a substitution fetched, kept in a variable (`x=$(curl …)`, `export x=$(curl …)`): commands-remote-c7-3.
     for (const a of c.assigns) if (fetchOf.get(a.value)) this.fetchedVars.add(a.name);
     for (const w of c.words) { const m = /^([A-Za-z_]\w*)=/.exec(w.raw); if (m && fetchOf.get(w)) this.fetchedVars.add(m[1]); }
-    const redirs = c.redirs.map(r => this.posixRedir(r, sc));
-    const stdin: Simple["stdin"] = c.redirs.some(r => r.op === "<<" || r.op === "<<-" || r.op === "<<<") ? "heredoc"
-      : c.redirs.some(r => r.op === "<") ? "file" : o.stdinPipe ? "pipe" : null;
-    // Text echo or printf pipes in is its input as a here-string's would be (commands-remote-c5-1).
-    const piped = stdin === "pipe" ? o.given ?? undefined : undefined;
-    const stdinText = stdin === "heredoc" ? this.hereText(c.redirs, sc) : piped?.text;
-    const stdinVars = stdin === "heredoc" ? (stdinText === null ? this.hereVars(c.redirs, sc) : undefined) : piped?.vars;
-    // Written-out text only: a here-string with no tilde, variable or substitution (`<<< "$HOME"` is a value Ember
-    // follows, not text written out), a here-document Ember sees whole (commands-a7-2).
-    const hereOnly = c.redirs.every(r => (r.fd === null || r.fd === 0) && r.dup === undefined && (r.op === "<<" || r.op === "<<-" || (r.op === "<<<" && r.target !== null && WRITTEN_OUT.test(r.target.raw))));
-    const ownInput: Simple["ownInput"] = o.stdinPipe ? "other" : c.redirs.length === 0 ? "none" : hereOnly && typeof stdinText === "string" ? "seen" : "other";
+    // The command as Ember reads its words, redirections and input.
+    const read = (): { words: Arg[]; redirs: Redir[]; carried: boolean; s: Simple } => {
+      const words = c.words.map(w => this.posixWord(w, sc, fetchOf.get(w) ?? false));
+      const redirs = c.redirs.map(r => this.posixRedir(r, sc));
+      const stdin: Simple["stdin"] = c.redirs.some(r => r.op === "<<" || r.op === "<<-" || r.op === "<<<") ? "heredoc"
+        : c.redirs.some(r => r.op === "<") ? "file" : o.stdinPipe ? "pipe" : null;
+      // Text echo or printf pipes in is its input as a here-string's would be (commands-remote-c5-1).
+      const piped = stdin === "pipe" ? o.given ?? undefined : undefined;
+      const stdinText = stdin === "heredoc" ? this.hereText(c.redirs, sc) : piped?.text;
+      const stdinVars = stdin === "heredoc" ? (stdinText === null ? this.hereVars(c.redirs, sc) : undefined) : piped?.vars;
+      // Written-out text only: a here-string with no tilde, variable or substitution (`<<< "$HOME"` is a value Ember
+      // follows, not text written out), a here-document Ember sees whole (commands-a7-2).
+      const hereOnly = c.redirs.every(r => (r.fd === null || r.fd === 0) && r.dup === undefined && (r.op === "<<" || r.op === "<<-" || (r.op === "<<<" && r.target !== null && WRITTEN_OUT.test(r.target.raw))));
+      const ownInput: Simple["ownInput"] = o.stdinPipe ? "other" : c.redirs.length === 0 ? "none" : hereOnly && typeof stdinText === "string" ? "seen" : "other";
+      // What it prints reaches the next command only without a redirection of its output.
+      const carried = o.pipedOn === true && o.carriedOn === true && !redirs.some(r => r.kind !== "none" && r.kind !== "read" && !r.op.startsWith("2"));
+      const fetched = words.some(w => w.fetch === true || varNames(w).some(n => this.fetchedVars.has(n))) || (stdinVars?.names ?? []).some(n => this.fetchedVars.has(n));
+      const s: Simple = { words, redirs, stdin, stdinText, stdinVars, ownInput, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried, ...(fetched ? { fetched } : {}) };
+      return { words, redirs, carried, s };
+    };
+    // A `${HOME:?}` or `${PWD:?}` in a word or a redirection is read as the home or current folder, so Ember's own
+    // refusal and the rules for the path it names apply; before round five it was a word Ember couldn't see, and many
+    // commands asked for that alone (`ls ${HOME:?}/x`, `bash "${HOME:?}/x.sh"`, `test -d ${HOME:?}/x`). The command is
+    // judged that way too, apart, and where that asks this one asks (commands-remote-r7-2).
+    const guards = (w: PWord): boolean => w.segs.some(seg => seg.t === "unres" && seg.of !== undefined && seg.exact === true && (seg.of === "HOME" ? sc.home : seg.of === "PWD" ? sc.cwd : null) != null);
+    const guarded = [...c.words, ...c.redirs.flatMap(r => (r.target ? [r.target] : []))].some(guards);
+    const asked = guarded && this.asksApartWhole(() => {
+      this.asWritten = true;
+      let unseen: ReturnType<typeof read>;
+      try { unseen = read(); } finally { this.asWritten = false; }
+      if (c.words.length === 0) { this.newCommand("", [], sc, unseen.redirs, o.background, o.pipedFrom); this.redirects(unseen.redirs, sc); } else this.simple(unseen.s, sc);
+    });
+    const before = this.findings.length;
+    const { words, redirs, carried, s } = read();
     if (c.words.length === 0) {
       this.newCommand("", [], sc, redirs, o.background, o.pipedFrom);
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, null, false);
       this.redirects(redirs, sc);
+      if (asked) this.asksAtLeast(before, "unclear.guarded-word", SAYS.guardedWord);
       return null;
     }
-    // What it prints reaches the next command only without a redirection of its output.
-    const carried = o.pipedOn === true && o.carriedOn === true && !redirs.some(r => r.kind !== "none" && r.kind !== "read" && !r.op.startsWith("2"));
-    const fetched = words.some(w => w.fetch === true || varNames(w).some(n => this.fetchedVars.has(n))) || (stdinVars?.names ?? []).some(n => this.fetchedVars.has(n));
-    this.simple({ words, redirs, stdin, stdinText, stdinVars, ownInput, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried, ...(fetched ? { fetched } : {}) }, sc, () => {
+    this.simple(s, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
+    if (asked) this.asksAtLeast(before, "unclear.guarded-word", SAYS.guardedWord);
     return carried ? printedBy(words) : null;
   }
 
@@ -2072,6 +2117,12 @@ class Engine extends Classifier {
     const names = [...last.heredoc.body.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map(m => m[1]);
     return names.length ? { names, word: null } : undefined;
   }
+
+  /**
+   * While set, `${HOME:?}` and `${PWD:?}` stay words Ember can't see, as they were before round five: the command is
+   * judged that way too, apart, so reading them as the home folder never decides less safely (posixSimple).
+   */
+  private asWritten = false;
 
   /** A POSIX word's value with the scope's home and folder (`~`, `$HOME`, `$PWD`, `$(pwd)`); anything else unresolved. */
   posixWord(w: PWord, sc: Scope, fetch: boolean): Arg {
@@ -2116,7 +2167,7 @@ class Engine extends Classifier {
         // `${url##*/}`, `${d:-x}`) may be other text too, so a part Ember can't see stays as well: the near rule and a
         // copied download still see it (commands-remote-w5-1). HOME and PWD are the scope's, as `$HOME` is (w5-3).
         const val = seg.of === "HOME" ? sc.home : seg.of === "PWD" ? sc.cwd : null;
-        if (val !== null && seg.exact) { v += val; parts.push(val); pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
+        if (val !== null && seg.exact && !this.asWritten) { v += val; parts.push(val); pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
         else {
           unresolved = true;
           // A default's plain text (`${d:-build}`, `${XDG_CONFIG_HOME:-$HOME/.config}`, `${d:-~/x}`) is a value too.
@@ -2643,6 +2694,9 @@ class Engine extends Classifier {
       return { name: a.raw.slice(0, eq).replace(/\+$/, ""), value };
     });
     const words = all.slice(lead);
+    // One whose value Ember can't see (`time x=$(…)`) stood as a program it couldn't name before these were read as
+    // assignments, and asked: it still asks (commands-remote-r7-2).
+    if (all.slice(0, lead).some(a => a.v === null)) this.unclear("unclear.assignment-unseen", "It sets a variable to text Ember can't see, where a command could stand.");
     const sc = child(h.sc, { ...o, wrappers: [...h.sc.wrappers, wrapper] }, more(h.sc));
     pc.wrappers = [...sc.wrappers];
     if (words.length === 0) {
@@ -3675,7 +3729,7 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     // With no command on its line it runs the commands its input gives, one a line (`redis-cli <<< FLUSHALL`, `echo
     // DEL x | redis-cli`); with -x its input is the last argument's value (commands-remote-c5-3).
     if (p.operands.length === 0 && !has(p, "x")) {
-      if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => { for (const l of t.split("\n")) redisCommand(h, l.trim().split(/\s+/)); });
+      if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => { for (const l of t.split("\n")) redisCommand(h, l.trim().split(/\s+/)); }, false);
       else if (h.s.stdin === "file") stdinFile(h);
     }
   }
@@ -4240,8 +4294,21 @@ reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma
   const p = opts(h, { shortValue: valueShort[h.key] ?? "S", longValue: ["suffix", "format", "threads", "memlimit", "output", "quality", "window", "processes", "blocksize", "patch-from"] });
   const keeps = has(p, "k", "keep", "c", "stdout", "to-stdout", "t", "test", "l", "list", "h", "help", "V", "version");
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
-  const ins = objsOf(h, p.operands, "write");
-  if (removes && p.operands.length && !keeps) h.e.add("destroy", "archive.in-place", `Replaces ${listOf(ins)} with a packed or unpacked copy.`, { objects: ins });
+  // A word after a count or format option that is no count or format (`xz -T big.tar`, `pigz -p "$N"`, `xz -T
+  // ~/.config/ember/settings.json`) may be a file the tool packs after all: it is judged as one too, as it was before
+  // these options took a value (commands-remote-r7-2).
+  const stray = p.opts.flatMap(o => {
+    const next = h.args[o.at + 1];
+    const word = h.args[o.at]?.v ?? "";
+    const short = /^-[A-Za-z]$/.test(o.name) && "TMFCpbqw".includes(o.name[1]) && (valueShort[h.key] ?? "").includes(o.name[1]) && word.endsWith(o.name[1]) && !word.startsWith("--");
+    const long = /^--(processes|blocksize|quality|window)$/.test(o.name) && word === o.name;
+    if (o.value === undefined || !next || !(short || long)) return [];
+    const ok = next.v === null ? countWord(next.raw) : /^[FC]$/.test(o.name.slice(1)) ? /^(auto|xz|lzma|lzip|raw|none|crc32|crc64|sha256)$/.test(next.v) : /^\d+(\.\d+)?[A-Za-z%]*$/.test(next.v);
+    return ok ? [] : [next];
+  });
+  const packed = [...p.operands, ...stray];
+  const ins = objsOf(h, packed, "write");
+  if (removes && packed.length && !keeps) h.e.add("destroy", "archive.in-place", `Replaces ${listOf(ins)} with a packed or unpacked copy.`, { objects: ins });
   // zstd's and brotli's -o names the file they write (with -f, over one that is there), and zstd's -D a dictionary it
   // reads: judged as that file is (commands-remote-v5-1). Unpacked from a download, it is one too.
   if (!["zstd", "unzstd", "brotli"].includes(h.key)) return;
@@ -4417,9 +4484,18 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
  * when Ember can see all of the text (a quoted here-document or a here-string), `judge` it; otherwise a fetch before it
  * is download-and-run, and anything else is unclear (it runs code Ember can't see). The dangerous cases ask either way.
  */
-function fromStdin(h: H, judge: (text: string) => void): void {
+function fromStdin(h: H, judge: (text: string) => void, printedAsks = true): void {
   const t = h.s.stdinText;
-  if (t !== undefined && t !== null) { judge(t); return; }
+  if (t !== undefined && t !== null) {
+    judge(t);
+    // Text echo or printf prints into it is judged, and never decided less safely than a pipe Ember can't see, which
+    // is how it was judged before Ember read what is printed: it asks as well (commands-remote-r7-2). `printedAsks`
+    // false: a client whose piped input never asked by itself (redis-cli).
+    if (h.s.stdin !== "pipe" || !printedAsks) return;
+    if (h.s.fetchBefore) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
+    else h.e.unclear("unclear.stdin-code", "It runs the text another command prints into it.");
+    return;
+  }
   if (h.s.fetchBefore && (h.s.stdin === "pipe" || h.s.stdin === "heredoc")) { h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns); return; }
   h.e.unclear("unclear.stdin-code", "Runs code Ember can't see.");
 }

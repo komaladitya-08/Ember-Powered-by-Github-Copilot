@@ -15684,7 +15684,10 @@
   },
   {
    "cmd": "cat \"${HOME:?}/notes.txt\"",
-   "verdict": "run"
+   "verdict": "ask",
+   "rules": [
+    "unclear.guarded-word"
+   ]
   },
   {
    "cmd": "T=deploy; make -j \"$T\"",
@@ -16364,6 +16367,182 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "echo 'select 1;' | psql app",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "echo build | psql -d app -f -",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "echo 'select 1' | mysql app",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "printf 'select 1;\\n' | sqlite3 app.db",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "echo 'select 1' | PSQLRC=evil.sql psql app",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "echo 'drop table users;' | psql app",
+   "verdict": "ask",
+   "rules": [
+    "db.change",
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "echo '.sh rm -rf ~/.config/ember' | sqlite3 a.db",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "echo 'all: ; echo hi' | make -f -",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "psql app <<< 'select 1'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo 'GET k' | redis-cli",
+   "verdict": "run"
+  },
+  {
+   "cmd": "xz -T big.tar",
+   "verdict": "ask",
+   "rules": [
+    "archive.in-place"
+   ]
+  },
+  {
+   "cmd": "pigz -p big.tar",
+   "verdict": "ask",
+   "rules": [
+    "archive.in-place"
+   ]
+  },
+  {
+   "cmd": "xz -T ~/.config/ember/settings.json",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "xz -T \"$N\"",
+   "verdict": "ask",
+   "rules": [
+    "archive.in-place"
+   ]
+  },
+  {
+   "cmd": "pigz --processes big.tar",
+   "verdict": "ask",
+   "rules": [
+    "archive.in-place"
+   ]
+  },
+  {
+   "cmd": "xz -kT4 big.tar",
+   "verdict": "run"
+  },
+  {
+   "cmd": "test -d ${HOME:?}/.config/ember && echo there",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "test -d ${PWD:?}/../.config/ember && echo there",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "ls ${HOME:?}/x",
+   "verdict": "ask",
+   "rules": [
+    "unclear.guarded-word"
+   ]
+  },
+  {
+   "cmd": "bash \"${HOME:?}/x.sh\"",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "echo hi > \"${HOME:?}/proj/new.txt\"",
+   "missing": [
+    "~/proj/new.txt"
+   ],
+   "verdict": "ask"
+  },
+  {
+   "cmd": "rm -rf \"${HOME:?}/proj/build\"",
+   "words": "delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "tar -C ${HOME:?}/.ssh -xf x.tar",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "cd \"${HOME:?}/proj\" && ls",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[ -f \"${HOME:?}/.bashrc\" ] && echo yes",
+   "verdict": "run"
+  },
+  {
+   "cmd": "time x=$(ls | wc -l); echo $x",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment-unseen"
+   ]
+  },
+  {
+   "cmd": "time x=$(curl -s https://e.com/x)",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment-unseen"
+   ]
+  },
+  {
+   "cmd": "time -p x=$(ls)",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "time x=1",
+   "verdict": "run"
+  },
+  {
+   "cmd": "x=$(ls | wc -l); echo $x",
+   "verdict": "run"
   }
  ]
 }

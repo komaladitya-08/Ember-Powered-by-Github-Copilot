@@ -470,7 +470,10 @@ Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`, or a cut or a default
 of a variable, `~/.config/"${x%y}"`, which may be other text than its value) or a pattern before it could match one
-(`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is, and a default's text counts as a value
+(`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is (and `${PWD:?}` the current one; Ember reads the
+path it names, and also asks wherever it asked before it read such a word, "It uses a ${…:?} word, which Ember reads
+as the folder it names but can't be sure of.": `ls ${HOME:?}/x`, `bash "${HOME:?}/x.sh"` and an unquoted `test -d
+${HOME:?}/x` ask, `[ -f "${HOME:?}/.bashrc" ]` and `cd "${HOME:?}/proj"` run), and a default's text counts as a value
 (`"${XDG_CONFIG_HOME:-$HOME/.config}/ember"` is Ember's folder). A variable is judged where a command uses it, so one that only names Ember's
 folder to test or print it on the terminal (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
 input while nothing takes what it prints (`grep -q ember <<< "$p"`, `echo "$p" | wc -c`; never an awk or sed program
@@ -489,7 +492,8 @@ it likes, so the command after it is judged as given input Ember can't see, and 
 way is still refused. A command `xargs`
 builds from text Ember reads is judged batch by batch (`echo test publish | xargs -n1 npm` asks about `npm publish`,
 `printf 'status\nclean -fdx\n' | xargs -L1 git` about the clean), and reading the text never makes it run or announce
-where it asked before: `echo build | xargs ls` asks ("xargs builds this command from its input."), and `echo build |
+where it asked before (a database client, `make -f -` or `awk -f -` given printed text asks too, "It runs the text
+another command prints into it.", saying as well when the text changes data: `echo 'drop table users;' | psql app`): `echo build | xargs ls` asks ("xargs builds this command from its input."), and `echo build |
 xargs rm -rf` asks whatever you said. Handed to a program that
 may change what it names (an export, the input of a program Ember can't follow), Ember says it would change its files. A value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
 does.
