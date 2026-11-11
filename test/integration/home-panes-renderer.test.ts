@@ -390,6 +390,29 @@ describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-
     await page.close();
   });
 
+  it("shows which pane is open in the narrow row of section links, after a link in the page opens it and when the window reopens on it (home-c7-1)", async () => {
+    const page = await open("home", { viewport: { width: 500, height: 800 }, checks: [{ id: "atspi", status: "fail", label: "Accessibility", detail: "Ember can't read apps.", fix: "Turn on assistive technologies." }] });
+    /** How far the current link is outside the row, left and right (px; 0 when all of it shows), and its name. */
+    const current = () => page.evaluate(() => {
+      const row = document.getElementById("jump")!.getBoundingClientRect();
+      const a = document.querySelector<HTMLElement>("#jump a[aria-current]")!;
+      const r = a.getBoundingClientRect();
+      return { name: a.getAttribute("href"), out: Math.max(0, Math.round(row.left - r.left)) + Math.max(0, Math.round(r.right - row.right)) };
+    });
+    expect(await page.evaluate(() => { const j = document.getElementById("jump")!; return j.scrollWidth > j.clientWidth; })).toBe(true);
+    await page.locator("#p-setup").click();
+    await expect.poll(current).toEqual({ name: "#checks-h", out: 0 });
+    // Reopened on the pane it remembers: its link is in the row, not Home's.
+    await page.reload();
+    await page.waitForSelector("a[href='#checks-h']");
+    await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
+    await expect.poll(current).toEqual({ name: "#checks-h", out: 0 });
+    // The remembered pane is this test's alone: the next page opens on Home.
+    await page.locator("#checks-h").evaluate(() => { localStorage.removeItem("ember.home.pane"); });
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
   it("gives each entry's words the whole row in a narrow window at a large text size, and keeps one row when there is room (accessibility-visual-r1)", async () => {
     const thunderbird = { app: "thunderbird", kind: "click", element: { role: "push button", name: "Send" } };
     const entries: ActivityEntry[] = [{ t: minutesAgo(1), event: "confirm", answer: "always", ...thunderbird }];

@@ -2254,8 +2254,24 @@ function showPane(p: string, glide = false, remember = true): void {
     else a.removeAttribute("aria-current");
   }
   placeHighlight(glide);
+  showCurrentLink();
   // Home's characters draw only while they show (the observer sees them go).
   drawSoon();
+}
+/**
+ * In the narrow row of section links (it scrolls sideways), the link of the pane shown is brought into the row: a link
+ * in the page that opened a pane, or the window reopening on the pane it remembers, left the row on Home, Projects
+ * and the like with the current link and its badge off to the side (home-c7-1). The row alone scrolls, never the page.
+ */
+function showCurrentLink(): void {
+  const row = $("jump");
+  const a = jumpLinks.find(l => l.getAttribute("aria-current") === "true");
+  if (!a || row.scrollWidth <= row.clientWidth) return;
+  const r = row.getBoundingClientRect();
+  const l = a.getBoundingClientRect();
+  // 4 px to spare, as a focused link has for its ring (scroll-margin-inline).
+  if (l.left < r.left + 4) row.scrollLeft += l.left - r.left - 4;
+  else if (l.right > r.right - 4) row.scrollLeft += l.right - r.right + 4;
 }
 /**
  * The sidebar's selection: one highlight that glides to the link of the pane shown when the user picks it, and is put
@@ -2325,7 +2341,7 @@ for (const s of document.querySelectorAll(".home > [data-pane]")) panesSeen.obse
 // resizes them: the highlight follows at once.
 const linksMoved = new MutationObserver(() => placeHighlight(false));
 for (const a of jumpLinks) linksMoved.observe(a, { attributes: true, attributeFilter: ["hidden", "class"] });
-new ResizeObserver(() => placeHighlight(false)).observe($("jump"));
+new ResizeObserver(() => { placeHighlight(false); showCurrentLink(); }).observe($("jump"));
 
 // ───── Search settings: at the top of the sidebar, it narrows the panes to those that hold the words typed, and
 // Enter goes to the first setting found (System Settings' search, HIG/search-fields) ─────
