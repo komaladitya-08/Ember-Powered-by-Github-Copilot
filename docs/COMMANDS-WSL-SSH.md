@@ -201,7 +201,8 @@ Ember stops and asks before a command that:
   build.sh` asks). An address a variable holds only the start of still ends in a name Ember can read, so `curl -LO
   "$BASE/run.sh"` records run.sh, and a variable the command line sets is followed (`V=1.2; curl -LO
   https://example.com/tool-$V.sh` records tool-1.2.sh); `wget -x` records the file under the host's folder
-  (`example.com/dir/a.py`); text a fetch printed that a variable carries into a file is the download too (`x=$(curl -s
+  (`example.com/dir/a.py`, with a port `example.com:8080/dir/a.py`) and by its name alone as well, also without the
+  host's folder when `-nH` is anywhere in its options (`-xnH`, `--no-host-dir`); text a fetch printed that a variable carries into a file is the download too (`x=$(curl -s
   …); echo "$x" > a.py`); a repository cloned from an address or into a folder Ember can't see (`git clone $REPO`)
   makes the folder it is cloned in count, so building there asks; and `node .` or `python3 tool` asks when the
   folder's entry file (`index.js`, `package.json`, `__main__.py`) is a download. A download Ember can name never

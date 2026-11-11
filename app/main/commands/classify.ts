@@ -5430,6 +5430,9 @@ git(["clone"], h => {
     else if (!dir) h.e.markUnnamed(".", h.sc);
     else { const seen = name.slice(0, name.indexOf(UNSEEN)); h.e.markUnnamed(seen.includes("/") ? seen.slice(0, seen.lastIndexOf("/") + 1) : seen === "" ? null : ".", h.sc); }
   }
+  // With a folder word Ember can't see, the address's own name is marked as well, as on main: no form of the word
+  // decides less safely than it did (commands-remote-x7-2).
+  if (dir && dir.v === null && url?.v) h.e.download(url.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop()?.replace(/\.git$/, "") ?? null, h.sc);
 });
 git(["archive"], h => {
   const p = opts(h, { shortValue: "o", longValue: ["output", "format", "prefix", "remote", "exec", "add-file", "add-virtual-file"] });
@@ -6609,25 +6612,33 @@ reg(NATIVE, ["wget", "wget2"], h => {
     // included (review #169); wget may pick another name (a redirect, -r's folders), so the folder is judged too.
     if (dir === null) h.e.downloadUnnamed(null, h.sc);
     else if (dir !== undefined) writeInto(h, dir);
-    // -x keeps the address's folders, under the host's: the file lands at host/path (commands-remote-c7-3).
+    // -x keeps the address's folders, under the host's (with its port, as written): the file lands at host/path
+    // (commands-remote-c7-3). The name alone is marked as well, as on main, whatever the options: -nd, or -nH with no
+    // folders left, saves it there, and both may stand in a cluster or be cut short (`-xnH`, `--no-host-dir`), so a
+    // hint of -nH marks the place with the host's folder and without it (commands-remote-x7-2).
     const tree = has(p, "x", "force-directories");
-    const flat = !tree || h.args.some(a => a.v === "-nd" || a.v === "--no-directories");
-    const noHost = h.args.some(a => a.v === "-nH" || a.v === "--no-host-directories");
-    const cut = Number((values(p, "cut-dirs").pop() ?? "0") || "0");
+    const noHost = h.args.some(a => a.v !== null && (/^-[A-Za-z]*nH/.test(a.v) || (a.v.length >= 6 && "--no-host-directories".startsWith(a.v))));
+    // A count of folders to drop that Ember can't read leaves a name it can't place.
+    const cuts = values(p, "cut-dirs");
+    const cutWord = cuts.length ? cuts[cuts.length - 1] : "0";
+    const cut = cutWord !== null && /^\d{1,3}$/.test(cutWord) ? Number(cutWord) : null;
     let unnamed = false;
     for (const u of p.operands) {
       // An address a variable holds part of gives the names the text gives it; a name Ember can't see is a download
       // of no name it knows, in the folder it saves into (commands-remote-r6-1).
       const got = h.e.addressNames(u, { fallback: "index.html" });
       unnamed ||= got.unnamed;
-      if (flat) for (const name of got.names) saveAs(h, dir ? `${dir}/${name}` : name);
+      for (const name of got.names) saveAs(h, dir ? `${dir}/${name}` : name);
       if (!tree) continue;
       const m = u.v === null ? null : /^(?:([a-z][a-z0-9+.-]*):\/\/)?(?:[^@/]*@)?([^/?#]+)(\/[^?#]*)?/i.exec(u.v);
-      if (!m || !Number.isInteger(cut) || cut < 0) { unnamed = true; continue; }
+      if (!m || cut === null) unnamed = true;
+      if (!m) continue;
       const dirs = (m[3] ?? "/").split("/").slice(1);
       const name = dirs.pop() || "index.html";
-      const under = [...(has(p, "protocol-directories") ? [m[1] ?? "http"] : []), ...(noHost ? [] : [m[2].replace(/:\d+$/, "")]), ...dirs.slice(cut), name].join("/");
-      saveAs(h, dir ? `${dir}/${under}` : under);
+      for (const host of noHost ? [[], [m[2]]] : [[m[2]]]) {
+        const under = [...(has(p, "protocol-directories") ? [m[1] ?? "http"] : []), ...host, ...dirs.slice(cut ?? 0), name].join("/");
+        saveAs(h, dir ? `${dir}/${under}` : under);
+      }
     }
     if (unnamed && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
     // Names the server or a list picks, and a recursion's or a page's files (commands-remote-c5-2).
