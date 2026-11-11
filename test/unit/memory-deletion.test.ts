@@ -369,6 +369,42 @@ describe("what used to be true, in Settings › Memory (memory-c7-2)", () => {
     expect(onDisk()).toEqual([]);
   });
 
+  /** A fact of the user's and `n` wordings of Ember's summary of it, each closing the one before, as a sleep-time pass adds them. */
+  function reworded(n: number) {
+    const s = setup();
+    s.memory.remember("Works on Atlas", [{ name: "User" }], "I work on Atlas");
+    const from = s.memory.list()[0].id;
+    for (let i = 1; i <= n; i++) {
+      s.memory.refine(g => g.add({ text: `Summary v${i}: works on Atlas`, about: [{ name: "User" }], predicate: "summary", single: true, source: "conversation", confidence: 0.6, derivedFrom: [from] }).kind === "added" ? 1 : 0);
+    }
+    s.memory.flush();
+    const onDisk = () => (JSON.parse(fs.readFileSync(path.join(s.dir, "memory.json"), "utf8")) as { facts: Fact[] }).facts.map(f => f.text);
+    return { s, from, onDisk };
+  }
+
+  it("lists one summary per subject however often Ember rewords it: an earlier wording is not “No longer true” (memory-x7-4)", () => {
+    const { s, onDisk } = reworded(6);
+    expect(s.memory.review().map(r => [r.text, !!r.until])).toEqual([["Summary v6: works on Atlas", false], ["Works on Atlas", false]]);
+    expect(onDisk()).toHaveLength(7);
+  });
+
+  it("forgets a summary's earlier wordings with it from Settings, so none is left unseen, and Undo puts them back (memory-x7-4)", () => {
+    const { s, onDisk } = reworded(3);
+    const gone = s.memory.forgetCounted(s.memory.review()[0].id, false)!;
+    expect([gone.text, gone.derived]).toEqual(["Summary v3: works on Atlas", 0]);
+    expect(onDisk()).toEqual(["Works on Atlas"]);
+    expect(s.memory.review().map(r => r.text)).toEqual(["Works on Atlas"]);
+    expect(s.memory.restore(gone.undo)).toBe(true);
+    expect(onDisk()).toHaveLength(4);
+    expect(s.memory.review().map(r => r.text)).toEqual(["Summary v3: works on Atlas", "Works on Atlas"]);
+  });
+
+  it("counts only the notes that were listed when the fact they came from is forgotten, and removes every wording (memory-x7-4)", () => {
+    const { s, from, onDisk } = reworded(4);
+    expect(s.memory.forgetCounted(from, false)!.derived).toBe(1);
+    expect(onDisk()).toEqual([]);
+  });
+
   it("refuses a correction of what is no longer true (memory-c7-2)", async () => {
     const { s } = await moved();
     expect(() => s.memory.correct(s.memory.review()[1], "Lives at 14 Mill Lane, Leeds")).toThrow("This memory changed");

@@ -54,6 +54,17 @@ const memoryItem = (f: Fact): MemoryItem => {
     ...(f.invalidAt ? { until: f.invalidAt } : {}) };
 };
 
+/**
+ * An earlier wording of one of Ember's own notes: closed by a newer note of the same kind (each sleep-time pass
+ * rewords a subject's summary: ./refine.ts). It is the note's history, not something that stopped being true, so
+ * Settings lists the note once, and it goes whenever the wording that replaced it does (memory-x7-4).
+ */
+const reworded = (g: MemoryGraph, f: Fact): boolean => {
+  const kind = noteKind(f);
+  const by = f.invalidAt && f.supersededBy ? g.fact(f.supersededBy) : undefined;
+  return !!kind && !!by && noteKind(by) === kind;
+};
+
 /** What is wrong with memory.json this run (MemoryService.trouble; memory-r2). */
 export type MemoryTrouble = "unreadable" | "reset" | "unsaved";
 
@@ -311,13 +322,24 @@ export class MemoryService {
     const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
     const f = next.fact(id)!;
     const notes = next.notesFrom(id);
-    // The notes the user could see in the list: Settings lists the closed ones too (memory-c7-2).
-    const shownNotes = notes.length;
+    // The notes the user could see in the list: Settings lists the closed ones too (memory-c7-2), but a note's
+    // earlier wordings never (memory-x7-4).
+    const shownNotes = notes.filter(n => !reworded(next, next.fact(n)!)).length;
     let reopened = 0;
     // What the fact itself gives back, in its words, so whoever says what went says this too (memory-12).
     const back = reopen && !f.invalidAt ? next.allFacts().filter(o => o.supersededBy === id && !notes.includes(o.id)).map(o => o.text) : [];
     // A note that replaced an older one gives it back, unless that one goes too.
     for (const x of [id, ...notes]) if (!next.fact(x)?.invalidAt && (reopen || x !== id)) reopened += next.reopenSuperseded(x);
+    // A note's earlier wordings aren't listed, so they go with the wording that replaced them: none is left on disk
+    // behind a note that is gone (memory-x7-4). One that was just given back is open, and stays.
+    const going = new Set([id, ...notes]);
+    for (let more = true; more;) {
+      more = false;
+      for (const o of next.allFacts()) {
+        if (going.has(o.id) || !o.supersededBy || !going.has(o.supersededBy) || !reworded(next, o)) continue;
+        going.add(o.id); notes.push(o.id); more = true;
+      }
+    }
     for (const x of [id, ...notes]) next.forgetFact(x);
     try {
       // Derived data first. If the graph write fails, missing vectors can safely be rebuilt from the retained graph.
@@ -413,10 +435,11 @@ export class MemoryService {
   /**
    * Everything kept, for Settings › Memory (memory-c7-2): what holds now as `list` gives it, then what is no longer
    * true (`until`), most recently replaced first. That history stays on disk for HISTORY_DAYS and recall can give it
-   * to the model as what used to be true, so the user can see it and forget it.
+   * to the model as what used to be true, so the user can see it and forget it. Not an earlier wording of one of
+   * Ember's own notes (`reworded`): the note is listed once, as it reads now (memory-x7-4).
    */
   review(): MemoryItem[] {
-    const closed = this.g.allFacts().filter(f => f.invalidAt)
+    const closed = this.g.allFacts().filter(f => f.invalidAt && !reworded(this.g, f))
       .sort((a, b) => b.invalidAt!.localeCompare(a.invalidAt!) || b.id.localeCompare(a.id));
     return [...this.list(), ...closed.map(memoryItem)];
   }
