@@ -121,6 +121,16 @@ describe("main's answer speech ownership", () => {
     expect(w.voice.speak).not.toHaveBeenCalled();
   });
 
+  it("never reads an answer out while a question is up, as no answer is said then: the question's voice isn't cut (voice-speaking-x7-4)", () => {
+    const w = wiring();
+    w.confirmer.waiting = true;
+    expect(w.readOut("Opened Notes.")).toBe(false);
+    expect(w.voice.hush).not.toHaveBeenCalled();
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    w.confirmer.waiting = false;
+    expect(w.readOut("Opened Notes.")).toBe(true);
+  });
+
   it("tells the suggestions whether Ember speaks, so “Read it out” isn't offered where it couldn't be read (voice-speaking-r6-1)", () => {
     const w = wiring();
     w.prefs.speak = false;

@@ -95,6 +95,8 @@ export const COMPOSER_SAYS = {
   noReply: "No reply was written. Task activity shows any task this request started.",
   replyStopped: "The reply was stopped before it finished.",
   stoppedAll: "Stopped everything, running tasks included.",
+  // "Read it out": Ember says its last answer aloud, and writes nothing new (voice-speaking-x7-2).
+  readOut: "Reading the last answer out.",
 } as const;
 /**
  * A Problem line as Home shows it (home-7): Home is Ember's settings, so where the line sends the user to "Ember's

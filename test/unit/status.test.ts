@@ -123,6 +123,13 @@ describe("resultsRequest", () => {
     for (const t of ["read them out again", "read the results aloud", "read this email out", "read it", "tell me a joke", "tell me again why the sky is blue", "try again"]) expect(readOutRequest(t), t).toBe(false);
   });
 
+  it("leaves “read this out”, which asks for what is on the screen, to the conversation (voice-speaking-x7-3)", () => {
+    for (const t of ["read this out", "Ember, read this out", "read this aloud", "could you read this out loud, please", "read this aloud to me"]) {
+      expect(readOutRequest(t), t).toBe(false);
+      expect(resultsRequest(t), t).toBeNull();
+    }
+  });
+
   it("leaves “just show it”, an answer to Ember's “Shall I show it?”, to the conversation (voice-speaking-c7-2)", () => {
     for (const t of ["just show it", "Ember, just show it"]) expect(resultsRequest(t), t).toBeNull();
   });
@@ -298,6 +305,57 @@ describe("AgentHost's status answer", () => {
     await host.ask("read it out");
     expect(read.at(-1)).toBe(answer);
     expect(settings.get().speakResults).toBe(false);
+  });
+
+  /** A host that reads out through `read`, telling Home's turn through `turns`; `waiting`: a question is up. */
+  const reader = (o: { waiting?: () => boolean } = {}) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const answers: string[] = [], read: string[] = [], turns: unknown[] = [];
+    const confirmer = { get waiting() { return o.waiting?.() ?? false; }, settled: async () => undefined, cancelAll: () => undefined };
+    const host = new AgentHost({
+      userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet,
+      setState: () => undefined, onStatus: () => undefined, onAnswer: t => answers.push(t), health: () => ({ mic: "off", speaks: true }),
+      readOut: t => { read.push(t); return true; },
+      onConversationTurn: (turn, ended) => turns.push(ended ? { turn, ended } : { turn }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- only the confirmer's question state is read here
+      ...(o.waiting ? { taskBase: { audit: {}, confirmer } as any } : {}),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a finished task's line, as TaskManager's callback writes it
+    const remember = (who: "ember" | "task", text: string) => { (host as any).remember(who, text); };
+    return { host, answers, read, turns, remember };
+  };
+
+  it("tells Home a typed “Read it out” was answered by reading, so its composer doesn't say “Thinking…” for good (voice-speaking-x7-2)", async () => {
+    const { host, read, turns, remember } = reader();
+    remember("ember", "Your next meeting is at three.");
+    await host.ask("Read it out");
+    expect(read).toEqual(["Your next meeting is at three."]);
+    expect(turns).toEqual([{ turn: "thinking" }, { turn: "idle", ended: "read-out" }]);
+    expect(host.conversationTurn).toBe("idle");
+  });
+
+  it("says a finished task's result again for “say that again”, not the answer before it (voice-speaking-x7-3)", async () => {
+    const { host, read, remember } = reader();
+    remember("ember", "On it: I've started renaming the photos.");
+    remember("task", "Rename the photos: Renamed 12 photos in Pictures.");
+    for (const t of ["say that again", "Could you repeat that?", "read it out"]) await host.ask(t);
+    expect(read).toEqual(Array(3).fill("Rename the photos: Renamed 12 photos in Pictures."));
+    // The handle's "Read the last answer" still opens Ember's own last answer.
+    expect(host.lastAnswer()).toBe("On it: I've started renaming the photos.");
+  });
+
+  it("never reads an older answer out over a question that is up: the request is the conversation's then (voice-speaking-x7-4)", async () => {
+    let waiting = true;
+    const { host, read, answers, remember } = reader({ waiting: () => waiting });
+    remember("ember", "Your next meeting is at three.");
+    await host.ask("say that again");
+    expect(read).toEqual([]);
+    expect(answers.filter(a => Object.values(READ_OUT_REPLY).includes(a as never))).toEqual([]);
+    waiting = false;
+    await host.ask("say that again");
+    expect(read).toEqual(["Your next meeting is at three."]);
   });
 
   it("never promises results read aloud when Ember isn't speaking, the organisation keeps them on screen, or the switch can't be saved (audit of the conversation features)", async () => {

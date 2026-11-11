@@ -1150,7 +1150,8 @@ function endComposerWait(): void {
   const said = since.filter(e => e.who === "ember" || e.who === "problem").at(-1);
   // A Stop that ended it left no line to read it from (the bubble's own Stop: home-c2-2).
   const stopped = conversationTurnEnded === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : conversationTurnEnded === "stopped" ? CONVERSATION_STOPPED : null;
-  const words = stopped ? stoppedLine(stopped)
+  // (Read out: Ember says its last answer aloud and writes no line: voice-speaking-x7-2.)
+  const words = stopped ? stoppedLine(stopped) : conversationTurnEnded === "read-out" ? COMPOSER_SAYS.readOut
     : said?.who === "problem" ? problemSaid(since) : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
   if (stopped) conversationStopTold = words;
   keepingComposer(() => { conversationComposeStatus.textContent = words; });
@@ -1227,7 +1228,7 @@ function conversationTurn(value: unknown): void {
     // Nothing waits in main now. With no Stop, every message it took has its line, or never will (home-v4-1); a Stop
     // dropped those still without one, given back though the composer waited for none of them (a later send was
     // refused: home-v4-2).
-    if (!change.ended) conversationUnsent = conversationUnsent.filter(u => !u.taken);
+    if (!change.ended || change.ended === "read-out") conversationUnsent = conversationUnsent.filter(u => !u.taken);
     else if (conversationUnsent.some(u => u.taken)) keepingComposer(() => { conversationComposeStatus.textContent = conversationStopTold = stoppedLine(change.ended === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : CONVERSATION_STOPPED); });
   }
   renderStatus();

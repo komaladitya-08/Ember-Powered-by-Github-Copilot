@@ -1217,10 +1217,11 @@ function start(): void {
   /**
    * "Read it out": Ember's last answer said once, as it would have been said (code and addresses left to the bubble, its
    * language's voice), in place of whatever Ember is saying. False, and nothing said, where Ember may not speak now
-   * (voice-speaking-r6-1).
+   * (voice-speaking-r6-1), or while a question is up, as no answer is said then: its own voice isn't cut
+   * (voice-speaking-x7-4).
    */
   const readOut = (answer: string): boolean => {
-    if (!voice || !maySpeak()) return false;
+    if (!voice || !maySpeak() || confirmer?.waiting) return false;
     const pieces = answerPieces(answer);
     if (!pieces.length) return false;
     resetAnswerSpeech();

@@ -1145,6 +1145,7 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
       noReply: "No reply was written. Task activity shows any task this request started.",
       replyStopped: "The reply was stopped before it finished.",
       stoppedAll: "Stopped everything, running tasks included.",
+      readOut: "Reading the last answer out.",
     });
     expect(conv.CONVERSATION_STOPPED).toBe("Response stopped. Running tasks continue.");
     expect(conv.CONVERSATION_NOTHING_TO_STOP).toBe("Nothing is being answered right now, so there was nothing to stop.");

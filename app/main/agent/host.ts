@@ -1558,9 +1558,11 @@ export class AgentHost {
 
   /** The last retained answer. Home discloses if the explicit per-message memory bound was reached. */
   lastAnswer(o: { readable?: boolean } = {}): string | null {
-    // `readable`: not Ember's own "I can't read it out", which a second "read it out" would otherwise read.
+    // `readable` (for "read it out", "say that again"): the last thing Ember said, a finished task's result too (main
+    // speaks those: an older answer was read in its place, voice-speaking-x7-3), and not Ember's own "I can't read it
+    // out", which a second "read it out" would otherwise read.
     const unread: readonly string[] = o.readable ? Object.values(READ_OUT_REPLY) : [];
-    return [...this.transcript].reverse().find(e => e.who === "ember" && !e.stopped && !unread.includes(e.text))?.text ?? null;
+    return [...this.transcript].reverse().find(e => (e.who === "ember" || (o.readable && e.who === "task")) && !e.stopped && !unread.includes(e.text))?.text ?? null;
   }
 
   /**
@@ -3057,12 +3059,20 @@ export class AgentHost {
     }
     // "Read it out" (the suggestion under an answer that wasn't said, typed or spoken): the last answer, said once.
     // No setting changes, and the answer isn't written into the conversation a second time (voice-speaking-r6-1).
-    if (readOutRequest(text) && this.betweenTurns()) {
+    // Never while a question is up: reading an answer over it would cut the question's own voice, and "allow" said
+    // over Ember's voice doesn't count, so the request is the conversation's as any other is then (voice-speaking-x7-4).
+    if (readOutRequest(text) && this.betweenTurns() && !this.confirmer?.waiting) {
       const last = this.lastAnswer({ readable: true });
       let said = false;
       try { said = !!last && (this.o.readOut?.(last) ?? false); } catch (err) { this.o.log.warn("agent.read_out_failed", { err }); }
       this.o.log.info("agent.read_out", { said, answer: !!last });
       if (!said) this.answerLocally(text, last ? READ_OUT_REPLY.silent : READ_OUT_REPLY.none, how);
+      // No line and no turn of the model's come for it: Home is told it was answered, or its composer says
+      // "Thinking…" for good (voice-speaking-x7-2). With a turn told and not yet over, that turn's end says it.
+      else if (this.turnTold === "idle" && !this.turnEnding) {
+        this.o.onConversationTurn?.("thinking");
+        this.o.onConversationTurn?.("idle", "read-out");
+      }
       return true;
     }
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it

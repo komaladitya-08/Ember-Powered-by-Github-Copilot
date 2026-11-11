@@ -162,9 +162,10 @@ export function resultsReply(asked: "quiet" | "loud", o: { saved: boolean; on: b
 
 /**
  * Asking to hear the last answer: "read it out" (the suggestion under an answer that wasn't said), "read that aloud",
- * "tell me again", "say that again".
+ * "tell me again", "say that again". Never "read this out", which asks for what is on the screen and is the
+ * conversation's (voice-speaking-x7-3).
  */
-const READ_OUT_RE = new RegExp(String.raw`^${LEAD}(?:(?:please[,\s]+)?(?:(?:can|could|would|will) you[,\s]+(?:please[,\s]+)?)?(?:read (?:it|that|this|the (?:last )?answer|your (?:last )?answer) (?:out(?: loud)?|aloud)(?: again| to me)?|(?:tell me|say (?:it|that)) again|repeat that))(?:[,\s]+please)?${TAIL}$`, "i");
+const READ_OUT_RE = new RegExp(String.raw`^${LEAD}(?:(?:please[,\s]+)?(?:(?:can|could|would|will) you[,\s]+(?:please[,\s]+)?)?(?:read (?:it|that|the (?:last )?answer|your (?:last )?answer) (?:out(?: loud)?|aloud)(?: again| to me)?|(?:tell me|say (?:it|that)) again|repeat that))(?:[,\s]+please)?${TAIL}$`, "i");
 
 /**
  * Whether `text` asks Ember to say its last answer aloud (voice-speaking-r6-1). It reads that answer once; it never
