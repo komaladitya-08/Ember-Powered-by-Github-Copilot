@@ -207,6 +207,23 @@ describe("spokenText leaves markup that is only for the eye unsaid, and says a p
     ["Wrap it in `<b>` and `&amp;`.", "Wrap it in <b> and &amp;."],
     ["Pick [x] or [ ] in the form.", "Pick [x] or [ ] in the form."],
   ])("says %j as %j (voice-speaking-r7-3)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    // A comparison or a type with a one-letter name, and an answer about HTML, keep their words.
+    ["if x<p or y>q then", "if x<p or y>q then"],
+    ["If a <b and c> d then stop.", "If a <b and c> d then stop."],
+    ["Use <p> for a paragraph and <b> for bold.", "Use <p> for a paragraph and <b> for bold."],
+    ["Type <s> to search, <i> for insert, <u> to undo.", "Type <s> to search, <i> for insert, <u> to undo."],
+    ["Close it with </p>.", "Close it with </p>."],
+    // A regex's negated set isn't a footnote; a footnote's definition loses its mark and colon.
+    ["The regex [^abc] matches others.", "The regex [^abc] matches others."],
+    ["See the note[^1] here.\n\n[^1]: The note itself is here.", "See the note here.\nThe note itself is here."],
+    // A ticked item that says it is done isn't told twice.
+    ["* [x] Done: paid rent", "Done: paid rent."],
+    ["1. [x] Done already\n2. [ ] Not yet", "1. Done already.\n2. Not yet."],
+    // Markup around words is still unsaid.
+    ["<b>Important.</b> Press <kbd>Ctrl</kbd>, then <span style=\"color:red\">red</span>.", "Important. Press Ctrl, then red."],
+  ])("says %j as %j, dropping no words that only look like markup (voice-speaking-x7-5)", (text, said) => expect(spokenText(text)).toBe(said));
 });
 
 describe("spokenText", () => {

@@ -209,14 +209,21 @@ const worth = (n: string, scale?: string) => Number(n.replace(/,/g, "")) * (scal
 /**
  * Markup that is only for the eye (voice-speaking-r7-3), outside inline code: a line break and the common inline HTML
  * tags, a footnote's mark and the commonest character entities were read out letter by letter ("less than sub greater
- * than"). Anything else in angle brackets is said as written ("<name>", "a < b").
+ * than"). Anything else in angle brackets is said as written ("<name>", "a < b"), and so is what only looks like a
+ * tag (voice-speaking-x7-5): a tag is unsaid only around the words it marks (an opening one right before them, a
+ * closing one right after), with nothing in it but `name=value` attributes, so "if x<p or y>q" and "use <p> for a
+ * paragraph" keep their words; a footnote's mark only right after the word or stop it notes ("the regex [^abc]" is
+ * said), and its definition's "[^1]:" at the start of a line.
  */
-const EYE_ONLY = /(`+)(?!`)[^\n]*?(?<!`)\1(?!`)|<(br)\s*\/?>|<\/?(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)(?:\s[^<>\n]*)?>|\[\^[^\]\s]{1,24}\]|&(amp|lt|gt|quot|apos|nbsp|#39);/gi;
+const EYE_ONLY = /(`+)(?!`)[^\n]*?(?<!`)\1(?!`)|<(br)\s*\/?>|<(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)(?:\s+[\w:-]+=(?:"[^"<>\n]*"|'[^'<>\n]*'|[^\s"'<>=]+))*\s*>(?=[^\s.,;:!?)])|(?<=\S)<\/(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)>|(?<=[A-Za-z0-9\u00C0-\u024F.,;:!?)"”’])\[\^[\w-]{1,24}\](?!:)|^[ \t]*\[\^[\w-]{1,24}\]:[ \t]*|&(amp|lt|gt|quot|apos|nbsp|#39);/gim;
 const ENTITY: Readonly<Record<string, string>> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", "#39": "'", nbsp: " " };
 const withoutEyeOnly = (text: string): string =>
   text.replace(EYE_ONLY, (m: string, code: string | undefined, br: string | undefined, entity: string | undefined) => (code ? m : br ? " " : entity ? ENTITY[entity.toLowerCase()] : ""));
-/** A task list's box: an open one is unsaid, a ticked one is "Done:" (it was read "x": voice-speaking-r7-3). */
-const TASK_BOX = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[([ xX])\][ \t]+(?=\S)/gm;
+/**
+ * A task list's box: an open one is unsaid, a ticked one is "Done:" (it was read "x": voice-speaking-r7-3), unless its
+ * item says so itself ("[x] Done: paid rent" was "Done: Done:": voice-speaking-x7-5).
+ */
+const TASK_BOX = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[([ xX])\][ \t]+(?=(done\b)|\S)/gim;
 
 /** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
@@ -341,7 +348,7 @@ export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: s
     // Tables: a header row and its |---| line, and the rows after it.
     .replace(/(^|\n)[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}[\s\S]*?(?=\n[ \t]*(?!\|)|$)/g, `$1${TABLE}`);
   const plain = withoutEyeOnly(linkLabels(prose))
-    .replace(TASK_BOX, (_m, lead: string, box: string) => (box === " " ? lead : `${lead}Done: `))
+    .replace(TASK_BOX, (_m, lead: string, box: string, done: string | undefined) => (box === " " || done ? lead : `${lead}Done: `))
     // A heart between words is a word ("I ❤️ Paris"): dropped with the other emoji, it was "I Paris".
     .replace(/([\p{L}\p{N}])[ \t]*[\u2764\u2665]\uFE0F?[ \t]*(?=[\p{L}\p{N}])/gu, "$1 love ")
     .replace(EMOJI_BETWEEN, "$1. ")
