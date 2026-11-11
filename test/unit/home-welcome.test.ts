@@ -1,6 +1,6 @@
 /**
  * First run, one step at a time (Home's `#welcome`, UI audit #7): the order and the consent gate, the consent in
- * short, sign-in, the setup rows in plain words, the tries and "Your Ember". The pure parts are called directly; the
+ * short, sign-in, the setup rows in plain words, the tries and the last step. The pure parts are called directly; the
  * page's markup and script are read as text where the behaviour is theirs (there is no DOM in these tests).
  */
 import { describe, expect, it } from "vitest";
@@ -373,7 +373,7 @@ describe("the try step", () => {
   });
 });
 
-describe("“Your Ember”", () => {
+describe("the last step, “Ready to start”", () => {
   const keys = { ask: "Ctrl+Alt+Space", stop: "Ctrl+Alt+X", settings: "Ctrl+Alt+E" };
 
   it("sums up the character, Copilot, voice and the keys Ember holds", () => {

@@ -1,7 +1,7 @@
 /**
  * First run in the settings window (`#welcome`): Ember introduces itself, optional character choice, the consent is
  * agreed (the gate: nothing is read, heard or sent before it, M8.8), GitHub is signed in to, the computer is checked,
- * the stop shortcut, "Hey Ember" and a first request are tried for real, and "Your Ember" sums it up before Start.
+ * the stop shortcut, "Hey Ember" and a first request are tried for real, and "Ready to start" sums it up before Start.
  * One decision a step, a still step indicator, Back on every step after the first, and a reason beside any button
  * that can't be pressed yet (UI audit #7). The words and decisions are in welcome-copy.ts; this module only applies
  * them. It borrows two of the page's own parts while it runs, the character canvas and the character cards, and puts

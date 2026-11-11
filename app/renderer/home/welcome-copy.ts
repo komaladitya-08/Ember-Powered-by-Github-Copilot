@@ -96,7 +96,8 @@ export const STEP_TEXT: Readonly<Record<WelcomeStep, { title: string; lead: stri
     lead: "Optional. A few short answers help me get things right for you, and you can skip any of them. I keep them only once you turn memory on.",
   },
   done: {
-    title: "Your Ember",
+    // No name in a title the focus lands on, nor on Start: “Hey Ember” may listen by now (first-run-r6-1).
+    title: "Ready to start",
     lead: "That's everything. Here's what you chose.",
   },
 };
@@ -389,10 +390,10 @@ export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: s
 /** Ember's size until the user moves the slider (settings.ts's default). */
 export const DEFAULT_SIZE = 60;
 
-/** One row of the "Your Ember" card. */
+/** One row of the last step's card. */
 export interface SummaryRow { label: string; value: string }
 
-/** The "Your Ember" card's rows: who, Copilot, voice, and the keys Ember holds (a key another app holds isn't named). */
+/** The last step's card's rows: who, Copilot, voice, and the keys Ember holds (a key another app holds isn't named). */
 export function summaryRows(o: {
   character: string; size: number; signedIn: string | null; voice: "listening" | "waiting" | "off";
   /** The keys as Ember holds them ("" while another app holds one); null until the status names this OS's. */
@@ -429,7 +430,7 @@ export function serviceSummary(o: { ready: boolean; locked: boolean; managed: bo
 export const SUMMARY_NOTE = "You can change any of this in Settings, which opens from my handle in the corner of your screen.";
 
 /** The last button, and what a screen reader hears once it has worked. */
-export const START_LABEL = "Start Ember";
+export const START_LABEL = "Start";
 
 /** The navigation buttons. */
 export const NAV = { back: "Back", next: "Continue", begin: "Get started", skip: "Skip for now", character: "Choose a character…", about: "Personalise memory…" } as const;

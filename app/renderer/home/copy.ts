@@ -509,8 +509,11 @@ export function setupView(rows: readonly SetupRow[], before: { opened: boolean; 
   return { failing, warn, held, needing, open: needing > 0 && !before.opened, beforeStart: before.beforeStart || needing > 0, note: checksNote(held, needing) };
 }
 
-/** What a screen reader hears when Start has done its work and gone (review #50). */
-export const STARTED_TEXT = "Ember has started.";
+/**
+ * What a screen reader hears when Start has done its work and gone (review #50). Without Ember's name: after a changed
+ * consent “Hey Ember” already listens, and "Ember has started." woke it and was sent as "Has started." (first-run-r6-1).
+ */
+export const STARTED_TEXT = "Setup is finished.";
 
 /** "Today", "Yesterday", else the weekday and date. */
 export function dayLabel(t: string, now = new Date()): string {

@@ -8,8 +8,9 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED,
-  HEAR_WAITING, LISTEN_CONSENT_NOT_SAVED, composerStillWaiting, hearEmberLine, presenceLine, tagline, updateStatusText,
+  HEAR_WAITING, LISTEN_CONSENT_NOT_SAVED, STARTED_TEXT, composerStillWaiting, hearEmberLine, presenceLine, tagline, updateStatusText,
 } from "../../app/renderer/home/copy";
+import { NAV, START_LABEL, STEP_TEXT, TRY_TEXT, WELCOME_STEPS, signInText, stepPosition } from "../../app/renderer/home/welcome-copy";
 import { MATCH_TEXT, matchAnnouncement, matchView } from "../../app/renderer/home/match-copy";
 import { composerRefusal } from "../../app/main/agent/composer-refusal";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
@@ -136,5 +137,34 @@ describe("what Home tells a screen reader", () => {
       for (const checkedAt of [null, "2026-11-05T10:01:00.000Z"]) if (phase !== "available" || latest) lines.push(updateStatusText({ phase, latest, checkedAt } satisfies UpdateStatus));
     expect(new Set(lines.filter(Boolean)).size).toBeGreaterThan(5);
     expect(named(lines)).toEqual([]);
+  });
+
+  it("never says Ember's name where first run moves focus or speaks once the consent is agreed, nor as Start ends it (first-run-r6-1)", () => {
+    // After a changed consent is agreed again, a returning user's “Hey Ember” listens through the rest of first run.
+    // Start's "Ember has started." and the bare "Ember" heading it moved focus to both call Ember by name, and so did
+    // the last step's title "Your Ember" and its button "Start Ember" from the name on: the words after the name are
+    // sent as a request ("Has started.").
+    const titles = [
+      ...WELCOME_STEPS.filter(s => stepPosition(s) > stepPosition("consent")).map(s => STEP_TEXT[s].title), STEP_TEXT.provider.title, STEP_TEXT.about.title,
+      ...[{ managed: false }, { managed: true }, { managed: false, locked: true }, { managed: false, locked: true, held: true }, { managed: false, own: "localhost:11434" }, { managed: false, ownOffered: false }]
+        .map(o => signInText(o).title),
+    ];
+    const lines = [
+      ...titles.map(t => `${t}, heading level 2`), `${START_LABEL}, button`, ...Object.values(NAV).map(l => `${l}, button`),
+      TRY_TEXT.stop.done, TRY_TEXT.voice.done, TRY_TEXT.ask.done, STARTED_TEXT,
+    ];
+    expect(named(lines)).toEqual([]);
+    for (const line of lines) expect(line, line).not.toMatch(/\bEmber/i);
+    expect(STARTED_TEXT).toBe("Setup is finished.");
+    expect(STEP_TEXT.done.title).toBe("Ready to start");
+    expect(START_LABEL).toBe("Start");
+    // Start lands on the status line under the heading, which `tagline()` words without the name (the first test
+    // here), never on the heading itself: "Ember, heading level 1".
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    expect(page).toContain('<p id="tagline" role="status" tabindex="-1">Starting…</p>');
+    const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    const started = /if \(started\) \{\n([^]*?)\n {2}\}\n/.exec(main)?.[1] ?? "";
+    expect(started).toContain('$("tagline").focus({ preventScroll: true });');
+    expect(started).not.toContain('$("home-h")');
   });
 });

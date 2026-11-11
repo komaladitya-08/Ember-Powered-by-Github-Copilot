@@ -251,7 +251,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((await calls(p)).includes("signIn")).toBe(false);
     // The summary names the provider under its own label, never as Copilot (first-run-1).
     await next(p).click();
-    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Ready to start");
     const summary = await p.locator("#w-summary").innerText();
     expect(summary).toContain("Model service");
     expect(summary).toContain("Your own provider (api.example.com)");
@@ -1133,14 +1133,14 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.waitForTimeout(50);
     expect(await words()).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
     expect(await p.locator("#w-signin-line").innerText()).toBe(mine);
-    // Skip, then on to Your Ember: the provider by name, not "Not signed in yet" (first-run-c1-3).
+    // Skip, then on to the last step: the provider by name, not "Not signed in yet" (first-run-c1-3).
     await p.locator("#w-alt").click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
     await next(p).click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
     expect(await p.locator("#w-try-ask-text").innerText()).toBe("Once I'm connected, you can ask me something.");
     await next(p).click();
-    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Ready to start");
     const summary = await p.locator("#w-summary").innerText();
     expect(summary).toContain("Your own provider (localhost:11434), not connected yet");
     expect(summary).not.toMatch(/Copilot|signed in/i);
@@ -1150,7 +1150,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => q.locator("#w-title").innerText()).toBe("Checking this computer");
     await next(q).click();
     await next(q).click();
-    await expect.poll(() => q.locator("#w-title").innerText()).toBe("Your Ember");
+    await expect.poll(() => q.locator("#w-title").innerText()).toBe("Ready to start");
     expect(await q.locator("#w-summary").innerText()).toContain("Your organisation's model service, not connected yet");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
     expect((q as Page & { errors: string[] }).errors).toEqual([]);
@@ -1214,7 +1214,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
     expect(await p.locator("#w-try-ask-text").innerText()).toBe("While your organisation's policy locks me down, I can't answer.");
     await next(p).click();
-    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Ready to start");
     const summary = await p.locator("#w-summary").innerText();
     expect(summary).toContain("Locked down by your organisation");
     expect(summary).not.toMatch(/Not signed in|Copilot/);
@@ -1322,7 +1322,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-about").getByRole("button", { name: "I agree, remember" }).count()).toBe(0);
     expect(await next(p).innerText()).toBe("Continue");
     await next(p).click();
-    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Ready to start");
     expect((await calls(p)).some(c => c.startsWith("introduce"))).toBe(false);
     // Memory on and agreed to, still paused: the same, never "Couldn't save your answers".
     const on = await open({ agent: readyAgent() });

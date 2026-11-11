@@ -195,8 +195,10 @@ function applySettings(s: Settings): void {
   if ($("handle-corner").textContent !== corner) $("handle-corner").textContent = corner;
   if (presence) renderPresence(presence);
   // First run (or changed terms): its steps come first, the consent among them (welcome.ts); everything else waits
-  // until Ember has started. Start pressed here: focus moves to the top of the settings, and Ember says it started
-  // (review #50), rather than dropping to the page.
+  // until Ember has started. Start pressed here: focus moves to the top of the settings, and Home says setup is
+  // finished (review #50), rather than dropping to the page. It lands on the status line, worded without the name,
+  // never on the "Ember" heading: “Hey Ember” may listen by now, and a screen reader's "Ember, heading" calls it
+  // (first-run-r6-1).
   const started = welcome.settings(s);
   document.body.classList.toggle("first-run", !s.onboarded);
   document.body.classList.remove("loading");
@@ -207,7 +209,7 @@ function applySettings(s: Settings): void {
     $("home-live").textContent = STARTED_TEXT;
     showPane("home");
     window.scrollTo({ top: 0 });
-    $("home-h").focus({ preventScroll: true });
+    $("tagline").focus({ preventScroll: true });
   }
   renderStatus();
 }

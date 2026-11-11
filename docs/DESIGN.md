@@ -591,14 +591,14 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   first run, Home and the bubble's title alike (integrations-3). Once connected, “Models I'll use” names both models
   with the premium-request multiplier where Copilot gives one, and says so when tasks work from text only; Change is
   optional. A setup fix that fails says so in its own row. Once Ember uses the user's own provider, connected, still
-  connecting or failing, the sign-in step, its status line and **Your Ember**'s “Model service” row name that provider,
+  connecting or failing, the sign-in step, its status line and **Ready to start**'s “Model service” row name that provider,
   with no GitHub, Copilot or sign-in words and no “Use my own provider”, and Back from the setup check returns to the
   provider's step (first-run-1). A provider already in use as that step opens is shown as in use (“Your own model
   provider's details”, its connection's status, the card without a last sentence about going back, and Continue with
   no new check); Back leaves it on, an edit is checked as typed before it replaces anything (one that fails, or is left
   while it is checked, changes nothing: “Nothing has changed: I'm still using <host>.”, in first run's voice throughout, with the focus on
   the field the failure names and “Keep using <host>” under it to put back the details in use and go on: first-run-c3-1), and only “Use GitHub Copilot instead” switches it off (first-run-r2-1). Back puts away only a provider the visit itself set up, as its card says (first-run-c1-2). It is in use only while it is on: after “Use GitHub Copilot instead” its step opens again as one to set up, and a check there that fails switches it off again (first-run-r3-1). That press draws Copilot's sign-in at once, connecting, so the title the focus lands on is Copilot's before main's status follows; a switch-off that couldn't be saved shows the provider still in use, under the notice that says so (first-run-c3-2). While Ember is busy (a turn or a task under way) the step says “I'll switch to Copilot once I've finished what I'm doing.” with Continue open, “Use my own provider” still offered (first-run-r4-1) and no sign-in yet, and the try step's Ask “Once I'm connected, you can ask me something.”; main switches as soon as it is done, and the step then offers “Sign in with GitHub” (first-run-v4-1): a focus on Continue as it turns into the sign-in goes to the title, and the line says “I've switched to Copilot. Sign in with GitHub to go on, or skip for now.”, so a press meant for Continue starts nothing (first-run-c4-1). A service with nothing to sign in to that isn't connected yet (the user's own, the
-  organisation's) is named on **Your Ember** as “…, not connected yet”, never “Not signed in yet” (first-run-c1-3).
+  organisation's) is named on **Ready to start** as “…, not connected yet”, never “Not signed in yet” (first-run-c1-3).
 - **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column (720 px in a window
   1,000 px wide or more), centred in the window's height in a box of one size (560 px), so the indicator and title stay
   put from step to step and a short step no longer leaves the window's lower half empty. A still step indicator
@@ -609,7 +609,7 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   waits (`aria-describedby`). Not now leaves focus on the note that says what it did, and Agree and Quit Ember drop a
   press for half a second after they appear, so a double click or a held Enter can't agree or quit (first-run-c1-1). Sign in
   keeps focus on its own button while it waits, and a cancelled sign-in moves it to the title, so a second Enter
-  neither cancels nor skips (first-run-r3). Rows that need the user, the tries and **Your Ember** are grouped rows on `--surface-1`;
+  neither cancels nor skips (first-run-r3). Rows that need the user, the tries and **Ready to start** are grouped rows on `--surface-1`;
   the full consent text and the setup rows' details are disclosures (an accent chevron and words) over a
   `--surface-2` callout. Every state is a symbol and words. Motion: Ember arrives once (0.6 to 1 over 600 ms on the
   brisk spring, then a happy hop), each step's part comes in from the side it lies on (16 px over 420 ms, Back from the
