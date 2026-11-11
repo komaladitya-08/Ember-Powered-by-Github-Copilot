@@ -802,9 +802,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     chord("ask", "w-ask-keys");
     mark("w-try-stop", tried.stop, tried.stop ? TRY_TEXT.stop.done : stopHeld ? TRY_TEXT.stop.ask : TRY_TEXT.stop.fallback);
     const vs = voiceState();
-    $("w-try-voice").hidden = vs === "off";
-    $("w-voice-later").hidden = vs !== "off";
-    $("w-voice-later").textContent = TRY_TEXT.voiceLater;
+    $("w-try-voice").hidden = vs === "off" || vs === "no-models";
+    $("w-voice-later").hidden = !$("w-try-voice").hidden;
+    $("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : TRY_TEXT.voiceLater;
     mark("w-try-voice", tried.voice, tried.voice ? TRY_TEXT.voice.done : vs === "listening" ? TRY_TEXT.voice.ask : TRY_TEXT.voiceWaiting);
     $("w-meter").classList.toggle("off", vs !== "listening");
     // (While Ember finishes before it moves to Copilot, there is no sign-in to do yet: first-run-v4-1.)
