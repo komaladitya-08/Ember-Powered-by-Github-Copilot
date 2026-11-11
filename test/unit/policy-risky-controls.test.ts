@@ -165,6 +165,17 @@ describe("a click on a page whose title mentions a payment", () => {
   it("with the element known to be in a page, any title that mentions payment asks too", () => {
     expect(grants().decide(click("Continue", { window: "Complete your payment today - Example" })).verdict).toBe("confirm");
   });
+
+  it.each([["page tab", "Explorer", "billing.ts - shop - Visual Studio Code", "code", "Click the “Explorer” tab in Visual Studio Code? The window's title mentions billing, so this may pay for something."],
+    ["push button", "Threads", "billing (Channel) - Acme - Slack", "slack", "Click the “Threads” button in Slack? The window's title mentions billing, so this may pay for something."],
+    ["link", "Next", "git - How to check out a branch - Stack Overflow — Mozilla Firefox", "Firefox", "Click the “Next” link in Firefox? The window's title mentions a checkout, so this may pay for something."],
+    ["push button", "Start my plan", "PayPal Checkout", "Firefox", "Click the “Start my plan” button in Firefox? The window's title mentions a checkout, so this may pay for something."],
+    ["link", "Help", "How to make a payment - Wikipedia — Mozilla Firefox", "Firefox", "Click the “Help” link in Firefox? The window's title mentions a payment, so this may pay for something."]])(
+    "a %s “%s” in “%s” says why it asks, in words true of any title that mentions a payment (safety-privacy-x7-4)", (role, name, window, app, prompt) => {
+      const d = grants().decide(onPage(role, name, window, app));
+      expect(d).toMatchObject({ verdict: "confirm", risky: true, prompt });
+      expect(d.reason).not.toContain(window);
+    });
 });
 
 /** "Disable" and "Turn off" answer for a protection in a window or dialog titled for one, whatever follows them. */

@@ -2116,6 +2116,17 @@ const BROWSER = /msedge|chrome|chromium|firefox|librewolf|brave|opera|vivaldi|sa
 const BAR_BROWSER = /epiphany|^web$|falkon|midori|konqueror|waterfox|floorp|thorium|\barc\b|\borion\b/i;
 /** A page that takes payment: a button on it may buy something whatever its label says ("Activate now"; audit of 2026-11-01). */
 const PAYMENT_PAGE = /\b(checkout|check out|payment|billing)\b/;
+/**
+ * Why a control in such a window asks, in words true of any title that names one of PAYMENT_PAGE's words (a mail's subject,
+ * "billing.ts", "How to check out a branch" ask too, and the question used to say nothing: safety-privacy-x7-4). The
+ * word is Ember's own, never the title's text.
+ */
+const onPaymentPage = (window: string): Risk | null => {
+  const word = PAYMENT_PAGE.exec(normalizeLabel(window))?.[1];
+  if (!word) return null;
+  const what = word === "billing" ? "billing" : word === "payment" ? "a payment" : "a checkout";
+  return { reason: `this is in a window whose title mentions ${what}, where it may pay for something`, note: `The window's title mentions ${what}, so this may pay for something.` };
+};
 /** A window or dialog titled for a protection of the account or the computer, and the bare answers that turn one off there. */
 const PROTECTION_TITLE = /\b(two[- ]factor|two[- ]step|2[- ]step|2fa|multi[- ]factor|mfa|firewall|antivirus|security|protection|verification|passkeys?|encryption)\b/;
 const TURNS_OFF = /^[^a-z0-9]*(disable|turn (it )?off|switch (it )?off|deactivate)\b/;
@@ -2591,10 +2602,13 @@ export class PolicyEngine {
     const asksInFew = told.length <= 300 && (/[?？¿]/.test(told) || ASKS_IF_SURE.test(plainText(told)));
     const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !declines(name) && !plainDialog;
     const answersQuestion: Risk = { reason: "this answers a dialog's question or warning, and Ember can't be sure what that answer does", note };
+    // Any control of a page (or an Electron app's window) whose title mentions a payment: it may buy something whatever its
+    // label says. The question says why, in words true of a title that only mentions one (a mail's subject, a file's name).
+    const payment = ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) ? onPaymentPage(r.window) : null;
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
         if (named && !lone) return { reason: "this action may be hard to undo or visible to others", about: name };
-        if (ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) && PAYMENT_PAGE.test(normalizeLabel(r.window))) return { reason: "this button is on a payment page, where it may buy something", about: name };
+        if (payment) return { ...payment, about: name };
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
         if (around) return BARE_IN(around);

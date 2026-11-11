@@ -1987,7 +1987,7 @@ describe("review round 9: policy and selections", () => {
     }
   });
 
-  it("any button of a page on a payment site is asked about by a click, as the policy says, and the same button elsewhere isn't (safety-privacy-c7-2)", async () => {
+  it("any button of a page on a payment site is asked about by a click, as the policy says, saying why, and the same button elsewhere isn't (safety-privacy-c7-2, -x7-4)", async () => {
     const nodes: FakeNode[] = [{ id: 1, role: "document web", name: "Plans" }, { id: 2, role: "push button", name: "Continue", parent: 1 }];
     for (const [title, asks] of [["Billing - Example", true], ["Plans - Example", false]] as const) {
       const goal = `Look at the plans (${title})`;
@@ -1995,7 +1995,7 @@ describe("review round 9: policy and selections", () => {
       const screen = fakeScreen(nodes, { title });
       const asked: string[] = [];
       await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-      expect(asked, title).toEqual(asks ? ["Click the “Continue” button in Testapp?"] : []);
+      expect(asked, title).toEqual(asks ? ["Click the “Continue” button in Testapp? The window's title mentions billing, so this may pay for something."] : []);
       expect(screen.log.length, title).toBe(asks ? 0 : 1);
     }
   });
