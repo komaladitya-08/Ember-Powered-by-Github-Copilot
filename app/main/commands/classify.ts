@@ -32,6 +32,7 @@ import {
   type PsParamKind,
 } from "./tables";
 import { commandLineSecret } from "./redact";
+import { judgedText } from "./unroll";
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
 
@@ -144,6 +145,12 @@ export interface ClassificationExtra extends Classification {
    * keeps whatever this says (commands-c7-1).
    */
   holdsFlow?: boolean;
+  /**
+   * The line was judged as its written-out form (unroll.ts: a short `for` loop pass by pass, a simple `[[ … ]]` as
+   * `[ … ]`): it runs, asks or is refused as that form is, but never runs with a Stop because the user's words asked
+   * for what it does (commands-b7-2 stands; decide.ts).
+   */
+  writtenOut?: boolean;
   /**
    * Downloads that are the download only while the target doesn't say they are a folder: a download moved or copied
    * to a name that may be one (`mv x.py tools`), whose file is then tools/x.py, also in `downloads`. Until the target
@@ -1354,7 +1361,11 @@ function internalUnclear(shell: ShellId, cwd: string): ClassificationExtra {
  */
 export function classifyCommand(text: string, shell: ShellId, ctx: ClassifyContext): Classification {
   try {
-    return new Engine(ctx, shell).run(text);
+    // A command line's short written-out `for` loop is judged as the sequence of its passes, and its simple `[[ … ]]`
+    // as `[ … ]` (unroll.ts, commands-remote-r6-2); anything else, loops and a script's text included, as written.
+    const judged = SHELL_FAMILY[shell] === "posix" && ctx.script !== true ? judgedText(text) : text;
+    const cls = new Engine(ctx, shell).run(judged);
+    return judged === text ? cls : ({ ...cls, writtenOut: true } as ClassificationExtra);
   } catch {
     return internalUnclear(shell, ctx.cwd);
   }

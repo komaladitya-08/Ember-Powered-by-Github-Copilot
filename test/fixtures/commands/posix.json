@@ -6297,6 +6297,138 @@
   },
   {
    "cmd": "[[ -f x ]] && ls",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[[ -n \"$CI\" ]] || echo local",
+   "verdict": "run"
+  },
+  {
+   "cmd": "[[ -f $x ]] && ls",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "[[ -f a && -f b ]] && ls",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "[[ -d build ]] && rm -rf build",
+   "words": "delete the build folder",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "for i in 1 2 3; do echo $i; done",
+   "verdict": "run"
+  },
+  {
+   "cmd": "for f in a.txt b.txt; do wc -l \"$f\"; done",
+   "verdict": "run"
+  },
+  {
+   "cmd": "for i in 1 2\ndo\n  echo \"pass ${i}\"\ndone",
+   "verdict": "run"
+  },
+  {
+   "cmd": "for f in --hard; do git reset $f; done",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "git.reset.hard"
+   ]
+  },
+  {
+   "cmd": "for f in -delete; do find . $f; done",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.find.delete"
+   ]
+  },
+  {
+   "cmd": "for i in 1 2; do sed -i s/a/b/ ember/settings.json; cd ~/.config; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.folder"
+   ]
+  },
+  {
+   "cmd": "for d in build dist; do rm -rf $d; done",
+   "words": "delete build and dist",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "for d in ember; do rm -rf ~/.config/$d; done",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "for i in 1 2 3; do echo $i; done | cat",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "for i in 1 2 3; do echo $i; done; echo $i",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "for n in 1 2; do echo hi $n>out; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "for f in a b; do $f; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "for HOME in /etc; do ls ~; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "IFS=+; for f in a+b; do echo $f; done",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13; do echo $i; done",
    "verdict": "ask",
    "classes": [
     "unclear"

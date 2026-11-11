@@ -390,7 +390,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       continue;
     }
     const sctx: ClassifyContext = {
-      os: env.os, home: env.home, cwd: ref.cwd, ember: env.ember, downloaded: env.downloaded,
+      os: env.os, home: env.home, cwd: ref.cwd, ember: env.ember, downloaded: env.downloaded, script: true,
       ...(env.wsl ? { wsl: { mountRoot: env.wsl.mountRoot, windows: env.wsl.windows } } : {}),
     };
     for (const shell of lang.shells) {
