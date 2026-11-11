@@ -2332,7 +2332,10 @@ Open **Run a project command** to choose a local starting folder and enter a com
 this computer (the default), the form says so with **Open Commands** before anything is typed, and the command field
 and **Review command…** wait. Where the organisation's policy turned them off, it says "Your organisation has turned
 off commands on this computer." with no **Open Commands**. Ember applies the same settings, classifier and stop controls as its command window. Each run waits for approval of the
-exact command and folder. Output stays in the command window. The connected model does not receive it.
+exact command and folder. Output stays in the command window. The connected model does not receive it. A command
+that can't be taken says which of four reasons holds (`projectCommandProblem`: nothing typed, over 2,000 characters,
+more than one line or hidden characters, or what looks like a password, token or key), and a request of several lines
+that looks like it holds a secret names the line (`projectRequestSecret`; integrations-i6).
 
 **Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or connected
 provider configuration. Saving requires the system keyring and stores encrypted paths and the last
