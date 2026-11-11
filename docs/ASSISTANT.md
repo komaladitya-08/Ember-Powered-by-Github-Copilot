@@ -155,7 +155,7 @@ reported in every PR that touches it.
 | End of speech → first word, without Copilot's time | ≈ 2.0 s | **≤ 600 ms** |
 | Interrupting Ember by speaking → it stops talking | needs "Hey Ember" | **≤ 200 ms, no wake word** |
 | Idle CPU (listening, silence, no window open) | ≈ 11–15 % awake with Home open, on either listening backend (CI 10.8 %); about 6 % once dozing | **≤ 3 %** |
-| Idle memory (Ember's processes, PSS) | ≈ 700–790 MB listening on the C API the Linux packages run, ≈ 900–950 MB on WebAssembly (Home open; the listening process ≈ 240 MB against ≈ 400 MB) | **≤ 400 MB** |
+| Idle memory (Ember's processes, PSS) | ≈ 700–790 MB listening on the C API the Linux packages run, ≈ 900–950 MB on WebAssembly (Home open; the listening process ≈ 240 MB against ≈ 400 MB; not counting the Copilot runtime, ≈ 100 MB more once you are signed in) | **≤ 400 MB** |
 | Words wrong on your names, apps and projects | not measured | **halved** against the phase-0 baseline |
 
 ## 4. Decisions and phases
@@ -432,7 +432,8 @@ Local rules only, no model and nothing sent: from the last request and reply, wh
 the request started, the time of day, this session's requests (never one heard where Ember can't tell the user from
 its speakers, a chosen suggestion, or a risky one) and (memory in force) people's names: "Yes, please" and "No,
 thanks" after a question, "Close it" after opening something, "Turn … off" after turning it on, "Do the same for the
-next one" after a task on one item, "Read it out" after an unspoken answer, "What went wrong?" after a failure, a
+next one" after a task on one item, "Read it out" after an unspoken answer (only where Ember speaks replies; it
+reads that answer once), "What went wrong?" after a failure, a
 request said twice this session, and by time of day otherwise. Nothing risky, but one built from the user's own risky
 request just now ("Send it to Priya" after a request to send). Shown under the answer in the bubble (only under the
 answer they were made for, never with a question or buttons up) and in the Ask box (only while the field is empty,

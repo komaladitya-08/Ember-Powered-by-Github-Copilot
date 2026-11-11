@@ -302,9 +302,9 @@ progress[hidden] { display: none; }
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
 .add-row input:focus-visible, .field-row > input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
-/* 6.1:1 on the window and 4.8:1 on the field (the default grey is about 4:1). */
-.add-row input::placeholder { color: #9a9592; opacity: 1; }
-.field-row > input::placeholder { color: #9a9592; opacity: 1; }
+/* Every field's placeholder: 6.1:1 on the window and 4.8:1 or more on a field (the browser's grey is 3.2:1 on one).
+   One rule for all of them, so a new field is never left with the browser's. */
+::placeholder { color: #9a9592; opacity: 1; }
 .never-look-msg { margin: 0; }
 /* ── Your own model provider (Copilot): a label, then its field; the field goes under the label when narrow ── */
 .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 10px 14px; align-items: center; }
@@ -802,7 +802,6 @@ html[data-text-size] .timeline .at, html[data-text-size] .timeline .what { line-
   width: 100%; min-width: 150px; height: calc(28px * var(--text-scale)); padding: 0 10px; border: 0; border-radius: var(--r-sm);
   background: var(--wash-6); color: var(--fg); font: var(--type-callout); box-shadow: inset 0 0 0 1px var(--control-edge);
 }
-.search input::placeholder { color: #9a9592; opacity: 1; }
 .search input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
 .jump a.unmatched { display: none; }
 /* Nothing found: said in the sidebar, where the links were (and to screen readers by #search-msg). */
@@ -1118,7 +1117,8 @@ html.calm .w-card > * { transition-delay: 0s; }
 /* Light windows (ember.css): what no token reaches. */
 @media (prefers-color-scheme: light) and (forced-colors: none) {
   html.content { --bg: var(--surface-0); --sidebar-fill: #ebe7e4; }
-  html.content ::placeholder { color: #6b6664; }
+  /* 4.9:1 on Search settings, the darkest light field (the sidebar's fill under its wash), and more on the others. */
+  html.content ::placeholder { color: #625d5b; }
   html.content .conversation li.you p { color: var(--label); }
   html.content :is(.models select, #w-models select, #w-p-type, .choice select, #text-size, #handle-position, #glass, #appearance) {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231d1a1b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E");

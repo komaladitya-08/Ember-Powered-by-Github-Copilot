@@ -200,7 +200,7 @@ describe("settings keep what the user set (review fixes)", () => {
     const r = s.load();
     expect(r.recoveredFrom).toBeTruthy();
     expect(s.get().privacy.neverLook).toEqual(["payroll", "Thunderbird"]);
-    expect(s.lastProblem).toMatch(/defaults/);
+    expect(s.lastProblem).toMatch(/every setting but your never-look list went back to its default/);
   });
 
   it("a deleted file is written again from the settings in use, not from defaults", () => {

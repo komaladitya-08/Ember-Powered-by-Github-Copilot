@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SpeechStream } from "../../app/voice/tts";
+import { answerPieces, SpeechStream } from "../../app/voice/tts";
 import { AnswerLanguage, endsWithQuestion, spokenText } from "../../app/voice/spoken";
 import { TurnLatency } from "../../app/main/turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "../../app/main/acknowledge";
@@ -47,12 +47,12 @@ function wiring() {
     ${signOut}
     return {
       ${callbacks} ${taskCallback} ${transcriptCallback} ${learnedForgot}
-      interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech, signOut: () => signOutHandler(), silenceIfOff, stopSpeaking,
+      interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech, readOut, signOut: () => signOutHandler(), silenceIfOff, stopSpeaking,
       manualListening: on => { manualCall = on ? { source: "ask" } : null; },
     };
   `, { target: ts.ScriptTarget.ES2022 });
-  const run = new Function("SpeechStream", "AnswerLanguage", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "speechSilenced", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", "taskNotice", "prefs", code);
-  const callbacksUnderTest = run(SpeechStream, AnswerLanguage, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, speechSilenced, IPC, broadcast, voicePreference, voice, personal, agent, confirmer, taskNotice, prefs) as {
+  const run = new Function("SpeechStream", "answerPieces", "AnswerLanguage", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "speechSilenced", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", "taskNotice", "prefs", code);
+  const callbacksUnderTest = run(SpeechStream, answerPieces, AnswerLanguage, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, speechSilenced, IPC, broadcast, voicePreference, voice, personal, agent, confirmer, taskNotice, prefs) as {
     onTurnStart(turn: { text: string; spoken: boolean; manual?: true }): void;
     onAnswerDelta(text: string): void;
     onAnswer(text: string): void;
@@ -64,6 +64,7 @@ function wiring() {
     signOut(): Promise<void>;
     interrupt(): void;
     pause(): void;
+    readOut(answer: string): boolean;
     silenceIfOff(): boolean;
     stopSpeaking(source: "menu"): void;
     manualListening(on: boolean): void;
@@ -104,6 +105,40 @@ describe("main's answer speech ownership", () => {
     w.onTurnStart({ text: "The new account’s own request", spoken: false });
     w.onAnswer("Only the new reply.");
     expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("Only the new reply.", { append: false, lang: null });
+  });
+
+  it("reads an answer out on request, in place of what it was saying, and says nothing where it may not speak (voice-speaking-r6-1)", () => {
+    const w = wiring();
+    expect(w.readOut("Opened **Notes**. The file is `todo.txt`.\n\nVoilà.")).toBe(true);
+    expect(w.voice.hush).toHaveBeenCalled();
+    expect(w.voice.speak.mock.calls.map(c => c[1])).toEqual(w.voice.speak.mock.calls.map((_c, i) => ({ append: i > 0, lang: null })));
+    expect(w.voice.speak.mock.calls.map(c => c[0]).join(" ")).toMatch(/^Opened Notes\./);
+    // Never: nothing is said, and the caller is told so (it says why on screen).
+    w.voice.speak.mockClear();
+    w.prefs.speak = false;
+    w.prefs.speakWithScreenReader = false;
+    expect(w.readOut("Opened Notes.")).toBe(false);
+    expect(w.voice.speak).not.toHaveBeenCalled();
+  });
+
+  it("never reads an answer out while a question is up, as no answer is said then: the question's voice isn't cut (voice-speaking-x7-4)", () => {
+    const w = wiring();
+    w.confirmer.waiting = true;
+    expect(w.readOut("Opened Notes.")).toBe(false);
+    expect(w.voice.hush).not.toHaveBeenCalled();
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    w.confirmer.waiting = false;
+    expect(w.readOut("Opened Notes.")).toBe(true);
+  });
+
+  it("tells the suggestions whether Ember speaks, so “Read it out” isn't offered where it couldn't be read (voice-speaking-r6-1)", () => {
+    const w = wiring();
+    w.prefs.speak = false;
+    w.prefs.speakWithScreenReader = false;
+    w.onTurnStart({ text: "Summarise this", spoken: false });
+    w.onAnswer("A long answer.");
+    w.onTurnEnd(false);
+    expect(w.personal.answered).toHaveBeenLastCalledWith("A long answer.", expect.objectContaining({ spoken: false, speaks: false }));
   });
 
   it("hushes authoritative account erasure, while an ordinary empty learned-fact view preserves speech", () => {

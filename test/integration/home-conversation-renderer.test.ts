@@ -629,6 +629,36 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  it("says Ember is reading its last answer out after a typed \"Read it out\", never \"Thinking…\" for good (voice-speaking-x7-2)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "When is my next meeting?" }, { t: at(1), who: "ember", text: "Your next meeting is at three." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.clock.install();
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await page.locator("#conversation-message").fill("Read it out");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      // Main reads the answer aloud: no line is written, and it says the request was answered that way.
+      await turn(page, "thinking");
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "read-out" }));
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reading the last answer out.");
+      expect(await page.locator("#state-word").innerText()).toBe("Ready");
+      expect(await page.locator("#conversation-message").inputValue()).toBe("");
+      await page.clock.runFor(30_000);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Reading the last answer out.");
+      // Told before main answered the send (the read began at once): said as soon as the send is answered.
+      await page.evaluate(() => { window.__home.hold = true; });
+      await page.locator("#conversation-message").fill("tell me again");
+      await page.locator("#conversation-send").click();
+      await turn(page, "thinking");
+      await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "read-out" }));
+      await page.evaluate(() => { window.__home.release(); window.__home.hold = false; });
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Reading the last answer out.");
+      expect(await page.locator("#conversation-message").inputValue()).toBe("");
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("waits for its own turn's end, not another line of Ember's that comes meanwhile, such as a reminder (home-7)", async () => {
     const { page, errors } = await home([]);
     try {
@@ -1576,6 +1606,28 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe(refused);
       expect(await inView()).toBe(true);
       expect(await page.locator("#conversation-message").inputValue()).toBe("Q2 while offline");
+      // Ember connects again: the line no longer says it can't be reached, and the message is still there (reliability-c7-2).
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), { ...READY, phase: "error", reason: "network", detail: "Can't reach the model service." });
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe(refused);
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Connected again. Your message is still here: send it now.");
+      expect(await inView()).toBe(true);
+      expect(await page.locator("#conversation-message").inputValue()).toBe("Q2 while offline");
+      // The runtime drops again before the message is sent: the line no longer says to send it now (reliability-x7-1),
+      // and the next reconnect doesn't bring it back (nothing was refused since).
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), { ...READY, phase: "error", reason: "runtime", detail: "Copilot stopped unexpectedly. Reconnecting…" });
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("");
+      expect(await page.locator("#conversation-message").inputValue()).toBe("Q2 while offline");
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("");
+      // A send refused for a locked screen keeps its reason when the connection comes back: connecting doesn't unlock it.
+      const locked = "Unlock your screen before sending a request.";
+      await page.evaluate(e => { window.__home.sendError = e; }, locked);
+      await page.keyboard.press("Control+Enter");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe(locked);
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), { ...READY, phase: "error", reason: "network", detail: "Can't reach the model service." });
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe(locked);
       // A message copied, then a request from the Ask box came and went, leaving the line empty; then a send that waits for
       // a reconnect (no line of its own yet): its "Thinking…" shows, and so does how Stop everything ended it.
       await page.evaluate(() => { window.__home.sendError = undefined; });

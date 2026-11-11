@@ -160,9 +160,10 @@ function clock(_m: string, h: string, mm: string, meridiem: string | undefined):
  * A file's or a folder's path ("~/Documents/report.pdf", "C:\\Users\\alex\\notes.txt", "/mnt/backup"): read out, it was
  * "tilde slash ember slash report.pdf" (and 7.9 s for a Windows one). A file is said with its folder ("report.pdf in
  * Documents"), anything else by its last part ("backup"); the bubble shows the whole path. An address, "and/or" and
- * "1/2" aren't paths.
+ * "1/2" aren't paths. A folder or a file whose name starts with a dot is one like any other ("~/.config/ember":
+ * "/home/me/.config/ember/settings.json" was "me.config/ember/settings.json", voice-speaking-r7-2).
  */
-const PATH = /(?<![\w.~/\\:-])(?:~(?:\/[\w@+-]+(?:\.[\w@+-]+)*)+|\/(?:[\w@+-]+(?:\.[\w@+-]+)*\/)+[\w@+-]+(?:\.[\w@+-]+)*|[A-Za-z]:\\(?:[\w@+$-]+(?:\.[\w@+$-]+)*\\)*[\w@+$-]+(?:\.[\w@+$-]+)*)\/?/g;
+const PATH = /(?<![\w.~/\\:-])(?:~(?:\/\.?[\w@+-]+(?:\.[\w@+-]+)*)+|\/(?:\.?[\w@+-]+(?:\.[\w@+-]+)*\/)+\.?[\w@+-]+(?:\.[\w@+-]+)*|[A-Za-z]:\\(?:[\w@+$-]+(?:\.[\w@+$-]+)*\\)*[\w@+$-]+(?:\.[\w@+$-]+)*)\/?/g;
 function pathSaid(p: string): string {
   const parts = p.split(/[/\\]/).filter(Boolean);
   const name = parts[parts.length - 1], folder = parts[parts.length - 2];
@@ -204,6 +205,25 @@ const HOURS = /((?<![\w:.,$£€¥])\d{1,2}(?::[0-5]\d)?(?:[ \t]?[ap]\.?m\.?)?)[
 /** What an amount is worth, with its scale ("2.5M"), to tell a range from a sum. */
 const SCALES: Readonly<Record<string, number>> = { k: 1e3, thousand: 1e3, m: 1e6, million: 1e6, bn: 1e9, b: 1e9, billion: 1e9, trillion: 1e12 };
 const worth = (n: string, scale?: string) => Number(n.replace(/,/g, "")) * (scale ? SCALES[scale.toLowerCase()] : 1);
+
+/**
+ * Markup that is only for the eye (voice-speaking-r7-3), outside inline code: a line break and the common inline HTML
+ * tags, a footnote's mark and the commonest character entities were read out letter by letter ("less than sub greater
+ * than"). Anything else in angle brackets is said as written ("<name>", "a < b"), and so is what only looks like a
+ * tag (voice-speaking-x7-5): a tag is unsaid only around the words it marks (an opening one right before them, a
+ * closing one right after), with nothing in it but `name=value` attributes, so "if x<p or y>q" and "use <p> for a
+ * paragraph" keep their words; a footnote's mark only right after the word or stop it notes ("the regex [^abc]" is
+ * said), and its definition's "[^1]:" at the start of a line.
+ */
+const EYE_ONLY = /(`+)(?!`)[^\n]*?(?<!`)\1(?!`)|<(br)\s*\/?>|<(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)(?:\s+[\w:-]+=(?:"[^"<>\n]*"|'[^'<>\n]*'|[^\s"'<>=]+))*\s*>(?=[^\s.,;:!?)])|(?<=\S)<\/(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)>|(?<=[A-Za-z0-9\u00C0-\u024F.,;:!?)"”’])\[\^[\w-]{1,24}\](?!:)|^[ \t]*\[\^[\w-]{1,24}\]:[ \t]*|&(amp|lt|gt|quot|apos|nbsp|#39);/gim;
+const ENTITY: Readonly<Record<string, string>> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", "#39": "'", nbsp: " " };
+const withoutEyeOnly = (text: string): string =>
+  text.replace(EYE_ONLY, (m: string, code: string | undefined, br: string | undefined, entity: string | undefined) => (code ? m : br ? " " : entity ? ENTITY[entity.toLowerCase()] : ""));
+/**
+ * A task list's box: an open one is unsaid, a ticked one is "Done:" (it was read "x": voice-speaking-r7-3), unless its
+ * item says so itself ("[x] Done: paid rent" was "Done: Done:": voice-speaking-x7-5).
+ */
+const TASK_BOX = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[([ xX])\][ \t]+(?=(done\b)|\S)/gim;
 
 /** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
@@ -327,7 +347,8 @@ export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: s
     .replace(FENCED_CODE, `$1${CODE}`)
     // Tables: a header row and its |---| line, and the rows after it.
     .replace(/(^|\n)[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}[\s\S]*?(?=\n[ \t]*(?!\|)|$)/g, `$1${TABLE}`);
-  const plain = linkLabels(prose)
+  const plain = withoutEyeOnly(linkLabels(prose))
+    .replace(TASK_BOX, (_m, lead: string, box: string, done: string | undefined) => (box === " " || done ? lead : `${lead}Done: `))
     // A heart between words is a word ("I ❤️ Paris"): dropped with the other emoji, it was "I Paris".
     .replace(/([\p{L}\p{N}])[ \t]*[\u2764\u2665]\uFE0F?[ \t]*(?=[\p{L}\p{N}])/gu, "$1 love ")
     .replace(EMOJI_BETWEEN, "$1. ")
@@ -386,13 +407,24 @@ const SCRIPTS: readonly [RegExp, string][] = [
  */
 const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   en: new Set("the a an and is are was were to of in on at by or from as do no he she it i you we they my your that this with for not have has what can will if so but all just there here".split(" ")),
-  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces ça cela".split(" ")),
-  de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe es sind des im nur noch dir mich mir kann wird".split(" ")),
+  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces ça cela à vos votre mon ma mes".split(" ")),
+  de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe es sind des im nur noch dir mich mir kann wird du hast den bei aus".split(" ")),
   es: new Set("el la los las del que y en un una es por para con se está como pero muy yo de lo al eso esto hay su sus mi te le".split(" ")),
-  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle".split(" ")),
-  pt: new Set("os que e é uma para não da em na por se eu você de dos das ao às mas isso seu sua ele ela foi".split(" ")),
+  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle la ho hai ti ci vuoi tua tuo al".split(" ")),
+  pt: new Set("os que e é uma para não da em na por se eu você de dos das ao às mas isso seu sua ele ela foi um já são tem está nas quer".split(" ")),
   nl: new Set("de het een en niet ik je van dat op te met zijn voor maar ook wat om naar uit bij nog aan heb kan".split(" ")),
 };
+
+/**
+ * Letters and marks one of these languages writes and the others seldom do. Only to tell two languages apart whose
+ * short words a reply has as many of: Spanish and French share "la", "de", "un", "en", "se", "que" and "le", and a
+ * Spanish reply went to a French voice (voice-speaking-c7-1).
+ */
+const OWN_LETTERS: Readonly<Record<string, RegExp>> = {
+  es: /[ñáíóú¿¡]/giu, fr: /[àâçèêëîïôûùœ]/giu, de: /[äöß]/giu, it: /[ìò]/giu, pt: /[ãõ]/giu,
+};
+/** A short word two languages write that is far commoner in one: Spanish's "and", French's "there" ("il y a"). */
+const LEANS: Readonly<Record<string, ReadonlySet<string>>> = { es: new Set(["y"]) };
 
 /** Short lower-case words that join the parts of a name ("La Vie en Rose", "Hotel de la Paix", "Ludwig van Beethoven"). */
 const NAME_JOINS = new Set("de del della di da do dos das du des la le les el en y van von der den of the".split(" "));
@@ -425,11 +457,13 @@ function wordsBesidesNames(text: string): string[] {
  * The language a reply is in when it clearly isn't English, or null (English, or too little to tell): Kitten reads only
  * English, so a Chinese reply was 7 s of "Chinese letter" and a French one was gibberish (voice-speaking-11). Mostly
  * one script names its language; Latin text, less its names (wordsBesidesNames) and what it quotes, needs two different
- * short words of a language, a quarter of its words, and more than English has. Pure and local: nothing is sent
- * anywhere to tell.
+ * short words of a language, a quarter of its words, and more than English has. Where two languages have as many, it
+ * is `prefer` (the request's language) if that is one of them, else the one whose own letters it writes (OWN_LETTERS),
+ * whose way a shared word leans (LEANS), or with more short words only it has (voice-speaking-c7-1). Pure and local: nothing is sent anywhere to
+ * tell.
  */
-export function speechLanguage(text: string): string | null {
-  return languageOf(text, 2);
+export function speechLanguage(text: string, prefer: string | null = null): string | null {
+  return languageOf(text, 2, prefer);
 }
 
 /**
@@ -437,7 +471,7 @@ export function speechLanguage(text: string): string | null {
  * counted, unless it is all quotes: an English answer saying how to say something in French ("It's « je ne sais
  * pas ».") is English (voice-speaking-r2-1).
  */
-function languageOf(quoting: string, minDifferent: number): string | null {
+function languageOf(quoting: string, minDifferent: number, prefer: string | null = null): string | null {
   const text = outsideQuotes(quoting);
   const letters = text.match(/\p{L}/gu) ?? [];
   if (!letters.length) return null;
@@ -448,11 +482,20 @@ function languageOf(quoting: string, minDifferent: number): string | null {
   }
   const words = wordsBesidesNames(text);
   const english = stopwords(words, "en").length;
-  let best: string | null = null, most = 0, different = 0;
-  for (const lang of Object.keys(STOPWORDS)) {
-    if (lang === "en") continue;
+  let best: string | null = null, most = 0, different = 0, tie = [0, 0, 0, 0];
+  const others = Object.keys(STOPWORDS).filter(lang => lang !== "en");
+  for (const lang of others) {
     const found = stopwords(words, lang);
-    if (found.length > most) { best = lang; most = found.length; different = new Set(found).size; }
+    if (found.length < most || !found.length) continue;
+    // As many as the best so far: the request's language, then its own letters, a word that leans its way, then the
+    // words only it has.
+    const rank = [
+      lang === prefer ? 1 : 0, (text.match(OWN_LETTERS[lang] ?? /(?!)/gu) ?? []).length, found.filter(w => LEANS[lang]?.has(w)).length,
+      found.filter(w => others.every(o => o === lang || !STOPWORDS[o].has(w))).length,
+    ];
+    const differs = rank.findIndex((r, i) => r !== tie[i]);
+    const better = found.length > most || (differs >= 0 && rank[differs] > tie[differs]);
+    if (better) { best = lang; most = found.length; different = new Set(found).size; tie = rank; }
   }
   return best && different >= minDifferent && most * 4 >= words.length && most > english ? best : null;
 }
@@ -493,6 +536,14 @@ function englishClearly(text: string): boolean {
   return Object.keys(STOPWORDS).every(lang => lang === "en" || stopwords(words, lang).length < english.length);
 }
 
+/**
+ * Whether `text`, a piece of an answer said in `lang`, is English and nothing else: clearly English, with none of
+ * `lang`'s short words and no letter of another script (voice-speaking-x7-1).
+ */
+function englishOnly(text: string, lang: string): boolean {
+  return englishClearly(text) && !stopwords(wordsBesidesNames(text), lang).length && !/[^\p{Script=Latin}\P{L}]/u.test(text);
+}
+
 /** An answer's language is decided from this many of its letters, or from all of a shorter one (voice-speaking-r1). */
 export const DECIDE_LETTERS = 60;
 /** Letters English seldom writes, outside names ("Café Nero", "São Paulo": voice-speaking-r2-2): "Bien sûr", "Natürlich". */
@@ -512,7 +563,9 @@ const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.tes
  * isn't: voice-speaking-r3-2). A message that ends shorter is judged by itself, or by the request's
  * language when it can't be told and has fewer English words than that language's. A message before a tool call that
  * ends shorter decides nothing for the messages after it (voice-speaking-r2-1: "Sure, one moment." had fixed a whole
- * turn to the request's language).
+ * turn to the request's language). Once an answer is in another language, a piece of it that is English and nothing
+ * else outside what it quotes is still said in Ember's own voice (voice-speaking-c7-3, voice-speaking-x7-1), however
+ * the answer opened ("Sure.", "José wrote:": voice-speaking-y7-1).
  */
 export class AnswerLanguage {
   private text = "";
@@ -538,14 +591,21 @@ export class AnswerLanguage {
     let lang = this.lang;
     if (lang === undefined) {
       if (!this.text.trim()) return [];
-      const found = speechLanguage(this.text);
+      const found = speechLanguage(this.text, this.asked);
       if ((this.text.match(/\p{L}/gu) ?? []).length >= DECIDE_LETTERS) lang = this.lang = found;
       else if (end) {
         lang = found ?? this.followsRequest();
         if (!more) this.lang = lang;
       } else if (found || (this.asked && !englishClearly(outsideQuotes(this.text))) || mayBeAnother(this.text)) return [];
     }
-    const out = this.held.map(text => ({ text, lang: lang ?? null }));
+    // An answer in another language's voice because of a passage it read out says its own clearly English pieces (its
+    // closing "Shall I reply to it?") in Ember's voice: said by the passage's voice, or unsaid with none installed,
+    // the question went unheard while Ember waited for its answer (voice-speaking-c7-3). What a piece quotes isn't
+    // counted, so a French reply's "« I don't know »" stays with it, and so does a piece with one of the answer's
+    // language's short words or a letter of another script ("Il s'appelle Gone with the Wind.", "Ошибка: The file was
+    // not found.": voice-speaking-x7-1). Not by how the answer opened: most open too short to tell ("Sure.", "José
+    // wrote:"), and their closing question went back to the passage's voice (voice-speaking-y7-1).
+    const out = this.held.map(text => ({ text, lang: lang && englishOnly(text.replace(QUOTED, " "), lang) ? null : lang ?? null }));
     this.held = [];
     return out;
   }

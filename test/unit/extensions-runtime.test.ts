@@ -493,6 +493,20 @@ describe("ExtensionsService", () => {
     expect(pluginPath("/m", "/other", path.posix)).toBeNull();
   });
 
+  it("lists no marketplaces while Ember isn't connected yet, without a warning and its stack in the log each time (reliability-r7-4)", async () => {
+    const logged: { level: string; event: string; fields?: Record<string, unknown> }[] = [];
+    const at = (level: string) => (event: string, fields?: Record<string, unknown>) => { logged.push({ level, event, fields }); };
+    const log = { info: at("info"), warn: at("warn"), error: at("error"), debug: at("debug"), child: () => undefined } as never;
+    // Home asks at start and at every reconnect, before the runtime is there: that is expected, not a fault.
+    expect(await new ExtensionsService(deps({ client: () => null, log })).marketplaces()).toEqual([]);
+    expect(logged).toEqual([{ level: "debug", event: "extensions.marketplaces_not_connected", fields: undefined }]);
+    // A real failure still warns, with its error.
+    logged.length = 0;
+    const failing = { rpc: { plugins: { marketplaces: { list: async () => { throw new Error("catalog refresh failed"); } } } } } as never;
+    expect(await new ExtensionsService(deps({ client: () => failing, log })).marketplaces()).toEqual([]);
+    expect(logged).toMatchObject([{ level: "warn", event: "extensions.marketplaces_failed" }]);
+  });
+
   it("lists only plugins with a server Ember can run, and where each reaches", async () => {
     const s = new ExtensionsService(deps());
     const entries = await s.browse("local-market");

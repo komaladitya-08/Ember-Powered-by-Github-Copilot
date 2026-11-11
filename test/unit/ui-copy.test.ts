@@ -217,6 +217,9 @@ describe("corner card with a task", () => {
 describe("page styles that keep things readable and reachable", () => {
   const read = (f: string) => readFileSync(new URL(`../../app/renderer/${f}`, import.meta.url), "utf8");
   const home = read("home/styles.css"), page = read("home/index.html"), overlay = read("overlay/styles.css");
+  /** The selector of every rule that styles a placeholder, alone or in a list, at the top or inside an at-rule. */
+  const placeholderRules = (sheet: string) =>
+    [...sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]*::placeholder[^{}]*)\{/g)].map(m => m[1].trim().replace(/\s+/g, " "));
   /** WCAG contrast ratio of two #rrggbb colours. */
   const contrast = (a: string, b: string) => {
     const lum = (h: string) => {
@@ -244,9 +247,32 @@ describe("page styles that keep things readable and reachable", () => {
     expect(overlay).toMatch(/\.task b, \.task span \{ overflow-wrap: anywhere; \}/);
   });
 
+  it("gives every field's placeholder the one colour, 4.5:1 or more on the darkest and the lightest dark field, so none is left the browser's grey (accessibility-r7-2, WCAG 1.4.3)", () => {
+    // "Find a message" and "What would you like help with?" had no rule of their own: Chrome's #757575 on the field, 3.2:1.
+    const placeholder = /^::placeholder \{ color: (#[0-9a-f]{6}); opacity: 1; \}/m.exec(home)?.[1];
+    expect(placeholder).toBeDefined();
+    const dark = read("shared/ember.css");
+    for (const surface of ["surface-0", "surface-1", "surface-2"]) {
+      expect(contrast(placeholder!, new RegExp(`^  --${surface}: (#[0-9a-f]{6});`, "m").exec(dark)![1]), surface).toBeGreaterThanOrEqual(4.5);
+    }
+    // One rule for them all: a field's own rule would leave the next field without one. Light windows restate it.
+    expect(placeholderRules(home)).toEqual(["::placeholder", "html.content ::placeholder"]);
+  });
+
+  it("counts a placeholder rule however it is spelt, so a field's own colour can't come back unseen (accessibility-x7-1, WCAG 1.4.3)", () => {
+    // Each of these would bring back the 3.2:1 grey on its field; the first pin read only "<selector>::placeholder {".
+    for (const own of [
+      ".conversation-search input::placeholder, .x { color: #757575; }",
+      "#conversation-message::placeholder{ color:#757575 }",
+      "textarea::placeholder\n{ color: #757575; }",
+      "@media (min-width: 1px) { input::placeholder { color: #757575; } }",
+    ]) expect(placeholderRules(`${home}\n${own}\n`), own).toHaveLength(3);
+    expect(placeholderRules("/* a ::placeholder { in a comment } */ a { color: red; }")).toEqual([]);
+  });
+
   it("gives the never-look placeholder enough contrast and the folds clean names", () => {
     const bg = /--bg: (#[0-9a-f]{6})/.exec(home)![1];
-    const placeholder = /\.add-row input::placeholder \{ color: (#[0-9a-f]{6})/.exec(home)![1];
+    const placeholder = /^::placeholder \{ color: (#[0-9a-f]{6})/m.exec(home)![1];
     expect(contrast(placeholder, bg)).toBeGreaterThanOrEqual(4.5);
     expect(home).toMatch(/\.fold > summary::before \{\s*content: "" \/ "";/);
     for (const id of ["activity", "checks", "about"]) expect(page).toContain(`<details class="fold" id="${id}-fold" aria-labelledby="${id}-h">`);
@@ -1147,6 +1173,7 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
       noReply: "No reply was written. Task activity shows any task this request started.",
       replyStopped: "The reply was stopped before it finished.",
       stoppedAll: "Stopped everything, running tasks included.",
+      readOut: "Reading the last answer out.",
     });
     expect(conv.CONVERSATION_STOPPED).toBe("Response stopped. Running tasks continue.");
     expect(conv.CONVERSATION_NOTHING_TO_STOP).toBe("Nothing is being answered right now, so there was nothing to stop.");
@@ -1162,6 +1189,45 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(composerRefusal({ phase: "error", reason: "policy" }, null, false)).toBe("Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.");
     expect(composerRefusal({ phase: "error", reason: "network" }, null, true)).toBe("Copilot can't be reached right now. Your message is still here: send it again once you're online.");
     expect(readFileSync("app/main/main.ts", "utf8")).toContain("composerSendRefusal(status, stops, status.phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held)");
+  });
+
+  it("takes a refused send's reason away once Ember is connected again, and says the message can go now (reliability-c7-2)", () => {
+    const refused = composerRefusal({ phase: "error", reason: "runtime", detail: "Copilot stopped unexpectedly. Reconnecting…" });
+    expect(refused).toBe("Reconnecting to Copilot. Your message is still here: send it again in a moment.");
+    // Connected again with the message still in the composer: the line stayed "Reconnecting…" for as long as it was watched.
+    expect(conv.composerLineConnected(refused, refused, true)).toBe("Connected again. Your message is still here: send it now.");
+    expect(conv.COMPOSER_CONNECTED).toBe("Connected again. Your message is still here: send it now.");
+    // The message was cleared meanwhile: nothing is "still here", so the line just goes.
+    expect(conv.composerLineConnected(refused, refused, false)).toBe("");
+    // Any other line since (Edit's caution, a reply's outcome, nothing) is left as it is, and so is a send never refused.
+    expect(conv.composerLineConnected(conv.CONVERSATION_EDIT, refused, true)).toBeNull();
+    expect(conv.composerLineConnected("", refused, true)).toBeNull();
+    expect(conv.composerLineConnected(refused, null, true)).toBeNull();
+    // A wait of the Ask box's or voice's never takes its place: it is about the draft.
+    expect(conv.composerLineYields(conv.COMPOSER_CONNECTED)).toBe(false);
+  });
+
+  it("says \"Connected again\" only after a refusal the connection ends, and takes it back when the connection drops (reliability-x7-1)", () => {
+    // Every refusal for want of a connection gives way to it, whichever model service is in use.
+    for (const service of [undefined, { kind: "admin", host: "models.example.com" }, { kind: "user", host: "localhost:11434" }] as const) {
+      const lines = [
+        composerRefusal({ phase: "starting", service } as never), composerRefusal({ phase: "signed-out", service } as never), composerRefusal({ phase: "signed-out", service } as never, "api.example.com"),
+        composerRefusal({ phase: "error", reason: "runtime", service, waitingForTasks: true } as never), composerRefusal({ phase: "error", reason: "runtime", service, detail: "Copilot stopped unexpectedly. Reconnecting…" } as never),
+        composerRefusal({ phase: "error", reason: "network", service } as never), composerRefusal({ phase: "error", reason: "not-answering", service } as never), composerRefusal({ phase: "error", reason: "runtime", service } as never),
+      ];
+      for (const line of lines) expect(conv.composerLineConnected(line, line, true), line).toBe(conv.COMPOSER_CONNECTED);
+    }
+    // A send refused for anything else stays as it was said: connecting changes none of these.
+    const policy = composerRefusal({ phase: "error", reason: "policy" });
+    for (const line of ["Unlock your screen before sending a request.", "Finish setup before sending a request.", conv.COMPOSER_SAYS.sendFailed, policy]) {
+      expect(conv.composerLineConnected(line, line, true), line).toBeNull();
+      expect(conv.composerLineConnected(line, line, false), line).toBeNull();
+    }
+    // The connection drops again while the line says "Connected again": it goes, since sending now would be refused.
+    expect(conv.composerLineDisconnected(conv.COMPOSER_CONNECTED)).toBe("");
+    for (const line of ["", conv.CONVERSATION_EDIT, conv.COMPOSER_SAYS.replied, policy]) expect(conv.composerLineDisconnected(line)).toBeNull();
+    const home = readFileSync("app/renderer/home/main.ts", "utf8");
+    expect(home).toContain("composerLineDisconnected(");
   });
 
   it("refuses a message sent while Ember isn't connected by why, and says it is still there (reliability-performance-v2)", () => {

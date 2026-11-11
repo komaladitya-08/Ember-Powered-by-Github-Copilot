@@ -20,10 +20,14 @@ import { LEVEL_MS, VOICE_KEEP_ALIVE_MS, VOICE_LEVEL_MS, LevelMeter, envelope, rm
 declare global { interface Window { emberMic: MicApi } }
 
 const api = window.emberMic;
-/** Keep the warning in sync across neural playback, local-voice loading and the system-speech watchdog. */
+/**
+ * Keep the warning in sync across neural playback, local-voice loading and the system-speech watchdog. That speech
+ * works is told when it changes; that a reply found no voice is told each time, since main ends a Hear Ember that waits
+ * on it (voice-speaking-r6-2: the second press waited its whole 12 s).
+ */
 let speechOk: boolean | null = null;
 function reportSpeech(ok: boolean): void {
-  if (ok === speechOk) return;
+  if (ok && speechOk) return;
   speechOk = ok;
   api.speech(ok);
 }

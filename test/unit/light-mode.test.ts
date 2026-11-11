@@ -61,6 +61,65 @@ describe.each([["light windows", light], ["light windows with Increase Contrast"
   });
 });
 
+describe("the approval window's “Risky step” tag", () => {
+  const sheet = read("app/renderer/prompt/styles.css");
+  /** Every rule that reaches the tag (`.risk` or `#risk`), alone or in a list, at the top or in an at-rule: [selector, declarations]. */
+  const tagRules = (text: string) => [...text.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map(m => [m[1].trim(), m[2]] as const).filter(([selector]) => /[.#]risk(?![\w-])/.test(selector));
+  const rule = tagRules(sheet).find(([selector]) => selector === ".risk")![1];
+  const tokenOf = (prop: string) => new RegExp(`(?:^|; | )${prop}: var\\((--[\\w-]+)\\);`).exec(rule)?.[1];
+  /** The dark values: ember.css's first :root block, and Increase Contrast's over it. */
+  const block = (open: string) => {
+    const at = css.indexOf(open);
+    expect(at, open).toBeGreaterThanOrEqual(0);
+    return Object.fromEntries([...css.slice(at, css.indexOf("\n}", at)).matchAll(/(--[\w-]+): ([^;]+);/g)].map(m => [m[1], m[2]]));
+  };
+  const dark = block(":root {");
+  const darkFirm = { ...dark, ...block("@media (prefers-contrast: more) {\n  :root {") };
+
+  it("takes its words and its fill from tokens that change together, so its words read at 4.5:1 or more in dark, light and with Increase Contrast (accessibility-r7-1, WCAG 1.4.3)", () => {
+    const [word, fill] = [tokenOf("color"), tokenOf("background")];
+    // A literal colour here stayed dark while the light windows' --yellow became a dark text colour: 2.9:1, and 2.2:1 firm.
+    expect(word, rule).toBeDefined();
+    expect(fill, rule).toBe("--yellow");
+    for (const [name, t] of [["dark", dark], ["dark with Increase Contrast", darkFirm], ["light", light], ["light with Increase Contrast", firm]] as const) {
+      expect(contrast(hex(t[word!]), hex(t[fill!])), name).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("has one rule that colours it, and a system-colours one, however a second is spelt (accessibility-x7-1, WCAG 1.4.3)", () => {
+    // The first pin read only the first ".risk {": a more specific rule after it would bring back the 2.9:1 tag unseen.
+    const system = /^(?:CanvasText|Canvas)$/;
+    const coloured = (text: string) => tagRules(text).filter(([, body]) =>
+      [...body.matchAll(/(?:^|[;\s])(?:color|background(?:-color)?)\s*:\s*([^;]+)/g)].some(m => !system.test(m[1].trim())));
+    expect(coloured(sheet).map(([selector]) => selector)).toEqual([".risk"]);
+    for (const again of [
+      '.card[data-risky="true"] .risk { color: #1d1d1f; }',
+      "#risk { color: #1d1d1f; }",
+      "p.risk,.x{color:#1d1d1f}",
+      "@media (min-width: 1px) { .risk { background: #ffd60a; } }",
+    ]) expect(coloured(`${sheet}\n${again}\n`), again).toHaveLength(2);
+    // The brackets round a risky card and words that only contain "risk" are not the tag.
+    expect(coloured('.card[data-risky="true"] { color: red; } .risky { color: red; } .risk { margin: 0; }')).toEqual([]);
+  });
+});
+
+describe("a placeholder in a light window", () => {
+  const home = read("app/renderer/home/styles.css");
+  const lightRules = home.slice(home.indexOf(`${LIGHT} {\n  html.content { --bg:`));
+
+  it("reads at 4.5:1 or more on a field on every surface and on the sidebar's Search settings field (accessibility-r7-3, WCAG 1.4.3)", () => {
+    const placeholder = /html\.content ::placeholder \{ color: (#[0-9a-f]{6}); \}/.exec(lightRules)![1];
+    const sidebar = /--sidebar-fill: (#[0-9a-f]{6});/.exec(lightRules)![1];
+    // A field is its surface, or a wash on it: "Search settings" is --wash-6 on the sidebar's fill (it was 4.3:1).
+    for (const under of [sidebar, light["--surface-0"], light["--surface-1"], light["--surface-2"]].map(hex)) {
+      for (const field of [under, paint(light["--wash-6"], under)]) {
+        expect(contrast(hex(placeholder), field), `${placeholder} on ${field.map(Math.round).join()}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+});
+
 describe("which windows are light", () => {
   it("is the content windows alone: the floating layer stays dark over any app", () => {
     for (const page of ["home", "command", "prompt"]) expect(read(`app/renderer/${page}/index.html`), page).toContain('<html lang="en" class="content">');

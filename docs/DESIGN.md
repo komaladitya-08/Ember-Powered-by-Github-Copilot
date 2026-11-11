@@ -532,7 +532,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   native menus and dialogs on macOS, and menus on Windows. On Linux, menus and dialogs follow the
   GTK theme, and Windows' message boxes (the quit question) stay light.
   `test/unit/design-system.test.ts` checks the token pairs: labels and system colours on every
-  surface, dark text on filled buttons, control edges.
+  surface, dark text on filled buttons, control edges. The approval window's "Risky step" tag is a filled tag: its
+  words are `--on-accent` on `--yellow`, dark on the dark windows' bright yellow and white on the light windows' deep
+  one (`light-mode.test.ts` measures the pair in dark, light and Increase Contrast: 13.0:1, 5.9:1 and 7.6:1).
 - **Contrast themes** (Windows' forced colours, where the system paints with its own few colours and
   drops shadows and gradients): the tokens become system colours, the accent the system's highlight
   (the prominent button, on-switches, the chosen character, the selected tab). Control edges become

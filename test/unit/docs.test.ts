@@ -236,7 +236,8 @@ describe("docs/DEVELOPING.md", () => {
     const gate = /The full gate[^]*?```sh\n([^]*?)```/.exec(claude)?.[1] ?? "";
     const order = gate.split("\n").map(l => l.trim().split(/\s+#/)[0]);
     const pack = order.indexOf("(cd packages/npm && npm pack --dry-run)");
-    expect(pack).toBe(order.indexOf("npm test") + 1);
+    // Between them: the kill switch's real-time deadline (the next case).
+    expect(pack).toBe(order.indexOf("npm test") + 2);
     expect(order.indexOf("npm run test:sidecar")).toBe(pack + 1);
     // el8's last step: the awake-rest budget, with every flag CI gives it.
     const footprint = /node scripts\/perf\/footprint\.mjs [^\n]*--max-cpu \d+ --max-pss \d+/.exec(ci)?.[0] ?? "";
@@ -253,6 +254,33 @@ describe("docs/DEVELOPING.md", () => {
     expect(line).toContain("xcompmgr");
   });
 
+  it("names the voice gate's switch, the screenshot folder and the offline runtime check among the test switches (install-docs-c7-2)", () => {
+    const dev = flat(read("docs/DEVELOPING.md"));
+    // CLAUDE.md's gate and CI set the first; the tests read all three.
+    expect(read("CLAUDE.md")).toContain("EMBER_VOICE_TEST=1 npm run test:integration");
+    expect(read(".github/workflows/ci.yml")).toContain('EMBER_VOICE_TEST: "1"');
+    expect(read("test/integration/voice.test.ts")).toContain('process.env.EMBER_VOICE_TEST !== "1"');
+    expect(read("test/integration/home-conversation-renderer.test.ts")).toContain("process.env.EMBER_UI_EVIDENCE");
+    expect(read("test/integration/runtime-env-live.test.ts")).toContain('process.env.EMBER_RUNTIME_ENV_LIVE === "1"');
+    expect(dev).toMatch(/`EMBER_VOICE_TEST=1` makes the voice suite \([^)]*\) fail instead of skipping when the models aren't there/);
+    expect(dev).toContain("`EMBER_UI_EVIDENCE=<folder>` saves the renderer journeys' screenshots there");
+    expect(dev).toMatch(/`EMBER_RUNTIME_ENV_LIVE=1` runs [^.]*, only through `scripts\/runtime-env-live\.sh`/);
+  });
+
+  it("gives the kill switch's real-time deadline step in the gate, right after the unit tests, as CI's three jobs run it (install-docs-r7-1)", () => {
+    const ci = read(".github/workflows/ci.yml");
+    const step = "npm run test:integration -- test/integration/killswitch-deadline.test.ts";
+    // Linux, Windows and macOS each run it on its own, straight after `npm test`.
+    expect(ci.split(`      - run: npm test\n      - name: Kill switch real-time deadline (isolated from parallel unit tests)\n        run: ${step}\n`)).toHaveLength(4);
+    expect(fs.existsSync("test/integration/killswitch-deadline.test.ts")).toBe(true);
+    const gate = /The full gate[^]*?```sh\n([^]*?)```/.exec(read("CLAUDE.md"))?.[1] ?? "";
+    const order = gate.split("\n").map(l => l.trim().split(/\s+#/)[0]);
+    expect(order.indexOf(step)).toBe(order.indexOf("npm test") + 1);
+    // docs/DEVELOPING.md's command table names it too, with why it runs alone.
+    const row = read("docs/DEVELOPING.md").split("\n").find(l => l.startsWith(`| \`${step}\` |`)) ?? "";
+    expect(row).toContain("on its own");
+  });
+
   it("keeps the C API's and WebAssembly's measured figures in the --native bullet, not in the one after it (reliability-y6-2)", () => {
     const dev = read("docs/DEVELOPING.md");
     const rest = dev.slice(dev.indexOf("**What Ember costs at rest.**"), dev.indexOf("### Connecting Copilot"));
@@ -262,6 +290,29 @@ describe("docs/DEVELOPING.md", () => {
     expect(figures).toMatch(/^- A development build listens on WebAssembly\. `--native` listens on sherpa-onnx's C API/);
     const gap = bullets.find(b => b.startsWith("- The voice process must listen from the sample's start to its end")) ?? "";
     expect(gap).toMatch(/it used to leave the run waiting for ever\.$/);
+  });
+
+  it("the README's resting memory covers what was measured, the Copilot runtime included (reliability-r7-1, reliability-c7-1)", () => {
+    const dev = flat(read("docs/DEVELOPING.md"));
+    // What footprint.mjs measured (it starts no Copilot runtime), and the runtime measured beside it.
+    const m = /(\d+)–(\d+) MB and [\d.–]+ % of a core in all, against (\d+)–(\d+) MB/.exec(dev);
+    const runtime = /the Copilot runtime[^.]*?took (\d+)–(\d+) MB/.exec(dev);
+    expect(m).not.toBeNull();
+    expect(runtime).not.toBeNull();
+    const top = (hi: string) => Number(hi) + Number(runtime![2]);
+    // The sum is written out, so nobody has to add it up.
+    expect(dev).toContain(`about ${Number(m![1]) + Number(runtime![1])}–${top(m![2])} MB on the C API and ${(Number(m![3]) + Number(runtime![1])).toLocaleString("en-GB")}–${top(m![4]).toLocaleString("en-GB")} MB on WebAssembly`);
+    // The README's requirement: no less than the top of each range, and within 100 MB of it.
+    const line = read("README.md").split("\n").find(l => /MB of memory while Ember is idle and listening/.test(l)) ?? "";
+    const native = Number(/about (\d+) MB of memory while Ember is idle and listening/i.exec(line)?.[1]);
+    const wasm = Number(/about ([\d.]+) GB where listening runs on WebAssembly/.exec(line)?.[1]) * 1000;
+    for (const [said, measured] of [[native, top(m![2])], [wasm, top(m![4])]]) {
+      expect(said).toBeGreaterThanOrEqual(measured);
+      expect(said).toBeLessThanOrEqual(measured + 100);
+    }
+    // docs/ASSISTANT.md's table and the script say what their figures leave out.
+    expect(flat(read("docs/ASSISTANT.md").split("\n").find(l => l.startsWith("| Idle memory")) ?? "")).toContain(`not counting the Copilot runtime, ≈ ${Math.round((Number(runtime![1]) + Number(runtime![2])) / 20) * 10} MB more once you are signed in`);
+    expect(read("scripts/perf/footprint.mjs")).toContain("Not counted: the Copilot runtime (no sign-in; about 100 MB more, docs/DEVELOPING.md)");
   });
 
   it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {
@@ -614,6 +665,22 @@ describe("README.md", () => {
     expect(updated).toBeGreaterThanOrEqual(Math.min(...rounds));
     expect(status).toContain("PLAN.md §10's **Product audit fixes** entries");
     expect(status).toContain("each ends with what it left");
+  });
+
+  it("names every day the product audit's rounds ran, as PLAN.md §10 dates them, and is dated no earlier than the last (reliability-r7-2)", () => {
+    const status = flat(read("STATUS.md"));
+    const sentence = /Since 4 November a product audit[^.]*\./.exec(status)?.[0] ?? "";
+    // The days STATUS.md gives: "from 7 to 9 November" and "on 11 November".
+    const named = new Set<number>();
+    for (const r of sentence.matchAll(/from (\d{1,2}) to (\d{1,2}) November/g)) for (let d = Number(r[1]); d <= Number(r[2]); d++) named.add(d);
+    for (const r of sentence.matchAll(/ on (\d{1,2}) November/g)) named.add(Number(r[1]));
+    // PLAN.md §10's headings: one day, or "first to last".
+    const days = [...read("PLAN.md").matchAll(/^### Product audit fixes[^\n(]*\(2026-11-(\d{2})(?: to 2026-11-(\d{2}))?\)$/gm)]
+      .flatMap(r => [Number(r[1]), Number(r[2] ?? r[1])]);
+    expect(days.length).toBeGreaterThanOrEqual(12);
+    for (const d of days) expect([...named], `${d} November`).toContain(d);
+    const updated = /^# Ember status Updated (\d{1,2}) November 2026\./.exec(status);
+    expect(Number(updated?.[1])).toBeGreaterThanOrEqual(Math.max(...days, ...named));
   });
 
   it("says `npm run package` makes the RPM and the AppImage, as the spec builds one RPM (install-docs-c1-2)", () => {

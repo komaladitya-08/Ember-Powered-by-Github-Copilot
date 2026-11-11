@@ -13,7 +13,7 @@
 // voice process listened on (voice.ready in Ember's log, not main's choice in voice.backend: listening-backend.mjs), so
 // like is compared with like.
 // The sample is of Ember awake at rest (it dozes after 3 minutes with the pointer still). Needs `npm run build`
-// and the speech models from `node scripts/voice/prepare.mjs`. Not counted: the Copilot runtime (no sign-in) and the
+// and the speech models from `node scripts/voice/prepare.mjs`. Not counted: the Copilot runtime (no sign-in; about 100 MB more, docs/DEVELOPING.md) and the
 // speech process for Ember's voice (it starts with the first reply). On Xvfb there is no GPU, so the GPU process
 // composites in software, and no compositor, so the overlay falls back to the handle card: --compositor starts xcompmgr
 // on the display first (EPEL's xcompmgr on EL8), so the overlay that sits beside the cursor on a desktop, the biggest

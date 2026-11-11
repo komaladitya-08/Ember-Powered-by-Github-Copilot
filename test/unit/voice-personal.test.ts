@@ -374,6 +374,12 @@ describe("what the user might say next (predict.ts)", () => {
     expect(predictNext({ ...base, lastRequest: "Archive the first email", task: { status: "done" } }, risky).map(s => s.text)).toContain("Do the same for the next one");
   });
 
+  it("offers “Read it out” only where Ember speaks replies, never a chip that couldn't read the answer (voice-speaking-r6-1)", () => {
+    const unsaid = { ...base, lastRequest: "Summarise this email", lastReply: "x".repeat(80), spoken: false };
+    expect(predictNext({ ...unsaid, speaks: false }, risky).map(s => s.text)).not.toContain("Read it out");
+    expect(predictNext({ ...unsaid, speaks: true }, risky).map(s => s.text)).toContain("Read it out");
+  });
+
   it("marks the ones that answer or follow the reply, which mean something only while it shows (companion-c2-2)", () => {
     const follows = (p: Partial<PredictInput>) => Object.fromEntries(predictNext({ ...base, ...p }, risky).map(s => [s.text, s.follows === true]));
     expect(follows({ lastRequest: "Shall I?", lastReply: "Want me to add a world clock?" })).toMatchObject({ "Yes, please": true, "No, thanks": true });

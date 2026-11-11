@@ -34,6 +34,7 @@ The full gate, in CI's order. Run all of it before you push, and put the command
 npm run lint
 npm run typecheck
 npm test                         # vitest: test/unit/** and packages/**/*.test.ts
+npm run test:integration -- test/integration/killswitch-deadline.test.ts   # the stop deadline in real time, on its own
 (cd packages/npm && npm pack --dry-run)   # the npm launcher's package files
 npm run test:sidecar             # python3 -B sidecar/atspi/test_ember_atspi.py
 node scripts/voice/prepare.mjs   # speech models (SHA-256 checked) for the voice tests

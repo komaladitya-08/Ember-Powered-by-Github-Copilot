@@ -205,10 +205,10 @@ export class PersonalVoice {
    * Ember answered (or its task ended): the predictions for what the user might say next (none while Suggest is off).
    * Returns them, and how long a spoken reply's follow-up window stays open.
    */
-  answered(reply: string, o: { spoken: boolean; task?: PredictInput["task"] }): { suggestions: Suggestion[]; followUpMs: number } {
+  answered(reply: string, o: { spoken: boolean; speaks?: boolean; task?: PredictInput["task"] }): { suggestions: Suggestion[]; followUpMs: number } {
     const follow = followUpMs({ lastReply: reply });
     if (!this.last) return { suggestions: [], followUpMs: follow };
-    this.last = { ...this.last, lastReply: reply, spoken: o.spoken, task: o.task ?? this.last.task ?? null };
+    this.last = { ...this.last, lastReply: reply, spoken: o.spoken, ...(o.speaks === undefined ? {} : { speaks: o.speaks }), task: o.task ?? this.last.task ?? null };
     if (!this.o.settings().suggest) { this.suggestions = []; return { suggestions: [], followUpMs: follow }; }
     const facts = this.o.memory();
     const people = facts ? memoryNames(facts, 20) : [];

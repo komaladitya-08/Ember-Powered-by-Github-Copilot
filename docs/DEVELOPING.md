@@ -88,6 +88,7 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 |---|---|
 | `npm run dev` | Build and start Ember |
 | `npm test` | Unit tests (Vitest) |
+| `npm run test:integration -- test/integration/killswitch-deadline.test.ts` | The kill switch's real-time deadline: a stop returns in time even when one part hangs, its audit line included. CI runs it on its own straight after `npm test` on Linux, Windows and macOS, so the parallel unit tests don't compete with its clock; run it before you push too |
 | `npm run test:sidecar` | The accessibility sidecar's own tests (`python3 -B sidecar/atspi/test_ember_atspi.py`; a stand-in pyatspi, no desktop needed). CI also runs them on RHEL 8's `platform-python` 3.6. They share the secret-field labels in `test/fixtures/secret-labels.json` with the TypeScript tests |
 | `npm run test:integration` | Runs the real Copilot runtime against the offline mock model |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
@@ -123,6 +124,15 @@ The exact file list is in `.github/workflows/ci.yml`. Its `el8` job runs the Lin
 conversation-history-live skip), under `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24"`. `EMBER_KITTEN_TEST=1` requires actual synthesis with the verified default Kitten model in native
 speech integration tests. `node scripts/voice/prepare.mjs` includes it; the gate needs a supported native sherpa
 runtime. It does not change the app's consent or speaking settings.
+
+Three more switches belong to the tests themselves (the test process reads them, not Ember):
+`EMBER_VOICE_TEST=1` makes the voice suite (test/integration/voice.test.ts, on the models from
+`node scripts/voice/prepare.mjs`) fail instead of skipping when the models aren't there, which is how the gate and CI
+run it; `EMBER_UI_EVIDENCE=<folder>` saves the renderer journeys' screenshots there (the conversation, memory,
+natural-voice, panes, integrations and first-run journeys, and project-live), for a visual check, and should point
+outside the repository; and `EMBER_RUNTIME_ENV_LIVE=1` runs the offline check of the real Copilot runtime's
+environment, only through `scripts/runtime-env-live.sh`, which gives it a network namespace with nothing but loopback
+(not in CI).
 
 ### Using Ember
 
@@ -606,7 +616,8 @@ voice otherwise, sentence by sentence as the answer
 arrives. **Speaking speed** in Settings › Voice (`voice.rate`, Slower 0.8 to Faster 1.3, Normal 1; settings keep 0.8
 to 1.4) sets how fast it speaks, in its own voice and the system's, and **Hear Ember** says one fixed sentence the way
 replies are said and, once it is heard, which voice said it ("Getting Ember's voice ready…" until then, and "Ember
-couldn't speak just now" when no voice spoke it within 12 s; not with **Never**, while the screen is locked or when the
+couldn't speak just now" when no voice spoke it within 12 s, or as soon as the speech page says it found no voice,
+on every press; not with **Never**, while the screen is locked or when the
 organisation has turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
 the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
 “Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
@@ -660,7 +671,7 @@ record of its tasks (the step each one is on, one waiting for your answer or sto
 went), with no Copilot request, so it works offline too. A spoken request's short acknowledgement (“On it.”) comes only
 once the request has gone to Copilot, after anything Ember is already saying. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without
 reading them out, and “read them out again” undoes it (the same switch as **Read finished tasks out loud** under
-**Voice**); while Ember isn't speaking replies at all, it says results stay on screen instead of promising to read them. “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
+**Voice**); while Ember isn't speaking replies at all, it says results stay on screen instead of promising to read them. “Read it out” (the suggestion under an answer that wasn't said, typed or spoken; also “tell me again” and “say that again”) says the last thing Ember said (its last answer, or a finished task's result after it) once and changes no setting; Home's composer then says “Reading the last answer out.” (nothing new is written); where Ember isn't speaking replies it says so on screen instead. While a question is up nothing is read over it, and “read this out” (what is on the screen) is the conversation's as before. “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
 how each went, from the same record. “Ember, systems check” (or “are you working?”) says whether Copilot is connected,
 whether Ember is listening and speaking, and what is under way, also when Copilot can't be reached. “Remind me in 20 minutes to call Priya” or “at 3 pm, remind me to stand up” sets a
 reminder: when it is due, Ember shows it in its bubble, says it when replies are spoken (after what it is saying), and
@@ -868,7 +879,8 @@ label waits for its step, and what is before it is said once its line has come),
 its labelled steps too, is said as each item's line ends, not after the whole answer, each line ending as the whole
 answer's would (a colon line's run goes on past a label line among its lines: "Note: this can take a while."). What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
-last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
+last part (through a dot folder too: "~/.config/ember" is "ember"), a ticked task-list box as "Done:" and an open one
+not at all, common inline HTML tags around the words they mark (never "x<p or y>q" or "use <p> for a paragraph"), a footnote's mark after its word (never a regex's "[^abc]") and "&amp;" unsaid or as the character they stand for, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
 "Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", an arrow key by its name ("Press the →
 key" as "the right arrow key", "Press ← or →" as "left arrow or right arrow") or, before the word "arrow", by its
 direction ("the ← and → arrow keys" as "the left and right arrow keys"), in a chord as the other keys are ("Win+←" as
@@ -879,11 +891,17 @@ hyphen between amounts that go down is a sum, said as written, or "minus" before
 run of numbers, "0800–123–456"; no piece is cut at a dash between two amounts), and other emoji and typed
 smileys not at all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
 reply that is clearly in another language (mostly another script, or two or more different short words of a European
-language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`) is said by
+language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`; where two
+languages share them, as Spanish and French do "la", "de" and "y", the request's language, then the letters only one
+of them writes, decide, so "Abrí la carpeta de descargas." is Spanish) is said by
 a local system voice for that language, or not at all when there is none, which isn't reported as Ember failing to
 speak, even with no voices installed; a Chinese reply was 7 s of "Chinese letter". An answer's language is decided
 once, from its first 60 letters (`AnswerLanguage`, app/voice/spoken.ts), and kept for every piece of it: an English
-list's "1. La La Land." is Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters
+list's "1. La La Land." is Kitten's too. (One way only: in an answer said in another language, a piece that is clearly
+English outside what it quotes, with none of that language's short words and no letter of another script, is
+Kitten's, so "Shall I reply to it?" after a Spanish email read out is asked in English, however the answer opened
+("Sure.", "José wrote:"); "Il s'appelle Gone with the Wind." and "Ошибка: The file was not found." keep their answer's
+voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's.) Until then a piece that may be another language's ("Bien sûr !", with letters
 English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
 typed in another language (three different short words of it outside quotes, and none only English writes:
 `requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer, unless its words outside quotes are clearly English. A reply too short to tell follows that
@@ -946,6 +964,12 @@ regression alongside the Electron smoke.
   With `--compositor --settle 70 --sample 30` on 4 shared vCPUs (2026-11-08), the listening process took 238–244 MB on
   the C API against 402–403 MB on WebAssembly: 695–785 MB and 14.2–15.4 % of a core in all, against 942–947 MB and
   14.3–15.5 % (Ember's other processes vary by about 90 MB from run to run).
+- The script connects no model, so its totals leave out the Copilot runtime, which is a process of Ember's whenever
+  you are signed in (or use your own provider). Started beside the scripted mock model with Home open and listening
+  off (2026-11-11; PSS from `/proc/<pid>/smaps_rollup`, 70 s to settle, 30 s sampled, two runs on 4 shared vCPUs), the
+  Copilot runtime took 97–105 MB at rest, in 520–554 MB for all of Ember. Add it to the figures above for what a
+  signed-in person sees while Ember is idle and listening: about 792–890 MB on the C API and 1,039–1,052 MB on
+  WebAssembly. The README's requirement (about 900 MB, about 1.1 GB on WebAssembly) is the top of each, rounded up.
 - The voice process must listen from the sample's start to its end, or the total leaves it out: the script takes the
   process list as the sample begins and reads each process's memory as it ends, and reads Ember's log at both points.
   The first line then says "not throughout the sample" and the JSON's `listeningGap` says why in three cases. No voice
@@ -1041,8 +1065,10 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 
 A hand edit of `settings.json` that Ember can't use is copied aside as `settings.json.bad-<time>` (the three newest
-are kept); one it can repair is tidied once it has stayed the same for 2 s. A `settings.json` that can't be read at
-start-up is never replaced with defaults: Ember says so, keeps changes in memory and saves them over the file once it
+are kept); one it can repair is tidied once it has stayed the same for 2 s. When Ember starts on one that isn't JSON
+at all (cut off mid-write, say), nothing in it can be kept but the never-look list, so Home says every setting went
+back to its default and that Ember asks to be set up again, and names the copy. A `settings.json` whose file can't be
+opened at start-up (its permissions, say) is never replaced with defaults: Ember says so, keeps changes in memory and saves them over the file once it
 reads again.
 
 A short filesystem write is completed before settings replace the previous file. If writing stops or the disk fills,
@@ -1384,6 +1410,7 @@ and the settings window says it is there.
 npm run eval                                  # per-PR tier: dist/eval/report.html and results.json
 node eval/run.mjs --only bench-save,injection-delete --no-gates
 node eval/run.mjs --live --repeat 3           # nightly tier: a real model, pass^3 (see below)
+node eval/run.mjs --help                      # its options; runs nothing
 ```
 
 The task suite is `eval/tasks/*.json` (schema: `eval/src/schema.ts`). Each task says how to set things up

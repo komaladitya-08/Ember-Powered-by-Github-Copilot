@@ -55,7 +55,7 @@ import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./searc
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { problemInHome, PROBLEM_SETTINGS, composerCount, composerDraftBack, composerGivenBack, composerLineBase, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, LISTEN_CONSENT_NOT_SAVED, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
-import { composerEditAgain, composerEditCancelled, composerLineFits, STATUS_FAILED } from "./copy";
+import { composerEditAgain, composerEditCancelled, composerLineConnected, composerLineDisconnected, composerLineFits, STATUS_FAILED } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -898,6 +898,10 @@ function renderTaskReasoning(): void {
 const projectReady = mountProject();
 function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
+  // Connected again after a send was refused for want of a connection: its reason no longer holds (reliability-c7-2).
+  if (a.phase === "ready" && agent && agent.phase !== "ready") composerConnected();
+  // And dropped again while the line says "Connected again… send it now.": that no longer holds either (reliability-x7-1).
+  if (a.phase !== "ready" && agent?.phase === "ready") composerDisconnected();
   agent = a;
   projectReady(a.phase === "ready", a.service?.host ?? "GitHub Copilot", a.conductorModel);
   const had = document.activeElement;
@@ -1138,6 +1142,19 @@ let shownConversation: Entry[] = [];
 const conversationMessage = $("conversation-message") as HTMLTextAreaElement;
 const conversationSearch = $("conversation-search") as HTMLInputElement;
 const conversationComposeStatus = $("conversation-compose-status");
+/** The reason the last refused send gave, while the composer's line may still say it (reliability-c7-2). */
+let conversationRefused: string | null = null;
+/** Ember is connected again: a refused send's reason still on the composer's line becomes that the message can go now. */
+function composerConnected(): void {
+  const next = composerLineConnected(conversationComposeStatus.textContent ?? "", conversationRefused, !!conversationMessage.value.trim());
+  conversationRefused = null;
+  if (next !== null) keepingComposer(() => { conversationComposeStatus.textContent = next; });
+}
+/** Ember is no longer connected: "Connected again… send it now." goes from the composer's line. */
+function composerDisconnected(): void {
+  const next = composerLineDisconnected(conversationComposeStatus.textContent ?? "");
+  if (next !== null) keepingComposer(() => { conversationComposeStatus.textContent = next; });
+}
 let conversationAwaitingReply = false;
 /**
  * Whether the conversation answers a request now, as main says (home-c1-1): from the composer, the Ask box or voice.
@@ -1168,7 +1185,8 @@ function endComposerWait(): void {
   const said = since.filter(e => e.who === "ember" || e.who === "problem").at(-1);
   // A Stop that ended it left no line to read it from (the bubble's own Stop: home-c2-2).
   const stopped = conversationTurnEnded === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : conversationTurnEnded === "stopped" ? CONVERSATION_STOPPED : null;
-  const words = stopped ? stoppedLine(stopped)
+  // (Read out: Ember says its last answer aloud and writes no line: voice-speaking-x7-2.)
+  const words = stopped ? stoppedLine(stopped) : conversationTurnEnded === "read-out" ? COMPOSER_SAYS.readOut
     : said?.who === "problem" ? problemSaid(since) : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
   if (stopped) conversationStopTold = words;
   keepingComposer(() => { conversationComposeStatus.textContent = words; });
@@ -1245,7 +1263,7 @@ function conversationTurn(value: unknown): void {
     // Nothing waits in main now. With no Stop, every message it took has its line, or never will (home-v4-1); a Stop
     // dropped those still without one, given back though the composer waited for none of them (a later send was
     // refused: home-v4-2).
-    if (!change.ended) conversationUnsent = conversationUnsent.filter(u => !u.taken);
+    if (!change.ended || change.ended === "read-out") conversationUnsent = conversationUnsent.filter(u => !u.taken);
     else if (conversationUnsent.some(u => u.taken)) keepingComposer(() => { conversationComposeStatus.textContent = conversationStopTold = stoppedLine(change.ended === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : CONVERSATION_STOPPED); });
   }
   renderStatus();
@@ -1682,7 +1700,7 @@ $("conversation-compose").addEventListener("submit", event => {
       syncComposerCount(true);
     }
     awaitingReply(false);
-    keepingComposer(() => { conversationComposeStatus.textContent = ipcErrorText(error) || COMPOSER_SAYS.sendFailed; });
+    keepingComposer(() => { conversationComposeStatus.textContent = conversationRefused = ipcErrorText(error) || COMPOSER_SAYS.sendFailed; });
   }).finally(() => { if (generation === conversationGeneration) { send.removeAttribute("aria-disabled"); send.textContent = "Send"; } });
 });
 $("conversation-cancel-edit").addEventListener("click", () => {
