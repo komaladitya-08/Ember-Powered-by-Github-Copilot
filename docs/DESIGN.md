@@ -455,8 +455,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   button). Rows a switch governs show only while it is on, and rarely needed ones fold under **Advanced**. An edit of
   the provider in force to another host waits in the fields until its card is agreed and it answers: the hint says the
   host in force still answers, the card's quiet button is “Keep using <host>”, and a failed check says “Nothing has
-  changed” (integrations-c3-1); a host that answers with no model list there is adopted and says it is asked for the
-  model as typed (integrations-r4-2). A
+  changed” (integrations-c3-1); a host that answers with no model list there changes nothing either, and the card
+  gains a third, quiet button, “Use it as typed”, whose press adopts it and says it is asked for the model as typed
+  (integrations-c5-1, -r4-2). A
   disclosure inside a group (Projects' patch, command and saved workspaces) has the folds' chevron (`details.disclose`),
   a lone button (Refresh list, Choose command folder…) keeps its own size in a row of actions, and an empty status line
   takes no row: every status line in Home stays on the page while it says nothing, as a box of nothing out of the flow,

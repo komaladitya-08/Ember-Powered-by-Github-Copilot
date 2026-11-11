@@ -605,6 +605,11 @@ export const providerHeldShown = (from: string, to: string) => `Read the note ab
 export const providerHeldChecking = (to: string) => `Checking ${to}…`;
 /** The check failed (`why`: main's sentence), or the edit was put away: nothing was saved. */
 export const providerHeldKept = (from: string, why = "") => `${why ? `${why} ` : ""}Nothing has changed: Ember still uses ${from}.`;
+/**
+ * The check found something at the new address, but no model list (`why`: main's sentence): nothing was saved, and the
+ * card's second button uses the address as typed, for a gateway that answers chat only (integrations-c5-1, -c7-1).
+ */
+export const providerHeldUnlisted = (from: string, why: string) => `${why} Nothing has changed: Ember still uses ${from}. If the address is right, choose “Use it as typed”.`;
 /** A key typed for that edit is saved with its yes, never for the host still in force. */
 export const providerHeldKey = (to: string | null) => (to ? `Ember saves this key with the new address once you agree to use ${to}.` : "Enter the service's address first.");
 
@@ -612,7 +617,7 @@ export const providerHeldKey = (to: string | null) => (to ? `Ember saves this ke
 export const providerCardShown = (host: string) => `Read the note above: Ember sends nothing to ${host} until you agree.`;
 /** Said once the card is agreed to, in place of the line above (integrations-r4). */
 export const providerAgreedText = (host: string) => `Agreed. Ember now sends your requests to ${host}.`;
-/** Said instead when a held edit's new host answered but lists no models there, so it is used as typed (integrations-r4-2). */
+/** Said instead when a held edit's new host answered but lists no models there, and the person chose “Use it as typed” (integrations-r4-2, -c5-1). */
 export const providerAgreedUnlisted = (host: string, model: string | null) =>
   `Agreed. ${host} answered but lists no models, so Ember asks it for ${model ?? "the models"} as typed.`;
 

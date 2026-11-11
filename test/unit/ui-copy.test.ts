@@ -26,7 +26,7 @@ import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
 import { friendlyError, lostWords } from "../../app/main/agent/presenter";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerAgreedUnlisted, providerHeldUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -943,6 +943,9 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(providerHeldChecking("127.0.0.1:18309")).toBe("Checking 127.0.0.1:18309…");
     expect(providerHeldKept("127.0.0.1:18308", "Ember can't reach 127.0.0.1:18309. Check the address and the network.")).toBe("Ember can't reach 127.0.0.1:18309. Check the address and the network. Nothing has changed: Ember still uses 127.0.0.1:18308.");
     expect(providerHeldKept("127.0.0.1:18308")).toBe("Nothing has changed: Ember still uses 127.0.0.1:18308.");
+    // Something answered, with no model list: still nothing saved, and the way on is the person's own press (integrations-c5-1).
+    expect(providerHeldUnlisted("127.0.0.1:18308", "127.0.0.1:18309 answered, but has no model list at that address. Check the endpoint and the provider."))
+      .toBe("127.0.0.1:18309 answered, but has no model list at that address. Check the endpoint and the provider. Nothing has changed: Ember still uses 127.0.0.1:18308. If the address is right, choose “Use it as typed”.");
     expect(providerHeldKey("api.example.com")).toBe("Ember saves this key with the new address once you agree to use api.example.com.");
     expect(providerHeldKey(null)).toBe("Enter the service's address first.");
   });

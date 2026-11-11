@@ -11,7 +11,7 @@ import path from "node:path";
 import { AdminPolicySchema, applyAdminPolicy, managedKeys, parseAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "../../app/main/admin";
 import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore, repairSettings, type Settings } from "../../app/main/settings";
 import {
-  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, checkAgain, listedModelIds, providerSummary, providerWaitingHost, testConnection, testRequest, userProviderConfig, userProviderFromFile,
+  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, checkAgain, listedModelIds, providerDown, providerSummary, providerWaitingHost, testConnection, testRequest, userProviderConfig, userProviderFromFile,
   userProviderInForce, type FetchLike,
 } from "../../app/main/provider";
 import { PROVIDER_BAD_REQUEST, PROVIDER_FAILED, registerProviderIpc, type ProviderApi, type ProviderIpcEvent } from "../../app/main/provider-ipc";
@@ -356,6 +356,19 @@ describe("Test connection", () => {
     expect(await testConnection(settings(), STORED, fetch)).toEqual({ ok: true, host: "models.example.com", models: 2, ids: ["a", "b"] });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0][1]).toMatchObject({ method: "GET", redirect: "error" });
+  });
+
+  it("says Connected only to an answer with a model list: a web page or other JSON that answers 200 is no model service (integrations-c7-1)", async () => {
+    const page = vi.fn<FetchLike>(async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("Unexpected token < in JSON"); } }));
+    const no = { ok: false, why: "models.example.com answered, but not as a model service does. Check the endpoint.", cause: "no-list" };
+    expect(await testConnection(settings(), STORED, page)).toEqual(no);
+    expect(await testConnection(settings(), STORED, answer(200, { hello: "world" }))).toEqual(no);
+    expect(await testConnection(settings(), STORED, answer(200, null))).toEqual(no);
+    // Something is there, so the status never calls the provider down for it.
+    expect(providerDown(await testConnection(settings(), STORED, page), "models.example.com", false)).toBeNull();
+    // A list, even an empty one or Ollama's, is a model service's answer.
+    expect(await testConnection(settings(), STORED, answer(200, { data: [] }))).toEqual({ ok: true, host: "models.example.com", models: 0 });
+    expect(await testConnection(settings(), STORED, answer(200, { models: [{ name: "llama3.2:3b" }] }))).toEqual({ ok: true, host: "models.example.com", models: 1, ids: ["llama3.2:3b"] });
   });
 
   it("says in one sentence why it failed, never with the service's raw text or the key", async () => {

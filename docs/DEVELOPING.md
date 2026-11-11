@@ -1073,7 +1073,8 @@ such as Ollama at `http://localhost:11434/v1` or LM Studio at `http://localhost:
 **Conversation model** and **Model for tasks** (the conversation's when empty; it must take images), and under
 **Advanced** the wire API (`completions` or `responses`) and Azure's API version. **Test connection** makes one GET of the
 service's model list with the saved key and says in one sentence what came of it, naming one or two of the models it
-lists; up to 50 of their ids (`listedModelIds`: `data[].id`, or Ollama's `models[].name`, each a `MODEL_ID`) are
+lists ("Connected" only to an answer that holds a model list: a 200 with anything else, a web page included, says
+"<host> answered, but not as a model service does. Check the endpoint.", integrations-c7-1); up to 50 of their ids (`listedModelIds`: `data[].id`, or Ollama's `models[].name`, each a `MODEL_ID`) are
 offered as suggestions in both model fields, set as option values only. It is disabled, and main refuses it,
 until the card below is agreed for the endpoint's host: nothing at all goes to a host the user hasn't agreed to, with
 or without a key. A line under it says why it waits (its `aria-describedby`), and when the card comes up for an
@@ -1098,10 +1099,15 @@ fails says main's reason and "Nothing has changed: Ember still uses <host in for
 names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
 main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
 A host that answers but has no model list at that address (404, 405 or 501 on GET /models, as some gateways that answer
-chat only do: the test's `cause: "no-list"`, which the start probe doesn't count as down either) is adopted the same
-way, and the line says "Agreed. <new host> answered but lists no models, so Ember asks it for <model> as typed."
-(integrations-r4-2); one that can't be reached, times out, has a certificate Ember can't verify, refuses the key or
-answers with another error changes nothing.
+chat only do, and as a mistyped path does; or a 200 that isn't a model list, as a web front end, a sign-in page or a
+parked domain gives: both are the test's `cause: "no-list"`, which the start probe doesn't count as down either) is not
+adopted by the yes (integrations-c5-1, -c7-1): the line says main's sentence, then "Nothing has changed: Ember still
+uses <host in force>. If the address is right, choose “Use it as typed”.", and the card gains a quiet **Use it as
+typed**, for that very edit (any change of it takes the button away). Only that press saves the edit, in the same one
+change, and the line says "Agreed. <new host> answered but lists no models, so Ember asks it for <model> as typed."
+(integrations-r4-2); until then the provider in force and its saved key stay as they were, and a key typed for the new
+host waits in its field. One that can't be reached, times out, has a certificate Ember can't verify, refuses the key or
+answers with another error changes nothing and offers nothing.
 An edit back to the host in force, or of the same host, is saved at once as before. The held card's text has no
 sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
 provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so

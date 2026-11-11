@@ -587,7 +587,9 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
 /**
  * What a test of the endpoint found. `cause`, for a failure: nothing answered (refused, timed out, unreachable: the
  * provider is down), or it answered but has no model list at that address (`no-list`: 404, 405 or 501 on GET /models,
- * as some gateways that answer chat only do), which a held edit's check takes as an answer (integrations-r4-2).
+ * as some gateways that answer chat only do, and as a mistyped path does; or a 200 that isn't a model list, as a web
+ * page is: integrations-c7-1). Something is there, so the provider isn't down, but a held edit's check adopts it only
+ * on the person's own "Use it as typed" (integrations-c5-1).
  */
 export type TestResult = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
@@ -627,15 +629,16 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
     if (res.status === 401 || res.status === 403) return { ok: false, why: key ? `${host} didn't accept the API key. Check it, or replace it.` : `${host} needs an API key.` };
     if (res.status === 404 || res.status === 405 || res.status === 501) return { ok: false, why: `${host} answered, but has no model list at that address. Check the endpoint and the provider.`, cause: "no-list" };
     if (!res.ok) return { ok: false, why: friendlyError(`HTTP ${res.status}`, undefined, { statusCode: res.status, provider: "user", settingsKey: null }) };
-    let models: number | null = null;
-    let ids: string[] = [];
+    // A 200 says only that something is there: a web front end, a sign-in page or a parked domain answers every path
+    // with one. Connected means it answered as a model service does, with a model list (integrations-c7-1).
+    let list: unknown[] | null = null;
     try {
       const body = await res.json() as { data?: unknown; models?: unknown };
-      const list = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
-      models = list ? list.length : null;
-      if (list) ids = listedModelIds(list);
-    } catch { /* answered, with a body that isn't a list: still connected */ }
-    return { ok: true, host, models, ...(ids.length ? { ids } : {}) };
+      list = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
+    } catch { /* a body that isn't JSON (a web page): no model list, said below */ }
+    if (!list) return { ok: false, why: `${host} answered, but not as a model service does. Check the endpoint.`, cause: "no-list" };
+    const ids = listedModelIds(list);
+    return { ok: true, host, models: list.length, ...(ids.length ? { ids } : {}) };
   } catch (err) {
     const msg = err instanceof Error ? `${err.name} ${err.message} ${(err as { cause?: { code?: string } }).cause?.code ?? ""}` : String(err);
     if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`, cause: "timeout" };
