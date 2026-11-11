@@ -5615,7 +5615,14 @@ reg(NATIVE, ["gh"], h => {
   const what = GH_WHAT[group];
   if (!what) { h.e.unclear("unclear.gh-verb", "Ember can't tell which gh command this runs."); return; }
   if (sub === null) return;
-  if (group === "release" && sub === "download") { h.e.download(".", h.sc); return; }
+  // A release's files or a workflow run's artifacts land in the folder, or in -D's (and -O's file): running one later
+  // is running a download (commands-remote-r7-3).
+  if ((group === "release" || group === "run") && sub === "download") {
+    h.e.download(".", h.sc);
+    const dp = parseOpts(rest, { shortValue: "DOnpAR", longValue: ["dir", "output", "name", "pattern", "archive", "repo"] });
+    for (const d of values(dp, "D", "dir", "O", "output")) { if (d) h.e.download(d, h.sc); else h.e.markUnnamed(null, h.sc); }
+    return;
+  }
   if (group === "repo" && sub === "clone") { const [r, d] = rest.filter(a => !isOption(a)).slice(1); h.e.download(d?.v ?? r?.v?.split("/").pop() ?? null, h.sc); return; }
   if (group === "repo" && sub === "deploy-key" && rest.some(a => a.v === "delete")) { h.e.add("remote-delete", "gh.repo.deploy-key", "Deletes a deploy key on GitHub."); return; }
   if ((GH_DELETE[group] ?? []).includes(sub)) {
@@ -5761,6 +5768,8 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
     const remote = (a: Arg | undefined): boolean => !!a?.v && /^[A-Za-z0-9_.-]+:/.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v);
     if (src && !remote(src)) h.e.usePath(src, "readTree", h.sc);
     if (dst && !remote(dst)) { const obj = h.e.usePath(dst, "write", h.sc); if (obj.abs) h.e.add("destroy", "posix.cp", `Replaces ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
+    // A file copied out of a container is a download where it lands (commands-remote-r7-3).
+    if (dst && !remote(dst) && src && (remote(src) || src.v === null)) { if (dst.v) h.e.download(dst.v, h.sc); else h.e.markUnnamed(null, h.sc); }
     return;
   }
   if (v === "save" || v === "export") { for (const o of values(parseOpts(rest, { shortValue: "o", longValue: ["output"] }), "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); } return; }
@@ -5926,7 +5935,12 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     if (h.key === "ansible" || h.key === "ansible-playbook") { h.e.add("publish", "cloud.change", checkRun ? `Ember can't tell whether this changes ${service}.` : `Changes ${service}.`); return; }
     return;
   }
-  if (verbs.includes("?")) { h.e.unclear("unclear.cloud-verb", "Ember can't tell which command this runs."); return; }
+  if (verbs.includes("?")) {
+    h.e.unclear("unclear.cloud-verb", "Ember can't tell which command this runs.");
+    // A copy or a download with a word Ember can't see may save a file anywhere (commands-remote-r7-3).
+    if (verbs.some(v => /^(cp|mv|rsync|download|download-batch)$/.test(v))) h.e.markUnnamed(null, h.sc);
+    return;
+  }
   let verb: string;
   switch (h.key) {
     case "aws": verb = verbs[0] === "s3" ? `s3 ${verbs[1] ?? ""}` : verbs[1] ?? verbs[0]; break;
@@ -5973,6 +5987,24 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   if (h.key === "gsutil" && /^(cp|mv|rsync)$/.test(verb)) {
     const ops = rest.filter(a => !isOption(a)).slice(1).map(a => a.v ?? "");
     if (ops[ops.length - 1]?.startsWith("gs://")) { h.e.add("publish", "upload.cloud", "Sends data to Google Cloud Storage."); return; }
+  }
+  // A file copied down from a bucket, a pod or a storage account is a download where it lands (commands-remote-r7-3):
+  // the words after the one that names the remote place; anywhere, when Ember can't see a word. It asks as before.
+  {
+    const words = rest.filter(a => !isOption(a));
+    const copies = (h.key === "gsutil" && /^(cp|mv|rsync)$/.test(verbs[0] ?? "")) || (h.key === "gcloud" && verbs[0] === "storage" && /^(cp|mv|rsync)$/.test(verbs[1] ?? ""))
+      || ((h.key === "kubectl" || h.key === "oc") && verbs[0] === "cp");
+    const remote = (a: Arg): boolean => a.v === null || /^gs:\/\//.test(a.v) || ((h.key === "kubectl" || h.key === "oc") && /^[^/\\:]+(\/[^/\\:]+)?:/.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v));
+    // Every word after the remote one that isn't remote itself (an option's value among them: marking more is safe).
+    const from = copies ? words.findIndex(a => a.v !== null && remote(a)) : -1;
+    if (from >= 0) for (const dest of words.slice(from + 1)) { if (dest.v === null) h.e.markUnnamed(null, h.sc); else if (!remote(dest)) h.e.download(dest.v, h.sc); }
+    else if (copies && words.some(a => a.v === null)) h.e.markUnnamed(null, h.sc);
+    if (h.key === "az" && verbs.some(v => v === "download" || v === "download-batch")) {
+      const ap = parseOpts(h.args, { shortValue: "fdncs", longValue: ["file", "destination", "name", "container-name", "source", "account-name", "pattern", "path"] });
+      const to = values(ap, "f", "file", "d", "destination");
+      if (to.length === 0) h.e.markUnnamed(".", h.sc);
+      for (const f of to) { if (f) h.e.download(f, h.sc); else h.e.markUnnamed(null, h.sc); }
+    }
   }
   if ((h.key === "terraform" || h.key === "tofu" || h.key === "pulumi") && verb === "apply" && h.args.some(a => a.v === "-destroy")) verb = "destroy";
   if ((h.key === "kubectl" || h.key === "oc") && (verb === "edit" || (verb === "exec" && h.args.some(a => /^-[a-z]*i[a-z]*t|^-[a-z]*t[a-z]*i/.test(a.v ?? ""))))) h.e.unclear("unclear.interactive", SAYS.interactive);
@@ -6851,6 +6883,9 @@ reg(NATIVE, ["scp", "pscp"], h => {
     return;
   }
   copyLike({ ...h, args: ops }, "cp");
+  // A source Ember can't see may be another computer's file (`scp "$H:run.sh" .`): where it lands is a download
+  // (commands-remote-r7-3).
+  if (sources.some(s => s.v === null)) h.e.download(dest.v, h.sc);
 });
 /** ssh-family options: code-running settings, identity files, port forwarding, background. */
 function sshOptions(h: H, p: Parsed): void {

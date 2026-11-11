@@ -257,7 +257,7 @@ export const INTERPRETERS: Readonly<Record<string, { inline: readonly string[]; 
 };
 
 /** Network fetchers: piping one into an interpreter is download-and-run (§3.4.7). */
-export const FETCHERS = new Set(["curl", "wget", "fetch", "aria2c", "invoke-webrequest", "invoke-restmethod", "iwr", "irm", "nc", "ncat", "netcat", "socat", "http", "https", "xh", "lwp-download", "lwp-request", "gsutil", "scp", "sftp", "ftp", "tftp", "bitsadmin", "certutil"]);
+export const FETCHERS = new Set(["curl", "wget", "fetch", "aria2c", "invoke-webrequest", "invoke-restmethod", "iwr", "irm", "nc", "ncat", "netcat", "socat", "http", "https", "xh", "lwp-download", "lwp-request", "gsutil", "scp", "sftp", "ftp", "tftp", "bitsadmin", "certutil", "ssh", "slogin", "autossh"]);
 /** Decoders of hidden text (base64 -d and friends): piping one into an interpreter hides what runs. */
 export const DECODERS = new Set(["base64", "base32", "xxd", "openssl", "gzip", "gunzip", "zcat", "xz", "unxz", "bzip2", "bunzip2", "uudecode", "rev", "tr"]);
 
