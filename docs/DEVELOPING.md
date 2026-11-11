@@ -1218,7 +1218,8 @@ and the notice asks the user to have the computer's manager fix it; `ember docto
 no actions, commands or listening, nothing sent to any model service (neither
 GitHub Copilot nor the organisation's own endpoint), and nothing deleted from the audit log. Ember reads the policy
 again every 10 seconds. Once it changes (tightened, repaired, added or removed, and the next read says so too), Ember
-stops everything and stays locked down until the user restarts it (the bubble offers **Restart Ember**, and the
+stops everything and stays locked down until the user restarts it (the bubble offers **Restart Ember**, a message sent
+from Home is refused with "…so Ember can't answer until you restart it.", and the
 settings window says so at once, already open or not: its notice, what it says Ember reads and sends, and the switches
 the lockdown turns off), and the restart reads the new policy whole. Every key is optional:
 
