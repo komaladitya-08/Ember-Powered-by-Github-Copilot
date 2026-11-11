@@ -357,7 +357,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
   character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
   state in a few words ("Ready", "Working on 2 tasks", "Thinking…" while it answers what you sent from Home, "A task
-  needs you" with **Open approval**, "Not connected", "Reconnecting…" while Ember's own model connection starts again
+  needs you" with **Open approval**, "Not connected" (signed in and offline, the caption says "Copilot can't be
+  reached right now: reconnecting once you're online." and the button is **Models & connections…**, never "Connect
+  Copilot": home-r7-1), "Reconnecting…" while Ember's own model connection starts again
   by itself, as the handle and Ask say,
   "Needs setting up", "Locked by your organisation"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
   you, then two facts (which of listening, memory and commands are on; today's tasks by outcome, in their rows' words (a task

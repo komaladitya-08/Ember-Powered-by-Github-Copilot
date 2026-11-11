@@ -77,6 +77,20 @@ describe("Home's status panel", () => {
     expect(fs.readFileSync("app/renderer/home/main.ts", "utf8")).toContain("setText(\"p-connect\", connectLabel(agent?.service?.kind, !!waitingFor(), runtimeState(agent)));");
   });
 
+  it("says Copilot can't be reached while offline and signed in, never to connect Copilot, and points to where Check again is (home-r7-1)", () => {
+    expect(runtimeState({ phase: "error", reason: "network" })).toBe("offline");
+    // Another model service's own lines say it can't connect; signed out is still signed out.
+    expect(runtimeState({ phase: "error", reason: "network", service: { kind: "user" } })).toBeNull();
+    expect(runtimeState({ phase: "signed-out" })).toBeNull();
+    const t = { failing: 0, onboarded: true, phase: "error", hidden: false, overlay: true, runtime: "offline" as const };
+    expect(tagline(t)).toBe("Beside your cursor. Copilot can't be reached right now: reconnecting once you're online.");
+    expect(tagline(t)).not.toMatch(/Connect Copilot|Ember/);
+    expect(connectLabel(undefined, false, "offline")).toBe("Models & connections…");
+    expect(statusWord({ phase: "error", failing: 0, running: 0, asking: 0, runtime: "offline" })).toEqual({ word: "Not connected", ring: "error" });
+    // Tasks at work come first, as before.
+    expect(tagline({ ...t, waitingForTasks: true })).toMatch(/isn't answering: reconnecting once the tasks/);
+  });
+
   it("says Ember is reconnecting while its model connection starts again, as the handle and Ask do, and never sends the person to a provider that is fine (accessibility-visual-c1-2)", () => {
     // The runtime stopped under the user's own provider (lost(): runtimeWords("user").stopped), then gave up.
     const crashed = { phase: "error", reason: "runtime", detail: "Ember's model connection stopped unexpectedly. Reconnecting…" };
@@ -85,7 +99,7 @@ describe("Home's status panel", () => {
     expect(runtimeState({ ...crashed, detail: "Copilot stopped unexpectedly. Reconnecting…" })).toBe("reconnecting");
     expect(runtimeState({ phase: "error", reason: "not-answering", detail: "Your model provider isn't answering. Reconnecting…" })).toBe("reconnecting");
     expect(runtimeState(gaveUp)).toBe("stopped");
-    for (const other of [{ phase: "error", reason: "network", detail: "" }, { phase: "error", reason: "not-answering", detail: "Your model provider isn't answering." }, { phase: "signed-out", detail: "" }, { phase: "ready", detail: "" }, null]) expect(runtimeState(other)).toBeNull();
+    for (const other of [{ phase: "error", reason: "network", detail: "", service: { kind: "user" } }, { phase: "error", reason: "not-answering", detail: "Your model provider isn't answering." }, { phase: "signed-out", detail: "" }, { phase: "ready", detail: "" }, null]) expect(runtimeState(other)).toBeNull();
     const base = { phase: "error", failing: 0, running: 0, asking: 0, service: "user" };
     // Before, "Not connected" (the error ring) whatever the reason, while the handle and Ask said "Reconnecting…".
     expect(statusWord({ ...base, runtime: "reconnecting" })).toEqual({ word: "Reconnecting…", ring: "starting" });
