@@ -54,7 +54,7 @@ import type { ActStamp, PerceptionPort, SidecarPort } from "../perception/ports"
 import type { TargetBinding } from "../targets/types";
 import type { CommandService, ShellId } from "../commands/types";
 import type { TargetId } from "../../shared/targets";
-import { placeName, ranToItsEnd, runCommandTool, whereWords, type CommandFlowContext } from "../commands/flow";
+import { placeName, runCommandTool, whereWords, type CommandFlowContext } from "../commands/flow";
 import { LOCKED_SCREEN } from "../screen-lock";
 
 /**
@@ -262,14 +262,14 @@ const ONLY_REPORTS: ReadonlySet<string> = new Set([...CHANGES_NOTHING, "show_vie
 /**
  * Whether a call's result means a step wasn't done, so that the calls sent in one reply with it are held back, and how:
  * `no` for any call turned down, unanswered, refused or stopped; `failed` for a step that didn't work. A read, a
- * progress note or a card view that failed (its arguments too) is no step in the user's apps, and a command that ran
- * and ended with an exit code was done: neither holds anything back (tasks-approvals-x7-1, -x7-2).
+ * progress note or a card view that failed (its arguments too) is no step in the user's apps, so it holds nothing back
+ * (tasks-approvals-x7-2). A command that failed holds the rest back however it ended, an exit code included: the same
+ * result is what a Ctrl+C typed into the command window or a signal leaves (tasks-approvals-y7-1).
  */
 export function leftUndone(name: string, result: ToolResultObject | string): "no" | "failed" | null {
   if (typeof result !== "object") return null;
   if (result.resultType === "denied") return "no";
-  if (result.resultType !== "failure" || ONLY_REPORTS.has(name)) return null;
-  return name === "run_command" && ranToItsEnd(result) ? null : "failed";
+  return result.resultType === "failure" && !ONLY_REPORTS.has(name) ? "failed" : null;
 }
 /**
  * A step that can't be done because the accessibility helper can't work here at all (helperCantRun: its Python

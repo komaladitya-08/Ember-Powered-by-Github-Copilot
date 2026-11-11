@@ -150,18 +150,21 @@ describe("run_command is offered only with commands (§3.2)", () => {
   });
 });
 
-describe("calls sent in one reply with a step that only reported back", () => {
+describe("calls sent in one reply with a step that failed or only reported back", () => {
   const cmd = (command: string) => ({ target: "This computer", command, why: "to check the project" });
 
-  it("a command that ran and ended with an exit code holds back none of the commands sent with it (tasks-approvals-x7-1)", async () => {
-    recordingJudge();
-    const svc = commandService(LOCAL, { exit: spec => (spec.command.startsWith("grep") ? { code: 1 } : {}) });
-    const { call } = makeWorker({ target: LOCAL, commands: svc, spec: { userWords: "check the project for me" } });
-    // One reply: all three are queued before the first one's result is known.
-    const [first, second, third] = await Promise.all([call("run_command", cmd("grep -q nothere /etc/hostname")), call("run_command", cmd("echo second-ran > second.txt")), call("run_command", cmd("ls"))]);
-    expect(first.textResultForLlm).toMatch(/^It ended with exit code 1\./);
-    expect([second.resultType, third.resultType]).toEqual(["success", "success"]);
-    expect(svc.starts.map(s => s.command)).toEqual(["grep -q nothere /etc/hostname", "echo second-ran > second.txt", "ls"]);
+  it("a command that ended with an exit code, a signal or no code at all holds back the commands sent with it: a Ctrl+C in the command window ends that way (tasks-approvals-y7-1)", async () => {
+    for (const exit of [{ code: 130 }, { code: 1 }, { code: null, signal: "SIGKILL" }, { code: null }] as Partial<RunExit>[]) {
+      recordingJudge();
+      const svc = commandService(LOCAL, { exit: spec => (spec.command.startsWith("sleep") ? exit : {}) });
+      const { call } = makeWorker({ target: LOCAL, commands: svc, spec: { userWords: "check the project for me" } });
+      // One reply: both are queued before the first one's result is known.
+      const [first, second] = await Promise.all([call("run_command", cmd("sleep 30; echo after")), call("run_command", cmd("touch ran-after.txt"))]);
+      expect(first.textResultForLlm, JSON.stringify(exit)).toMatch(/^It ended with /);
+      expect(second.resultType, JSON.stringify(exit)).toBe("denied");
+      expect(second.textResultForLlm, JSON.stringify(exit)).toBe("An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened to that step and decide afresh.");
+      expect(svc.starts.map(s => s.command), JSON.stringify(exit)).toEqual(["sleep 30; echo after"]);
+    }
   });
 
   it("a command that was stopped, timed out or never started still holds back the commands sent with it (tasks-approvals-x7-1)", async () => {
