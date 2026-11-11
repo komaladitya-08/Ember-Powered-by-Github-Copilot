@@ -589,9 +589,10 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
  * provider is down), or it answered but has no model list at that address (`no-list`: 404, 405 or 501 on GET /models,
  * as some gateways that answer chat only do, and as a mistyped path does; or a 200 that isn't a model list, as a web
  * page is: integrations-c7-1). Something is there, so the provider isn't down, but a held edit's check adopts it only
- * on the person's own "Use it as typed" (integrations-c5-1).
+ * on the person's own "Use it as typed" (integrations-c5-1). `more`, for an answer: the list says it goes on past
+ * this page (listSaysMore), so a model it doesn't name may still be one the service has (first-run-x7-1).
  */
-export type TestResult = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
+export type TestResult = { ok: true; host: string; models: number | null; ids?: string[]; more?: true } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
 /** The most model ids the test passes on for the model fields' suggestions. */
 export const TEST_IDS_MAX = 50;
@@ -640,6 +641,17 @@ export function modelList(body: unknown): unknown[] | null {
 }
 
 /**
+ * A model list's answer says more models follow on another page (first-run-x7-1): Anthropic's and OpenAI's `has_more`,
+ * or a next page's token, cursor or address (`next_page_token`, Google's `nextPageToken`, `next_cursor`, `next`). The
+ * test asks for one page only, so such a list was not read whole.
+ */
+export function listSaysMore(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const o = body as Record<string, unknown>;
+  return o.has_more === true || ["next_page_token", "nextPageToken", "next_cursor", "next"].some(k => typeof o[k] === "string" && o[k] !== "");
+}
+
+/**
  * Makes testRequest's request and says what came of it, in plain words (never the service's raw text). Nothing at all is
  * sent to a host whose card the user hasn't agreed to, and the key goes only to the host it was entered for. Redirects
  * are refused: a redirected fetch keeps custom headers such as x-api-key and api-key (only Authorization is dropped
@@ -659,10 +671,11 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
     // A 200 says only that something is there: a web front end, a sign-in page or a parked domain answers every path
     // with one. Connected means it answered as a model service does, with a model list (integrations-c7-1).
     let list: unknown[] | null = null;
-    try { list = modelList(await res.json()); } catch { /* a body that isn't JSON (a web page): no model list, said below */ }
+    let more = false;
+    try { const body: unknown = await res.json(); list = modelList(body); more = !!list && listSaysMore(body); } catch { /* a body that isn't JSON (a web page): no model list, said below */ }
     if (!list) return { ok: false, why: `${host} answered, but not as a model service does. Check the endpoint.`, cause: "no-list" };
     const ids = listedModelIds(list);
-    return { ok: true, host, models: list.length, ...(ids.length ? { ids } : {}) };
+    return { ok: true, host, models: list.length, ...(ids.length ? { ids } : {}), ...(more ? { more: true as const } : {}) };
   } catch (err) {
     const msg = err instanceof Error ? `${err.name} ${err.message} ${(err as { cause?: { code?: string } }).cause?.code ?? ""}` : String(err);
     if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`, cause: "timeout" };

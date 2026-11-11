@@ -251,11 +251,59 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((await calls(p)).includes("signIn")).toBe(false);
     // The summary names the provider under its own label, never as Copilot (first-run-1).
     await next(p).click();
-    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Ready to start");
     const summary = await p.locator("#w-summary").innerText();
     expect(summary).toContain("Model service");
     expect(summary).toContain("Your own provider (api.example.com)");
     expect(summary).not.toContain("Copilot");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(am) a model name the service doesn't list fails the check on its field and names what is listed; the listed name then passes (first-run-c7-1)", async () => {
+    const p = await open();
+    await p.getByRole("button", { name: "Use my own provider" }).click();
+    await p.fill("#w-p-url", "http://127.0.0.1:18392/v1");
+    // The step's own example, for a model server that lists one other model.
+    await p.fill("#w-p-conductor", "gpt-4.1");
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("test");
+    await settle(p, "test", { ok: true, host: "127.0.0.1:18392", models: 1, ids: ["llama3.2:3b"] });
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("127.0.0.1:18392 answered, but it doesn't list gpt-4.1. It lists 1 model: llama3.2:3b. Enter that name.");
+    expect(await p.locator("#w-p-result").getAttribute("class")).toBe("w-status error");
+    expect(await focusedId(p)).toBe("w-p-conductor");
+    expect(await next(p).innerText()).toBe("Check again");
+    // Not verified: the provider isn't left switched on with a model it can't answer with.
+    await expect.poll(() => p.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
+    await p.fill("#w-p-conductor", "llama3.2:3b");
+    await next(p).click();
+    await expect.poll(async () => (await calls(p)).filter(c => c === "test").length).toBe(2);
+    await settle(p, "test", { ok: true, host: "127.0.0.1:18392", models: 1, ids: ["llama3.2:3b"] }, 1);
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("Connected to 127.0.0.1:18392. It lists 1 model: llama3.2:3b.");
+    expect(await focusedId(p)).toBe("w-next");
+    expect(await p.evaluate(() => window.__frState.settings.provider.on)).toBe(true);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(an) a failed GitHub sign-in's error doesn't stay under “Your own model provider” once that provider is connected (first-run-c7-3)", async () => {
+    const p = await open();
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("signIn");
+    await emit(p, "onSignInProgress", { state: "error", message: "Ember can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember." });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toContain("I can't verify GitHub's certificate.");
+    // The user's own provider is set up and connected instead: the step is its own, and so is the line under it.
+    const provider = (on: boolean) => p.evaluate(v => {
+      window.__frState.settings.provider = { ...window.__frState.settings.provider, on: v, baseUrl: "http://localhost:11434/v1", conductor: "llama3.2:3b" };
+      window.__frEmit("onSettingsChanged", JSON.parse(JSON.stringify(window.__frState.settings)));
+    }, on);
+    await provider(true);
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, readyAgent({ login: undefined, models: [], conductorModel: "llama3.2:3b", workerModel: null, service: { kind: "user", host: "localhost:11434" } }));
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await p.locator("#w-signin-line").innerText()).not.toMatch(/GitHub|certificate/);
+    expect(await p.locator("#w-signin-line").getAttribute("class")).not.toContain("error");
+    // Back with Copilot (the provider put away), the sign-in's failure is still what the step says.
+    await provider(false);
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, SIGNED_OUT);
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toContain("I can't verify GitHub's certificate.");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
@@ -1205,14 +1253,14 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.waitForTimeout(50);
     expect(await words()).not.toMatch(/Copilot|GitHub|sign in|sign-in/i);
     expect(await p.locator("#w-signin-line").innerText()).toBe(mine);
-    // Skip, then on to Your Ember: the provider by name, not "Not signed in yet" (first-run-c1-3).
+    // Skip, then on to the last step: the provider by name, not "Not signed in yet" (first-run-c1-3).
     await p.locator("#w-alt").click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
     await next(p).click();
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
     expect(await p.locator("#w-try-ask-text").innerText()).toBe("Once I'm connected, you can ask me something.");
     await next(p).click();
-    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Ready to start");
     const summary = await p.locator("#w-summary").innerText();
     expect(summary).toContain("Your own provider (localhost:11434), not connected yet");
     expect(summary).not.toMatch(/Copilot|signed in/i);
@@ -1222,7 +1270,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => q.locator("#w-title").innerText()).toBe("Checking this computer");
     await next(q).click();
     await next(q).click();
-    await expect.poll(() => q.locator("#w-title").innerText()).toBe("Your Ember");
+    await expect.poll(() => q.locator("#w-title").innerText()).toBe("Ready to start");
     expect(await q.locator("#w-summary").innerText()).toContain("Your organisation's model service, not connected yet");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
     expect((q as Page & { errors: string[] }).errors).toEqual([]);
@@ -1286,7 +1334,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
     expect(await p.locator("#w-try-ask-text").innerText()).toBe("While your organisation's policy locks me down, I can't answer.");
     await next(p).click();
-    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Ready to start");
     const summary = await p.locator("#w-summary").innerText();
     expect(summary).toContain("Locked down by your organisation");
     expect(summary).not.toMatch(/Not signed in|Copilot/);
@@ -1394,7 +1442,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-about").getByRole("button", { name: "I agree, remember" }).count()).toBe(0);
     expect(await next(p).innerText()).toBe("Continue");
     await next(p).click();
-    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your Ember");
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Ready to start");
     expect((await calls(p)).some(c => c.startsWith("introduce"))).toBe(false);
     // Memory on and agreed to, still paused: the same, never "Couldn't save your answers".
     const on = await open({ agent: readyAgent() });
@@ -1413,6 +1461,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
   it("(q) someone who agreed to an earlier version starts at the consent and is told what changed (first-run-4, safety-privacy-8)", async () => {
     const p = await open({ consent: 6, agent: readyAgent() });
     expect(await p.locator("#w-title").innerText()).toBe("What's changed since you last agreed");
+    // The step it opens on has the focus on its title, not the page (first-run-r7-3).
+    expect(await focusedId(p)).toBe("w-title");
     expect(await p.locator("#w-count").innerText()).toBe("Step 2 of 6");
     expect(await p.locator("#w-changes").isVisible()).toBe(true);
     const changed = await p.locator("#w-changes-list li").allInnerTexts();

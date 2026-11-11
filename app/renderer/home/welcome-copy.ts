@@ -24,6 +24,15 @@ export function firstStep(agreed: number): WelcomeStep {
   return agreed > 0 ? "consent" : "hello";
 }
 
+/**
+ * The element a step's focus lands on, so it is read from the top: its title. The hello step's lead instead once the
+ * consent is agreed: its title, "Hi, I'm Ember.", ends in the name, and “Hey Ember” may listen by then (Back from a
+ * consent agreed again), so what a screen reader read on would be taken as a request (first-run-r6-1).
+ */
+export function stepLanding(step: WelcomeStep, consented: boolean): "w-title" | "w-lead" {
+  return step === "hello" && consented ? "w-lead" : "w-title";
+}
+
 /** Position in the essential route; optional detours keep their originating step's indicator. */
 export function stepPosition(step: WelcomeStep): number {
   return WELCOME_STEPS.indexOf(step === "character" ? "hello" : step === "about" ? "try" : step === "provider" ? "sign-in" : step);
@@ -96,7 +105,8 @@ export const STEP_TEXT: Readonly<Record<WelcomeStep, { title: string; lead: stri
     lead: "Optional. A few short answers help me get things right for you, and you can skip any of them. I keep them only once you turn memory on.",
   },
   done: {
-    title: "Your Ember",
+    // No name in a title the focus lands on, nor on Start: “Hey Ember” may listen by now (first-run-r6-1).
+    title: "Ready to start",
     lead: "That's everything. Here's what you chose.",
   },
 };
@@ -367,7 +377,9 @@ export const TRY_TEXT = {
   askLocked: "While your organisation's policy locks me down, I can't answer.",
   /** Voice is off (not turned on, or not agreed to): the try isn't shown, and this says where to turn it on. */
   voiceLater: "To talk to me, turn on “Hey Ember” later in Settings › Voice. Then say, for example, “Hey Ember, what's in this window?”",
-  /** Voice is on but not listening yet (models still to download, or starting). */
+  /** Voice is on and agreed to, but its speech models aren't here and nothing fetches them by itself (first-run-r7-2). */
+  voiceNoModels: "I can't listen for “Hey Ember” yet: my speech models aren't on this computer. Download them later in Settings › Voice.",
+  /** Voice is on but not listening yet (models downloading, or starting). */
   voiceWaiting: "I'm not listening yet. Once I am, say “Hey Ember”.",
 } as const;
 
@@ -378,23 +390,26 @@ export function askWhy(o: { locked: boolean; noSignIn: boolean }): string {
 
 /**
  * "Say “Hey Ember”" shows only while Ember listens for it: on, agreed to, allowed by the organisation
- * (`features.voice`), not muted, and the microphone open. Muted, off, not working or not allowed counts as off.
+ * (`features.voice`), not muted, and the microphone open. Muted, off, not working or not allowed counts as off; on
+ * with its speech models missing is "no-models": it won't listen until they are downloaded, so neither "not yet,
+ * once I am" nor "On" is said (first-run-r7-2).
  */
-export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: string | null; allowed?: boolean; muted?: boolean }): "listening" | "waiting" | "off" {
+export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: string | null; allowed?: boolean; muted?: boolean }): "listening" | "waiting" | "off" | "no-models" {
   if (!o.wakeWord || !o.voiceConsent || o.allowed === false || o.muted) return "off";
   if (o.state === "off" || o.state === "muted" || o.state === "error") return "off";
+  if (o.state === "needs-models") return "no-models";
   return o.state === "waiting" || o.state === "active" ? "listening" : "waiting";
 }
 
 /** Ember's size until the user moves the slider (settings.ts's default). */
 export const DEFAULT_SIZE = 60;
 
-/** One row of the "Your Ember" card. */
+/** One row of the last step's card. */
 export interface SummaryRow { label: string; value: string }
 
-/** The "Your Ember" card's rows: who, Copilot, voice, and the keys Ember holds (a key another app holds isn't named). */
+/** The last step's card's rows: who, Copilot, voice, and the keys Ember holds (a key another app holds isn't named). */
 export function summaryRows(o: {
-  character: string; size: number; signedIn: string | null; voice: "listening" | "waiting" | "off";
+  character: string; size: number; signedIn: string | null; voice: "listening" | "waiting" | "off" | "no-models";
   /** The keys as Ember holds them ("" while another app holds one); null until the status names this OS's. */
   keys: { ask: string; stop: string; settings: string } | null;
   /** False when the model service isn't GitHub Copilot (the user's own, the organisation's): the row isn't called Copilot (first-run-1). */
@@ -404,7 +419,7 @@ export function summaryRows(o: {
     // The size in pixels only once the user changed it: "Default size" says as much without a number to decode.
     { label: "Character", value: o.size === DEFAULT_SIZE ? `${o.character}, default size` : `${o.character}, ${o.size} px` },
     { label: o.copilot === false ? "Model service" : "Copilot", value: o.signedIn ?? "Not signed in yet" },
-    { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : "On" },
+    { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : o.voice === "no-models" ? "Not yet: its speech models need downloading" : "On" },
   ];
   if (o.keys?.ask) rows.push({ label: "Ask", value: o.keys.ask });
   if (o.keys?.stop) rows.push({ label: "Stop everything", value: o.keys.stop });
@@ -429,7 +444,7 @@ export function serviceSummary(o: { ready: boolean; locked: boolean; managed: bo
 export const SUMMARY_NOTE = "You can change any of this in Settings, which opens from my handle in the corner of your screen.";
 
 /** The last button, and what a screen reader hears once it has worked. */
-export const START_LABEL = "Start Ember";
+export const START_LABEL = "Start";
 
 /** The navigation buttons. */
 export const NAV = { back: "Back", next: "Continue", begin: "Get started", skip: "Skip for now", character: "Choose a character…", about: "Personalise memory…" } as const;

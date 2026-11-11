@@ -1,6 +1,6 @@
 /**
  * First run, one step at a time (Home's `#welcome`, UI audit #7): the order and the consent gate, the consent in
- * short, sign-in, the setup rows in plain words, the tries and "Your Ember". The pure parts are called directly; the
+ * short, sign-in, the setup rows in plain words, the tries and the last step. The pure parts are called directly; the
  * page's markup and script are read as text where the behaviour is theirs (there is no DOM in these tests).
  */
 import { describe, expect, it } from "vitest";
@@ -341,15 +341,39 @@ describe("the checks step", () => {
   });
 });
 
+describe("the step first run opens on", () => {
+  it("takes keyboard focus on its title, so a screen reader starts there and not on the page (first-run-r7-3)", () => {
+    // Every later step focused its title; the opening one (the hello, or the changed consent) left focus on <body>.
+    const begin = /function begin\(\): void \{\n([^]*?)\n {2}\}\n/.exec(SCRIPT)?.[1] ?? "";
+    expect(begin).toContain("$(stepLanding(step, consented())).focus({ preventScroll: true });");
+    expect(PAGE).toContain('<h2 id="w-title" tabindex="-1">');
+  });
+});
+
 describe("the try step", () => {
   it("offers “Hey Ember” only while Ember listens for it, and says where to turn it on otherwise", () => {
     expect(voiceTry({ wakeWord: false, voiceConsent: false, state: "off" })).toBe("off");
     expect(voiceTry({ wakeWord: true, voiceConsent: false, state: "off" })).toBe("off");
-    expect(voiceTry({ wakeWord: true, voiceConsent: true, state: "needs-models" })).toBe("waiting");
+    expect(voiceTry({ wakeWord: true, voiceConsent: true, state: "downloading" })).toBe("waiting");
+    expect(voiceTry({ wakeWord: true, voiceConsent: true, state: "starting" })).toBe("waiting");
     expect(voiceTry({ wakeWord: true, voiceConsent: true, state: "waiting" })).toBe("listening");
     expect(TRY_TEXT.voiceLater).toContain("Settings › Voice");
     // The level reaches the meter only after the wake word, so the words say to ask something.
     expect(TRY_TEXT.voice.ask).toBe("Say “Hey Ember”, then ask something and watch the meter.");
+  });
+
+  it("says the speech models need downloading when they are gone, never that it will listen soon or that “Hey Ember” is on (first-run-r7-2)", () => {
+    // A returning user with listening agreed and no models was told "I'm not listening yet. Once I am, say “Hey
+    // Ember”." for good, and the last step said "“Hey Ember”: On".
+    expect(voiceTry({ wakeWord: true, voiceConsent: true, state: "needs-models" })).toBe("no-models");
+    expect(TRY_TEXT.voiceNoModels).toBe("I can't listen for “Hey Ember” yet: my speech models aren't on this computer. Download them later in Settings › Voice.");
+    const row = (voice: "listening" | "waiting" | "off" | "no-models") => summaryRows({ character: "Cinder", size: 60, signedIn: null, voice, keys: null })[2];
+    expect(row("no-models")).toEqual({ label: "“Hey Ember”", value: "Not yet: its speech models need downloading" });
+    expect(row("waiting").value).toBe("On");
+    expect(row("off").value).toBe("Off");
+    // The try isn't drawn, and its line under the tries says why.
+    expect(SCRIPT).toContain('$("w-try-voice").hidden = vs === "off" || vs === "no-models";');
+    expect(SCRIPT).toContain('$("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : TRY_TEXT.voiceLater;');
   });
 
   it("counts voice as off when the organisation turned it off, it is muted, or the microphone isn't working (review of #124)", () => {
@@ -373,7 +397,7 @@ describe("the try step", () => {
   });
 });
 
-describe("“Your Ember”", () => {
+describe("the last step, “Ready to start”", () => {
   const keys = { ask: "Ctrl+Alt+Space", stop: "Ctrl+Alt+X", settings: "Ctrl+Alt+E" };
 
   it("sums up the character, Copilot, voice and the keys Ember holds", () => {

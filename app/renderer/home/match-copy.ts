@@ -10,12 +10,19 @@ export const MATCH_TEXT = {
   none: "Ember hears anyone who talks to it. Teach it your voice, and you can answer its questions out loud (“Ember, allow”); other voices can't. “Ember, stop” works for anyone.",
   on: "On: your voice can answer Ember's questions out loud, and other voices can't. Ember still hears everyone. Your voiceprint stays on this computer.",
   off: "Off: answer Ember's questions by clicking. It keeps your voiceprint until you forget it.",
-  /** enrolVoice() said no: Ember isn't listening just now (muted, starting, or not working), so it can't hear the phrases. */
-  notListening: "Ember isn't listening just now, so it can't learn your voice. Try again once it's listening for “Ember”.",
+  /**
+   * enrolVoice() said no: Ember isn't listening just now (muted, starting, or the microphone not working, which the voice
+   * line above says: voice-listening-r7-1), so it can't hear the phrases. Shown, and said as Teach is pressed, also while
+   * listening starts, so without the name: "Ember isn't listening just now, so it can't learn your voice. Try again once
+   * it's listening for “Ember”." woke Ember and was sent as a request in 3 of 4 real-model placements, this line in 0
+   * of 20 (voice-listening-r6-3, voice-listening-c7-1).
+   */
+  notListening: "Not listening just now, so your voice can't be learnt. Check the microphone and the voice status above, then try again.",
   say: "Say:",
-  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" },
-  teach: "Teach Ember my voice",
-  teachAgain: "Teach Ember my voice again",
+  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "That wasn't heard clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" },
+  /** Without the name: focus is moved to this button, and a screen reader then reads it (voice-listening-r6-2). */
+  teach: "Teach my voice",
+  teachAgain: "Teach my voice again",
   cancel: "Cancel",
   forget: "Forget my voice",
   learnt: "Ember knows your voice now.",
@@ -41,9 +48,16 @@ export const MATCH_TEXT = {
  * voice (voice-listening-x6-4). Nor with more listening than the line shown says: right after Forget my voice,
  * "Everyone who talks is heard." said all talk near the computer is, where the line shown says only that anyone who
  * talks to Ember is heard (voice-listening-y6-3). `none` is said only after teaching or forgetting, so "again".
+ *
+ * The Teach button's description is in these words too (`teach` where no voice is known, without the "again";
+ * matchView's `teach.said`): Home moves focus to Teach after Cancel, as teaching ends and after Forget my voice, and a
+ * screen reader then reads the button's name and description. With the line shown as the description, "Teach Ember my
+ * voice, button. Ember hears anyone who talks to it. Teach it your voice…" woke Ember and was sent as a request in 18 of
+ * 20 real-model placements, and the name alone in 14 (voice-listening-r6-2, voice-listening-q6-1); these in 0 of 20.
  */
 export const MATCH_SAID = {
   none: "Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.",
+  teach: "Requests from any voice are heard. Teach your voice, and you can answer questions out loud; other voices can't.",
   on: "On: your voice can answer questions out loud, and other voices can't. Everyone is still heard. Your voiceprint stays on this computer.",
   off: "Off: answer questions by clicking. Your voiceprint is kept until you forget it.",
   noModel: "Voice Match's model is missing or was damaged. Download it above to put that right.",
@@ -57,10 +71,10 @@ export const MATCH_SAID = {
   },
 } as const;
 
-/** `matchText`'s news as a screen reader is told it (MATCH_SAID). */
-function matchSaid(m: VoiceMatchStatus): string {
+/** `matchText`'s news as a screen reader is told it (MATCH_SAID). `none`: the words for no voice known. */
+function matchSaid(m: VoiceMatchStatus, none: string = MATCH_SAID.none): string {
   if (noModel(m)) return MATCH_SAID.noModel;
-  const state = !m.enrolled ? MATCH_SAID.none : m.on ? MATCH_SAID.on : MATCH_SAID.off;
+  const state = !m.enrolled ? none : m.on ? MATCH_SAID.on : MATCH_SAID.off;
   const ended = m.ended === "gave-up" || m.ended === "timeout" || m.ended === "interrupted" ? MATCH_SAID.ended[m.ended] : null;
   return ended ? `${ended} ${state}` : state;
 }
@@ -75,7 +89,8 @@ export interface MatchView {
   /** The phrase to say ("" when not enrolling). */
   prompt: string;
   progress: { value: number; max: number; text: string } | null;
-  teach: { hidden: boolean; label: string };
+  /** `said`: the description a screen reader reads with the button, in MATCH_SAID's words (never the line shown). */
+  teach: { hidden: boolean; label: string; said: string };
   cancelHidden: boolean;
   forgetHidden: boolean;
   /** Where focus goes when the control that had it is hidden or disabled by this state (first shown wins). */
@@ -109,8 +124,21 @@ export function matchPrompt(e: NonNullable<VoiceMatchStatus["enrolling"]>): stri
   return `${e.again ? MATCH_TEXT.again[e.again] : MATCH_TEXT.say} “${e.phrase}”`;
 }
 
-/** `speakerBytes`: Voice Match's model's size, when it alone is missing (said in the note about it). */
-export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boolean; managed: boolean; speakerBytes?: number | null }): MatchView {
+/**
+ * Whether a refused Teach's line (MATCH_TEXT.notListening) still holds: until Ember listens again (`state`: the voice
+ * status's) or teaching starts. With no microphone the voice status is sent again at every retry (after 1 s, 5 s, then
+ * every 30 s), and the line was wiped at the next one, the row reading "…Teach it your voice…" again as if Teach could
+ * work (voice-listening-x7-2).
+ */
+export function matchRefusalHolds(state: string | undefined, m: VoiceMatchStatus | undefined): boolean {
+  return state !== "waiting" && state !== "active" && !m?.enrolling;
+}
+
+/**
+ * `speakerBytes`: Voice Match's model's size, when it alone is missing (said in the note about it). `refused`: Teach
+ * was pressed and refused, and that still holds (matchRefusalHolds), so the line says why.
+ */
+export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boolean; managed: boolean; speakerBytes?: number | null; refused?: boolean }): MatchView {
   const hidden = !m || o.managed || !o.listening;
   const e = m?.enrolling ?? null;
   const busy = !!e;
@@ -121,14 +149,16 @@ export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boole
     busy,
     checked: !!m && (m.on || busy),
     disabled: busy || blocked,
-    text: m ? matchText(m, o.speakerBytes ?? null) : "",
+    text: !m ? "" : o.refused && !e ? MATCH_TEXT.notListening : matchText(m, o.speakerBytes ?? null),
     prompt: e ? matchPrompt(e) : "",
     progress: e ? { value: e.got, max: e.of, text: `${e.got} of ${e.of} heard` } : null,
-    teach: { hidden: busy || blocked, label: m?.enrolled ? MATCH_TEXT.teachAgain : MATCH_TEXT.teach },
+    teach: { hidden: busy || blocked, label: m?.enrolled ? MATCH_TEXT.teachAgain : MATCH_TEXT.teach, said: m ? matchSaid(m, MATCH_SAID.teach) : "" },
     cancelHidden: !busy,
     forgetHidden: busy || !m?.enrolled,
-    // Teaching: Cancel is the one button there. Otherwise Teach; with the whole group gone, the listening switch.
-    focus: hidden ? ["wake"] : busy ? ["match-cancel"] : blocked ? ["voice-download", "wake"] : ["match-teach", "match-on", "wake"],
+    // Teaching: Cancel is the one button there. Otherwise Teach; with the whole group gone (listening off), the listening
+    // switch. Without its model, while Ember listens: Download, or Listen once, never the switch, whose name read aloud
+    // ("Listen for “Hey Ember”, switch, on") wakes Ember (voice-listening-r7-2).
+    focus: hidden ? ["wake"] : busy ? ["match-cancel"] : blocked ? ["voice-download", "voice-listen-once", "wake"] : ["match-teach", "match-on", "wake"],
   };
 }
 

@@ -53,10 +53,26 @@ export function composerCount(n: number, limit = CONVERSATION_REQUEST_LIMIT): st
   return `${num(n)} of ${num(limit)} characters${over > 0 ? `, ${num(over)} too many` : ""}.`;
 }
 /**
- * The composer's line while Ember answers what was sent from it (home-7): thinking at first, then, while the bubble
- * says it (main's "slow" turn: home-c1-1), still waiting for the service in use, and how to stop it.
+ * The microphone note's Agree couldn't save the choice: shown on the note and said. Without the name, as every line Home
+ * says by itself (voice-listening-r6-3).
  */
-export const COMPOSER_THINKING = "Thinking… Ember's reply will appear above.";
+export const LISTEN_CONSENT_NOT_SAVED = "Your choice couldn't be saved, so listening is still off. Press “I agree, start listening” to try again.";
+/**
+ * The composer's line while Ember answers what was sent from it (home-7): thinking at first, then, while the bubble
+ * says it (main's "slow" turn: home-c1-1), still waiting for the service in use, and how to stop it. Without the name,
+ * not even "Ember's": a screen reader says it on every typed send, into the wake word's microphone, and "Thinking…
+ * Ember's reply will appear above." woke Ember in 2 of 24 real-model placements, which also stopped the answer on its
+ * way; this wording in 0 of 20 (voice-listening-r6-1).
+ */
+export const COMPOSER_THINKING = "Thinking… The reply will appear above.";
+/**
+ * Said after the composer's line once an edited request is sent and the draft Edit set aside is back in the field
+ * (home-c5-1): it was thrown away without a word. As Cancel edit says it.
+ */
+const DRAFT_BACK = "Your previous draft is restored.";
+export const composerDraftBack = (line: string): string => (line ? `${line} ${DRAFT_BACK}` : DRAFT_BACK);
+/** The composer's line without that note: what the wait's lines are told apart by. */
+export const composerLineBase = (line: string): string => (line.endsWith(` ${DRAFT_BACK}`) ? line.slice(0, -DRAFT_BACK.length - 1) : line);
 /** The same while it waits, unsent, for a switch of model service that waits for the work under way (main's "held" turn: home-r4-4). */
 export const COMPOSER_HELD = "This goes to the new model service once what's under way now has finished. Stop response cancels it.";
 export function composerStillWaiting(service?: string): string {
@@ -385,6 +401,12 @@ export function presenceLine(p: { overlay: boolean; hidden: boolean }, corner: H
 }
 
 /**
+ * The caption once every try to read Home's first status has failed (status-fence.ts STATUS_RETRIES), beside Try again
+ * (home-r7-2): the window showed its defaults for good, with no word and no way on. Without the name: it is said aloud.
+ */
+export const STATUS_FAILED = "The settings couldn't be loaded. Try again, or restart if it keeps happening.";
+
+/**
  * The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. Worded under the
  * heading, without the name, wherever Ember can listen: a screen reader says it as it changes (a reconnect, Hide), and
  * "Ember is beside your cursor. …" said into the wake word's microphone woke Ember and was sent as a request in 39 of
@@ -404,7 +426,7 @@ export function tagline(t: {
   /** Signed out while the user's own provider waits for its card for this host: agreeing is the way on (integrations-r3-1). */
   waitingFor?: string | null;
   /** Ember's own model connection stopped (status-copy.ts runtimeState): reconnecting by itself, or not (accessibility-visual-c1-2). */
-  runtime?: "reconnecting" | "stopped" | null;
+  runtime?: "reconnecting" | "stopped" | "offline" | "unreachable" | null;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
   // Before Start it is always the first-run instruction: the setup check's own heading counts its rows (review #160).
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
@@ -418,6 +440,10 @@ export function tagline(t: {
   // in the bubble's words for it ("Copilot isn't running", "My model connection isn't running").
   if (t.phase === "error" && t.runtime === "reconnecting") return `${where} Reconnecting to ${service}…`;
   if (t.phase === "error" && t.runtime === "stopped") return `${where} ${t.service ? "Ember's model connection" : "Copilot"} isn't running: Models & connections says why.`;
+  // Signed in and offline: connecting Copilot isn't what is missing, and it comes back by itself (home-r7-1).
+  if (t.phase === "error" && t.runtime === "offline" && !t.service) return `${where} Copilot can't be reached right now: reconnecting once you're online.`;
+  // Online, and GitHub's certificate can't be verified: it waits on IT, so no "once you're online" (home-x7-2).
+  if (t.phase === "error" && t.runtime === "unreachable" && !t.service) return `${where} Copilot can't be reached: Models & connections says why.`;
   if (t.phase === "error" && t.service) return `${where} Can't connect to ${service} yet: Models & connections says why.`;
   if (t.phase === "signed-out" && t.waitingFor) return `${where} Agree to use ${t.waitingFor} in Models & connections to start asking.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot to start asking.`;
@@ -483,8 +509,11 @@ export function setupView(rows: readonly SetupRow[], before: { opened: boolean; 
   return { failing, warn, held, needing, open: needing > 0 && !before.opened, beforeStart: before.beforeStart || needing > 0, note: checksNote(held, needing) };
 }
 
-/** What a screen reader hears when Start has done its work and gone (review #50). */
-export const STARTED_TEXT = "Ember has started.";
+/**
+ * What a screen reader hears when Start has done its work and gone (review #50). Without Ember's name: after a changed
+ * consent “Hey Ember” already listens, and "Ember has started." woke it and was sent as "Has started." (first-run-r6-1).
+ */
+export const STARTED_TEXT = "Setup is finished.";
 
 /** "Today", "Yesterday", else the weekday and date. */
 export function dayLabel(t: string, now = new Date()): string {

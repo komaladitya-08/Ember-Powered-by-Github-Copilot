@@ -199,6 +199,8 @@ export const IPC = {
   /** Main tells the settings window whether it can be seen (minimised or hidden: false), as X11 doesn't say. */
   homeVisibility: "ember:home-visibility",
   quit: "ember:quit",
+  /** Restart Ember from the settings window, only while a changed policy holds it locked (admin.held): home-r7-3. */
+  restart: "ember:restart",
   /** The handle menu's Ask Ember… and Stop everything, from the settings window (a keyboard's way to them). */
   openAsk: "ember:open-ask",
   stopEverything: "ember:stop-everything",
@@ -536,6 +538,8 @@ export interface EmberHomeApi {
   onAdminChanged(fn: (admin: Status["admin"]) => void): () => void;
   /** Quit Ember (asks first while tasks are running). */
   quit(): Promise<void>;
+  /** Restart Ember to read the organisation's changed policy; main does nothing unless that lockdown is held. */
+  restart(): Promise<void>;
   /** Opens the ask box, as the handle menu's Ask Ember… does (the keyboard's way when another app has the shortcut). */
   openAsk(): Promise<void>;
   listenOnce(on: boolean): Promise<ListenOnceStatus>;
@@ -767,9 +771,10 @@ export type ProviderDone = { ok: true } | { ok: false; why: string };
 /** "Test connection": the service answered (`models`: how many it lists, when it says), or why not in one sentence. */
 /**
  * `ids`: the models it names, as suggestions for the model fields (at most 50, each a MODEL_ID). `cause`: nothing
- * answered at all (main's TestResult), so the address or the network is what to check.
+ * answered at all (main's TestResult), so the address or the network is what to check. `more`: the list says more
+ * models follow on another page, so it doesn't name every model the service has.
  */
-export type ProviderTest = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
+export type ProviderTest = { ok: true; host: string; models: number | null; ids?: string[]; more?: true } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
 /**
  * Details typed for the user's own provider but not saved, checked before they replace the details in use (first run's

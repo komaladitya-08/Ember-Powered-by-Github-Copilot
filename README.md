@@ -216,8 +216,8 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
    file, and the npm launcher with `ember`. Its first window takes you
    through 6 steps: a hello, **What I do, and what I don't** (nothing is read, heard or sent until you agree), **Sign
    in to GitHub** (or **Use my own provider**), **Checking this computer** (what to fix, with a button where Ember can
-   do it), **Try me out** (stop Ember, ask it something, and say “Hey Ember” if you like) and **Your Ember**, a summary
-   of what you chose.
+   do it), **Try me out** (stop Ember, ask it something, and say “Hey Ember” if you like) and **Ready to start**, a
+   summary of what you chose.
 2. To ask, press Ctrl+Alt+Space (on Windows Win+Alt+Space, on a Mac Control+Shift+Command+Space; see **Shortcuts**),
    type your request and press Enter. Ember answers in its bubble beside your cursor, and asks "May I?" before it does
    something in an app.

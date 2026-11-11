@@ -554,15 +554,15 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.locator("#conversation-message").fill("What's the weather?");
       await page.locator("#conversation-send").click();
       await turn(page, "thinking");
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
       // No guess of its own: only main's word that the bubble says it is still waiting.
       await page.clock.runFor(20_000);
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       await turn(page, "slow");
       expect(await page.locator("#conversation-compose-status").innerText()).toBe("Still waiting for Copilot… Stop response ends this reply.");
       await turn(page, "thinking");
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       // Words come, then the reply: the wait is over.
       await reply(page, [], "What's the weather?", 2);
       await turn(page, "idle");
@@ -572,10 +572,10 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.locator("#conversation-message").fill("And tomorrow?");
       await page.locator("#conversation-send").click();
       await turn(page, "thinking");
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       await page.evaluate(() => window.__home.emit("onConversationStream", { id: 3, text: "Rain", state: "streaming" }));
       await turn(page, "slow");
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);
@@ -595,7 +595,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       }
       // Switched and sent: now it is answered.
       await turn(page, "thinking");
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
       expect(errors).toEqual([]);
     } finally { await page.close(); }
@@ -611,7 +611,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.locator("#conversation-send").click();
       await turn(page, "thinking");
       await page.evaluate(e => window.__home.emit("onConversation", e), [...seed, { t: at(2), who: "you", text: "Then empty the trash" }]);
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       // The turn only started a task: no line of Ember's, and the turn ends.
       await turn(page, "idle");
       expect(await page.locator("#conversation-compose-status").innerText()).toBe("No reply was written. Task activity shows any task this request started.");
@@ -622,7 +622,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await turn(page, "thinking");
       await page.locator("#conversation-message").fill("And close Files");
       await page.locator("#conversation-send").click();
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       await turn(page, "idle");
       expect(await page.locator("#conversation-compose-status").innerText()).toBe("No reply was written. Task activity shows any task this request started.");
       expect(errors).toEqual([]);
@@ -638,11 +638,11 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await turn(page, "thinking");
       const asked: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Summarise my mail" }];
       await page.evaluate(e => window.__home.emit("onConversation", e), asked);
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       // A reminder comes due while Ember answers: Ember's line, but not this reply.
       const reminded = [...asked, { t: at(1), who: "ember" as const, text: "Reminder: call the dentist" }];
       await page.evaluate(e => window.__home.emit("onConversation", e), reminded);
-      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       expect(await page.locator("#state-word").innerText()).toBe("Thinking…");
       await page.evaluate(e => window.__home.emit("onConversation", e), [...reminded, { t: at(2), who: "ember" as const, text: "Three new messages, none urgent." }]);
       await turn(page, "idle");
@@ -672,7 +672,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.locator("#conversation-message").fill("Summarise my mail");
       await page.locator("#conversation-send").click();
       await turn(page, "thinking");
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       await page.evaluate(() => window.__home.emit("onStopped", "hotkey"));
       await turn(page, "idle");
       // (It never became a line of the conversation, so it never went: its words are back to send again, home-r3-1.)
@@ -1514,7 +1514,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       expect(await line.innerText()).toBe("Still waiting for Copilot… Stop response ends this reply.");
       // Written to at last: the line doesn't say the composer's "Thinking…", which no message of its own waits for.
       await page.evaluate(() => window.__home.emit("onConversationStream", { id: 5, text: "Here", state: "streaming" }));
-      expect(await line.innerText()).not.toBe("Thinking… Ember's reply will appear above.");
+      expect(await line.innerText()).not.toBe("Thinking… The reply will appear above.");
       await turn(page, "idle");
       expect(await line.innerText()).toBe("");
       expect(errors).toEqual([]);
@@ -1591,7 +1591,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.keyboard.type("Q3 during reconnect");
       await page.keyboard.press("Control+Enter");
       await turn(page, "thinking");
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       expect(await inView()).toBe(true);
       await page.evaluate(() => window.__home.emit("onStopped", "hotkey"));
       expect(await page.locator("#conversation-compose-status").innerText()).toBe("Stopped everything, running tasks included. Your message wasn't sent, so it's back here to edit or send again.");
@@ -1652,6 +1652,68 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.locator("#conversation-new").click();
       await expect.poll(() => page.evaluate(() => window.__home.news)).toBe(2);
       expect(await confirm.isHidden()).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("puts back the draft Edit set aside once the edited request is sent, and says so (home-c5-1)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const cancel = page.getByRole("button", { name: "Cancel edit" });
+      const edit = page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ });
+      await field.fill("My long unsent draft about holidays");
+      await edit.click();
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent)).toEqual(["Empty the trash"]);
+      await expect.poll(() => field.inputValue()).toBe("My long unsent draft about holidays");
+      expect(await line.innerText()).toBe("Thinking… The reply will appear above. Your previous draft is restored.");
+      expect(await cancel.isHidden()).toBe(true);
+      // The wait's lines still follow main's word of the turn, and the reply's line ends it as ever.
+      await turn(page, "slow");
+      await turn(page, "thinking");
+      expect(await line.innerText()).toBe("Thinking… The reply will appear above.");
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...seed, { t: at(2), who: "you", text: "Empty the trash" }, { t: at(3), who: "ember", text: "Done again." }]);
+      await turn(page, "idle");
+      await expect.poll(() => line.innerText()).toBe("Reply received.");
+      expect(await field.inputValue()).toBe("My long unsent draft about holidays");
+      // No draft before Edit: nothing comes back, and nothing is said of one.
+      await field.fill("");
+      await edit.click();
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent.length)).toBe(2);
+      await expect.poll(() => line.innerText()).toBe("Thinking… The reply will appear above.");
+      expect(await field.inputValue()).toBe("");
+      expect(await cancel.isHidden()).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps Cancel edit when I choose Edit while an earlier send is still being acknowledged, and never brings the sent words back as a draft (home-c7-2)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const field = page.locator("#conversation-message");
+      const cancel = page.getByRole("button", { name: "Cancel edit" });
+      await page.evaluate(() => { window.__home.hold = true; });
+      await field.fill("Order lunch");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent)).toEqual(["Order lunch"]);
+      await page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ }).click();
+      expect(await field.inputValue()).toBe("Empty the trash");
+      await page.evaluate(() => { window.__home.release(); window.__home.hold = false; });
+      await expect.poll(() => page.locator("#conversation-send").getAttribute("aria-disabled")).toBeNull();
+      // The edit is still open: its request is in the field and Cancel edit is there.
+      expect(await field.inputValue()).toBe("Empty the trash");
+      expect(await cancel.isVisible()).toBe(true);
+      // "Order lunch" was sent: it is not the draft from before Edit.
+      await cancel.click();
+      expect(await field.inputValue()).toBe("");
+      expect(await cancel.isHidden()).toBe(true);
       expect(errors).toEqual([]);
     } finally { await page.close(); }
   }, 60_000);

@@ -15,7 +15,8 @@ import { onThisComputer } from "../../shared/provider";
  * (host.ts lost, after the runtime stopped) means Ember is reconnecting by itself, whatever the reason. `waiting`: the
  * host whose note the user's own provider waits for (provider.ts providerWaitingHost), while signed out: agreeing to it
  * is the way on, as the tagline, the hint and the start hello say (integrations-r4-3). `held`: the organisation's policy
- * only changed while Ember ran (admin.ts heldUntilRestart), so a restart is the way on, not a fix (safety-privacy-c7-3).
+ * only changed while Ember ran and holds it locked until a restart (admin.ts heldUntilRestart): restarting is the way
+ * on, as the tagline and the notice above the composer say, never waiting for a fix (safety-privacy-c7-3, home-r6-2).
  */
 export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }, waiting: string | null = null, held = false): string {
   const it = s.service?.kind === "user" ? "your model provider" : s.service ? "the model service" : "Copilot";

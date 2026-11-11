@@ -353,11 +353,14 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   used first: Home, Projects, Models & connections, Voice, Your Ember, Memory, Apps & privacy, Comfort & access, Computers and Commands (once
   available), Extensions, Setup & about. The current pane's link carries `aria-current`, a fill that glides between
   rows on a click (`--spring-smooth-0`), and in a contrast theme an outline. The window reopens on the last pane. Below
-  640 px the links are one row of capsules, the search field first.
+  640 px the links are one row of capsules, the search field first; the row scrolls sideways by itself to the link of
+  the pane shown, however it was opened (home-c7-1).
 - **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
   character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
   state in a few words ("Ready", "Working on 2 tasks", "Thinking…" while it answers what you sent from Home, "A task
-  needs you" with **Open approval**, "Not connected", "Reconnecting…" while Ember's own model connection starts again
+  needs you" with **Open approval**, "Not connected" (signed in and offline, the caption says "Copilot can't be
+  reached right now: reconnecting once you're online." and the button is **Models & connections…**, never "Connect
+  Copilot": home-r7-1), "Reconnecting…" while Ember's own model connection starts again
   by itself, as the handle and Ask say,
   "Needs setting up", "Locked by your organisation"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
   you, then two facts (which of listening, memory and commands are on; today's tasks by outcome, in their rows' words (a task
@@ -399,7 +402,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   never kept with them, a deleted message never comes back and only those left are counted (home-w5-1, home-w5-2), and
   that request never stays (home-w5-4), above the draft from before Edit (home-r4-1); Edit on another request keeps
   them above it, as left and still words given back ("…The message that wasn't sent stays above it…"), so Cancel edit
-  still names them and says when they're over 2,000 characters with that draft (home-w5-3);
+  still names them and says when they're over 2,000 characters with that draft (home-w5-3); once the edited request
+  is sent, the draft Edit set aside is back in the field and the line ends "Your previous draft is restored."
+  (home-c5-1), and only that send ends the edit: Edit chosen while an earlier send is on its way keeps its Cancel
+  edit, which never brings the sent words back as a draft (home-c7-2);
   together over 2,000 characters, the line says to send them one at a time, never to send again (home-c4-2), but to
   shorten what was being written or edited where that alone is over (home-v5-3); one whose line came (Ember answered it itself, or it went to
   the model) never does, however far the conversation has moved past it (home-v4-1); a typed "stop" that stopped everything says so (sent also while Ember waits for the running tasks to reconnect, when other messages are refused: home-c2-1), and is kept in the conversation with Ember's
@@ -572,6 +578,13 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
+  A service that answers has its models named (“It lists 1 model: llama3.2:3b.”, Home's `providerTestText`), and a
+  model name typed that its list doesn't hold fails the check on that field, naming what is listed (“<host> answered,
+  but it doesn't list gpt-4.1. It lists 1 model: llama3.2:3b. Enter that name.”), instead of passing a name the first
+  request then fails on; only where the list was read whole (never one page of a list that says more follow,
+  first-run-x7-1) and holds model names (never Azure's deployments or a server's model files), and a name the
+  service may still take passes: with or without “:latest” or a path, and a model's name, its “-latest” or “-0” for
+  a dated snapshot (`providerModelMissing`, first-run-c7-1, first-run-x7-2).
   Main's words for a check or a connection (written for Models & connections, which speaks of Ember) are said in first
   run's own voice on every visit, on the sign-in step too: “I can't reach <host>…”, “…and I'll connect in a moment.”
   (`inMyVoice`, first-run-r4-2), and what they call Ember's comes along: “…the GitHub sign-in I found (my saved
@@ -580,20 +593,22 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   wherever nothing else on it does that check (a refused token, the organisation's service), keeping Check again only
   where the GitHub CLI's button is shown; the in-use provider step, which has neither, says “Go back and press Try
   again” (`signInWays`, `pressOnStep`, first-run-w5-2).
+  What a GitHub sign-in said (a failure's sentence) is the line only on Copilot's step: once the user's own provider
+  is in use, the step “Your own model provider” shows that provider's state, never a GitHub error (first-run-c7-3).
   A failed connection offers what its reason calls for (`failureView`): an entitlement failure leads with the user's own
   provider or a different GitHub account, never the same sign-in. A failure of the user's own provider leads with
   “Check my provider's details” (or Try again for the network), with no GitHub account, sign-in or Copilot words, in
   first run, Home and the bubble's title alike (integrations-3). Once connected, “Models I'll use” names both models
   with the premium-request multiplier where Copilot gives one, and says so when tasks work from text only; Change is
   optional. A setup fix that fails says so in its own row. Once Ember uses the user's own provider, connected, still
-  connecting or failing, the sign-in step, its status line and **Your Ember**'s “Model service” row name that provider,
+  connecting or failing, the sign-in step, its status line and **Ready to start**'s “Model service” row name that provider,
   with no GitHub, Copilot or sign-in words and no “Use my own provider”, and Back from the setup check returns to the
   provider's step (first-run-1). A provider already in use as that step opens is shown as in use (“Your own model
   provider's details”, its connection's status, the card without a last sentence about going back, and Continue with
   no new check); Back leaves it on, an edit is checked as typed before it replaces anything (one that fails, or is left
   while it is checked, changes nothing: “Nothing has changed: I'm still using <host>.”, in first run's voice throughout, with the focus on
   the field the failure names and “Keep using <host>” under it to put back the details in use and go on: first-run-c3-1), and only “Use GitHub Copilot instead” switches it off (first-run-r2-1). Back puts away only a provider the visit itself set up, as its card says (first-run-c1-2). It is in use only while it is on: after “Use GitHub Copilot instead” its step opens again as one to set up, and a check there that fails switches it off again (first-run-r3-1). That press draws Copilot's sign-in at once, connecting, so the title the focus lands on is Copilot's before main's status follows; a switch-off that couldn't be saved shows the provider still in use, under the notice that says so (first-run-c3-2). While Ember is busy (a turn or a task under way) the step says “I'll switch to Copilot once I've finished what I'm doing.” with Continue open, “Use my own provider” still offered (first-run-r4-1) and no sign-in yet, and the try step's Ask “Once I'm connected, you can ask me something.”; main switches as soon as it is done, and the step then offers “Sign in with GitHub” (first-run-v4-1): a focus on Continue as it turns into the sign-in goes to the title, and the line says “I've switched to Copilot. Sign in with GitHub to go on, or skip for now.”, so a press meant for Continue starts nothing (first-run-c4-1). A service with nothing to sign in to that isn't connected yet (the user's own, the
-  organisation's) is named on **Your Ember** as “…, not connected yet”, never “Not signed in yet” (first-run-c1-3).
+  organisation's) is named on **Ready to start** as “…, not connected yet”, never “Not signed in yet” (first-run-c1-3).
 - **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column (720 px in a window
   1,000 px wide or more), centred in the window's height in a box of one size (560 px), so the indicator and title stay
   put from step to step and a short step no longer leaves the window's lower half empty. A still step indicator
@@ -604,7 +619,7 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   waits (`aria-describedby`). Not now leaves focus on the note that says what it did, and Agree and Quit Ember drop a
   press for half a second after they appear, so a double click or a held Enter can't agree or quit (first-run-c1-1). Sign in
   keeps focus on its own button while it waits, and a cancelled sign-in moves it to the title, so a second Enter
-  neither cancels nor skips (first-run-r3). Rows that need the user, the tries and **Your Ember** are grouped rows on `--surface-1`;
+  neither cancels nor skips (first-run-r3). Rows that need the user, the tries and **Ready to start** are grouped rows on `--surface-1`;
   the full consent text and the setup rows' details are disclosures (an accent chevron and words) over a
   `--surface-2` callout. Every state is a symbol and words. Motion: Ember arrives once (0.6 to 1 over 600 ms on the
   brisk spring, then a happy hop), each step's part comes in from the side it lies on (16 px over 420 ms, Back from the

@@ -1155,6 +1155,15 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     for (const said of Object.values(conv.COMPOSER_SAYS)) expect(home).not.toContain(`"${said}"`);
   });
 
+  it("says to restart, not to wait for a fix, when a message is refused while a changed policy holds Ember locked, as the tagline and the notice do (home-r6-2)", () => {
+    expect(composerRefusal({ phase: "error", reason: "policy" }, null, true)).toBe("Your organisation changed Ember's policy while Ember was running. Restart Ember, then send again.");
+    expect(composerSendRefusal({ phase: "error", reason: "policy" }, false, null, true)).toBe("Your organisation changed Ember's policy while Ember was running. Restart Ember, then send again.");
+    // A broken policy file isn't the user's to restart away, and any other refusal is as before.
+    expect(composerRefusal({ phase: "error", reason: "policy" }, null, false)).toBe("Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.");
+    expect(composerRefusal({ phase: "error", reason: "network" }, null, true)).toBe("Copilot can't be reached right now. Your message is still here: send it again once you're online.");
+    expect(readFileSync("app/main/main.ts", "utf8")).toContain("composerSendRefusal(status, stops, status.phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held)");
+  });
+
   it("refuses a message sent while Ember isn't connected by why, and says it is still there (reliability-performance-v2)", () => {
     expect(composerRefusal({ phase: "signed-out" })).toBe("Connect Copilot in Models & connections, then send again.");
     expect(composerRefusal({ phase: "starting" })).toBe("Still connecting to Copilot. Your message is still here: send it again in a moment.");
@@ -1233,6 +1242,14 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     // A line about the draft: another request's wait leaves it be.
     expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED))).toBe(false);
     expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, true))).toBe(false);
+  });
+
+  it("says the draft set aside by Edit is back once the edited request is sent, and still knows the line under it (home-c5-1)", () => {
+    expect(conv.composerDraftBack(conv.COMPOSER_THINKING)).toBe("Thinking… The reply will appear above. Your previous draft is restored.");
+    expect(conv.composerDraftBack("")).toBe("Your previous draft is restored.");
+    // The wait's lines are still told apart under it: "still waiting" goes back to thinking once Ember is heard from.
+    expect(conv.composerLineBase(conv.composerDraftBack(conv.COMPOSER_HELD))).toBe(conv.COMPOSER_HELD);
+    expect(conv.composerLineBase(conv.COMPOSER_THINKING)).toBe(conv.COMPOSER_THINKING);
   });
 
   it("keeps Edit's caution when a Stop gives my message back above the request I'm editing, and Cancel edit keeps it (home-r4-1)", () => {

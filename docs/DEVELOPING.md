@@ -131,13 +131,13 @@ runtime. It does not change the app's consent or speaking settings.
   lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
   provider while it is in force, or the organisation's model service) and **Agree and continue**, or **Not now**, which keeps Ember off
   and offers **Quit Ember** (a press on either within half a second of its appearing is dropped, so a double click
-  agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Your Ember** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on, only **Use GitHub Copilot instead** switches it off (pressed while Ember is still answering or at a task, the step says Ember will switch once it has finished, and lets you go on), and an edit is checked as typed before it replaces the details in use, so one that fails, or that you leave or change while it is checked, changes nothing and the step says Ember is still using the old host, with **Keep using** it to go on; once switched off, the step opens again as one to set up, and a check there that fails leaves it off; or **Skip for now**); the setup check shows only
+  agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Ready to start** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on, only **Use GitHub Copilot instead** switches it off (pressed while Ember is still answering or at a task, the step says Ember will switch once it has finished, and lets you go on), and an edit is checked as typed before it replaces the details in use, so one that fails, or that you leave or change while it is checked, changes nothing and the step says Ember is still using the old host, with **Keep using** it to go on; once switched off, the step opens again as one to set up, and a check there that fails leaves it off; or **Skip for now**); the setup check shows only
   the rows that need you (and, once **Turn on** has switched screen reading on, that apps already open need a restart), in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission), and
   **Check again**, which reads the rows anew once you have run the command or changed the setting yourself (Home's
   setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s, in the background, so Ember
   keeps answering while that import takes up to 5 s) (**Show the details** has every
   row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
-  request in the ask box; and **Your Ember** sums it up before **Start Ember**. Nothing is read, heard or sent before
+  request in the ask box; and **Ready to start** sums it up before **Start** (neither says Ember's name, nor does “Setup is finished.”, which a screen reader is told as Start lands on Home's status line: after a changed consent “Hey Ember” already listens, first-run-r6-1). Nothing is read, heard or sent before
   **Agree and continue** (it saves the consent; the steps after it can't be reached without it). Back works on every
   step but the first. A run that agreed but didn't finish opens at sign-in next time. After an update that changed the consent
   (`CONSENT_VERSION`), someone who agreed to an earlier version opens at the consent step, titled “What's changed since
@@ -166,7 +166,10 @@ runtime. It does not change the app's consent or speaking settings.
   about**. **Search settings** at the top of the sidebar narrows it to the panes that hold the words typed; Enter goes
   to a selected labelled result (ArrowDown/Tab enters results; Escape clears them). The window reopens on the pane you last viewed (kept in the page's own storage).
   - **Home** is a status panel (Ember's still presence ring, its state in a few words, which of listening, memory and
-    commands are on, today's tasks and approvals, **Ask Ember…** and **Stop everything** with the stop chord), then the
+    commands are on in fact (`whatsOn`: what the organisation's policy or a lockdown turned off reads off, and
+    listening that can't run reads "Listening needs its speech models" or "Microphone problem", never "on"; "Checking…"
+    until the first status arrives, and if every try for it fails the caption says "The settings couldn't be loaded.
+    Try again, or restart if it keeps happening." with **Try again**), today's tasks and approvals, **Ask Ember…** and **Stop everything** with the stop chord), then the
     **Conversation**, **Task activity** and the folded **What Ember did**.
   - **Task activity** shows each task of this session, newest first and the one that needs you on top: its state and
     clock, its steps in one line, its plan as a checklist, a row for each thing it did with the time after it started
@@ -607,8 +610,11 @@ couldn't speak just now" when no voice spoke it within 12 s; not with **Never**,
 organisation has turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
 the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
 “Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
-stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted),
-after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases that don't sound alike; settings says which.
+stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted,
+or the microphone goes or sends only silence), after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases
+that don't sound alike; settings says which. Teaching doesn't start while the voice line says the microphone isn't
+working: **Teach my voice** then says to check the microphone and the voice status above it, at each press, and the
+line stays under the switch until Ember listens again.
 While a screen reader runs, which reads each prompt aloud, teaching takes nothing it reads: speech that begins within
 1.5 s of a prompt showing, or in a prompt's own words ("Say…", "Heard 2 of 4…", "That was too short…"), teaches
 nothing, and a phrase said so soon after the reading that the two ran together is asked for again ("Your screen reader
@@ -1230,7 +1236,9 @@ no actions, commands or listening, nothing sent to any model service (neither
 GitHub Copilot nor the organisation's own endpoint), no GitHub sign-in started (a **Sign in** that still shows asks
 GitHub for nothing and says why), and nothing deleted from the audit log. Ember reads the policy
 again every 10 seconds. Once it changes (tightened, repaired, added or removed, and the next read says so too), Ember
-stops everything and stays locked down until the user restarts it (the bubble offers **Restart Ember**, and the
+stops everything and stays locked down until the user restarts it (the bubble and Home's status panel offer **Restart
+Ember**; main restarts from Home's only while that lockdown is held; a message sent
+from Home is refused with "…so Ember can't answer until you restart it.", and the
 settings window says so at once, already open or not: its notice, what it says Ember reads and sends, and the switches
 the lockdown turns off; a message sent there is refused with "Restart Ember, then send again"), and the restart
 reads the new policy whole. Every key is optional:
