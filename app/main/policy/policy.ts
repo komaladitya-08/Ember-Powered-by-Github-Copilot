@@ -393,10 +393,14 @@ const RISKY_INTL = new RegExp(RISKY_INTL_SOURCE, "u");
  * change a shared repository. Risky on a button, link or menu item, and on anything clicked but a check box, radio
  * button or switch (a click on text goes to the link or row around it): a "Block selection" check item, or a "Comments"
  * heading a key lands on, isn't one. English verbs that are nouns too count where they lead the label
- * ("Report", "Block user"; not "Download report", "Add block").
+ * ("Report", "Block user"; not "Download report", "Add block"). Also the everyday words that grant access ("Allow",
+ * "Permit", "Continue as Sam"), commit money or a place ("Place bid", "Sell", "Reserve", "Check out"; "Book", "Bet",
+ * "Vote", "Deposit", "Refund", "Email" and "Call" alone or before what they act on, not "Bookmarks" or "Call history"),
+ * change who can see or join ("Make public", "Add member"), drop work ("Purge", "Drop changes", "Mark as spam") or turn a
+ * protection off ("Turn off firewall"): audit of 2026-11-11, safety-privacy-r7-1.
  */
-const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget)\b/u;
-const RISKY_ACT = /\b(add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream)|refresh (firefox|chrome|chromium|(the |your )?browser))\b/;
+const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget|allow|permit|sell|reserve|purge|(?:book|bid|bet|vote|deposit|refund|redirect|bounce|email|call)(?=[^\p{L}\p{N}]*$| (?:now|it|this|that|these|those|a|an|my|your|the|all|selected)\b))\b/u;
+const RISKY_ACT = /\b(add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream)|refresh (firefox|chrome|chromium|(the |your )?browser)|place (a |my |your )?(bid|bet|wager)|apply now|mark (as |this as )?(spam|junk)|check out(?=[^a-z0-9]*$| now\b| as guest\b| securely\b)|make (it |this )?(public|private)|make (an? |them |him |her )?(admin|administrator|owner|moderator)|change (the )?visibility|add (a |an |new )?(members?|collaborators?|admin|owner)|continue as|drop changes|(turn off|switch off|disable|deactivate|pause) (the |my |your )?(firewall|antivirus|virus protection|real-time protection|protection|two-factor|two-step|2-step|2fa|encryption|screen lock))\b/;
 /** The same in the languages of RISKY_WORDS (written with their accents, folded when the pattern is built). */
 export const RISKY_ACT_WORDS: Record<string, string[]> = {
   fr: ["commenter", "commentez", "inviter", "invitez", "refuser", "refusez", "décliner", "résilier", "annuler (l'|mon |votre )?abonnement",
@@ -2095,6 +2099,9 @@ const BROWSER_KEYS: Readonly<Record<OS, RegExp>> = {
 const BROWSER = /msedge|chrome|chromium|firefox|librewolf|brave|opera|vivaldi|safari|iexplore/i;
 /** A page that takes payment: a button on it may buy something whatever its label says ("Activate now"; audit of 2026-11-01). */
 const PAYMENT_PAGE = /\b(checkout|check out|payment|billing)\b/;
+/** A window or dialog titled for a protection of the account or the computer, and the bare answers that turn one off there. */
+const PROTECTION_TITLE = /\b(two[- ]factor|two[- ]step|2[- ]step|2fa|multi[- ]factor|mfa|firewall|antivirus|security|protection|verification|passkeys?|encryption)\b/;
+const TURNS_OFF = /^[^a-z0-9]*(disable|turn (it )?off|switch (it )?off|deactivate)\b/;
 /** Titles of file dialogs (open, save, export, attach). */
 const FILE_DIALOG_TITLE = /^\s*(save|save as|save a copy|save file|save image|export|export as|open|open files?|select files?|choose files?|insert (file|image|picture)|upload|attach)\b/i;
 /**
@@ -2433,8 +2440,10 @@ export class PolicyEngine {
     const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name);
     const riskyNamed = (role === "link" && content ? linkCommands(name, !selects, os) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
+    // A bare "Disable" or "Turn off" on a page or dialog titled for a protection ("Two-factor authentication") turns it off.
+    const unprotects = ACTIVATING_ROLES.test(role) && TURNS_OFF.test(normalizeLabel(name)) && PROTECTION_TITLE.test(normalizeLabel(`${r.window} ${r.dialog?.name ?? ""}`));
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
-    const named = riskyNamed && !opensDialog(role, name);
+    const named = (riskyNamed && !opensDialog(role, name)) || unprotects;
     // A lone "Confirm" or "Approve" agrees to what its dialog (or the window's title) says, as "OK" does: it is judged by that.
     const lone = LONE_AGREE.test(normalizeLabel(name)) && (!!r.dialog || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window));
     // A dialog asked about only as one that may hold the app's settings: its title says which.

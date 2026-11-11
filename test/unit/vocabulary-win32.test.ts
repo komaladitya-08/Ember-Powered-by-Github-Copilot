@@ -428,7 +428,9 @@ describe("the Linux rows stay frozen copies", () => {
     same(OFFICE_APP.linux, /soffice|libreoffice/i);
     same(FILE_PATH_WORDS.linux, /[~/][\w.-]|\.\w{1,5}\b/);
     same(TERMINAL_REQUEST.linux.names, /\b(?:terminal|shell|command[- ]line|command prompt|console)\b/i);
-    expect([SECURITY_CLASS.linux, RISKY_EXTRA.linux, RUNS_PROGRAM_EXTRA.linux, RUN_FILE_DIALOG_EXTRA.linux, TYPING_REFUSED.linux]).toEqual([[], [], [], [], []]);
+    expect([SECURITY_CLASS.linux, RISKY_EXTRA.linux, RUNS_PROGRAM_EXTRA.linux, RUN_FILE_DIALOG_EXTRA.linux, TYPING_REFUSED.linux]).toEqual([[],
+      // Files' British bin labels (safety-privacy-r7-1): the one addition since the port.
+      ["move to (the )?wastebasket", "move to (the )?rubbish bin", "move to (the )?bin"], [], [], []]);
   });
 
   it("keeps the Linux never-look list, clipboard rule, words and terminal id words", () => {

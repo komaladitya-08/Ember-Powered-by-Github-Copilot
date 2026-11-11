@@ -200,7 +200,8 @@ describe("risky and run-a-program labels on macOS", () => {
       expect(engine().decide(click(label, "menu item")), label).toMatchObject({ verdict: "confirm", risky: true });
     }
     for (const label of ["Move", "Bin", "Open", "Show in Finder"]) expect(isRiskyLabel(label, M), label).toBe(false);
-    expect(isRiskyLabel("Move to Bin")).toBe(false); // Linux keeps its own lists only
+    expect(isRiskyLabel("Open Anyway")).toBe(false); // Linux keeps its own lists only
+    expect(isRiskyLabel("Move to Bin")).toBe(true); // Files' British label, on Linux's own row (safety-privacy-r7-1)
     expect(RISKY_EXTRA.darwin).toContain("move to bin");
   });
 
