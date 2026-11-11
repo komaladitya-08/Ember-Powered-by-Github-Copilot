@@ -1,7 +1,8 @@
 /**
  * Writing a short `for` loop out pass by pass, and a simple `[[ … ]]` test as `[ … ]` (app/main/commands/unroll.ts,
  * commands-remote-r6-2). The written-out text is what the classifier judges, so it must mean to the shell exactly what
- * the loop means: the last test runs both through bash and sh (echo and printf only) and compares what they print.
+ * the loop means: one test runs both through bash, sh and (where it is installed) zsh, with echo and printf only, and
+ * compares what they print.
  */
 
 import { spawnSync } from "node:child_process";
@@ -60,7 +61,51 @@ describe("a short for loop written out pass by pass (commands-remote-r6-2)", () 
     expect(judgedText("ls; pwd")).toBe("ls; pwd");
   });
 
-  it("means the same to bash and sh as the loop it was written from (commands-remote-r6-2)", () => {
+  it("leaves a loop with a letter outside ASCII as written: zsh reads it as part of the variable's name (commands-remote-x7-1)", () => {
+    // zsh 5.9 with a UTF-8 locale prints `[--hard]` for `for f in x; do echo "[--hard$fé]"; done`; bash and sh `[--hardxé]`.
+    for (const tail of ["é", "ß", "я", "中", "١", "ª", "Ａ", "ｆ", "éx"]) {
+      for (const body of ["git reset \"--hard$f§\"", "find . \"-delete$f§\"", "cat \"/etc/shadow$f§\"", "history \"-c$f§\"", "git stash \"drop$f§\"", "echo \"$f§\"", "echo $f§", "echo \"${f}§\""]) {
+        const line = `for f in x; do ${body.replace("§", tail)}; done`;
+        expect(unrollLoops(line), line).toBeNull();
+        expect(judgedText(line), line).toBe(line);
+      }
+    }
+    for (const line of ["for f in a b; do echo $f; done; echo café", "echo é; for f in a b; do echo $f; done", "for f in é b; do echo $f; done", "for f in a b; do echo $f \u00a0x; done"]) expect(unrollLoops(line), line).toBeNull();
+  });
+
+  it("leaves a loop as written when a command in it can set the variable from a word that looks like an option (commands-remote-x7-2)", () => {
+    // zsh 5.9: `for f in a; do print -vf -- --hard; echo "<$f>"; done` prints `<--hard>`; `zparseopts -af x` empties f.
+    for (const line of [
+      "for f in a; do print -vf -- --hard; git reset $f; done", "for f in a; do print -rvf -- -delete; find . $f; done", "for f in a; do print -nvf -- --hard; git reset \"$f\"; done",
+      "for f in a; do print -vf -- -c; history $f; done", "for file in x; do print -vfile -- --hard; git reset $file; done", "for f in a b\ndo\nprint -vf -- --hard; git reset $f\ndone",
+      "cd sub; for f in a; do print -vf /; ls $f; done; echo ok", "for f in a; do print \"-vf\" -- --hard; git reset $f; done", "for f in a; do print -v'f' -- --hard; git reset $f; done",
+      "for f in a; do print -rv fi''le -- --hard; git reset $f; done", "for f in a; do - print -vf -- --hard; git reset $f; done", "for f in a; do X=1 print -vf -- --hard; git reset $f; done",
+      "for f in a; do print $OPT --hard; git reset $f; done", "for f in a; do print \"$OPT\" --hard; git reset $f; done", "for f in -vf; do print $f --hard; git reset $f; done",
+      "for f in a; do printf -vf %s --hard; git reset $f; done", "for f in a; do printf $OPT f --hard; git reset $f; done", "for f in a; do printf \"-vf\" %s --hard; git reset $f; done",
+      "for f in x; do zparseopts -af q; cat /etc/shadow$f; done", "for f in x; do zparseopts -D -E -af q; cat $f; done", "for f in x; do compgen -Vf -W --hard; git reset $f; done",
+      "for f in x; do zformat -f f %a a:--hard; git reset $f; done", "for f in x; do zstyle -s :x y f; git reset $f; done", "for f in x; do vared -c f; git reset $f; done",
+      "for f in x; do getln f; git reset $f; done", "for f in x; do zregexparse f g x; git reset $f; done", "for f in x; do functions -c p q; q; git reset $f; done",
+      "disable -r done\nfor f in a b; do echo $f; done", "for f in x; do - zparseopts -af q; cat $f; done",
+    ]) expect(unrollLoops(line), line).toBeNull();
+    // An option of a program that isn't the shell's own can't set the variable, and print's and printf's other options are fine.
+    expect(unrollLoops("for f in a b; do rm -f $f; done")).toBe("f=a; rm -f a; f=b; rm -f b");
+    expect(unrollLoops("for d in src test; do test -d $d && ls -d $d; done")).toBe("d=src; test -d src && ls -d src; d=test; test -d test && ls -d test");
+    expect(unrollLoops("for f in a b; do printf '%s|' $f; print -rn -- $f; print -l -- x \"$f\"; done")).toBe("f=a; printf '%s|' a; print -rn -- a; print -l -- x \"a\"; f=b; printf '%s|' b; print -rn -- b; print -l -- x \"b\"");
+  });
+
+  it("leaves a loop as written when an assignment with a subscript earlier on the line may have made a command (commands-remote-x7-3)", () => {
+    // bash --posix: `BASH_ALIASES[p]='printf -vf %s --hard'`, then on the next line `for f in a; do p; echo "[$f]"; done`
+    // prints `[--hard]`; zsh does with `functions[p]='print -vf -- --hard'`.
+    for (const line of [
+      "BASH_ALIASES[p]='printf -vf %s --hard'\nfor f in a; do p; git reset $f; done", "POSIXLY_CORRECT=1\nBASH_ALIASES[p]='printf -vf %s --hard'\nfor f in a; do p; git reset $f; done",
+      "BASH_ALIASES[p]='printf -vf %s -delete'\nfor f in a; do p; find . $f; done", "functions[p]='print -vf -- --hard'; for f in a; do p; git reset $f; done",
+      "functions[p]='print -vf -- -delete'\nfor f in a; do p; find . $f; done", "aliases[p]='print -vf -- --hard'\nfor f in a; do p; git reset $f; done",
+      "functions[p]+='print -vf -- --hard'; for f in a; do p; git reset $f; done", "functions['p']='f=--hard'; for f in a; do p; git reset $f; done",
+      "for f in a; do functions[p]='f=--hard'; p; git reset $f; done", "options[shwordsplit]=on; for f in a b; do echo $f; done", "for f in a b; do echo $f; done; BASH_CMDS[ls]=/tmp/x",
+    ]) expect(unrollLoops(line), line).toBeNull();
+  });
+
+  it("means the same to bash, sh and zsh as the loop it was written from (commands-remote-r6-2, x7-1)", () => {
     // Every way a `$f` may stand in a word, crossed with lists; only echo and printf, which are the shell's own.
     const before = ["", "a", "/", ".", ":", ",", "@", "%", "+", "-", "--o=", "x=", "=", "~", "~/", "~a", "~a/", "[", "*", "?", "\"q\"", "'q'", "1", "$g", "${g}"];
     const refs = ["$f", "${f}", "\"$f\"", "\"${f}\"", "\"x $f y\"", "\"${f}z\""];
@@ -75,13 +120,15 @@ describe("a short for loop written out pass by pass (commands-remote-r6-2)", () 
     expect(pairs.length).toBeGreaterThan(400);
     expect(pairs.some(([, u]) => /[<>]/.test(u))).toBe(false);
     // Where there is no such shell on the path (Windows), there is nothing to compare.
-    const env = { PATH: "/usr/bin:/bin", HOME: "/nonexistent" };
-    for (const shell of [["bash", "--noprofile", "--norc"], ["sh"]]) {
+    const env = { PATH: "/usr/bin:/bin", HOME: "/nonexistent", LANG: "C.UTF-8" };
+    // zsh too where it is installed, with the UTF-8 locale Ember's own start gives it (commands-remote-x7-1).
+    for (const shell of [["bash", "--noprofile", "--norc"], ["sh"], ["zsh", "-f"]]) {
       if (spawnSync(shell[0], ["-c", "exit 0"], { env }).status !== 0) continue;
-      const script = pairs.map(([line, u]) => `(${line}\n)\necho ===\n(${u}\n)\necho ===`).join("\n");
+      const script = pairs.map(([line, u]) => `(${line}\n)\necho @@@\n(${u}\n)\necho @@@`).join("\n");
       const r = spawnSync(shell[0], shell.slice(1), { input: script, encoding: "utf8", cwd: "/", env, maxBuffer: 64 * 1024 * 1024 });
-      expect(r.stderr, shell[0]).toBe("");
-      const out = r.stdout.split("===\n");
+      // zsh stops a command at `~a` (no such user), in the loop and in its written-out text alike.
+      if (shell[0] !== "zsh") expect(r.stderr, shell[0]).toBe("");
+      const out = r.stdout.split("@@@\n");
       expect(out.length, shell[0]).toBe(pairs.length * 2 + 1);
       const wrong = pairs.filter((_, k) => out[2 * k] !== out[2 * k + 1]).map(([line]) => line);
       expect(wrong, shell[0]).toEqual([]);

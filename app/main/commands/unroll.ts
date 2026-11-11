@@ -19,6 +19,11 @@
  * after the loop, or inside single quotes); a `$NAME` as the command word, beside a `~`, `[`, `=`, `<` or `>` that would
  * read differently with the word written in, or followed by `:` or `[` (zsh's modifiers and subscripts); a list word
  * that is quoted, a pattern, a variable, a reserved word or holds `=` or `~`; more than MAX_PASSES passes in the line.
+ * And, from the seventh round's regression review: any character outside ASCII (zsh reads a letter such as `é` as part
+ * of a name, so `"$fé"` is another variable: commands-remote-x7-1); a shell command that sets a variable it is given
+ * by name, an option of `print` or `printf` that could be `-v` (`print -vf` sets `f`), or `-` in front of a command
+ * (commands-remote-x7-2); an assignment with a subscript (`BASH_ALIASES[p]=…`, zsh's `functions[p]=…` make `p` a
+ * command that can set the variable: commands-remote-x7-3).
  */
 
 /** The most passes written out on one line (every loop's together); longer lists ask as before. */
@@ -40,6 +45,18 @@ const DENIED: ReadonlySet<string> = new Set([
   "shift", "trap", "exec", "alias", "unalias", "shopt", "setopt", "unsetopt", "emulate", "enable", "builtin", "command", "integer", "float",
   "autoload", "zmodload", "break", "continue", "wait", "IFS",
 ]);
+/**
+ * Shell commands that set a variable they are given by name, sometimes in a word that looks like an option (zsh's
+ * `zparseopts -af`, bash's `compgen -Vf`), or that change what a later word is (`functions`, `disable`); `-` runs
+ * the command after it. A line with one as a command's program is judged as written (commands-remote-x7-2).
+ */
+const SETS_BY_NAME: ReadonlySet<string> = new Set([
+  "-", "zparseopts", "zformat", "zregexparse", "zstyle", "vared", "getln", "private", "functions", "unfunction", "disable", "compgen", "complete",
+  "compopt", "compadd", "compset", "compquote", "compvalues", "comparguments", "compdescribe", "compfiles", "compgroups", "comptags", "comptry",
+  "compcall", "compctl", "zle", "bindkey", "zcompile", "sched", "fc",
+]);
+/** An assignment with a subscript: bash's `BASH_ALIASES[p]=…` and zsh's `functions[p]=…` define a command (commands-remote-x7-3). */
+const SUBSCRIPT_SET = /^[A-Za-z_][A-Za-z0-9_]*\[.*\]\+?=/;
 /** A list word written out whole: nothing for the shell to expand, split, or read as an assignment. */
 const VALUE = /^[A-Za-z0-9_./:@%+,-]+$/;
 /** A word of plain characters (a program's name, an option, a file). */
@@ -234,16 +251,22 @@ const programAfterDo = (words: readonly Tok[]): Tok | undefined => programOf(wor
 function settled(toks: readonly Tok[]): boolean {
   for (const k of toks) {
     if (k.k !== "word") continue;
-    if (DENIED.has(k.value) || /(?<![A-Za-z0-9_])IFS(?![A-Za-z0-9_])/.test(k.raw)) return false;
+    if (DENIED.has(k.value) || /(?<![A-Za-z0-9_])IFS(?![A-Za-z0-9_])/.test(k.raw) || SUBSCRIPT_SET.test(k.raw)) return false;
   }
   for (const c of simples(toks)) {
     const p = programAfterDo(c.words);
     if (p === undefined) continue;
     // A command Ember can't name (`$X args`) could be any of them; `.` is `source`.
-    if (p.refs.length > 0 || p.value === ".") return false;
-    // `printf -v name` sets a variable.
-    const printf = c.words.findIndex(w => w.value === "printf");
-    if (printf >= 0 && c.words.slice(printf + 1).some(w => w.value.startsWith("-v"))) return false;
+    if (p.refs.length > 0 || p.value === "." || SETS_BY_NAME.has(p.value)) return false;
+    // `printf -v name` and zsh's `print -v name` set a variable, with the name in the same word too (`print -rvf`
+    // sets `f`: commands-remote-x7-2). So no word that may be an option holds a `v` or starts with a variable: for
+    // printf the word after it (its format), for print every word up to `--`.
+    const at = c.words.findIndex(w => w.value === "printf" || w.value === "print");
+    if (at < 0) continue;
+    const rest = c.words.slice(at + 1).filter(w => !w.target);
+    const end = rest.findIndex(w => w.raw === "--");
+    const options = c.words[at].value === "printf" ? rest.slice(0, 1) : end < 0 ? rest : rest.slice(0, end);
+    if (options.some(w => /^[-+].*v/.test(w.value) || w.refs.some(r => r.s === w.s || (r.s === w.s + 1 && w.raw[0] === "\"")))) return false;
   }
   return true;
 }
@@ -291,6 +314,10 @@ function loopAt(toks: readonly Tok[], at: number): Loop | null {
  */
 export function unrollLoops(text: string): string | null {
   if (text.length > MAX_CHARS || !/(^|[;\n])[ \t]*for[ \t]/.test(text)) return null;
+  // zsh reads a letter outside ASCII as part of a variable's name: `"$fé"` is the variable `fé`, not `$f` and then `é`,
+  // so the written-out word would not be what zsh runs (commands-remote-x7-1).
+  // eslint-disable-next-line no-control-regex -- the range of ASCII, to find any character outside it
+  if (/[^\x00-\x7f]/.test(text)) return null;
   const toks = scan(text);
   if (toks === null || !settled(toks)) return null;
   const edits: { s: number; e: number; text: string; name: Tok; refs: Set<Ref> }[] = [];

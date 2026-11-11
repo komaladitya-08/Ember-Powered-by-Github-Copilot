@@ -253,7 +253,12 @@ Ember writes a loop out only when it is sure the written-out commands are what t
 - the line holds nothing else Ember would have to follow: no other loop, `if`, `case`, `[[ … ]]`, group, function,
   substitution, backslash, comment, here-document or background job, no `break` or `continue`, and none of `eval`,
   `source`, `.`, `read`, `export`, `declare`, `set`, `unset`, `trap`, `exec`, `command`, `builtin`, `IFS` and the
-  like, which can change a variable or how words are read;
+  like, which can change a variable or how words are read; no shell command that sets a variable it is given by
+  name (zsh's `zparseopts`, `zstyle`, `vared`; bash's `compgen`), no option of `print` or `printf` that could be
+  `-v` (`print -vf` sets `f`), and no assignment with a subscript (`BASH_ALIASES[p]=…` or zsh's `functions[p]=…`
+  makes `p` a command of the shell's own);
+- every character on the line is plain ASCII: zsh reads a letter such as `é` straight after `"$f"` as part of the
+  variable's name, so a loop with any other character asks;
 - the loop's name is used only as `$NAME` or `${NAME}` inside the loop, never set, read, used after the loop or put
   in single quotes, and each `$NAME` stands where the word itself means the same: after the program's name, never
   as the program, beside `~`, in a pattern, straight before `<`, `>`, `=`, `:` or `[`, or straight after another
