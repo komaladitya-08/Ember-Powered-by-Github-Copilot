@@ -4457,15 +4457,15 @@ reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
   // The word after a count or format option (`xz -T big.tar`, `xz -M 1G`, `pigz -p "$N"`, `xz -T
   // ~/.config/ember/settings.json`) is judged as a file the tool packs as well, as it was before these options took a
-  // value: main asked for it whatever it was, a count or a format too (commands-remote-r7-2, x7-5). Only a processor
-  // count's substitution or arithmetic of numbers, which Ember can't see as a word, is the count alone.
+  // value: main asked for it whatever it was, a count or a format too, a processor count's substitution included
+  // (`xz -T $(nproc)` with nothing else to pack asked on main, as `xz -T 4` did: commands-remote-r7-2, x7-5).
   const stray = p.opts.flatMap(o => {
     const next = h.args[o.at + 1];
     const word = h.args[o.at]?.v ?? "";
     const short = /^-[A-Za-z]$/.test(o.name) && "TMFCpbqw".includes(o.name[1]) && (valueShort[h.key] ?? "").includes(o.name[1]) && word.endsWith(o.name[1]) && !word.startsWith("--");
     const long = /^--(processes|blocksize|quality|window|patch-from)$/.test(o.name) && word === o.name;
     if (o.value === undefined || !next || !(short || long)) return [];
-    return next.v === null && countWord(next.raw) ? [] : [next];
+    return [next];
   });
   const packed = [...p.operands, ...stray];
   const ins = objsOf(h, packed, "write");

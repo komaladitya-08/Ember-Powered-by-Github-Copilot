@@ -2379,12 +2379,14 @@ describe("option values and assignments main read as words, decided no less safe
     for (const cmd of [
       "xz -M 1G", "xz -F auto", "xz -C crc32", "xz -T 4", "pigz -b 128", "pigz -p 4", "gzip --quality 4", "xz --window 4", "xz --patch-from big.tar", "xz -vT 4", "unxz -M 50%",
       "xz -T 4 big.tar", "lzma -F lzma", "gzip --processes 2", "gzip --blocksize 128",
+      // A processor count given apart is judged as main judged `-T 4`: it asked, so this asks (the merge's comparison).
+      "pigz -p $(nproc)", "xz -T $(nproc)", "unxz -T $(nproc)", "lzma -T $(nproc)", "unpigz -p $(nproc)",
     ]) {
       expect(decided(cmd).verdict, cmd).toBe("ask");
       expect(decided(cmd).rules, cmd).toContain("archive.in-place");
     }
-    // A count attached to its option, or one that keeps the input, never was a file; a processor count is the usual job count.
-    for (const cmd of ["xz -T4 -c", "xz -k -T 4", "xz -T$(nproc)", "pigz -p $(nproc)", "xz --threads=4", "xz -c -M 1G"]) expect(decided(cmd).verdict, cmd).toBe("run");
+    // A count attached to its option, or one that keeps the input, never was a file.
+    for (const cmd of ["xz -T4 -c", "xz -k -T 4", "xz -T$(nproc)", "xz -k -T $(nproc) big.tar", "xz --threads=4", "xz -c -M 1G"]) expect(decided(cmd).verdict, cmd).toBe("run");
     expect(decided("xz -T ~/.config/ember/settings.json").verdict).toBe("refuse");
   });
 
