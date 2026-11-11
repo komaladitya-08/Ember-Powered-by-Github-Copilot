@@ -55,7 +55,7 @@ import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./searc
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
 import { problemInHome, PROBLEM_SETTINGS, composerCount, composerGivenBack, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
-import { composerEditAgain, composerEditCancelled, composerLineConnected, composerLineFits } from "./copy";
+import { composerEditAgain, composerEditCancelled, composerLineConnected, composerLineDisconnected, composerLineFits } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -894,6 +894,8 @@ function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
   // Connected again after a send was refused for want of a connection: its reason no longer holds (reliability-c7-2).
   if (a.phase === "ready" && agent && agent.phase !== "ready") composerConnected();
+  // And dropped again while the line says "Connected again… send it now.": that no longer holds either (reliability-x7-1).
+  if (a.phase !== "ready" && agent?.phase === "ready") composerDisconnected();
   agent = a;
   projectReady(a.phase === "ready", a.service?.host ?? "GitHub Copilot", a.conductorModel);
   const had = document.activeElement;
@@ -1128,6 +1130,11 @@ let conversationRefused: string | null = null;
 function composerConnected(): void {
   const next = composerLineConnected(conversationComposeStatus.textContent ?? "", conversationRefused, !!conversationMessage.value.trim());
   conversationRefused = null;
+  if (next !== null) keepingComposer(() => { conversationComposeStatus.textContent = next; });
+}
+/** Ember is no longer connected: "Connected again… send it now." goes from the composer's line. */
+function composerDisconnected(): void {
+  const next = composerLineDisconnected(conversationComposeStatus.textContent ?? "");
   if (next !== null) keepingComposer(() => { conversationComposeStatus.textContent = next; });
 }
 let conversationAwaitingReply = false;

@@ -1196,6 +1196,29 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(conv.composerLineYields(conv.COMPOSER_CONNECTED)).toBe(false);
   });
 
+  it("says \"Connected again\" only after a refusal the connection ends, and takes it back when the connection drops (reliability-x7-1)", () => {
+    // Every refusal for want of a connection gives way to it, whichever model service is in use.
+    for (const service of [undefined, { kind: "admin", host: "models.example.com" }, { kind: "user", host: "localhost:11434" }] as const) {
+      const lines = [
+        composerRefusal({ phase: "starting", service } as never), composerRefusal({ phase: "signed-out", service } as never), composerRefusal({ phase: "signed-out", service } as never, "api.example.com"),
+        composerRefusal({ phase: "error", reason: "runtime", service, waitingForTasks: true } as never), composerRefusal({ phase: "error", reason: "runtime", service, detail: "Copilot stopped unexpectedly. Reconnecting…" } as never),
+        composerRefusal({ phase: "error", reason: "network", service } as never), composerRefusal({ phase: "error", reason: "not-answering", service } as never), composerRefusal({ phase: "error", reason: "runtime", service } as never),
+      ];
+      for (const line of lines) expect(conv.composerLineConnected(line, line, true), line).toBe(conv.COMPOSER_CONNECTED);
+    }
+    // A send refused for anything else stays as it was said: connecting changes none of these.
+    const policy = composerRefusal({ phase: "error", reason: "policy" });
+    for (const line of ["Unlock your screen before sending a request.", "Finish setup before sending a request.", conv.COMPOSER_SAYS.sendFailed, policy]) {
+      expect(conv.composerLineConnected(line, line, true), line).toBeNull();
+      expect(conv.composerLineConnected(line, line, false), line).toBeNull();
+    }
+    // The connection drops again while the line says "Connected again": it goes, since sending now would be refused.
+    expect(conv.composerLineDisconnected(conv.COMPOSER_CONNECTED)).toBe("");
+    for (const line of ["", conv.CONVERSATION_EDIT, conv.COMPOSER_SAYS.replied, policy]) expect(conv.composerLineDisconnected(line)).toBeNull();
+    const home = readFileSync("app/renderer/home/main.ts", "utf8");
+    expect(home).toContain("composerLineDisconnected(");
+  });
+
   it("refuses a message sent while Ember isn't connected by why, and says it is still there (reliability-performance-v2)", () => {
     expect(composerRefusal({ phase: "signed-out" })).toBe("Connect Copilot in Models & connections, then send again.");
     expect(composerRefusal({ phase: "starting" })).toBe("Still connecting to Copilot. Your message is still here: send it again in a moment.");

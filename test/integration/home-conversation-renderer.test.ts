@@ -1613,6 +1613,21 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Connected again. Your message is still here: send it now.");
       expect(await inView()).toBe(true);
       expect(await page.locator("#conversation-message").inputValue()).toBe("Q2 while offline");
+      // The runtime drops again before the message is sent: the line no longer says to send it now (reliability-x7-1),
+      // and the next reconnect doesn't bring it back (nothing was refused since).
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), { ...READY, phase: "error", reason: "runtime", detail: "Copilot stopped unexpectedly. Reconnecting…" });
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("");
+      expect(await page.locator("#conversation-message").inputValue()).toBe("Q2 while offline");
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe("");
+      // A send refused for a locked screen keeps its reason when the connection comes back: connecting doesn't unlock it.
+      const locked = "Unlock your screen before sending a request.";
+      await page.evaluate(e => { window.__home.sendError = e; }, locked);
+      await page.keyboard.press("Control+Enter");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe(locked);
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), { ...READY, phase: "error", reason: "network", detail: "Can't reach the model service." });
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      expect(await page.locator("#conversation-compose-status").innerText()).toBe(locked);
       // A message copied, then a request from the Ask box came and went, leaving the line empty; then a send that waits for
       // a reconnect (no line of its own yet): its "Thinking…" shows, and so does how Stop everything ended it.
       await page.evaluate(() => { window.__home.sendError = undefined; });

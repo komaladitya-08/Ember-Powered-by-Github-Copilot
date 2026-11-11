@@ -175,14 +175,31 @@ export function composerLineFits(line: string, editing: boolean): string | null 
 /** What the composer says once Ember is connected again after it refused a send for want of a connection. */
 export const COMPOSER_CONNECTED = "Connected again. Your message is still here: send it now.";
 /**
+ * Whether a refused send's reason (`refused`) is the connection's (composer-refusal.ts composerRefusal's lines, which say
+ * the message is still there or to send again once connected), so that connecting ends it. Not a locked screen, setup
+ * unfinished, a failed send or the organisation's policy, which connecting changes nothing about (reliability-x7-1).
+ */
+function refusedForConnection(refused: string): boolean {
+  return refused.includes("Your message is still here") || refused.endsWith(", then send again.");
+}
+/**
  * The composer's line once Ember is connected again, or null to leave it (reliability-c7-2): a refused send's reason
  * (`refused`, "Reconnecting to Copilot. … send it again in a moment.") stayed after Ember had reconnected, until the next
  * send. While the line still says it, it becomes that the message can go now; with the message gone from the composer
- * (`hasDraft` false) it just goes. Any other line since is left alone.
+ * (`hasDraft` false) it just goes. Any other line since is left alone, and so is a refusal for anything but the
+ * connection (reliability-x7-1).
  */
 export function composerLineConnected(line: string, refused: string | null, hasDraft: boolean): string | null {
-  if (!refused || line !== refused) return null;
+  if (!refused || line !== refused || !refusedForConnection(refused)) return null;
   return hasDraft ? COMPOSER_CONNECTED : "";
+}
+/**
+ * The composer's line once Ember is no longer connected, or null to leave it (reliability-x7-1): "Connected again… send
+ * it now." stayed while the runtime dropped again, saying the opposite of the state. It goes; Home's status says what the
+ * connection is doing, and a send then is refused with the reason of the moment.
+ */
+export function composerLineDisconnected(line: string): string | null {
+  return line === COMPOSER_CONNECTED ? "" : null;
 }
 /** The composer's lines that say how something earlier went: they give way to a wait of the Ask box's or voice's. */
 const COMPOSER_OUTCOMES: ReadonlySet<string> = new Set([
