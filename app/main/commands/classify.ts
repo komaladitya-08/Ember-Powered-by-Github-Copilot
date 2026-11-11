@@ -3394,13 +3394,30 @@ reg(NATIVE, ["mysql", "mariadb", "mysqldump", "mysqladmin", "mysqlimport"], h =>
   if (h.args.some(a => a.v !== null && /^-p.+/.test(a.v))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   if (h.key === "mysql" || h.key === "mariadb") {
     interactive(h);
-    databaseText(h, inlineSql(h, ["e"], ["execute"]));
+    databaseText(h, inlineSql(h, ["e"], ["execute"]), "mysql");
     // SQL read from stdin or a here-document (`mysql <<< 'system id'`): judge the seen text, else ask (review #166).
-    if (!inlineSql(h, ["e"], ["execute"]).length) sqlFromStdin(h);
+    if (!inlineSql(h, ["e"], ["execute"]).length) sqlFromStdin(h, "mysql");
+    // The file --tee copies everything to, the program --pager shows results through, the SQL --init-command runs
+    // first and the folder client plugins load from (commands-remote-c7-1).
+    const p = opts(h, { shortValue: "hPuDeS", shortOptional: "p", longValue: MYSQL_VALUES, longOptional: ["password", "pager"] });
+    for (const o of p.opts) {
+      if (o.value === undefined) continue;
+      const a: Arg = o.value === null ? { v: null, raw: "?", glob: false, ...(o.parts ? { parts: o.parts } : {}) } : lit(o.value);
+      if (optIs(o.name, "tee")) h.e.usePath(a, "write", h.sc);
+      else if (optIs(o.name, "init-command")) databaseText(h, [o.value], "mysql");
+      else if (optIs(o.name, "pager")) clientShell(h, o.value);
+      else if (optIs(o.name, "plugin-dir")) { h.e.usePath(a, "read", h.sc); h.e.unclear("unclear.sql", "It loads client plugins from a folder Ember doesn't read."); }
+    }
   }
   if (h.key === "mysqladmin" && h.args.some(a => /^(drop|shutdown|flush-|kill|password|reload|refresh)/.test(a.v ?? ""))) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   for (const r of h.args) if (r.v && /^--result-file=/.test(r.v)) h.e.usePath(lit(r.v.slice(14)), "write", h.sc);
 });
+
+/** mysql's long options that take the next word (the ones a command line commonly carries). */
+const MYSQL_VALUES = [
+  "host", "port", "user", "database", "execute", "socket", "tee", "init-command", "defaults-file", "defaults-extra-file", "defaults-group-suffix", "default-character-set",
+  "plugin-dir", "ssl-ca", "ssl-capath", "ssl-cert", "ssl-key", "ssl-mode", "protocol", "delimiter", "login-path", "connect-timeout", "max-allowed-packet", "prompt",
+];
 
 /** Statements that change or delete what a database holds (D4.3 a: destroying data). */
 const SQL_WRITE = /\b(drop|delete|truncate|update|alter|insert|replace|merge|upsert|grant|revoke|create|rename|vacuum|reindex|attach|detach|flushall|flushdb|dropdatabase|deletemany|deleteone|remove|load\s+data)\b|\binto\s+(out|dump)file\b/i;
@@ -3429,8 +3446,8 @@ function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
  * SQL a client reads from stdin: a here-document or another program's output is judged when seen, else asks (review
  * #166). A file redirect (`psql < dump.sql`) runs as `psql -f dump.sql` does (stdinFile).
  */
-function sqlFromStdin(h: H): void {
-  if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t]));
+function sqlFromStdin(h: H, client?: SqlClient): void {
+  if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t], client));
   else if (h.s.stdin === "file") stdinFile(h);
 }
 
@@ -3459,11 +3476,78 @@ function redisCommand(h: H, words: readonly (string | null)[]): void {
   if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(words[1] ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
 }
 
+/** The clients whose own commands Ember reads (clientCommands): psql's `\x`, sqlite3's and duckdb's `.x`, mysql's words. */
+type SqlClient = "psql" | "sqlite" | "mysql";
+
+const SAYS_CLIENT = "It runs database client commands that can run programs or write files.";
+/**
+ * sqlite3's and duckdb's client commands that only show things or set how results look. Only written whole: sqlite3
+ * takes any shortening (`.sh` is `.shell`, `.o` is `.output`), so every other word after a dot asks
+ * (commands-remote-c7-1).
+ */
+const SQLITE_SHOWS = new Set([
+  "bail", "binary", "changes", "columns", "databases", "dbinfo", "echo", "eqp", "exit", "explain", "fullschema", "header", "headers", "help", "indexes", "indices", "limit",
+  "lint", "mode", "nullvalue", "print", "prompt", "quit", "schema", "separator", "show", "stats", "tables", "timeout", "timer", "version", "width",
+]);
+/** SQL functions of sqlite3's shell that read or write files, load code or open an editor. */
+const SQLITE_FUNCTIONS = /\b(load_extension|writefile|readfile|edit|fts3_tokenizer)\s*\(/i;
+/** psql's backslash commands that only describe, show or set how results look (`\dt+`, `\l`, `\x`, `\timing`). */
+const PSQL_SHOWS = /^(d[A-Za-z]*\+?|l\+?|x|a|t|H|q|z|h|\?|timing|pset|echo|qecho|warn|conninfo|encoding|set|unset|C|f|T|sf\+?|sv\+?|errverbose|crosstabview|p|r|reset|print|if|elif|else|endif)$/;
+
+/** A program a database client's own command or option runs through the shell (`.shell …`, `\! …`, `--pager=…`): judged as shell text. */
+function clientShell(h: H, text: string | null): void {
+  h.e.unclear("unclear.sql", SAYS_CLIENT);
+  if (text === null || text.trim() !== "") h.e.payload([lit("sh"), lit("-c"), text === null ? { v: null, raw: "?", glob: false } : lit(text)], h.sc, h.prog || "sql");
+}
+
+/** The words after a client command that asks: a program after `|`, else files it may write, judged for Ember's own refusal. */
+function clientWords(h: H, rest: string, use: PathUse = "write"): void {
+  h.e.unclear("unclear.sql", SAYS_CLIENT);
+  const t = rest.trim();
+  if (t.startsWith("|")) { clientShell(h, t.slice(1)); return; }
+  for (const w of t.split(/\s+/)) {
+    const name = w.replace(/^['"]|['"];?$|;$/g, "");
+    if (name !== "" && !name.startsWith("-")) h.e.usePath(lit(name), use, h.sc);
+  }
+}
+
+/**
+ * A database client's own commands in its text (commands-remote-c7-1): any that isn't on its short list of ones that
+ * only show things asks, and the shell command or the files it names are judged, so Ember's own are refused.
+ */
+function clientCommands(h: H, client: SqlClient, t: string): void {
+  if (client === "sqlite") {
+    for (const line of t.split("\n")) {
+      const m = /^\s*\.([A-Za-z]\w*)[ \t]*(.*)$/.exec(line);
+      if (!m || SQLITE_SHOWS.has(m[1].toLowerCase())) continue;
+      const name = m[1].toLowerCase();
+      if ("shell".startsWith(name) || "system".startsWith(name)) clientShell(h, m[2]);
+      else clientWords(h, m[2]);
+    }
+    if (SQLITE_FUNCTIONS.test(t)) h.e.unclear("unclear.sql", SAYS_CLIENT);
+  } else if (client === "psql") {
+    for (const m of t.matchAll(/(?:^|[\s;])\\([A-Za-z!?][\w!?+]*)[ \t]*([^\n\\]*)/g)) {
+      // A backquoted word in any of them runs a program.
+      if (PSQL_SHOWS.test(m[1]) && !m[2].includes("`")) continue;
+      if (m[1] === "!") clientShell(h, m[2]);
+      else clientWords(h, m[2]);
+    }
+  } else {
+    for (const m of t.matchAll(/(?:^|;)\s*(source|tee|pager|edit|system)\b[ \t]*([^;\n]*)|\\([.!TPe])[ \t]*([^;\n\\]*)/gi)) {
+      const word = (m[1] ?? "").toLowerCase();
+      const rest = m[2] ?? m[4] ?? "";
+      if (word === "system" || word === "pager" || m[3] === "!" || m[3] === "P") clientShell(h, rest);
+      else clientWords(h, rest, word === "source" || m[3] === "." ? "read" : "write");
+    }
+  }
+}
+
 /** A database client's own text: changing data is class a; running programs or touching files from it is unclear. */
-function databaseText(h: H, texts: (string | null)[]): void {
+function databaseText(h: H, texts: (string | null)[], client?: SqlClient): void {
   for (const t of texts) {
     if (t === null) { h.e.unclear("unclear.sql", "It runs database commands Ember can't see."); continue; }
-    if (SQL_ESCAPE.test(t)) h.e.unclear("unclear.sql", "It runs database client commands that can run programs or write files.");
+    if (SQL_ESCAPE.test(t)) h.e.unclear("unclear.sql", SAYS_CLIENT);
+    if (client) clientCommands(h, client, t);
     if (SQL_WRITE.test(t)) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   }
 }
@@ -3472,11 +3556,22 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   if (INTERACTIVE.has(h.key)) interactive(h);
   const k = h.key;
   if (k === "psql") {
-    databaseText(h, inlineSql(h, ["c"], ["command"]));
+    databaseText(h, inlineSql(h, ["c"], ["command"]), "psql");
+    // The file its results go to (-o, or a program after `|`) and the one it logs every query to (-L), judged as
+    // files it writes (commands-remote-c7-1).
+    const p = opts(h, { shortValue: "cdfFhLopPRTUv", longValue: ["command", "dbname", "file", "field-separator", "host", "log-file", "output", "port", "pset", "record-separator", "table-attr", "username", "set", "variable"] });
+    for (const o of p.opts) {
+      if (o.value === undefined) continue;
+      const a: Arg = o.value === null ? { v: null, raw: "?", glob: false, ...(o.parts ? { parts: o.parts } : {}) } : lit(o.value);
+      if (optIs(o.name, "o") || optIs(o.name, "output")) {
+        if (o.value !== null && o.value.trim().startsWith("|")) clientShell(h, o.value.trim().slice(1));
+        else overwrites(h, a);
+      } else if (optIs(o.name, "L") || optIs(o.name, "log-file")) h.e.usePath(a, "write", h.sc);
+    }
     // SQL read from stdin or a here-document (`psql <<< '\! id'`, `psql -f - <<< …`): judge the seen text, else ask;
     // a file given as another descriptor (`-f /dev/fd/3`) can't be read first (review #166).
     const files = inlineSql(h, ["f"], ["file"]);
-    if (files.some(f => f !== null && STDIN_NAME.test(f)) || (!inlineSql(h, ["c"], ["command"]).length && !files.length)) sqlFromStdin(h);
+    if (files.some(f => f !== null && STDIN_NAME.test(f)) || (!inlineSql(h, ["c"], ["command"]).length && !files.length)) sqlFromStdin(h, "psql");
     if (files.some(f => f !== null && !STDIN_NAME.test(f) && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
   }
   else if (k === "sqlcmd") databaseText(h, inlineSql(h, ["Q", "q"], []));
@@ -3485,12 +3580,12 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
     // -cmd's and -init's values are not the database or its SQL.
     const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));
-    databaseText(h, [...ops.slice(1).map(a => a.v), ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))]);
+    databaseText(h, [...ops.slice(1).map(a => a.v), ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))], "sqlite");
     // -init FILE runs the file's commands first, as `.read FILE` does (review #166): stdin is judged as below, another
     // descriptor can't be read first, and any other file asks.
     const init = h.args.flatMap((a, j) => (/^--?init$/.test(a.v ?? "") ? [h.args[j + 1]?.v ?? null] : []));
     for (const f of init) {
-      if (f !== null && STDIN_NAME.test(f)) sqlFromStdin(h);
+      if (f !== null && STDIN_NAME.test(f)) sqlFromStdin(h, "sqlite");
       else if (f !== null && STREAM_NAME.test(f)) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
       else {
         if (f) h.e.usePath(lit(f), "read", h.sc);
@@ -3498,7 +3593,7 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
       }
     }
     // SQL read from stdin or a here-document (`sqlite3 <<< '.shell id'`): judge the seen text, else ask (review #166).
-    if (ops.length < 2 && !inlineSql(h, [], ["cmd"]).length && !h.args.some(a => a.v === "-cmd") && !init.some(f => f !== null && STDIN_NAME.test(f))) sqlFromStdin(h);
+    if (ops.length < 2 && !inlineSql(h, [], ["cmd"]).length && !h.args.some(a => a.v === "-cmd") && !init.some(f => f !== null && STDIN_NAME.test(f))) sqlFromStdin(h, "sqlite");
     if (ops[0]) h.e.readArgs([ops[0]], h.sc);
     return;
   } else if (k === "mongo" || k === "mongosh") {

@@ -136,7 +136,13 @@ Ember stops and asks before a command that:
   `redis-cli <<< FLUSHALL`, `echo 'db.dropDatabase()' | mongosh`; commands or code on its input or its line that
   Ember can't see or follow ask too, such as `redis-cli "$CMD"` and options held in a variable, `redis-cli $OPTS`;
   a file redis-cli's options name is judged as that file, so `redis-cli --rdb ~/.bashrc`, which writes a dump over
-  it, asks), and package scripts, make targets and SQL or command files named clean, wipe, purge,
+  it, asks; so is the file `psql -o` writes its results to, which asks when it is there, the one `psql -L` or
+  `mysql --tee` logs to, and Ember's own files are refused there too; a client's own commands that can run a
+  program or write a file ask, with the shell command or file they name judged as if written out: psql's `\!`,
+  `\o`, `\copy` and any other backslash command that doesn't only describe or show, mysql's `system`, `source`,
+  `tee` and `pager`, `--pager` and `--init-command`, and every sqlite3 or duckdb dot-command but the ones that only
+  show things written whole, `.tables`, `.schema`, `.mode`, `.headers` and the like, because sqlite3 takes any
+  shortening: `.sh` is `.shell`, `.o` is `.output`), and package scripts, make targets and SQL or command files named clean, wipe, purge,
   reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`);
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
