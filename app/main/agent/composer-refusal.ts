@@ -14,9 +14,10 @@ import { onThisComputer } from "../../shared/provider";
  * The refusal for a status whose phase isn't "ready". `detail`: the status' own words; one that ends "Reconnecting…"
  * (host.ts lost, after the runtime stopped) means Ember is reconnecting by itself, whatever the reason. `waiting`: the
  * host whose note the user's own provider waits for (provider.ts providerWaitingHost), while signed out: agreeing to it
- * is the way on, as the tagline, the hint and the start hello say (integrations-r4-3).
+ * is the way on, as the tagline, the hint and the start hello say (integrations-r4-3). `held`: the organisation's policy
+ * only changed while Ember ran (admin.ts heldUntilRestart), so a restart is the way on, not a fix (safety-privacy-c7-3).
  */
-export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }, waiting: string | null = null): string {
+export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }, waiting: string | null = null, held = false): string {
   const it = s.service?.kind === "user" ? "your model provider" : s.service ? "the model service" : "Copilot";
   const It = it[0].toUpperCase() + it.slice(1);
   if (s.phase === "starting") return `Still connecting to ${it}. Your message is still here: send it again in a moment.`;
@@ -32,7 +33,8 @@ export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waiti
       if (s.service?.kind === "user" && onThisComputer(s.service.host)) return "The model server on this computer can't be reached. Is it running? Your message is still here: send it again once it is.";
       return `${It} can't be reached right now. Your message is still here: send it again once you're online.`;
     case "not-answering": return `Reconnecting to ${it}. Your message is still here: send it again in a moment.`;
-    case "policy": return "Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.";
+    case "policy": return held ? "Your organisation changed Ember's policy while Ember was running. Restart Ember, then send again."
+      : "Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.";
     default: return `Can't connect to ${it} yet: Models & connections says why. Your message is still here.`;
   }
 }
@@ -42,6 +44,6 @@ export function composerRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waiti
  * at once (AgentHost.stopsWith), which goes whatever the connection is doing, as the Ask box's and voice's do (home-c2-1:
  * waiting for the running tasks before it reconnects, Home refused the very stop that would end them).
  */
-export function composerSendRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }, stops: boolean, waiting: string | null = null): string | null {
-  return stops || s.phase === "ready" ? null : composerRefusal(s, waiting);
+export function composerSendRefusal(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTasks" | "service"> & { detail?: string }, stops: boolean, waiting: string | null = null, held = false): string | null {
+  return stops || s.phase === "ready" ? null : composerRefusal(s, waiting, held);
 }

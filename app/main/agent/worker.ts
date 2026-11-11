@@ -246,6 +246,32 @@ const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 /**
+ * To a call the model sent in the same reply as one that then wasn't done: it was planned on that step going ahead, so
+ * it does nothing (tasks-approvals-c7-1). `no`: behind a "Not now", an unanswered question or a refusal; `failed`:
+ * behind a step that didn't work, where nobody said no to anything (tasks-approvals-x7-1).
+ */
+const QUEUED_BEHIND_UNDONE = {
+  no: "An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened and decide afresh; don't retry or work around a step the user said no to.",
+  failed: "An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened to that step and decide afresh.",
+} as const;
+/** Calls that change nothing in the user's apps: they still run behind a step that wasn't done. */
+const CHANGES_NOTHING: ReadonlySet<string> = new Set(["perceive_window", "list_windows", "report_progress"]);
+/** Reads, notes and the card's views: one that fails says nothing of the user's apps, so it holds nothing back. */
+const ONLY_REPORTS: ReadonlySet<string> = new Set([...CHANGES_NOTHING, "show_view", "update_view"]);
+
+/**
+ * Whether a call's result means a step wasn't done, so that the calls sent in one reply with it are held back, and how:
+ * `no` for any call turned down, unanswered, refused or stopped; `failed` for a step that didn't work. A read, a
+ * progress note or a card view that failed (its arguments too) is no step in the user's apps, so it holds nothing back
+ * (tasks-approvals-x7-2). A command that failed holds the rest back however it ended, an exit code included: the same
+ * result is what a Ctrl+C typed into the command window or a signal leaves (tasks-approvals-y7-1).
+ */
+export function leftUndone(name: string, result: ToolResultObject | string): "no" | "failed" | null {
+  if (typeof result !== "object") return null;
+  if (result.resultType === "denied") return "no";
+  return result.resultType === "failure" && !ONLY_REPORTS.has(name) ? "failed" : null;
+}
+/**
  * A step that can't be done because the accessibility helper can't work here at all (helperCantRun: its Python
  * bindings missing, macOS not having given Ember the Accessibility permission, the helper unable to start;
  * tasks-approvals-8). It can't work again until the user fixes that, so the model is never told to try again.
@@ -1427,6 +1453,9 @@ export class Worker {
 
   /** Tells the task's activity (its card); a listener's fault never stops the task. */
   private activity(e: ActivityEvent): void {
+    // A step turned down or refused names its call: the calls of one reply are all under way on the card at once, and
+    // only this one was decided (tasks-approvals-c5-1).
+    if ((e.type === "refused" || e.type === "denied") && this.callId) e = { ...e, id: this.callId };
     try { this.d.onActivity?.(e); } catch (err) { this.d.log.warn("worker.activity_failed", { err }); }
   }
 
@@ -1481,15 +1510,23 @@ export class Worker {
    * One tool: arguments are checked against the schema here (the runtime does not
    * enforce it), the step limit is counted, and nothing runs once the task is stopped or finished.
    * Tools run one at a time, in the order called (the runtime may call several at once): two actions
-   * or questions of one task never overlap.
+   * or questions of one task never overlap. The model sends every call of a reply before the first one's result is
+   * known: runTool holds back one sent with a step that then wasn't done (tasks-approvals-c7-1). Which calls came in
+   * one reply is known from the runtime's message event (`replyCalls`); a call also notes here, as it is queued, how
+   * many steps had not been done by then, for a runtime that says nothing of it.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
   private tool<S extends z.ZodType>(name: string, description: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>): Tool<any> {
     const maxSteps = this.d.limits?.maxSteps ?? 150;
     return defineTool(name, {
       description, parameters, skipPermission: true, defer: "never",
-      handler: (raw: unknown) => {
-        const run = this.toolTurn.then(() => this.runTool(name, parameters, handler, raw, maxSteps));
+      handler: (raw: unknown, invocation?: { toolCallId?: string }) => {
+        const callId = typeof invocation?.toolCallId === "string" && invocation.toolCallId ? invocation.toolCallId : undefined;
+        const undone = this.undone;
+        const run = this.toolTurn.then(() => {
+          this.callId = callId;
+          return this.runTool(name, parameters, handler, raw, maxSteps, undone).finally(() => { this.callId = undefined; });
+        });
         this.toolTurn = run.catch(() => undefined);
         return run;
       },
@@ -1498,17 +1535,53 @@ export class Worker {
 
   /** The tool call in progress (or queued last): the next one waits for it. */
   private toolTurn: Promise<unknown> = Promise.resolve();
+  /** How many steps of this task were not done so far: turned down, unanswered, refused, or failed (`leftUndone`). */
+  private undone = 0;
+  /** The ids of the calls the model's latest reply held, and whether one of them wasn't done. */
+  private replyCalls: ReadonlySet<string> = new Set();
+  private replyUndone = false;
+  /** How the latest step that wasn't done ended (`leftUndone`), and whether the call that runs now was held back for it. */
+  private undoneHow: "no" | "failed" = "no";
+  private heldBack = false;
+  /** The call that runs now was sent in one reply with a step that then wasn't done: before the model knew of it. */
+  private behindUndone(undoneWhenQueued: number): boolean {
+    return this.undone !== undoneWhenQueued || (this.replyUndone && this.callId !== undefined && this.replyCalls.has(this.callId));
+  }
+  /** The runtime's id of the call that runs now (the id of its tool-start): what a refusal's row is matched by. */
+  private callId: string | undefined;
   /** The turn ended without finish_task and only its summary is asked for now. */
   private wrappingUp = false;
 
-  private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number): Promise<ToolResultObject | string> {
+  private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number, undoneWhenQueued = this.undone): Promise<ToolResultObject | string> {
+    const result = await this.runQueued(name, parameters, handler, raw, maxSteps, undoneWhenQueued);
+    const how = leftUndone(name, result);
+    if (how) {
+      // A call held back here keeps how the step ahead of it ended: it was no answer of its own.
+      if (!this.heldBack) this.undoneHow = how;
+      this.undone++;
+      if (this.callId !== undefined && this.replyCalls.has(this.callId)) this.replyUndone = true;
+    }
+    return result;
+  }
+
+  private async runQueued<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number, undoneWhenQueued: number): Promise<ToolResultObject | string> {
     // A step held to go ahead without asking that its own call didn't take (a password prompt, the keyboard or the desk
     // refused it) is never written by a later call's action entry, after its refusal (safety-privacy-r4-1).
     this.ahead = null;
+    this.heldBack = false;
     if (this.halted) return STOPPED();
     if (this.result) return denied("The task is already finished. Stop now.");
     // Asked for its summary (its turn ended without one): nothing more is done in the user's apps.
     if (this.wrappingUp && name !== "finish_task" && name !== "report_progress") return denied("The task is over: call finish_task now with what you already did. Do nothing else.");
+    // Sent in one reply with a step that then wasn't done (the user's "Not now", a question nobody answered, a refusal,
+    // a step that didn't work: `leftUndone`): the model planned this one on that step going ahead, before it knew. It
+    // does nothing in the user's apps and asks nothing; the model hears so and decides again (tasks-approvals-c7-1).
+    // Reading still goes on.
+    this.heldBack = this.behindUndone(undoneWhenQueued) && !CHANGES_NOTHING.has(name);
+    if (this.heldBack) {
+      this.activity({ type: "denied" });
+      return denied(QUEUED_BEHIND_UNDONE[this.undoneHow]);
+    }
     if (++this.steps > maxSteps) {
       this.limitHit = true;
       this.stopNow(`I stopped after ${maxSteps} steps without finishing, to be safe.`);
@@ -1948,6 +2021,13 @@ export class Worker {
       session.on(e => {
         d.presenter.event(e as { type: string; data?: Record<string, unknown> });
         if (e.type === "assistant.message") lastAnswer = String((e.data as { content?: string }).content ?? lastAnswer);
+        // The calls of one reply, all sent before any result was known: one that isn't done holds the rest back
+        // (runTool; tasks-approvals-c7-1). A new reply starts afresh: the model has seen what happened.
+        if (e.type === "assistant.message") {
+          const calls = (e.data as { toolRequests?: { toolCallId?: unknown }[] }).toolRequests;
+          this.replyCalls = new Set((Array.isArray(calls) ? calls : []).map(c => c?.toolCallId).filter((id): id is string => typeof id === "string" && id !== ""));
+          this.replyUndone = false;
+        }
         if (e.type === "assistant.usage") d.onUsage?.(e.data.inputTokens ?? 0, e.data.outputTokens ?? 0);
         // The task card follows the current step ("Typing…"); the model's own progress notes replace it.
         if (e.type === "tool.execution_start") {
@@ -2483,11 +2563,13 @@ export class Worker {
 
   /**
    * Where element `id` is when it has no name (an icon, an unnamed button), for the question asked about it: the named
-   * control around it (not the window itself), else its place in the window.
+   * control around it (not the window itself), else its place in the window. The policy also judges an unnamed button
+   * by that control's name ("Send message"), only ever towards asking: also one named only by a symbol ("➤"), whose
+   * name says as little (safety-privacy-x7-6).
    */
   private placeOf(id: number, element: Focus): Pick<ActionRequest, "place"> {
     // (A text area or field is named well enough by what it is: "the text area".)
-    if (element.name || element.withheld || TYPING_ROLES.has(element.role)) return {};
+    if (/[\p{L}\p{N}]/u.test(element.name.normalize("NFKC")) || element.withheld || TYPING_ROLES.has(element.role)) return {};
     const node = this.known.get(id);
     if (!node) return {};
     for (let p = node.parent, hops = 0; p !== null && hops < 6; hops++) {
@@ -2814,6 +2896,9 @@ export class Worker {
       taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
       ...(kind === "text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + (value ?? "") } : {}), ...this.formulaOf(node, value, judged), ...this.ownText(field, node.text) } : {}),
       ...((kind === "click" || kind === "toggle") && selects ? { clickSelects: true } : {}),
+      // A page's button with no name, and any button of a page that takes payment, is asked about (policy's BARE_BUTTON,
+      // PAYMENT_PAGE): the policy is told where the click lands.
+      ...((kind === "click" || kind === "toggle") && inWebPage(node, i => this.known.get(i)) ? { onPage: true } : {}),
       ...(dialog ? { dialog } : {}),
       ...this.placeOf(id, element),
     };
@@ -3032,6 +3117,7 @@ export class Worker {
         around: fieldAround(node, this.labels.get(node.id), i => this.known.get(i), this.known.values()),
         ...(this.knownWhole && mainDocument(node, this.known.values()) ? { mainDocument: true } : {}) } : {}),
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
+      ...(kind === "cursor_click" && inWebPage(node, i => this.known.get(i)) ? { onPage: true } : {}),
       ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
     const context = this.actionContext();
     // Append/replace explicitly choose where text goes after this click. Only the target's selection may collapse

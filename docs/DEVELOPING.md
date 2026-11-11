@@ -375,7 +375,9 @@ by accident. A hidden Ember shows itself to ask, and with **Speak replies, quest
 out loud; **Never** keeps it quiet even for a screen reader, and chosen while Ember talks it stops at once (as does a
 screen reader turned off, at the answer's next sentence). Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
-for them. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
+for them. After **Not now** (or a question nobody answered, a refusal, or a step that failed), a step Ember had lined
+up to follow it in the same breath isn't taken either: it looks again and decides afresh. A progress note or card view that
+wasn't accepted holds nothing back; a command that ended with an error does, however it ended. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
 "Waiting for you" while it asks, "Starts when another task ends" while two others are at work), how long it has worked and which step of its plan it is on, and shows what it did
 under **Details**; a failed card goes on its own after about a minute when not being read (Home's Conversation keeps
 what went wrong). So does the card of a task whose question ran out of time while you were away: it says so ("No
@@ -985,7 +987,7 @@ app/main/agent/credential-env.ts: `COPILOT_SDK_AUTH_TOKEN`, `GITHUB_TOKEN`, `GH_
 `env` of every stdio MCP server it gives a session (`hardenedSessionConfig`): the runtime merges that `env` over its own
 environment, so the launcher and any other stdio server start with those variables empty, not holding the sign-in. Any
 GitHub-token-shaped text, any token the commands redactor knows by its shape (`TOKEN_SHAPES`: AWS, Slack, Google, npm,
-OpenAI, Anthropic, Stripe, Hugging Face, GitLab), `Bearer` or `token=` value and URL password is replaced in the
+OpenAI, Anthropic, Stripe, Hugging Face, GitLab, SendGrid, DigitalOcean, Twilio), `Bearer` or `token=` value and URL password is replaced in the
 finished line of every Ember log (logger.ts, `redactSecretText`) and in the sentence a failed start shows; the user's provider key is replaced by
 exact match in messages, scopes, keys and fields (`redactingLogger`). Observed on the real runtime with
 `scripts/runtime-env-live.sh` (a network namespace with only loopback, dummy tokens, not in CI): before this blanking
@@ -1225,11 +1227,13 @@ users can't loosen them. If the file exists but can't be read or has a mistake, 
 and says so in its settings window (Home's status panel reads "Locked by your organisation", with no Connect button,
 and the notice asks the user to have the computer's manager fix it; `ember doctor` and the log name the problem):
 no actions, commands or listening, nothing sent to any model service (neither
-GitHub Copilot nor the organisation's own endpoint), and nothing deleted from the audit log. Ember reads the policy
+GitHub Copilot nor the organisation's own endpoint), no GitHub sign-in started (a **Sign in** that still shows asks
+GitHub for nothing and says why), and nothing deleted from the audit log. Ember reads the policy
 again every 10 seconds. Once it changes (tightened, repaired, added or removed, and the next read says so too), Ember
 stops everything and stays locked down until the user restarts it (the bubble offers **Restart Ember**, and the
 settings window says so at once, already open or not: its notice, what it says Ember reads and sends, and the switches
-the lockdown turns off), and the restart reads the new policy whole. Every key is optional:
+the lockdown turns off; a message sent there is refused with "Restart Ember, then send again"), and the restart
+reads the new policy whole. Every key is optional:
 
 ```json
 {

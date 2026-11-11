@@ -2134,7 +2134,7 @@ function start(): void {
     // Still starting, offline or reconnecting is said as such: Models & connections can't help with those. Signed out
     // while the user's own provider waits for its note, the host it waits for is named (integrations-r4-3).
     const status = agent?.getStatus() ?? { phase: "signed-out" as const };
-    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null);
+    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held);
     if (refusal) throw new Error(refusal);
     // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
     void askEmber(text, {}, Promise.resolve(null));
@@ -2231,6 +2231,10 @@ function start(): void {
   ipcMain.handle(IPC.signIn, guard(async () => {
     // Nothing connects before the user has agreed to what Ember does.
     if (!consented()) { showHome(); throw new Error("Agree to how Ember works first (at the top of this window)."); }
+    // Under a lockdown no sign-in could be used (refuseConnect): nothing is asked of GitHub and no page is opened, and
+    // the lockdown's own sentence says why, a restart where the policy only changed (safety-privacy-c7-3).
+    const lockedDown = modelServiceRefusal(admin);
+    if (lockedDown) { progress({ state: "error", message: lockedDown }); return; }
     // This flow only: a second click cancels the first, and an old flow never overwrites a newer one's messages.
     const ac = new AbortController();
     signInAbort?.abort();

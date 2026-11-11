@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { commandLineSecret, redactSecrets, SECRET_HIDDEN } from "../../app/main/commands/redact";
+import { memoryRefusal } from "../../app/main/memory/guard";
 
 const GH = `ghp_${"a1B2".repeat(9)}`;
 const PAT = `github_pat_${"x".repeat(22)}`;
@@ -232,6 +233,52 @@ describe("redactSecrets", () => {
     for (const text of ["sk-learn is scikit-learn", "risk-assessment-for-the-quarterly-planning-2026", "task-1234567890abcdefghijklmnopqrstuvwxyz", "hf_short", "sk_live_short", "build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value", "--compass=north", "--max-passes=3"]) {
       expect(redactSecrets(text)).toBe(text);
     }
+  });
+
+  it.each([
+    ["a SendGrid key", `SG.${"aB3_".repeat(5)}xy.${"cD4-".repeat(10)}xyz`],
+    ["a DigitalOcean token", `dop_v1_${"0a1b2c3d".repeat(8)}`],
+    ["a Twilio API key", `SK${"0a1b2c3d".repeat(4)}`],
+  ])("hides %s on its own (safety-privacy-r7-3)", (_what, token) => {
+    expect(redactSecrets(`key is ${token} here`)).toBe(`key is ${SECRET_HIDDEN} here`);
+    expect(commandLineSecret(token)).toBe(true);
+  });
+
+  it("hides a Docker config's auth and a .netrc line's password, keeping what names them (safety-privacy-r7-3)", () => {
+    expect(redactSecrets('{ "auths": { "ghcr.io": { "auth": "dXNlcjpodW50ZXIyMTIzNDU2Nzg5MA==" } } }')).toBe(`{ "auths": { "ghcr.io": { "auth": "${SECRET_HIDDEN}" } } }`);
+    expect(redactSecrets("machine api.example.com login bob password hunter2xyz")).toBe(`machine api.example.com login bob password ${SECRET_HIDDEN}`);
+    expect(redactSecrets("default login anonymous password me@example.com")).toBe(`default login anonymous password ${SECRET_HIDDEN}`);
+  });
+
+  it("takes no ordinary sentence about a default password or a machine for a .netrc entry (safety-privacy-x7-2)", () => {
+    for (const text of ["the default password is admin", "Reset the default password policy", "machine learning password reset", "default password field",
+      "The router still has the default password set; Ana wants to change it", "Ana is studying machine learning password cracking research"]) {
+      expect(redactSecrets(text)).toBe(text);
+      expect(commandLineSecret(text)).toBe(false);
+    }
+    for (const command of ['git commit -m "Reset the default password policy"', 'echo "the default password is admin"', 'grep "machine learning password reset" notes.txt', 'git log --grep="default password field"'])
+      expect(commandLineSecret(command)).toBe(false);
+    for (const note of ["Sam uses the default password manager, Bitwarden, on his Mac", "The router still has the default password set; Ana wants to change it",
+      "Team rule: the default password policy is 12 characters", "Ana is studying machine learning password cracking research"]) expect(memoryRefusal(note)).toBeNull();
+  });
+
+  it("still hides a .netrc entry's password with no login, by its host's name (safety-privacy-r7-3)", () => {
+    expect(redactSecrets("machine api.example.com password hunter2xyz")).toBe(`machine api.example.com password ${SECRET_HIDDEN}`);
+    expect(commandLineSecret("echo 'machine api.example.com login bob password hunter2xyz' >> ~/.netrc")).toBe(true);
+    expect(memoryRefusal("machine api.example.com login bob password hunter2xyz")).not.toBeNull();
+  });
+
+  it("leaves text that only looks a little like those alone (safety-privacy-r7-3)", () => {
+    for (const text of ["SG.short.thing", "SKU1234567890abcdef1234567890abcdef12", "dop_v1_short", '"auth": "none"', '"author": "Sam Example of Somewhere"', "the machine asked for a password reset",
+      "enter your password again"]) {
+      expect(redactSecrets(text)).toBe(text);
+    }
+  });
+
+  it("stays linear on long runs of the new shapes (safety-privacy-r7-3)", () => {
+    const start = Date.now();
+    redactSecrets("machine ".repeat(100_000) + "SG.".repeat(100_000) + '"auth": "'.repeat(50_000));
+    expect(Date.now() - start).toBeLessThan(2000);
   });
 
   it("doesn't hide a value twice", () => {

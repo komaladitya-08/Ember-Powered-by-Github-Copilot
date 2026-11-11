@@ -30,11 +30,13 @@ import { SettingsStore } from "../../app/main/settings";
 import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import type { Logger } from "../../app/main/logger";
 import type { OS } from "../../app/shared/shortcuts";
+import { ActivityLog, type ActivityEvent } from "../../app/main/agent/activity";
+import { STATUS_WORDS } from "../../app/shared/activity";
 
 const { id: runtimeId, exe } = runtimeFor(process.platform as OS, process.arch);
 
 type Msg = { role: string; content: unknown };
-type Reply = { text?: string; reasoning?: string; tool?: { name: string; args: Record<string, unknown> } };
+type Reply = { text?: string; reasoning?: string; tool?: { name: string; args: Record<string, unknown> }; tools?: { name: string; args: Record<string, unknown> }[] };
 const text = (m: Msg) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content));
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -112,6 +114,7 @@ function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
   grants?: Record<string, Grant>; confirmer?: Confirmer; flyTo?: WorkerDeps["flyTo"]; limits?: WorkerDeps["limits"]; target?: { title: string; app?: string };
   progress?: (s: string) => void; id?: string; cursor?: WorkerDeps["cursor"]; clipboard?: WorkerDeps["clipboard"];
   desk?: WorkerDeps["desk"]; model?: string | null; isTerminalApp?: (name: string) => boolean; userWords?: string; screen?: string; agreed?: Agreement[];
+  onActivity?: WorkerDeps["onActivity"];
 } = {}) {
   const settings = new SettingsStore(path.join(dir, `settings-${Math.random()}.json`));
   settings.load();
@@ -131,6 +134,7 @@ function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
     cursor: o.cursor,
     clipboard: o.clipboard,
     desk: o.desk,
+    onActivity: o.onActivity,
   } as unknown as WorkerDeps, { id: o.id ?? Math.random().toString(36).slice(2, 8), goal, target: o.target ?? { title: "Test Window" }, ...(o.userWords !== undefined ? { userWords: o.userWords } : {}), ...(o.agreed ? { agreed: o.agreed } : {}), ...(o.screen ? { screen: o.screen } : {}) });
   made.push(w);
   return w;
@@ -1746,6 +1750,81 @@ describe("review round 3: what Ember asks about is what it does", () => {
   });
 });
 
+describe("several calls in one reply", () => {
+  const perceive: Reply = { tool: { name: "perceive_window", args: {} } };
+  const finish: Reply = { tool: { name: "finish_task", args: { success: false, summary: "not done" } } };
+  const WIZARD: FakeNode[] = [{ id: 1, role: "push button", name: "Delete all" }, { id: 2, role: "push button", name: "Next" }];
+  const saysNo = (asked: string[]) => {
+    const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0 });
+    // A moment to answer: every call of the reply has begun by then, as it has for a person.
+    c.ask = async q => { asked.push(q.prompt); await sleep(150); return "deny"; };
+    return c;
+  };
+  /** The task's card after `events`, as TaskManager keeps it. */
+  const cardOf = (events: ActivityEvent[]) => {
+    const l = new ActivityLog(0);
+    events.forEach((e, i) => l.add(e, (i + 1) * 10));
+    l.add({ type: "end", status: "done" }, (events.length + 1) * 10);
+    return l;
+  };
+
+  it("the card shows the step the user turned down as stopped and the read after it as done, never the other way round (tasks-approvals-c5-1)", async () => {
+    scripts.set("Tidy the wizard (card)", m => [perceive, { tools: [{ name: "click", args: { id: 1 } }, { name: "perceive_window", args: {} }] }][steps(m)] ?? finish);
+    const asked: string[] = [];
+    const events: ActivityEvent[] = [];
+    const screen = fakeScreen(WIZARD);
+    await makeWorker(screen, "Tidy the wizard (card)", { confirmer: saysNo(asked), userWords: "Delete all the old notes", onActivity: e => events.push(e) }).run(new AbortController().signal);
+    expect(asked).toEqual(["Click the “Delete all” button in Testapp?"]);
+    expect(screen.log).toEqual([]);
+    // Both calls were under way on the card before the question was answered, and the no names its own call.
+    const starts = events.filter(e => e.type === "tool-start").map(e => (e as { id: string }).id);
+    const no = events.find(e => e.type === "denied") as { id?: string };
+    expect(no.id).toBe(starts[1]);
+    expect(events.findIndex(e => e.type === "tool-start" && e.id === starts[2])).toBeLessThan(events.findIndex(e => e.type === "answer"));
+    const l = cardOf(events);
+    expect(l.card().rows.map(r => [r.state, r.words])).toEqual([
+      ["done", "Read the window"], ["stopped", "Tried to click in Testapp"], ["done", "Read the window in Testapp"],
+      ["stopped", "Asked you: you said not now"], ["done", STATUS_WORDS.done],
+    ]);
+    expect(l.get().failedSteps).toBe(0);
+  });
+
+  it("after “Not now”, a step the same reply queued behind it does nothing in the app and asks nothing (tasks-approvals-c7-1)", async () => {
+    const goal = "Tidy the wizard (queued)";
+    scripts.set(goal, m => [perceive, { tools: [{ name: "click", args: { id: 1 } }, { name: "click", args: { id: 2 } }, { name: "finish_task", args: { success: true, summary: "Deleted the notes and pressed Next." } }] }][steps(m)] ?? finish);
+    const asked: string[] = [];
+    const events: ActivityEvent[] = [];
+    const screen = fakeScreen(WIZARD);
+    const r = await makeWorker(screen, goal, { confirmer: saysNo(asked), userWords: "Delete all the old notes and then press Next in the wizard", onActivity: e => events.push(e) }).run(new AbortController().signal);
+    // One question, answered no: Next (an ordinary step in a granted app, planned on the delete going ahead) is never pressed.
+    expect(asked).toEqual(["Click the “Delete all” button in Testapp?"]);
+    expect(screen.log).toEqual([]);
+    // Nor does the reply's own "all done" stand: the model hears each wasn't done and ends the task knowing of the no.
+    expect(r.success).toBe(false);
+    const results = [...mock.requests].reverse().find(q => text(q.messages.find(m => m.role === "user")!).includes(goal))!.messages.filter(m => m.role === "tool").map(text);
+    expect(results[1]).toContain("The user said no.");
+    expect(results[2]).toContain("An earlier step in this reply wasn't done, so this one wasn't either");
+    expect(results[3]).toContain("An earlier step in this reply wasn't done, so this one wasn't either");
+    // Its card: neither click happened, and nothing "didn't work".
+    const l = cardOf(events);
+    expect(l.card().rows.map(r => [r.state, r.words])).toEqual([
+      ["done", "Read the window"], ["stopped", "Tried to click 2 times in Testapp"], ["stopped", "Asked you: you said not now"], ["done", STATUS_WORDS.done],
+    ]);
+    expect(l.get().failedSteps).toBe(0);
+  });
+
+  it("a step queued behind one that worked still goes ahead, and so does a read behind one that didn't (tasks-approvals-c7-1)", async () => {
+    scripts.set("Step through the wizard", m => [perceive, { tools: [{ name: "click", args: { id: 2 } }, { name: "click", args: { id: 2 } }] }, { tools: [{ name: "click", args: { id: 99 } }, { name: "perceive_window", args: {} }, { name: "click", args: { id: 2 } }] }][steps(m) > 3 ? 3 : steps(m) > 1 ? 2 : steps(m)] ?? finish);
+    const screen = fakeScreen(WIZARD);
+    await makeWorker(screen, "Step through the wizard", { userWords: "press Next twice" }).run(new AbortController().signal);
+    // Two Nexts in one reply are both pressed; then a click that fails (no such element) holds back the click after it, not the read.
+    expect(screen.log.map(l => l.what)).toEqual(["doAction 2 click", "doAction 2 click"]);
+    const results = [...mock.requests].reverse().find(q => text(q.messages.find(m => m.role === "user")!).includes("Step through the wizard"))!.messages.filter(m => m.role === "tool").map(text);
+    expect(results[4]).toContain("<screen");
+    expect(results[5]).toContain("An earlier step in this reply wasn't done, so this one wasn't either");
+  });
+});
+
 describe("models", () => {
   it("a task never runs on the runtime's default model", async () => {
     const before = mock.requests.length;
@@ -1888,19 +1967,57 @@ describe("review round 9: policy and selections", () => {
     }
   });
 
-  it("a control whose name the reader withheld is asked about, in a page where names were withheld too; one simply unnamed isn't (P10-1)", async () => {
+  it("any button of a page on a payment site is asked about by a click, as the policy says, and the same button elsewhere isn't (safety-privacy-c7-2)", async () => {
+    const nodes: FakeNode[] = [{ id: 1, role: "document web", name: "Plans" }, { id: 2, role: "push button", name: "Continue", parent: 1 }];
+    for (const [title, asks] of [["Billing - Example", true], ["Plans - Example", false]] as const) {
+      const goal = `Look at the plans (${title})`;
+      plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }]);
+      const screen = fakeScreen(nodes, { title });
+      const asked: string[] = [];
+      await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
+      expect(asked, title).toEqual(asks ? ["Click the “Continue” button in Testapp?"] : []);
+      expect(screen.log.length, title).toBe(asks ? 0 : 1);
+    }
+  });
+
+  it("a control whose name the reader withheld is asked about, in a page where names were withheld too; one simply unnamed is asked about as Ember's doubt (P10-1, safety-privacy-c7-2)", async () => {
     const page = { id: 1, role: "document web", name: "Checkout" };
     for (const [goal, nodes, asks] of [
       ["Fill in my shipping address (withheld)", [page, { id: 2, role: "push button", name: "", withheld: true, parent: 1 }], true],
       ["Fill in my shipping address (in a page with names withheld)", [page, { id: 3, role: "label", name: "", withheld: true, parent: 1 }, { id: 2, role: "push button", name: "", parent: 1 }], true],
-      ["Fill in my shipping address (unnamed)", [page, { id: 2, role: "push button", name: "", parent: 1 }], false],
-    ] as [string, FakeNode[], boolean][]) {
+      ["Fill in my shipping address (unnamed)", [page, { id: 2, role: "push button", name: "", parent: 1 }], "doubt"],
+      ["Fill in my shipping address (unnamed, in a desktop app)", [{ id: 1, role: "panel", name: "" }, { id: 2, role: "push button", name: "", parent: 1 }], false],
+    ] as [string, FakeNode[], boolean | "doubt"][]) {
       plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }]);
       const screen = fakeScreen(nodes);
       const asked: string[] = [];
       await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-      expect(asked, goal).toEqual(asks ? ["Click the button in Testapp? I can't show what it says: it may reveal something private."] : []);
+      expect(asked, goal).toEqual(asks === "doubt" ? ["Click the button on the “Checkout” page in Testapp? I can't tell what it does: it has no name."] : asks ? ["Click the button in Testapp? I can't show what it says: it may reveal something private."] : []);
       expect(screen.log.length, goal).toBe(asks ? 0 : 1);
+    }
+  });
+
+  it("an unnamed button in a mail's row isn't judged by the mail's subject, and the task stays as it was (safety-privacy-x7-5)", async () => {
+    const goal = "Open the message from Ana about lunch";
+    const nodes: FakeNode[] = [{ id: 1, role: "list item", name: "Re: please delete the old report" }, { id: 2, role: "push button", name: "", parent: 1 }, { id: 3, role: "push button", name: "Next" }];
+    plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }, { tool: { name: "click", args: { id: 3 } } }]);
+    const screen = fakeScreen(nodes);
+    const asked: string[] = [];
+    await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
+    expect(asked).toEqual([]);
+    expect(screen.log.length).toBe(2);
+  });
+
+  it("a desktop app's button named only by a symbol is judged by the named panel it sits in, as one with no name is (safety-privacy-x7-6)", async () => {
+    for (const [name, question] of [["➤", "Click the “➤” button in Testapp?"], ["", "Click the button on the “Send message” panel in Testapp?"]] as const) {
+      const goal = `Look at the desktop chat (${name || "no name"})`;
+      plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }]);
+      const screen = fakeScreen([{ id: 1, role: "panel", name: "Send message" }, { id: 2, role: "push button", name, parent: 1 }]);
+      const asked: string[] = [];
+      await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
+      expect(asked.length, goal).toBe(1);
+      expect(asked[0], goal).toContain(question);
+      expect(screen.log.length, goal).toBe(0);
     }
   });
 });

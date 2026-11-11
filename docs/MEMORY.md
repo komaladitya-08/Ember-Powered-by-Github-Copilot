@@ -102,8 +102,8 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   number, a National Insurance number and a mother's maiden name with its value, in any capitals (memory-c7-3,
   memory-x7-2); a rule, a date, a range, a count of lines, a status, hardware pins and someone else's mother are kept
   ("Password, expires, 2026-12-01", "Password max. 1024", "sign-in code 401 403 errors", "Her mother's maiden name was
-  Smith": memory-x7-3). It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
-  GitLab keys among them, and a password given to a program's option, on its line or as its own element of a list of
+  Smith": memory-x7-3). It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face, GitLab,
+  SendGrid, DigitalOcean and Twilio keys among them, and a password given to a program's option, on its line or as its own element of a list of
   arguments: a compose healthcheck's `["CMD", "mysqladmin", "ping", "-phunter2"]`, `["sshpass", "-p", "hunter2", …]`,
   memory-q6-1), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",

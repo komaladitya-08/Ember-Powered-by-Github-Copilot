@@ -273,7 +273,9 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   async marketplaces(): Promise<Marketplace[]> {
-    if (!this.allowed()) return [];
+    // Before the runtime is connected (Home opens first on a fresh start) there is nothing to ask: `connected()` tells
+    // Home why the list is empty, and a warning with a stack at every such start was only noise in the log.
+    if (!this.allowed() || !this.o.client()) return [];
     try {
       const r = await this.rpc().plugins.marketplaces.list();
       // Copilot's own (isDefault) and the organisation's (managed) can't be removed: Home shows them so (integrations-4).
