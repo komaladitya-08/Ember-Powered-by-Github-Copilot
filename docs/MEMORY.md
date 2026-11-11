@@ -383,9 +383,11 @@ download, so English-only MiniLM is the trade-off for now.
      (memory-c1-3). **Forget everything** clears the lines too.
      A Forget is never undone by the turn that said the fact: every turn waits up to a minute (longer at the hourly
      cap) to be read for facts, so what was forgotten is held in RAM, never on disk, while a batch that began before
-     the Forget (or within two minutes of it, `FORGOTTEN_TURN_MS`: the turn may still be under way) waits, and an
-     extracted fact at least `DUPLICATE` like it with the same polarity is skipped; the batch's other facts are still
-     learned, Undo of the Forget lifts it, and a later turn that says it again is learned from (memory-c7-1).
+     the Forget (or, for a fact Ember kept in the last ten minutes, within two minutes of it, `FORGOTTEN_TURN_MS`: the
+     turn may still be under way) waits, and an extracted fact about the same subject, at least `DUPLICATE` like it
+     with the same polarity, is skipped; the batch's other facts are still learned, Undo of the Forget lifts it, and
+     a later turn that says it again is learned from (memory-c7-1). A Forget of an older fact holds nothing back
+     from what is said after it, and the same words about someone else are learned (memory-x7-5).
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
      only for Ember to forget something about the user ("forget that I…", "forget my address", "forget my wife's

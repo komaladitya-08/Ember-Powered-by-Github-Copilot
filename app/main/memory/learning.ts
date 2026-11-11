@@ -36,6 +36,8 @@ export const IDLE_CHECK_MS = 60_000;
  * or while a batch from before then waits, is never learned back from it (memory-c7-1).
  */
 export const FORGOTTEN_TURN_MS = 2 * 60_000;
+/** A forgotten fact held back from the turns that could bring it back (MemoryLearning's `forgotten`). */
+interface Forgotten { text: string; about: string[]; at: number; fresh: boolean; undo: string }
 /** The most forgotten facts held for that at once. */
 const FORGOTTEN_MAX = 50;
 /** Refinement passes a day, at most (and one per idle stretch). */
@@ -125,10 +127,11 @@ export class MemoryLearning {
   /** The facts kept lately, newest last, for "forget that". */
   private recent: { id: string; text: string; at: number }[] = [];
   /**
-   * What was forgotten while turns said before it may still be read (memory-c7-1): its words, when, and its Undo's
-   * token. In RAM only, and dropped as soon as no such turn is left (`forgottenStill`).
+   * What was forgotten while turns said before it may still be read (memory-c7-1): its words, what it was about (its
+   * subject first, folded), when, whether Ember had kept it just now (`fresh`: the turn that said it may still be under
+   * way) and its Undo's token. In RAM only, and dropped as soon as no such turn is left (`forgottenStill`).
    */
-  private forgotten: { text: string; at: number; undo: string }[] = [];
+  private forgotten: Forgotten[] = [];
 
   constructor(private d: LearningDeps) {
     this.lastActive = this.now();
@@ -246,11 +249,13 @@ export class MemoryLearning {
     this.refining?.abort();
     ++this.recallRevision;
     const kept = this.recent.find(r => r.id === id);
-    const gone = this.d.memory.forgetCounted(id, !!kept && this.now() - kept.at <= FORGET_THAT_MS);
+    const fresh = !!kept && this.now() - kept.at <= FORGET_THAT_MS;
+    const about = this.d.memory.factAbout(id).map(fold);
+    const gone = this.d.memory.forgetCounted(id, fresh);
     this.recent = this.recent.filter(r => r.id !== id);
     if (gone) {
       // Nor may the turn that said it, still waiting to be read (or still under way), put it back (memory-c7-1).
-      this.forgotten = [...this.forgottenStill(), { text: gone.text, at: this.now(), undo: gone.undo }].slice(-FORGOTTEN_MAX);
+      this.forgotten = [...this.forgottenStill(), { text: gone.text, about, at: this.now(), fresh, undo: gone.undo }].slice(-FORGOTTEN_MAX);
       try { this.d.onForgot?.(id, gone); } catch { this.d.log.warn("memory.delete_notice_failed"); }
     }
     return gone;
@@ -273,21 +278,34 @@ export class MemoryLearning {
    * The forgotten facts a waiting turn could still bring back: those forgotten less than FORGOTTEN_TURN_MS ago (the
    * turn that said one may not have ended yet), and those a batch that began before then is still waiting with.
    */
-  private forgottenStill(): { text: string; at: number; undo: string }[] {
+  private forgottenStill(): Forgotten[] {
     const now = this.now();
     const since = this.learner.waitingSince;
     return this.forgotten.filter(f => now - f.at < FORGOTTEN_TURN_MS || (since !== null && since <= f.at + FORGOTTEN_TURN_MS));
   }
 
   /**
+   * Whether a batch that began at `since` could hold the turn that said the forgotten `g`: it began before the Forget,
+   * or, for a fact Ember had kept just now, within FORGOTTEN_TURN_MS of it (that turn may still have been under way).
+   * A Forget of an older fact holds nothing back from what is said after it (memory-x7-5).
+   */
+  private couldSay(g: Forgotten, since: number): boolean {
+    return since <= g.at || (g.fresh && since <= g.at + FORGOTTEN_TURN_MS);
+  }
+
+  /**
    * Keeps a fact extraction found, unless the user forgot the same thing after the batch it was read from began: a
    * Forget that Ember confirmed is never undone by the turn that said the fact (memory-c7-1). A later turn that says
-   * it again is learned from as usual.
+   * it again is learned from as usual, and so are the same words about someone or something else ("Dana is
+   * vegetarian" after "Is vegetarian" about the user is forgotten: memory-x7-5).
    */
   private keepLearned(f: NewFact, since: number): AddResult {
     this.forgotten = this.forgottenStill();
     const polarity = negated(f.text);
-    if (this.forgotten.some(g => since <= g.at + FORGOTTEN_TURN_MS && negated(g.text) === polarity && similarity(g.text, f.text) >= DUPLICATE)) {
+    const subject = fold(f.about[0]?.name ?? "");
+    // With no record of what it was about, the forgotten fact is held whoever the new one is about.
+    const sameSubject = (g: Forgotten) => !g.about.length || !subject || g.about.includes(subject);
+    if (this.forgotten.some(g => this.couldSay(g, since) && sameSubject(g) && negated(g.text) === polarity && similarity(g.text, f.text) >= DUPLICATE)) {
       this.d.log.info("memory.learn_skipped", { why: "forgotten" });
       return { kind: "refused", reason: "it was just forgotten" };
     }
