@@ -912,20 +912,27 @@ function toldChange(text: string): boolean {
 /**
  * A password, passcode or passphrase with its value straight after ("VPN password hunter2", "the password 'Summer2024!'",
  * "HR portal pw Summer2024!", "Wi-Fi BlueSky, passphrase BlueSky99", "wifi pass BlueSky99": memory-r7-5): only a value with a digit or a symbol in it, so "password manager", "password reset" and "£500 pw for
- * the flat" are still words.
+ * the flat" are still words. A Wi-Fi pass for a season or some days is a ticket ("wifi pass 2024-25", "WiFi pass
+ * 3-day"): memory-x7-3.
  */
 const BARE_PASSWORD = new RegExp(
-  String.raw`\b(?:pass(?:word|wd|code|phrase)|pwd|pw|wi-?fi\s+(?:key|pass))s?\s+["'“]?(?!(?:${NOT_A_VALUE})(?:[\s.,;!?"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
+  String.raw`\b(?:(?:pass(?:word|wd|code|phrase)|pwd|pw)s?\s+["'“]?|wi-?fi\s+(?:key|pass)s?\s+["'“]?(?!(?:\d{2,4}[-–/]\d{2,4}|\d+-(?:day|week|month|hour|year)s?)(?![^\s"'”])))(?!(?:${NOT_A_VALUE})(?:[\s.,;!?"'”]|$))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`,
   "i",
 );
 /**
  * A recovery code or key with its value straight after, no "is" or colon ("GitHub recovery code abcde-12345",
  * "BitLocker recovery key 482193-118822-…"): eight characters or more of letters, digits and dashes with a digit, never
- * a date or a count ("recovery key 2 of 8"). These are long-lived, so they matter most: memory-r7-5.
+ * a date or a count ("recovery key 2 of 8"). These are long-lived, so they matter most: memory-r7-5. Never years, a
+ * word with its year or a Windows update's number ("Recovery keys 2024-2025 budget", "recovery key rotation-2024
+ * policy", "recovery key KB5034441 article"): memory-x7-3.
  */
-const BARE_RECOVERY = /\brecovery\s+(?:code|key)s?\s+["'“]?(?!\d{4}-\d{2}-\d{2}(?![\w-]))(?=[A-Za-z0-9-]{8,}(?![\w-]))(?=[A-Za-z0-9-]*\d)[A-Za-z0-9]/i;
-/** A one-time code named as one, with its six to eight digits straight after ("verification code 482193", "login code 482-193"): memory-r7-5. */
-const BARE_ONE_TIME = /\b(?:verification|authenticator|authentication|login|sign-?in|2fa|mfa|one-time|otp|backup)\s+codes?\s+["'“]?\d{3}[- ]?\d{3,5}(?![\w-])/i;
+const BARE_RECOVERY = /\brecovery\s+(?:code|key)s?\s+["'“]?(?!\d{4}-\d{2}-\d{2}(?![\w-]))(?!(?:(?:19|20)\d{2}-(?:19|20)?\d{2}|[A-Za-z]+-(?:19|20)\d{2}|KB\d{6,8})(?![\w-]))(?=[A-Za-z0-9-]{8,}(?![\w-]))(?=[A-Za-z0-9-]*\d)[A-Za-z0-9]/i;
+/**
+ * A one-time code named as one, with its six to eight digits straight after ("verification code 482193", "login code
+ * 482-193"): memory-r7-5. Never a count of lines or a status ("authentication code 200300 lines of C", "sign-in code
+ * 401 403 errors"): memory-x7-3.
+ */
+const BARE_ONE_TIME = /\b(?:verification|authenticator|authentication|login|sign-?in|2fa|mfa|one-time|otp|backup)\s+codes?\s+["'“]?\d{3}[- ]?\d{3,5}(?![\w-])(?!\s+(?:lines?|errors?|bytes?|characters?|chars?|times|tests?|files?|rows?|users?|responses?|status(?:es)?)\b)/i;
 /**
  * An Indian postcode, which is called a "PIN code" ("Bengaluru, PIN code: 560001", "Our office PIN code is 560001", a line
  * "PIN Code - 560001" under an address): six digits, after an address earlier in its sentence (a word for a place, a
@@ -1096,16 +1103,22 @@ const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}
  * A value after an aside between commas, with no "is" or colon ("The password, salted, hunter2", "PIN, required,
  * 4821"), or after a limit's word and its full stop ("Password min. hunter2"): as STATE_THEN, only a value with a
  * digit or a symbol, never a length or an algorithm ("Password, hashed, SHA-256", "Password min. 12 characters"):
- * memory-q6-4.
+ * memory-q6-4. One password or PIN, never several ("My passwords, unfortunately, 2019-era", "pins, GPIO, 3.3V"); the
+ * aside is no algorithm or rule ("Password, bcrypt, cost=12", "Password, policy, NIST-800-63"), what follows it no
+ * date or range ("Password, expires, 2026-12-01", "Password, optional, 8-64 chars") and what follows a limit no
+ * number ("Password max. 1024", "Password min. 8–64"): memory-x7-3.
  */
-const STATE_ASIDE = new RegExp(String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pin)s?(?:[ \t]*,[ \t]*[A-Za-z][A-Za-z'’-]*[ \t]*,|[ \t]+(?:min|max)\.)[ \t]*["'“]?`
+const STATE_ASIDE = new RegExp(String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pin)(?:[ \t]*,[ \t]*(?!${STATE_ALGORITHM})(?!(?:policy|standard|rules?|format|scheme|algorithm)\b)[A-Za-z][A-Za-z'’-]*[ \t]*,[ \t]*["'“]?`
+  + String.raw`(?!\d{4}-\d{2}-\d{2}(?![\w-]))(?!\d+[-–]\d+(?![^\s"'”,.;]))|s?[ \t]+(?:min|max)\.[ \t]*["'“]?(?!\d+(?:[-–]\d+)?(?![^\s"'”,.;])))`
   + String.raw`(?!${STATE_LENGTH})(?!${STATE_ALGORITHM})(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
 /**
  * A network's key labelled "Key" on the line after the network's name ("Network: HomeNet\nKey: BlueSky99"): six
- * characters or more with a digit or a symbol, never its mode, standard or band ("Key: WPA2-PSK"): memory-q6-5.
+ * characters or more with a digit or a symbol, never its mode, standard or band ("Key: WPA2-PSK"): memory-q6-5. The
+ * key ends its line (a bracketed note may follow), and the network is no interface ("Network: eth0\nKey: value3",
+ * "Network: Tube map\nKey: zone1-2 fares"): memory-x7-3.
  */
-const NETWORK_KEY_LINE = new RegExp(String.raw`(?:^|\n)[ \t]*(?:network|ssid|wi-?fi|wlan|wireless)(?:[ \t]+(?:name|ssid))?[ \t]*[:=][^\n]*\n[ \t]*key[ \t]*[:=][ \t]*["'“]?`
-  + String.raw`(?!(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*(?![^\s"'”]))(?!802\.11|\d+(?:\.\d+)?\s?(?:ghz|mhz|[kmg]bps))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}`, "i");
+const NETWORK_KEY_LINE = new RegExp(String.raw`(?:^|\n)[ \t]*(?:network|ssid|wi-?fi|wlan|wireless)(?:[ \t]+(?:name|ssid))?[ \t]*[:=](?![ \t]*(?:eth|en[ops]|wlan|wl[opx]|br|veth|tun|tap|docker)\w*\d\w*[ \t]*\n)[^\n]*\n[ \t]*key[ \t]*[:=][ \t]*["'“]?`
+  + String.raw`(?!(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*(?![^\s"'”]))(?!802\.11|\d+(?:\.\d+)?\s?(?:ghz|mhz|[kmg]bps))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}["'”]?[ \t]*(?:\([^\n)]{0,80}\)[ \t]*)?(?:\n|$)`, "i");
 /**
  * A network and its key said together ("Guest Wi-Fi: BlueSky / BlueSky99", "Home network: BlueSky, key BlueSky99"),
  * the key with a digit or a symbol: safety-privacy-c4-2. Never its router's address, its standard, its mode or its band
@@ -1284,15 +1297,40 @@ function luhn(digits: string): boolean {
 
 /**
  * UK bank details: a sort code and an account number together, either first (a sort code alone names a branch, an
- * account number alone may be a customer's): memory-c7-3.
+ * account number alone may be a customer's): memory-c7-3. The eight digits are the account's number, not when it
+ * opened or its reference ("the account opened 20240115", "Account reference 12345678"): memory-x7-3.
  */
 const UK_SORT = String.raw`\bsort\s+code\b[^\d\n]{0,20}\d{2}[- ]?\d{2}[- ]?\d{2}(?!\d)`;
-const UK_ACCOUNT = String.raw`\baccount(?:\s+(?:number|no\.?))?\b[^\d\n]{0,20}\d{8}(?!\d)`;
+const UK_ACCOUNT = String.raw`\baccount(?:\s+(?:number|no\.?))?\b(?!\s+(?:opened|closed|created|reference|ref|manager|team|balance|since|id)\b)[^\d\n]{0,20}\d{8}(?!\d)`;
 const UK_BANK = new RegExp(String.raw`${UK_SORT}[^\n]{0,60}?${UK_ACCOUNT}|${UK_ACCOUNT}[^\n]{0,60}?${UK_SORT}`, "i");
-/** A UK National Insurance number after its name ("national insurance number is QQ123456C", "NI number: AB 12 34 56 C"): memory-c7-3. */
-const UK_NINO = /\b(?:national\s+insurance|NI|NINO)(?:\s+(?:number|no\.?))?\b[^\n]{0,20}?(?<![A-Za-z])[A-Za-z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-Da-d](?![A-Za-z0-9])/;
-/** A security question's usual answer, with its value ("My mother's maiden name is Smith"); never the question alone: memory-c7-3. */
-const MAIDEN_NAME = /\b[Mm]other['’]?s\s+maiden\s+name\b\s*(?:is|was|[:=])\s*["'“]?\p{Lu}/u;
+/**
+ * A UK National Insurance number after its name, in any capitals ("National Insurance number is QQ123456C", "my nino
+ * is QQ123456C": memory-x7-2), or after "NI number", "NI no." or "NI:" ("NI number: AB 12 34 56 C"): memory-c7-3.
+ * "NI" alone is Northern Ireland or an airline ("NI flight BA 12 34 56 A", "NI team id XY123456A"): memory-x7-3.
+ */
+const UK_NUMBER = String.raw`(?:[Nn]umber|NUMBER|[Nn]o\.?|NO\.?)`;
+const UK_NINO = new RegExp(String.raw`\b(?:(?:[Nn]ational\s+[Ii]nsurance|NATIONAL\s+INSURANCE|[Nn][Ii][Nn][Oo])(?:\s+${UK_NUMBER})?\b[^\n]{0,20}?`
+  + String.raw`|NI(?:\s+${UK_NUMBER}\b[^\n]{0,20}?|\s*[:=]\s*|\s+is\s+))(?<![A-Za-z])[A-Za-z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-Da-d](?![A-Za-z0-9])`);
+/**
+ * A security question's usual answer, with its value ("My mother's maiden name is Smith"); never the question alone:
+ * memory-c7-3. In any capitals: a capitalised word, or any one word that ends its sentence ("my mother's maiden name is
+ * smith", "MOTHER'S MAIDEN NAME: SMITH": memory-x7-2). Never a word that is no name ("Mother's maiden name: Unknown",
+ * "… is Not required on this form") or someone else's mother ("Her mother's maiden name was Smith"): memory-x7-3.
+ */
+const MAIDEN_NAME = /(?<other>\b(?:her|his|their)\s+|['’]s\s+)?\bmother['’]?s\s+maiden\s+name\b\s*(?:is|was|[:=])\s*["'“]?(?<value>\p{L}[\p{L}'’-]*)/giu;
+/** Where a one-word answer ends its sentence or its line. */
+const ANSWER_END = /["'”]?[ \t]*(?:[.!]|\n|$)/y;
+const NO_ANSWER = /^(?:unknown|not|none|n\/a|required|optional|needed|asked|private|secret|the|a|an|on|in|at|what|something|one|often|usually|always|never|still|also|saved|stored|kept|written)$/i;
+function maidenName(text: string): boolean {
+  for (const m of text.matchAll(MAIDEN_NAME)) {
+    const value = m.groups?.value ?? "";
+    if (m.groups?.other !== undefined || NO_ANSWER.test(value)) continue;
+    if (/^\p{Lu}/u.test(value)) return true;
+    ANSWER_END.lastIndex = m.index + m[0].length;
+    if (ANSWER_END.test(text)) return true;
+  }
+  return false;
+}
 
 /** Why `text` may not be remembered, in a few words for the model to pass on, or null when it may. */
 export function memoryRefusal(text: string): string | null {
@@ -1319,6 +1357,6 @@ export function memoryRefusal(text: string): string | null {
     if (digits.length >= 13 && luhn(digits)) return "it holds a card number";
   }
   if (SSN.test(text) || (text.match(IBAN) ?? []).some(iban) || UK_BANK.test(text) || UK_NINO.test(text)) return "it holds an account or ID number";
-  if (MAIDEN_NAME.test(text)) return "it holds a security question's answer";
+  if (maidenName(text)) return "it holds a security question's answer";
   return null;
 }

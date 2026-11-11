@@ -901,6 +901,36 @@ describe("what memory never keeps", () => {
   ])("keeps %j, a branch, a customer or a question with no answer (memory-c7-3)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // The National Insurance number and the security answer in any capitals (memory-x7-2).
+  it.each([
+    ["National Insurance number is QQ123456C", "it holds an account or ID number"], ["NATIONAL INSURANCE NO: QQ 12 34 56 C", "it holds an account or ID number"],
+    ["my nino is QQ123456C", "it holds an account or ID number"], ["My NINO is QQ123456C", "it holds an account or ID number"], ["NI: AB123456C", "it holds an account or ID number"],
+    ["my mother's maiden name is smith", "it holds a security question's answer"], ["MOTHER'S MAIDEN NAME: SMITH", "it holds a security question's answer"],
+    ["My mothers maiden name was O'Brien.", "it holds a security question's answer"],
+  ])("refuses %j, however it is capitalised (memory-x7-2)", (text, why) => {
+    expect(memoryRefusal(text)).toBe(why);
+  });
+  // Sentences about password rules, dates, hardware pins, status codes and other people that the new patterns took
+  // for a value (memory-x7-3).
+  it.each([
+    ["Password, expires, 2026-12-01"], ["PIN, changed, 2024-05-01"], ["Password, optional, 8-64 chars"], ["Password max. 1024"], ["Password min. 8–64"],
+    ["Password, policy, NIST-800-63"], ["Password, bcrypt, cost=12"], ["My passwords, unfortunately, 2019-era and weak"], ["pins, GPIO, 3.3V tolerant"],
+    ["The pins, though, 10mm long"], ["Recovery keys 2024-2025 budget"], ["Recovery key rotation-2024 policy is on the wiki"], ["recovery key KB5034441 article explains it"],
+    ["The authentication code 200300 lines of C"], ["sign-in code 401 403 errors"], ["login code 100 200 lines long"], ["Conference wifi pass 2024-25"],
+    ["The WiFi pass 3-day costs £10"], ["Network: eth0\nKey: value3"], ["Network: Tube map\nKey: zone1-2 fares"],
+    ["Our sort code is 12-34-56 and the account opened 20240115"], ["Sort code 12-34-56. Account reference 12345678"], ["NI flight BA 12 34 56 A"], ["NI team id XY123456A"],
+    ["Her mother's maiden name was Smith"], ["Mother's maiden name: Unknown"], ["Mother's maiden name is Not required on this form"],
+    ["My mother's maiden name is often the security question"],
+  ])("keeps %j, a rule, a date, a part, a status or someone else's (memory-x7-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["Password, changed, hunter2"], ["PIN, changed, 4821"], ["Password max. hunter2!"], ["My password, sadly, Summer2024!"], ["Recovery key rotation-20240115x"],
+    ["login code 482 193"], ["authentication code 482193 expires soon"], ["Network: Office Guest\nKey: BlueSky99"], ["Wi-Fi pass BlueSky-2024"],
+    ["Sort code 12-34-56. Account 12345678"], ["Account no. 12345678, sort code 12 34 56"],
+  ])("still refuses %j (memory-x7-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
   // A password that is its own element of a list of a program's arguments (memory-q6-1).
   it.each([
     ['test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-phunter2"]'], ['subprocess.run(["mysql", "-u", "root", "-pSummer2024!", "db"])'],

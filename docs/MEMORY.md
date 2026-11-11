@@ -97,7 +97,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   ("GitHub recovery code abcde-12345", "verification code 482193", "wifi pass BlueSky99": memory-r7-5), a value after
   an aside or a limit's word ("The password, salted, hunter2", "Password min. hunter2": memory-q6-4), a network's key
   on the line under its name ("Network: HomeNet" then "Key: BlueSky99": memory-q6-5), a UK sort code with its account
-  number, a National Insurance number and a mother's maiden name with its value (memory-c7-3). It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  number, a National Insurance number and a mother's maiden name with its value, in any capitals (memory-c7-3,
+  memory-x7-2); a rule, a date, a range, a count of lines, a status, hardware pins and someone else's mother are kept
+  ("Password, expires, 2026-12-01", "Password max. 1024", "sign-in code 401 403 errors", "Her mother's maiden name was
+  Smith": memory-x7-3). It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them, and a password given to a program's option, on its line or as its own element of a list of
   arguments: a compose healthcheck's `["CMD", "mysqladmin", "ping", "-phunter2"]`, `["sshpass", "-p", "hunter2", …]`,
   memory-q6-1; an option a source file declares, `"--no-password"`, a stock word and a key's file are kept,
