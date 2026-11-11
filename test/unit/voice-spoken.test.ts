@@ -496,6 +496,22 @@ describe("AnswerLanguage says an English answer's own closing words in Ember's v
   it("keeps a reply in another language in that language's voice, its names and what it quotes in English too (voice-speaking-c7-3)", () => {
     expect(said(["J'ai ouvert le fichier que vous avez demandé dans le dossier des documents.", "Le film The Thing est dans la liste.", "Ça veut dire « I don't know what you have »."])).toEqual(["fr", "fr", "fr"]);
   });
+
+  it.each([
+    ["fr", ["Le film que vous cherchez est très connu et il est dans la liste que je vous ai donnée hier.", "Il s'appelle Gone with the Wind.", "Ensuite, choisissez Do not show this again."]],
+    ["de", ["Der Film, den du suchst, ist sehr bekannt und nicht zu lang für einen Abend mit der Familie.", "Er heißt Gone with the Wind.", "Das Buch heißt The Catcher in the Rye.", "Wähle dann Do not show this again."]],
+    ["es", ["La película que buscas es muy conocida y está en la lista que te mandé por la mañana.", "Se llama Gone with the Wind.", "Solo dice have you what you need for the trip."]],
+    ["it", ["La canzone che cerchi è molto famosa e non è difficile da trovare nella lista che ti ho dato.", "Si chiama Gone with the Wind."]],
+    ["ru", ["Файл сохранён на рабочем столе, и вы можете открыть его в любое время, чтобы посмотреть содержимое.", "Ошибка: The file was not found."]],
+    ["zh", ["文件已经保存在桌面上了，你可以随时打开它来查看里面的全部内容和图片。请在设置里打开 Do Not Disturb，然后再试一次。错误信息是 The file was not found，请检查路径。"]],
+    ["ja", ["ファイルはデスクトップに保存しました。いつでも開いて中身を確認できますので、どうぞご利用ください。", "エラーメッセージは The file was not found です。"]],
+  ])("keeps a %s answer's own sentence that names an English title, button or error in that answer's voice, never Ember's English one (voice-speaking-x7-1)", (lang, pieces) => {
+    expect(said(pieces)).toEqual(pieces.map(() => lang));
+  });
+
+  it("says a passage's sentence that only carries English words in the passage's voice, in an answer that opened in English (voice-speaking-x7-1)", () => {
+    expect(said(["Here is the note you asked for:", "Le film que vous cherchez est très connu et il est dans la liste.", "Il s'appelle Gone with the Wind.", "Ошибка: The file was not found.", "Shall I reply to it?"]).slice(1)).toEqual(["fr", "fr", "fr", null]);
+  });
 });
 
 describe("speechLanguage finds a whole sentence of French, Italian, Portuguese or German (voice-speaking-r7-1)", () => {

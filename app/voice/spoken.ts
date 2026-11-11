@@ -529,6 +529,14 @@ function englishClearly(text: string): boolean {
   return Object.keys(STOPWORDS).every(lang => lang === "en" || stopwords(words, lang).length < english.length);
 }
 
+/**
+ * Whether `text`, a piece of an answer said in `lang`, is English and nothing else: clearly English, with none of
+ * `lang`'s short words and no letter of another script (voice-speaking-x7-1).
+ */
+function englishOnly(text: string, lang: string): boolean {
+  return englishClearly(text) && !stopwords(wordsBesidesNames(text), lang).length && !/[^\p{Script=Latin}\P{L}]/u.test(text);
+}
+
 /** An answer's language is decided from this many of its letters, or from all of a shorter one (voice-speaking-r1). */
 export const DECIDE_LETTERS = 60;
 /** Letters English seldom writes, outside names ("Café Nero", "São Paulo": voice-speaking-r2-2): "Bien sûr", "Natürlich". */
@@ -548,8 +556,9 @@ const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.tes
  * isn't: voice-speaking-r3-2). A message that ends shorter is judged by itself, or by the request's
  * language when it can't be told and has fewer English words than that language's. A message before a tool call that
  * ends shorter decides nothing for the messages after it (voice-speaking-r2-1: "Sure, one moment." had fixed a whole
- * turn to the request's language). Once an answer is in another language, a piece of it that is clearly English
- * outside what it quotes is still said in Ember's own voice (voice-speaking-c7-3).
+ * turn to the request's language). Once an answer that opened in English is in another language (it read a passage
+ * out), a piece of it that is English outside what it quotes is still said in Ember's own voice (voice-speaking-c7-3);
+ * an answer that opened in another language keeps that voice throughout (voice-speaking-x7-1).
  */
 export class AnswerLanguage {
   private text = "";
@@ -557,12 +566,15 @@ export class AnswerLanguage {
   private lang: string | null | undefined;
   /** The request's language, when it was clearly another (requestLanguage of what the user typed). */
   private asked: string | null = null;
+  /** Whether the answer's first piece was clearly English (undefined: none has come). */
+  private opened: boolean | undefined;
 
   /** A new answer, to `request` (the user's words). */
   reset(request = ""): void {
     this.text = "";
     this.held = [];
     this.lang = undefined;
+    this.opened = undefined;
     this.asked = requestLanguage(request);
   }
 
@@ -571,7 +583,7 @@ export class AnswerLanguage {
    * more messages of this answer may follow it (it ended before a tool call).
    */
   take(pieces: readonly string[], end = false, more = false): { text: string; lang: string | null }[] {
-    for (const p of pieces) if (p.trim()) { this.held.push(p); this.text += ` ${p}`; }
+    for (const p of pieces) if (p.trim()) { this.held.push(p); this.text += ` ${p}`; this.opened ??= englishClearly(p.replace(QUOTED, " ")); }
     let lang = this.lang;
     if (lang === undefined) {
       if (!this.text.trim()) return [];
@@ -585,9 +597,14 @@ export class AnswerLanguage {
     // An answer in another language's voice because of a passage it read out says its own clearly English pieces (its
     // closing "Shall I reply to it?") in Ember's voice: said by the passage's voice, or unsaid with none installed,
     // the question went unheard while Ember waited for its answer (voice-speaking-c7-3). What a piece quotes isn't
-    // counted, so a French reply's "« I don't know »" stays with it.
-    const out = this.held.map(text => ({ text, lang: lang && englishClearly(text.replace(QUOTED, " ")) ? null : lang ?? null }));
+    // counted, so a French reply's "« I don't know »" stays with it. Only in an answer that opened in English: a
+    // French, Russian or Chinese answer's own sentence naming an English title, button or error ("Il s'appelle Gone
+    // with the Wind.") went to Kitten, which reads only English (voice-speaking-x7-1).
+    const own = lang && this.opened ? lang : null;
+    const out = this.held.map(text => ({ text, lang: own && englishOnly(text.replace(QUOTED, " "), own) ? null : lang ?? null }));
     this.held = [];
+    // A message before a tool call opens nothing for the messages after it.
+    if (end && more) this.opened = undefined;
     return out;
   }
 
