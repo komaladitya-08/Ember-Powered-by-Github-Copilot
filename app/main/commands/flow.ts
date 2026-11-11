@@ -622,12 +622,24 @@ export function autonomousCommand(d: CommandDecision, o: { scopes: AutonomyScope
   };
 }
 
+/** How the result of a command that ran to its own end with an exit code (or a signal) begins. */
+const RAN_TO_ITS_END = "It ended with ";
+
+/**
+ * Whether a run_command failure is a command that ran and ended by itself, reporting an exit code: the routine answer
+ * of `grep -q`, `test -f` or `git diff --quiet`, not a step that wasn't done. A command the user stopped, one that
+ * timed out, lost its connection or never started is not (tasks-approvals-x7-1).
+ */
+export function ranToItsEnd(result: ToolResultObject | string): boolean {
+  return typeof result === "object" && result.resultType === "failure" && result.textResultForLlm.startsWith(RAN_TO_ITS_END);
+}
+
 /** The result the model gets for how a run ended (§3.8.6). */
 function resultOf(exit: RunExit, shaped: string, o: { label: string; timeoutS: number; redact: (s: string) => string }): ToolResultObject {
   switch (exit.ended) {
     case "exit":
       if (exit.code === 0) return done(shaped);
-      return fail(`It ended with ${exit.code !== null ? `exit code ${exit.code}` : exit.signal ? `signal ${exit.signal}` : "no exit code"}.\n${shaped}`);
+      return fail(`${RAN_TO_ITS_END}${exit.code !== null ? `exit code ${exit.code}` : exit.signal ? `signal ${exit.signal}` : "no exit code"}.\n${shaped}`);
     case "stopped-user":
       return fail(`The user stopped it after ${seconds(exit.ms)} s. Don't run it again unless they ask.\n${shaped}`);
     case "stopped-task":

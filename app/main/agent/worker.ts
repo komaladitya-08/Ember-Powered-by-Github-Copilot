@@ -54,7 +54,7 @@ import type { ActStamp, PerceptionPort, SidecarPort } from "../perception/ports"
 import type { TargetBinding } from "../targets/types";
 import type { CommandService, ShellId } from "../commands/types";
 import type { TargetId } from "../../shared/targets";
-import { placeName, runCommandTool, whereWords, type CommandFlowContext } from "../commands/flow";
+import { placeName, ranToItsEnd, runCommandTool, whereWords, type CommandFlowContext } from "../commands/flow";
 import { LOCKED_SCREEN } from "../screen-lock";
 
 /**
@@ -246,12 +246,31 @@ const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 /**
- * To a call the model sent in the same reply as one that then wasn't done (a "Not now", an unanswered question, a
- * refusal, a failure): it was planned on that step going ahead, so it does nothing (tasks-approvals-c7-1).
+ * To a call the model sent in the same reply as one that then wasn't done: it was planned on that step going ahead, so
+ * it does nothing (tasks-approvals-c7-1). `no`: behind a "Not now", an unanswered question or a refusal; `failed`:
+ * behind a step that didn't work, where nobody said no to anything (tasks-approvals-x7-1).
  */
-const QUEUED_BEHIND_UNDONE = "An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened and decide afresh; don't retry or work around a step the user said no to.";
+const QUEUED_BEHIND_UNDONE = {
+  no: "An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened and decide afresh; don't retry or work around a step the user said no to.",
+  failed: "An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened to that step and decide afresh.",
+} as const;
 /** Calls that change nothing in the user's apps: they still run behind a step that wasn't done. */
 const CHANGES_NOTHING: ReadonlySet<string> = new Set(["perceive_window", "list_windows", "report_progress"]);
+/** Reads, notes and the card's views: one that fails says nothing of the user's apps, so it holds nothing back. */
+const ONLY_REPORTS: ReadonlySet<string> = new Set([...CHANGES_NOTHING, "show_view", "update_view"]);
+
+/**
+ * Whether a call's result means a step wasn't done, so that the calls sent in one reply with it are held back, and how:
+ * `no` for any call turned down, unanswered, refused or stopped; `failed` for a step that didn't work. A read, a
+ * progress note or a card view that failed (its arguments too) is no step in the user's apps, and a command that ran
+ * and ended with an exit code was done: neither holds anything back (tasks-approvals-x7-1, -x7-2).
+ */
+export function leftUndone(name: string, result: ToolResultObject | string): "no" | "failed" | null {
+  if (typeof result !== "object") return null;
+  if (result.resultType === "denied") return "no";
+  if (result.resultType !== "failure" || ONLY_REPORTS.has(name)) return null;
+  return name === "run_command" && ranToItsEnd(result) ? null : "failed";
+}
 /**
  * A step that can't be done because the accessibility helper can't work here at all (helperCantRun: its Python
  * bindings missing, macOS not having given Ember the Accessibility permission, the helper unable to start;
@@ -1516,11 +1535,14 @@ export class Worker {
 
   /** The tool call in progress (or queued last): the next one waits for it. */
   private toolTurn: Promise<unknown> = Promise.resolve();
-  /** How many calls of this task were not done so far: turned down, unanswered, refused, or failed. */
+  /** How many steps of this task were not done so far: turned down, unanswered, refused, or failed (`leftUndone`). */
   private undone = 0;
   /** The ids of the calls the model's latest reply held, and whether one of them wasn't done. */
   private replyCalls: ReadonlySet<string> = new Set();
   private replyUndone = false;
+  /** How the latest step that wasn't done ended (`leftUndone`), and whether the call that runs now was held back for it. */
+  private undoneHow: "no" | "failed" = "no";
+  private heldBack = false;
   /** The call that runs now was sent in one reply with a step that then wasn't done: before the model knew of it. */
   private behindUndone(undoneWhenQueued: number): boolean {
     return this.undone !== undoneWhenQueued || (this.replyUndone && this.callId !== undefined && this.replyCalls.has(this.callId));
@@ -1532,7 +1554,10 @@ export class Worker {
 
   private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number, undoneWhenQueued = this.undone): Promise<ToolResultObject | string> {
     const result = await this.runQueued(name, parameters, handler, raw, maxSteps, undoneWhenQueued);
-    if (typeof result === "object" && (result.resultType === "denied" || result.resultType === "failure")) {
+    const how = leftUndone(name, result);
+    if (how) {
+      // A call held back here keeps how the step ahead of it ended: it was no answer of its own.
+      if (!this.heldBack) this.undoneHow = how;
       this.undone++;
       if (this.callId !== undefined && this.replyCalls.has(this.callId)) this.replyUndone = true;
     }
@@ -1543,16 +1568,19 @@ export class Worker {
     // A step held to go ahead without asking that its own call didn't take (a password prompt, the keyboard or the desk
     // refused it) is never written by a later call's action entry, after its refusal (safety-privacy-r4-1).
     this.ahead = null;
+    this.heldBack = false;
     if (this.halted) return STOPPED();
     if (this.result) return denied("The task is already finished. Stop now.");
     // Asked for its summary (its turn ended without one): nothing more is done in the user's apps.
     if (this.wrappingUp && name !== "finish_task" && name !== "report_progress") return denied("The task is over: call finish_task now with what you already did. Do nothing else.");
     // Sent in one reply with a step that then wasn't done (the user's "Not now", a question nobody answered, a refusal,
-    // a failure): the model planned this one on that step going ahead, before it knew. It does nothing in the user's
-    // apps and asks nothing; the model hears so and decides again (tasks-approvals-c7-1). Reading still goes on.
-    if (this.behindUndone(undoneWhenQueued) && !CHANGES_NOTHING.has(name)) {
+    // a step that didn't work: `leftUndone`): the model planned this one on that step going ahead, before it knew. It
+    // does nothing in the user's apps and asks nothing; the model hears so and decides again (tasks-approvals-c7-1).
+    // Reading still goes on.
+    this.heldBack = this.behindUndone(undoneWhenQueued) && !CHANGES_NOTHING.has(name);
+    if (this.heldBack) {
       this.activity({ type: "denied" });
-      return denied(QUEUED_BEHIND_UNDONE);
+      return denied(QUEUED_BEHIND_UNDONE[this.undoneHow]);
     }
     if (++this.steps > maxSteps) {
       this.limitHit = true;
