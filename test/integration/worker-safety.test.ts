@@ -30,11 +30,13 @@ import { SettingsStore } from "../../app/main/settings";
 import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import type { Logger } from "../../app/main/logger";
 import type { OS } from "../../app/shared/shortcuts";
+import { ActivityLog, type ActivityEvent } from "../../app/main/agent/activity";
+import { STATUS_WORDS } from "../../app/shared/activity";
 
 const { id: runtimeId, exe } = runtimeFor(process.platform as OS, process.arch);
 
 type Msg = { role: string; content: unknown };
-type Reply = { text?: string; reasoning?: string; tool?: { name: string; args: Record<string, unknown> } };
+type Reply = { text?: string; reasoning?: string; tool?: { name: string; args: Record<string, unknown> }; tools?: { name: string; args: Record<string, unknown> }[] };
 const text = (m: Msg) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content));
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -112,6 +114,7 @@ function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
   grants?: Record<string, Grant>; confirmer?: Confirmer; flyTo?: WorkerDeps["flyTo"]; limits?: WorkerDeps["limits"]; target?: { title: string; app?: string };
   progress?: (s: string) => void; id?: string; cursor?: WorkerDeps["cursor"]; clipboard?: WorkerDeps["clipboard"];
   desk?: WorkerDeps["desk"]; model?: string | null; isTerminalApp?: (name: string) => boolean; userWords?: string; screen?: string; agreed?: Agreement[];
+  onActivity?: WorkerDeps["onActivity"];
 } = {}) {
   const settings = new SettingsStore(path.join(dir, `settings-${Math.random()}.json`));
   settings.load();
@@ -131,6 +134,7 @@ function makeWorker(screen: ReturnType<typeof fakeScreen>, goal: string, o: {
     cursor: o.cursor,
     clipboard: o.clipboard,
     desk: o.desk,
+    onActivity: o.onActivity,
   } as unknown as WorkerDeps, { id: o.id ?? Math.random().toString(36).slice(2, 8), goal, target: o.target ?? { title: "Test Window" }, ...(o.userWords !== undefined ? { userWords: o.userWords } : {}), ...(o.agreed ? { agreed: o.agreed } : {}), ...(o.screen ? { screen: o.screen } : {}) });
   made.push(w);
   return w;
@@ -1743,6 +1747,46 @@ describe("review round 3: what Ember asks about is what it does", () => {
         expect(keys).toEqual(["ctrl+Home", "shift+End", "ctrl+b"]);
       });
     });
+  });
+});
+
+describe("several calls in one reply", () => {
+  const perceive: Reply = { tool: { name: "perceive_window", args: {} } };
+  const finish: Reply = { tool: { name: "finish_task", args: { success: false, summary: "not done" } } };
+  const WIZARD: FakeNode[] = [{ id: 1, role: "push button", name: "Delete all" }, { id: 2, role: "push button", name: "Next" }];
+  const saysNo = (asked: string[]) => {
+    const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0 });
+    // A moment to answer: every call of the reply has begun by then, as it has for a person.
+    c.ask = async q => { asked.push(q.prompt); await sleep(150); return "deny"; };
+    return c;
+  };
+  /** The task's card after `events`, as TaskManager keeps it. */
+  const cardOf = (events: ActivityEvent[]) => {
+    const l = new ActivityLog(0);
+    events.forEach((e, i) => l.add(e, (i + 1) * 10));
+    l.add({ type: "end", status: "done" }, (events.length + 1) * 10);
+    return l;
+  };
+
+  it("the card shows the step the user turned down as stopped and the read after it as done, never the other way round (tasks-approvals-c5-1)", async () => {
+    scripts.set("Tidy the wizard (card)", m => [perceive, { tools: [{ name: "click", args: { id: 1 } }, { name: "perceive_window", args: {} }] }][steps(m)] ?? finish);
+    const asked: string[] = [];
+    const events: ActivityEvent[] = [];
+    const screen = fakeScreen(WIZARD);
+    await makeWorker(screen, "Tidy the wizard (card)", { confirmer: saysNo(asked), userWords: "Delete all the old notes", onActivity: e => events.push(e) }).run(new AbortController().signal);
+    expect(asked).toEqual(["Click the “Delete all” button in Testapp?"]);
+    expect(screen.log).toEqual([]);
+    // Both calls were under way on the card before the question was answered, and the no names its own call.
+    const starts = events.filter(e => e.type === "tool-start").map(e => (e as { id: string }).id);
+    const no = events.find(e => e.type === "denied") as { id?: string };
+    expect(no.id).toBe(starts[1]);
+    expect(events.findIndex(e => e.type === "tool-start" && e.id === starts[2])).toBeLessThan(events.findIndex(e => e.type === "answer"));
+    const l = cardOf(events);
+    expect(l.card().rows.map(r => [r.state, r.words])).toEqual([
+      ["done", "Read the window"], ["stopped", "Tried to click in Testapp"], ["done", "Read the window in Testapp"],
+      ["stopped", "Asked you: you said not now"], ["done", STATUS_WORDS.done],
+    ]);
+    expect(l.get().failedSteps).toBe(0);
   });
 });
 

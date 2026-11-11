@@ -1427,6 +1427,9 @@ export class Worker {
 
   /** Tells the task's activity (its card); a listener's fault never stops the task. */
   private activity(e: ActivityEvent): void {
+    // A step turned down or refused names its call: the calls of one reply are all under way on the card at once, and
+    // only this one was decided (tasks-approvals-c5-1).
+    if ((e.type === "refused" || e.type === "denied") && this.callId) e = { ...e, id: this.callId };
     try { this.d.onActivity?.(e); } catch (err) { this.d.log.warn("worker.activity_failed", { err }); }
   }
 
@@ -1488,8 +1491,12 @@ export class Worker {
     const maxSteps = this.d.limits?.maxSteps ?? 150;
     return defineTool(name, {
       description, parameters, skipPermission: true, defer: "never",
-      handler: (raw: unknown) => {
-        const run = this.toolTurn.then(() => this.runTool(name, parameters, handler, raw, maxSteps));
+      handler: (raw: unknown, invocation?: { toolCallId?: string }) => {
+        const callId = typeof invocation?.toolCallId === "string" && invocation.toolCallId ? invocation.toolCallId : undefined;
+        const run = this.toolTurn.then(() => {
+          this.callId = callId;
+          return this.runTool(name, parameters, handler, raw, maxSteps).finally(() => { this.callId = undefined; });
+        });
         this.toolTurn = run.catch(() => undefined);
         return run;
       },
@@ -1498,6 +1505,8 @@ export class Worker {
 
   /** The tool call in progress (or queued last): the next one waits for it. */
   private toolTurn: Promise<unknown> = Promise.resolve();
+  /** The runtime's id of the call that runs now (the id of its tool-start): what a refusal's row is matched by. */
+  private callId: string | undefined;
   /** The turn ended without finish_task and only its summary is asked for now. */
   private wrappingUp = false;
 

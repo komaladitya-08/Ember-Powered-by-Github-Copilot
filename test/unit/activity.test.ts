@@ -202,6 +202,46 @@ describe("the details' rows", () => {
     expect(card.summary ?? "").not.toMatch(/didn't work/);
   });
 
+  it("show the step the user turned down as stopped and the one after it as done, when one reply held both (tasks-approvals-c5-1)", () => {
+    const { l } = log();
+    // The runtime begins every call of a reply at once; the worker runs them in order, so the first is the one asked about.
+    l.add({ type: "tool-start", id: "a", tool: "click", step: stepOf("click"), app: "Mail" }, T0);
+    l.add({ type: "tool-start", id: "b", tool: "type_text", step: stepOf("type_text"), app: "Notes" }, T0 + 1);
+    l.add({ type: "question" }, T0 + 5);
+    l.add({ type: "answer", answer: "declined" }, T0 + 10);
+    l.add({ type: "denied", id: "a" }, T0 + 11);
+    l.add({ type: "tool-end", id: "a", ok: false }, T0 + 12);
+    l.add({ type: "tool-end", id: "b", ok: true }, T0 + 20);
+    expect(l.card().rows.map(r => [r.state, r.words])).toEqual([
+      ["stopped", "Tried to click in Mail"], ["done", "Typed text in Notes"], ["stopped", "Asked you: you said not now"],
+    ]);
+    expect(l.get().failedSteps).toBe(0);
+    expect(l.card().summary ?? "").not.toMatch(/didn't work/);
+  });
+
+  it("put a refusal on the step that was refused, and leave the step queued behind it to end as it really did (tasks-approvals-c5-1)", () => {
+    const { l } = log();
+    l.add({ type: "tool-start", id: "a", tool: "click", step: stepOf("click"), app: "Mail" }, T0);
+    l.add({ type: "tool-start", id: "b", tool: "type_text", step: stepOf("type_text"), app: "Notes" }, T0 + 1);
+    // A refusal is followed by the call's own "denied": neither may touch the other step.
+    l.add({ type: "refused", reason: "a view holding a password or key", id: "a" }, T0 + 5);
+    l.add({ type: "denied", id: "a" }, T0 + 5);
+    l.add({ type: "tool-end", id: "a", ok: false }, T0 + 6);
+    l.add({ type: "tool-end", id: "b", ok: true }, T0 + 20);
+    expect(l.card().rows.map(r => [r.state, r.words])).toEqual([
+      ["done", "Typed text in Notes"], ["stopped", "Not allowed: a view holding a password or key"],
+    ]);
+    expect(l.get().failedSteps).toBe(0);
+    // With no id (an older caller), the first step under way is the one decided: tools run in the order called.
+    const old = log().l;
+    old.add({ type: "tool-start", id: "a", tool: "click", step: stepOf("click"), app: "Mail" }, T0);
+    old.add({ type: "tool-start", id: "b", tool: "type_text", step: stepOf("type_text"), app: "Notes" }, T0 + 1);
+    old.add({ type: "denied" }, T0 + 5);
+    old.add({ type: "tool-end", id: "a", ok: false }, T0 + 6);
+    old.add({ type: "tool-end", id: "b", ok: true }, T0 + 20);
+    expect(old.card().rows.map(r => [r.state, r.words])).toEqual([["stopped", "Tried to click in Mail"], ["done", "Typed text in Notes"]]);
+  });
+
   it("keep an app's name short, and quote one another computer named over SSH (UI audit)", () => {
     expect(cardApp("Text Editor")).toBe("Text Editor");
     const long = cardApp("A window title that some app put in its WM_CLASS to look official");
