@@ -535,7 +535,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
-  it("(aj) Home holds an edit of my provider in use to another host until its note is agreed and it answers: requests stay with the one in use, and a failed check or Keep using changes nothing (integrations-c3-1)", async () => {
+  it("(aj) Home holds an edit of my provider in use to another host until its note is agreed and it answers: requests stay with the one in use, and a failed check or Keep using changes nothing; the lines under it say that once (integrations-c3-1, -r7-3)", async () => {
     const using = "127.0.0.1:18308";
     const service = { kind: "user", host: using };
     const p = await open({ home: true, liveState: true, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
@@ -547,7 +547,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.keyboard.press("Tab");
     await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
     expect(await p.locator("#byok-consent-text").innerText()).toContain("to 127.0.0.1:18309 instead");
-    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`Read the note above: Ember still uses ${using}, and sends nothing to 127.0.0.1:18309 until you agree.`);
+    // The two lines under the group say it once between them: what waits, then what is still in use (integrations-r7-3).
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Read the note above: Ember sends nothing to 127.0.0.1:18309 until you agree.");
     expect(await p.locator("#byok-hint").innerText()).toBe(`Ember still uses ${using}. Agree to use 127.0.0.1:18309 to switch.`);
     expect(await p.locator("#byok-no").innerText()).toBe(`Keep using ${using}`);
     expect(await p.locator("#byok-test").isDisabled()).toBe(true);

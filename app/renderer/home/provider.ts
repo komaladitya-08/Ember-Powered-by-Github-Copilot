@@ -13,7 +13,7 @@ import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, heldAnswer, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { noteProviderChoice } from "./provider-choice";
-import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, providerHeldUnlisted, providerHint, providerTestText, providerTestWaits } from "./copy";
+import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldUnlisted, providerHint, providerTestText, providerTestWaits } from "./copy";
 import { providerFailField, providerKeepLabel } from "./first-run-copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
@@ -208,7 +208,7 @@ function draw(): void {
   $("byok-consent").hidden = !asking;
   // The card came up for an address just entered (Tab has moved on to the next field): said, never silent (integrations-7).
   if (announceFor !== null && host === announceFor) {
-    if (asking && cardHost !== host && !$("byok-consent").contains(document.activeElement)) say(held ? providerHeldShown(held.from, host) : providerCardShown(host));
+    if (asking && cardHost !== host && !$("byok-consent").contains(document.activeElement)) say(providerCardShown(host));
     announceFor = null;
   }
   // The host the card names, remembered: "I agree" is for it, whatever the field says by the time it is clicked.

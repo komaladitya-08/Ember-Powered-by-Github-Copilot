@@ -26,7 +26,7 @@ import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
 import { friendlyError, lostWords } from "../../app/main/agent/presenter";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerAgreedUnlisted, providerHeldUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldShown, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerAgreedUnlisted, providerHeldUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -939,7 +939,6 @@ describe("the Model provider group's words (Copilot section)", () => {
   it("says, while an edit of my provider in use to another host waits for its note, that the one in use still answers, and that a failed check changed nothing (integrations-c3-1)", () => {
     expect(providerHeldHint("127.0.0.1:18308", "127.0.0.1:18309")).toBe("Ember still uses 127.0.0.1:18308. Agree to use 127.0.0.1:18309 to switch.");
     expect(providerHeldHint("127.0.0.1:18308", null)).toBe("Ember still uses 127.0.0.1:18308. Enter the new address to switch.");
-    expect(providerHeldShown("127.0.0.1:18308", "127.0.0.1:18309")).toBe("Read the note above: Ember still uses 127.0.0.1:18308, and sends nothing to 127.0.0.1:18309 until you agree.");
     expect(providerHeldChecking("127.0.0.1:18309")).toBe("Checking 127.0.0.1:18309…");
     expect(providerHeldKept("127.0.0.1:18308", "Ember can't reach 127.0.0.1:18309. Check the address and the network.")).toBe("Ember can't reach 127.0.0.1:18309. Check the address and the network. Nothing has changed: Ember still uses 127.0.0.1:18308.");
     expect(providerHeldKept("127.0.0.1:18308")).toBe("Nothing has changed: Ember still uses 127.0.0.1:18308.");

@@ -599,8 +599,6 @@ export const PROVIDER_WORDS = {
 export function providerHeldHint(from: string, to: string | null): string {
   return to ? `Ember still uses ${from}. Agree to use ${to} to switch.` : `Ember still uses ${from}. Enter the new address to switch.`;
 }
-/** Said as the note comes up for that edit (focus has moved on), in place of providerCardShown. */
-export const providerHeldShown = (from: string, to: string) => `Read the note above: Ember still uses ${from}, and sends nothing to ${to} until you agree.`;
 /** Its "I agree" asks the new details first, as Test connection would. */
 export const providerHeldChecking = (to: string) => `Checking ${to}…`;
 /** The check failed (`why`: main's sentence), or the edit was put away: nothing was saved. */
@@ -613,7 +611,11 @@ export const providerHeldUnlisted = (from: string, why: string) => `${why} Nothi
 /** A key typed for that edit is saved with its yes, never for the host still in force. */
 export const providerHeldKey = (to: string | null) => (to ? `Ember saves this key with the new address once you agree to use ${to}.` : "Enter the service's address first.");
 
-/** Said when the card appears for an address just entered: focus has moved on, so it is announced (integrations-7, WCAG 4.1.3). */
+/**
+ * Said when the card appears for an address just entered: focus has moved on, so it is announced (integrations-7, WCAG
+ * 4.1.3). For a held edit too: that the host in force still answers is the hint's to say, directly below, once
+ * (integrations-r7-3).
+ */
 export const providerCardShown = (host: string) => `Read the note above: Ember sends nothing to ${host} until you agree.`;
 /** Said once the card is agreed to, in place of the line above (integrations-r4). */
 export const providerAgreedText = (host: string) => `Agreed. Ember now sends your requests to ${host}.`;

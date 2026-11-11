@@ -1091,8 +1091,8 @@ held edit is), so the provider in use never leaves force for Copilot between, an
 Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
 held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
 answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
-up for the new host, the status line says "Read the note above: Ember still uses <host in force>, and sends nothing to
-<new host> until you agree.", the hint "Ember still uses <host in force>. Agree to use <new host> to switch.", the card's
+up for the new host, the status line says "Read the note above: Ember sends nothing to <new host> until you agree."
+(as for any address just entered: the line below it says the rest once, integrations-r7-3), the hint "Ember still uses <host in force>. Agree to use <new host> to switch.", the card's
 quiet button reads "Keep using <host in force>" (it puts the details in force back, saving nothing), and a key typed for
 the new host waits in its field. "I agree" checks the held details with the same GET ("Checking <new host>…"); one that
 fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
