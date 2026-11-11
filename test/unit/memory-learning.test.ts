@@ -1068,6 +1068,16 @@ describe("Home's words for memory", () => {
     expect(aboutYouSpoken(false)).toBe("Ember won't speak its replies now. You can change that in Voice.");
   });
 
+  it("says since which day a replaced fact is no longer true, after where it came from (memory-c7-2)", () => {
+    const day = new Date("2026-11-12T10:00:00Z").toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" });
+    expect(day).toContain("2026");
+    expect(memoryProvenanceLabel("user", undefined, undefined, "2026-11-12T10:00:00Z")).toBe(`You told me · No longer true since ${day}`);
+    expect(memoryProvenanceLabel("conversation", "2026-11-04T12:00:00Z", undefined, "2026-11-12T10:00:00Z")).toBe(`From our conversation · Corrected by you · No longer true since ${day}`);
+    // A date that can't be read still says what the row is.
+    expect(memoryProvenanceLabel("user", undefined, undefined, "soon")).toBe("You told me · No longer true");
+    expect(memoryProvenanceLabel("user")).toBe("You told me");
+  });
+
   it("says memory is paused for someone who agreed to the first note, until they agree to the new one", () => {
     expect(memoryPaused({ on: true, consent: { version: 1 } })).toBe(true);
     expect(memoryPaused({ on: true, consent: { version: 2 } })).toBe(true);

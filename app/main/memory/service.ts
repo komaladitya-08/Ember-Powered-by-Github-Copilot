@@ -38,7 +38,11 @@ export const UNDO_FORGET_MS = MEMORY_UNDO_MS;
  * One remembered fact as Settings lists it. `kind`: one of Ember's own notes, its summary of a subject or a guess drawn
  * from several facts (./refine.ts), which Home labels as Ember's rather than as the conversation (memory-3).
  */
-export interface MemoryItem { id: string; text: string; source: Source; at: string; revision?: number; correctedAt?: string; kind?: "summary" | "guess" }
+export interface MemoryItem {
+  id: string; text: string; source: Source; at: string; revision?: number; correctedAt?: string; kind?: "summary" | "guess";
+  /** Since when it is no longer true (a newer fact replaced it): kept as history, listed only by `review` (memory-c7-2). */
+  until?: string;
+}
 
 /** Which of Ember's own notes a fact is, if it is one (`summary`, `reflection`). */
 export const noteKind = (f: Pick<Fact, "predicate">): MemoryItem["kind"] => (f.predicate === "summary" ? "summary" : f.predicate === "reflection" ? "guess" : undefined);
@@ -46,7 +50,8 @@ export const noteKind = (f: Pick<Fact, "predicate">): MemoryItem["kind"] => (f.p
 const memoryItem = (f: Fact): MemoryItem => {
   const kind = noteKind(f);
   return { id: f.id, text: f.text, source: f.source, at: f.validAt,
-    ...(f.revision === undefined ? {} : { revision: f.revision }), ...(f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt }), ...(kind ? { kind } : {}) };
+    ...(f.revision === undefined ? {} : { revision: f.revision }), ...(f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt }), ...(kind ? { kind } : {}),
+    ...(f.invalidAt ? { until: f.invalidAt } : {}) };
 };
 
 /** What is wrong with memory.json this run (MemoryService.trouble; memory-r2). */
@@ -272,10 +277,12 @@ export class MemoryService {
     return this.forgetCounted(id, reopen) !== null;
   }
 
-  /** The words of an open fact, or null (forget_memory checks the user asked about it: memory-v2). */
+  /**
+   * The words of a kept fact, or null (forget_memory checks the user asked about it: memory-v2). What is no longer
+   * true has words too: recall gives the model its id, and the user may ask for it to go (memory-c7-2).
+   */
   factText(id: string): string | null {
-    const f = this.g.fact(id);
-    return f && !f.invalidAt ? f.text : null;
+    return this.g.fact(id)?.text ?? null;
   }
 
   /**
@@ -293,8 +300,8 @@ export class MemoryService {
     const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
     const f = next.fact(id)!;
     const notes = next.notesFrom(id);
-    // The notes the user could see in the list: older closed ones are history.
-    const shownNotes = notes.filter(n => !next.fact(n)!.invalidAt).length;
+    // The notes the user could see in the list: Settings lists the closed ones too (memory-c7-2).
+    const shownNotes = notes.length;
     let reopened = 0;
     // What the fact itself gives back, in its words, so whoever says what went says this too (memory-12).
     const back = reopen && !f.invalidAt ? next.allFacts().filter(o => o.supersededBy === id && !notes.includes(o.id)).map(o => o.text) : [];
@@ -390,6 +397,17 @@ export class MemoryService {
     return this.g.allFacts(true)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
       .map(memoryItem);
+  }
+
+  /**
+   * Everything kept, for Settings › Memory (memory-c7-2): what holds now as `list` gives it, then what is no longer
+   * true (`until`), most recently replaced first. That history stays on disk for HISTORY_DAYS and recall can give it
+   * to the model as what used to be true, so the user can see it and forget it.
+   */
+  review(): MemoryItem[] {
+    const closed = this.g.allFacts().filter(f => f.invalidAt)
+      .sort((a, b) => b.invalidAt!.localeCompare(a.invalidAt!) || b.id.localeCompare(a.id));
+    return [...this.list(), ...closed.map(memoryItem)];
   }
 
   /** Joins the current sleep-time pass. False if it was cancelled or no longer allowed. */

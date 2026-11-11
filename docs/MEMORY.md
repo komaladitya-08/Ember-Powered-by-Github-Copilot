@@ -50,7 +50,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     preference takes the predicate of the one it closed, so "Prefers long answers" after About you's "Prefers short
     answers" is the answer length in the profile sent with every request (memory-r1). A
     weaker source never closes what the user said,
-    and the closed fact stays as history, so Undo of the newer puts it back.
+    and the closed fact stays as history, so Undo of the newer puts it back. History is the user's to see too:
+    Settings › Memory lists it after what holds now (`MemoryService.review`, each row "… · No longer true since
+    <date>", with Forget and no Correct…), counts it, and `forget_memory` can forget one the user names, since it stays
+    on disk for 180 days and recall can give it to the model as what used to be true (memory-c7-2).
 - `recall.ts`: BM25 over fact text plus entity names. The matched facts and named entities then seed a Personalized
   PageRank over the bipartite entity–fact graph:
   - edges into an entity are weighted by inverse degree, so a hub such as "User" doesn't spread the walk to

@@ -225,6 +225,8 @@ runtime. It does not change the app's consent or speaking settings.
   - Switching memory off stops remembering and recall during existing turns too. Pending recall is dropped on
     Stop or Forget; unchecked speech never counts as your own words when a fact is saved.
   - It keeps this in `memory.json` in its data folder (mode 0600).
+  - A fact that a newer one replaced is kept for 180 days as what used to be true. Settings › Memory lists it
+    under what holds now, marked "No longer true since <date>", with its own Forget.
   - While it is in force, the names in what you told it (its `user` facts) also help Ember hear them right
     (app/main/personal/correct.ts); nothing more is kept for that.
   - With each request, the few facts that bear on it go to Copilot as an untrusted `<memory>` block.

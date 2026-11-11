@@ -745,10 +745,18 @@ export const MEMORY_CORRECTION = {
   failed: "Ember couldn't save this correction. Your words are still here; try again.",
 } as const;
 /** A corrected sentence still names its original source, including its original authority. */
-/** Where a listed fact came from; one of Ember's own notes says so whatever it was drawn from (memory-3). */
-export function memoryProvenanceLabel(source: string, correctedAt?: string, kind?: "summary" | "guess"): string {
+/**
+ * Where a listed fact came from; one of Ember's own notes says so whatever it was drawn from (memory-3). `until`: a
+ * newer fact replaced it then, and Ember keeps it as what used to be true (memory-c7-2).
+ */
+export function memoryProvenanceLabel(source: string, correctedAt?: string, kind?: "summary" | "guess", until?: string): string {
   const from = kind === "summary" ? "Ember's summary" : kind === "guess" ? "Ember's guess" : memorySourceLabel(source);
-  return `${from}${correctedAt ? " · Corrected by you" : ""}`;
+  return `${from}${correctedAt ? " · Corrected by you" : ""}${until ? ` · ${memoryNoLongerTrue(until)}` : ""}`;
+}
+/** A replaced fact's line: since which day it is no longer true (just the words when the date can't be read). */
+export function memoryNoLongerTrue(until: string): string {
+  const d = new Date(until);
+  return Number.isNaN(d.getTime()) ? "No longer true" : `No longer true since ${d.toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" })}`;
 }
 export const correctMemoryLabel = (text: string) => `Correct memory: ${text}`;
 /** Correction failures use main's plain bounded sentences; arbitrary IPC/filesystem details remain private. */

@@ -1633,7 +1633,8 @@ function start(): void {
     betterRecall.settingsChanged();
   });
   const memoryView = () => ({
-    rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.list() : [],
+    // What holds now, then what is no longer true: it is kept and can reach the model, so it is shown too (memory-c7-2).
+    rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.review() : [],
     ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason, erasesOnSignOut: memoryOwner.mayEraseOnSignOut,
     // After the rows, which read memory.json first: what was wrong with it, only for the account's open memory (memory-r2).
     trouble: memoryOwner.ready ? memory.trouble : null,

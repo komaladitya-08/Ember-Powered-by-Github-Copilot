@@ -1765,7 +1765,7 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
     const row = read();
     const li = document.createElement("li");
     const fact = Object.assign(document.createElement("span"), { className: "mem-fact" });
-    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memoryProvenanceLabel(row.source, row.correctedAt, row.kind) }));
+    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memoryProvenanceLabel(row.source, row.correctedAt, row.kind, row.until) }));
     const button = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
     button.setAttribute("aria-label", forgetMemoryLabel(row.text));
     button.dataset.memoryForget = "";
@@ -1780,16 +1780,22 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
     });
     const correct = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: MEMORY_CORRECTION.correct });
     correct.dataset.memoryCorrect = row.id;
-    correct.addEventListener("click", () => memoryCorrection.open(read()));
+    // What is no longer true can be forgotten, never corrected: a correction is for what holds now (memory-c7-2).
+    correct.hidden = !!row.until;
+    correct.addEventListener("click", () => { if (!read().until) memoryCorrection.open(read()); });
     const actions = Object.assign(document.createElement("div"), { className: "agent-actions" });
     actions.append(button, correct); li.append(fact, actions);
     return li;
   },
   update: (li, row) => {
     li.querySelector<HTMLElement>(".mem-fact > span")!.textContent = row.text;
-    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt, row.kind);
+    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt, row.kind, row.until);
     li.querySelector<HTMLElement>("[data-memory-forget]")!.setAttribute("aria-label", forgetMemoryLabel(row.text));
-    li.querySelector<HTMLElement>("[data-memory-correct]")!.setAttribute("aria-label", correctMemoryLabel(row.text));
+    const correct = li.querySelector<HTMLElement>("[data-memory-correct]")!;
+    correct.setAttribute("aria-label", correctMemoryLabel(row.text));
+    // Replaced while its Correct… had focus: focus goes to the row's Forget, never to the page.
+    if (row.until && !correct.hidden && document.activeElement === correct) li.querySelector<HTMLElement>("[data-memory-forget]")!.focus();
+    correct.hidden = !!row.until;
   },
 });
 function renderMemory(rows: MemoryRow[]): void {
