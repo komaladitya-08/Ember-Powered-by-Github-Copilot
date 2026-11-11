@@ -492,7 +492,7 @@ const isAffirmative = (s: string) => AFFIRMATIVE.test(normalizeLabel(s)) || AFFI
 /** A button that is only "Confirm" or "Approve": it agrees to what is asked, as "OK" does. */
 const LONE_AGREE = /^\s*(yes,?\s*)?(confirm|approve)\s*[.!]?\s*$/;
 /** Fields Ember never fills: secrets and payment details (an expiry date only beside a card: the screen reader's list has those). */
-const SECRET_FIELD = /\b(password|passphrase|passcode|pin|card ?number|credit ?card|cvv|cvc|security code|iban|routing number|account number|one-time code|otp|2fa|recovery code|secret)\b/;
+const SECRET_FIELD = /\b(password|passphrase|passcode|pass phrase|pin|card ?number|card (details|information|info)|credit ?card|debit ?card|name on (the )?card|card ?holder|cvv|cvc|security code|iban|routing number|account number|one-time code|otp|2fa|recovery code|secret)\b/;
 /**
  * Is this an authentication or security prompt (polkit, sudo, keyring…)? Ember stays out of those. By `os`'s
  * vocabulary (./vocabulary.ts): its prompts' programs and titles, and the window classes its backend reports as the

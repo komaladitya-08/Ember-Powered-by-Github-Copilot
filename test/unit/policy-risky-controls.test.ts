@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PolicyEngine, type ActionRequest } from "../../app/main/policy/policy";
+import { PolicyEngine, isSecretField, type ActionRequest } from "../../app/main/policy/policy";
 import { ALL_SCOPES } from "../../app/main/policy/autonomy";
 
 /**
@@ -101,5 +101,18 @@ describe("a button with no name, or only a symbol for one", () => {
     expect(engine().decide(bare("Next")).verdict).toBe("allow");
     expect(engine().decide(bare("", { element: { role: "link", name: "" } })).verdict).toBe("allow");
     expect(engine().decide(bare("", { app: "gedit", window: "notes.txt", inPage: undefined, place: { role: "tool bar", name: "Tools" } })).verdict).toBe("allow");
+  });
+});
+
+describe("payment and secret fields Ember never fills", () => {
+  it.each(["Card details", "Card information", "Debit card", "Name on card", "Cardholder name", "Pass phrase"])("refuses to type into “%s” (safety-privacy-r7-2)", name => {
+    expect(isSecretField(name)).toBe(true);
+    for (const kind of ["text", "cursor_text", "keys"] as const) {
+      expect(engine(true).decide(click(name, { kind, value: kind === "keys" ? "4" : "4111 1111 1111 1111", element: { role: "entry", name } })).verdict).toBe("deny");
+    }
+  });
+
+  it.each(["Business card title", "Details", "Token", "Expiry", "Phrase"])("still types into “%s”", name => {
+    expect(isSecretField(name)).toBe(false);
   });
 });

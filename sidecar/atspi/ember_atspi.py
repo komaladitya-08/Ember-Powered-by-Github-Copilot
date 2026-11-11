@@ -147,6 +147,7 @@ SECRET_WORDS = [
     "κωδικ(ού|ό) πρόσβασης", "пароль", "лозинка", "kata sandi", "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?s?",
     # Cards and bank accounts. An expiry date only beside a card ("Expiration date of the report" is not one).
     "card ?(number|no)s?", "credit ?cards?", "cvv2?", "cvc2?", "csc", "security codes?", "card verification",
+    "card (details|information|info)", "debit ?cards?", "name on (the )?card", "card ?holder( name)?", "pass phrases?",
     "card (expir(y|ation)|exp)", "mm ?/ ?(yy|aa|jj){1,2}", "valid (thru|through)", "kartennummer", "kreditkarte(nnummer)?",
     "prüfziffer", "prüfnummer", "sicherheitscode", "ablaufdatum der karte", "num(é|e)ro de (la )?carte", "cryptogramme",
     "date d['’]expiration de (la )?carte", "n(ú|u)mero de (la )?tarjeta", "n(ú|u)mero do cart(ã|a)o", "numero (di|della) carta",
