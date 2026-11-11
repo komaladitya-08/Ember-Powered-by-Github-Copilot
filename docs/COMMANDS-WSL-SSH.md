@@ -295,7 +295,8 @@ this does."), whatever it does:
   `[[ -n "$CI" ]]`), two texts (`=`, `==`, `!=`), two whole numbers (`-lt`, `-eq`) or two files (`-nt`), each a plain
   word or one word in double quotes. So `[[ -f package.json ]] && echo yes` runs as `[ -f package.json ] && echo yes`
   does, and `[[ -d build ]] && rm -rf build` asks (never with a Stop). Any other test asks: a variable outside
-  quotes, a pattern, `&&`, `||`, `!`, `=~`, `-v`, `~`. (In a script, a plain one is read; below.)
+  quotes, a pattern, `&&`, `||`, `!`, `=~`, `-v`, `~`, a word that holds `[[` or `]]`. (In a script, a plain one
+  is read; below.)
 - **text Ember can't see.** A `read`, `mapfile`, `readarray`, `select` or `getopts`, in an `if`, a loop or neither,
   asks ("It works on text Ember can't see.") whatever its variables are used for afterwards, unless it reads its own
   input and that is a here-string or here-document of written-out text (`read -r a b <<< 'x y'`, `if read -r l <<<

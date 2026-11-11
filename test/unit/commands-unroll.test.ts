@@ -165,6 +165,8 @@ describe("a simple [[ … ]] test written as [ … ] (commands-remote-r6-2)", ()
       "[[ a =~ b ]]", "[[ a < b ]]", "[[ -v x ]]", "[[ -o errexit ]]", "[[ -t 1 ]]", "[[ -f 'a b' ]]", "[[ -f ~/x ]]", "[[ -f x -a -d y ]]", "[[ ( -f x ) ]]", "[[ -n $(ls) ]]",
       "[[ -n \"$(ls)\" ]]", "[[ -n \"`ls`\" ]]", "[[ -f x ]] > out", "[[ -f x]] && ls", "X=1 [[ -f x ]]", "if [[ -f x ]]; then ls; fi", "while [[ -f x ]]; do ls; done",
       "for f in a b; do [[ -f x ]] && echo $f; done", "[[ -f x ]] && { ls; }", "[[ -f x ]] && (ls)", "! [[ -f x ]]", "[[ -f x ]]; [[ $y ]]", "[[ -n \"a\"\"b\" ]]", "[[ -f -x ]]",
+      // An operand that holds the test's own brackets: the comparison with main can't write it out to prove it.
+      "[[ -e \"[[\" ]] || cat x", "[[ \"[[\" = \"]]\" ]]", "[[ x == \"[[\" ]] || cat x", "[[ -n \"a]]b\" ]]",
     ]) expect(plainTests(line), line).toBeNull();
   });
 });

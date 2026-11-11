@@ -391,8 +391,11 @@ const UNARY: ReadonlySet<string> = new Set(["-e", "-f", "-d", "-r", "-w", "-x", 
 const TEXT_BINARY: ReadonlySet<string> = new Set(["=", "==", "!="]);
 const NUMBER_BINARY: ReadonlySet<string> = new Set(["-eq", "-ne", "-lt", "-le", "-gt", "-ge"]);
 const FILE_BINARY: ReadonlySet<string> = new Set(["-nt", "-ot", "-ef"]);
-/** A test's operand `[` reads as `[[` does: a plain word that isn't an operator, or one word in double quotes. */
-const operand = (w: Tok): boolean => !w.target && !w.single && (/^[A-Za-z0-9_./:@%+,][A-Za-z0-9_./:@%+,-]*$/.test(w.raw) || /^"[^"]*"$/.test(w.raw));
+/**
+ * A test's operand `[` reads as `[[` does: a plain word that isn't an operator, or one word in double quotes. Never one
+ * that holds `[[` or `]]` itself (`[[ -e "[[" ]]`): the comparison with main can't write that test out to prove it.
+ */
+const operand = (w: Tok): boolean => !w.target && !w.single && !/\[\[|\]\]/.test(w.raw) && (/^[A-Za-z0-9_./:@%+,][A-Za-z0-9_./:@%+,-]*$/.test(w.raw) || /^"[^"]*"$/.test(w.raw));
 const numeral = (w: Tok): boolean => /^(0|[1-9][0-9]{0,8})$/.test(w.raw);
 
 /**
