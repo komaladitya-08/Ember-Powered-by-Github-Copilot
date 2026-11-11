@@ -942,6 +942,12 @@ regression alongside the Electron smoke.
   With `--compositor --settle 70 --sample 30` on 4 shared vCPUs (2026-11-08), the listening process took 238–244 MB on
   the C API against 402–403 MB on WebAssembly: 695–785 MB and 14.2–15.4 % of a core in all, against 942–947 MB and
   14.3–15.5 % (Ember's other processes vary by about 90 MB from run to run).
+- The script connects no model, so its totals leave out the Copilot runtime, which is a process of Ember's whenever
+  you are signed in (or use your own provider). Started beside the scripted mock model with Home open and listening
+  off (2026-11-11; PSS from `/proc/<pid>/smaps_rollup`, 70 s to settle, 30 s sampled, two runs on 4 shared vCPUs), the
+  Copilot runtime took 97–105 MB at rest, in 520–554 MB for all of Ember. Add it to the figures above for what a
+  signed-in person sees while Ember is idle and listening: about 792–890 MB on the C API and 1,039–1,052 MB on
+  WebAssembly. The README's requirement (about 900 MB, about 1.1 GB on WebAssembly) is the top of each, rounded up.
 - The voice process must listen from the sample's start to its end, or the total leaves it out: the script takes the
   process list as the sample begins and reads each process's memory as it ends, and reads Ember's log at both points.
   The first line then says "not throughout the sample" and the JSON's `listeningGap` says why in three cases. No voice

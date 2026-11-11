@@ -279,6 +279,29 @@ describe("docs/DEVELOPING.md", () => {
     expect(gap).toMatch(/it used to leave the run waiting for ever\.$/);
   });
 
+  it("the README's resting memory covers what was measured, the Copilot runtime included (reliability-r7-1, reliability-c7-1)", () => {
+    const dev = flat(read("docs/DEVELOPING.md"));
+    // What footprint.mjs measured (it starts no Copilot runtime), and the runtime measured beside it.
+    const m = /(\d+)–(\d+) MB and [\d.–]+ % of a core in all, against (\d+)–(\d+) MB/.exec(dev);
+    const runtime = /the Copilot runtime[^.]*?took (\d+)–(\d+) MB/.exec(dev);
+    expect(m).not.toBeNull();
+    expect(runtime).not.toBeNull();
+    const top = (hi: string) => Number(hi) + Number(runtime![2]);
+    // The sum is written out, so nobody has to add it up.
+    expect(dev).toContain(`about ${Number(m![1]) + Number(runtime![1])}–${top(m![2])} MB on the C API and ${(Number(m![3]) + Number(runtime![1])).toLocaleString("en-GB")}–${top(m![4]).toLocaleString("en-GB")} MB on WebAssembly`);
+    // The README's requirement: no less than the top of each range, and within 100 MB of it.
+    const line = read("README.md").split("\n").find(l => /MB of memory while Ember is idle and listening/.test(l)) ?? "";
+    const native = Number(/about (\d+) MB of memory while Ember is idle and listening/i.exec(line)?.[1]);
+    const wasm = Number(/about ([\d.]+) GB where listening runs on WebAssembly/.exec(line)?.[1]) * 1000;
+    for (const [said, measured] of [[native, top(m![2])], [wasm, top(m![4])]]) {
+      expect(said).toBeGreaterThanOrEqual(measured);
+      expect(said).toBeLessThanOrEqual(measured + 100);
+    }
+    // docs/ASSISTANT.md's table and the script say what their figures leave out.
+    expect(flat(read("docs/ASSISTANT.md").split("\n").find(l => l.startsWith("| Idle memory")) ?? "")).toContain(`not counting the Copilot runtime, ≈ ${Math.round((Number(runtime![1]) + Number(runtime![2])) / 20) * 10} MB more once you are signed in`);
+    expect(read("scripts/perf/footprint.mjs")).toContain("Not counted: the Copilot runtime (no sign-in; about 100 MB more, docs/DEVELOPING.md)");
+  });
+
   it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {
     const paths = [...WINDOWS_MIC_FIX.matchAll(/Settings › [^()]+?microphone/g)].map(m => m[0]);
     expect(paths.length).toBe(2);

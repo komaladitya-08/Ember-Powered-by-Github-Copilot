@@ -155,7 +155,7 @@ reported in every PR that touches it.
 | End of speech → first word, without Copilot's time | ≈ 2.0 s | **≤ 600 ms** |
 | Interrupting Ember by speaking → it stops talking | needs "Hey Ember" | **≤ 200 ms, no wake word** |
 | Idle CPU (listening, silence, no window open) | ≈ 11–15 % awake with Home open, on either listening backend (CI 10.8 %); about 6 % once dozing | **≤ 3 %** |
-| Idle memory (Ember's processes, PSS) | ≈ 700–790 MB listening on the C API the Linux packages run, ≈ 900–950 MB on WebAssembly (Home open; the listening process ≈ 240 MB against ≈ 400 MB) | **≤ 400 MB** |
+| Idle memory (Ember's processes, PSS) | ≈ 700–790 MB listening on the C API the Linux packages run, ≈ 900–950 MB on WebAssembly (Home open; the listening process ≈ 240 MB against ≈ 400 MB; not counting the Copilot runtime, ≈ 100 MB more once you are signed in) | **≤ 400 MB** |
 | Words wrong on your names, apps and projects | not measured | **halved** against the phase-0 baseline |
 
 ## 4. Decisions and phases
