@@ -19,7 +19,7 @@ import { introFacts } from "../../app/main/memory/intro";
 import { SEMANTIC_FLOOR, bm25, personalizedPageRank, recall } from "../../app/main/memory/recall";
 import { memoryFile } from "../../app/main/memory/store";
 import { MemoryService } from "../../app/main/memory/service";
-import { memoryTroubleText } from "../../app/renderer/home/copy";
+import { memoryEmptyText, memoryTroubleText } from "../../app/renderer/home/copy";
 import { nameKey, similarity, terms } from "../../app/main/memory/text";
 import { MEMORY_MODEL } from "../../app/voice/models";
 
@@ -1380,6 +1380,22 @@ describe("the memory file", () => {
       expect(memoryTroubleText("unreadable")).toBe("Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again. Check that your account can open memory.json in Ember's data folder, then restart Ember.");
       expect(memoryTroubleText(null)).toBe("");
     } finally { vi.useRealTimers(); }
+  });
+
+  it("keeps nothing new while memory.json can't be read, and says so, so nothing is promised, sent with requests or left that Forget can't remove (memory-r7-1)", () => {
+    const quietLog = { info: () => undefined, warn: () => undefined };
+    const locked = tmp();
+    fs.mkdirSync(path.join(locked, "memory.json"));
+    const s = new MemoryService({ dir: locked, log: quietLog });
+    expect(s.remember("Works on Atlas", [{ name: "User" }], "I work on Atlas"))
+      .toBe("Not remembered: Ember couldn't read its saved memory, so nothing new is kept until it starts again. Tell the user plainly.");
+    expect(s.learn({ text: "Prefers tea", about: [{ name: "User" }], source: "user" })).toEqual({ kind: "refused", reason: "saved memory can't be read" });
+    expect(s.trouble).toBe("unreadable");
+    expect(s.list()).toEqual([]);
+    expect(s.recall("Atlas")).toEqual([]);
+    expect(memoryEmptyText(true, "unreadable")).toBe("Ember couldn't read your saved memory, so nothing is listed.");
+    expect(memoryEmptyText(true, "reset")).toBe("Nothing yet. Tell Ember about yourself, or say “Remember that…”.");
+    expect(memoryEmptyText(false, "unreadable")).toBe("Nothing remembered.");
   });
 
   it("forgets everything when erased", () => {

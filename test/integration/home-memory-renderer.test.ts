@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { chromium } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 import { expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import type { MemoryCorrection } from "../../app/shared/memory-correction";
@@ -775,14 +775,13 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("never lands a forget or rememb
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);
 
-it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("lists what is no longer true after what holds now, with its date and Forget but no Correct…, counts it, and never says “Nothing yet” while some is kept (memory-c7-2)", async () => {
+/** Built Home at Settings › Memory with `view` as main's first answer: `run` gets the page and a way to push another view. */
+async function atMemory(view: MemoryView, run: (page: Page, push: (next: MemoryView) => Promise<void>) => Promise<void>): Promise<void> {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
   settings.memory = { ...settings.memory, on: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
   const status = { appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null,
     admin: { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] } };
-  const now: MemoryView["rows"][number] = { id: "york", text: "Lives at 4 Abbey Road, York", source: "user", at: "2026-11-12T10:00:00Z" };
-  const old: MemoryView["rows"][number] = { id: "leeds", text: "Lives at 12 Mill Lane, Leeds", source: "user", at: "2026-11-11T10:00:00Z", until: "2026-11-12T10:00:00Z" };
   const browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
   const dist = path.resolve("dist");
   const server = http.createServer((req, res) => {
@@ -803,18 +802,27 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("lists what is no longer true a
       window.ember = new Proxy({}, { get: (_target, name: string) => {
         if (name.startsWith("on")) return (fn: (value: unknown) => void) => { listeners[name] = fn; return () => { delete listeners[name]; }; };
         if (name === "getStatus") return async () => seed.status;
-        if (name === "memory") return async () => ({ rows: seed.rows, ownership: "ready", reason: null });
+        if (name === "memory") return async () => seed.view;
         if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
         if (name === "forgetMemory") return async (id: string) => { test.forgot.push(id); return { derived: 0, undo: "tok-12345678" }; };
         return () => new Promise(() => undefined);
       } }) as EmberHomeApi;
-    }, { status, rows: [now, old] });
+    }, { status, view });
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Renderer fixture didn't start.");
     await page.goto(`http://127.0.0.1:${address.port}/app/renderer/home/index.html`);
     await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
     await page.locator('a[href="#memory-h"]').click();
-    const push = (rows: MemoryView["rows"]) => page.evaluate(sent => (window as unknown as { __c72: { push(view: MemoryView): void } }).__c72.push({ rows: sent, ownership: "ready", reason: null }), rows);
+    await run(page, next => page.evaluate(sent => (window as unknown as { __c72: { push(view: MemoryView): void } }).__c72.push(sent), next));
+    expect(errors).toEqual([]);
+  } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+}
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("lists what is no longer true after what holds now, with its date and Forget but no Correct…, counts it, and never says “Nothing yet” while some is kept (memory-c7-2)", async () => {
+  const now: MemoryView["rows"][number] = { id: "york", text: "Lives at 4 Abbey Road, York", source: "user", at: "2026-11-12T10:00:00Z" };
+  const old: MemoryView["rows"][number] = { id: "leeds", text: "Lives at 12 Mill Lane, Leeds", source: "user", at: "2026-11-11T10:00:00Z", until: "2026-11-12T10:00:00Z" };
+  await atMemory({ rows: [now, old], ownership: "ready", reason: null }, async (page, send) => {
+    const push = (rows: MemoryView["rows"]) => send({ rows, ownership: "ready", reason: null });
     const read = () => page.evaluate(() => [...document.querySelectorAll("#memory-list li")].map(li => ({
       text: li.querySelector(".mem-fact > span")?.textContent ?? li.textContent, from: li.querySelector(".mem-from")?.textContent,
       forget: !!li.querySelector<HTMLElement>("[data-memory-forget]")?.offsetParent, correct: !!li.querySelector<HTMLElement>("[data-memory-correct]")?.offsetParent,
@@ -849,7 +857,22 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("lists what is no longer true a
     // Forget of what is no longer true goes to main by its id.
     await page.locator("#memory-list li").nth(1).locator("[data-memory-forget]").click();
     await expect.poll(() => page.evaluate(() => (window as unknown as { __c72: { forgot: string[] } }).__c72.forgot)).toEqual(["york"]);
-    expect(errors).toEqual([]);
-  } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
 }, 60_000);
 
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("never invites “Remember that…” or offers Tell Ember about you's Save while memory.json can't be read, and says why in both places (memory-r7-1)", async () => {
+  await atMemory({ rows: [], ownership: "ready", reason: null, trouble: "unreadable" }, async (page, send) => {
+    await expect.poll(() => page.locator("#memory-list").innerText()).toBe("Ember couldn't read your saved memory, so nothing is listed.");
+    expect(await page.locator("#memory-trouble").innerText()).toContain("nothing new is kept until Ember starts again");
+    expect(await page.locator("#about-you .about-paused").innerText()).toContain("nothing new is kept until Ember starts again");
+    expect(await page.locator("#about-you input:visible, #about-you select:visible").count()).toBe(0);
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "memory-unreadable.png"), fullPage: false });
+    }
+    // Readable again (a restart): the list and the questions are back.
+    await send({ rows: [], ownership: "ready", reason: null, trouble: null });
+    await expect.poll(() => page.locator("#memory-list").innerText()).toContain("Nothing yet");
+    await expect.poll(() => page.locator("#about-you input:visible").count()).toBeGreaterThan(0);
+  });
+}, 60_000);

@@ -19,7 +19,7 @@ import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, SPOKEN_FACT, introFac
 import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
 import {
-  ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, INTRO_NOTE, NOTHING_TO_FORGET, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes,
+  ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, INTRO_NOTE, MEMORY_UNREADABLE, NOTHING_TO_FORGET, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes,
   forgetNote, forgetReply, forgetsWithMore, forgotReply, gapFact, gapQuestion, isForgetThat, looksLikeRequest, memoryAsk, rememberNote,
   remembersWithMore, type MemoryNote, type MemoryNotNow,
 } from "./questions";
@@ -355,6 +355,8 @@ export class MemoryLearning {
     if (isGetToKnowMe(text)) {
       if (!this.d.inForce()) return this.notInForce();
       this.question = null;
+      // Nothing it heard could be kept while memory.json can't be read: said, never asked (memory-r7-1).
+      if (this.d.memory.unreadable) { this.interview = null; return MEMORY_UNREADABLE; }
       this.interview = new Interview(now);
       this.interviewAt = now;
       return this.interview.start();

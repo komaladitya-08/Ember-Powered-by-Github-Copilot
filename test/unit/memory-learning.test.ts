@@ -13,7 +13,7 @@ import { MemoryGraph } from "../../app/main/memory/graph";
 import { IntroSchema, Interview, INTRO_DONE, INTRO_OFF, answerFacts, introFacts, isGetToKnowMe, styleOf } from "../../app/main/memory/intro";
 import { CallBudget, EXTRACT_SYSTEM, Learner, MAX_ANSWER_CHARS, extractPrompt, learnedFacts, parseExtraction, soundsLikeInstruction, subjectOf, turnSource, type OneShot } from "../../app/main/memory/learn";
 import { IDLE_MS, MemoryLearning, REFINE_PER_DAY, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "../../app/main/memory/learning";
-import { FORGET_OFF, Gaps, INTRO_NOTE, NOTHING_TO_FORGET, answersQuestion, describes, forgetReply, gapQuestion, isForgetThat, looksLikeRequest, memoryActionOpens, memoryAsk, memoryNoteActions, namesIn, rememberNote } from "../../app/main/memory/questions";
+import { FORGET_OFF, Gaps, INTRO_NOTE, MEMORY_UNREADABLE, NOTHING_TO_FORGET, answersQuestion, describes, forgetReply, gapQuestion, isForgetThat, looksLikeRequest, memoryActionOpens, memoryAsk, memoryNoteActions, namesIn, rememberNote } from "../../app/main/memory/questions";
 import { negated, samePolarity } from "../../app/main/memory/text";
 import { REFINE_FACTS, REFLECTION_CONFIDENCE, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "../../app/main/memory/refine";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
@@ -491,6 +491,28 @@ describe("the conversation's memory lines after Undo (memory-c1-3)", () => {
     const gone = l.forgetCounted(id);
     expect(gone).toMatchObject({ text: "Likes to be called Ram", undo: expect.any(String) });
     expect(forgot).toHaveBeenCalledExactlyOnceWith(id, gone);
+  });
+});
+
+describe("getting to know the user while memory.json can't be read (memory-r7-1)", () => {
+  function unreadable() {
+    const dir = tmp();
+    fs.mkdirSync(path.join(dir, "memory.json"));
+    const s = new MemoryService({ dir, log: quiet });
+    const said: string[] = [];
+    const l = new MemoryLearning({ memory: s, inForce: () => true, questionsOn: () => true, askedAt: () => null, setAskedAt: () => undefined, idle: () => true, locked: () => false, say: text => { said.push(text); return true; }, log: quiet });
+    return { l, s };
+  }
+
+  it("says nothing was saved from Tell Ember about you, and starts no interview it couldn't keep the answers of (memory-r7-1)", () => {
+    const { l, s } = unreadable();
+    expect(l.introduce({ name: "Ram", work: "Platform engineer" })).toBe(0);
+    expect(l.intent("Get to know me", { own: true })).toBe(MEMORY_UNREADABLE);
+    expect(MEMORY_UNREADABLE).toBe("I can't read my saved memory right now, so I can't keep what you tell me until I start again.");
+    // No interview began: the next thing said is a request like any other.
+    expect(l.intent("Call me Ram", { own: true })).toBeNull();
+    expect(l.conductorMemory().remember("Likes tea", [{ name: "User" }], "I like tea")).toContain("Not remembered");
+    expect(s.list()).toEqual([]);
   });
 });
 

@@ -1759,7 +1759,7 @@ memorySource.replaceChildren(...["", ...MEMORY_SOURCES].map(source => Object.ass
 $("memory-more").textContent = MEMORY_SHOW_MORE;
 const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
   key: row => row.id,
-  empty: () => memoryQuery.value.trim() || memorySource.value ? MEMORY_NO_MATCHES : memoryEmptyText(memoryOn()),
+  empty: () => memoryQuery.value.trim() || memorySource.value ? MEMORY_NO_MATCHES : memoryEmptyText(memoryOn(), memoryTrouble),
   fallback: memoryRest,
   create: read => {
     const row = read();
@@ -1842,7 +1842,8 @@ function renderMemory(rows: MemoryRow[]): void {
   const ownerText = memoryOwnerText(memoryReason, memoryOwner === "locked");
   $("memory-owner").textContent = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn()) ? "" : ownerText;
   // Tell Ember about you can't keep answers then: it says why instead of its questions.
-  aboutYou.owner(memoryOwner === "ready" || !memoryOn() ? null : ownerText);
+  // Nor while memory.json can't be read: nothing new is kept until Ember starts again (memory-r7-1).
+  aboutYou.owner(!memoryOn() ? null : memoryOwner !== "ready" ? ownerText : memoryTrouble === "unreadable" ? memoryTroubleText("unreadable") : null);
   // First run's "Tell me about you" too, and before memory is on while a model service keeps it paused (memory-c1-2).
   const provider = memoryReason === "own-provider" || memoryReason === "org-provider";
   welcome.memoryOwner(memoryOwner === "ready" || (!memoryOn() && !provider) ? null : ownerText);

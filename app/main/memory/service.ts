@@ -138,6 +138,16 @@ export class MemoryService {
   /** What is wrong with memory.json this run, or null (memory-r2). */
   get trouble(): MemoryTrouble | null { return this.problem; }
 
+  /**
+   * memory.json is there and couldn't be read (it is read now if it hasn't been): nothing new is kept this run, as
+   * Settings › Memory says. A fact kept in RAM alone would go with requests, be gone at the next start, and couldn't
+   * be forgotten, since no save may replace the file (memory-r7-1).
+   */
+  get unreadable(): boolean {
+    void this.g;
+    return this.problem === "unreadable";
+  }
+
   private get g(): MemoryGraph {
     if (!this.graph) {
       this.graph = this.file.load(this.o.clock);
@@ -179,14 +189,15 @@ export class MemoryService {
   remember(fact: string, about: AboutRef[], said: string, replaces?: string): string {
     const refs = (about.length ? about : [{ name: "User", kind: "person" }]).map(a => ({ name: a.name, kind: kindOf(a.kind) }));
     const source: Source = ownFact(fact, said) ? "user" : "conversation";
+    if (this.unreadable) return "Not remembered: Ember couldn't read its saved memory, so nothing new is kept until it starts again. Tell the user plainly.";
     const r = this.g.add({ text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
     if (r.kind === "refused") return `Not remembered: ${r.reason}. Tell the user plainly if they asked you to remember it.`;
     this.dirty();
     this.o.semantic?.changed(this.g);
     this.o.log.info("memory.remembered", { kind: r.kind, source: r.fact.source, chars: r.fact.text.length, ...(r.kind === "added" ? { closed: r.closed.length } : {}) });
-    // Saving is failing (memory.json couldn't be saved or read this run): kept for now, and the model is told so it
-    // never promises more (memory-r2).
-    const unkept = this.problem === "unsaved" || this.problem === "unreadable" ? " Saving memory on this computer is failing, so tell the user it may be gone when Ember closes." : "";
+    // Saving is failing (memory.json couldn't be saved this run): kept for now, and the model is told so it never
+    // promises more (memory-r2).
+    const unkept = this.problem === "unsaved" ? " Saving memory on this computer is failing, so tell the user it may be gone when Ember closes." : "";
     if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].${unkept}`;
     return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.${unkept}`;
   }
@@ -452,6 +463,7 @@ export class MemoryService {
    * decided its source; the graph's guard still refuses any secret whole.
    */
   learn(input: NewFact): AddResult {
+    if (this.unreadable) return { kind: "refused", reason: "saved memory can't be read" };
     const r = this.g.add(input);
     if (r.kind === "refused") return r;
     this.dirty();

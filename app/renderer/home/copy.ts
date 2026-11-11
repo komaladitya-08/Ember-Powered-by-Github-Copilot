@@ -910,8 +910,12 @@ export function routinesEmptyText(on: boolean): string {
 /** A routine's Delete button, for screen readers: which routine. */
 export const deleteRoutineLabel = (name: string) => `Delete the routine “${name}”`;
 
-/** The memory list while it is empty: `on`, memory is on. */
-export function memoryEmptyText(on: boolean): string {
+/**
+ * The memory list while it is empty: `on`, memory is on. While memory.json can't be read (`trouble`) nothing is listed
+ * and nothing new is kept, so it never invites "Remember that…" (memory-r7-1).
+ */
+export function memoryEmptyText(on: boolean, trouble?: "unreadable" | "reset" | "unsaved" | null): string {
+  if (on && trouble === "unreadable") return "Ember couldn't read your saved memory, so nothing is listed.";
   return on ? "Nothing yet. Tell Ember about yourself, or say “Remember that…”." : "Nothing remembered.";
 }
 

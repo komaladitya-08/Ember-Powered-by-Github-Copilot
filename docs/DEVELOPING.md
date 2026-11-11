@@ -236,6 +236,8 @@ runtime. It does not change the app's consent or speaking settings.
   - If `memory.json` can't be read (it is left as it was), isn't memory (it is set aside as `memory.json.broken`; if that
     happens again the first copy stays and the later file goes to `memory.json.broken.2`) or
     can't be saved (a full or read-only disk), Settings › Memory says so under the list. While it can't be read,
+    nothing new is kept (the remember tool, extraction, Tell Ember about you and "get to know me" say so rather than
+    hold facts in RAM that no Forget could remove),
     Home's status line says "Memory paused" and the line says to check that your account can open `memory.json` in
     Ember's data folder (a file left by running Ember as root is the usual cause), then restart Ember.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
