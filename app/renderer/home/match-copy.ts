@@ -142,8 +142,10 @@ export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boole
     teach: { hidden: busy || blocked, label: m?.enrolled ? MATCH_TEXT.teachAgain : MATCH_TEXT.teach, said: m ? matchSaid(m, MATCH_SAID.teach) : "" },
     cancelHidden: !busy,
     forgetHidden: busy || !m?.enrolled,
-    // Teaching: Cancel is the one button there. Otherwise Teach; with the whole group gone, the listening switch.
-    focus: hidden ? ["wake"] : busy ? ["match-cancel"] : blocked ? ["voice-download", "wake"] : ["match-teach", "match-on", "wake"],
+    // Teaching: Cancel is the one button there. Otherwise Teach; with the whole group gone (listening off), the listening
+    // switch. Without its model, while Ember listens: Download, or Listen once, never the switch, whose name read aloud
+    // ("Listen for “Hey Ember”, switch, on") wakes Ember (voice-listening-r7-2).
+    focus: hidden ? ["wake"] : busy ? ["match-cancel"] : blocked ? ["voice-download", "voice-listen-once", "wake"] : ["match-teach", "match-on", "wake"],
   };
 }
 

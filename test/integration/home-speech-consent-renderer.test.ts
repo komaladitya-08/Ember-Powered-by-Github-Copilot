@@ -106,6 +106,24 @@ describe.skipIf(process.env.EMBER_SPEECH_CONSENT_TEST !== "1")("Home speech cons
     expect(errors).toEqual([]);
   }, 60_000);
 
+  it("moves focus to Listen once, not to the “Hey Ember” switch, after Agree and when a download ends with focus on its Cancel (voice-listening-r7-2)", async () => {
+    // "Listen for “Hey Ember”, switch, on", read by a screen reader as listening started, woke Ember.
+    const { page, errors, calls, open, settle } = await freshHome();
+    await open();
+    await page.locator("#consent-yes").click();
+    await expect.poll(() => calls("save:")).toBe(1);
+    await settle(0, "ok");
+    await expect.poll(() => page.locator("#consent").isHidden()).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("voice-listen-once");
+    // Its download, with focus on Cancel, ends with every model in: Download is gone, so Listen once takes focus.
+    await page.evaluate(() => window.__emit("onVoiceStatus", { state: "downloading", detail: null, modelsReady: false, modelsMissing: ["vad"], modelsBytes: 1_000_000, downloading: true }));
+    await page.locator("#voice-download-cancel").focus();
+    await page.evaluate(() => window.__emit("onVoiceStatus", { state: "starting", detail: null, modelsReady: true, modelsMissing: [], modelsBytes: 0 }));
+    expect(await page.locator("#voice-download-cancel").isHidden()).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("voice-listen-once");
+    expect(errors).toEqual([]);
+  }, 60_000);
+
   it("says on the consent card that agreeing downloads the models, and offers Cancel while they download (voice-listening-6)", async () => {
     const { page, errors, calls, open } = await freshHome();
     await open();

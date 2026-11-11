@@ -2626,11 +2626,13 @@ function renderVoice(v: VoiceStatus): void {
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
   ($("voice-progress") as HTMLProgressElement).hidden = !downloading;
-  // Its Cancel, while it runs (voice-listening-6); when it goes with focus on it, focus goes back to Download.
+  // Its Cancel, while it runs (voice-listening-6); when it goes with focus on it, focus goes back to Download, or with
+  // every model in to Listen once: never to the switch, as listening starts then and a screen reader reading "Listen
+  // for “Hey Ember”, switch, on" into the wake word's microphone woke Ember (voice-listening-r7-2).
   const cancel = $("voice-download-cancel") as HTMLButtonElement;
   const hadCancel = document.activeElement === cancel;
   cancel.hidden = !downloading;
-  if (hadCancel && cancel.hidden) focusFirst(["voice-download", "wake"]);
+  if (hadCancel && cancel.hidden) focusFirst(["voice-download", "voice-listen-once", "wake"]);
   // The consent card says that agreeing downloads the models, and how much (modelsDownloadLabel's size).
   $("consent-models").hidden = !v.modelsMissing.length;
   $("consent-models-size").textContent = modelsSize(v.modelsMissing, v.modelsBytes);
@@ -2747,7 +2749,10 @@ $("consent-yes").addEventListener("click", () => {
     $("consent").hidden = true;
     // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
     if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
-    $("wake").focus();
+    // Listening starts now: focus goes to Listen once, the next control, whose name and line don't say Ember's name.
+    // On the switch, a screen reader read "Listen for “Hey Ember”, switch, on" as the microphone opened, which woke
+    // Ember in 20 of 20 real-model placements and sent "Switch on." in 18 (voice-listening-r7-2).
+    $("voice-listen-once").focus();
   });
 });
 $("consent-no").addEventListener("click", () => { consentClosed(); $("consent").hidden = true; $("wake").focus(); });

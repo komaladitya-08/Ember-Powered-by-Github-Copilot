@@ -47,7 +47,7 @@ describe("Voice Match's states", () => {
 
   it("without its model: off with a note (a kept voiceprint isn't used, so every voice is heard), nothing to switch on or teach", () => {
     const kept = matchView({ enrolled: true, on: false, model: false, wanted: true, enrolling: null }, { ...shown, speakerBytes: 26_534_365 });
-    expect(kept).toMatchObject({ checked: false, disabled: true, forgetHidden: false, focus: ["voice-download", "wake"] });
+    expect(kept).toMatchObject({ checked: false, disabled: true, forgetHidden: false, focus: ["voice-download", "voice-listen-once", "wake"] });
     expect(kept.teach.hidden).toBe(true);
     expect(kept.text).toMatch(/^Off for now: Voice Match's model is missing or was damaged, so your voice can't answer .*Download it above \(27 MB\)/);
     const fresh = matchView({ enrolled: false, on: false, model: false, enrolling: null }, shown);
@@ -84,6 +84,20 @@ describe("Voice Match's focus (as after Download speech models and the consent b
     expect(matchView(onNow, shown).focus[0]).toBe("match-teach");
     expect(matchView(none, shown).focus[0]).toBe("match-teach");
     expect(matchView(onNow, { listening: false, managed: false }).focus).toEqual(["wake"]);
+  });
+
+  it("goes to Listen once, never to the “Hey Ember” switch, where focus is moved as listening starts or while Ember listens (voice-listening-r7-2)", () => {
+    // After "I agree, start listening" and as a download ended with focus on its Cancel, focus went to the switch, and a
+    // screen reader read "Listen for “Hey Ember”, switch, on": said into an open wake microphone that woke Ember in 20
+    // of 20 real-model placements and sent "Switch on." in 18. "Listen once, button. …" in 0 of 20.
+    const agree = main.slice(main.indexOf('$("consent-yes").addEventListener'), main.indexOf('$("consent-no").addEventListener'));
+    expect(agree).toContain('$("voice-listen-once").focus();');
+    expect(agree).not.toContain('$("wake").focus()');
+    expect(main).toContain('if (hadCancel && cancel.hidden) focusFirst(["voice-download", "voice-listen-once", "wake"]);');
+    // Voice Match's model gone while Ember listens, and its download under way (so no Download button).
+    expect(matchView({ enrolled: true, on: false, model: false, wanted: true, enrolling: null }, shown).focus).toEqual(["voice-download", "voice-listen-once", "wake"]);
+    // Not now leaves listening off: back to the switch that opened the note.
+    expect(main).toContain('$("consent-no").addEventListener("click", () => { consentClosed(); $("consent").hidden = true; $("wake").focus(); });');
   });
 
   it("is moved by the draw only when the control that had it was hidden or disabled", () => {
