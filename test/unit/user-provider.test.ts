@@ -4,6 +4,7 @@
  * only with a real keyring and never in settings, logs or answers, Home's IPC checks, and "Test connection".
  */
 
+import { problemInHome } from "../../app/renderer/home/copy";
 import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -412,6 +413,19 @@ describe("Test connection", () => {
 });
 
 describe("errors with the user's own provider", () => {
+  it("say a 404 may be the endpoint's address as well as the model, as Test connection says of that address (integrations-r7-2)", () => {
+    const both = "The model I'm set to use isn't available, or the endpoint's address is wrong. Check both in Ember's settings (Ctrl+Alt+E).";
+    expect(friendlyError("404 page not found", undefined, { provider: "user", statusCode: 404 })).toBe(both);
+    expect(friendlyError("HTTP 404", undefined, { provider: "user" })).toBe(both);
+    expect(friendlyError("404 Not Found", undefined, { provider: "user", statusCode: 404, settingsKey: null })).toBe("The model I'm set to use isn't available, or the endpoint's address is wrong. Check both in Ember's settings.");
+    // The service names the model: it is the model.
+    expect(friendlyError("404 The model `gpt-9` does not exist: model_not_found", undefined, { provider: "user", statusCode: 404 })).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
+    // The organisation's service is the administrator's to address: the old words.
+    expect(friendlyError("404 page not found", undefined, { provider: true, statusCode: 404 })).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
+    // In Home the way there is Models & connections, with its button.
+    expect(problemInHome(both)).toEqual({ text: "The model I'm set to use isn't available, or the endpoint's address is wrong. Check both in Models & connections.", settings: true });
+  });
+
   it("point at the key in Ember's settings, not at a GitHub sign-in or an administrator", () => {
     expect(friendlyError("401 Unauthorized", undefined, { provider: "user" })).toBe("Your model service refused the request. Check its API key in Ember's settings (Ctrl+Alt+E).");
     expect(friendlyError("HTTP 502 bad gateway", undefined, { provider: "user" })).toBe("Your model service had a problem on its side. Try again in a moment.");
