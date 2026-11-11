@@ -22,7 +22,7 @@ import { mountAboutYou } from "./about-you";
 import { mountReminders } from "./reminders";
 import { dismissForgetConfirms, mountForgetConfirms } from "./forget-confirm";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
+import { MATCH_TEXT, matchAnnouncement, matchRefusalHolds, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { AGREE_ARM_MS } from "../../shared/provider";
@@ -2554,8 +2554,11 @@ const showListenOnce = mountListenOnce(
 );
 /** No voice spoke Ember's replies (main found it): said under the Speak switch, with a row in the setup check. */
 let speechMissing = false;
-/** Screen readers hear the voice line when it changes, and a download only every 25 %. */
-const voiceLive = (text: string) => { const live = $("voice-live"); if ((live.textContent || voiceTold) !== text) live.textContent = text; };
+/**
+ * Screen readers hear the voice line when it changes, and a download only every 25 %. `again`: a press asked, so its
+ * answer is written (and so said) even in the words the line holds (a second refused Teach, voice-listening-x7-2).
+ */
+const voiceLive = (text: string, again = false) => { const live = $("voice-live"); if (again || (live.textContent || voiceTold) !== text) live.textContent = text; };
 /** What `#voice-live` said before a window emptied it (below): the line it comes back to isn't said again. */
 let voiceTold = "";
 /**
@@ -2650,12 +2653,17 @@ let voiceLine = "";
 /** Voice Match as last drawn, and whether the user pressed Cancel since (for what is said when teaching ends). */
 let shownMatch: VoiceStatus["match"];
 let matchCancelled = false;
+/** Teach was pressed and refused: its line stays under the switch while that holds (match-copy.ts matchRefusalHolds). */
+let matchRefused = false;
 /** Draws Voice Match (match-copy.ts matchView) and returns what screen readers should hear, if anything. */
 function renderMatch(): string | null {
   const m = voice?.match;
   // Voice Match's model alone missing: its size, for the note that says to download it.
   const speakerBytes = voice?.modelsMissing.length === 1 && voice.modelsMissing[0] === "speaker" ? voice.modelsBytes : null;
-  const view = matchView(m, { listening: voiceSettings.wakeWord && voiceSettings.consent, managed: managed.has("wakeWord"), speakerBytes });
+  if (matchRefused && !matchRefusalHolds(voice?.state, m)) matchRefused = false;
+  const view = matchView(m, { listening: voiceSettings.wakeWord && voiceSettings.consent, managed: managed.has("wakeWord"), speakerBytes, refused: matchRefused });
+  // (Listening turned off hides the row: turned on again, it starts with where Voice Match stands.)
+  if (view.hidden) matchRefused = false;
   const group = $("match");
   // The control that has focus, if this draw hides or disables it: focus moves on (as after Download and the consent buttons).
   const had = document.activeElement instanceof HTMLElement && group.contains(document.activeElement) ? document.activeElement : null;
@@ -2686,9 +2694,10 @@ function renderMatch(): string | null {
   return view.hidden ? null : said;
 }
 const startEnrol = () => {
-  // Ember not listening just now: said where the switch's description is, and to screen readers. Otherwise focus
-  // moves to Cancel once the first phrase is shown (renderMatch).
-  void window.ember.enrolVoice().then(ok => { if (!ok) { $("match-text").textContent = MATCH_TEXT.notListening; voiceLive(MATCH_TEXT.notListening); } });
+  // Ember not listening just now: said where the switch's description is, and to screen readers, at every press, and
+  // kept there while it holds (voice-listening-x7-2). Otherwise focus moves to Cancel once the first phrase is shown
+  // (renderMatch).
+  void window.ember.enrolVoice().then(ok => { if (!ok) { matchRefused = true; $("match-text").textContent = MATCH_TEXT.notListening; voiceLive(MATCH_TEXT.notListening, true); } });
 };
 $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;

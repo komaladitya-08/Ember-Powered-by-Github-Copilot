@@ -603,7 +603,8 @@ the four phrases it shows. While it learns, Ember takes no requests (the phrases
 stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted,
 or the microphone goes or sends only silence), after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases
 that don't sound alike; settings says which. Teaching doesn't start while the voice line says the microphone isn't
-working: **Teach my voice** then says to check the microphone and the voice status above it.
+working: **Teach my voice** then says to check the microphone and the voice status above it, at each press, and the
+line stays under the switch until Ember listens again.
 While a screen reader runs, which reads each prompt aloud, teaching takes nothing it reads: speech that begins within
 1.5 s of a prompt showing, or in a prompt's own words ("Say…", "Heard 2 of 4…", "That was too short…"), teaches
 nothing, and a phrase said so soon after the reading that the two ran together is asked for again ("Your screen reader

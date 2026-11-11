@@ -124,8 +124,21 @@ export function matchPrompt(e: NonNullable<VoiceMatchStatus["enrolling"]>): stri
   return `${e.again ? MATCH_TEXT.again[e.again] : MATCH_TEXT.say} “${e.phrase}”`;
 }
 
-/** `speakerBytes`: Voice Match's model's size, when it alone is missing (said in the note about it). */
-export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boolean; managed: boolean; speakerBytes?: number | null }): MatchView {
+/**
+ * Whether a refused Teach's line (MATCH_TEXT.notListening) still holds: until Ember listens again (`state`: the voice
+ * status's) or teaching starts. With no microphone the voice status is sent again at every retry (after 1 s, 5 s, then
+ * every 30 s), and the line was wiped at the next one, the row reading "…Teach it your voice…" again as if Teach could
+ * work (voice-listening-x7-2).
+ */
+export function matchRefusalHolds(state: string | undefined, m: VoiceMatchStatus | undefined): boolean {
+  return state !== "waiting" && state !== "active" && !m?.enrolling;
+}
+
+/**
+ * `speakerBytes`: Voice Match's model's size, when it alone is missing (said in the note about it). `refused`: Teach
+ * was pressed and refused, and that still holds (matchRefusalHolds), so the line says why.
+ */
+export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boolean; managed: boolean; speakerBytes?: number | null; refused?: boolean }): MatchView {
   const hidden = !m || o.managed || !o.listening;
   const e = m?.enrolling ?? null;
   const busy = !!e;
@@ -136,7 +149,7 @@ export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boole
     busy,
     checked: !!m && (m.on || busy),
     disabled: busy || blocked,
-    text: m ? matchText(m, o.speakerBytes ?? null) : "",
+    text: !m ? "" : o.refused && !e ? MATCH_TEXT.notListening : matchText(m, o.speakerBytes ?? null),
     prompt: e ? matchPrompt(e) : "",
     progress: e ? { value: e.got, max: e.of, text: `${e.got} of ${e.of} heard` } : null,
     teach: { hidden: busy || blocked, label: m?.enrolled ? MATCH_TEXT.teachAgain : MATCH_TEXT.teach, said: m ? matchSaid(m, MATCH_SAID.teach) : "" },

@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { MANAGED_TEXT, MATCH_SAID, MATCH_TEXT, TRUST_TEXT, matchAnnouncement, matchView, trustView } from "../../app/renderer/home/match-copy";
+import { MANAGED_TEXT, MATCH_SAID, MATCH_TEXT, TRUST_TEXT, matchAnnouncement, matchRefusalHolds, matchView, trustView } from "../../app/renderer/home/match-copy";
 import { managedKeys } from "../../app/main/admin";
 import type { VoiceMatchStatus } from "../../app/shared/ipc";
 
@@ -74,7 +74,7 @@ describe("Voice Match's states", () => {
     }
     expect(matchView(undefined, shown).hidden).toBe(true);
     // main.ts asks with the listening switch's own condition and the organisation's wakeWord key (admin.ts managedKeys).
-    expect(main).toMatch(/matchView\(m, \{ listening: voiceSettings\.wakeWord && voiceSettings\.consent, managed: managed\.has\("wakeWord"\), speakerBytes \}\)/);
+    expect(main).toMatch(/matchView\(m, \{ listening: voiceSettings\.wakeWord && voiceSettings\.consent, managed: managed\.has\("wakeWord"\), speakerBytes, refused: matchRefused \}\)/);
   });
 });
 
@@ -183,7 +183,28 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
     expect(page).toContain('<p class="match-prompt" id="match-prompt" hidden></p>');
     expect(main).toMatch(/const said = renderMatch\(\);\s*if \(said\) voiceLive\(said\);/);
     // A refused start is said too, not only written under the switch.
-    expect(main).toMatch(/MATCH_TEXT\.notListening; voiceLive\(MATCH_TEXT\.notListening\)/);
+    expect(main).toMatch(/matchRefused = true; \$\("match-text"\)\.textContent = MATCH_TEXT\.notListening; voiceLive\(MATCH_TEXT\.notListening, true\)/);
+  });
+
+  it("keeps the refused Teach's line while listening still can't start, and says it again at the next press (voice-listening-x7-2)", () => {
+    // With no microphone the mic page tries again after 1 s, 5 s, then every 30 s, and each failure sends the voice
+    // status again: the line was wiped at the next one, and the row read "…Teach it your voice…" as if Teach could work.
+    for (const state of ["error", "muted", "starting", "downloading", "off", undefined] as const) expect(matchRefusalHolds(state, none)).toBe(true);
+    for (const m of [none, onNow, offNow]) {
+      expect(matchView(m, { ...shown, refused: true }).text).toBe(MATCH_TEXT.notListening);
+      // Only the line changes: Teach stays where it was, to press again once the microphone is back.
+      expect({ ...matchView(m, { ...shown, refused: true }), text: "" }).toEqual({ ...matchView(m, shown), text: "" });
+    }
+    // Listening again, or teaching under way: the row says where Voice Match stands, as before.
+    for (const state of ["waiting", "active"] as const) expect(matchRefusalHolds(state, none)).toBe(false);
+    expect(matchRefusalHolds("error", enrolling(0))).toBe(false);
+    expect(matchView(enrolling(0), { ...shown, refused: true }).text).toBe(matchView(enrolling(0), shown).text);
+    expect(matchView(none, shown).text).toBe(MATCH_TEXT.none);
+    // Home drops the refusal once it no longer holds, and draws the row with it until then.
+    expect(main).toMatch(/if \(matchRefused && !matchRefusalHolds\(voice\?\.state, m\)\) matchRefused = false;/);
+    expect(main).toContain("speakerBytes, refused: matchRefused });");
+    // A second press finds the status line holding the same words: written again all the same, so it is said again.
+    expect(main).toMatch(/const voiceLive = \(text: string, again = false\) => \{ const live = \$\("voice-live"\); if \(again \|\| \(live\.textContent \|\| voiceTold\) !== text\) live\.textContent = text; \};/);
   });
 });
 
