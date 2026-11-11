@@ -244,9 +244,21 @@ describe("page styles that keep things readable and reachable", () => {
     expect(overlay).toMatch(/\.task b, \.task span \{ overflow-wrap: anywhere; \}/);
   });
 
+  it("gives every field's placeholder the one colour, 4.5:1 or more on the darkest and the lightest dark field, so none is left the browser's grey (accessibility-r7-2, WCAG 1.4.3)", () => {
+    // "Find a message" and "What would you like help with?" had no rule of their own: Chrome's #757575 on the field, 3.2:1.
+    const placeholder = /^::placeholder \{ color: (#[0-9a-f]{6}); opacity: 1; \}/m.exec(home)?.[1];
+    expect(placeholder).toBeDefined();
+    const dark = read("shared/ember.css");
+    for (const surface of ["surface-0", "surface-1", "surface-2"]) {
+      expect(contrast(placeholder!, new RegExp(`^  --${surface}: (#[0-9a-f]{6});`, "m").exec(dark)![1]), surface).toBeGreaterThanOrEqual(4.5);
+    }
+    // One rule for them all: a field's own rule would leave the next field without one. Light windows restate it.
+    expect([...home.matchAll(/^.*::placeholder \{/gm)].map(m => m[0].trim())).toEqual(["::placeholder {", "html.content ::placeholder {"]);
+  });
+
   it("gives the never-look placeholder enough contrast and the folds clean names", () => {
     const bg = /--bg: (#[0-9a-f]{6})/.exec(home)![1];
-    const placeholder = /\.add-row input::placeholder \{ color: (#[0-9a-f]{6})/.exec(home)![1];
+    const placeholder = /^::placeholder \{ color: (#[0-9a-f]{6})/m.exec(home)![1];
     expect(contrast(placeholder, bg)).toBeGreaterThanOrEqual(4.5);
     expect(home).toMatch(/\.fold > summary::before \{\s*content: "" \/ "";/);
     for (const id of ["activity", "checks", "about"]) expect(page).toContain(`<details class="fold" id="${id}-fold" aria-labelledby="${id}-h">`);

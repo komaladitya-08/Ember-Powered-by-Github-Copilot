@@ -84,6 +84,22 @@ describe("the approval window's “Risky step” tag", () => {
   });
 });
 
+describe("a placeholder in a light window", () => {
+  const home = read("app/renderer/home/styles.css");
+  const lightRules = home.slice(home.indexOf(`${LIGHT} {\n  html.content { --bg:`));
+
+  it("reads at 4.5:1 or more on a field on every surface and on the sidebar's Search settings field (accessibility-r7-3, WCAG 1.4.3)", () => {
+    const placeholder = /html\.content ::placeholder \{ color: (#[0-9a-f]{6}); \}/.exec(lightRules)![1];
+    const sidebar = /--sidebar-fill: (#[0-9a-f]{6});/.exec(lightRules)![1];
+    // A field is its surface, or a wash on it: "Search settings" is --wash-6 on the sidebar's fill (it was 4.3:1).
+    for (const under of [sidebar, light["--surface-0"], light["--surface-1"], light["--surface-2"]].map(hex)) {
+      for (const field of [under, paint(light["--wash-6"], under)]) {
+        expect(contrast(hex(placeholder), field), `${placeholder} on ${field.map(Math.round).join()}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+});
+
 describe("which windows are light", () => {
   it("is the content windows alone: the floating layer stays dark over any app", () => {
     for (const page of ["home", "command", "prompt"]) expect(read(`app/renderer/${page}/index.html`), page).toContain('<html lang="en" class="content">');

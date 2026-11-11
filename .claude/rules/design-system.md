@@ -93,7 +93,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - `--hud-line` (the HUD's warm hairline ink: scales, tracks, bracket edges) and `--hud-dim` (a segment not lit). Both are decorative, never text and never the one sign of a state, so the contrast tests don't hold them to 3:1.
 
   Write the token, never the hex. The literals that exist are deliberate; don't add more:
-  - Home's `--bg` and the placeholder `#9a9592` (ui-copy.test.ts parses both);
+  - Home's `--bg` and the placeholder `#9a9592`, set by one `::placeholder` rule for every field (`#625d5b` in light windows), never a field's own rule, which left the next field the browser's grey (ui-copy.test.ts and light-mode.test.ts parse and measure them);
   - the sidebar fill and its tile colours;
   - the hero tile gradient (it matches the icon);
   - your own chat bubble's text;
