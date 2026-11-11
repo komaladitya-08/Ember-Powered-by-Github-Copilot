@@ -483,7 +483,10 @@ wrapper's option (`xargs -a "$p/settings.json"`, `xargs --arg-file="$p/settings.
 Remove-Item -Recurse` or `Write-Output $p | Remove-Item`) or through `${p:?}`, `${p:-…}` or `${p%/}`. What echo or
 printf prints into the next command is that command's input, as a here-string's text is (`echo ~/.config/ember | xargs
 rm -rf` is refused too); printf's escapes other than a line break, a tab and `\0` (`\056`, `\x2e`, `\u002e`) are text
-Ember can't see, so the command after it asks (`printf '\056\056\057\056netrc' | xargs cat`). A command `xargs`
+Ember can't see, so the command after it asks (`printf '\056\056\057\056netrc' | xargs cat`). Only the shell's own
+`echo` and `printf` count: a program merely named so (`./echo`, `/tmp/printf`, `node_modules/.bin/echo`) prints what
+it likes, so the command after it is judged as given input Ember can't see, and Ember's own folder handed to it that
+way is still refused. A command `xargs`
 builds from text Ember reads is judged batch by batch (`echo test publish | xargs -n1 npm` asks about `npm publish`,
 `printf 'status\nclean -fdx\n' | xargs -L1 git` about the clean), and reading the text never makes it run or announce
 where it asked before: `echo build | xargs ls` asks ("xargs builds this command from its input."), and `echo build |

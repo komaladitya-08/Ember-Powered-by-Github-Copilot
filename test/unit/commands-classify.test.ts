@@ -2088,6 +2088,23 @@ describe("printed input, decided no less safely than before Ember read it (round
     expect(says("printf 'a\\nb\\n' | xargs -L1 rm")).toEqual(["Deletes a.", "Deletes b.", "You didn't ask for this."]);
   });
 
+  it("never takes a program that is only named echo or printf for the shell's own, whose words it reads as the next command's input (commands-remote-c7-2)", () => {
+    for (const cmd of [
+      "./echo status | xargs git", "./echo 'select 1' | psql app", "node_modules/.bin/echo test | xargs npm", "/tmp/printf 'select 1' | sqlite3 a.db", "/tmp/echo GET k | redis-cli",
+      "./printf 'a\\n' | xargs rm", "../echo build | xargs ls", "~/bin/echo PING | redis-cli",
+    ]) expect(decided(cmd).decision.verdict, cmd).toBe("ask");
+    // What such a program prints is input Ember can't see: nothing is said about words it only seems to print.
+    expect(says("./echo a b | xargs rm")).toContain("Deletes (input).");
+    expect(decided("./echo PING | redis-cli").decision.rules).toContain("unclear.stdin-code");
+    // Ember's own folder such a program is given, to print into a command, is still refused, written out or in a variable.
+    for (const cmd of ["./echo ~/.config/ember | xargs rm -rf", "d=~/.config/ember; ./echo \"$d\" | xargs rm -rf", "d=~/.config/ember; /tmp/printf '%s' \"$d\" | xargs rm -rf"]) {
+      expect(decided(cmd).decision.verdict, cmd).toBe("refuse");
+    }
+    // The shell's own echo and printf are still read.
+    expect(says("echo a b | xargs rm")).toContain("Deletes a and b.");
+    expect(decided("echo PING | redis-cli").decision.verdict).toBe("run");
+  });
+
   it("asks before xargs hands a command words echo, printf, a here-string or a here-document wrote out, as it did before Ember read them (commands-remote-r7-2)", () => {
     for (const cmd of [
       "echo build | xargs ls", "echo build | xargs sh -c", "printf '%s\\n' build dist | xargs ls", "echo status | xargs git", "echo test | xargs npm",

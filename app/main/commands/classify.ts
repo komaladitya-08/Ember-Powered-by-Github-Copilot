@@ -292,7 +292,7 @@ interface Printed { text: string | null; vars?: HereVars }
 const varNames = (a: Arg): string[] => (a.parts ?? []).flatMap(p => (typeof p !== "string" && p.name !== null ? [p.name] : []));
 
 /**
- * What a POSIX echo or printf prints (Printed), or null for any other program. echo prints its words with spaces;
+ * What the shell's own echo or printf prints (Printed), or null for any other program. echo prints its words with spaces;
  * printf each argument through a format of one %s and separators, or a plain format with no arguments (`printf
  * 'FLUSHALL\n'`). Anything else, a pattern or a backslash in a word (echo's escapes differ between shells) is text
  * Ember doesn't see.
@@ -300,7 +300,9 @@ const varNames = (a: Arg): string[] => (a.parts ?? []).flatMap(p => (typeof p !=
 function printedBy(words: readonly Arg[]): Printed | null {
   let k = 0;
   while (k < words.length - 1 && words[k].v !== null && ASSIGNS_AFTER.has(words[k].v ?? "")) k++;
-  const prog = (words[k]?.v ?? "").split("/").pop();
+  // Only the shell's own, by its bare name: `./echo` or `/tmp/printf` is a program that prints what it likes
+  // (commands-remote-c7-2).
+  const prog = words[k]?.v ?? "";
   if (prog !== "echo" && prog !== "printf") return null;
   let rest = words.slice(k + 1);
   let shown: Arg[];
@@ -2495,7 +2497,13 @@ class Engine extends Classifier {
     // Where what it prints goes: the terminal, the next command as its input, or on to a file, a substitution or a
     // command that isn't handed it (commands-remote-c5-1).
     const toFile = s.redirs.some(r => (r.kind === "write" || r.kind === "append") && !r.op.startsWith("2") && !(r.target?.v != null && NULL_SINKS.has(r.target.v.toLowerCase())));
-    const out = toFile || (s.pipedOn === true && s.carriedOn !== true) ? "onward" : s.carriedOn === true ? "carried" : "shown";
+    // Only the shell's own echo and printf hand their words on as the next command's input (printedBy): a program
+    // merely named so (`./echo "$d" | xargs rm -rf`) prints what it likes, so its variables are judged here
+    // (commands-remote-c7-2).
+    const handsOn = s.carriedOn === true && !(sc.family === "posix" && (key === "echo" || key === "printf") && nameArg.v !== key);
+    const out = toFile || (s.pipedOn === true && !handsOn) ? "onward" : handsOn ? "carried" : "shown";
+    // Its written-out words too, which the next command may get as names: judged for Ember's own refusal.
+    if (s.carriedOn === true && !handsOn) this.judgeInput(args.map(a => a.v ?? "").join("\n"), sc);
     this.noteVarUses(key, this.commands.length === inner ? args : args.filter(a => !this.payloadWords.has(a)), out);
     if ((key === "done" || key === "fi" || key === "esac") && out !== "shown") this.compoundOnward = true;
     this.unnamedWrites(key, args, sc);

@@ -16314,6 +16314,56 @@
     "/home/ana/proj/data.json"
    ],
    "verdict": "run"
+  },
+  {
+   "cmd": "./echo status | xargs git",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "./echo 'select 1' | psql app",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "node_modules/.bin/echo test | xargs npm",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "/tmp/printf 'select 1' | sqlite3 a.db",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "./echo PING | redis-cli",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "./echo a b | xargs rm",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "./echo ~/.config/ember | xargs rm -rf",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "d=~/.config/ember; ./echo \"$d\" | xargs rm -rf",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }
