@@ -157,6 +157,30 @@ describe("first run: the provider check says only what it found (FE #2)", () => 
       if (r.ok) expect(providerModelMissing(r, typed)?.field).toBe("conductor");
     }
   });
+  it("never fails a name the service takes but lists differently (first-run-x7-2)", () => {
+    const typed = (conductor: string) => ({ type: "openai" as const, conductor, worker: "" });
+    const one = (id: string) => ({ host: "a.b", models: 1, ids: [id] });
+    // "-latest" for an id with no date, and Anthropic's "-0" for a model's first snapshot.
+    expect(providerModelMissing(one("grok-3"), typed("grok-3-latest"))).toBeNull();
+    expect(providerModelMissing(one("claude-opus-4-20250514"), typed("claude-opus-4-0"))).toBeNull();
+    // A ":latest" or a path typed that the list leaves off.
+    expect(providerModelMissing(one("llama3.2"), typed("llama3.2:latest"))).toBeNull();
+    expect(providerModelMissing(one("models/gemini-2.0-flash"), typed("models/gemini-2.0-flash"))).toBeNull();
+    expect(providerModelMissing(one("gemini-2.0-flash"), typed("models/gemini-2.0-flash"))).toBeNull();
+    // A dated preview of the model named.
+    expect(providerModelMissing(one("gpt-4-1106-preview"), typed("gpt-4"))).toBeNull();
+    // A server that lists its model's file (llama.cpp's) answers whatever name is sent: its list holds no names.
+    expect(providerModelMissing(one("/models/x.gguf"), typed("gpt-4.1"))).toBeNull();
+    expect(providerModelMissing(one("mistral-7b-instruct.Q4_K_M.gguf"), typed("gpt-4.1"))).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 2, ids: ["llama3.2:3b", "C:/models/x.gguf"] }, typed("gpt-4.1"))).toBeNull();
+    // Still different models: another tag, another size, another model under the same path.
+    expect(providerModelMissing(one("llama3.2:3b"), typed("llama3.2:latest"))?.field).toBe("conductor");
+    expect(providerModelMissing(one("gpt-4o-mini-2024-07-18"), typed("gpt-4o"))?.field).toBe("conductor");
+    expect(providerModelMissing(one("gpt-4.1-mini"), typed("gpt-4.1-latest"))?.field).toBe("conductor");
+    expect(providerModelMissing(one("models/gemini-2.0-flash"), typed("models/gemini-2.5-pro"))?.field).toBe("conductor");
+    expect(providerModelMissing(one("-20250101"), typed("-latest"))?.field).toBe("conductor");
+    expect(providerModelMissing(one("meta/llama-3.3-70b"), typed("other/llama-3.3-70b"))?.field).toBe("conductor");
+  });
 });
 
 describe("first run: the models Ember chose (FE #4, #5)", () => {

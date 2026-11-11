@@ -262,14 +262,23 @@ export function providerCheckLine(r: { ok: true; host: string; models: number | 
   return r.ok ? providerTestText(r) : inMyVoice(r.why);
 }
 
-/** A dated snapshot's ending after a model's name ("-20250929", "-2025-04-14", "-0613"). */
-const SNAPSHOT = /^-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{4})$/;
-/** `typed` may be how the service takes the listed `id`: the id itself, without its ":latest", path or snapshot date. */
+/** A dated snapshot's ending after a model's name ("-20250929", "-2025-04-14", "-0613", "-1106-preview"). */
+const SNAPSHOT = /^-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{4})(?:-preview)?$/;
+/** A listed id that is a model's file, not a name: a server that lists it (llama.cpp's) answers any name sent. */
+const MODEL_FILE = /^\/|\.(?:gguf|bin|safetensors)$/i;
+/**
+ * `typed` may be how the service takes the listed `id`: the id itself, either of them without its ":latest" or its
+ * path, or the id without its snapshot date, which "-latest" and Anthropic's "-0" also stand for (first-run-x7-2).
+ */
 function namesListed(id: string, typed: string): boolean {
-  const want = typed.toLowerCase();
-  const stem = want.replace(/-latest$/, "");
-  return [id.toLowerCase(), id.toLowerCase().split("/").pop() ?? ""].some(have =>
-    have === want || have === `${want}:latest` || (have.startsWith(stem) && SNAPSHOT.test(have.slice(stem.length))));
+  const plain = (name: string) => name.toLowerCase().replace(/:latest$/, "");
+  const last = (name: string) => name.split("/").pop() ?? "";
+  const same = (have: string, want: string) => !!want && [want, want.replace(/-latest$/, ""), want.replace(/-0$/, "")].some(stem =>
+    !!stem && have.startsWith(stem) && (have.length === stem.length || SNAPSHOT.test(have.slice(stem.length))));
+  const have = plain(id);
+  const want = plain(typed);
+  // A path is dropped from one side only: "a/m" is never taken for a listed "b/m".
+  return same(have, want) || same(last(have), want) || same(have, last(want));
 }
 
 /**
@@ -277,12 +286,12 @@ function namesListed(id: string, typed: string): boolean {
  * field and names what is listed, instead of passing a name the first request then fails on ("That model isn't
  * available.", first-run-c7-1). Only where the list was read whole (every model's id, at most main's 50, and no word
  * from the service that more follow on another page: `more`, first-run-x7-1) and holds
- * model names: Azure asks for a deployment's name, which its list doesn't hold. A name the service may still take
- * (namesListed) passes. Null when nothing is known to be missing.
+ * model names: Azure asks for a deployment's name, which its list doesn't hold, and a list of model files
+ * (MODEL_FILE) says nothing of the names taken. A name the service may still take (namesListed) passes. Null when nothing is known to be missing.
  */
 export function providerModelMissing(r: { host: string; models: number | null; ids?: string[]; more?: true }, typed: { type: ProviderType; conductor: string; worker: string }): { field: "conductor" | "worker"; line: string } | null {
   const ids = r.ids ?? [];
-  if (typed.type === "azure" || !ids.length || r.models !== ids.length || r.more) return null;
+  if (typed.type === "azure" || !ids.length || r.models !== ids.length || r.more || ids.some(id => MODEL_FILE.test(id))) return null;
   const field = (["conductor", "worker"] as const).find(f => typed[f] && !ids.some(id => namesListed(id, typed[f])));
   if (!field) return null;
   const all = (names: readonly string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0]);
