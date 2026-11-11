@@ -177,23 +177,18 @@ const SECRET_OPTION = String.raw`--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pas
  * `"-a", "…"` after redis-cli, `"-u", "admin:…"` after curl and wget, `"-U", "admin%…"` after smbclient, openssl's
  * `"-k", "…"` and `"-pass", "pass:…"`, and, after any program, a quoted option named like a secret with the next
  * quoted element as its value (`"--password", "…"`: three characters or more with no space, never another option, so
- * `"-pass", "1"` and an option's description stay). That last one reads source files too, so it leaves what holds no
- * password (memory-x7-1): the first arguments of a call (`option("--api-key", "api_key")`: a declaration), an option
- * that switches a password off or counts (`--no-password`, `--single-pass`), a stock word (`"none"`, `"default"`) and
- * a key's file (`"path/to/key.pem"`, `"id_ed25519"`); and after curl's `-u` an address (`"http://…"`) is no password.
+ * `"-pass", "1"` and an option's description stay).
  */
-const UNSECRET_OPTION = String.raw`(?!--?(?:no|not|without|skip|disable|ask|prompt|max|min|num|single|multi|first|second|one|two|by)[-_.])`;
-const STOCK_VALUE = String.raw`(?:true|false|yes|no|none|null|nil|undefined|default|on|off|enabled?|disabled?|auto|prompt|ask|stdin|(?:api|access|private|client)[-_]?(?:key|secret)|id_(?:rsa|dsa|ecdsa|ed25519)|[\w.~-]*[\/\\][^\s"']*\.[A-Za-z]{2,5})`;
 const LIST_PASSWORDS: readonly RegExp[] = [
   new RegExp(String.raw`(?<keep>${listProgram(CLIENT)}${LIST_ARGS}${listOption("-p")})(?<value>${listValue("-p")})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("sshpass|mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport")}${LIST_ARGS}${listOption("-p")}(?:\k<q>${LIST_SEP}\k<q>)?)(?<value>${listValue("(?:-p)?")})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("docker|podman|nerdctl|buildah|helm")}${LIST_ARGS}${LIST_SEP}["']?login["']?${LIST_ARGS}${listPair("-p|--password")})(?<value>${listValue("")})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("redis-cli")}${LIST_ARGS}${listPair("-a")})(?<value>${listValue("")})`, "g"),
-  new RegExp(String.raw`(?<keep>${listProgram("curl|wget")}${LIST_ARGS}${listPair("-u|--user")}[^\s"',:\]]*:)(?!\/\/)(?<value>${listValue(String.raw`[^\s"',:\]]*:`)})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("curl|wget")}${LIST_ARGS}${listPair("-u|--user")}[^\s"',:\]]*:)(?<value>${listValue(String.raw`[^\s"',:\]]*:`)})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("smbclient")}${LIST_ARGS}${listPair("-U")}[^\s"',%\]]*%)(?<value>${listValue(String.raw`[^\s"',%\]]*%`)})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("openssl")}${LIST_ARGS}${listPair("-k")})(?<value>${listValue("")})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("openssl")}${LIST_ARGS}${listPair("-pass(?:in|out)?")}pass:)(?<value>${listValue("pass:")})`, "g"),
-  new RegExp(String.raw`(?<keep>(?<![^\s,[])(?<q>["'])(?<!\(\s*["'])${UNSECRET_OPTION}${SECRET_OPTION}\k<q>${LIST_SEP}\k<q>)(?<value>(?!-)${LIST_NOT_VALUE}(?!(?:${LIST_HOLDER}|${STOCK_VALUE})\k<q>)(?:(?!\k<q>)\S){3,})(?=\k<q>)`, "g"),
+  new RegExp(String.raw`(?<keep>(?<![^\s,[(])(?<q>["'])${SECRET_OPTION}\k<q>${LIST_SEP}\k<q>)(?<value>(?!-)${LIST_NOT_VALUE}(?!${LIST_HOLDER}\k<q>)(?:(?!\k<q>)\S){3,})(?=\k<q>)`, "g"),
 ];
 
 /** URL credentials: `://user:pass@` becomes `://[secret hidden]@`. */
