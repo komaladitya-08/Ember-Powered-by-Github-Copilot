@@ -279,7 +279,10 @@ export class ExtensionsService implements ExtensionsApi {
       // Copilot's own (isDefault) and the organisation's (managed) can't be removed: Home shows them so (integrations-4).
       return r.marketplaces.map(m => ({ name: m.name, source: m.source, ...(m.isDefault ? { builtIn: true } : {}), ...(m.managed ? { managed: true } : {}) }));
     } catch (err) {
-      this.o.log.warn("extensions.marketplaces_failed", { err });
+      // Home asks at start and at each reconnect, before the runtime is there: expected, so no warning with a stack
+      // every time (13 in 90 s of reconnects, reliability-r7-4).
+      if ((err as Error)?.message === "not connected") this.o.log.debug("extensions.marketplaces_not_connected");
+      else this.o.log.warn("extensions.marketplaces_failed", { err });
       return [];
     }
   }
