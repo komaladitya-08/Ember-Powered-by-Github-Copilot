@@ -2688,15 +2688,27 @@ class Engine extends Classifier {
   }
 
   /** Unwraps a wrapper: the same command now runs `words`, with the wrapper recorded (sudo rm → program rm, wrappers sudo). */
-  unwrap(h: H, all: Arg[], wrapper: string, o: Partial<Scope> = {}): void {
+  unwrap(h: H, all: Arg[], wrapper: string, o: Partial<Scope> = {}, asProgram = false): void {
     if (all.length === 0) return;
     for (const w of all) this.payloadWords.add(w);
-    const pc = this.commands[this.at];
     // After a reserved word the shell still takes `NAME=value` words as assignments: `then LD_PRELOAD=./x.so ls` runs ls
     // with the library loaded, and `do PATH=/tmp/x:/usr/bin` changes where later commands are found. They are judged as
     // at the start of a command, never as the program (commands-remote-c1-1).
     let lead = 0;
-    if (h.sc.family === "posix" && ASSIGNS_AFTER.has(wrapper)) while (lead < all.length && ASSIGNMENT_WORD.test(all[lead].raw)) lead++;
+    if (!asProgram && h.sc.family === "posix" && ASSIGNS_AFTER.has(wrapper)) while (lead < all.length && ASSIGNMENT_WORD.test(all[lead].raw)) lead++;
+    // Before these were read as assignments the first one stood as the program, with the command after it as its
+    // words, and some asked for that (`time x=1 sh -c '…'`: a program Ember doesn't know given a shell's text). Judged
+    // that way too, apart: where it asks, this asks (commands-remote-x7-5). After `time` only: after a flow word the
+    // line's `if` or loop decides (scripts.ts), and a read there is read through on purpose (commands-a7-2).
+    const askedAsProgram = lead > 0 && wrapper === "time" && this.asksApartWhole(() => this.unwrap(h, all, wrapper, o, true), READ_FLOW_RULE);
+    const from = this.findings.length;
+    this.unwrapped(h, all, lead, wrapper, o);
+    if (askedAsProgram) this.asksAtLeast(from, "unclear.assignment-program", "It sets a variable where a command could stand.");
+  }
+
+  /** unwrap's work: the first `lead` words are assignments, the rest the command. */
+  private unwrapped(h: H, all: Arg[], lead: number, wrapper: string, o: Partial<Scope>): void {
+    const pc = this.commands[this.at];
     const assigns = all.slice(0, lead).map(a => {
       const eq = a.raw.indexOf("=");
       const value: Arg = { v: a.v === null ? null : a.v.slice(a.v.indexOf("=") + 1), raw: a.raw.slice(eq + 1), glob: false };
@@ -4343,17 +4355,17 @@ reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma
   const p = opts(h, { shortValue: valueShort[h.key] ?? "S", longValue: ["suffix", "format", "threads", "memlimit", "output", "quality", "window", "processes", "blocksize", "patch-from"] });
   const keeps = has(p, "k", "keep", "c", "stdout", "to-stdout", "t", "test", "l", "list", "h", "help", "V", "version");
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
-  // A word after a count or format option that is no count or format (`xz -T big.tar`, `pigz -p "$N"`, `xz -T
-  // ~/.config/ember/settings.json`) may be a file the tool packs after all: it is judged as one too, as it was before
-  // these options took a value (commands-remote-r7-2).
+  // The word after a count or format option (`xz -T big.tar`, `xz -M 1G`, `pigz -p "$N"`, `xz -T
+  // ~/.config/ember/settings.json`) is judged as a file the tool packs as well, as it was before these options took a
+  // value: main asked for it whatever it was, a count or a format too (commands-remote-r7-2, x7-5). Only a processor
+  // count's substitution or arithmetic of numbers, which Ember can't see as a word, is the count alone.
   const stray = p.opts.flatMap(o => {
     const next = h.args[o.at + 1];
     const word = h.args[o.at]?.v ?? "";
     const short = /^-[A-Za-z]$/.test(o.name) && "TMFCpbqw".includes(o.name[1]) && (valueShort[h.key] ?? "").includes(o.name[1]) && word.endsWith(o.name[1]) && !word.startsWith("--");
-    const long = /^--(processes|blocksize|quality|window)$/.test(o.name) && word === o.name;
+    const long = /^--(processes|blocksize|quality|window|patch-from)$/.test(o.name) && word === o.name;
     if (o.value === undefined || !next || !(short || long)) return [];
-    const ok = next.v === null ? countWord(next.raw) : /^[FC]$/.test(o.name.slice(1)) ? /^(auto|xz|lzma|lzip|raw|none|crc32|crc64|sha256)$/.test(next.v) : /^\d+(\.\d+)?[A-Za-z%]*$/.test(next.v);
-    return ok ? [] : [next];
+    return next.v === null && countWord(next.raw) ? [] : [next];
   });
   const packed = [...p.operands, ...stray];
   const ins = objsOf(h, packed, "write");

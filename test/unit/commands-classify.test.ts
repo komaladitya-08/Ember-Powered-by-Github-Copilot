@@ -2230,3 +2230,30 @@ describe("a ${HOME:?} or ${PWD:?} word inside a plain if (round seven's review)"
     expect(withoutReadFlow(classifyCommand("if true; then cat ${HOME:?}/.config/ember/settings.json; fi", "bash", contextOf("linux")), "bash").refuse?.rule).toBe("ember.path");
   });
 });
+
+describe("option values and assignments main read as words, decided no less safely (round seven's review)", () => {
+  const decided = (cmd: string) => runCase({ cmd, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" }).decision;
+
+  it("asks before a compressor whose count or format option's value main judged as a file to pack (commands-remote-x7-5)", () => {
+    for (const cmd of [
+      "xz -M 1G", "xz -F auto", "xz -C crc32", "xz -T 4", "pigz -b 128", "pigz -p 4", "gzip --quality 4", "xz --window 4", "xz --patch-from big.tar", "xz -vT 4", "unxz -M 50%",
+      "xz -T 4 big.tar", "lzma -F lzma", "gzip --processes 2", "gzip --blocksize 128",
+    ]) {
+      expect(decided(cmd).verdict, cmd).toBe("ask");
+      expect(decided(cmd).rules, cmd).toContain("archive.in-place");
+    }
+    // A count attached to its option, or one that keeps the input, never was a file; a processor count is the usual job count.
+    for (const cmd of ["xz -T4 -c", "xz -k -T 4", "xz -T$(nproc)", "pigz -p $(nproc)", "xz --threads=4", "xz -c -M 1G"]) expect(decided(cmd).verdict, cmd).toBe("run");
+    expect(decided("xz -T ~/.config/ember/settings.json").verdict).toBe("refuse");
+  });
+
+  it("asks where main asked for a word after time that it read as a program, now an assignment (commands-remote-x7-5)", () => {
+    for (const cmd of ["time x=1 sh -c 'echo $x'", "nice time x= sh -c 'echo $x'", "time -- x=~/a sh -c 'echo $x'", "time x=1 y=2 bash -c 'echo $x'", "time x=1 sh -c 'rm -rf build'"]) {
+      expect(decided(cmd).verdict, cmd).toBe("ask");
+    }
+    // An assignment before an ordinary command ran on main and still runs; the command is still judged as itself.
+    for (const cmd of ["time FOO=1 make", "time x=1 ls", "time x=1"]) expect(decided(cmd).verdict, cmd).toBe("run");
+    expect(decided("time x=1 rm -rf ~/.config/ember").verdict).toBe("refuse");
+    expect(decided("time x=1 sh -c 'rm -rf build'").rules).toContain("posix.rm");
+  });
+});
