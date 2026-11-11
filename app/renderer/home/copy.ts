@@ -1643,7 +1643,8 @@ export function signOutScope(c: ForgetCounts): string {
 /** The question for Forget everything: only saved memory goes, and the other three are said to stay. */
 export function forgetEverythingScope(c: ForgetCounts): string {
   return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")}, what Ember learned from them and the conversation saved on this computer, if you keep one. `
-    + `${plural(c.tasks, "task", "tasks")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are, and so do the lines on screen now, but they aren't saved again.`
+    // The sentence's first words: "An unknown number of tasks", never "an …" after the full stop (memory-r7-3).
+    + `${plural(c.tasks, "task", "tasks").replace(/^a/, "A")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are, and so do the lines on screen now, but they aren't saved again.`
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
 }
 

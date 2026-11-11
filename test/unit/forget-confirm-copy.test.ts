@@ -23,6 +23,10 @@ describe("Sign out and Forget everything copy", () => {
     expect(t).toContain("unknown, not zero");
     expect(forgetEverythingScope({ tasks: 0, facts: null, reminders: 0, routines: 0 })).toContain("removes an unknown number of saved facts");
   });
+  it("starts Forget everything's second sentence with a capital when the task count is unknown (memory-r7-3)", () => {
+    expect(forgetEverythingScope({ tasks: null, facts: 3, reminders: 0, routines: null }))
+      .toBe("Forget everything? This removes 3 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. An unknown number of tasks, 0 reminders and an unknown number of routines stay as they are, and so do the lines on screen now, but they aren't saved again. Ember couldn't count everything right now, so those numbers are unknown, not zero.");
+  });
   it("says saved memory Ember can't match to this account stays, rather than promising to clear it (memory-11)", () => {
     const t = signOutScope({ tasks: 0, facts: null, reminders: 1, routines: 0, kept: true });
     expect(t).toBe("Sign out? This stops 0 tasks that are running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), 1 reminder and 0 routines. Saved memory Ember can't match to this account stays on this computer; Forget everything in Memory removes it.");
