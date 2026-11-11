@@ -856,6 +856,23 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBeNull();
   });
 
+  // A password that is its own element of a list of a program's arguments (memory-q6-1).
+  it.each([
+    ['test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-phunter2"]'], ['subprocess.run(["mysql", "-u", "root", "-pSummer2024!", "db"])'],
+    ['"Test": ["CMD", "mysql", "-uroot", "-pS3cretPass", "-e", "SELECT 1"]'], ['["mysql", "-u", "root", "--password", "hunter2"]'],
+    ['["redis-cli", "-a", "hunter2", "ping"]'], ['["sshpass", "-p", "hunter2", "ssh", "host"]'], ['["curl", "-u", "admin:hunter2", "https://x"]'],
+    ["The healthcheck is test: [CMD, mysqladmin, ping, -uroot, -phunter2]"],
+  ])("refuses %j and saves nothing, a password in a list of arguments (memory-q6-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ['The healthcheck is test: ["CMD", "mysqladmin", "ping", "-p"]'], ['The backup runs ["mysql", "-u", "root", "-p", "db"]'],
+    ['The database listens on ["mysql", "-h", "db", "-P", "3306"]'], ['The tunnel runs ["ssh", "-p", "2222", "host"]'],
+  ])("keeps %j, a list of arguments that prompts for its password or names a port (memory-q6-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
     [`Stripe key sk_live_${run(24)}`], [`Restricted key rk_test_${run(24)}`], [`Webhook signing secret whsec_${run(32)}`],
