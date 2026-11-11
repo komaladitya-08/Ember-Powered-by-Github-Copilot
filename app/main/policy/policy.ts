@@ -400,39 +400,13 @@ const RISKY_INTL = new RegExp(RISKY_INTL_SOURCE, "u");
  * change a shared repository. Risky on a button, link or menu item, and on anything clicked but a check box, radio
  * button or switch (a click on text goes to the link or row around it): a "Block selection" check item, or a "Comments"
  * heading a key lands on, isn't one. English verbs that are nouns too count where they lead the label
- * ("Report", "Block user"; not "Download report", "Add block"). Also (the single words in COMMITS_LEAD, below) the
- * everyday words that grant access ("Allow", "Permit", "Continue as Sam"), commit money or a place ("Place bid", "Sell", "Reserve", "Check out"; "Book", "Bet",
+ * ("Report", "Block user"; not "Download report", "Add block"). Also the everyday words that grant access ("Allow",
+ * "Permit", "Continue as Sam"), commit money or a place ("Place bid", "Sell", "Reserve", "Check out"; "Book", "Bet",
  * "Vote", "Deposit", "Refund", "Email" and "Call" alone or before what they act on, not "Bookmarks" or "Call history"),
  * change who can see or join ("Make public", "Add member"), drop work ("Purge", "Drop changes", "Mark as spam") or turn a
  * protection off ("Turn off firewall"): audit of 2026-11-11, safety-privacy-r7-1.
  */
-const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget)\b/u;
-/**
- * Those everyday words that grant or commit, by what carries them (ActShape): they also start headlines ("Reserve Bank
- * raises rates"), name tabs ("Email", "Call") and settings ("Allow Editing"), and a step so named was asked as one the
- * user didn't ask for, which put the whole task back to asking (regression review of round seven, safety-privacy-x7-1).
- * - `command` (a button, a dialog's words): "Allow" and "Permit" before anything; the rest alone or before what they
- *   act on ("Sell", "Reserve a table", "Email the file"; not "Sell by date", "Reserve space").
- * - `menu` (a menu item, which mostly names a setting): all of them alone or before what they act on ("Allow all").
- * - `title` (a link, a row, text clicked, a window's title: named by what they hold or lead to): "Allow" and "Permit"
- *   alone or with one more word ("Allow access"), the rest alone or with "now"; never a lone "Email", "Call" or
- *   "Book", which open a place to write, dial or choose.
- * - `place` (a tab, which shows a view): none.
- */
-type ActShape = "command" | "menu" | "title" | "place";
-const ACTED_ON = String.raw`(?=[^\p{L}\p{N}]*$| (?:now|it|this|that|these|those|a|an|my|your|the|all|selected)\b)`;
-const COMMITS_WORDS = "sell|reserve|purge|book|bid|bet|vote|deposit|refund|redirect|bounce|email|call";
-const ALONE = String.raw`(?=[^\p{L}\p{N}]*$| now[^\p{L}\p{N}]*$)`;
-const COMMITS_LEAD: Readonly<Record<ActShape, RegExp | null>> = {
-  command: new RegExp(String.raw`^[^\p{L}\p{N}]*(?:(allow|permit)\b|(${COMMITS_WORDS})${ACTED_ON})`, "u"),
-  menu: new RegExp(String.raw`^[^\p{L}\p{N}]*(allow|permit|${COMMITS_WORDS})${ACTED_ON}`, "u"),
-  title: new RegExp(String.raw`^[^\p{L}\p{N}]*(?:(allow|permit)(?=[^\p{L}\p{N}]*$| [\p{L}\p{N}'-]+[^\p{L}\p{N}]*$)|(sell|reserve|purge|bid|bet|vote|deposit|refund|redirect|bounce)${ALONE}|(book|email|call)(?= now[^\p{L}\p{N}]*$))`, "u"),
-  place: null,
-};
-/** The word of COMMITS_LEAD that leads a normalised label in this shape, or "". */
-const commitsLead = (n: string, shape: ActShape): string => COMMITS_LEAD[shape]?.exec(n)?.slice(1).find(Boolean) ?? "";
-/** The shape of what a control's role makes of its name: a button commands, a menu item mostly sets, a tab shows a view, anything else is named by what it holds. */
-const actShape = (role: string): ActShape => /\btab\b/.test(role) ? "place" : /menu item/.test(role) ? "menu" : /button/.test(role) ? "command" : "title";
+const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget|allow|permit|sell|reserve|purge|(?:book|bid|bet|vote|deposit|refund|redirect|bounce|email|call)(?=[^\p{L}\p{N}]*$| (?:now|it|this|that|these|those|a|an|my|your|the|all|selected)\b))\b/u;
 const RISKY_ACT = /\b(add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream)|refresh (firefox|chrome|chromium|(the |your )?browser)|place (a |my |your )?(bid|bet|wager)|apply now|mark (as |this as )?(spam|junk)|check out(?=[^a-z0-9]*$| now\b| as guest\b| securely\b)|make (it |this )?(public|private)|make (an? |them |him |her )?(admin|administrator|owner|moderator)|change (the )?visibility|add (a |an |new )?(members?|collaborators?|admin|owner)|continue as|drop changes|(turn off|switch off|disable|deactivate|pause) (the |my |your )?(firewall|antivirus|virus protection|real-time protection|protection|two-factor|two-step|2-step|2fa|encryption|screen lock))\b/;
 /** The same in the languages of RISKY_WORDS (written with their accents, folded when the pattern is built). */
 export const RISKY_ACT_WORDS: Record<string, string[]> = {
@@ -494,7 +468,7 @@ export const RISKY_ACT_ANYWHERE: Record<string, string[]> = {
 const RISKY_ACT_INTL_SOURCE = intlSource(RISKY_ACT_WORDS, RISKY_ACT_ANYWHERE);
 const RISKY_ACT_INTL = new RegExp(RISKY_ACT_INTL_SOURCE, "u");
 /** Does this label post, invite, change an account or a repository (RISKY_ACT), in any of the languages above? */
-const isRiskyActLabel = (s: string, shape: ActShape = "command") => { const n = normalizeLabel(s); return RISKY_ACT_LEAD.test(n) || !!commitsLead(n, shape) || RISKY_ACT.test(n) || RISKY_ACT_INTL.test(foldLabel(s)); };
+const isRiskyActLabel = (s: string) => { const n = normalizeLabel(s); return RISKY_ACT_LEAD.test(n) || RISKY_ACT.test(n) || RISKY_ACT_INTL.test(foldLabel(s)); };
 /** Controls whose activation does what their name says (HTML buttons and links, GTK buttons, menu items). */
 const ACTING_CONTROL = /^(push button|push button menu|button|split button|toggle button|link|menu item)$/;
 
@@ -635,7 +609,7 @@ const riskyExtra = perOS(os => wordsOf(RISKY_EXTRA[os]));
 export const isRiskyLabel = (s: string, os: OS = "linux") => RISKY.test(normalizeLabel(s)) || RISKY_INTL.test(foldLabel(s)) || RISKY_WHOLE.test(foldLabel(s)) || formatsDisk(s)
   || (riskyExtra(os)?.test(normalizeLabel(s)) ?? false);
 /** Is activating this control hard to undo or visible to others: a risky label, or one that posts or acts on others (RISKY_ACT) on a button, link or menu item? */
-export const isRiskyControl = (role: string, name: string, os: OS = "linux", shape: ActShape = actShape(role)) => isRiskyLabel(name, os) || (ACTING_CONTROL.test(role) && isRiskyActLabel(name, shape));
+export const isRiskyControl = (role: string, name: string, os: OS = "linux") => isRiskyLabel(name, os) || (ACTING_CONTROL.test(role) && isRiskyActLabel(name));
 
 /** Ember's own windows by app or title (settings, the overlay and its bubble, Ask Ember, the desk's view, the microphone helper, the command window). */
 const EMBER_WINDOW = /^(ember|ember overlay|ask ember|ember's desk|ember microphone|ember commands)$/;
@@ -1479,8 +1453,8 @@ function riskyTerms(s: string): string[] {
     out.push(...[...normalizeLabel(s).matchAll(new RegExp(en.source, "g"))].map(m => m[0]));
     for (const m of foldLabel(s).matchAll(new RegExp(intl, "gu"))) out.push(m.groups?.word ?? m.groups?.cjk ?? m[0]);
   }
-  const lead = RISKY_ACT_LEAD.exec(normalizeLabel(s))?.[1] ?? commitsLead(normalizeLabel(s), "command");
-  if (lead) out.push(lead);
+  const lead = RISKY_ACT_LEAD.exec(normalizeLabel(s));
+  if (lead) out.push(lead[1]);
   return out;
 }
 
@@ -2054,8 +2028,7 @@ function riskyContent(name: string, acts: boolean, os: OS): boolean {
   const label = plainText(name).trim();
   if (acts) {
     if (FILE_NAME.test(label) && !MONEY.test(name)) return false;
-    // (Named by what it holds: the words that grant or commit count in a title's shape, COMMITS_LEAD.)
-    return isRiskyControl("push button", name, os, "title") || isRiskyActLabel(label.replace(LEAD_IN, ""), "title") || isRiskyActLabel(label.replace(LEAD_GROUP, "").replace(LEAD_IN, ""), "title")
+    return isRiskyControl("push button", name, os) || isRiskyActLabel(label.replace(LEAD_IN, "")) || isRiskyActLabel(label.replace(LEAD_GROUP, "").replace(LEAD_IN, ""))
       || PHRASES.some(([re]) => new RegExp(re.source).test(foldLabel(name))) || formatsDisk(name);
   }
   if (/\.[a-z0-9]{1,5}$/.test(label)) return false;
@@ -2064,7 +2037,7 @@ function riskyContent(name: string, acts: boolean, os: OS): boolean {
   if (first === undefined || more.length) return false;
   // A word that is a noun too, alone or with a number, names a thing ("Trash", "Archive", "Order #4481236").
   if (NOT_ALWAYS_VERB.test(first) && (second === undefined || /^\d+$/.test(second))) return false;
-  return riskyTerms(name).some(t => label.startsWith(plainText(t))) || RISKY_ACT_LEAD.test(normalizeLabel(name)) || !!commitsLead(normalizeLabel(name), "title") || formatsDisk(name);
+  return riskyTerms(name).some(t => label.startsWith(plainText(t))) || RISKY_ACT_LEAD.test(normalizeLabel(name)) || formatsDisk(name);
 }
 
 /** Calc's input line, by its name in the languages of RISKY_WORDS: a formula typed there goes into the cell. */
@@ -2119,7 +2092,7 @@ const GOES_SOMEWHERE = /(^|[^\p{L}\p{N}])(search|address|url|location)(?![\p{L}\
 const SEARCHES = /(^|[^\p{L}\p{N}])search(?![\p{L}\p{N}])/iu;
 const oneLineField = (r: ActionRequest, role: string): boolean => /^(entry|combo box|text)$/.test(role) && !r.multiLine && !r.dialog;
 /** A word that acts on others anywhere in a name, not only leading it ("Search and invite"). */
-const actsAnywhere = (name: string): boolean => name.trim().split(/\s+/).some((_, i, words) => isRiskyActLabel(words.slice(i).join(" "), "title"));
+const actsAnywhere = (name: string): boolean => name.trim().split(/\s+/).some((_, i, words) => isRiskyActLabel(words.slice(i).join(" ")));
 const addressBar = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
   oneLineField(r, role) && !r.inPage && (BROWSER.test(r.app) || BAR_BROWSER.test(r.app)) && tabbed(r.app, os) && GOES_SOMEWHERE.test(name);
 const searchBox = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
@@ -2464,7 +2437,7 @@ export class PolicyEngine {
     const questions = !!r.dialog && (!!r.dialog.alert || isRiskyLabel(told, os) || isRiskyActLabel(told) || (told.includes("?") && told.length <= 300));
     const dialogAsks = !!r.dialog && (questions || !formattingDialog(r.dialog));
     const applies = !!r.dialog && !r.dialog.alert && APPLY.test(foldLabel(name));
-    const agrees = (isAffirmative(name) || applies) && (dialogAsks || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window, "title"));
+    const agrees = (isAffirmative(name) || applies) && (dialogAsks || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window));
     const asks = r.dialog ? `${name} ${r.dialog.name} ${r.dialog.text}` : `${name} ${r.window}`;
     // A setting about the user's security or privacy, by its own words or its dialog's (Macro Security, Options –
     // Security, a proxy's), or one that says it weakens a protection ("Low (not recommended)", "Allow all"): asked
@@ -2495,7 +2468,7 @@ export class PolicyEngine {
     // (A page's link is named by what it leads to, as a row by what it holds: "Post Malone - Circles" isn't a request to post.)
     const content = CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage);
     const selects = !!r.clickSelects && (r.kind === "click" || r.kind === "cursor_click");
-    const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name, actShape(role));
+    const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name);
     const riskyNamed = (role === "link" && content ? linkCommands(name, !selects, os) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     // A bare "Disable" or "Turn off" on a page or dialog titled for a protection ("Two-factor authentication") turns it off.
@@ -2511,7 +2484,7 @@ export class PolicyEngine {
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
     const named = (riskyNamed && !opensDialog(role, name)) || unprotects;
     // A lone "Confirm" or "Approve" agrees to what its dialog (or the window's title) says, as "OK" does: it is judged by that.
-    const lone = LONE_AGREE.test(normalizeLabel(name)) && (!!r.dialog || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window, "title"));
+    const lone = LONE_AGREE.test(normalizeLabel(name)) && (!!r.dialog || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window));
     // A dialog asked about only as one that may hold the app's settings: its title says which.
     const settings = !!r.dialog && !questions && !lone && !!r.dialog.name.trim();
     // An OK, Close or Dismiss that only acknowledges a message box read whole (acknowledgesOnly, an allow-list): Ember's

@@ -69,8 +69,12 @@ describe("what goes unasked in the other browsers and in an app's own search box
       expect(on(os, app).decide(edge({ app, window: "Inbox", value: "Return", ...(inPage === undefined ? {} : { inPage }), element: { role: "entry", name } }))).toMatchObject({ verdict: "allow", autonomy: true });
     });
 
-  it.each(["Search email", "Search by name or email", "Search calls", "Search books"])("Enter in a page's search box named “%s” (safety-privacy-x7-3)", name => {
+  it.each(["Search calls", "Search books"])("Enter in a page's search box named “%s” (safety-privacy-x7-3)", name => {
     unasked(edge({ value: "Return", inPage: true, element: { role: "entry", name } }));
+  });
+
+  it.each(["Search or call", "Search to call", "Search contacts to email", "Search or book", "Search email"])("Enter in a page's field named “%s” still asks (safety-privacy-y7-1)", name => {
+    asks(edge({ value: "Return", inPage: true, element: { role: "entry", name } }));
   });
 
   it("a mail app's own “address” field, and a search box on a payment page or one that does more, still ask (safety-privacy-c7-1)", () => {

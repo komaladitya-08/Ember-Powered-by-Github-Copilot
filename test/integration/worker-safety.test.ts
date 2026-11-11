@@ -1929,19 +1929,6 @@ describe("review round 9: policy and selections", () => {
     expect(screen.log.length).toBe(2);
   });
 
-  it("a page's headline link or tab that only starts with a word that grants or commits is clicked without a question, and the next click too (safety-privacy-x7-1)", async () => {
-    const page: FakeNode = { id: 1, role: "document web", name: "News" };
-    for (const [goal, first] of [["Open the first article about interest rates", { id: 2, role: "link", name: "Reserve Bank raises interest rates again", parent: 1 }],
-      ["Show me the notification settings", { id: 2, role: "page tab", name: "Email", parent: 1 }]] as [string, FakeNode][]) {
-      plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }, { tool: { name: "click", args: { id: 3 } } }]);
-      const screen = fakeScreen([page, first, { id: 3, role: "link", name: "Read more", parent: 1 }]);
-      const asked: string[] = [];
-      await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-      expect(asked, goal).toEqual([]);
-      expect(screen.log.length, goal).toBe(2);
-    }
-  });
-
   it("a desktop app's button named only by a symbol is judged by the named panel it sits in, as one with no name is (safety-privacy-x7-6)", async () => {
     for (const [name, question] of [["➤", "Click the “➤” button in Testapp?"], ["", "Click the button on the “Send message” panel in Testapp?"]] as const) {
       const goal = `Look at the desktop chat (${name || "no name"})`;
