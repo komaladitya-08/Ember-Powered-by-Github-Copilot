@@ -12,7 +12,7 @@ import path from "node:path";
 import { AdminPolicySchema, applyAdminPolicy, managedKeys, parseAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "../../app/main/admin";
 import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore, repairSettings, type Settings } from "../../app/main/settings";
 import {
-  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, checkAgain, listedModelIds, providerDown, providerSummary, providerWaitingHost, testConnection, testRequest, userProviderConfig, userProviderFromFile,
+  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, checkAgain, listedModelIds, modelList, providerDown, providerSummary, providerWaitingHost, testConnection, testRequest, userProviderConfig, userProviderFromFile,
   userProviderInForce, type FetchLike,
 } from "../../app/main/provider";
 import { PROVIDER_BAD_REQUEST, PROVIDER_FAILED, registerProviderIpc, type ProviderApi, type ProviderIpcEvent } from "../../app/main/provider-ipc";
@@ -370,6 +370,22 @@ describe("Test connection", () => {
     // A list, even an empty one or Ollama's, is a model service's answer.
     expect(await testConnection(settings(), STORED, answer(200, { data: [] }))).toEqual({ ok: true, host: "models.example.com", models: 0 });
     expect(await testConnection(settings(), STORED, answer(200, { models: [{ name: "llama3.2:3b" }] }))).toEqual({ ok: true, host: "models.example.com", models: 1, ids: ["llama3.2:3b"] });
+  });
+
+  it("says Connected to a model list in whatever shape the service writes it, and still not to other JSON (integrations-x7-1)", async () => {
+    const ok = (models: number, ids: string[]) => ({ ok: true, host: "models.example.com", models, ...(ids.length ? { ids } : {}) });
+    // A bare array, as some OpenAI-compatible services answer /v1/models.
+    expect(await testConnection(settings(), STORED, answer(200, [{ id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", object: "model" }]))).toEqual(ok(1, ["meta-llama/Llama-3.3-70B-Instruct-Turbo"]));
+    expect(await testConnection(settings(), STORED, answer(200, []))).toEqual(ok(0, []));
+    // The list under another name, and models keyed by id.
+    expect(await testConnection(settings(), STORED, answer(200, { object: "list", result: [{ id: "a" }, { id: "b" }] }))).toEqual(ok(2, ["a", "b"]));
+    expect(await testConnection(settings(), STORED, answer(200, { data: { a: { id: "a" } } }))).toEqual(ok(1, ["a"]));
+    expect(modelList({ object: "list", result: [{ id: "a" }] })).toEqual([{ id: "a" }]);
+    // JSON that names no model is still no model service's answer (integrations-c7-1).
+    for (const body of [{ hello: "world" }, {}, null, "ok", 7, [1, 2], ["<html>"], { items: [1, 2] }, { data: { message: "Welcome" } }, { data: "none" }, { error: { message: "no" } }, { errors: [{ id: "E42" }] }]) {
+      expect(modelList(body), JSON.stringify(body)).toBeNull();
+      expect(await testConnection(settings(), STORED, answer(200, body))).toMatchObject({ ok: false, cause: "no-list" });
+    }
   });
 
   it("says in one sentence why it failed, never with the service's raw text or the key", async () => {

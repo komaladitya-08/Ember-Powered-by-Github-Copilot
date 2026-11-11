@@ -612,6 +612,33 @@ export function listedModelIds(list: readonly unknown[]): string[] {
   return out;
 }
 
+/** An entry that names a model as listedModelIds reads one: an object with a string `id`, `name` or `model`. */
+const namesModel = (m: unknown): boolean => {
+  const o = m && typeof m === "object" ? m as { id?: unknown; name?: unknown; model?: unknown } : null;
+  return typeof o?.id === "string" || typeof o?.name === "string" || typeof o?.model === "string";
+};
+
+/**
+ * The model list in a GET /models answer, or null when the body holds none (a web page's JSON, a greeting, an error:
+ * integrations-c7-1). Services write it in several shapes, and each is a list (integrations-x7-1): an array under
+ * `data` (OpenAI, Azure, Anthropic) or `models` (Ollama), whatever it holds; the body itself as an array, empty or
+ * with an entry that names a model; models keyed by id under `data` or `models`; or an array under another name
+ * (`result`) with an entry that names a model, never one under `error` or `errors`.
+ */
+export function modelList(body: unknown): unknown[] | null {
+  const listed = (v: unknown): v is unknown[] => Array.isArray(v) && (v.length === 0 || v.some(namesModel));
+  if (Array.isArray(body)) return listed(body) ? body : null;
+  if (!body || typeof body !== "object") return null;
+  const o = body as Record<string, unknown>;
+  for (const key of ["data", "models"]) {
+    const v = o[key];
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === "object") { const values = Object.values(v); if (values.some(namesModel)) return values; }
+  }
+  for (const [key, v] of Object.entries(o)) if (!/^errors?$/i.test(key) && Array.isArray(v) && v.some(namesModel)) return v;
+  return null;
+}
+
 /**
  * Makes testRequest's request and says what came of it, in plain words (never the service's raw text). Nothing at all is
  * sent to a host whose card the user hasn't agreed to, and the key goes only to the host it was entered for. Redirects
@@ -632,10 +659,7 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
     // A 200 says only that something is there: a web front end, a sign-in page or a parked domain answers every path
     // with one. Connected means it answered as a model service does, with a model list (integrations-c7-1).
     let list: unknown[] | null = null;
-    try {
-      const body = await res.json() as { data?: unknown; models?: unknown };
-      list = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
-    } catch { /* a body that isn't JSON (a web page): no model list, said below */ }
+    try { list = modelList(await res.json()); } catch { /* a body that isn't JSON (a web page): no model list, said below */ }
     if (!list) return { ok: false, why: `${host} answered, but not as a model service does. Check the endpoint.`, cause: "no-list" };
     const ids = listedModelIds(list);
     return { ok: true, host, models: list.length, ...(ids.length ? { ids } : {}) };

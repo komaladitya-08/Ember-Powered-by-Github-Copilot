@@ -1074,7 +1074,9 @@ such as Ollama at `http://localhost:11434/v1` or LM Studio at `http://localhost:
 **Advanced** the wire API (`completions` or `responses`) and Azure's API version. **Test connection** makes one GET of the
 service's model list with the saved key and says in one sentence what came of it, naming one or two of the models it
 lists ("Connected" only to an answer that holds a model list: a 200 with anything else, a web page included, says
-"<host> answered, but not as a model service does. Check the endpoint.", integrations-c7-1); up to 50 of their ids (`listedModelIds`: `data[].id`, or Ollama's `models[].name`, each a `MODEL_ID`) are
+"<host> answered, but not as a model service does. Check the endpoint.", integrations-c7-1; `modelList` takes the
+list as services write it: an array under `data` or `models`, a bare array, models keyed by id, or an array of models
+under another name, integrations-x7-1); up to 50 of their ids (`listedModelIds`: `data[].id`, or Ollama's `models[].name`, each a `MODEL_ID`) are
 offered as suggestions in both model fields, set as option values only. It is disabled, and main refuses it,
 until the card below is agreed for the endpoint's host: nothing at all goes to a host the user hasn't agreed to, with
 or without a key. A line under it says why it waits (its `aria-describedby`), and when the card comes up for an
