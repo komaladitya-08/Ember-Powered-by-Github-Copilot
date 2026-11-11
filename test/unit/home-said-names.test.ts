@@ -58,6 +58,15 @@ describe("what Home tells a screen reader", () => {
     expect(named(lines)).toEqual([]);
   });
 
+  it("never says Ember's name at all, not even “Ember's”, in the line said on every typed send (voice-listening-r6-1)", () => {
+    // "Thinking… Ember's reply will appear above." woke Ember in 2 of 24 real-model placements and was sent as "Thinking
+    // numbers reply will appear above."; the wake also stopped the typed request's answer on its way. `calledByName`
+    // leaves "Ember's" out, but the recogniser joins the word before it to the name (voice.ts, voice-listening-y6-1).
+    // The same line without the name: 0 of 20.
+    for (const line of [COMPOSER_THINKING, COMPOSER_HELD, COMPOSER_OVER, composerStillWaiting(), composerStillWaiting("user"), composerStillWaiting("admin")])
+      expect(line, line).not.toMatch(/\bEmber/i);
+  });
+
   it("never calls Ember by name, nor says a phrase it answers, as Voice Match's teaching ends or the voice is forgotten (voice-listening-r5-1)", () => {
     // "Ember knows your voice now. On: …" woke Ember in 22 of 40 placements, "Ember forgot your voice…" in 24, and the
     // line shown for no voice quotes “Ember, stop”, which said into the microphone stops Ember.

@@ -54,9 +54,12 @@ export function composerCount(n: number, limit = CONVERSATION_REQUEST_LIMIT): st
 }
 /**
  * The composer's line while Ember answers what was sent from it (home-7): thinking at first, then, while the bubble
- * says it (main's "slow" turn: home-c1-1), still waiting for the service in use, and how to stop it.
+ * says it (main's "slow" turn: home-c1-1), still waiting for the service in use, and how to stop it. Without the name,
+ * not even "Ember's": a screen reader says it on every typed send, into the wake word's microphone, and "Thinking…
+ * Ember's reply will appear above." woke Ember in 2 of 24 real-model placements, which also stopped the answer on its
+ * way; this wording in 0 of 20 (voice-listening-r6-1).
  */
-export const COMPOSER_THINKING = "Thinking… Ember's reply will appear above.";
+export const COMPOSER_THINKING = "Thinking… The reply will appear above.";
 /** The same while it waits, unsent, for a switch of model service that waits for the work under way (main's "held" turn: home-r4-4). */
 export const COMPOSER_HELD = "This goes to the new model service once what's under way now has finished. Stop response cancels it.";
 export function composerStillWaiting(service?: string): string {
