@@ -91,6 +91,21 @@ describe("Home's status panel", () => {
     expect(tagline({ ...t, waitingForTasks: true })).toMatch(/isn't answering: reconnecting once the tasks/);
   });
 
+  it("never promises Copilot comes back once online when it is GitHub's certificate Ember can't verify, and points to where it says why (home-x7-2)", () => {
+    // Main gives a certificate failure the reason "network" too (startErrorReason), with its own words (explainStartError).
+    const cert = { phase: "error", reason: "network", detail: "Ember can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember." };
+    expect(runtimeState(cert)).toBe("unreachable");
+    // Offline, in main's words and with none, is as before; another model service keeps its own lines.
+    expect(runtimeState({ ...cert, detail: "Ember can't reach GitHub right now. It will try again when the network is back." })).toBe("offline");
+    expect(runtimeState({ ...cert, service: { kind: "user" } })).toBeNull();
+    const t = { failing: 0, onboarded: true, phase: "error", hidden: false, overlay: true, runtime: runtimeState(cert) };
+    // Before: "Copilot can't be reached right now: reconnecting once you're online." to someone online, waiting on IT.
+    expect(tagline(t)).toBe("Beside your cursor. Copilot can't be reached: Models & connections says why.");
+    expect(tagline(t)).not.toMatch(/online|Connect Copilot|reconnecting/);
+    expect(connectLabel(undefined, false, "unreachable")).toBe("Models & connections…");
+    expect(statusWord({ phase: "error", failing: 0, running: 0, asking: 0, runtime: "unreachable" })).toEqual({ word: "Not connected", ring: "error" });
+  });
+
   it("says Ember is reconnecting while its model connection starts again, as the handle and Ask do, and never sends the person to a provider that is fine (accessibility-visual-c1-2)", () => {
     // The runtime stopped under the user's own provider (lost(): runtimeWords("user").stopped), then gave up.
     const crashed = { phase: "error", reason: "runtime", detail: "Ember's model connection stopped unexpectedly. Reconnecting…" };

@@ -47,8 +47,9 @@ export interface StatusFacts {
 /**
  * Ember's own model connection (its runtime) when it stopped: starting again by itself, or not (it gave up, or can't
  * start). "offline": signed in, and Copilot can't be reached over the network (Ember tries again by itself).
+ * "unreachable": signed in and online, and GitHub's certificate can't be verified (it waits on IT, not on the network).
  */
-export type RuntimeState = "reconnecting" | "stopped" | "offline" | null;
+export type RuntimeState = "reconnecting" | "stopped" | "offline" | "unreachable" | null;
 
 /**
  * Whether the agent's status is Ember's own model connection that stopped, from its reason and words: "reconnecting"
@@ -57,12 +58,14 @@ export type RuntimeState = "reconnecting" | "stopped" | "offline" | null;
  * provider's or Copilot's sign-in, which are fine then (accessibility-visual-c1-2: the panel said "Not connected" with
  * "Check my provider…" while the handle and Ask said "Reconnecting…"). "offline" when Copilot can't be reached over the
  * network: the person is signed in, so nothing says "Connect Copilot" (home-r7-1); another model service keeps its own
- * "Can't connect to … yet" lines.
+ * "Can't connect to … yet" lines. Main gives a certificate it can't verify the reason "network" too (startErrorReason),
+ * in words of its own (explainStartError): that is "unreachable", since the person is online and it won't come back by
+ * itself, so nothing says "once you're online" (home-x7-2).
  */
 export function runtimeState(a: { phase?: string | null; reason?: string; detail?: string; service?: unknown } | null | undefined): RuntimeState {
   if (a?.phase !== "error") return null;
   if ((a.reason === "runtime" || a.reason === "not-answering") && a.detail?.endsWith("Reconnecting…")) return "reconnecting";
-  if (a.reason === "network" && !a.service) return "offline";
+  if (a.reason === "network" && !a.service) return /certificate/i.test(a.detail ?? "") ? "unreachable" : "offline";
   return a.reason === "runtime" ? "stopped" : null;
 }
 

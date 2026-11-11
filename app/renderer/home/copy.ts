@@ -426,7 +426,7 @@ export function tagline(t: {
   /** Signed out while the user's own provider waits for its card for this host: agreeing is the way on (integrations-r3-1). */
   waitingFor?: string | null;
   /** Ember's own model connection stopped (status-copy.ts runtimeState): reconnecting by itself, or not (accessibility-visual-c1-2). */
-  runtime?: "reconnecting" | "stopped" | "offline" | null;
+  runtime?: "reconnecting" | "stopped" | "offline" | "unreachable" | null;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
   // Before Start it is always the first-run instruction: the setup check's own heading counts its rows (review #160).
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
@@ -442,6 +442,8 @@ export function tagline(t: {
   if (t.phase === "error" && t.runtime === "stopped") return `${where} ${t.service ? "Ember's model connection" : "Copilot"} isn't running: Models & connections says why.`;
   // Signed in and offline: connecting Copilot isn't what is missing, and it comes back by itself (home-r7-1).
   if (t.phase === "error" && t.runtime === "offline" && !t.service) return `${where} Copilot can't be reached right now: reconnecting once you're online.`;
+  // Online, and GitHub's certificate can't be verified: it waits on IT, so no "once you're online" (home-x7-2).
+  if (t.phase === "error" && t.runtime === "unreachable" && !t.service) return `${where} Copilot can't be reached: Models & connections says why.`;
   if (t.phase === "error" && t.service) return `${where} Can't connect to ${service} yet: Models & connections says why.`;
   if (t.phase === "signed-out" && t.waitingFor) return `${where} Agree to use ${t.waitingFor} in Models & connections to start asking.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot to start asking.`;
