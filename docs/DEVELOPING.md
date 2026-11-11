@@ -233,7 +233,8 @@ runtime. It does not change the app's consent or speaking settings.
   - A fact counts as yours only when it is mostly your own words. Otherwise it is the model's inference, and context
     only.
   - It never keeps passwords, codes, keys or card numbers.
-  - If `memory.json` can't be read (it is left as it was), isn't memory (it is set aside as `memory.json.broken`) or
+  - If `memory.json` can't be read (it is left as it was), isn't memory (it is set aside as `memory.json.broken`; if that
+    happens again the first copy stays and the later file goes to `memory.json.broken.2`) or
     can't be saved (a full or read-only disk), Settings › Memory says so under the list. While it can't be read,
     Home's status line says "Memory paused" and the line says to check that your account can open `memory.json` in
     Ember's data folder (a file left by running Ember as root is the usual cause), then restart Ember.

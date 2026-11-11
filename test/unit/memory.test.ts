@@ -1321,6 +1321,25 @@ describe("the memory file", () => {
     expect(fs.readFileSync(path.join(dir, "memory.json.broken"), "utf8")).toBe("{ not json");
   });
 
+  it("keeps the first copy set aside when memory.json breaks a second time, sets the later one beside it, and Forget everything removes both (memory-r7-2)", () => {
+    const dir = tmp();
+    const file = memoryFile(dir);
+    fs.writeFileSync(path.join(dir, "memory.json"), "the user's real memory, damaged");
+    file.load();
+    file.save(new MemoryGraph());
+    fs.writeFileSync(path.join(dir, "memory.json"), "what was kept since, damaged");
+    file.load();
+    expect(fs.readFileSync(path.join(dir, "memory.json.broken"), "utf8")).toBe("the user's real memory, damaged");
+    expect(fs.readFileSync(path.join(dir, "memory.json.broken.2"), "utf8")).toBe("what was kept since, damaged");
+    // A third takes the later copy's place, never the first's.
+    fs.writeFileSync(path.join(dir, "memory.json"), "a third");
+    file.load();
+    expect(fs.readFileSync(path.join(dir, "memory.json.broken"), "utf8")).toBe("the user's real memory, damaged");
+    expect(fs.readFileSync(path.join(dir, "memory.json.broken.2"), "utf8")).toBe("a third");
+    file.erase();
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
   it("says when memory.json was set aside, can't be read or can't be saved, instead of showing an empty memory alone (memory-r2)", () => {
     vi.useFakeTimers();
     try {
