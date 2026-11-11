@@ -116,3 +116,55 @@ describe("payment and secret fields Ember never fills", () => {
     expect(isSecretField(name)).toBe(false);
   });
 });
+
+/**
+ * The words that grant or commit are also the first words of headlines, tabs and menu items: what names a place, a
+ * setting or what a link leads to isn't asked as something the user didn't ask for (regression review of round seven).
+ */
+describe("labels that only start with a word that grants or commits", () => {
+  const plain = (r: ActionRequest) => {
+    for (const on of [false, true]) {
+      const d = engine(on).decide(r);
+      expect(d.verdict).toBe("allow");
+      expect(d.aligned).not.toBe(false);
+    }
+  };
+  // As the worker sends a click: `onPage`, never `inPage`.
+  const onPage = (role: string, name: string): ActionRequest => click(name, { inPage: undefined, onPage: true, goal: "Open the first article about interest rates", element: { role, name } });
+
+  it.each(["Reserve Bank raises interest rates again", "Call the Midwife - Series 13 Trailer", "Allow Me to Reintroduce Myself", "Sell-off deepens as markets tumble",
+    "Permit applications open for summer events", "Book a demo", "Email", "Call"])("a page's link named “%s” goes without a question (safety-privacy-x7-1)", name => {
+    plain(onPage("link", name));
+    plain(click(name, { element: { role: "link", name } }));
+  });
+
+  it.each(["Email", "Call", "Book", "Allow"])("a tab named “%s” goes without a question (safety-privacy-x7-1)", name => {
+    plain(onPage("page tab", name));
+  });
+
+  it.each(["Allow Editing", "Allow Text Wrapping"])("a menu's “%s” goes without a question (safety-privacy-x7-1)", name => {
+    plain(click(name, { app: "gedit", window: "notes.txt - gedit", inPage: undefined, element: { role: "menu item", name } }));
+  });
+
+  it.each(["Reserve space", "Sell by date"])("a button named “%s” goes without a question (safety-privacy-x7-1)", name => {
+    plain(click(name, { app: "gedit", window: "notes.txt - gedit", inPage: undefined }));
+  });
+
+  it("a click on a headline's own text goes without a question (safety-privacy-x7-1)", () => {
+    plain(onPage("static", "Reserve Bank raises interest rates again"));
+  });
+
+  it("an OK on a page titled with a headline isn't asked for the title's first word (safety-privacy-x7-1)", () => {
+    plain(click("OK", { window: "Call the Midwife - Series 13 Trailer - Mozilla Firefox" }));
+  });
+
+  it.each(["Allow", "Allow access", "Permit", "Sell", "Reserve now", "Bid", "Vote", "Book now"])("a link named “%s” still asks every time (safety-privacy-r7-1)", name => {
+    asksAlways(click(name, { inPage: undefined, onPage: true, element: { role: "link", name } }));
+    asksAlways(click(name, { element: { role: "link", name } }));
+  });
+
+  it.each(["Allow", "Allow all", "Purge", "Email the file", "Book a table"])("a menu's or button's “%s” still asks every time (safety-privacy-r7-1)", name => {
+    asksAlways(click(name, { app: "gedit", window: "notes.txt - gedit", inPage: undefined, element: { role: "menu item", name } }));
+    asksAlways(click(name, { app: "gedit", window: "notes.txt - gedit", inPage: undefined }));
+  });
+});
