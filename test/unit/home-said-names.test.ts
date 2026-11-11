@@ -10,7 +10,7 @@ import {
   COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED,
   HEAR_WAITING, LISTEN_CONSENT_NOT_SAVED, STARTED_TEXT, composerStillWaiting, hearEmberLine, presenceLine, tagline, updateStatusText,
 } from "../../app/renderer/home/copy";
-import { NAV, START_LABEL, STEP_TEXT, TRY_TEXT, WELCOME_STEPS, signInText, stepPosition } from "../../app/renderer/home/welcome-copy";
+import { NAV, START_LABEL, STEP_TEXT, TRY_TEXT, WELCOME_STEPS, signInText, stepLanding, stepPosition } from "../../app/renderer/home/welcome-copy";
 import { MATCH_TEXT, matchAnnouncement, matchView } from "../../app/renderer/home/match-copy";
 import { composerRefusal } from "../../app/main/agent/composer-refusal";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
@@ -166,5 +166,20 @@ describe("what Home tells a screen reader", () => {
     const started = /if \(started\) \{\n([^]*?)\n {2}\}\n/.exec(main)?.[1] ?? "";
     expect(started).toContain('$("tagline").focus({ preventScroll: true });');
     expect(started).not.toContain('$("home-h")');
+  });
+
+  it("lands on the hello step's lead, not its title “Hi, I'm Ember.”, when Back reaches it after the consent is agreed (first-run-r6-1)", () => {
+    // A returning user who agreed again is heard from then on, and Back twice from the sign-in step moved focus to the
+    // title that ends in the name: the lead read after it would be taken as the request.
+    expect(named([`${STEP_TEXT.hello.title}, heading level 2`])).toHaveLength(1);
+    expect(stepLanding("hello", true)).toBe("w-lead");
+    expect(named([STEP_TEXT.hello.lead])).toEqual([]);
+    // Before any agreement nothing is heard, and every other step's title has no name (the test above).
+    expect(stepLanding("hello", false)).toBe("w-title");
+    for (const step of [...WELCOME_STEPS, "character", "about", "provider"] as const) if (step !== "hello") for (const consented of [true, false]) expect(stepLanding(step, consented), step).toBe("w-title");
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    expect(page).toContain('<p class="w-lead" id="w-lead" tabindex="-1"></p>');
+    const go = /function go\(to: WelcomeStep\): void \{\n([^]*?)\n {2}\}\n/.exec(readFileSync(new URL("../../app/renderer/home/welcome.ts", import.meta.url), "utf8"))?.[1] ?? "";
+    expect(go).toContain("$(stepLanding(step, consented())).focus({ preventScroll: true });");
   });
 });

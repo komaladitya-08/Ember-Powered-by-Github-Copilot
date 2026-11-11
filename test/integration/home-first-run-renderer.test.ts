@@ -1366,6 +1366,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
   it("(q) someone who agreed to an earlier version starts at the consent and is told what changed (first-run-4, safety-privacy-8)", async () => {
     const p = await open({ consent: 6, agent: readyAgent() });
     expect(await p.locator("#w-title").innerText()).toBe("What's changed since you last agreed");
+    // The step it opens on has the focus on its title, not the page (first-run-r7-3).
+    expect(await focusedId(p)).toBe("w-title");
     expect(await p.locator("#w-count").innerText()).toBe("Step 2 of 6");
     expect(await p.locator("#w-changes").isVisible()).toBe(true);
     const changed = await p.locator("#w-changes-list li").allInnerTexts();

@@ -341,6 +341,15 @@ describe("the checks step", () => {
   });
 });
 
+describe("the step first run opens on", () => {
+  it("takes keyboard focus on its title, so a screen reader starts there and not on the page (first-run-r7-3)", () => {
+    // Every later step focused its title; the opening one (the hello, or the changed consent) left focus on <body>.
+    const begin = /function begin\(\): void \{\n([^]*?)\n {2}\}\n/.exec(SCRIPT)?.[1] ?? "";
+    expect(begin).toContain("$(stepLanding(step, consented())).focus({ preventScroll: true });");
+    expect(PAGE).toContain('<h2 id="w-title" tabindex="-1">');
+  });
+});
+
 describe("the try step", () => {
   it("offers “Hey Ember” only while Ember listens for it, and says where to turn it on otherwise", () => {
     expect(voiceTry({ wakeWord: false, voiceConsent: false, state: "off" })).toBe("off");

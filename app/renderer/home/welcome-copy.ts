@@ -24,6 +24,15 @@ export function firstStep(agreed: number): WelcomeStep {
   return agreed > 0 ? "consent" : "hello";
 }
 
+/**
+ * The element a step's focus lands on, so it is read from the top: its title. The hello step's lead instead once the
+ * consent is agreed: its title, "Hi, I'm Ember.", ends in the name, and “Hey Ember” may listen by then (Back from a
+ * consent agreed again), so what a screen reader read on would be taken as a request (first-run-r6-1).
+ */
+export function stepLanding(step: WelcomeStep, consented: boolean): "w-title" | "w-lead" {
+  return step === "hello" && consented ? "w-lead" : "w-title";
+}
+
 /** Position in the essential route; optional detours keep their originating step's indicator. */
 export function stepPosition(step: WelcomeStep): number {
   return WELCOME_STEPS.indexOf(step === "character" ? "hello" : step === "about" ? "try" : step === "provider" ? "sign-in" : step);

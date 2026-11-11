@@ -25,7 +25,7 @@ import {
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
-  DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
+  DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepLanding, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
 /** What the settings window lends the welcome. */
@@ -165,6 +165,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     void readOwn();
     root.hidden = false;
     render();
+    // The step it opens on is read from its title too, not left to the page (first-run-r7-3): once the page shows (it
+    // is hidden while it loads, and takes no focus then), and only while nothing else has the focus.
+    setTimeout(() => { if (active && document.activeElement === document.body) $(stepLanding(step, consented())).focus({ preventScroll: true }); }, 0);
     // Ember lands, then greets: one happy hop (none in Calm, where the rig holds still).
     setTimeout(() => { if (active) deps.arrived(); }, 600);
   }
@@ -204,7 +207,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (step === "try") heardBefore = -1;
     render();
     window.scrollTo({ top: 0, behavior: "auto" });
-    $("w-title").focus({ preventScroll: true });
+    $(stepLanding(step, consented())).focus({ preventScroll: true });
   }
 
   // ───── Drawing the step ─────

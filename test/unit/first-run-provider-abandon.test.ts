@@ -12,7 +12,7 @@ import path from "node:path";
 import ts from "typescript";
 import { latestOnly, endpointHost } from "../../app/shared/provider";
 import { providerCheckLine, providerFailField, providerKeptLine, providerModelMissing, PROVIDER_STEP } from "../../app/renderer/home/first-run-copy";
-import { gated, stepPosition } from "../../app/renderer/home/welcome-copy";
+import { gated, stepLanding, stepPosition } from "../../app/renderer/home/welcome-copy";
 import { SettingsStore, withOwnProvider } from "../../app/main/settings";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { noteProviderChoice, providerChoice } from "../../app/renderer/home/provider-choice";
@@ -76,7 +76,7 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
     // The visit set the provider up (it wasn't in use as the step opened): Back to Copilot puts it away (first-run-c1-2).
     visitInUse: false, checkSaves: true, edited: false, ownInForce: () => false, inUseHost: () => null, offPending: 0, see() {}, switchMade: false, switchedSaid: false,
     get settings() { return settings.get(); },
-    latestOnly, endpointHost, providerChoice, showOffFailureText: "", providerCheckLine, providerFailField, providerModelMissing, providerKeptLine, PROVIDER_STEP, gated, stepPosition,
+    latestOnly, endpointHost, providerChoice, showOffFailureText: "", providerCheckLine, providerFailField, providerModelMissing, providerKeptLine, PROVIDER_STEP, gated, stepLanding, stepPosition,
     root: { dataset: {} }, consented: () => true, render() {}, $: (id: string) => (nodes[id] ??= { hidden: true, textContent: "", focus() {} }), provField: () => ({ focus() {} }), next: { focus() {} },
     readProviderFields: () => ({ ...fields }), window: { emberProvider: api, scrollTo() {} },
     deps: {
