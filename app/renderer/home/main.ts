@@ -54,7 +54,7 @@ import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, t
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { problemInHome, PROBLEM_SETTINGS, composerCount, composerGivenBack, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { problemInHome, PROBLEM_SETTINGS, composerCount, composerGivenBack, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, LISTEN_CONSENT_NOT_SAVED, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
 import { composerEditAgain, composerEditCancelled, composerLineFits } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
@@ -2743,7 +2743,7 @@ $("consent-yes").addEventListener("click", () => {
     if (run !== consentRun) return; // closed meanwhile: nothing more to do here
     consentSaving = false;
     $("consent-yes").removeAttribute("aria-busy");
-    if (!ok) { consentError("Ember couldn't save your choice, so it isn't listening. Press “I agree, start listening” to try again."); $("consent-yes").focus(); return; }
+    if (!ok) { consentError(LISTEN_CONSENT_NOT_SAVED); $("consent-yes").focus(); return; }
     $("consent").hidden = true;
     // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
     if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();

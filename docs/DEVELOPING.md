@@ -600,8 +600,10 @@ couldn't speak just now" when no voice spoke it within 12 s; not with **Never**,
 organisation has turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
 the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
 “Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
-stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted),
-after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases that don't sound alike; settings says which.
+stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted,
+or the microphone goes or sends only silence), after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases
+that don't sound alike; settings says which. Teaching doesn't start while the voice line says the microphone isn't
+working: **Teach my voice** then says to check the microphone and the voice status above it.
 While a screen reader runs, which reads each prompt aloud, teaching takes nothing it reads: speech that begins within
 1.5 s of a prompt showing, or in a prompt's own words ("Say…", "Heard 2 of 4…", "That was too short…"), teaches
 nothing, and a phrase said so soon after the reading that the two ran together is asked for again ("Your screen reader

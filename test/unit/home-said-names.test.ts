@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED,
-  HEAR_WAITING, composerStillWaiting, hearEmberLine, presenceLine, tagline, updateStatusText,
+  HEAR_WAITING, LISTEN_CONSENT_NOT_SAVED, composerStillWaiting, hearEmberLine, presenceLine, tagline, updateStatusText,
 } from "../../app/renderer/home/copy";
 import { MATCH_TEXT, matchAnnouncement, matchView } from "../../app/renderer/home/match-copy";
 import { composerRefusal } from "../../app/main/agent/composer-refusal";
@@ -106,6 +106,19 @@ describe("what Home tells a screen reader", () => {
     const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
     expect(page).toMatch(/<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-teach-said">Teach my voice<\/button><span id="match-teach-said" hidden><\/span>/);
     expect(readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8")).toContain('$("match-teach-said").textContent = view.teach.said;');
+  });
+
+  it("never says Ember's name where Teach is refused, a phrase is asked for again or listening's consent couldn't be saved (voice-listening-r6-3, voice-listening-c7-1, voice-listening-r7-1)", () => {
+    // "Ember isn't listening just now, so it can't learn your voice. Try again once it's listening for “Ember”." is said
+    // as Teach is refused, also while listening starts, and said whole into an idle wake microphone it woke Ember and
+    // was sent as a request in 3 of 4 real-model placements; the line now said in 0 of 20.
+    const lines = [MATCH_TEXT.notListening, LISTEN_CONSENT_NOT_SAVED, ...Object.values(MATCH_TEXT.again)];
+    expect(named(lines)).toEqual([]);
+    for (const line of lines) expect(line, line).not.toMatch(/\bEmber/i);
+    // A refused Teach says where to look: the microphone may be why (voice-listening-r7-1).
+    expect(MATCH_TEXT.notListening).toBe("Not listening just now, so your voice can't be learnt. Check the microphone and the voice status above, then try again.");
+    expect(LISTEN_CONSENT_NOT_SAVED).toBe("Your choice couldn't be saved, so listening is still off. Press “I agree, start listening” to try again.");
+    expect(readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8")).toContain("consentError(LISTEN_CONSENT_NOT_SAVED)");
   });
 
   it("never calls Ember by name in what Hear Ember found (voice-listening-r5-1)", () => {

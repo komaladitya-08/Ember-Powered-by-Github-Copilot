@@ -10,10 +10,16 @@ export const MATCH_TEXT = {
   none: "Ember hears anyone who talks to it. Teach it your voice, and you can answer its questions out loud (“Ember, allow”); other voices can't. “Ember, stop” works for anyone.",
   on: "On: your voice can answer Ember's questions out loud, and other voices can't. Ember still hears everyone. Your voiceprint stays on this computer.",
   off: "Off: answer Ember's questions by clicking. It keeps your voiceprint until you forget it.",
-  /** enrolVoice() said no: Ember isn't listening just now (muted, starting, or not working), so it can't hear the phrases. */
-  notListening: "Ember isn't listening just now, so it can't learn your voice. Try again once it's listening for “Ember”.",
+  /**
+   * enrolVoice() said no: Ember isn't listening just now (muted, starting, or the microphone not working, which the voice
+   * line above says: voice-listening-r7-1), so it can't hear the phrases. Shown, and said as Teach is pressed, also while
+   * listening starts, so without the name: "Ember isn't listening just now, so it can't learn your voice. Try again once
+   * it's listening for “Ember”." woke Ember and was sent as a request in 3 of 4 real-model placements, this line in 0
+   * of 20 (voice-listening-r6-3, voice-listening-c7-1).
+   */
+  notListening: "Not listening just now, so your voice can't be learnt. Check the microphone and the voice status above, then try again.",
   say: "Say:",
-  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" },
+  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "That wasn't heard clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" },
   /** Without the name: focus is moved to this button, and a screen reader then reads it (voice-listening-r6-2). */
   teach: "Teach my voice",
   teachAgain: "Teach my voice again",

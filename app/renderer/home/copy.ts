@@ -53,6 +53,11 @@ export function composerCount(n: number, limit = CONVERSATION_REQUEST_LIMIT): st
   return `${num(n)} of ${num(limit)} characters${over > 0 ? `, ${num(over)} too many` : ""}.`;
 }
 /**
+ * The microphone note's Agree couldn't save the choice: shown on the note and said. Without the name, as every line Home
+ * says by itself (voice-listening-r6-3).
+ */
+export const LISTEN_CONSENT_NOT_SAVED = "Your choice couldn't be saved, so listening is still off. Press “I agree, start listening” to try again.";
+/**
  * The composer's line while Ember answers what was sent from it (home-7): thinking at first, then, while the bubble
  * says it (main's "slow" turn: home-c1-1), still waiting for the service in use, and how to stop it. Without the name,
  * not even "Ember's": a screen reader says it on every typed send, into the wake word's microphone, and "Thinking…

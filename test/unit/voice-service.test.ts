@@ -2072,6 +2072,44 @@ describe("speech models", () => {
       });
     }
 
+    for (const how of ["no microphone", "a silent microphone", "a failed voice process"] as const) {
+      it(`doesn't start teaching while the microphone isn't working (${how}), as Listen once doesn't (voice-listening-r7-1)`, async () => {
+        // With no microphone, Teach showed the first phrase and "0 of 4 heard", and 45 s later said no phrase was heard
+        // for a while; the voice line three rows up said "Not working: No microphone was found. Trying again…".
+        const { v, states } = service(true, { voiceprint: () => null });
+        await v.setWanted(true);
+        const proc = electron.procs.at(-1)!;
+        proc.emit("message", { type: "ready", loadMs: 10 });
+        const mic = electron.windows.at(-1)!;
+        if (how === "no microphone") electron.ipcMain.emit(VOICE.status, { sender: mic.webContents }, { state: "lost", message: "NotFoundError" });
+        else if (how === "a silent microphone") proc.emit("message", { type: "silent", on: true });
+        else proc.emit("message", { type: "error", message: "Something broke." });
+        expect(states.at(-1)?.s).toBe("error");
+        expect(v.listenOnceStatus.reason).toBe("voice-error");
+        expect(v.enrol()).toBe(false);
+        expect(v.isEnrolling).toBe(false);
+        expect(posted(proc, "enrol")).toEqual([]);
+        // Working again: Teach starts.
+        if (how === "no microphone") { captured(); expect(v.enrol()).toBe(true); }
+        else if (how === "a silent microphone") { proc.emit("message", { type: "silent", on: false }); expect(v.enrol()).toBe(true); }
+      });
+    }
+
+    for (const how of ["lost", "silent"] as const) {
+      it(`ends the teaching as cut short, not as no phrase heard for a while, when the microphone goes (${how}) while a voice is taught (voice-listening-r7-1)`, async () => {
+        const { v, proc, progress, states } = await teaching();
+        if (how === "lost") electron.ipcMain.emit(VOICE.status, { sender: electron.windows.at(-1)!.webContents }, { state: "lost", message: "NotFoundError" });
+        else proc.emit("message", { type: "silent", on: true });
+        expect(states.at(-1)?.s).toBe("error");
+        expect(progress.at(-1)).toEqual({ type: "enrol", state: "cancelled", got: 1, of: 4, why: "interrupted" });
+        expect(v.isEnrolling).toBe(false);
+        // The voice process stops taking phrases too; its own "cancelled" then changes nothing.
+        expect(posted(proc, "enrol-cancel")).toEqual([{ type: "enrol-cancel" }]);
+        proc.emit("message", { type: "enrol", state: "cancelled", got: 1, of: 4 });
+        expect(v.isEnrolling).toBe(false);
+      });
+    }
+
     it("stops the teaching with everything else when the kill switch stops listening (voice-listening-v1)", async () => {
       const { v, proc } = await teaching();
       v.cancelListening();

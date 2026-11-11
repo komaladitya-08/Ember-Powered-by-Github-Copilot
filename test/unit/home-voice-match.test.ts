@@ -40,7 +40,7 @@ describe("Voice Match's states", () => {
   it("asks again with the reason when a phrase wasn't kept", () => {
     expect(matchView(enrolling(2, "short"), shown).prompt).toBe("That was too short. Say it again: “Ember, what's the weather like”");
     expect(matchView(enrolling(2, "unlike"), shown).prompt).toBe("That didn't sound like the others (another voice, or noise). Say it again: “Ember, what's the weather like”");
-    expect(matchView(enrolling(0, "failed"), shown).prompt).toBe("Ember couldn't hear that clearly. Say it again: “Ember, what's the weather like”");
+    expect(matchView(enrolling(0, "failed"), shown).prompt).toBe("That wasn't heard clearly. Say it again: “Ember, what's the weather like”");
     // Said while a screen reader still read the prompt, the two came as one (voice-listening-r4-1).
     expect(matchView(enrolling(1, "over"), shown).prompt).toBe("Your screen reader was still reading. Wait for it to finish, then say: “Ember, what's the weather like”");
   });

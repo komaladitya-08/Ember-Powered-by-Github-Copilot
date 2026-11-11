@@ -82,8 +82,8 @@ describe.skipIf(process.env.EMBER_SPEECH_CONSENT_TEST !== "1")("Home speech cons
     // A refused write: still no download, a visible line, Agree ready again, nothing claiming consent.
     await settle(0, "reject");
     await expect.poll(() => error().isVisible()).toBe(true);
-    expect(await error().innerText()).toContain("couldn't save");
-    expect(await page.locator("#voice-live").innerText()).toContain("couldn't save");
+    expect(await error().innerText()).toContain("couldn't be saved");
+    expect(await page.locator("#voice-live").innerText()).toContain("couldn't be saved");
     expect(await calls("download")).toBe(0);
     expect(await page.locator("#consent").isVisible()).toBe(true);
     expect(await page.locator("#consent-yes").getAttribute("aria-busy")).toBeNull();

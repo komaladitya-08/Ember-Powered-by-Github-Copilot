@@ -804,7 +804,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     };
     const phrase = ["Ember, what's the weather like today?", "Hey Ember, open my calendar.", "Ember, turn on Do Not Disturb.", "Ember, set a timer for ten minutes."];
     const prompt = (st: EnrolState) => {
-      const say = st.state === "again" ? { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" }[st.why] : "Say:";
+      const say = st.state === "again" ? { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "That wasn't heard clearly. Say it again:", over: "Your screen reader was still reading. Wait for it to finish, then say:" }[st.why] : "Say:";
       return `${st.state === "heard" ? `Heard ${st.got} of ${st.of}. ` : ""}${say} ${phrase[Math.min(st.got, 3)]}`;
     };
     // The room as it goes: each prompt read 0.4 s after it shows, the owner's phrase 0.7 s after the reading ends (said
