@@ -808,6 +808,8 @@ function start(): void {
    * question at a time: Quit chosen again while it is up (perhaps behind a window now) closes it and asks again on top.
    */
   let quitAsking: AbortController | null = null;
+  /** The administrator's policy changed while Ember ran: a restart reads it whole (run from an AppImage, the AppImage). */
+  const restartForPolicy = (): void => { app.relaunch(restartOptions(process.env, process.argv, process.execPath)); app.quit(); };
   const quitEmber = async (): Promise<void> => {
     const words = quitWords();
     if (!words) { app.quit(); return; }
@@ -2321,6 +2323,8 @@ function start(): void {
     return presence();
   }));
   ipcMain.handle(IPC.quit, guard(() => quitEmber()));
+  // Home's Restart Ember, shown while a changed policy holds Ember locked: the bubble's may be closed or hidden (home-r7-3).
+  ipcMain.handle(IPC.restart, guard(() => { if (admin.held) restartForPolicy(); }));
   // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
   ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
   /** Project work under way may go on: the settings window open, shown or not (integrations-6). */
@@ -2835,7 +2839,7 @@ function start(): void {
     if (id === "ui:conversation") { readLastAnswer(); return; }
     if (id === "ui:close") { closeExpanded(); return; }
     // The administrator's policy changed while Ember ran: a restart reads it whole (run from an AppImage, the AppImage).
-    if (id === "ui:restart" && admin.held) { app.relaunch(restartOptions(process.env, process.argv, process.execPath)); app.quit(); return; }
+    if (id === "ui:restart" && admin.held) { restartForPolicy(); return; }
     // The targets runtime's own: a target picked, an offer, a connection, a panel to show, an announced command's Stop.
     if (targets?.bubbleAction(id)) return;
     if (task) {

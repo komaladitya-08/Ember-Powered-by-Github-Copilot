@@ -196,6 +196,19 @@ describe("Home's status panel", () => {
     expect(STATUS_FAILED).not.toMatch(/Ember/);
   });
 
+  it("offers Restart Ember on Home while a changed policy holds Ember locked, and main restarts only then (home-r7-3)", () => {
+    const html = fs.readFileSync("app/renderer/home/index.html", "utf8");
+    expect(html).toContain('<button type="button" id="p-restart" class="btn" hidden>Restart Ember</button>');
+    const home = fs.readFileSync("app/renderer/home/main.ts", "utf8");
+    expect(home).toContain('$("p-restart").hidden = !lastAdmin?.held;');
+    expect(home).toContain('$("p-restart").addEventListener("click", () => { void window.ember.restart(); });');
+    expect(fs.readFileSync("app/preload/home.ts", "utf8")).toContain("restart: () => ipcRenderer.invoke(IPC.restart),");
+    // Main checks the sender (guard) and restarts only while the lockdown is held: nothing else restarts Ember from a page.
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("ipcMain.handle(IPC.restart, guard(() => { if (admin.held) restartForPolicy(); }));");
+    expect(IPC.restart).toBe("ember:restart");
+  });
+
   it("says memory is paused, not on, while its owner isn't verified (memory-2)", () => {
     expect(memoryWhatsOn(true, false, "ready")).toBe(true);
     expect(memoryWhatsOn(true, false, "locked")).toBe("paused");

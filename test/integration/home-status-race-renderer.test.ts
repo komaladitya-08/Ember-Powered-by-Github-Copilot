@@ -59,6 +59,7 @@ async function openHome(initial: typeof A, statusCalls: "held" | "answer-now" = 
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return () => w.__statusMode === "answer-now" ? Promise.resolve(w.__status) : new Promise((resolve, reject) => { w.__statusCalls.push({ resolve, reject }); });
       if (name === "updateSettings") return async () => ({ ok: true });
+      if (name === "restart") return async () => { (window as unknown as { __restarts: number }).__restarts = ((window as unknown as { __restarts?: number }).__restarts ?? 0) + 1; };
       return () => new Promise(() => undefined);
     } }) as never;
   }, { status: statusOf(initial), provider: providerFor(initial), mode: statusCalls });
@@ -172,6 +173,21 @@ describe.skipIf(process.env.EMBER_STATUS_RACE_TEST !== "1")("Home startup snapsh
     await page.close();
     expect(errors.filter(e => !/Main is busy/.test(e))).toEqual([]);
   }, 60_000);
+
+  it("shows Restart Ember in the status panel once a changed policy holds Ember locked, and it asks main to restart (home-r7-3)", async () => {
+    const { page, errors } = await openHome(A, "answer-now");
+    await page.evaluate(() => { document.body.classList.remove("loading", "first-run"); });
+    await expect.poll(() => page.locator("#whats-on").innerText()).not.toBe("Checking…");
+    expect(await page.locator("#p-restart").isHidden()).toBe(true);
+    await page.evaluate(a => window.__emit("onAdminChanged", a), { ...admin, source: "/etc/ember/policy.json", held: true, error: "Your organisation changed Ember's policy while Ember was running. Restart Ember to use the new one.", features: { voice: false }, commands: { local: "off", wsl: "off", ssh: "off" } });
+    await expect.poll(() => page.locator("#state-word").innerText()).toBe("Locked until a restart");
+    const restart = page.getByRole("button", { name: "Restart Ember" });
+    expect(await restart.isVisible()).toBe(true);
+    await restart.click();
+    expect(await page.evaluate(() => (window as unknown as { __restarts?: number }).__restarts)).toBe(1);
+    expect(errors).toEqual([]);
+    await page.close();
+  }, 30_000);
 
   it("restores the saved microphone switch and consent after every initial status request fails", async () => {
     const { page, errors } = await openHome(A);

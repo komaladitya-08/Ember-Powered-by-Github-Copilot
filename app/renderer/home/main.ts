@@ -298,6 +298,8 @@ function renderStatus(): void {
   const notConnected = (agent?.phase === "signed-out" || agent?.phase === "error") && agent?.waitingForTasks !== true;
   // Locked down, connecting can't help (safety-privacy-4): no Connect button.
   $("p-connect").hidden = !notConnected || locked;
+  // Held locked until a restart, the way on is here too, not only in the bubble (home-r7-3).
+  $("p-restart").hidden = !lastAdmin?.held;
   setText("p-connect", connectLabel(agent?.service?.kind, !!waitingFor(), runtimeState(agent)));
   $("p-ask").classList.toggle("quiet", notConnected);
   $("p-waiting").hidden = !asking;
@@ -310,6 +312,7 @@ $("p-setup").addEventListener("click", () => showSection("checks"));
 $("p-write").addEventListener("click", () => showSection("conversation:message"));
 $("p-tasks").addEventListener("click", () => showSection("tasks"));
 $("p-connect").addEventListener("click", () => showSection("copilot"));
+$("p-restart").addEventListener("click", () => { void window.ember.restart(); });
 // Home opens the exact live approval in its own focusable window; main owns question identity and authority.
 const openApproval = () => { void window.ember.openApproval(); };
 $("p-waiting").addEventListener("click", openApproval);

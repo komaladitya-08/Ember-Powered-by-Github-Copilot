@@ -199,6 +199,8 @@ export const IPC = {
   /** Main tells the settings window whether it can be seen (minimised or hidden: false), as X11 doesn't say. */
   homeVisibility: "ember:home-visibility",
   quit: "ember:quit",
+  /** Restart Ember from the settings window, only while a changed policy holds it locked (admin.held): home-r7-3. */
+  restart: "ember:restart",
   /** The handle menu's Ask Ember… and Stop everything, from the settings window (a keyboard's way to them). */
   openAsk: "ember:open-ask",
   stopEverything: "ember:stop-everything",
@@ -536,6 +538,8 @@ export interface EmberHomeApi {
   onAdminChanged(fn: (admin: Status["admin"]) => void): () => void;
   /** Quit Ember (asks first while tasks are running). */
   quit(): Promise<void>;
+  /** Restart Ember to read the organisation's changed policy; main does nothing unless that lockdown is held. */
+  restart(): Promise<void>;
   /** Opens the ask box, as the handle menu's Ask Ember… does (the keyboard's way when another app has the shortcut). */
   openAsk(): Promise<void>;
   listenOnce(on: boolean): Promise<ListenOnceStatus>;
