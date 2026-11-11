@@ -103,7 +103,11 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   const modelGone = /model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m);
   // A 404 from the user's own provider that names no model: an endpoint without its path (no /v1) answers the same, and
   // Test connection says of that address that it has no model list there. The two agree (integrations-r7-2).
-  if (!modelGone && mine && status === 404) return `The model I'm set to use isn't available, or the endpoint's address is wrong. Check both ${inSettings(true)}.`;
+  // The service's own words for a model that isn't there name it without those phrases (integrations-x7-3): OpenAI's
+  // "The model `x` does not exist…", Anthropic's not_found_error "model: x", Azure's DeploymentNotFound (its deployment
+  // is the model) and "No such model". Azure's "Resource not found", for a wrong address, names none.
+  const namedGone = modelGone || /model.{0,40}(does not|doesn't) exist|no such model|\bmodel: ?\S|deployment.?not.?found|deployment.{0,60}(does not|doesn't) exist/i.test(m);
+  if (!namedGone && mine && status === 404) return `The model I'm set to use isn't available, or the endpoint's address is wrong. Check both ${inSettings(true)}.`;
   if (modelGone || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one ${inSettings(false)}.`;
   if (/policy|\b403\b|forbidden|\bseat\b|subscription/i.test(m)) return refused;
   // The whole conversation (not this request) went over the model's limit: a new conversation starts from Home's New conversation button.

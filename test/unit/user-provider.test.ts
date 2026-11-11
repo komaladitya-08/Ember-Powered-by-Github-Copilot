@@ -436,6 +436,18 @@ describe("errors with the user's own provider", () => {
     expect(friendlyError("404 Not Found", undefined, { provider: "user", statusCode: 404, settingsKey: null })).toBe("The model I'm set to use isn't available, or the endpoint's address is wrong. Check both in Ember's settings.");
     // The service names the model: it is the model.
     expect(friendlyError("404 The model `gpt-9` does not exist: model_not_found", undefined, { provider: "user", statusCode: 404 })).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
+    // In each service's own words for a model that isn't there (integrations-x7-3).
+    for (const raw of [
+      "404 The model `gpt-9` does not exist or you do not have access to it.",
+      '404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-9"}}',
+      "DeploymentNotFound: The API deployment for this resource does not exist. If you created the deployment within the last 5 minutes, please wait a moment and try again.",
+      "404 model 'llama9' not found",
+      "404 No such model: gpt-9",
+    ]) expect(friendlyError(raw, undefined, { provider: "user", statusCode: 404 }), raw).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
+    // A 404 that names no model is still either: a wrong path, or Azure's answer for a wrong resource address.
+    for (const raw of ['404 {"type":"error","error":{"type":"not_found_error","message":"Not Found"}}', '404 {"error":{"code":"404","message":"Resource not found"}}', "404 The requested URL does not exist"]) {
+      expect(friendlyError(raw, undefined, { provider: "user", statusCode: 404 }), raw).toBe(both);
+    }
     // The organisation's service is the administrator's to address: the old words.
     expect(friendlyError("404 page not found", undefined, { provider: true, statusCode: 404 })).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
     // In Home the way there is Models & connections, with its button.
