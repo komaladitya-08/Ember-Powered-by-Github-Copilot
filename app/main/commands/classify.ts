@@ -1513,11 +1513,21 @@ const PROGRAM_CMD_VARS = new Set([
 ]);
 /** Variables holding a tool's options where a sub-option names a program it runs (`GOFLAGS=-toolexec=…`). */
 const PROGRAM_OPT_VARS = /^(GOFLAGS|GOTESTFLAGS|CGO_[A-Z]*FLAGS|TAR_OPTIONS|RUSTFLAGS|CARGO_[A-Z_]*RUSTFLAGS|PYTEST_ADDOPTS)$/;
-/** A sub-option whose value is a program a build tool runs (go's toolexec/exec, tar's --to-command, pytest's -p). */
-const SUBOPT_PROGRAM = /(^|[\s,'"=])--?(toolexec|exec|vettool|to-command|ldflags|p|plugins?)(=|\s|$)/;
-/** A value that looks like a shell command (a shell operator, or a leading shell or interpreter), not a plain word. */
-const SHELL_SHAPE = /[$`;|&<>()\n]/;
-const SHELL_LEAD = /^\s*(sh|bash|zsh|dash|ksh|fish|ash|busybox|env|eval|exec|command|xargs|python[0-9.]*|perl|ruby|node|nodejs|php|lua|awk|sed|curl|wget)(\s|$)/;
+/**
+ * A value that looks like a shell command, not a plain word: an operator that chains or substitutes (`|`, `;`, `&&`, a
+ * substitution, a backtick, a newline — never a lone `&`, `<`, `>` or parenthesis, which a URL or a flag holds), or a
+ * leading shell or interpreter with an argument after it (`sh -c …`, never a bare `python3`): commands-remote-c8-1.
+ */
+const SHELL_SHAPE = /[|;`\n]|&&|\$\(/;
+const SHELL_LEAD = /^\s*(sh|bash|zsh|dash|ksh|fish|ash|busybox|env|eval|exec|command|xargs|python[0-9.]*|perl|ruby|node|nodejs|php|lua|awk|sed|curl|wget)\s+\S/;
+/** Whether an options variable's value names a program its tool runs, by that tool's own sub-option (never a shared list). */
+function optNamesProgram(name: string, value: string): boolean {
+  if (/^(GOFLAGS|GOTESTFLAGS|CGO_[A-Z]*FLAGS)$/.test(name)) return /(^|[\s,'"=])-(toolexec|exec|vettool)(=|\s)/.test(value);
+  if (name === "TAR_OPTIONS") return /(^|[\s,'"=])--?to-command(=|\s)/.test(value);
+  if (/RUSTFLAGS$/.test(name)) return /(^|[\s,'"=])-C\s*linker=/.test(value);
+  if (name === "PYTEST_ADDOPTS") return /(^|[\s,'"=])-p(=|\s+)(?!no:)/.test(value);
+  return false;
+}
 /**
  * Whether a variable set in front of a command names a program or command the command runs (commands-remote-c8-1), so
  * its value must be judged. A value Ember can't see counts only for a listed program variable, never for an ordinary
@@ -1525,7 +1535,7 @@ const SHELL_LEAD = /^\s*(sh|bash|zsh|dash|ksh|fish|ash|busybox|env|eval|exec|com
  */
 function namesProgram(name: string, value: string | null): boolean {
   if (value === null) return PROGRAM_CMD_VARS.has(name);
-  if (PROGRAM_OPT_VARS.test(name)) return SUBOPT_PROGRAM.test(value);
+  if (PROGRAM_OPT_VARS.test(name)) return optNamesProgram(name, value);
   return SHELL_SHAPE.test(value) || SHELL_LEAD.test(value);
 }
 
@@ -5495,9 +5505,10 @@ const gitFetch = (fetches: boolean): GitFn => h => {
   // Only the repository word is an scp-style address: a refspec after it (`main:main`) looks like one.
   const ops = h.args.filter(a => !isOption(a));
   // A remote this line added with an address (`git remote add e <url> && git pull e main`) is that address too
-  // (commands-remote-r8-1).
-  const added = ops[0] !== undefined && h.e.addedRemotes.size > 0 && (ops[0].v === null || h.e.addedRemotes.has(ops[0].v) || h.e.addedRemotes.has(UNSEEN));
-  if (fetches && (ops.some(a => URL_LIKE.test(a.v ?? "")) || SCP_LIKE.test(ops[0]?.v ?? "") || added)) h.e.markUnnamed(".", h.sc);
+  // (commands-remote-r8-1). A pull or fetch with no remote named, or `--all`, draws on it as well.
+  const named = ops[0] !== undefined && h.e.addedRemotes.size > 0 && (ops[0].v === null || h.e.addedRemotes.has(ops[0].v) || h.e.addedRemotes.has(UNSEEN));
+  const fromAdded = h.e.addedRemotes.size > 0 && (named || ops.length === 0 || h.args.some(a => a.v === "--all"));
+  if (fetches && (ops.some(a => URL_LIKE.test(a.v ?? "")) || SCP_LIKE.test(ops[0]?.v ?? "") || fromAdded)) h.e.markUnnamed(".", h.sc);
 };
 git(["fetch", "pull"], gitFetch(true));
 git(["ls-remote"], gitFetch(false));
@@ -5963,13 +5974,15 @@ reg(NATIVE, ["svn"], h => {
   const ops = rest.filter(a => !isOption(a));
   const urlOp = ops.some(a => URL_LIKE.test(a.v ?? ""));
   // A checkout or export from a URL brings a working copy or files in: a clone, so building or running there asks
-  // (commands-remote-r8-2). The folder is the one named, else the URL's last part.
+  // (commands-remote-r8-2). An explicit destination folder is marked, and the URL's own last name always too, so an
+  // option before the path (`svn checkout -r 123 URL`) can't be mistaken for the folder.
   if (/^(checkout|co|export)$/.test(verb) && urlOp) {
-    const paths = ops.filter(a => !URL_LIKE.test(a.v ?? ""));
-    const dest = paths[paths.length - 1];
-    const url = ops.find(a => URL_LIKE.test(a.v ?? ""));
+    const p = parseOpts(rest, { shortValue: "rxlN", longValue: ["revision", "depth", "set-depth", "targets", "changelist", "encoding", "extensions", "config-dir", "config-option", "username", "password", "with-revprop", "native-eol", "cl"] });
+    const purls = p.operands.filter(a => URL_LIKE.test(a.v ?? ""));
+    const dest = p.operands.filter(a => !URL_LIKE.test(a.v ?? "")).pop();
+    for (const u of purls) if (u.v) h.e.download(u.v.replace(/[\\/]+$/, "").split("/").pop() || null, h.sc);
     if (dest?.v) h.e.markUnnamed(dest.v, h.sc);
-    else if (url?.v) h.e.download(url.v.replace(/[\\/]+$/, "").split("/").pop() || null, h.sc);
+    else if (dest && dest.v === null) h.e.markUnnamed(null, h.sc);
   }
   if (/^(commit|ci|import|lock|unlock)$/.test(verb)) h.e.add("publish", "svn.commit", "Sends changes to Subversion.");
   else if (/^(copy|cp|move|mv|rename|ren|mkdir|propset|pset|ps|propdel|pdel|pd|propedit|pedit|pe)$/.test(verb) && urlOp) h.e.add("publish", "svn.commit", "Sends changes to Subversion.");
@@ -5987,11 +6000,11 @@ reg(NATIVE, ["hg"], h => {
   for (const o of g.opts) if (o.name === "--config" && o.value && /^(hooks|alias|ui\.(editor|merge|ssh)|extensions)/i.test(o.value)) h.e.unclear("unclear.hg-config", "Runs code from a setting.");
   const verb = h.args[g.verbAt]?.v ?? "";
   const rest = h.args.slice(g.verbAt + 1);
-  // `hg clone URL [dest]` brings a working copy in, a clone, so building there asks (commands-remote-r8-2).
+  // `hg clone [options] SOURCE [DEST]` brings a working copy in, a clone, so building there asks (commands-remote-r8-2).
+  // Options before the path (`hg clone -u tip URL`) take their value, so the source and dest are read past them.
   if (verb === "clone") {
-    const ops = rest.filter(a => !isOption(a));
-    const src = ops.find(a => URL_LIKE.test(a.v ?? "") || SCP_LIKE.test(a.v ?? "")) ?? ops[0];
-    const dest = ops[1];
+    const p = parseOpts(rest, { shortValue: "urbe", longValue: ["rev", "updaterev", "branch", "ssh", "remotecmd", "config"] });
+    const [src, dest] = p.operands;
     if (dest?.v) h.e.markUnnamed(dest.v, h.sc);
     else if (dest && dest.v === null) h.e.markUnnamed(null, h.sc);
     else if (src?.v) h.e.download(src.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop() || null, h.sc);
@@ -6443,9 +6456,10 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   const verb = verbArg?.v ?? null;
   const rest = h.args.slice(g.verbAt + 1);
   // `--script-shell <program>` changes the shell every package script runs in: a program Ember can't vouch for
-  // (commands-remote-c8-1). `npm config set script-shell …` makes that change last for every later run.
+  // (commands-remote-c8-1). `npm config set script-shell …` (never `get`) makes that change last for every later run.
   if (h.args.some(a => /^--script-shell(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
-  if ((verb === "config" || verb === "c" || verb === "set") && h.args.some(a => a.v === "set" || a.v === verb) && h.args.some(a => /^script-shell$/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
+  const configVerb = verb === "config" || verb === "c" ? h.args[g.verbAt + 1]?.v ?? null : verb;
+  if (configVerb === "set" && h.args.some(a => /^script-shell(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
   const global = g.opts.some(o => o.name === "-g" || o.name === "--global") || rest.some(a => a.v === "-g" || a.v === "--global" || a.v === "--location=global");
   const widening = global ? ["--global"] : [];
   if (verbArg && verb === null) { h.e.unclear("unclear.npm-verb", "Ember can't tell which command this runs."); return; }
@@ -7324,7 +7338,12 @@ reg(NATIVE, ["rsync"], h => {
 });
 reg(NATIVE, ["rclone"], h => {
   const verb = firstOperand(h.args).v ?? "";
-  const ops = h.args.filter(a => !isOption(a)).slice(1).map(a => a.v ?? "");
+  // rclone's value options (--transfers 4, --config …) sit among the operands, so SOURCE and DEST are read past them,
+  // or `--transfers`'s `4` is mistaken for the destination (commands-remote-r8-2).
+  const rcloneP = parseOpts(h.args.slice(firstOperand(h.args).at + 1), {
+    longValue: ["transfers", "checkers", "config", "bwlimit", "include", "exclude", "filter", "filter-from", "include-from", "exclude-from", "files-from", "max-age", "min-age", "max-size", "min-size", "contimeout", "timeout", "retries", "low-level-retries", "multi-thread-streams", "multi-thread-cutoff", "log-file", "log-level", "stats", "buffer-size", "order-by", "backup-dir", "suffix", "compare-dest", "copy-dest", "track-renames-strategy", "max-depth", "cache-dir", "temp-dir", "user-agent"],
+  });
+  const ops = rcloneP.operands.map(a => a.v ?? "");
   const remote = (s: string): boolean => /^[A-Za-z0-9_.-]+:/.test(s) && !/^[A-Za-z]:[\\/]/.test(s);
   if (/^(config|password|obscure|authorize)$/.test(verb)) { h.e.add("secret", "secret.program", SAYS.secrets); return; }
   if (/^(delete|purge|deletefile|rmdir|rmdirs|cleanup|dedupe)$/.test(verb)) { h.e.add(ops.some(remote) ? "remote-delete" : "destroy", ops.some(remote) ? "cloud.delete" : "posix.rm", "Deletes files."); return; }
