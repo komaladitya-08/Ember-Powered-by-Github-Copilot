@@ -104,6 +104,36 @@ describe("Listen once controls", () => {
     expect(said.slice(before)).toEqual(["The microphone is muted.", "Speak one request.", "Checking the microphone…", "Listening for one request…"]);
   });
 
+  it("says “Request heard.” once: not again when the line comes back after what a press would stop first (voice-listening-r6-4)", async () => {
+    // Main keeps "Request heard." as Listen once's line. While the answer was on its way the line read "Stops the answer
+    // on its way, …", and as the answer ended it came back, so a screen reader said "Request heard." a second time, after
+    // the answer, into the wake word's microphone.
+    const { said, live } = statusLine();
+    const button = Object.assign(new EventTarget(), { textContent: "", setAttribute: vi.fn() });
+    const detail = { textContent: "" };
+    const heard: ListenOnceStatus = { phase: "ready", detail: "Request heard." };
+    const stops: ListenOnceStatus = { phase: "ready", detail: "Stops the answer on its way, then listens for one request." };
+    const update = mountListenOnce(button as unknown as HTMLButtonElement, detail as HTMLElement, async () => ({ phase: "listening", detail: "Listening for one request…" }), "Speak one request.", undefined, live as unknown as HTMLElement);
+    update({ phase: "checking", detail: "Checking what was said…" });
+    const before = said.length;
+    for (const s of [heard, stops, heard]) update(s);
+    expect(said.slice(before)).toEqual(["Request heard.", "Stops the answer on its way, then listens for one request."]);
+    // Shown as before, and the status line keeps no line that no longer holds beside it (voice-listening-v4-2).
+    expect(detail.textContent).toBe("Request heard.");
+    expect(live.textContent).toBe("");
+    // The next answer's line is said, and the old news still isn't; nor while Ember talks ("Stops speaking first, …").
+    for (const s of [stops, heard, { phase: "ready", detail: "Stops speaking first, then listens for one request." } as const, heard]) update(s);
+    expect(said.slice(before + 2)).toEqual(["Stops the answer on its way, then listens for one request.", "Stops speaking first, then listens for one request."]);
+    // A line that comes back after the control was blocked, or after a new press, is news: said.
+    update({ phase: "blocked", detail: "Unmute the microphone first." });
+    update(heard);
+    expect(said.slice(-2)).toEqual(["Unmute the microphone first.", "Request heard."]);
+    button.dispatchEvent(new Event("click"));
+    await Promise.resolve(); await Promise.resolve();
+    update(heard);
+    expect(said.slice(-3)).toEqual(["Checking the microphone…", "Listening for one request…", "Request heard."]);
+  });
+
   it("says nothing more when a press finds Ember already listening, and never leaves “Checking the microphone…” to be read beside it (voice-listening-v4-2)", async () => {
     // A window opened as Listen once was pressed: its answer, "Ember is already listening.", would be said into that
     // window (voice-listening-c3-1), and the status line kept "Checking the microphone…", read in browse mode beside it.
