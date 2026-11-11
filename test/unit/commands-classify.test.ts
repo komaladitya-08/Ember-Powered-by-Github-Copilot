@@ -2209,3 +2209,24 @@ describe("xargs with options Ember can't batch by, decided no less safely than b
     expect(decided("echo ~/.config/ember | xargs -i rm -rf {}").verdict).toBe("refuse");
   });
 });
+
+describe("a ${HOME:?} or ${PWD:?} word inside a plain if (round seven's review)", () => {
+  const left = (cmd: string): string[] => withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.map(f => f.rule);
+
+  it("asks where the word unseen asked, though the if's own words are read through (commands-remote-x7-4)", () => {
+    for (const cmd of [
+      "if true; then cat ${HOME:?}/x; fi", "if true; then bash ${HOME:?}/x.sh; fi", "if true; then python3 ${PWD:?}/a.py; fi", "if true; then ${PWD:?}/run.sh; fi",
+      "if [ -f ${HOME:?}/x ]; then cat ${HOME:?}/x; fi", "if ls ${HOME:?}/x; then echo y; fi", "if true; then echo y; else cat ${HOME:?}/x; fi", "if false; then :; elif ls ${PWD:?}/x; then echo y; fi",
+      "if ! ls ${HOME:?}/x; then echo y; fi", "if true; then echo hi > ${HOME:?}/x; fi",
+    ]) {
+      expect(left(cmd), cmd).toContain("unclear.guarded-word");
+      expect(left(cmd).length, cmd).toBeGreaterThan(1);
+    }
+    // The same word outside an if asks as before, and an if whose guarded word asked for nothing unseen still runs.
+    expect(left("cat ${HOME:?}/x")).toContain("unclear.guarded-word");
+    expect(left("if true; then echo ${HOME:?}; fi")).toEqual([]);
+    expect(left("if true; then cd ${HOME:?}; fi").filter(r => r === "unclear.guarded-word")).toEqual([]);
+    // Ember's own files are refused inside an if as outside it.
+    expect(withoutReadFlow(classifyCommand("if true; then cat ${HOME:?}/.config/ember/settings.json; fi", "bash", contextOf("linux")), "bash").refuse?.rule).toBe("ember.path");
+  });
+});

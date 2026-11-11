@@ -355,6 +355,12 @@ const accessOf = (use: PathUse): "read" | "safety" => (READ_USES.has(use) ? "rea
  */
 interface PipeState { fetch: boolean; program: string; carried?: boolean }
 
+/**
+ * The findings of sh's and bash's flow words alone (`if`, `then`, `do`…): a command line or script reads through them
+ * (scripts.ts's SCRIPT_FLOW), so one of them never stands for a command's own finding.
+ */
+const READ_FLOW_RULE = /^unclear\.(if|then|elif|else|fi|for|while|until|do|done|in)$/;
+
 /** The classifier's state for one command text. */
 class Classifier {
   findings: Finding[] = [];
@@ -508,14 +514,15 @@ class Classifier {
   /**
    * Whether `judge` finds anything to ask about, judged apart: what it finds is not kept (a refusal, and what it notes
    * of files and variables, is). For a form Ember judges a second way, which must never decide less safely than the
-   * first (commands-remote-r7-2).
+   * first (commands-remote-r7-2). `apartFrom`: rules that don't count as asking (a flow word's own, which the command
+   * proper finds too).
    */
-  asksApart(judge: () => void): boolean {
+  asksApart(judge: () => void, apartFrom?: RegExp): boolean {
     const kept = this.findings;
     this.findings = [];
     try {
       judge();
-      return this.findings.length > 0;
+      return apartFrom ? this.findings.some(f => !apartFrom.test(f.rule)) : this.findings.length > 0;
     } finally {
       this.findings = kept;
     }
@@ -523,12 +530,14 @@ class Classifier {
 
   /**
    * Makes what was found since `from` ask whatever the user's words say (the "fed" widening, which no intent row
-   * covers); with nothing found that stands whatever the target's files are, an unclear finding asks instead.
+   * covers); with nothing found that stands whatever the target's files are, an unclear finding asks instead. A flow
+   * word's own finding (`then` before the command) doesn't stand: on an sh or bash line it is read through, so the
+   * command would run (commands-remote-x7-4).
    */
   asksAtLeast(from: number, rule: string, says: string): void {
     const found = this.findings.slice(from);
     for (const f of found) if (!f.widening.includes("fed")) f.widening.push("fed");
-    if (!found.some(f => f.ifExists === undefined)) this.unclear(rule, says);
+    if (!found.some(f => f.ifExists === undefined && !READ_FLOW_RULE.test(f.rule))) this.unclear(rule, says);
   }
 
   noteUnclear(list: readonly Unclear[]): void {
@@ -1794,11 +1803,11 @@ class Engine extends Classifier {
    * asksApart for a whole command judged a second way: the commands it registers, and where it leaves the pipeline, the
    * current command and the folder, are taken back too, so the command proper is judged as if this never ran.
    */
-  asksApartWhole(judge: () => void): boolean {
+  asksApartWhole(judge: () => void, apartFrom?: RegExp): boolean {
     const n = this.commands.length;
     const kept = { count: this.simpleCount, at: this.at, program: this.program, pipe: this.pipe, state: { ...this.pipe }, cd: this.cdTarget, top: this.topCd };
     try {
-      return this.asksApart(judge);
+      return this.asksApart(judge, apartFrom);
     } finally {
       this.commands.length = n;
       this.simpleCount = kept.count;
@@ -2069,7 +2078,7 @@ class Engine extends Classifier {
       let unseen: ReturnType<typeof read>;
       try { unseen = read(); } finally { this.asWritten = false; }
       if (c.words.length === 0) { this.newCommand("", [], sc, unseen.redirs, o.background, o.pipedFrom); this.redirects(unseen.redirs, sc); } else this.simple(unseen.s, sc);
-    });
+    }, READ_FLOW_RULE);
     const before = this.findings.length;
     const { words, redirs, carried, s } = read();
     if (c.words.length === 0) {

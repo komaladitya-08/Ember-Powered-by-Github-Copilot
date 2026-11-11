@@ -480,7 +480,8 @@ of a variable, `~/.config/"${x%y}"`, which may be other text than its value) or 
 (`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is (and `${PWD:?}` the current one; Ember reads the
 path it names, and also asks wherever it asked before it read such a word, "It uses a ${…:?} word, which Ember reads
 as the folder it names but can't be sure of.": `ls ${HOME:?}/x`, `bash "${HOME:?}/x.sh"` and an unquoted `test -d
-${HOME:?}/x` ask, `[ -f "${HOME:?}/.bashrc" ]` and `cd "${HOME:?}/proj"` run), and a default's text counts as a value
+${HOME:?}/x` ask, `[ -f "${HOME:?}/.bashrc" ]` and `cd "${HOME:?}/proj"` run; inside an `if` the same holds, so `if true; then cat
+${HOME:?}/x; fi` asks), and a default's text counts as a value
 (`"${XDG_CONFIG_HOME:-$HOME/.config}/ember"` is Ember's folder). A variable is judged where a command uses it, so one that only names Ember's
 folder to test or print it on the terminal (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
 input while nothing takes what it prints (`grep -q ember <<< "$p"`, `echo "$p" | wc -c`; never an awk or sed program
