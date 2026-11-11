@@ -856,6 +856,51 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBeNull();
   });
 
+  // Long-lived and one-time codes said with no "is" or colon, and a Wi-Fi "pass" (memory-r7-5).
+  it.each([
+    ["GitHub recovery code abcde-12345"], ["BitLocker recovery key 482193-118822-993311-220011"], ["My recovery codes abcde-12345 fghij-67890"],
+    ["authenticator code 482193"], ["verification code 482193"], ["login code 482-193"], ["wifi pass BlueSky99"], ["The Wi-Fi pass BlueSky99!"],
+  ])("refuses %j, a code or a key with its value straight after (memory-r7-5)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  it.each([
+    ["My recovery code is in the safe"], ["The recovery key 2 of 8 is used"], ["Keeps recovery codes in 1Password"], ["The verification code 4 digits long expires in a minute"],
+    ["Error code 482193 means the disk is full"], ["Promo code 482193 expires in May"], ["The wifi pass rate is 99%"], ["Has a Wi-Fi pass for the train"],
+  ])("keeps %j, where a code is, or a number that is no secret (memory-r7-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A password after an aside between commas or after "min." (memory-q6-4), and a Wi-Fi key labelled "Key:" on the
+  // line after its network's name (memory-q6-5).
+  it.each([["The password, salted, hunter2"], ["Password, hashed, Summer2024!"], ["Password min. hunter2"], ["PIN, required, 4821"]])(
+    "refuses %j, a value after an aside or a limit's word (memory-q6-4)", text => {
+      expect(memoryRefusal(text)).not.toBeNull();
+    });
+  it.each([["The password, salted, is never logged"], ["Password, hashed, SHA-256"], ["Password min. 12 characters"], ["PIN, required, 4 digits"], ["Passwords, tokens and keys are rotated in Q3"]])(
+    "keeps %j, how a password is stored or how long it must be (memory-q6-4)", text => {
+      expect(memoryRefusal(text)).toBeNull();
+    });
+  it.each([["Network: HomeNet\nKey: BlueSky99"], ["SSID: HomeNet\n  Key: BlueSky99!"], ["Wi-Fi name: HomeNet\nKey = BlueSky99"]])(
+    "refuses %j, a network's key on the line after its name (memory-q6-5)", text => {
+      expect(memoryRefusal(text)).not.toBeNull();
+    });
+  it.each([["Network: HomeNet\nKey: see sticker"], ["Network: HomeNet\nKey: WPA2-PSK"], ["Network: HomeNet\nBand: 5GHz"], ["Shortcut: Ctrl+K\nKey: F12"], ["Network: HomeNet\nKey: on the router's label"]])(
+    "keeps %j, where the key is, its mode or another setting (memory-q6-5)", text => {
+      expect(memoryRefusal(text)).toBeNull();
+    });
+  // UK bank details, a National Insurance number and a security question's usual answer (memory-c7-3).
+  it.each([
+    ["My bank sort code is 12-34-56 and account 12345678", "it holds an account or ID number"], ["Account number 12345678, sort code 123456", "it holds an account or ID number"],
+    ["My national insurance number is QQ123456C", "it holds an account or ID number"], ["NI number: AB 12 34 56 C", "it holds an account or ID number"],
+    ["My mother's maiden name is Smith", "it holds a security question's answer"], ["Mother’s maiden name: O'Brien", "it holds a security question's answer"],
+  ])("refuses %j (memory-c7-3)", (text, why) => {
+    expect(memoryRefusal(text)).toBe(why);
+  });
+  it.each([
+    ["Sort code 12-34-56 is the branch in Leeds"], ["Asked HR about my national insurance number"], ["Account 12345678 is the customer I look after"],
+    ["Doesn't know their mother's maiden name"], ["The form asks for a mother's maiden name"], ["Banks with Monzo, whose sort code starts 04"],
+  ])("keeps %j, a branch, a customer or a question with no answer (memory-c7-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
   // A password that is its own element of a list of a program's arguments (memory-q6-1).
   it.each([
     ['test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-phunter2"]'], ['subprocess.run(["mysql", "-u", "root", "-pSummer2024!", "db"])'],

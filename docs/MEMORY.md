@@ -93,7 +93,11 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   WPA2-PSK / 5GHz / BlueSky99!", "Home network: HomeNet / 192.168.1.1 / admin / Summer2024!", memory-y6-3, also labelled
   or past any other field, "Wi-Fi: HomeNet / WPA2-PSK / key: BlueSky99!", "… / channel 36 / BlueSky99!", "… /
   192.168.1.1 / admin admin123", memory-z6-2), a capitals setting for a password ("DB_PASS=Tr0ub4dor&3", never a
-  filter's "LOW_PASS=8000"), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  filter's "LOW_PASS=8000"), a recovery or seed phrase, a recovery code or key and a one-time code with the value straight after
+  ("GitHub recovery code abcde-12345", "verification code 482193", "wifi pass BlueSky99": memory-r7-5), a value after
+  an aside or a limit's word ("The password, salted, hunter2", "Password min. hunter2": memory-q6-4), a network's key
+  on the line under its name ("Network: HomeNet" then "Key: BlueSky99": memory-q6-5), a UK sort code with its account
+  number, a National Insurance number and a mother's maiden name with its value (memory-c7-3). It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
   GitLab keys among them, and a password given to a program's option, on its line or as its own element of a list of
   arguments: a compose healthcheck's `["CMD", "mysqladmin", "ping", "-phunter2"]`, `["sshpass", "-p", "hunter2", …]`,
   memory-q6-1), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
