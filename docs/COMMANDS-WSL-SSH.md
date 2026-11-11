@@ -408,12 +408,19 @@ in is where it must be: "delete the build folder in dist" covers `rm -r dist/bui
 "the build folder, which is in dist", "(the one in dist)", "from dist", "the build folder of dist", "… for dist", "… at
 dist/", "in dist, delete the build folder" and "dist's build folder"; "in my home folder" means the home folder, and "at the
 root", "at this point", "at your convenience" and "of mine" name no folder. A place is read from all your words,
-wherever it stands after the name: "the build folder at the root of frontend/" and "at the top of the frontend repo"
-are frontend's, "…, but only the one in frontend" is too, and a place Ember can't check a path against always asks:
-beside something ("next to frontend", "near src", "above frontend") or on another computer or service ("on the
-server", "on staging", "on the remote"; "on this computer" and "on my laptop" place nothing, and "on the desktop" is
-the Desktop folder). A name written without a folder is the one in the folder the task works in, so a command that
-changes folder first asks: after "delete the build folder", `cd .. && rm -rf build` asks. Anything broader than what you named asks: a force flag, a
+wherever it stands: "the build folder at the root of frontend/" and "at the top of the frontend repo"
+are frontend's, "…, but only the one in frontend", "…, the frontend one" and "… in the folder called frontend" are
+too, and so is a folder you say to go into first or name before the thing ("cd into frontend and delete the build
+folder", "at the root of frontend, delete the build folder"). A place Ember can't check a path against always asks:
+beside something ("next to frontend", "near src", "above frontend", "by the src folder"), up from here ("up one
+level", "in the folder above", "in ..") or on another computer or service, said before or after ("on the
+server", "on staging", "on the remote", "off the server", "over ssh", "remotely"; "on this computer" and "on my
+laptop" place nothing, and straight after the name "on the desktop" and "on my desktop" are
+the Desktop folder). Ember reads places loosely, so a folder named for something else in the same words ("run the
+tests in frontend and delete the build folder") asks too. A name written without a folder is the one in the folder
+the task works in, so a command that changes folder first asks unless your words named a folder the file is in: after
+"delete the build folder", `cd .. && rm -rf build` and `cd frontend && rm -rf build` ask; after "delete the build
+folder in frontend", `cd frontend && rm -rf build` is announced. Anything broader than what you named asks: a force flag, a
 wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
 as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
 build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).

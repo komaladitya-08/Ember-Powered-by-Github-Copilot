@@ -813,8 +813,11 @@ const NARROWS = new Set(["but", "only", "just", "specifically"]);
 const ELSEWHERE = "\u0000";
 /** Words that put a thing beside another one ("the build folder next to frontend", "beside src", "above frontend"). */
 const BESIDE = new Set(["beside", "near", "above", "below", "alongside", "outside", "behind", "beneath", "underneath", "opposite"]);
-/** Words after "on" that name this computer, said with "this" or "my" ("on this computer", "on my laptop"), or no place. */
-const ON_HERE = new Set(["computer", "machine", "pc", "mac", "laptop", "desktop", "box", "system", "disk", "drive"]);
+/**
+ * Words after "on" that name this computer, said with "this" or "my" ("on this computer", "on my laptop"), or no place.
+ * "on my desktop" is the Desktop folder, as "on the desktop" is (commands-remote-x7-6).
+ */
+const ON_HERE = new Set(["computer", "machine", "pc", "mac", "laptop", "box", "system", "disk", "drive"]);
 const ON_NO_PLACE = new Set(["behalf", "purpose", "demand", "request", "time", "disk", "second"]);
 /**
  * The place the words at `k` put the thing before them in, when it is one Ember can't check the path against
@@ -825,7 +828,7 @@ const ON_NO_PLACE = new Set(["behalf", "purpose", "demand", "request", "time", "
 function elsewhere(tokens: readonly string[], k: number): string | null {
   const t = tokens[k] ?? "";
   if (BESIDE.has(t) || ((t === "next" || t === "close") && tokens[k + 1] === "to")) return ELSEWHERE;
-  if (t !== "on") return null;
+  if (t !== "on" && t !== "off") return null;
   const own = tokens[k + 1] === "this" || tokens[k + 1] === "my";
   let m = k + 1;
   while (BEFORE_FOLDER.has(tokens[m] ?? "")) m++;
@@ -880,18 +883,79 @@ const whereNamed = (resolved: string, idx: number, w: Words, ctx: Ctx): boolean 
  * ./build was deleted with a Stop. Each word that names the path is read again where it stands in all the words.
  */
 function placedElsewhere(fs: readonly Finding[], whole: Words, ctx: Ctx): boolean {
+  // `..` on its own is the folder above, which the tokens drop as punctuation.
+  const said = [...placesSaid(whole.tokens), ...(/(^|\s)\.\.[\\/]?(\s|$)/.test(whole.raw) ? [ELSEWHERE] : [])];
   for (const f of fs) {
     for (const o of f.objects) {
       if (!o.resolved || (o.kind !== "path" && o.kind !== "glob")) continue;
+      const resolved = o.resolved;
       for (let k = 0; k < whole.tokens.length; k++) {
         if (!namesObject(o, whole.tokens[k])) continue;
         const folder = folderNamed(k, whole);
-        if (folder !== null && (folder === ELSEWHERE || !inNamedFolder(o.resolved, folder, ctx.home))) return true;
+        if (folder !== null && (folder === ELSEWHERE || !inNamedFolder(resolved, folder, ctx.home))) return true;
       }
+      // A place said anywhere in the words, before the thing or after a break ("on the server, delete the build
+      // folder", "cd into frontend and delete…", "…, the frontend one"): the path is in it, or is it, or names it; else
+      // the words may mean another one (commands-remote-x7-6).
+      const within = (folder: string): boolean => folder !== ELSEWHERE && (inNamedFolder(resolved, folder, ctx.home) || inNamedFolder(`${resolved}/x`, folder, ctx.home) || namesObject(o, folder));
+      if (said.some(folder => !within(folder))) return true;
+      // A name written without its folder that the command works on somewhere else (`cd frontend && rm -rf build`):
+      // the words must have named a folder it is in.
+      const moved = o.kind === "path" && ctx.cwd !== "" && !isAbsoluteText(o.text, ctx.os) && !o.text.startsWith("~")
+        && resolveTargetPath(o.text, { os: ctx.os, home: ctx.home, cwd: ctx.cwd }).toLowerCase() !== resolved.toLowerCase();
+      if (moved && !said.some(folder => folder !== ELSEWHERE && inNamedFolder(resolved, folder, ctx.home))) return true;
     }
   }
   return false;
 }
+
+/** Words that send Ember to a folder first ("cd into frontend", "go to frontend", "switch to web"). */
+const GOES = new Set(["cd", "go", "goto", "switch", "change", "navigate", "move", "enter", "chdir"]);
+/** Words in "the … one" that say which by how it is, not where ("the old one", "the whole one"). */
+const HOW_IT_IS = new Set([
+  "old", "new", "whole", "entire", "big", "large", "small", "same", "empty", "stale", "generated", "temporary", "temp", "local", "current", "existing", "first",
+  "last", "only", "right", "main", "top", "top-level", "toplevel", "root",
+]);
+/**
+ * Every place the words name, wherever it stands (commands-remote-x7-6): a folder after "in", "inside", "under" or
+ * "from", after "cd into" or "go to", in "the frontend one" or after "the folder called"; and ELSEWHERE for a place
+ * Ember can't check a path against (elsewhere(), "over ssh", "remotely", "up one level", "by the src folder").
+ * Read loosely on purpose: a place it finds that the path isn't in only makes Ember ask.
+ */
+function placesSaid(tokens: readonly string[]): string[] {
+  const out: string[] = [];
+  const at = (k: number): string => (tokens[k] ?? "").replaceAll(PLACED, "");
+  const w: Pick<Words, "tokens"> = { tokens: tokens as string[] };
+  for (let k = 0; k < tokens.length; k++) {
+    const t = at(k);
+    if (IN_FOLDER.has(t) || (t === "of" && (at(k - 1) === "root" || at(k - 1) === "top" || at(k - 1) === "level"))) {
+      // "in the folder called frontend", "in the directory frontend".
+      let m = k + 1;
+      while (BEFORE_FOLDER.has(at(m))) m++;
+      if (FOLDER_WORDS.has(at(m)) && at(m + 1) !== "" && !FILLERS.has(at(m + 1)) && !PLACE_ENDS.has(at(m + 1))) {
+        const name = at(m + 1) === "called" || at(m + 1) === "named" ? at(m + 2) : at(m + 1);
+        if (BESIDE.has(name)) out.push(ELSEWHERE); else if (name !== "") out.push(name);
+        continue;
+      }
+      const folder = folderAfter(k, w);
+      // "everything in it", "in all", and a file ("fix line 12 in main.ts") name no folder.
+      if (folder !== null && !PRONOUN.has(folder) && !NOT_A_PLACE_AFTER.has(folder) && !/[^\\/.]\.[a-z0-9]{1,5}$/i.test(folder)) out.push(folder);
+      continue;
+    }
+    // "on the desktop" counts only straight after the thing (folderNamed): said first it may be this computer.
+    const other = elsewhere(tokens, k);
+    if (other !== null) { if (other === ELSEWHERE) out.push(other); continue; }
+    if (GOES.has(t) && (at(k + 1) === "into" || at(k + 1) === "to" || t === "cd")) {
+      const folder = folderAfter(t === "cd" && at(k + 1) !== "into" && at(k + 1) !== "to" ? k : k + 1, w);
+      if (folder !== null) out.push(folder);
+    } else if (t === "the" && (at(k + 2) === "one" || at(k + 2) === "ones") && at(k + 1) !== "" && !HOW_IT_IS.has(at(k + 1))) out.push(at(k + 1));
+    else if (t === "remotely" || t === "ssh" || t === "parent" || (t === "up" && /^(one|a|1|two|2)$/.test(at(k + 1))) || (t === "level" && at(k + 1) === "up")) out.push(ELSEWHERE);
+    else if (t === "by" && [at(k + 2), at(k + 3)].some(x => FOLDER_WORDS.has(x))) out.push(ELSEWHERE);
+  }
+  return out;
+}
+/** Words after "in the folder" that end the place ("in this folder and…", "in the folder please"). */
+const PLACE_ENDS = new Set(["and", "or", "but", "please", "too", "as", "then", "now", "here", "with", "for", "to", "that", "which", "where", "i", "we", "you", "is", "if", "so", "before", "after", "when"]);
 
 /**
  * Whether the user's words name a script: its file name ("build.sh", "./ci/test.sh"), or its name without the
