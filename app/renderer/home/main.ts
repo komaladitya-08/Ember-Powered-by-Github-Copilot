@@ -2671,6 +2671,8 @@ function renderMatch(): string | null {
   else bar.removeAttribute("aria-valuetext");
   $("match-teach").hidden = view.teach.hidden;
   $("match-teach").textContent = view.teach.label;
+  // Read with the button where focus is moved to it: without Ember's name, unlike the line shown (voice-listening-r6-2).
+  $("match-teach-said").textContent = view.teach.said;
   $("match-cancel").hidden = view.cancelHidden;
   $("match-forget").hidden = view.forgetHidden;
   // Keep learning my voice and Reset to my enrolment, once Voice Match knows the voice.

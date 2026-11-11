@@ -25,7 +25,7 @@ describe("Voice Match's states", () => {
   it("not taught: the switch is off, Teach is offered, Forget and Cancel are not", () => {
     const v = matchView(none, shown);
     expect(v).toMatchObject({ hidden: false, busy: false, checked: false, disabled: false, text: MATCH_TEXT.none, prompt: "", progress: null, cancelHidden: true, forgetHidden: true });
-    expect(v.teach).toEqual({ hidden: false, label: "Teach Ember my voice" });
+    expect(v.teach).toEqual({ hidden: false, label: "Teach my voice", said: "Requests from any voice are heard. Teach your voice, and you can answer questions out loud; other voices can't." });
   });
 
   it("while learning: the switch shows on but can't be changed, the phrase and the count show, Cancel replaces Teach", () => {
@@ -59,7 +59,9 @@ describe("Voice Match's states", () => {
   it("taught and on, or taught and off: Teach again and Forget are offered", () => {
     const on = matchView(onNow, shown);
     expect(on).toMatchObject({ checked: true, disabled: false, text: MATCH_TEXT.on, forgetHidden: false, cancelHidden: true });
-    expect(on.teach).toEqual({ hidden: false, label: "Teach Ember my voice again" });
+    expect(on.teach).toEqual({ hidden: false, label: "Teach my voice again", said: MATCH_SAID.on });
+    // Why the last teaching ended is read with the button too, in the words said as it ended.
+    expect(matchView({ ...offNow, ended: "timeout" }, shown).teach.said).toBe(`${MATCH_SAID.ended.timeout} ${MATCH_SAID.off}`);
     const off = matchView(offNow, shown);
     expect(off).toMatchObject({ checked: false, text: MATCH_TEXT.off, forgetHidden: false });
     expect(off.text).toMatch(/keeps your voiceprint until you forget it/);
@@ -172,11 +174,11 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
 });
 
 describe("Voice Match's markup", () => {
-  it("names the group by its switch, describes the switch and Teach by the state line, and labels the bar", () => {
+  it("names the group by its switch, describes the switch by the state line and Teach in words without Ember's name, and labels the bar (voice-listening-r6-2)", () => {
     expect(page).toContain('<div id="match" class="match" role="group" aria-labelledby="match-label" hidden>');
     expect(page).toContain(`<input type="checkbox" id="match-on" role="switch" aria-describedby="match-text"><span id="match-label">${MATCH_TEXT.label}</span>`);
     expect(page).toContain(`<progress id="match-progress" max="4" value="0" aria-label="${MATCH_TEXT.progressLabel}" hidden></progress>`);
-    expect(page).toContain(`<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">${MATCH_TEXT.teach}</button>`);
+    expect(page).toContain(`<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-teach-said">${MATCH_TEXT.teach}</button><span id="match-teach-said" hidden></span>`);
     expect(page).toContain(`<button type="button" id="match-cancel" class="btn quiet" hidden>${MATCH_TEXT.cancel}</button>`);
     // Forget my voice deletes the words learnt too: the button says so before it is pressed (voice-listening-9).
     expect(page).toContain(`<button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="${MATCH_TEXT.forgetHint}" hidden>${MATCH_TEXT.forget}</button><span id="match-forget-hint" hidden>${MATCH_TEXT.forgetHint}</span>`);

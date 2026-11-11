@@ -18,6 +18,9 @@ import { ModelLoadError, sherpaBackend } from "../../app/voice/sherpa";
 import { DEFAULT_VOICE, modelPaths, modelReady, modelsReady } from "../../app/voice/models";
 import { nativePackage, sherpaRuntime, type RuntimeOptions } from "../../app/voice/runtime";
 import { kittenSpec } from "../../app/voice/tts-spec";
+import { matchView } from "../../app/renderer/home/match-copy";
+import { COMPOSER_THINKING } from "../../app/renderer/home/copy";
+import type { VoiceMatchStatus } from "../../app/shared/ipc";
 import { Enrolment, VoiceGate, type EnrolState, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, printFeatures, similarity, unit } from "../../app/voice/voiceprint";
 
@@ -738,6 +741,35 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
 
   // The test-only Ryan voice reads the prompts (node scripts/voice/prepare.mjs --voice ryan): skipped without it.
   const readerVoice = path.join(dir, "vits-piper-en_US-ryan-low");
+  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("doesn't wake when a screen reader reads the Teach button Home moved focus to, or the composer's line on a typed send (voice-listening-r6-2, voice-listening-q6-1, voice-listening-r6-1)", () => {
+    // Where Ember can't hear its speakers (Windows, macOS, Linux without parec), "Teach Ember my voice, button. Ember
+    // hears anyone who talks to it. Teach it your voice…" woke Ember and was sent as a request in 18 of 20 placements,
+    // the button's name alone in 14 of 20, and "Thinking… Ember's reply will appear above." in 2 of 24.
+    const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(readerVoice, "en_US-ryan-low.onnx"), tokens: path.join(readerVoice, "tokens.txt"), dataDir: path.join(readerVoice, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
+    const rms = (x: Float32Array) => Math.sqrt(x.reduce((n, v) => n + v * v, 0) / x.length);
+    const none: VoiceMatchStatus = { enrolled: false, on: false, model: true, wanted: false, enrolling: null, learnt: 0 };
+    const teach = (m: VoiceMatchStatus) => { const b = matchView(m, { listening: true, managed: false }).teach; return `${b.label}, button. ${b.said}`; };
+    // After Cancel with no voiceprint; after a teaching that timed out, a voiceprint kept and off; on a typed send.
+    const lines = [teach(none), teach({ ...none, enrolled: true, ended: "timeout" }), COMPOSER_THINKING];
+    const woke: string[] = [];
+    for (const text of lines) for (let p = 0; p < 6; p++) {
+      const raw: Float32Array = tts.generate({ text, sid: 0, speed: [1, 1.15, 0.9, 1.3][p % 4] }).samples;
+      let a = 0, b = raw.length;
+      while (a < b && Math.abs(raw[a]) < 0.01) a++;
+      while (b > a && Math.abs(raw[b - 1]) < 0.01) b--;
+      const level = [0.05, 0.1, 0.03, 0.07, 0.15][p % 5] / rms(raw.subarray(a, b));
+      const lead = Math.round(16000 * (0.4 + 0.37 * p));
+      const all = new Float32Array(lead + (b - a));
+      let seed = 7 + p;
+      for (let i = 0; i < all.length; i++) all[i] = ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 0.002;
+      for (let i = a; i < b; i++) all[lead + i - a] += raw[i] * level;
+      const { events } = play(all);
+      const heard = events.filter(e => e.type === "wake" || e.type === "utterance" || e.type === "stop");
+      if (heard.length) woke.push(`${text} (placement ${p}): ${heard.map(e => e.type === "utterance" ? `sent “${e.text}”` : e.type).join(", ")}`);
+    }
+    expect(woke).toEqual([]);
+  }, 600_000);
+
   it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
     // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for
     // phrases: the owner's held-out clips then scored 0.47-0.66 against the voiceprint, the screen reader's 0.70-0.82.

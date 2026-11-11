@@ -5,11 +5,12 @@
  * (design-system.md "Screen readers").
  */
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED,
   HEAR_WAITING, composerStillWaiting, hearEmberLine, presenceLine, tagline, updateStatusText,
 } from "../../app/renderer/home/copy";
-import { matchAnnouncement } from "../../app/renderer/home/match-copy";
+import { MATCH_TEXT, matchAnnouncement, matchView } from "../../app/renderer/home/match-copy";
 import { composerRefusal } from "../../app/main/agent/composer-refusal";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 import type { UpdateStatus, VoiceMatchStatus } from "../../app/shared/ipc";
@@ -84,6 +85,27 @@ describe("what Home tells a screen reader", () => {
     expect(lines.filter(Boolean).length).toBeGreaterThan(20);
     expect(named(lines)).toEqual([]);
     for (const line of lines) expect(line, line).not.toMatch(/\bEmber\b/);
+  });
+
+  it("never says Ember's name in the Teach button's name or the description read with it, where focus is moved to it (voice-listening-r6-2, voice-listening-q6-1)", () => {
+    // Home moves focus to Teach after Cancel, as teaching ends and after Forget my voice, and a screen reader then reads
+    // the button. "Teach Ember my voice, button. Ember hears anyone who talks to it. Teach it your voice…" woke Ember
+    // and was sent as a request in 18 of 20 real-model placements, "Teach Ember my voice, button." alone in 14.
+    const none: VoiceMatchStatus = { enrolled: false, on: false, model: true, wanted: false, enrolling: null, learnt: 0 };
+    const on: VoiceMatchStatus = { ...none, enrolled: true, on: true, wanted: true };
+    const lines: string[] = [MATCH_TEXT.teach, MATCH_TEXT.teachAgain];
+    for (const m of [none, on, { ...on, on: false }]) for (const ended of [undefined, "learnt", "cancelled", "stopped", "gave-up", "timeout", "interrupted"] as const) {
+      const teach = matchView({ ...m, ...(ended ? { ended } : {}) }, { listening: true, managed: false }).teach;
+      expect(teach.said, teach.label).toBeTruthy();
+      lines.push(`${teach.label}, button. ${teach.said}`);
+    }
+    expect(new Set(lines).size).toBeGreaterThan(8);
+    expect(named(lines)).toEqual([]);
+    for (const line of lines) expect(line, line).not.toMatch(/\bEmber/i);
+    // The page reads that description with the button, not the line shown (which names Ember and quotes “Ember, stop”).
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    expect(page).toMatch(/<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-teach-said">Teach my voice<\/button><span id="match-teach-said" hidden><\/span>/);
+    expect(readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8")).toContain('$("match-teach-said").textContent = view.teach.said;');
   });
 
   it("never calls Ember by name in what Hear Ember found (voice-listening-r5-1)", () => {
