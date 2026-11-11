@@ -1105,7 +1105,8 @@ chat only do, and as a mistyped path does; or a 200 that isn't a model list, as 
 parked domain gives: both are the test's `cause: "no-list"`, which the start probe doesn't count as down either) is not
 adopted by the yes (integrations-c5-1, -c7-1): the line says main's sentence, then "Nothing has changed: Ember still
 uses <host in force>. If the address is right, choose “Use it as typed”.", and the card gains a quiet **Use it as
-typed**, for that very edit (any change of it takes the button away). Only that press saves the edit, in the same one
+typed**, for that very edit as it was asked (a change of its address, provider type, Azure API version or key takes the
+button and that line away, integrations-x7-2; a model typed since goes with the press). Only that press saves the edit, in the same one
 change, and the line says "Agreed. <new host> answered but lists no models, so Ember asks it for <model> as typed."
 (integrations-r4-2); until then the provider in force and its saved key stay as they were, and a key typed for the new
 host waits in its field. One that can't be reached, times out, has a certificate Ember can't verify, refuses the key or

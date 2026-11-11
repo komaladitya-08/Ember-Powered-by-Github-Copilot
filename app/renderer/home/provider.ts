@@ -53,10 +53,20 @@ let heldRun = 0;
 let checkingFor: string | null = null;
 /**
  * A held edit's host answered its check, but not with a model list (a 404 at that address, or a web page): the card
- * offers "Use it as typed" for exactly that edit (`run`: heldRun as it was checked), and nothing is saved before that
- * press (integrations-c5-1, -c7-1).
+ * offers "Use it as typed" for exactly that edit (`run`: heldRun as it was checked; `asked`: what the check asked
+ * with), and nothing is saved before that press (integrations-c5-1, -c7-1).
  */
-let asTyped: { host: string; run: number } | null = null;
+let asTyped: { host: string; run: number; asked: string } | null = null;
+
+/**
+ * What a held edit's check asks with: the provider type (which sets the list's path and the key's header), the
+ * address, Azure's API version and the key in the field. A change of any means that host was never asked this way, so
+ * the offer made for the old ones goes (integrations-x7-2). The models and the wire API are no part of the question.
+ */
+function askedWith(): string {
+  const d = { ...own, ...held?.fields };
+  return JSON.stringify([d.type, d.baseUrl, d.azureApiVersion ?? null, input("byok-key").value.trim()]);
+}
 /** Ember has no GitHub sign-in (the agent's phase): with the card waiting, nothing answers until it is agreed. */
 let signedOut = false;
 
@@ -132,6 +142,7 @@ async function adopt(host: string): Promise<void> {
   const was = held;
   if (!a || !own || !was) return;
   const run = heldRun;
+  const asked = askedWith();
   const keyField = input("byok-key");
   const key = keyField.value.trim() ? keyField.value : "";
   const d = { ...own, ...was.fields };
@@ -147,7 +158,7 @@ async function adopt(host: string): Promise<void> {
     // Something answered there, but not with a model list: the provider that works and its key stay until the person
     // says the address is right (integrations-c5-1). Nothing answering, a refused key or another error changes nothing.
     const unlisted = heldAnswer(tried) === "unlisted";
-    if (unlisted) asTyped = { host, run };
+    if (unlisted) asTyped = { host, run, asked };
     draw();
     say(unlisted ? providerHeldUnlisted(held.from, tried.why) : providerHeldKept(held.from, tried.why), true);
     input(providerFailField(tried) === "key" ? "byok-key" : "byok-url").focus();
@@ -223,8 +234,10 @@ function draw(): void {
   if ($("byok-no").textContent !== no) $("byok-no").textContent = no;
   // aria-disabled, not disabled: the focus stays on it while its check runs.
   if (checkingFor !== null) $("byok-yes").setAttribute("aria-disabled", "true"); else $("byok-yes").removeAttribute("aria-disabled");
-  // "Use it as typed" is for the very edit whose check answered with no model list: any change of it takes the offer away.
+  // "Use it as typed" is for the very edit whose check answered with no model list: a change of its address, provider
+  // type, Azure version or key takes the offer away, and with it the line that named the button (integrations-x7-2).
   if (asTyped && (!held || asTyped.run !== heldRun || asTyped.host !== cardHost)) asTyped = null;
+  else if (asTyped && asTyped.asked !== askedWith()) { asTyped = null; say(""); }
   $("byok-as-typed").hidden = !asTyped || checkingFor !== null;
   // Nothing goes to a host the card isn't agreed for, Test connection included: it waits for the yes.
   const test = $("byok-test") as HTMLButtonElement;
@@ -363,6 +376,8 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
   $("byok-as-typed").addEventListener("click", () => {
     const offer = asTyped;
     if (!offer || !held || offer.run !== heldRun || offer.host !== cardHost || checkingFor !== null) return;
+    // Asked with another type or key than the fields hold now: nothing is adopted (integrations-x7-2).
+    if (offer.asked !== askedWith()) { draw(); return; }
     const next = agreeAction(offer.host, input("byok-url").value);
     if (!next || !("agree" in next) || endpointHost(held.fields.baseUrl ?? "") !== offer.host) return;
     void commit(offer.host, true);
@@ -384,7 +399,8 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
   const model = (id: string, key: "conductor" | "worker") => input(id).addEventListener("change", e => {
     const v = (e.target as HTMLInputElement).value.trim();
     if (v && !MODEL_ID.test(v)) { say(PROVIDER_WORDS.badModel, true); return; }
-    say("");
+    // The line that names "Use it as typed" stays while the button does: a model is no part of what was asked.
+    if (!asTyped) say("");
     void change({ [key]: v || null });
   });
   model("byok-conductor", "conductor");
@@ -395,6 +411,8 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     if (v && !AZURE_API_VERSION.test(v)) { say(PROVIDER_WORDS.badAzure, true); return; }
     void change({ azureApiVersion: v || null });
   });
+  // A key typed over the one a held edit was checked with: its offer goes as it is typed (integrations-x7-2).
+  input("byok-key").addEventListener("input", () => { if (asTyped) draw(); });
   $("byok-key-form").addEventListener("submit", e => {
     e.preventDefault();
     const field = input("byok-key");
