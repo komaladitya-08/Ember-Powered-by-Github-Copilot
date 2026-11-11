@@ -307,12 +307,6 @@ export class MemoryService {
     return this.g.fact(id)?.text ?? null;
   }
 
-  /** The names of what a kept fact is about, its subject first; none when it isn't there. Never the fact's words. */
-  factAbout(id: string): string[] {
-    const g = this.g;
-    return (g.fact(id)?.entities ?? []).map(e => g.entity(e)?.name).filter((n): n is string => !!n);
-  }
-
   /**
    * `forget`, saying what went: the fact's words, how many of Ember's own notes made from it went with it (its
    * summaries and guesses, which hold its words: memory-3), the token `restore` takes to undo it, and (`back`) the

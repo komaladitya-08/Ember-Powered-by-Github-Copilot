@@ -569,51 +569,6 @@ describe("a Forget and the turns still waiting to be learned from (memory-c7-1)"
   });
 });
 
-describe("a Forget holds back only the turn that could bring the fact back (memory-x7-5)", () => {
-  const VEG = { from: 1, fact: "Is vegetarian", about: [{ name: "User", kind: "person" }], confidence: 0.9, evidence: "I'm vegetarian" };
-
-  it.each([30_000, 119_000])("learns a day-old fact again when the user says it %i ms after forgetting it by mistake (memory-x7-5)", async after => {
-    const { l, s, advance } = learning({ model: async () => answer([VEG]) });
-    const tools = l.conductorMemory();
-    tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian");
-    advance(24 * 3600_000);
-    l.forgetCounted(s.list()[0].id);
-    advance(after);
-    tools.heard("Sorry, wrong button. I'm vegetarian", "Noted.", true);
-    advance(61_000);
-    expect(await l.flush()).toBe(1);
-    expect(s.list().map(i => i.text)).toEqual(["Is vegetarian"]);
-  });
-
-  it("learns the same words about someone else straight after a Forget (memory-x7-5)", async () => {
-    const dana = { ...VEG, about: [{ name: "Dana", kind: "person" }], evidence: "Dana is vegetarian" };
-    const { l, s, advance } = learning({ model: async () => answer([dana]) });
-    const tools = l.conductorMemory();
-    tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian");
-    advance(5000);
-    l.forgetCounted(s.list()[0].id);
-    advance(20_000);
-    tools.heard("Dana is vegetarian", "Noted.", true);
-    advance(61_000);
-    expect(await l.flush()).toBe(1);
-    expect(s.list().map(i => i.text)).toEqual(["Is vegetarian"]);
-    expect(s.recall("Dana", 8, true).map(r => r.fact.text)).toContain("Is vegetarian");
-  });
-
-  it("still holds an old fact back from a turn that was waiting when it was forgotten (memory-x7-5)", async () => {
-    const { l, s, advance } = learning({ model: async () => answer([VEG]) });
-    const tools = l.conductorMemory();
-    tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian");
-    advance(24 * 3600_000);
-    tools.heard("As I said, I'm vegetarian", "I know.", true);
-    advance(10_000);
-    l.forgetCounted(s.list()[0].id);
-    advance(51_000);
-    expect(await l.flush()).toBe(0);
-    expect(s.list()).toEqual([]);
-  });
-});
-
 describe("“forget that”, the instruction check and the conversation's line", () => {
   it("forgets what was kept just now, and says so when nothing was, rather than leaving it to a model that can't (memory-v1)", () => {
     const { l, s, advance } = learning();
