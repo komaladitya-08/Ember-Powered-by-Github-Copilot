@@ -170,9 +170,12 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   // A script's finding (read only here: the PC never saw it) is covered only by the user's yes to a question that
   // carried it, under its own rule id: the PC's rule for `rm -r build` (announced or approved) never covers the same
   // rule inside the script it runs.
+  // A line judged as its written-out form (a `[[ … ]]` as `[ … ]`: unroll.ts) is never announced on
+  // the PC, so here too only the user's yes covers what it does (commands-remote-r6-2).
+  const writtenOut = (cls as { writtenOut?: boolean }).writtenOut === true;
   const covered = (f: Finding) => (f.widening.includes(IN_SCRIPT)
     ? approval !== null && stamp.rules.includes(ruleOf(f))
-    : stamp.rules.includes(f.rule) && (approval !== null || (stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
+    : stamp.rules.includes(f.rule) && (approval !== null || (!writtenOut && stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
   const extra = findings.filter(f => !covered(f));
   if (extra.length || asks.length) {
     const rules = [...new Set(extra.map(ruleOf))].slice(0, 64);

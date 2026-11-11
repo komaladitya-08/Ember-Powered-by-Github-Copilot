@@ -42,8 +42,9 @@ import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
   type CommandService, type DecideInput, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
-  type RunSpec, type ShellId, standingFindings,
+  type RunSpec, SHELL_FAMILY, type ShellId, standingFindings,
 } from "./types";
+import { judgedText } from "./unroll";
 
 /** What run_command needs from its worker. */
 export interface CommandFlowContext {
@@ -782,7 +783,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   }
   where = whereWords(binding) ?? (others.length || places.length ? here : undefined);
   const tainted = ctx.task.tainted();
-  const carried = carriedText(a.command, ctx.task.readFrom(), words, binding.shellOs);
+  // A line judged as its written-out form (unroll.ts) carries what that form holds too.
+  const judged = SHELL_FAMILY[shell] === "posix" ? judgedText(a.command) : a.command;
+  const carried = carriedText(judged === a.command ? a.command : `${a.command}\n${judged}`, ctx.task.readFrom(), words, binding.shellOs);
   const mode = svc.mode();
   const userAskEvery = !!ctx.projectFolderCurrent || svc.userAskEvery();
   const decided = j.decideCommand({ cls, paths, git, binding, facts, mode, userAskEvery, userWords: words, agreed: ctx.task.agreed(), tainted, carried });

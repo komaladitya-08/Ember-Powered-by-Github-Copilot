@@ -150,9 +150,13 @@ function pathToken(obj: CommandObject, w: Words, ctx: Ctx): number {
   const text = normPath(obj.text);
   const last = lastSegment(obj.text);
   const env = envOf(ctx);
+  // A name written without its folder is the one in the task's folder: after `cd ..` the same word is another file
+  // (`cd .. && rm -rf build` after "delete the build folder": commands-remote-r5-2).
+  const moved = obj.kind !== "glob" && obj.resolved !== undefined && ctx.cwd !== "" && !isAbsoluteText(obj.text, ctx.os) && !obj.text.startsWith("~")
+    && resolveTargetPath(obj.text, { os: ctx.os, home: ctx.home, cwd: ctx.cwd }).toLowerCase() !== obj.resolved.toLowerCase();
   return w.tokens.findIndex(t => {
     const n = normPath(t);
-    if (n === text) return true;
+    if (n === text && !moved) return true;
     if (obj.kind === "glob" || !obj.resolved) return false;
     const bare = n.replace(/[\\/]+$/, "");
     if (/[\\/]/.test(bare) || bare.startsWith("~")) {
@@ -788,26 +792,63 @@ function onlyPlace(tokens: readonly string[]): boolean {
  * there names a folder (commands-remote-c3-1: "the build folder in dist" is dist/build, never ./build); amounts ("in 5
  * minutes"), times and ways ("in a moment", "in the background") and the task's own folder ("in this repo") name none.
  */
-function folderNamed(idx: number, w: Words): string | null {
+function folderNamed(idx: number, w: Pick<Words, "tokens">): string | null {
   // "dist's build folder" (commands-remote-v4-3).
   const owner = /^(.+?)['’]s$/u.exec(w.tokens[idx - 1] ?? "")?.[1];
   if (owner !== undefined && !PRONOUN.has(owner) && !RELATIVE.has(owner) && !HERE_FOLDER.has(owner)) return owner === "home" ? "~" : owner;
   let k = idx + 1;
-  while (AFTER_OBJECT.has(w.tokens[k] ?? "") || SAYS_WHERE.has(w.tokens[k] ?? "")) k++;
+  while (AFTER_OBJECT.has(w.tokens[k] ?? "") || SAYS_WHERE.has(w.tokens[k] ?? "") || NARROWS.has(w.tokens[k] ?? "")) k++;
   if (placeWord(w.tokens, k)) return folderAfter(k, w);
+  const other = elsewhere(w.tokens, k);
+  if (other !== null) return other;
   // "in dist delete the build folder", "in dist, delete the build folder": a place before the verb (commands-remote-c3-1).
   let s = 0;
   while (FILLERS.has(w.tokens[s] ?? "")) s++;
   return s < idx && IN_FOLDER.has(w.tokens[s] ?? "") ? folderAfter(s, w) : null;
 }
 
+/** Words before a place that narrow the thing to it ("the build folder, but only the one in frontend", "just in dist"). */
+const NARROWS = new Set(["but", "only", "just", "specifically"]);
+/** A folder no path is in: the words put the thing somewhere Ember can't check against the path (elsewhere). */
+const ELSEWHERE = "\u0000";
+/** Words that put a thing beside another one ("the build folder next to frontend", "beside src", "above frontend"). */
+const BESIDE = new Set(["beside", "near", "above", "below", "alongside", "outside", "behind", "beneath", "underneath", "opposite"]);
+/**
+ * Words after "on" that name this computer, said with "this" or "my" ("on this computer", "on my laptop"), or no place.
+ * "on my desktop" is the Desktop folder, as "on the desktop" is (commands-remote-x7-6).
+ */
+const ON_HERE = new Set(["computer", "machine", "pc", "mac", "laptop", "box", "system", "disk", "drive"]);
+const ON_NO_PLACE = new Set(["behalf", "purpose", "demand", "request", "time", "disk", "second"]);
+/**
+ * The place the words at `k` put the thing before them in, when it is one Ember can't check the path against
+ * (ELSEWHERE; commands-remote-r5-2): beside something ("next to frontend", "near src"), or on another computer or
+ * service ("on the server", "on staging", "on the remote"); "on the desktop" is the Desktop folder. null for no such
+ * place ("on this computer", "on my laptop", "on purpose"). The command may be right, but the words don't say so.
+ */
+function elsewhere(tokens: readonly string[], k: number): string | null {
+  const t = tokens[k] ?? "";
+  if (BESIDE.has(t) || ((t === "next" || t === "close") && tokens[k + 1] === "to")) return ELSEWHERE;
+  if (t !== "on" && t !== "off") return null;
+  const own = tokens[k + 1] === "this" || tokens[k + 1] === "my";
+  let m = k + 1;
+  while (BEFORE_FOLDER.has(tokens[m] ?? "")) m++;
+  const what = (tokens[m] ?? "").replaceAll(PLACED, "");
+  if (what === "" || ON_NO_PLACE.has(what) || /^\d/.test(what) || (own && ON_HERE.has(what))) return null;
+  return what === "desktop" ? "desktop" : ELSEWHERE;
+}
+
 /** The folder after the place word at `k` ("in dist", "inside the frontend folder"), "~" for the home folder, or null. */
-function folderAfter(k: number, w: Words): string | null {
+function folderAfter(k: number, w: Pick<Words, "tokens">): string | null {
   const via = w.tokens[k] ?? "";
   k++;
   while (BEFORE_FOLDER.has(w.tokens[k] ?? "")) k++;
   const t = (w.tokens[k] ?? "").replaceAll(PLACED, "");
   if (t === "" || /^\d+(?:[.,:/-]\d+)*[a-z]{0,3}$/i.test(t)) return null;
+  // "at the root of frontend/", "at the top of the frontend repo", "in the top level of web": the folder after "of".
+  if (t === "root" || t === "top" || t === "toplevel" || t === "top-level") {
+    const of = w.tokens[k + 1] === "level" ? k + 2 : k + 1;
+    if (w.tokens[of] === "of") return folderAfter(of, w);
+  }
   if (NOT_A_FOLDER.has(t) || HERE_FOLDER.has(t) || (!IN_FOLDER.has(via) && NOT_A_PLACE_AFTER.has(t))) return null;
   if (t === "home" || t === "~") return "~";
   return t;
@@ -832,8 +873,89 @@ function inNamedFolder(resolved: string, folder: string, home: string): boolean 
 /** The path at `idx` is where the words put it: in the folder they named after it, when they named one. */
 const whereNamed = (resolved: string, idx: number, w: Words, ctx: Ctx): boolean => {
   const folder = folderNamed(idx, w);
-  return folder === null || inNamedFolder(resolved, folder, ctx.home);
+  return folder === null || (folder !== ELSEWHERE && inNamedFolder(resolved, folder, ctx.home));
 };
+
+/**
+ * Whether the user's words, read whole, put one of these paths somewhere it isn't (commands-remote-r5-2): a row reads
+ * only the verb's own phrase, which leaves out what follows "of", "beside" or a comma, so "the build folder at the root
+ * of frontend/", "…, but only the one in frontend", "… next to frontend" and "… on the server" placed nothing and
+ * ./build was deleted with a Stop. Each word that names the path is read again where it stands in all the words.
+ */
+function placedElsewhere(fs: readonly Finding[], whole: Words, ctx: Ctx): boolean {
+  // `..` on its own is the folder above, which the tokens drop as punctuation.
+  const said = [...placesSaid(whole.tokens), ...(/(^|\s)\.\.[\\/]?(\s|$)/.test(whole.raw) ? [ELSEWHERE] : [])];
+  for (const f of fs) {
+    for (const o of f.objects) {
+      if (!o.resolved || (o.kind !== "path" && o.kind !== "glob")) continue;
+      const resolved = o.resolved;
+      for (let k = 0; k < whole.tokens.length; k++) {
+        if (!namesObject(o, whole.tokens[k])) continue;
+        const folder = folderNamed(k, whole);
+        if (folder !== null && (folder === ELSEWHERE || !inNamedFolder(resolved, folder, ctx.home))) return true;
+      }
+      // A place said anywhere in the words, before the thing or after a break ("on the server, delete the build
+      // folder", "cd into frontend and delete…", "…, the frontend one"): the path is in it, or is it, or names it; else
+      // the words may mean another one (commands-remote-x7-6).
+      const within = (folder: string): boolean => folder !== ELSEWHERE && (inNamedFolder(resolved, folder, ctx.home) || inNamedFolder(`${resolved}/x`, folder, ctx.home) || namesObject(o, folder));
+      if (said.some(folder => !within(folder))) return true;
+      // A name written without its folder that the command works on somewhere else (`cd frontend && rm -rf build`):
+      // the words must have named a folder it is in.
+      const moved = o.kind === "path" && ctx.cwd !== "" && !isAbsoluteText(o.text, ctx.os) && !o.text.startsWith("~")
+        && resolveTargetPath(o.text, { os: ctx.os, home: ctx.home, cwd: ctx.cwd }).toLowerCase() !== resolved.toLowerCase();
+      if (moved && !said.some(folder => folder !== ELSEWHERE && inNamedFolder(resolved, folder, ctx.home))) return true;
+    }
+  }
+  return false;
+}
+
+/** Words that send Ember to a folder first ("cd into frontend", "go to frontend", "switch to web"). */
+const GOES = new Set(["cd", "go", "goto", "switch", "change", "navigate", "move", "enter", "chdir"]);
+/** Words in "the … one" that say which by how it is, not where ("the old one", "the whole one"). */
+const HOW_IT_IS = new Set([
+  "old", "new", "whole", "entire", "big", "large", "small", "same", "empty", "stale", "generated", "temporary", "temp", "local", "current", "existing", "first",
+  "last", "only", "right", "main", "top", "top-level", "toplevel", "root",
+]);
+/**
+ * Every place the words name, wherever it stands (commands-remote-x7-6): a folder after "in", "inside", "under" or
+ * "from", after "cd into" or "go to", in "the frontend one" or after "the folder called"; and ELSEWHERE for a place
+ * Ember can't check a path against (elsewhere(), "over ssh", "remotely", "up one level", "by the src folder").
+ * Read loosely on purpose: a place it finds that the path isn't in only makes Ember ask.
+ */
+function placesSaid(tokens: readonly string[]): string[] {
+  const out: string[] = [];
+  const at = (k: number): string => (tokens[k] ?? "").replaceAll(PLACED, "");
+  const w: Pick<Words, "tokens"> = { tokens: tokens as string[] };
+  for (let k = 0; k < tokens.length; k++) {
+    const t = at(k);
+    if (IN_FOLDER.has(t) || (t === "of" && (at(k - 1) === "root" || at(k - 1) === "top" || at(k - 1) === "level"))) {
+      // "in the folder called frontend", "in the directory frontend".
+      let m = k + 1;
+      while (BEFORE_FOLDER.has(at(m))) m++;
+      if (FOLDER_WORDS.has(at(m)) && at(m + 1) !== "" && !FILLERS.has(at(m + 1)) && !PLACE_ENDS.has(at(m + 1))) {
+        const name = at(m + 1) === "called" || at(m + 1) === "named" ? at(m + 2) : at(m + 1);
+        if (BESIDE.has(name)) out.push(ELSEWHERE); else if (name !== "") out.push(name);
+        continue;
+      }
+      const folder = folderAfter(k, w);
+      // "everything in it", "in all", and a file ("fix line 12 in main.ts") name no folder.
+      if (folder !== null && !PRONOUN.has(folder) && !NOT_A_PLACE_AFTER.has(folder) && !/[^\\/.]\.[a-z0-9]{1,5}$/i.test(folder)) out.push(folder);
+      continue;
+    }
+    // "on the desktop" counts only straight after the thing (folderNamed): said first it may be this computer.
+    const other = elsewhere(tokens, k);
+    if (other !== null) { if (other === ELSEWHERE) out.push(other); continue; }
+    if (GOES.has(t) && (at(k + 1) === "into" || at(k + 1) === "to" || t === "cd")) {
+      const folder = folderAfter(t === "cd" && at(k + 1) !== "into" && at(k + 1) !== "to" ? k : k + 1, w);
+      if (folder !== null) out.push(folder);
+    } else if (t === "the" && (at(k + 2) === "one" || at(k + 2) === "ones") && at(k + 1) !== "" && !HOW_IT_IS.has(at(k + 1))) out.push(at(k + 1));
+    else if (t === "remotely" || t === "ssh" || t === "parent" || (t === "up" && /^(one|a|1|two|2)$/.test(at(k + 1))) || (t === "level" && at(k + 1) === "up")) out.push(ELSEWHERE);
+    else if (t === "by" && [at(k + 2), at(k + 3)].some(x => FOLDER_WORDS.has(x))) out.push(ELSEWHERE);
+  }
+  return out;
+}
+/** Words after "in the folder" that end the place ("in this folder and…", "in the folder please"). */
+const PLACE_ENDS = new Set(["and", "or", "but", "please", "too", "as", "then", "now", "here", "with", "for", "to", "that", "which", "where", "i", "we", "you", "is", "if", "so", "before", "after", "when"]);
 
 /**
  * Whether the user's words name a script: its file name ("build.sh", "./ci/test.sh"), or its name without the
@@ -1005,9 +1127,10 @@ const HOW_TO = /(^|\s)(how\s+(to|do|does|did|would|could|can|should|might|i|you|
 
 /**
  * Widening any row refuses: a differing real path, a variable set in the text, options before the program's verb, and
- * a finding that came from inside a script Ember read (the user's words name the command, never the script's text).
+ * a finding that came from inside a script Ember read (the user's words name the command, never the script's text),
+ * and one about a command built from printed input ("fed": a form that asked before Ember read what is printed).
  */
-const ALWAYS_BROADER = new Set(["real-path", "env", "global-option", "in-script"]);
+const ALWAYS_BROADER = new Set(["real-path", "env", "global-option", "in-script", "fed"]);
 
 /** Recursion words near the operand the user named (§3.7 delete.paths). */
 const RECURSION = ["folder", "folders", "directory", "directories", "dir", "dirs", "tree", "recursively", "everything", "all"];
@@ -1373,6 +1496,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     // Words that hold the step back: an announcement would run it now (commands-remote-c4-4); a time or a condition of
     // another step said after this one's is that step's (v5-5).
     if (holdsBack(userWords, verbs)) return null;
+    if (placedElsewhere(fs, w, ctx)) return null;
     let m: IntentMatch | null = null;
     const acted = actedOn(w.raw, verbs, names, ROW_SHAPE[row]);
     for (const part of acted) if ((m = fn(fs, wordsOf(part), ctx, F, w))) break;

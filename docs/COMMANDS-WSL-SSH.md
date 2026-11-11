@@ -136,7 +136,17 @@ Ember stops and asks before a command that:
   `redis-cli <<< FLUSHALL`, `echo 'db.dropDatabase()' | mongosh`; commands or code on its input or its line that
   Ember can't see or follow ask too, such as `redis-cli "$CMD"` and options held in a variable, `redis-cli $OPTS`;
   a file redis-cli's options name is judged as that file, so `redis-cli --rdb ~/.bashrc`, which writes a dump over
-  it, asks), and package scripts, make targets and SQL or command files named clean, wipe, purge,
+  it, asks; so is the file `psql -o` writes its results to, which asks when it is there, the one `psql -L` or
+  `mysql --tee` logs to, and Ember's own files are refused there too; a client's own commands that can run a
+  program or write a file ask, with the shell command or file they name judged as if written out: psql's `\!`,
+  `\o`, `\copy` and any other backslash command that doesn't only describe or show, written straight after SQL too
+  (`select 1\g out.txt`; a backslash inside a quoted string is text, unless the text has a comment, a `$$` string or
+  an escaped quote, where every backslash counts), psql's `-c` and mysql's `-e` at the end of a cluster of options
+  read as well (`psql -Atc '…'`, `mysql -Ne '…'`), mysql's `system`, `source`,
+  `tee` and `pager` after a `;` or at the start of a line, `--pager` and `--init-command`, and every sqlite3 or
+  duckdb dot-command (in duckdb's `-c` and `-s` text as well) but the ones that only
+  show things written whole, `.tables`, `.schema`, `.mode`, `.headers` and the like, because sqlite3 takes any
+  shortening: `.sh` is `.shell`, `.o` is `.output`), and package scripts, make targets and SQL or command files named clean, wipe, purge,
   reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`);
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
@@ -170,7 +180,10 @@ Ember stops and asks before a command that:
   settings a program runs code from (`~/.vimrc`, `~/.tmux.conf`, `~/.config/pip`, `~/.cargo/config.toml`), and
   launchers and desktop extensions (`~/.local/share/applications`, GNOME Shell extensions), even when the file is new;
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
-  downloaded in this task (also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
+  downloaded in this task (one fetched with `curl`, `wget` and the like, cloned, or handed over by another tool:
+  `gh release download` and `gh run download`, `aws s3 cp`, `gsutil cp` and `gcloud storage cp` from a bucket, `az
+  storage blob download`, `docker cp` and `kubectl cp` out of a container or a pod, `scp` and `rsync` from another
+  computer, or what `ssh host …` prints, saved with `>` or piped into a shell; also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
   `rsync`, `dd`, `cat x.py > y.py`, `tee`, `dos2unix -n`, `sort -o`, `split` and `cat` of its pieces, or a `tar` or
   `zip` of it unpacked again, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
   or a `New-Item` link, also from a pipeline (`Get-Item x.exe | Copy-Item -Destination y.exe`; when Ember can't tell
@@ -181,15 +194,32 @@ Ember stops and asks before a command that:
   a download whose saved name Ember can't tell (one the server or a list picks: `curl -OJ`, `wget
   --content-disposition`, `wget -r`, `wget -i`, `aria2c -i`; one in a variable or an expression: `curl -o "$f"`,
   `aria2c -o "$f"` or `-d "$d"`, `axel -o "$f"`, `fetch -o "$f"`, `lwp-download … "$f"`, `Invoke-WebRequest -OutFile $f`, `-OutFile (Join-Path …)`, `Start-BitsTransfer -Destination $d`; a WebClient's
-  `DownloadFile`) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
-  saved into or below, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the
+  `DownloadFile`; one named after an address Ember can't see the end of: `curl -O "$URL"`, `wget $URL`, `aria2c
+  "$URL"`, `curl -O "https://example.com/$NAME"`, addresses `xargs`, `parallel` or a loop hands over, `xargs -n1 curl
+  -sO < urls.txt`, curl's `file[1-3].sh` and `{a,b}.sh`, which name several files, and httpie's `http -d`, where the
+  server may pick the name) asks "Downloads to a file Ember can't name.", and afterwards running any file from the folder it
+  saved into or below, or that folder's build tools and test runners, asks too, and unless the file that runs is
+  one the task saved under a name Ember knows the card says it may be a download ("May run a file downloaded in
+  this task: Ember can't tell which files an earlier command downloaded or changed."), not that it is, whatever
+  else the task saved by name (anywhere, when Ember can't tell the
   folder either, as for a file saved by name in a folder Ember can't tell: `cd "$d" && curl … > x.py`); a listing or a
   read never does; a download a program run through `env -C` or `sudo -D` writes with the shell's `>` is the file in
   the shell's own folder, so `env -C src curl -s … > x.py` and then `python3 x.py` asks; and a patch this task downloaded or fetched applied with `patch`,
   `git apply` or `git am`, in whichever folder it is applied in (`patch -d src -p1 < x.patch`, `env -C src patch -p1 <
   x.patch`, `git -C sub am < x.patch`), or code pulled or fetched from an address rather than the repository's own
   remote (`git pull https://…`), marks the files it changes the same way, so the next `make`, `npm test` or `bash
-  build.sh` asks),
+  build.sh` asks). An address a variable holds only the start of still ends in a name Ember can read, so `curl -LO
+  "$BASE/run.sh"` records run.sh, and a variable the command line sets is followed (`V=1.2; curl -LO
+  https://example.com/tool-$V.sh` records tool-1.2.sh); `wget -x` records the file under the host's folder
+  (`example.com/dir/a.py`, with a port both `example.com:8080/dir/a.py` and `example.com/dir/a.py`) and by its name alone as well, also without the
+  host's folder when `-nH` is anywhere in its options (`-xnH`, `--no-host-dir`); text a fetch printed that a variable carries into a file is the download too (`x=$(curl -s
+  …); echo "$x" > a.py`, also through a copy of the variable, `y=$x`, one `read` fills, `read x < <(curl …)`, any
+  program given the text that writes its output to a file, `tee a.py <<< "$x"`, `dd of=a.py`, and a group's own
+  redirection, `{ echo "$x"; } > a.py`); a repository cloned from an address or into a folder Ember can't see (`git clone $REPO`)
+  makes the folder it is cloned in count, so building there asks; and `node .` or `python3 tool` asks when the
+  folder's entry file (`index.js`, `package.json`, `__main__.py`) is a download. A download Ember can name never
+  makes the project's own tools ask: after `curl -LO https://example.com/data.csv`, `python3 analyze.py` and `npm
+  test` run as before),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
@@ -205,14 +235,17 @@ Ember stops and asks before a command that:
   -C"$d" cmd`), which may hold the command it runs; only `xargs -P` and `parallel -j` take a count there (`xargs
   -P$(nproc) cmd`).
 
-**Loops on a command line** in bash or sh always ask, whatever their body, as they did before: a line with `for`,
-`while`, `until` or `select` anywhere in it asks with the loop's own words ("Ember can't tell exactly what this
-does."), so `for i in 1 2 3; do echo $i; done` and `while read -r l; do echo "$l"; done <<< 'a b'` ask too. Ember
+**Loops on a command line** in bash or sh always ask, whatever their body: a line with `for`, `while`, `until` or
+`select` anywhere in it asks with the loop's own words ("Ember can't tell exactly what this does."), so `for i in 1 2
+3; do echo $i; done`, `for f in *.log; do …` and `while read -r l; do echo "$l"; done <<< 'a b'` ask too. Ember
 judges a loop's body once, and a value from the loop's own list or a `read` can reach an option that nothing Ember
-judges looks at: `for f in --hard; do git reset $f; done` is `git reset --hard`. Ember's own folder named in a loop is
-still refused before anything asks (`for d in ~/.config/ember; do rm -rf "$d"; done`), the card still says what a
-dangerous command in the loop does ("Deletes a.log and b.log."), and a loop never runs with a Stop because your words
-asked for what it does. (A shell script's loops are read; below.)
+judges looks at: `for f in --hard; do git reset $f; done` is `git reset --hard`. Ember doesn't judge a loop pass by
+pass, however short its list: what a shell runs on each pass can differ from the loop's words written out (`for f in
+a; do >~/.bashrc echo $f; done` overwrites a file; `printf -v` or an alias can set the loop's variable from inside the
+body). Ember's own folder named in a loop is still refused before anything asks (`for d in ~/.config/ember; do rm -rf
+"$d"; done`), the card still says what a dangerous command in the loop does ("Deletes a.log and b.log.", "Deletes
+each file the loop names."), and a loop never runs with a Stop because your words asked for what it does. (A shell
+script's loops are read; below.)
 
 **An `if` on a command line** in bash or sh runs without a question only when the whole line is plain: then `if`,
 `then`, `elif`, `else` and `fi` don't ask by themselves, and Ember judges every command in it as if it were written
@@ -228,8 +261,15 @@ this does."), whatever it does:
   `declare`, `typeset`, `local`, `readonly`, `printf -v`, `set`, `unset`, `shift`, `wait -p`, `exec`, `${x:=…}`), or a
   file sourced (`source`, `.`): `if x=$(cat f); then echo $x; fi` and `if [ -f x ]; then y=1; fi` ask. A `read` of
   written-out text (below) is the exception.
-- **a `[[ … ]]` test**, in an `if` or not: `if [[ -d build ]]; then make; fi` and `[[ -d build ]] && make` ask. (In a
-  script, a plain one is read; below.)
+- **a `!`** in front of a command in the `if`: `if ! [ -f "$f" ]; then echo no; fi` and `if ! mkdir -p x; then echo no;
+  fi` ask.
+- **a `[[ … ]]` test** in an `if` or a loop: `if [[ -d build ]]; then make; fi` asks. On a line with no `if` and no
+  loop, a test that `[ … ]` reads the same way is judged as that test: one file or text (`[[ -f package.json ]]`,
+  `[[ -n "$CI" ]]`), two texts (`=`, `==`, `!=`), two whole numbers (`-lt`, `-eq`) or two files (`-nt`), each a plain
+  word or one word in double quotes. So `[[ -f package.json ]] && echo yes` runs as `[ -f package.json ] && echo yes`
+  does, and `[[ -d build ]] && rm -rf build` asks (never with a Stop). Any other test asks: a variable outside
+  quotes, a pattern, `&&`, `||`, `!`, `=~`, `-v`, `~`, a word that holds `[[` or `]]`. (In a script, a plain one
+  is read; below.)
 - **text Ember can't see.** A `read`, `mapfile`, `readarray`, `select` or `getopts`, in an `if`, a loop or neither,
   asks ("It works on text Ember can't see.") whatever its variables are used for afterwards, unless it reads its own
   input and that is a here-string or here-document of written-out text (`read -r a b <<< 'x y'`, `if read -r l <<<
@@ -237,10 +277,12 @@ this does."), whatever it does:
   another descriptor (`read -u 3`, `read <&3`), a substitution or a variable (`<<< "$d"`, `<<< "$HOME"`) all ask, and
   a loop's card says so too when its list has any word that isn't written out (a pattern such as `*.log`, a variable,
   `~`, `{1..3}`, a substitution, `"$@"`). `IFS` in front of a loop's or an `if`'s `read` changes only how that `read`
-  splits the line (`if IFS= read -r l <<< 'a b'`); in front of any other command it asks.
+  splits the line, so Ember judges the read as it stands; a variable set in front of a `read`, a shell or another
+  program that runs commands asks all the same, after `if`, `then`, `do` or `time` as on a line of its own (`if IFS=
+  read -r l <<< 'a b'; then …`, `time x=1 sh -c '…'`: "It sets a variable where a command could stand."); in front
+  of any other command it asks.
 
-Ember's own folder named in sight is refused before any of this. zsh's, PowerShell's and cmd's `if` and `for` always
-ask, and so do an `if` in a shell the command starts (`bash -c '…'`), `case`, functions and `{ … }` groups. A loop
+Ember's own folder named in sight is refused before any of this. zsh's `if` and loops, and PowerShell's and cmd's `if` and `for` always ask, and so do an `if` in a shell the command starts (`bash -c '…'`), `case`, functions and `{ … }` groups. A loop
 whose variable is `PATH` or another that changes how commands are found says so on its card too ("It changes how
 commands are found or run."). A variable set after `then`, `do`, `else`, `!` or `time` is judged as one set at the
 start of a command: `if true; then LD_PRELOAD=./x.so ls; fi` asks, as `LD_PRELOAD=./x.so ls` does.
@@ -387,7 +429,20 @@ request 45. merge the pr"), since that merges the current branch's; "check pr 45
 in is where it must be: "delete the build folder in dist" covers `rm -r dist/build`, never `rm -r build`, and so do
 "the build folder, which is in dist", "(the one in dist)", "from dist", "the build folder of dist", "… for dist", "… at
 dist/", "in dist, delete the build folder" and "dist's build folder"; "in my home folder" means the home folder, and "at the
-root", "at this point", "at your convenience" and "of mine" name no folder. Anything broader than what you named asks: a force flag, a
+root", "at this point", "at your convenience" and "of mine" name no folder. A place is read from all your words,
+wherever it stands: "the build folder at the root of frontend/" and "at the top of the frontend repo"
+are frontend's, "…, but only the one in frontend", "…, the frontend one" and "… in the folder called frontend" are
+too, and so is a folder you say to go into first or name before the thing ("cd into frontend and delete the build
+folder", "at the root of frontend, delete the build folder"). A place Ember can't check a path against always asks:
+beside something ("next to frontend", "near src", "above frontend", "by the src folder"), up from here ("up one
+level", "in the folder above", "in ..") or on another computer or service, said before or after ("on the
+server", "on staging", "on the remote", "off the server", "over ssh", "remotely"; "on this computer" and "on my
+laptop" place nothing, and straight after the name "on the desktop" and "on my desktop" are
+the Desktop folder). Ember reads places loosely, so a folder named for something else in the same words ("run the
+tests in frontend and delete the build folder") asks too. A name written without a folder is the one in the folder
+the task works in, so a command that changes folder first asks unless your words named a folder the file is in: after
+"delete the build folder", `cd .. && rm -rf build` and `cd frontend && rm -rf build` ask; after "delete the build
+folder in frontend", `cd frontend && rm -rf build` is announced. Anything broader than what you named asks: a force flag, a
 wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
 as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
 build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).
@@ -453,7 +508,11 @@ Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`, or a cut or a default
 of a variable, `~/.config/"${x%y}"`, which may be other text than its value) or a pattern before it could match one
-(`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is, and a default's text counts as a value
+(`rm -rf ~/.c*/$x`); `${HOME:?}` is the home folder, as `$HOME` is (and `${PWD:?}` the current one; Ember reads the
+path it names, and also asks wherever it asked before it read such a word, "It uses a ${…:?} word, which Ember reads
+as the folder it names but can't be sure of.": `ls ${HOME:?}/x`, `bash "${HOME:?}/x.sh"` and an unquoted `test -d
+${HOME:?}/x` ask, `[ -f "${HOME:?}/.bashrc" ]` and `cd "${HOME:?}/proj"` run; inside an `if` the same holds, so `if true; then cat
+${HOME:?}/x; fi` asks), and a default's text counts as a value
 (`"${XDG_CONFIG_HOME:-$HOME/.config}/ember"` is Ember's folder). A variable is judged where a command uses it, so one that only names Ember's
 folder to test or print it on the terminal (`p=~/.config/ember; [ -d "$p" ] && echo yes`), or that a text filter only reads on its
 input while nothing takes what it prints (`grep -q ember <<< "$p"`, `echo "$p" | wc -c`; never an awk or sed program
@@ -466,7 +525,20 @@ wrapper's option (`xargs -a "$p/settings.json"`, `xargs --arg-file="$p/settings.
 Remove-Item -Recurse` or `Write-Output $p | Remove-Item`) or through `${p:?}`, `${p:-…}` or `${p%/}`. What echo or
 printf prints into the next command is that command's input, as a here-string's text is (`echo ~/.config/ember | xargs
 rm -rf` is refused too); printf's escapes other than a line break, a tab and `\0` (`\056`, `\x2e`, `\u002e`) are text
-Ember can't see, so the command after it asks (`printf '\056\056\057\056netrc' | xargs cat`). Handed to a program that
+Ember can't see, so the command after it asks (`printf '\056\056\057\056netrc' | xargs cat`). Only the shell's own
+`echo` and `printf` count: a program merely named so (`./echo`, `/tmp/printf`, `node_modules/.bin/echo`) prints what
+it likes, so the command after it is judged as given input Ember can't see, and Ember's own folder handed to it that
+way is still refused. A command `xargs`
+builds from text Ember reads is judged batch by batch (`echo test publish | xargs -n1 npm` asks about `npm publish`,
+`printf 'status\nclean -fdx\n' | xargs -L1 git` about the clean); with an option Ember can't batch by (`-x`, `-s`,
+`-E`, a count that is no number) the text is still judged, as one command (`echo publish | xargs -x cargo` asks,
+`echo ~/.config/ember | xargs -x rm -rf` is refused), and with `-I` or `-i` beside `-L` or `-n`, where xargs keeps
+only the later one, both ways are judged (`xargs -I{} -L1 git` given `push --force` asks). With `-I` or `-i` and more than 32 lines of text
+it asks, having judged the first 32. Reading the text, or an
+option's value, never makes it run or announce
+where it asked before (a database client, `make -f -` or `awk -f -` given printed text asks too, "It runs the text
+another command prints into it.", saying as well when the text changes data: `echo 'drop table users;' | psql app`): `echo build | xargs ls` asks ("xargs builds this command from its input."), and `echo build |
+xargs rm -rf` asks whatever you said. Handed to a program that
 may change what it names (an export, the input of a program Ember can't follow), Ember says it would change its files. A value Ember can't see at all (a file `read` reads, a command's output) isn't followed: such a command asks, as any delete
 does.
 
