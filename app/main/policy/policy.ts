@@ -2112,7 +2112,8 @@ const ENTER_IN_FIELD: Risk = { reason: "Enter in a text field can send or submit
  * - the bar (`addressBar`): a browser's (BROWSER, BAR_BROWSER) own field, outside any page, named as a search, address,
  *   URL or location;
  * - a search box (`searchBox`), a page's or an app's own: named as a search and nothing risky ("Search people to share
- *   with"), and not in a window titled as taking payment.
+ *   with") nor anything that sends or picks people (PICKS_OR_SENDS), and not in a window titled as taking payment or for
+ *   something risky.
  * (Narrowing the bar to Edge, Chrome, Firefox and Safari made GNOME Web, Falkon and Arc ask again, and a mail app's own
  * search box with them: regression review of round seven, safety-privacy-x7-3.)
  * A page's own "Email address", "Delivery address", "Webhook URL" or "Location" is a form's field, where Enter submits
@@ -2123,10 +2124,17 @@ const SEARCHES = /(^|[^\p{L}\p{N}])search(?![\p{L}\p{N}])/iu;
 const oneLineField = (r: ActionRequest, role: string): boolean => /^(entry|combo box|text)$/.test(role) && !r.multiLine && !r.dialog;
 /** A word that acts on others anywhere in a name, not only leading it ("Search and invite"). */
 const actsAnywhere = (name: string): boolean => name.trim().split(/\s+/).some((_, i, words) => isRiskyActLabel(words.slice(i).join(" ")));
+/**
+ * Words that say a box also sends or picks people, whatever else it searches ("Search or type a message", "Search people
+ * to add", "Search for a recipient"): never only a search (audit of 2026-11-11, safety-privacy-r8-3).
+ */
+const PICKS_OR_SENDS = /(^|[^\p{L}\p{N}])(messages?|chats?|recipients?|add)(?![\p{L}\p{N}])/iu;
 const addressBar = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
   oneLineField(r, role) && !r.inPage && (BROWSER.test(r.app) || BAR_BROWSER.test(r.app)) && tabbed(r.app, os) && GOES_SOMEWHERE.test(name);
 const searchBox = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
-  oneLineField(r, role) && SEARCHES.test(name) && !isRiskyLabel(name, os) && !actsAnywhere(name) && !PAYMENT_PAGE.test(normalizeLabel(r.window));
+  oneLineField(r, role) && SEARCHES.test(name) && !isRiskyLabel(name, os) && !actsAnywhere(name) && !saysWord(PICKS_OR_SENDS, name)
+  // Nor in a window titled for something risky ("Send money - PayPal", "Share with people"), or for a payment.
+  && !PAYMENT_PAGE.test(normalizeLabel(r.window)) && !isRiskyLabel(r.window, os);
 const goesSomewhere = (r: ActionRequest, role: string, name: string, os: OS): boolean => addressBar(r, role, name, os) || searchBox(r, role, name, os);
 /**
  * Keys that only move a browser between its pages and tabs, or reload one (an allow-list, for browsers alone: an app that

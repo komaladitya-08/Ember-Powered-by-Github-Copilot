@@ -116,6 +116,16 @@ describe("what still asks in a browser, whatever is on", () => {
     asks(edge({ value: "Return", inPage: true, element: { role: "entry", name } }));
   });
 
+  it.each([["Search or type a message", "Chat - Example"], ["Search people to add", "Members - Example"], ["Search for a recipient", "New transfer - Example"],
+    ["Search", "Send money - PayPal"], ["Search", "Share with people - Example"]])(
+    "Enter in “%s” on “%s”: it may send or pick someone, or its window is about something risky (safety-privacy-r8-3)", (name, window) => {
+      asks(edge({ value: "Return", inPage: true, window, element: { role: "entry", name } }));
+    });
+
+  it.each(["Search", "Search mail", "Search or jump to…", "Search Acme"])("Enter in a page's search box named “%s” still goes unasked (safety-privacy-r8-3)", name => {
+    unasked(edge({ value: "Return", inPage: true, window: "Inbox - Example", element: { role: "entry", name } }));
+  });
+
   it("Enter in an “address” field of an app that isn't a browser, in a page or not (safety-privacy-c7-1)", () => {
     const mail = new PolicyEngine({ neverLook: () => [], grants: () => ({ thunderbird: "act", slack: "act" }), autonomy: () => ({ ...ALL_SCOPES }), os: "win32", keys: KEYS.win32 });
     expect(mail.decide(edge({ app: "thunderbird", window: "Write: hello", value: "Return", inPage: false, element: { role: "entry", name: "To address" } })).verdict).toBe("confirm");
