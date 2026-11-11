@@ -12,7 +12,7 @@ export interface SpeechWatchDeps {
   timeoutMs: number;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(timer: unknown): void;
-  /** Speech works (true) or no voice spoke (false): told only when that changes. */
+  /** Speech works (true: told only when that changes) or no voice spoke (false: told for each reply, voice-speaking-r6-2). */
   report(ok: boolean): void;
 }
 
@@ -36,7 +36,7 @@ const NO_VOICE = new Set(["synthesis-unavailable", "synthesis-failed", "language
 export function speechWatch(d: SpeechWatchDeps): { utterance(): WatchedUtterance } {
   let last: boolean | null = null;
   const tell = (ok: boolean) => {
-    if (ok === last) return;
+    if (ok && last) return;
     last = ok;
     d.report(ok);
   };

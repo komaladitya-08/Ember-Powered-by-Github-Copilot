@@ -501,13 +501,14 @@ describe("speaking with no voice on the computer", () => {
     w.utterance();
     t.fire();
     expect(said).toEqual([false]);
-    // The next one doesn't start either: said once.
+    // The next one doesn't start either: said again, so a Hear Ember waiting on it ends (voice-speaking-r6-2).
     w.utterance();
     t.fire();
-    expect(said).toEqual([false]);
-    // A voice was added: speech starts, and main hears it works.
+    expect(said).toEqual([false, false]);
+    // A voice was added: speech starts, and main hears it works, once.
     w.utterance().started();
-    expect(said).toEqual([false, true]);
+    w.utterance().started();
+    expect(said).toEqual([false, false, true]);
     expect(t.count).toBe(0);
   });
 
