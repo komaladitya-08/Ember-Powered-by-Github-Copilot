@@ -62,7 +62,11 @@ describe.each([["light windows", light], ["light windows with Increase Contrast"
 });
 
 describe("the approval window's “Risky step” tag", () => {
-  const rule = /^\.risk \{([^}]*)\}/m.exec(read("app/renderer/prompt/styles.css"))![1];
+  const sheet = read("app/renderer/prompt/styles.css");
+  /** Every rule that reaches the tag (`.risk` or `#risk`), alone or in a list, at the top or in an at-rule: [selector, declarations]. */
+  const tagRules = (text: string) => [...text.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map(m => [m[1].trim(), m[2]] as const).filter(([selector]) => /[.#]risk(?![\w-])/.test(selector));
+  const rule = tagRules(sheet).find(([selector]) => selector === ".risk")![1];
   const tokenOf = (prop: string) => new RegExp(`(?:^|; | )${prop}: var\\((--[\\w-]+)\\);`).exec(rule)?.[1];
   /** The dark values: ember.css's first :root block, and Increase Contrast's over it. */
   const block = (open: string) => {
@@ -81,6 +85,22 @@ describe("the approval window's “Risky step” tag", () => {
     for (const [name, t] of [["dark", dark], ["dark with Increase Contrast", darkFirm], ["light", light], ["light with Increase Contrast", firm]] as const) {
       expect(contrast(hex(t[word!]), hex(t[fill!])), name).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it("has one rule that colours it, and a system-colours one, however a second is spelt (accessibility-x7-1, WCAG 1.4.3)", () => {
+    // The first pin read only the first ".risk {": a more specific rule after it would bring back the 2.9:1 tag unseen.
+    const system = /^(?:CanvasText|Canvas)$/;
+    const coloured = (text: string) => tagRules(text).filter(([, body]) =>
+      [...body.matchAll(/(?:^|[;\s])(?:color|background(?:-color)?)\s*:\s*([^;]+)/g)].some(m => !system.test(m[1].trim())));
+    expect(coloured(sheet).map(([selector]) => selector)).toEqual([".risk"]);
+    for (const again of [
+      '.card[data-risky="true"] .risk { color: #1d1d1f; }',
+      "#risk { color: #1d1d1f; }",
+      "p.risk,.x{color:#1d1d1f}",
+      "@media (min-width: 1px) { .risk { background: #ffd60a; } }",
+    ]) expect(coloured(`${sheet}\n${again}\n`), again).toHaveLength(2);
+    // The brackets round a risky card and words that only contain "risk" are not the tag.
+    expect(coloured('.card[data-risky="true"] { color: red; } .risky { color: red; } .risk { margin: 0; }')).toEqual([]);
   });
 });
 

@@ -217,6 +217,9 @@ describe("corner card with a task", () => {
 describe("page styles that keep things readable and reachable", () => {
   const read = (f: string) => readFileSync(new URL(`../../app/renderer/${f}`, import.meta.url), "utf8");
   const home = read("home/styles.css"), page = read("home/index.html"), overlay = read("overlay/styles.css");
+  /** The selector of every rule that styles a placeholder, alone or in a list, at the top or inside an at-rule. */
+  const placeholderRules = (sheet: string) =>
+    [...sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]*::placeholder[^{}]*)\{/g)].map(m => m[1].trim().replace(/\s+/g, " "));
   /** WCAG contrast ratio of two #rrggbb colours. */
   const contrast = (a: string, b: string) => {
     const lum = (h: string) => {
@@ -253,7 +256,18 @@ describe("page styles that keep things readable and reachable", () => {
       expect(contrast(placeholder!, new RegExp(`^  --${surface}: (#[0-9a-f]{6});`, "m").exec(dark)![1]), surface).toBeGreaterThanOrEqual(4.5);
     }
     // One rule for them all: a field's own rule would leave the next field without one. Light windows restate it.
-    expect([...home.matchAll(/^.*::placeholder \{/gm)].map(m => m[0].trim())).toEqual(["::placeholder {", "html.content ::placeholder {"]);
+    expect(placeholderRules(home)).toEqual(["::placeholder", "html.content ::placeholder"]);
+  });
+
+  it("counts a placeholder rule however it is spelt, so a field's own colour can't come back unseen (accessibility-x7-1, WCAG 1.4.3)", () => {
+    // Each of these would bring back the 3.2:1 grey on its field; the first pin read only "<selector>::placeholder {".
+    for (const own of [
+      ".conversation-search input::placeholder, .x { color: #757575; }",
+      "#conversation-message::placeholder{ color:#757575 }",
+      "textarea::placeholder\n{ color: #757575; }",
+      "@media (min-width: 1px) { input::placeholder { color: #757575; } }",
+    ]) expect(placeholderRules(`${home}\n${own}\n`), own).toHaveLength(3);
+    expect(placeholderRules("/* a ::placeholder { in a comment } */ a { color: red; }")).toEqual([]);
   });
 
   it("gives the never-look placeholder enough contrast and the folds clean names", () => {
