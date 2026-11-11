@@ -90,8 +90,8 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   WPA2-PSK / 5GHz / BlueSky99!", "Home network: HomeNet / 192.168.1.1 / admin / Summer2024!", memory-y6-3, also labelled
   or past any other field, "Wi-Fi: HomeNet / WPA2-PSK / key: BlueSky99!", "… / channel 36 / BlueSky99!", "… /
   192.168.1.1 / admin admin123", memory-z6-2), a capitals setting for a password ("DB_PASS=Tr0ub4dor&3", never a
-  filter's "LOW_PASS=8000"), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
-  GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
+  filter's "LOW_PASS=8000"), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face, GitLab,
+  SendGrid, DigitalOcean and Twilio keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
   "hashed" and "masked" only before more words with no digit or symbol: "password: never logged", but "Wi-Fi password
   is its BlueSky99" and "Password for Gmail is never Summer2024!" are refused, memory-v5-1; "typed", "entered",

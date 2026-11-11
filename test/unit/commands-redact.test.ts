@@ -181,6 +181,34 @@ describe("redactSecrets", () => {
     }
   });
 
+  it.each([
+    ["a SendGrid key", `SG.${"aB3_".repeat(5)}xy.${"cD4-".repeat(10)}xyz`],
+    ["a DigitalOcean token", `dop_v1_${"0a1b2c3d".repeat(8)}`],
+    ["a Twilio API key", `SK${"0a1b2c3d".repeat(4)}`],
+  ])("hides %s on its own (safety-privacy-r7-3)", (_what, token) => {
+    expect(redactSecrets(`key is ${token} here`)).toBe(`key is ${SECRET_HIDDEN} here`);
+    expect(commandLineSecret(token)).toBe(true);
+  });
+
+  it("hides a Docker config's auth and a .netrc line's password, keeping what names them (safety-privacy-r7-3)", () => {
+    expect(redactSecrets('{ "auths": { "ghcr.io": { "auth": "dXNlcjpodW50ZXIyMTIzNDU2Nzg5MA==" } } }')).toBe(`{ "auths": { "ghcr.io": { "auth": "${SECRET_HIDDEN}" } } }`);
+    expect(redactSecrets("machine api.example.com login bob password hunter2xyz")).toBe(`machine api.example.com login bob password ${SECRET_HIDDEN}`);
+    expect(redactSecrets("default login anonymous password me@example.com")).toBe(`default login anonymous password ${SECRET_HIDDEN}`);
+  });
+
+  it("leaves text that only looks a little like those alone (safety-privacy-r7-3)", () => {
+    for (const text of ["SG.short.thing", "SKU1234567890abcdef1234567890abcdef12", "dop_v1_short", '"auth": "none"', '"author": "Sam Example of Somewhere"', "the machine asked for a password reset",
+      "enter your password again"]) {
+      expect(redactSecrets(text)).toBe(text);
+    }
+  });
+
+  it("stays linear on long runs of the new shapes (safety-privacy-r7-3)", () => {
+    const start = Date.now();
+    redactSecrets("machine ".repeat(100_000) + "SG.".repeat(100_000) + '"auth": "'.repeat(50_000));
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
+
   it("doesn't hide a value twice", () => {
     expect(redactSecrets(`password=${GH}`)).toBe(`password=${SECRET_HIDDEN}`);
     expect(redactSecrets(redactSecrets("token=abc"))).toBe(`token=${SECRET_HIDDEN}`);
