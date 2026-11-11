@@ -236,7 +236,8 @@ describe("docs/DEVELOPING.md", () => {
     const gate = /The full gate[^]*?```sh\n([^]*?)```/.exec(claude)?.[1] ?? "";
     const order = gate.split("\n").map(l => l.trim().split(/\s+#/)[0]);
     const pack = order.indexOf("(cd packages/npm && npm pack --dry-run)");
-    expect(pack).toBe(order.indexOf("npm test") + 1);
+    // Between them: the kill switch's real-time deadline (the next case).
+    expect(pack).toBe(order.indexOf("npm test") + 2);
     expect(order.indexOf("npm run test:sidecar")).toBe(pack + 1);
     // el8's last step: the awake-rest budget, with every flag CI gives it.
     const footprint = /node scripts\/perf\/footprint\.mjs [^\n]*--max-cpu \d+ --max-pss \d+/.exec(ci)?.[0] ?? "";
@@ -251,6 +252,20 @@ describe("docs/DEVELOPING.md", () => {
     const line = claude.split("\n").find(l => l.includes("scripts/perf/footprint.mjs")) ?? "";
     expect(line).toContain(`\`dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" ${footprint}\``);
     expect(line).toContain("xcompmgr");
+  });
+
+  it("gives the kill switch's real-time deadline step in the gate, right after the unit tests, as CI's three jobs run it (install-docs-r7-1)", () => {
+    const ci = read(".github/workflows/ci.yml");
+    const step = "npm run test:integration -- test/integration/killswitch-deadline.test.ts";
+    // Linux, Windows and macOS each run it on its own, straight after `npm test`.
+    expect(ci.split(`      - run: npm test\n      - name: Kill switch real-time deadline (isolated from parallel unit tests)\n        run: ${step}\n`)).toHaveLength(4);
+    expect(fs.existsSync("test/integration/killswitch-deadline.test.ts")).toBe(true);
+    const gate = /The full gate[^]*?```sh\n([^]*?)```/.exec(read("CLAUDE.md"))?.[1] ?? "";
+    const order = gate.split("\n").map(l => l.trim().split(/\s+#/)[0]);
+    expect(order.indexOf(step)).toBe(order.indexOf("npm test") + 1);
+    // docs/DEVELOPING.md's command table names it too, with why it runs alone.
+    const row = read("docs/DEVELOPING.md").split("\n").find(l => l.startsWith(`| \`${step}\` |`)) ?? "";
+    expect(row).toContain("on its own");
   });
 
   it("keeps the C API's and WebAssembly's measured figures in the --native bullet, not in the one after it (reliability-y6-2)", () => {
