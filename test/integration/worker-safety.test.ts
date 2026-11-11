@@ -1788,6 +1788,41 @@ describe("several calls in one reply", () => {
     ]);
     expect(l.get().failedSteps).toBe(0);
   });
+
+  it("after “Not now”, a step the same reply queued behind it does nothing in the app and asks nothing (tasks-approvals-c7-1)", async () => {
+    const goal = "Tidy the wizard (queued)";
+    scripts.set(goal, m => [perceive, { tools: [{ name: "click", args: { id: 1 } }, { name: "click", args: { id: 2 } }, { name: "finish_task", args: { success: true, summary: "Deleted the notes and pressed Next." } }] }][steps(m)] ?? finish);
+    const asked: string[] = [];
+    const events: ActivityEvent[] = [];
+    const screen = fakeScreen(WIZARD);
+    const r = await makeWorker(screen, goal, { confirmer: saysNo(asked), userWords: "Delete all the old notes and then press Next in the wizard", onActivity: e => events.push(e) }).run(new AbortController().signal);
+    // One question, answered no: Next (an ordinary step in a granted app, planned on the delete going ahead) is never pressed.
+    expect(asked).toEqual(["Click the “Delete all” button in Testapp?"]);
+    expect(screen.log).toEqual([]);
+    // Nor does the reply's own "all done" stand: the model hears each wasn't done and ends the task knowing of the no.
+    expect(r.success).toBe(false);
+    const results = [...mock.requests].reverse().find(q => text(q.messages.find(m => m.role === "user")!).includes(goal))!.messages.filter(m => m.role === "tool").map(text);
+    expect(results[1]).toContain("The user said no.");
+    expect(results[2]).toContain("An earlier step in this reply wasn't done, so this one wasn't either");
+    expect(results[3]).toContain("An earlier step in this reply wasn't done, so this one wasn't either");
+    // Its card: neither click happened, and nothing "didn't work".
+    const l = cardOf(events);
+    expect(l.card().rows.map(r => [r.state, r.words])).toEqual([
+      ["done", "Read the window"], ["stopped", "Tried to click 2 times in Testapp"], ["stopped", "Asked you: you said not now"], ["done", STATUS_WORDS.done],
+    ]);
+    expect(l.get().failedSteps).toBe(0);
+  });
+
+  it("a step queued behind one that worked still goes ahead, and so does a read behind one that didn't (tasks-approvals-c7-1)", async () => {
+    scripts.set("Step through the wizard", m => [perceive, { tools: [{ name: "click", args: { id: 2 } }, { name: "click", args: { id: 2 } }] }, { tools: [{ name: "click", args: { id: 99 } }, { name: "perceive_window", args: {} }, { name: "click", args: { id: 2 } }] }][steps(m) > 3 ? 3 : steps(m) > 1 ? 2 : steps(m)] ?? finish);
+    const screen = fakeScreen(WIZARD);
+    await makeWorker(screen, "Step through the wizard", { userWords: "press Next twice" }).run(new AbortController().signal);
+    // Two Nexts in one reply are both pressed; then a click that fails (no such element) holds back the click after it, not the read.
+    expect(screen.log.map(l => l.what)).toEqual(["doAction 2 click", "doAction 2 click"]);
+    const results = [...mock.requests].reverse().find(q => text(q.messages.find(m => m.role === "user")!).includes("Step through the wizard"))!.messages.filter(m => m.role === "tool").map(text);
+    expect(results[4]).toContain("<screen");
+    expect(results[5]).toContain("An earlier step in this reply wasn't done, so this one wasn't either");
+  });
 });
 
 describe("models", () => {

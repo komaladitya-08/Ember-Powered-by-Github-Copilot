@@ -246,6 +246,13 @@ const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 /**
+ * To a call the model sent in the same reply as one that then wasn't done (a "Not now", an unanswered question, a
+ * refusal, a failure): it was planned on that step going ahead, so it does nothing (tasks-approvals-c7-1).
+ */
+const QUEUED_BEHIND_UNDONE = "An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened and decide afresh; don't retry or work around a step the user said no to.";
+/** Calls that change nothing in the user's apps: they still run behind a step that wasn't done. */
+const CHANGES_NOTHING: ReadonlySet<string> = new Set(["perceive_window", "list_windows", "report_progress"]);
+/**
  * A step that can't be done because the accessibility helper can't work here at all (helperCantRun: its Python
  * bindings missing, macOS not having given Ember the Accessibility permission, the helper unable to start;
  * tasks-approvals-8). It can't work again until the user fixes that, so the model is never told to try again.
@@ -1484,7 +1491,10 @@ export class Worker {
    * One tool: arguments are checked against the schema here (the runtime does not
    * enforce it), the step limit is counted, and nothing runs once the task is stopped or finished.
    * Tools run one at a time, in the order called (the runtime may call several at once): two actions
-   * or questions of one task never overlap.
+   * or questions of one task never overlap. The model sends every call of a reply before the first one's result is
+   * known: runTool holds back one sent with a step that then wasn't done (tasks-approvals-c7-1). Which calls came in
+   * one reply is known from the runtime's message event (`replyCalls`); a call also notes here, as it is queued, how
+   * many steps had not been done by then, for a runtime that says nothing of it.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
   private tool<S extends z.ZodType>(name: string, description: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>): Tool<any> {
@@ -1493,9 +1503,10 @@ export class Worker {
       description, parameters, skipPermission: true, defer: "never",
       handler: (raw: unknown, invocation?: { toolCallId?: string }) => {
         const callId = typeof invocation?.toolCallId === "string" && invocation.toolCallId ? invocation.toolCallId : undefined;
+        const undone = this.undone;
         const run = this.toolTurn.then(() => {
           this.callId = callId;
-          return this.runTool(name, parameters, handler, raw, maxSteps).finally(() => { this.callId = undefined; });
+          return this.runTool(name, parameters, handler, raw, maxSteps, undone).finally(() => { this.callId = undefined; });
         });
         this.toolTurn = run.catch(() => undefined);
         return run;
@@ -1505,12 +1516,30 @@ export class Worker {
 
   /** The tool call in progress (or queued last): the next one waits for it. */
   private toolTurn: Promise<unknown> = Promise.resolve();
+  /** How many calls of this task were not done so far: turned down, unanswered, refused, or failed. */
+  private undone = 0;
+  /** The ids of the calls the model's latest reply held, and whether one of them wasn't done. */
+  private replyCalls: ReadonlySet<string> = new Set();
+  private replyUndone = false;
+  /** The call that runs now was sent in one reply with a step that then wasn't done: before the model knew of it. */
+  private behindUndone(undoneWhenQueued: number): boolean {
+    return this.undone !== undoneWhenQueued || (this.replyUndone && this.callId !== undefined && this.replyCalls.has(this.callId));
+  }
   /** The runtime's id of the call that runs now (the id of its tool-start): what a refusal's row is matched by. */
   private callId: string | undefined;
   /** The turn ended without finish_task and only its summary is asked for now. */
   private wrappingUp = false;
 
-  private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number): Promise<ToolResultObject | string> {
+  private async runTool<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number, undoneWhenQueued = this.undone): Promise<ToolResultObject | string> {
+    const result = await this.runQueued(name, parameters, handler, raw, maxSteps, undoneWhenQueued);
+    if (typeof result === "object" && (result.resultType === "denied" || result.resultType === "failure")) {
+      this.undone++;
+      if (this.callId !== undefined && this.replyCalls.has(this.callId)) this.replyUndone = true;
+    }
+    return result;
+  }
+
+  private async runQueued<S extends z.ZodType>(name: string, parameters: S, handler: (a: z.infer<S>) => Promise<ToolResultObject | string>, raw: unknown, maxSteps: number, undoneWhenQueued: number): Promise<ToolResultObject | string> {
     // A step held to go ahead without asking that its own call didn't take (a password prompt, the keyboard or the desk
     // refused it) is never written by a later call's action entry, after its refusal (safety-privacy-r4-1).
     this.ahead = null;
@@ -1518,6 +1547,13 @@ export class Worker {
     if (this.result) return denied("The task is already finished. Stop now.");
     // Asked for its summary (its turn ended without one): nothing more is done in the user's apps.
     if (this.wrappingUp && name !== "finish_task" && name !== "report_progress") return denied("The task is over: call finish_task now with what you already did. Do nothing else.");
+    // Sent in one reply with a step that then wasn't done (the user's "Not now", a question nobody answered, a refusal,
+    // a failure): the model planned this one on that step going ahead, before it knew. It does nothing in the user's
+    // apps and asks nothing; the model hears so and decides again (tasks-approvals-c7-1). Reading still goes on.
+    if (this.behindUndone(undoneWhenQueued) && !CHANGES_NOTHING.has(name)) {
+      this.activity({ type: "denied" });
+      return denied(QUEUED_BEHIND_UNDONE);
+    }
     if (++this.steps > maxSteps) {
       this.limitHit = true;
       this.stopNow(`I stopped after ${maxSteps} steps without finishing, to be safe.`);
@@ -1957,6 +1993,13 @@ export class Worker {
       session.on(e => {
         d.presenter.event(e as { type: string; data?: Record<string, unknown> });
         if (e.type === "assistant.message") lastAnswer = String((e.data as { content?: string }).content ?? lastAnswer);
+        // The calls of one reply, all sent before any result was known: one that isn't done holds the rest back
+        // (runTool; tasks-approvals-c7-1). A new reply starts afresh: the model has seen what happened.
+        if (e.type === "assistant.message") {
+          const calls = (e.data as { toolRequests?: { toolCallId?: unknown }[] }).toolRequests;
+          this.replyCalls = new Set((Array.isArray(calls) ? calls : []).map(c => c?.toolCallId).filter((id): id is string => typeof id === "string" && id !== ""));
+          this.replyUndone = false;
+        }
         if (e.type === "assistant.usage") d.onUsage?.(e.data.inputTokens ?? 0, e.data.outputTokens ?? 0);
         // The task card follows the current step ("Typing…"); the model's own progress notes replace it.
         if (e.type === "tool.execution_start") {
