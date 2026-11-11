@@ -194,3 +194,20 @@ describe("a click in a window whose title only mentions a payment (regression re
     expect(grants().decide(click("Continue", { window: "Complete your payment today - Example" })).verdict).toBe("confirm");
   });
 });
+
+/** "Disable" and "Turn off" answer for a protection only as a bare answer, or where the label itself names the protection. */
+describe("a longer label that starts with “Turn off” or “Disable” in a window titled for a protection (regression review of round seven)", () => {
+  const apps = () => new PolicyEngine({ neverLook: () => [], grants: () => ({ gedit: "act", soffice: "act", evince: "act", firefox: "act" }), autonomy: () => null, isTerminalApp: () => false });
+
+  it.each([["menu item", "Disable Line Numbers", "Security review notes.txt - gedit", "gedit"], ["menu item", "Turn off Track Changes", "Crop protection.docx - Writer", "soffice"],
+    ["push button", "Turn Off Bullets and Numbering", "Verification report.odt - LibreOffice Writer", "soffice"], ["check box", "Turn off notifications", "Email verification - Firefox", "firefox"],
+    ["toggle button", "Disable Night Mode", "Data Protection Policy.pdf - Evince", "evince"], ["link", "Turn off the lights", "Eye protection tips - Blog", "firefox"]])(
+    "a %s “%s” in “%s” goes under “Always” (safety-privacy-x7-8)", (role, name, window, app) => {
+      expect(apps().decide(click(name, { app, window, inPage: undefined, element: { role, name } })).verdict).toBe("allow");
+    });
+
+  it.each([["Disable", "Two-factor authentication"], ["Turn off", "Two-step verification - Google Account"], ["Turn it off", "Firewall"], ["Disable now", "Security"],
+    ["Disable passkeys", "Account security"], ["Turn off verification", "Two-step verification"]])("“%s” in “%s” still asks every time (safety-privacy-r7-1)", (name, window) => {
+    asksAlways(click(name, { window }));
+  });
+});

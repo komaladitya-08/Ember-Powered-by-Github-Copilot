@@ -2153,7 +2153,17 @@ const paymentTitle = (title: string): boolean => normalizeLabel(title).split(/\s
 const ON_PAYMENT_PAGE = "It is on a payment page, so it may buy something.";
 /** A window or dialog titled for a protection of the account or the computer, and the bare answers that turn one off there. */
 const PROTECTION_TITLE = /\b(two[- ]factor|two[- ]step|2[- ]step|2fa|multi[- ]factor|mfa|firewall|antivirus|security|protection|verification|passkeys?|encryption)\b/;
-const TURNS_OFF = /^[^a-z0-9]*(disable|turn (it )?off|switch (it )?off|deactivate)\b/;
+const TURNS_OFF = /^[^a-z0-9]*(?:disable|turn (?:it )?off|switch (?:it )?off|deactivate)(?: (?:it|this|now))?(?:[^a-z0-9]*$| (.+))/;
+/**
+ * Does this label turn a protection off in a window so titled: the bare answer ("Disable", "Turn it off"), or one that
+ * names a protection itself ("Disable passkeys")? Not any label that starts so: an editor's window is titled by its
+ * document ("Security review notes.txt"), where "Disable Line Numbers" asked every time (regression review of round
+ * seven, safety-privacy-x7-8).
+ */
+const turnsProtectionOff = (name: string, titles: string): boolean => {
+  const m = TURNS_OFF.exec(normalizeLabel(name));
+  return !!m && PROTECTION_TITLE.test(normalizeLabel(titles)) && (m[1] === undefined || PROTECTION_TITLE.test(m[1]));
+};
 /** Titles of file dialogs (open, save, export, attach). */
 const FILE_DIALOG_TITLE = /^\s*(save|save as|save a copy|save file|save image|export|export as|open|open files?|select files?|choose files?|insert (file|image|picture)|upload|attach)\b/i;
 /**
@@ -2505,7 +2515,7 @@ export class PolicyEngine {
     const riskyNamed = (role === "link" && content ? linkCommands(name, !selects, os) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     // A bare "Disable" or "Turn off" on a page or dialog titled for a protection ("Two-factor authentication") turns it off.
-    const unprotects = ACTIVATING_ROLES.test(role) && TURNS_OFF.test(normalizeLabel(name)) && PROTECTION_TITLE.test(normalizeLabel(`${r.window} ${r.dialog?.name ?? ""}`));
+    const unprotects = ACTIVATING_ROLES.test(role) && turnsProtectionOff(name, `${r.window} ${r.dialog?.name ?? ""}`);
     // A button with no name, or only a symbol for one (BARE_BUTTON): its name says nothing of what it does.
     const bare = !!r.element && !r.element.withheld && BARE_BUTTON.test(role) && !/[\p{L}\p{N}]/u.test(name.normalize("NFKC"));
     // The named control it sits in says it (the worker's `place`: a form named "Send message"), judged as a button's name would be.
