@@ -2104,9 +2104,12 @@ const ENTER_IN_FIELD: Risk = { reason: "Enter in a text field can send or submit
  * Enter there can't send what it holds to anyone, so what asks is only Ember's doubt, which "Work without asking" may
  * cover. Without it, Enter in Edge's address bar asked on every task (owner report of 2026-11-05). An allow-list that
  * fails closed, and never makes another field's Enter any safer:
- * - the bar (`addressBar`): a browser's (BROWSER) own field, outside any page, named as a search, address, URL or location;
- * - a page's search box (`searchBox`): known to be in a page, named as a search and nothing risky ("Search people to
- *   share with"), and not on a page that takes payment.
+ * - the bar (`addressBar`): a browser's (BROWSER, BAR_BROWSER) own field, outside any page, named as a search, address,
+ *   URL or location;
+ * - a search box (`searchBox`), a page's or an app's own: named as a search and nothing risky ("Search people to share
+ *   with"), and not in a window titled as taking payment.
+ * (Narrowing the bar to Edge, Chrome, Firefox and Safari made GNOME Web, Falkon and Arc ask again, and a mail app's own
+ * search box with them: regression review of round seven, safety-privacy-x7-3.)
  * A page's own "Email address", "Delivery address", "Webhook URL" or "Location" is a form's field, where Enter submits
  * the form: it asks like any other (audit of 2026-11-11, safety-privacy-c7-1). Never a multi-line field or one in a dialog.
  */
@@ -2116,9 +2119,9 @@ const oneLineField = (r: ActionRequest, role: string): boolean => /^(entry|combo
 /** A word that acts on others anywhere in a name, not only leading it ("Search and invite"). */
 const actsAnywhere = (name: string): boolean => name.trim().split(/\s+/).some((_, i, words) => isRiskyActLabel(words.slice(i).join(" "), "title"));
 const addressBar = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
-  oneLineField(r, role) && !r.inPage && BROWSER.test(r.app) && tabbed(r.app, os) && GOES_SOMEWHERE.test(name);
+  oneLineField(r, role) && !r.inPage && (BROWSER.test(r.app) || BAR_BROWSER.test(r.app)) && tabbed(r.app, os) && GOES_SOMEWHERE.test(name);
 const searchBox = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
-  oneLineField(r, role) && r.inPage === true && SEARCHES.test(name) && !isRiskyLabel(name, os) && !actsAnywhere(name) && !PAYMENT_PAGE.test(normalizeLabel(r.window));
+  oneLineField(r, role) && SEARCHES.test(name) && !isRiskyLabel(name, os) && !actsAnywhere(name) && !PAYMENT_PAGE.test(normalizeLabel(r.window));
 const goesSomewhere = (r: ActionRequest, role: string, name: string, os: OS): boolean => addressBar(r, role, name, os) || searchBox(r, role, name, os);
 /**
  * Keys that only move a browser between its pages and tabs, or reload one (an allow-list, for browsers alone: an app that
@@ -2131,6 +2134,11 @@ const BROWSER_KEYS: Readonly<Record<OS, RegExp>> = {
 };
 /** Web browsers themselves, by program name. */
 const BROWSER = /msedge|chrome|chromium|firefox|librewolf|brave|opera|vivaldi|safari|iexplore/i;
+/**
+ * The other browsers of TABBED_APP, for the address bar alone (GNOME Web is "epiphany" or "Web"). Not SeaMonkey, whose
+ * windows are also a mail app's, where an "address" field is a message's.
+ */
+const BAR_BROWSER = /epiphany|^web$|falkon|midori|konqueror|waterfox|floorp|thorium|\barc\b|\borion\b/i;
 /** A page that takes payment: a button on it may buy something whatever its label says ("Activate now"; audit of 2026-11-01). */
 const PAYMENT_PAGE = /\b(checkout|check out|payment|billing)\b/;
 /** A window or dialog titled for a protection of the account or the computer, and the bare answers that turn one off there. */

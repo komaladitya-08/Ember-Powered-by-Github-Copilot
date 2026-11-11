@@ -52,6 +52,36 @@ describe("what goes unasked in a browser", () => {
   });
 });
 
+describe("what goes unasked in the other browsers and in an app's own search box (regression review of round seven)", () => {
+  const on = (os: "linux" | "win32" | "darwin", app: string) => new PolicyEngine({ neverLook: () => [], grants: () => ({ [app.toLowerCase()]: "act" }), autonomy: () => ({ ...ALL_SCOPES }), os, keys: KEYS[os] });
+
+  it.each([["linux", "epiphany", "URL"], ["linux", "Web", "Address and search bar"], ["linux", "falkon", "Address"], ["linux", "konqueror", "Location"], ["linux", "midori", "Search or enter an address"],
+    ["darwin", "Arc", "Address and search bar"], ["darwin", "Orion", "Address and search bar"], ["win32", "waterfox", "Search or enter address"], ["win32", "floorp", "Search or enter address"],
+    ["win32", "thorium", "Address and search bar"], ["win32", "arc", "Address and search bar"]] as const)(
+    "Enter in the address bar, and a long address replaced in it, on %s (%s) (safety-privacy-x7-3)", (os, app, name) => {
+      expect(on(os, app).decide(edge({ app, window: "New Tab", value: "Return", inPage: false, element: { role: "entry", name } }))).toMatchObject({ verdict: "allow", autonomy: true });
+      expect(on(os, app).decide(edge({ app, window: "New Tab", kind: "text", mode: "replace", value: "https://www.youtube.com", currentText: "x".repeat(146), element: { role: "entry", name } })))
+        .toMatchObject({ verdict: "allow", autonomy: true });
+    });
+
+  it.each([["linux", "thunderbird", "Search", false], ["linux", "evolution", "Search", false], ["win32", "outlook", "Search", false], ["darwin", "Mail", "Search", false], ["win32", "slack", "Search", undefined]] as const)(
+    "Enter in the app's own one-line search box on %s (%s, “%s”) (safety-privacy-x7-3)", (os, app, name, inPage) => {
+      expect(on(os, app).decide(edge({ app, window: "Inbox", value: "Return", ...(inPage === undefined ? {} : { inPage }), element: { role: "entry", name } }))).toMatchObject({ verdict: "allow", autonomy: true });
+    });
+
+  it.each(["Search email", "Search by name or email", "Search calls", "Search books"])("Enter in a page's search box named “%s” (safety-privacy-x7-3)", name => {
+    unasked(edge({ value: "Return", inPage: true, element: { role: "entry", name } }));
+  });
+
+  it("a mail app's own “address” field, and a search box on a payment page or one that does more, still ask (safety-privacy-c7-1)", () => {
+    for (const [os, app] of [["linux", "thunderbird"], ["linux", "evolution"], ["linux", "seamonkey"], ["darwin", "Mail"]] as const) {
+      expect(on(os, app).decide(edge({ app, window: "Write: hello", value: "Return", inPage: false, element: { role: "entry", name: "To address" } })).verdict).toBe("confirm");
+      expect(on(os, app).decide(edge({ app, window: "Checkout", value: "Return", inPage: false, element: { role: "entry", name: "Search" } })).verdict).toBe("confirm");
+      expect(on(os, app).decide(edge({ app, window: "Inbox", value: "Return", inPage: false, element: { role: "entry", name: "Search and invite" } })).verdict).toBe("confirm");
+    }
+  });
+});
+
 describe("what still asks in a browser, whatever is on", () => {
   it("Enter in a chat box or a form's field: it may send", () => {
     asks(edge({ value: "Return", inPage: true, element: { role: "entry", name: "Message" } }));
