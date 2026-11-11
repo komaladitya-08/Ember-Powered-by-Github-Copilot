@@ -211,3 +211,26 @@ describe("a longer label that starts with “Turn off” or “Disable” in a w
     asksAlways(click(name, { window }));
   });
 });
+
+/** A row is named by what it holds: an unnamed button in it isn't a button named by a mail's subject. */
+describe("an unnamed button in a row, cell or item named by its content (regression review of round seven)", () => {
+  it.each([["list item", "Re: please delete the old report"], ["table row", "Your order has shipped"], ["list item", "Ana - Can you send me the notes?"], ["tree item", "Trash"],
+    ["table cell", "Delete the draft?"], ["link", "Send feedback"], ["heading", "Remove old files"]])("in the %s “%s” isn't asked as something the user didn't ask for (safety-privacy-x7-5)", (role, name) => {
+    const r = click("", { app: "gedit", window: "Inbox", inPage: undefined, goal: "Open the message from Ana about lunch", place: { role, name } });
+    expect(engine().decide(r)).toMatchObject({ verdict: "allow" });
+    expect(engine().decide(r)).not.toHaveProperty("aligned", false);
+  });
+
+  it("in a page asks only as Ember's doubt, never as off-task (safety-privacy-x7-5)", () => {
+    const r = click("", { goal: "Open the message from Ana about lunch", place: { role: "list item", name: "Re: please delete the old report" } });
+    expect(engine().decide(r)).toMatchObject({ verdict: "confirm" });
+    expect(engine().decide(r)).not.toHaveProperty("aligned", false);
+    expect(engine(true).decide(r)).toMatchObject({ verdict: "allow", autonomy: true });
+  });
+
+  it("calls the page around an unnamed button a page (safety-privacy-x7-7)", () => {
+    expect(engine().decide(click("", { window: "Opening hours - Example", place: { role: "document web", name: "Opening hours - Example" } })).prompt)
+      .toBe("Click the button on the “Opening hours - Example” page in Firefox? I can't tell what it does: it has no name.");
+    expect(engine().decide(click("", { app: "soffice", window: "Letter.odt", place: { role: "document text", name: "Letter" } })).prompt).toContain("on the “Letter” document in ");
+  });
+});

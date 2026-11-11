@@ -2484,11 +2484,12 @@ export class Worker {
   /**
    * Where element `id` is when it has no name (an icon, an unnamed button), for the question asked about it: the named
    * control around it (not the window itself), else its place in the window. The policy also judges an unnamed button
-   * by that control's name ("Send message"), only ever towards asking.
+   * by that control's name ("Send message"), only ever towards asking: also one named only by a symbol ("➤"), whose
+   * name says as little (safety-privacy-x7-6).
    */
   private placeOf(id: number, element: Focus): Pick<ActionRequest, "place"> {
     // (A text area or field is named well enough by what it is: "the text area".)
-    if (element.name || element.withheld || TYPING_ROLES.has(element.role)) return {};
+    if (/[\p{L}\p{N}]/u.test(element.name.normalize("NFKC")) || element.withheld || TYPING_ROLES.has(element.role)) return {};
     const node = this.known.get(id);
     if (!node) return {};
     for (let p = node.parent, hops = 0; p !== null && hops < 6; hops++) {

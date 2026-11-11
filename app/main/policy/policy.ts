@@ -1752,11 +1752,13 @@ export const plainQuestion = (r: ActionRequest, kc: KeyConventions = KEYS.linux)
  */
 /** What an element without a name is called in a question: "the text area", not "the text" ("replace the text in the text"). */
 const UNNAMED: Record<string, string> = { text: "text area", "document text": "document", paragraph: "paragraph", entry: "text field", "password text": "password field", "table cell": "row", "list item": "row", "tree item": "row" };
+/** What an unnamed control sits in, in a question: a page's document is "page" (not the reader's "document web"; safety-privacy-x7-7). */
+const placeWord = (role: string): string => role === "document web" ? "page" : /^document\b/.test(role) ? "document" : roleWord(role);
 
 function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.linux): string {
   const cell = !!r.element && isSheetCell(r.element);
   // Controls are called by the plain words the activity list uses ("the “Save” button", not "“Save” push button").
-  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on the ${quote(r.place.name, 40)} ${roleWord(r.place.role)}`;
+  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on the ${quote(r.place.name, 40)} ${placeWord(r.place.role)}`;
   const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `the ${quote(r.element.name)} ${roleWord(r.element.role)}` : `the ${UNNAMED[r.element.role] ?? roleWord(r.element.role)}${r.element.withheld ? "" : place}`;
   const desk = r.onDesk ? " on my desk" : "";
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
@@ -2269,6 +2271,8 @@ const BARE_BUTTON = /^(push button|button|split button|toggle button|push button
 const SENDS_GLYPH = /[\u2190-\u21ff\u2794-\u27bf\u2b05-\u2b0d\u23ce\u2708\u2709\u2713\u2714\u2705\u{1f4e4}\u{1f4e8}\u{1f4e9}\u{1f4e7}\u{1f5d1}\u{1f680}]/u;
 const BARE: Risk = { reason: "this button has no name, so Ember can't tell what it does", note: "I can't tell what it does: it has no name.", plain: true };
 const BARE_GLYPH: Risk = { reason: "this button has only a symbol for a name, one that may send, confirm or delete", note: "I can't tell what it does: it may send, confirm or delete something." };
+/** What is around an unnamed button but named by what it holds or shows, not by what it does: a page, a row, a link's text. */
+const NAMED_BY_CONTENT = /^(document\b.*|list item|table row|table cell|tree item|row|cell|grid cell|icon|image|link|heading|paragraph|article|option|label|static|text)$/;
 const BARE_IN = (around: string): Risk => ({ reason: "this button has no name, and what it sits in is named for something hard to undo or visible to others", about: around });
 /** A control whose name the screen reader withheld (it may say what a secret field holds): what it does can't be shown. */
 const WITHHELD: Risk = { reason: "Ember can't show what this control says (it may reveal something private)", note: "I can't show what it says: it may reveal something private." };
@@ -2520,8 +2524,10 @@ export class PolicyEngine {
     const bare = !!r.element && !r.element.withheld && BARE_BUTTON.test(role) && !/[\p{L}\p{N}]/u.test(name.normalize("NFKC"));
     // The named control it sits in says it (the worker's `place`: a form named "Send message"), judged as a button's name would be.
     // (Not the page's document itself, which is named by the page's title: every unnamed button of a page titled "Send
-    // feedback" isn't a send button. In a page it asks as Ember's doubt below.)
-    const around = bare && r.place && "name" in r.place && !/^document\b/.test(r.place.role) && isRiskyControl("push button", r.place.name, os) ? r.place.name : "";
+    // feedback" isn't a send button. In a page it asks as Ember's doubt below. Nor a row, cell, item, link or heading,
+    // named by what it holds: a mail's row "Re: please delete the old report" asked as a delete the user didn't ask for,
+    // and put the task back to asking; regression review of round seven, safety-privacy-x7-5.)
+    const around = bare && r.place && "name" in r.place && !NAMED_BY_CONTENT.test(r.place.role) && isRiskyControl("push button", r.place.name, os) ? r.place.name : "";
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
     const named = (riskyNamed && !opensDialog(role, name)) || unprotects;
     // A lone "Confirm" or "Approve" agrees to what its dialog (or the window's title) says, as "OK" does: it is judged by that.

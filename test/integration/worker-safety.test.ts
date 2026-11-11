@@ -1914,8 +1914,32 @@ describe("review round 9: policy and selections", () => {
       const screen = fakeScreen(nodes);
       const asked: string[] = [];
       await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-      expect(asked, goal).toEqual(asks === "doubt" ? ["Click the button on the “Checkout” document web in Testapp? I can't tell what it does: it has no name."] : asks ? ["Click the button in Testapp? I can't show what it says: it may reveal something private."] : []);
+      expect(asked, goal).toEqual(asks === "doubt" ? ["Click the button on the “Checkout” page in Testapp? I can't tell what it does: it has no name."] : asks ? ["Click the button in Testapp? I can't show what it says: it may reveal something private."] : []);
       expect(screen.log.length, goal).toBe(asks ? 0 : 1);
+    }
+  });
+
+  it("an unnamed button in a mail's row isn't judged by the mail's subject, and the task stays as it was (safety-privacy-x7-5)", async () => {
+    const goal = "Open the message from Ana about lunch";
+    const nodes: FakeNode[] = [{ id: 1, role: "list item", name: "Re: please delete the old report" }, { id: 2, role: "push button", name: "", parent: 1 }, { id: 3, role: "push button", name: "Next" }];
+    plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }, { tool: { name: "click", args: { id: 3 } } }]);
+    const screen = fakeScreen(nodes);
+    const asked: string[] = [];
+    await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
+    expect(asked).toEqual([]);
+    expect(screen.log.length).toBe(2);
+  });
+
+  it("a desktop app's button named only by a symbol is judged by the named panel it sits in, as one with no name is (safety-privacy-x7-6)", async () => {
+    for (const [name, question] of [["➤", "Click the “➤” button in Testapp?"], ["", "Click the button on the “Send message” panel in Testapp?"]] as const) {
+      const goal = `Look at the desktop chat (${name || "no name"})`;
+      plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }]);
+      const screen = fakeScreen([{ id: 1, role: "panel", name: "Send message" }, { id: 2, role: "push button", name, parent: 1 }]);
+      const asked: string[] = [];
+      await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
+      expect(asked.length, goal).toBe(1);
+      expect(asked[0], goal).toContain(question);
+      expect(screen.log.length, goal).toBe(0);
     }
   });
 });
