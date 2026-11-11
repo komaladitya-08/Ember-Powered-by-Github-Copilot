@@ -1230,6 +1230,14 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(conv.composerLineYields(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 2, true))).toBe(false);
   });
 
+  it("says the draft set aside by Edit is back once the edited request is sent, and still knows the line under it (home-c5-1)", () => {
+    expect(conv.composerDraftBack(conv.COMPOSER_THINKING)).toBe("Thinking… The reply will appear above. Your previous draft is restored.");
+    expect(conv.composerDraftBack("")).toBe("Your previous draft is restored.");
+    // The wait's lines are still told apart under it: "still waiting" goes back to thinking once Ember is heard from.
+    expect(conv.composerLineBase(conv.composerDraftBack(conv.COMPOSER_HELD))).toBe(conv.COMPOSER_HELD);
+    expect(conv.composerLineBase(conv.COMPOSER_THINKING)).toBe(conv.COMPOSER_THINKING);
+  });
+
   it("keeps Edit's caution when a Stop gives my message back above the request I'm editing, and Cancel edit keeps it (home-r4-1)", () => {
     expect(conv.composerGivenBack(conv.CONVERSATION_STOPPED, 1, true, { editing: true })).toBe("Response stopped. Running tasks continue. Your message wasn't sent, so it's back here, above the request you're editing. Sending that request again may repeat actions.");
     expect(conv.composerEditCancelled(0, true)).toBe("Edit cancelled. Your previous draft is restored.");

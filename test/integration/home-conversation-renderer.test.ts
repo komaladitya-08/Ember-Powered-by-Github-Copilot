@@ -1656,6 +1656,68 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
     } finally { await page.close(); }
   }, 60_000);
 
+  it("puts back the draft Edit set aside once the edited request is sent, and says so (home-c5-1)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const line = page.locator("#conversation-compose-status");
+      const field = page.locator("#conversation-message");
+      const cancel = page.getByRole("button", { name: "Cancel edit" });
+      const edit = page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ });
+      await field.fill("My long unsent draft about holidays");
+      await edit.click();
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent)).toEqual(["Empty the trash"]);
+      await expect.poll(() => field.inputValue()).toBe("My long unsent draft about holidays");
+      expect(await line.innerText()).toBe("Thinking… The reply will appear above. Your previous draft is restored.");
+      expect(await cancel.isHidden()).toBe(true);
+      // The wait's lines still follow main's word of the turn, and the reply's line ends it as ever.
+      await turn(page, "slow");
+      await turn(page, "thinking");
+      expect(await line.innerText()).toBe("Thinking… The reply will appear above.");
+      await page.evaluate(e => window.__home.emit("onConversation", e), [...seed, { t: at(2), who: "you", text: "Empty the trash" }, { t: at(3), who: "ember", text: "Done again." }]);
+      await turn(page, "idle");
+      await expect.poll(() => line.innerText()).toBe("Reply received.");
+      expect(await field.inputValue()).toBe("My long unsent draft about holidays");
+      // No draft before Edit: nothing comes back, and nothing is said of one.
+      await field.fill("");
+      await edit.click();
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent.length)).toBe(2);
+      await expect.poll(() => line.innerText()).toBe("Thinking… The reply will appear above.");
+      expect(await field.inputValue()).toBe("");
+      expect(await cancel.isHidden()).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
+  it("keeps Cancel edit when I choose Edit while an earlier send is still being acknowledged, and never brings the sent words back as a draft (home-c7-2)", async () => {
+    const seed: TranscriptEntry[] = [{ t: at(0), who: "you", text: "Empty the trash" }, { t: at(1), who: "ember", text: "Done." }];
+    const { page, errors } = await home(seed);
+    try {
+      await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
+      const field = page.locator("#conversation-message");
+      const cancel = page.getByRole("button", { name: "Cancel edit" });
+      await page.evaluate(() => { window.__home.hold = true; });
+      await field.fill("Order lunch");
+      await page.locator("#conversation-send").click();
+      await expect.poll(() => page.evaluate(() => window.__home.sent)).toEqual(["Order lunch"]);
+      await page.locator("#conversation li.you").first().getByRole("button", { name: /^Edit your message/ }).click();
+      expect(await field.inputValue()).toBe("Empty the trash");
+      await page.evaluate(() => { window.__home.release(); window.__home.hold = false; });
+      await expect.poll(() => page.locator("#conversation-send").getAttribute("aria-disabled")).toBeNull();
+      // The edit is still open: its request is in the field and Cancel edit is there.
+      expect(await field.inputValue()).toBe("Empty the trash");
+      expect(await cancel.isVisible()).toBe(true);
+      // "Order lunch" was sent: it is not the draft from before Edit.
+      await cancel.click();
+      expect(await field.inputValue()).toBe("");
+      expect(await cancel.isHidden()).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await page.close(); }
+  }, 60_000);
+
   it("says Copied on a message's Copy, where the eye is, and names no ⌘ in the composer's hint on Linux (home-11)", async () => {
     const { page, errors } = await home(exchange(2));
     try {

@@ -65,6 +65,14 @@ export const LISTEN_CONSENT_NOT_SAVED = "Your choice couldn't be saved, so liste
  * way; this wording in 0 of 20 (voice-listening-r6-1).
  */
 export const COMPOSER_THINKING = "Thinking… The reply will appear above.";
+/**
+ * Said after the composer's line once an edited request is sent and the draft Edit set aside is back in the field
+ * (home-c5-1): it was thrown away without a word. As Cancel edit says it.
+ */
+const DRAFT_BACK = "Your previous draft is restored.";
+export const composerDraftBack = (line: string): string => (line ? `${line} ${DRAFT_BACK}` : DRAFT_BACK);
+/** The composer's line without that note: what the wait's lines are told apart by. */
+export const composerLineBase = (line: string): string => (line.endsWith(` ${DRAFT_BACK}`) ? line.slice(0, -DRAFT_BACK.length - 1) : line);
 /** The same while it waits, unsent, for a switch of model service that waits for the work under way (main's "held" turn: home-r4-4). */
 export const COMPOSER_HELD = "This goes to the new model service once what's under way now has finished. Stop response cancels it.";
 export function composerStillWaiting(service?: string): string {
