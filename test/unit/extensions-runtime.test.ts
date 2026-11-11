@@ -741,6 +741,16 @@ describe("ExtensionsService", () => {
     expect(new ExtensionsService(deps()).connected()).toBe(true);
   });
 
+  it("logs no warning for a list asked before the runtime is connected, only for one that failed (safety-privacy-r7-4)", async () => {
+    const warned: string[] = [];
+    const log = { info: () => undefined, warn: (event: string) => { warned.push(event); }, error: () => undefined, debug: () => undefined, child: () => undefined } as never;
+    expect(await new ExtensionsService(deps({ client: () => null, log })).marketplaces()).toEqual([]);
+    expect(warned).toEqual([]);
+    const broken = { rpc: { plugins: { marketplaces: { list: async () => { throw new Error("boom"); } } } } } as never;
+    expect(await new ExtensionsService(deps({ client: () => broken, log })).marketplaces()).toEqual([]);
+    expect(warned).toEqual(["extensions.marketplaces_failed"]);
+  });
+
   it("refuses to install or list marketplaces while the organisation turns extensions off", async () => {
     admin = AdminPolicySchema.parse({ features: { extensions: false } });
     const s = new ExtensionsService(deps());
