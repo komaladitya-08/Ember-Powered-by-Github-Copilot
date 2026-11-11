@@ -637,7 +637,7 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       await page.evaluate(s => window.__home.emit("onAgentStatus", s), READY);
       await page.locator("#conversation-message").fill("Read it out");
       await page.locator("#conversation-send").click();
-      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… Ember's reply will appear above.");
+      await expect.poll(() => page.locator("#conversation-compose-status").innerText()).toBe("Thinking… The reply will appear above.");
       // Main reads the answer aloud: no line is written, and it says the request was answered that way.
       await turn(page, "thinking");
       await page.evaluate(() => window.__home.emit("onConversationTurn", { turn: "idle", ended: "read-out" }));
