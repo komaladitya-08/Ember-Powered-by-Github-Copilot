@@ -19,7 +19,7 @@ import { introFacts } from "../../app/main/memory/intro";
 import { SEMANTIC_FLOOR, bm25, personalizedPageRank, recall } from "../../app/main/memory/recall";
 import { memoryFile } from "../../app/main/memory/store";
 import { MemoryService } from "../../app/main/memory/service";
-import { memoryTroubleText } from "../../app/renderer/home/copy";
+import { memoryEmptyText, memoryTroubleText } from "../../app/renderer/home/copy";
 import { nameKey, similarity, terms } from "../../app/main/memory/text";
 import { MEMORY_MODEL } from "../../app/voice/models";
 
@@ -856,6 +856,101 @@ describe("what memory never keeps", () => {
     expect(memoryRefusal(text)).toBeNull();
   });
 
+  // Long-lived and one-time codes said with no "is" or colon, and a Wi-Fi "pass" (memory-r7-5).
+  it.each([
+    ["GitHub recovery code abcde-12345"], ["BitLocker recovery key 482193-118822-993311-220011"], ["My recovery codes abcde-12345 fghij-67890"],
+    ["authenticator code 482193"], ["verification code 482193"], ["login code 482-193"], ["wifi pass BlueSky99"], ["The Wi-Fi pass BlueSky99!"],
+  ])("refuses %j, a code or a key with its value straight after (memory-r7-5)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  it.each([
+    ["My recovery code is in the safe"], ["The recovery key 2 of 8 is used"], ["Keeps recovery codes in 1Password"], ["The verification code 4 digits long expires in a minute"],
+    ["Error code 482193 means the disk is full"], ["Promo code 482193 expires in May"], ["The wifi pass rate is 99%"], ["Has a Wi-Fi pass for the train"],
+  ])("keeps %j, where a code is, or a number that is no secret (memory-r7-5)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // A password after an aside between commas or after "min." (memory-q6-4), and a Wi-Fi key labelled "Key:" on the
+  // line after its network's name (memory-q6-5).
+  it.each([["The password, salted, hunter2"], ["Password, hashed, Summer2024!"], ["Password min. hunter2"], ["PIN, required, 4821"]])(
+    "refuses %j, a value after an aside or a limit's word (memory-q6-4)", text => {
+      expect(memoryRefusal(text)).not.toBeNull();
+    });
+  it.each([["The password, salted, is never logged"], ["Password, hashed, SHA-256"], ["Password min. 12 characters"], ["PIN, required, 4 digits"], ["Passwords, tokens and keys are rotated in Q3"]])(
+    "keeps %j, how a password is stored or how long it must be (memory-q6-4)", text => {
+      expect(memoryRefusal(text)).toBeNull();
+    });
+  it.each([["Network: HomeNet\nKey: BlueSky99"], ["SSID: HomeNet\n  Key: BlueSky99!"], ["Wi-Fi name: HomeNet\nKey = BlueSky99"]])(
+    "refuses %j, a network's key on the line after its name (memory-q6-5)", text => {
+      expect(memoryRefusal(text)).not.toBeNull();
+    });
+  it.each([["Network: HomeNet\nKey: see sticker"], ["Network: HomeNet\nKey: WPA2-PSK"], ["Network: HomeNet\nBand: 5GHz"], ["Shortcut: Ctrl+K\nKey: F12"], ["Network: HomeNet\nKey: on the router's label"]])(
+    "keeps %j, where the key is, its mode or another setting (memory-q6-5)", text => {
+      expect(memoryRefusal(text)).toBeNull();
+    });
+  // UK bank details, a National Insurance number and a security question's usual answer (memory-c7-3).
+  it.each([
+    ["My bank sort code is 12-34-56 and account 12345678", "it holds an account or ID number"], ["Account number 12345678, sort code 123456", "it holds an account or ID number"],
+    ["My national insurance number is QQ123456C", "it holds an account or ID number"], ["NI number: AB 12 34 56 C", "it holds an account or ID number"],
+    ["My mother's maiden name is Smith", "it holds a security question's answer"], ["Mother’s maiden name: O'Brien", "it holds a security question's answer"],
+  ])("refuses %j (memory-c7-3)", (text, why) => {
+    expect(memoryRefusal(text)).toBe(why);
+  });
+  it.each([
+    ["Sort code 12-34-56 is the branch in Leeds"], ["Asked HR about my national insurance number"], ["Account 12345678 is the customer I look after"],
+    ["Doesn't know their mother's maiden name"], ["The form asks for a mother's maiden name"], ["Banks with Monzo, whose sort code starts 04"],
+  ])("keeps %j, a branch, a customer or a question with no answer (memory-c7-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  // The National Insurance number and the security answer in any capitals (memory-x7-2).
+  it.each([
+    ["National Insurance number is QQ123456C", "it holds an account or ID number"], ["NATIONAL INSURANCE NO: QQ 12 34 56 C", "it holds an account or ID number"],
+    ["my nino is QQ123456C", "it holds an account or ID number"], ["My NINO is QQ123456C", "it holds an account or ID number"], ["NI: AB123456C", "it holds an account or ID number"],
+    ["my mother's maiden name is smith", "it holds a security question's answer"], ["MOTHER'S MAIDEN NAME: SMITH", "it holds a security question's answer"],
+    ["My mothers maiden name was O'Brien.", "it holds a security question's answer"],
+  ])("refuses %j, however it is capitalised (memory-x7-2)", (text, why) => {
+    expect(memoryRefusal(text)).toBe(why);
+  });
+  // Sentences about password rules, dates, hardware pins, status codes and other people that the new patterns took
+  // for a value (memory-x7-3).
+  it.each([
+    ["Password, expires, 2026-12-01"], ["PIN, changed, 2024-05-01"], ["Password, optional, 8-64 chars"], ["Password max. 1024"], ["Password min. 8–64"],
+    ["Password, policy, NIST-800-63"], ["Password, bcrypt, cost=12"], ["My passwords, unfortunately, 2019-era and weak"], ["pins, GPIO, 3.3V tolerant"],
+    ["The pins, though, 10mm long"], ["Recovery keys 2024-2025 budget"], ["Recovery key rotation-2024 policy is on the wiki"], ["recovery key KB5034441 article explains it"],
+    ["The authentication code 200300 lines of C"], ["sign-in code 401 403 errors"], ["login code 100 200 lines long"], ["Conference wifi pass 2024-25"],
+    ["The WiFi pass 3-day costs £10"],
+    ["Our sort code is 12-34-56 and the account opened 20240115"], ["Sort code 12-34-56. Account reference 12345678"],
+    ["Her mother's maiden name was Smith"], ["Mother's maiden name: Unknown"], ["Mother's maiden name is Not required on this form"],
+    ["My mother's maiden name is often the security question"],
+  ])("keeps %j, a rule, a date, a part, a status or someone else's (memory-x7-3)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ["Password, changed, hunter2"], ["PIN, changed, 4821"], ["Password max. hunter2!"], ["My password, sadly, Summer2024!"], ["Recovery key rotation-20240115x"],
+    ["login code 482 193"], ["authentication code 482193 expires soon"], ["Network: Office Guest\nKey: BlueSky99"], ["Wi-Fi pass BlueSky-2024"],
+    ["Sort code 12-34-56. Account 12345678"], ["Account no. 12345678, sort code 12 34 56"],
+    // A network named like an interface, a key with words after it and "NI" in any shape (memory-y7-3, memory-y7-4).
+    ["Network: Brent5G\nKey: BlueSky99"], ["SSID: Brooklyn5G\nKey: Summer2024!"], ["Network: HomeNet\nKey: BlueSky99, ask Dana"],
+    ["Network: HomeNet\r\nKey: BlueSky99\r\nRouter in hall"], ["NI QQ123456C"], ["My NI, QQ123456C"], ["Ni number QQ123456C"], ["National INSURANCE number QQ123456C"],
+  ])("still refuses %j (memory-x7-3)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+  });
+  // A password that is its own element of a list of a program's arguments (memory-q6-1).
+  it.each([
+    ['test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-phunter2"]'], ['subprocess.run(["mysql", "-u", "root", "-pSummer2024!", "db"])'],
+    ['"Test": ["CMD", "mysql", "-uroot", "-pS3cretPass", "-e", "SELECT 1"]'], ['["mysql", "-u", "root", "--password", "hunter2"]'],
+    ['["redis-cli", "-a", "hunter2", "ping"]'], ['["sshpass", "-p", "hunter2", "ssh", "host"]'], ['["curl", "-u", "admin:hunter2", "https://x"]'],
+    ["The healthcheck is test: [CMD, mysqladmin, ping, -uroot, -phunter2]"],
+  ])("refuses %j and saves nothing, a password in a list of arguments (memory-q6-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
+  it.each([
+    ['The healthcheck is test: ["CMD", "mysqladmin", "ping", "-p"]'], ['The backup runs ["mysql", "-u", "root", "-p", "db"]'],
+    ['The database listens on ["mysql", "-h", "db", "-P", "3306"]'], ['The tunnel runs ["ssh", "-p", "2222", "host"]'],
+  ])("keeps %j, a list of arguments that prompts for its password or names a port (memory-q6-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],
     [`Stripe key sk_live_${run(24)}`], [`Restricted key rk_test_${run(24)}`], [`Webhook signing secret whsec_${run(32)}`],
@@ -1304,6 +1399,25 @@ describe("the memory file", () => {
     expect(fs.readFileSync(path.join(dir, "memory.json.broken"), "utf8")).toBe("{ not json");
   });
 
+  it("keeps the first copy set aside when memory.json breaks a second time, sets the later one beside it, and Forget everything removes both (memory-r7-2)", () => {
+    const dir = tmp();
+    const file = memoryFile(dir);
+    fs.writeFileSync(path.join(dir, "memory.json"), "the user's real memory, damaged");
+    file.load();
+    file.save(new MemoryGraph());
+    fs.writeFileSync(path.join(dir, "memory.json"), "what was kept since, damaged");
+    file.load();
+    expect(fs.readFileSync(path.join(dir, "memory.json.broken"), "utf8")).toBe("the user's real memory, damaged");
+    expect(fs.readFileSync(path.join(dir, "memory.json.broken.2"), "utf8")).toBe("what was kept since, damaged");
+    // A third takes the later copy's place, never the first's.
+    fs.writeFileSync(path.join(dir, "memory.json"), "a third");
+    file.load();
+    expect(fs.readFileSync(path.join(dir, "memory.json.broken"), "utf8")).toBe("the user's real memory, damaged");
+    expect(fs.readFileSync(path.join(dir, "memory.json.broken.2"), "utf8")).toBe("a third");
+    file.erase();
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
   it("says when memory.json was set aside, can't be read or can't be saved, instead of showing an empty memory alone (memory-r2)", () => {
     vi.useFakeTimers();
     try {
@@ -1344,6 +1458,22 @@ describe("the memory file", () => {
       expect(memoryTroubleText("unreadable")).toBe("Ember couldn't read your saved memory, so it's left as it was and nothing new is kept until Ember starts again. Check that your account can open memory.json in Ember's data folder, then restart Ember.");
       expect(memoryTroubleText(null)).toBe("");
     } finally { vi.useRealTimers(); }
+  });
+
+  it("keeps nothing new while memory.json can't be read, and says so, so nothing is promised, sent with requests or left that Forget can't remove (memory-r7-1)", () => {
+    const quietLog = { info: () => undefined, warn: () => undefined };
+    const locked = tmp();
+    fs.mkdirSync(path.join(locked, "memory.json"));
+    const s = new MemoryService({ dir: locked, log: quietLog });
+    expect(s.remember("Works on Atlas", [{ name: "User" }], "I work on Atlas"))
+      .toBe("Not remembered: Ember couldn't read its saved memory, so nothing new is kept until it starts again. Tell the user plainly.");
+    expect(s.learn({ text: "Prefers tea", about: [{ name: "User" }], source: "user" })).toEqual({ kind: "refused", reason: "saved memory can't be read" });
+    expect(s.trouble).toBe("unreadable");
+    expect(s.list()).toEqual([]);
+    expect(s.recall("Atlas")).toEqual([]);
+    expect(memoryEmptyText(true, "unreadable")).toBe("Ember couldn't read your saved memory, so nothing is listed.");
+    expect(memoryEmptyText(true, "reset")).toBe("Nothing yet. Tell Ember about yourself, or say “Remember that…”.");
+    expect(memoryEmptyText(false, "unreadable")).toBe("Nothing remembered.");
   });
 
   it("forgets everything when erased", () => {

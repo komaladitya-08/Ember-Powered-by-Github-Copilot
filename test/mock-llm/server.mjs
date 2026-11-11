@@ -10,7 +10,8 @@ import http from "node:http";
 
 /**
  * @typedef {{ role: string, content: unknown, tool_calls?: unknown[], tool_call_id?: string }} Message
- * @typedef {{ text?: string, reasoning?: string, tool?: { name: string, args?: object } }} Reply
+ * `tools`: several calls in one reply (the runtime begins them all at once); `tool`: one.
+ * @typedef {{ text?: string, reasoning?: string, tool?: { name: string, args?: object }, tools?: { name: string, args?: object }[] }} Reply
  * @param {{ port?: number, delayMs?: number, respond?: (messages: Message[], tools: string[]) => Reply }} [opts]
  */
 export async function startMockLlm(opts = {}) {
@@ -46,6 +47,7 @@ export async function startMockLlm(opts = {}) {
     const entry = { messages, tools, model: json.model, reasoningEffort: json.reasoning_effort, authorization: req.headers.authorization ?? null, at: Date.now() };
     requests.push(entry);
     const reply = (opts.respond ?? defaultRespond)(messages, tools);
+    if (reply.tools?.length) reply.tool = reply.tools[0];
     if (reply.tool) entry.tool = reply.tool.name;
     res.on("finish", () => { entry.doneAt = Date.now(); });
     const id = `cmpl-${requests.length}`;
@@ -70,7 +72,8 @@ export async function startMockLlm(opts = {}) {
       }
     }
     if (reply.tool) {
-      res.write(chunk({ role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function", function: { name: reply.tool.name, arguments: JSON.stringify(reply.tool.args ?? {}) } }] }));
+      const calls = reply.tools?.length ? reply.tools : [reply.tool];
+      res.write(chunk({ role: "assistant", tool_calls: calls.map((t, i) => ({ index: i, id: calls.length > 1 ? `call_${requests.length}_${i}` : `call_${requests.length}`, type: "function", function: { name: t.name, arguments: JSON.stringify(t.args ?? {}) } })) }));
       res.write(chunk({}, "tool_calls", usage));
     } else {
       for (const word of (reply.text ?? "").split(/(?<= )/)) {

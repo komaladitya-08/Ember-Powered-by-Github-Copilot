@@ -210,7 +210,8 @@ export const OFFICE_APP: Readonly<Record<OS, RegExp | null>> = {
  * starts and ends on one (Italian "Termina attività" is matched up to its accented letter).
  */
 export const RISKY_EXTRA: Readonly<Record<OS, readonly string[]>> = {
-  linux: [],
+  // Files' British labels ("Move to Wastebasket", "Move to the Rubbish Bin", "Move to Bin"); "Move to Trash" is RISKY's.
+  linux: ["move to (the )?wastebasket", "move to (the )?rubbish bin", "move to (the )?bin"],
   win32: [
     "move to (the )?recycle bin", "move to bin", "end task", "unblock", "open anyway", "run anyway", "force quit", "empty (the )?(recycle )?bin",
     "delete permanently", "papierkorb entleeren", "fin de t[aâ]che", "finalizar (la )?tarea", "termina attivit(?=à)", "finalizar tarefa",

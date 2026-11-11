@@ -390,7 +390,7 @@ export class VoiceService {
       }
       if (paused) { this.captureGeneration++; this.cancelListenOnce(); }
       if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint)); this.teardown(); }
-      else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`); }
+      else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.interruptEnrol(); this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`); }
       else if (s.state === "capturing") {
         this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
         this.micDevice = typeof s.device === "string" ? s.device.trim().slice(0, 80) : "";
@@ -819,11 +819,13 @@ export class VoiceService {
 
   /**
    * Voice Match: starts enrolment (the owner's phrases; nothing heard meanwhile is a request). False when Ember isn't
-   * listening (enrolment needs the microphone) or its voiceprint model isn't there.
+   * listening (enrolment needs the microphone) or its voiceprint model isn't there, and while the microphone isn't
+   * working (lost, denied or silent: the voice line says which), as Listen once is held back then: Teach showed the
+   * first phrase with no microphone, and 45 s later said no phrase was heard for a while (voice-listening-r7-1).
    */
   enrol(): boolean {
     if (this.enrolling) return true;
-    if (!this.wanted || !this.proc || !this.readyAt || !this.matchReady) return false;
+    if (!this.wanted || !this.proc || !this.readyAt || !this.matchReady || this.state === "error") return false;
     this.cancelListenOnce();
     this.enrolling = true;
     this.enrolGot = { got: 0, of: 0 };
@@ -842,6 +844,17 @@ export class VoiceService {
     this.proc?.postMessage({ type: "enrol-cancel", ...(why ? { why } : {}) });
     this.enrolEnded();
     this.o.onListenOnce?.();
+  }
+
+  /**
+   * The microphone went (lost, or only silence arrives) while a voice was taught: teaching ends as cut short, which
+   * settings says, rather than 45 s later as no phrase heard for a while (voice-listening-r7-1).
+   */
+  private interruptEnrol(): void {
+    if (!this.enrolling) return;
+    this.enrolling = false;
+    this.o.onEnrol?.({ type: "enrol", state: "cancelled", ...this.enrolGot, why: "interrupted" });
+    this.proc?.postMessage({ type: "enrol-cancel" });
   }
 
   /** Teaching is over: the voice line says what it did before (listening for “Ember” again). */
@@ -1544,7 +1557,7 @@ export class VoiceService {
         this.o.log.warn("voice.silent", { on: m.on });
         const was = this.micSilent;
         this.micSilent = m.on;
-        if (m.on) { this.captureGeneration++; this.cancelListenOnce(); this.setState("error", SILENT_TEXT); }
+        if (m.on) { this.captureGeneration++; this.cancelListenOnce(); this.interruptEnrol(); this.setState("error", SILENT_TEXT); }
         else if (was && this.state === "error") this.setState("waiting"); // (not another error, such as a lost microphone)
         return;
       }

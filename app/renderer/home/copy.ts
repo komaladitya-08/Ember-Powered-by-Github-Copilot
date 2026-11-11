@@ -53,10 +53,26 @@ export function composerCount(n: number, limit = CONVERSATION_REQUEST_LIMIT): st
   return `${num(n)} of ${num(limit)} characters${over > 0 ? `, ${num(over)} too many` : ""}.`;
 }
 /**
- * The composer's line while Ember answers what was sent from it (home-7): thinking at first, then, while the bubble
- * says it (main's "slow" turn: home-c1-1), still waiting for the service in use, and how to stop it.
+ * The microphone note's Agree couldn't save the choice: shown on the note and said. Without the name, as every line Home
+ * says by itself (voice-listening-r6-3).
  */
-export const COMPOSER_THINKING = "Thinking… Ember's reply will appear above.";
+export const LISTEN_CONSENT_NOT_SAVED = "Your choice couldn't be saved, so listening is still off. Press “I agree, start listening” to try again.";
+/**
+ * The composer's line while Ember answers what was sent from it (home-7): thinking at first, then, while the bubble
+ * says it (main's "slow" turn: home-c1-1), still waiting for the service in use, and how to stop it. Without the name,
+ * not even "Ember's": a screen reader says it on every typed send, into the wake word's microphone, and "Thinking…
+ * Ember's reply will appear above." woke Ember in 2 of 24 real-model placements, which also stopped the answer on its
+ * way; this wording in 0 of 20 (voice-listening-r6-1).
+ */
+export const COMPOSER_THINKING = "Thinking… The reply will appear above.";
+/**
+ * Said after the composer's line once an edited request is sent and the draft Edit set aside is back in the field
+ * (home-c5-1): it was thrown away without a word. As Cancel edit says it.
+ */
+const DRAFT_BACK = "Your previous draft is restored.";
+export const composerDraftBack = (line: string): string => (line ? `${line} ${DRAFT_BACK}` : DRAFT_BACK);
+/** The composer's line without that note: what the wait's lines are told apart by. */
+export const composerLineBase = (line: string): string => (line.endsWith(` ${DRAFT_BACK}`) ? line.slice(0, -DRAFT_BACK.length - 1) : line);
 /** The same while it waits, unsent, for a switch of model service that waits for the work under way (main's "held" turn: home-r4-4). */
 export const COMPOSER_HELD = "This goes to the new model service once what's under way now has finished. Stop response cancels it.";
 export function composerStillWaiting(service?: string): string {
@@ -95,6 +111,8 @@ export const COMPOSER_SAYS = {
   noReply: "No reply was written. Task activity shows any task this request started.",
   replyStopped: "The reply was stopped before it finished.",
   stoppedAll: "Stopped everything, running tasks included.",
+  // "Read it out": Ember says its last answer aloud, and writes nothing new (voice-speaking-x7-2).
+  readOut: "Reading the last answer out.",
 } as const;
 /**
  * A Problem line as Home shows it (home-7): Home is Ember's settings, so where the line sends the user to "Ember's
@@ -169,6 +187,35 @@ export function composerSaysOver(line: string): boolean {
  */
 export function composerLineFits(line: string, editing: boolean): string | null {
   return composerSaysOver(line) ? (editing ? CONVERSATION_EDIT : "") : null;
+}
+/** What the composer says once Ember is connected again after it refused a send for want of a connection. */
+export const COMPOSER_CONNECTED = "Connected again. Your message is still here: send it now.";
+/**
+ * Whether a refused send's reason (`refused`) is the connection's (composer-refusal.ts composerRefusal's lines, which say
+ * the message is still there or to send again once connected), so that connecting ends it. Not a locked screen, setup
+ * unfinished, a failed send or the organisation's policy, which connecting changes nothing about (reliability-x7-1).
+ */
+function refusedForConnection(refused: string): boolean {
+  return refused.includes("Your message is still here") || refused.endsWith(", then send again.");
+}
+/**
+ * The composer's line once Ember is connected again, or null to leave it (reliability-c7-2): a refused send's reason
+ * (`refused`, "Reconnecting to Copilot. … send it again in a moment.") stayed after Ember had reconnected, until the next
+ * send. While the line still says it, it becomes that the message can go now; with the message gone from the composer
+ * (`hasDraft` false) it just goes. Any other line since is left alone, and so is a refusal for anything but the
+ * connection (reliability-x7-1).
+ */
+export function composerLineConnected(line: string, refused: string | null, hasDraft: boolean): string | null {
+  if (!refused || line !== refused || !refusedForConnection(refused)) return null;
+  return hasDraft ? COMPOSER_CONNECTED : "";
+}
+/**
+ * The composer's line once Ember is no longer connected, or null to leave it (reliability-x7-1): "Connected again… send
+ * it now." stayed while the runtime dropped again, saying the opposite of the state. It goes; Home's status says what the
+ * connection is doing, and a send then is refused with the reason of the moment.
+ */
+export function composerLineDisconnected(line: string): string | null {
+  return line === COMPOSER_CONNECTED ? "" : null;
 }
 /** The composer's lines that say how something earlier went: they give way to a wait of the Ask box's or voice's. */
 const COMPOSER_OUTCOMES: ReadonlySet<string> = new Set([
@@ -385,6 +432,12 @@ export function presenceLine(p: { overlay: boolean; hidden: boolean }, corner: H
 }
 
 /**
+ * The caption once every try to read Home's first status has failed (status-fence.ts STATUS_RETRIES), beside Try again
+ * (home-r7-2): the window showed its defaults for good, with no word and no way on. Without the name: it is said aloud.
+ */
+export const STATUS_FAILED = "The settings couldn't be loaded. Try again, or restart if it keeps happening.";
+
+/**
  * The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. Worded under the
  * heading, without the name, wherever Ember can listen: a screen reader says it as it changes (a reconnect, Hide), and
  * "Ember is beside your cursor. …" said into the wake word's microphone woke Ember and was sent as a request in 39 of
@@ -404,7 +457,7 @@ export function tagline(t: {
   /** Signed out while the user's own provider waits for its card for this host: agreeing is the way on (integrations-r3-1). */
   waitingFor?: string | null;
   /** Ember's own model connection stopped (status-copy.ts runtimeState): reconnecting by itself, or not (accessibility-visual-c1-2). */
-  runtime?: "reconnecting" | "stopped" | null;
+  runtime?: "reconnecting" | "stopped" | "offline" | "unreachable" | null;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
   // Before Start it is always the first-run instruction: the setup check's own heading counts its rows (review #160).
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
@@ -418,6 +471,10 @@ export function tagline(t: {
   // in the bubble's words for it ("Copilot isn't running", "My model connection isn't running").
   if (t.phase === "error" && t.runtime === "reconnecting") return `${where} Reconnecting to ${service}…`;
   if (t.phase === "error" && t.runtime === "stopped") return `${where} ${t.service ? "Ember's model connection" : "Copilot"} isn't running: Models & connections says why.`;
+  // Signed in and offline: connecting Copilot isn't what is missing, and it comes back by itself (home-r7-1).
+  if (t.phase === "error" && t.runtime === "offline" && !t.service) return `${where} Copilot can't be reached right now: reconnecting once you're online.`;
+  // Online, and GitHub's certificate can't be verified: it waits on IT, so no "once you're online" (home-x7-2).
+  if (t.phase === "error" && t.runtime === "unreachable" && !t.service) return `${where} Copilot can't be reached: Models & connections says why.`;
   if (t.phase === "error" && t.service) return `${where} Can't connect to ${service} yet: Models & connections says why.`;
   if (t.phase === "signed-out" && t.waitingFor) return `${where} Agree to use ${t.waitingFor} in Models & connections to start asking.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot to start asking.`;
@@ -483,8 +540,11 @@ export function setupView(rows: readonly SetupRow[], before: { opened: boolean; 
   return { failing, warn, held, needing, open: needing > 0 && !before.opened, beforeStart: before.beforeStart || needing > 0, note: checksNote(held, needing) };
 }
 
-/** What a screen reader hears when Start has done its work and gone (review #50). */
-export const STARTED_TEXT = "Ember has started.";
+/**
+ * What a screen reader hears when Start has done its work and gone (review #50). Without Ember's name: after a changed
+ * consent “Hey Ember” already listens, and "Ember has started." woke it and was sent as "Has started." (first-run-r6-1).
+ */
+export const STARTED_TEXT = "Setup is finished.";
 
 /** "Today", "Yesterday", else the weekday and date. */
 export function dayLabel(t: string, now = new Date()): string {
@@ -599,20 +659,27 @@ export const PROVIDER_WORDS = {
 export function providerHeldHint(from: string, to: string | null): string {
   return to ? `Ember still uses ${from}. Agree to use ${to} to switch.` : `Ember still uses ${from}. Enter the new address to switch.`;
 }
-/** Said as the note comes up for that edit (focus has moved on), in place of providerCardShown. */
-export const providerHeldShown = (from: string, to: string) => `Read the note above: Ember still uses ${from}, and sends nothing to ${to} until you agree.`;
 /** Its "I agree" asks the new details first, as Test connection would. */
 export const providerHeldChecking = (to: string) => `Checking ${to}…`;
 /** The check failed (`why`: main's sentence), or the edit was put away: nothing was saved. */
 export const providerHeldKept = (from: string, why = "") => `${why ? `${why} ` : ""}Nothing has changed: Ember still uses ${from}.`;
+/**
+ * The check found something at the new address, but no model list (`why`: main's sentence): nothing was saved, and the
+ * card's second button uses the address as typed, for a gateway that answers chat only (integrations-c5-1, -c7-1).
+ */
+export const providerHeldUnlisted = (from: string, why: string) => `${why} Nothing has changed: Ember still uses ${from}. If the address is right, choose “Use it as typed”.`;
 /** A key typed for that edit is saved with its yes, never for the host still in force. */
 export const providerHeldKey = (to: string | null) => (to ? `Ember saves this key with the new address once you agree to use ${to}.` : "Enter the service's address first.");
 
-/** Said when the card appears for an address just entered: focus has moved on, so it is announced (integrations-7, WCAG 4.1.3). */
+/**
+ * Said when the card appears for an address just entered: focus has moved on, so it is announced (integrations-7, WCAG
+ * 4.1.3). For a held edit too: that the host in force still answers is the hint's to say, directly below, once
+ * (integrations-r7-3).
+ */
 export const providerCardShown = (host: string) => `Read the note above: Ember sends nothing to ${host} until you agree.`;
 /** Said once the card is agreed to, in place of the line above (integrations-r4). */
 export const providerAgreedText = (host: string) => `Agreed. Ember now sends your requests to ${host}.`;
-/** Said instead when a held edit's new host answered but lists no models there, so it is used as typed (integrations-r4-2). */
+/** Said instead when a held edit's new host answered but lists no models there, and the person chose “Use it as typed” (integrations-r4-2, -c5-1). */
 export const providerAgreedUnlisted = (host: string, model: string | null) =>
   `Agreed. ${host} answered but lists no models, so Ember asks it for ${model ?? "the models"} as typed.`;
 
@@ -745,10 +812,18 @@ export const MEMORY_CORRECTION = {
   failed: "Ember couldn't save this correction. Your words are still here; try again.",
 } as const;
 /** A corrected sentence still names its original source, including its original authority. */
-/** Where a listed fact came from; one of Ember's own notes says so whatever it was drawn from (memory-3). */
-export function memoryProvenanceLabel(source: string, correctedAt?: string, kind?: "summary" | "guess"): string {
+/**
+ * Where a listed fact came from; one of Ember's own notes says so whatever it was drawn from (memory-3). `until`: a
+ * newer fact replaced it then, and Ember keeps it as what used to be true (memory-c7-2).
+ */
+export function memoryProvenanceLabel(source: string, correctedAt?: string, kind?: "summary" | "guess", until?: string): string {
   const from = kind === "summary" ? "Ember's summary" : kind === "guess" ? "Ember's guess" : memorySourceLabel(source);
-  return `${from}${correctedAt ? " · Corrected by you" : ""}`;
+  return `${from}${correctedAt ? " · Corrected by you" : ""}${until ? ` · ${memoryNoLongerTrue(until)}` : ""}`;
+}
+/** A replaced fact's line: since which day it is no longer true (just the words when the date can't be read). */
+export function memoryNoLongerTrue(until: string): string {
+  const d = new Date(until);
+  return Number.isNaN(d.getTime()) ? "No longer true" : `No longer true since ${d.toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" })}`;
 }
 export const correctMemoryLabel = (text: string) => `Correct memory: ${text}`;
 /** Correction failures use main's plain bounded sentences; arbitrary IPC/filesystem details remain private. */
@@ -902,8 +977,12 @@ export function routinesEmptyText(on: boolean): string {
 /** A routine's Delete button, for screen readers: which routine. */
 export const deleteRoutineLabel = (name: string) => `Delete the routine “${name}”`;
 
-/** The memory list while it is empty: `on`, memory is on. */
-export function memoryEmptyText(on: boolean): string {
+/**
+ * The memory list while it is empty: `on`, memory is on. While memory.json can't be read (`trouble`) nothing is listed
+ * and nothing new is kept, so it never invites "Remember that…" (memory-r7-1).
+ */
+export function memoryEmptyText(on: boolean, trouble?: "unreadable" | "reset" | "unsaved" | null): string {
+  if (on && trouble === "unreadable") return "Ember couldn't read your saved memory, so nothing is listed.";
   return on ? "Nothing yet. Tell Ember about yourself, or say “Remember that…”." : "Nothing remembered.";
 }
 
@@ -1631,7 +1710,8 @@ export function signOutScope(c: ForgetCounts): string {
 /** The question for Forget everything: only saved memory goes, and the other three are said to stay. */
 export function forgetEverythingScope(c: ForgetCounts): string {
   return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")}, what Ember learned from them and the conversation saved on this computer, if you keep one. `
-    + `${plural(c.tasks, "task", "tasks")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are, and so do the lines on screen now, but they aren't saved again.`
+    // The sentence's first words: "An unknown number of tasks", never "an …" after the full stop (memory-r7-3).
+    + `${plural(c.tasks, "task", "tasks").replace(/^a/, "A")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are, and so do the lines on screen now, but they aren't saved again.`
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, pressOnStep, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, pressOnStep, PROVIDER_STEP, providerCheckLine, providerModelMissing, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices } from "../../app/renderer/home/first-run-copy";
 import { retryMessage, tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 import { KEY_NO_KEYRING, KEY_WRITE_FAILED, PROVIDER_MANAGED, PROVIDER_NO_CONSENT, providerDown, providerNotAgreed, testConnection } from "../../app/main/provider";
@@ -92,6 +92,94 @@ describe("first run: the provider check says only what it found (FE #2)", () => 
     expect(providerCheckLine({ ok: true, host: "a.b", models: 1 })).toBe("Connected to a.b. It lists 1 model.");
     expect(providerCheckLine({ ok: true, host: "a.b", models: null })).toBe("Connected to a.b.");
     expect(providerCheckLine({ ok: false, why: "The key was refused." })).toBe("The key was refused.");
+  });
+  it("names the models the service lists, as Home's Test connection does (first-run-c7-1)", () => {
+    expect(providerCheckLine({ ok: true, host: "127.0.0.1:18392", models: 1, ids: ["llama3.2:3b"] })).toBe("Connected to 127.0.0.1:18392. It lists 1 model: llama3.2:3b.");
+    expect(providerCheckLine({ ok: true, host: "a.b", models: 3, ids: ["m1", "m2", "m3"] })).toBe("Connected to a.b. It lists 3 models, such as m1 and m2.");
+  });
+  it("fails the check on the model field when the service doesn't list the name typed, naming what it lists (first-run-c7-1)", () => {
+    // The step's own example, "gpt-4.1", typed for a server that lists only llama3.2:3b: the check said "Connected…
+    // It lists 1 model." and offered Continue, and the first request failed with "That model isn't available."
+    const one = { host: "127.0.0.1:18392", models: 1, ids: ["llama3.2:3b"] };
+    expect(providerModelMissing(one, { type: "openai", conductor: "gpt-4.1", worker: "" })).toEqual({
+      field: "conductor", line: "127.0.0.1:18392 answered, but it doesn't list gpt-4.1. It lists 1 model: llama3.2:3b. Enter that name.",
+    });
+    // The neighbouring shape (integrations-9): a tag left off a name that has no “latest”.
+    expect(providerModelMissing(one, { type: "openai", conductor: "llama3.2", worker: "" })?.field).toBe("conductor");
+    expect(providerModelMissing(one, { type: "openai", conductor: "llama3.2:3b", worker: "" })).toBeNull();
+    // The model for tasks is checked too, after the conversation's.
+    const three = { host: "a.b", models: 3, ids: ["m1", "m2", "m3"] };
+    expect(providerModelMissing(three, { type: "openai", conductor: "m2", worker: "m9" })).toEqual({
+      field: "worker", line: "a.b answered, but it doesn't list m9. It lists 3 models: m1, m2 and m3. Enter one of those names.",
+    });
+    expect(providerModelMissing(three, { type: "openai", conductor: "m0", worker: "m9" })?.field).toBe("conductor");
+    expect(providerModelMissing(three, { type: "openai", conductor: "m1", worker: "m3" })).toBeNull();
+    const many = { host: "a.b", models: 7, ids: ["m1", "m2", "m3", "m4", "m5", "m6", "m7"] };
+    expect(providerModelMissing(many, { type: "anthropic", conductor: "x", worker: "" })?.line).toBe("a.b answered, but it doesn't list x. It lists 7 models, such as m1, m2, m3 and m4. Enter a name it lists.");
+    // Said as the step's own line, in the first person and without Ember's name.
+    expect(providerModelMissing(one, { type: "openai", conductor: "gpt-4.1", worker: "" })?.line).not.toMatch(/Ember/);
+  });
+  it("never fails a name the service may still take: a list it can't read whole, a deployment, a short name for a listed model (first-run-c7-1)", () => {
+    const typed = { type: "openai" as const, conductor: "gpt-4.1", worker: "" };
+    // No list, no readable ids, or more models than the ids read (the list is cut at 50, and odd ids are left out).
+    expect(providerModelMissing({ host: "a.b", models: null }, typed)).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 2 }, typed)).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 0, ids: [] }, typed)).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 60, ids: ["m1", "m2"] }, typed)).toBeNull();
+    // Azure asks for a deployment's name, which its model list doesn't hold.
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["gpt-4o"] }, { ...typed, type: "azure" })).toBeNull();
+    // Ollama takes "llama3.2" for "llama3.2:latest"; services take a model's name for its dated snapshot, and "-latest".
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["llama3.2:latest"] }, { ...typed, conductor: "llama3.2" })).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["claude-sonnet-4-5-20250929"] }, { ...typed, conductor: "claude-sonnet-4-5" })).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["claude-3-5-haiku-20241022"] }, { ...typed, conductor: "claude-3-5-haiku-latest" })).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["gpt-4.1-2025-04-14"] }, typed)).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["GPT-4.1"] }, typed)).toBeNull();
+    // A model path's last part ("models/gemini-2.0-flash", "org/model").
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["models/gemini-2.0-flash"] }, { ...typed, conductor: "gemini-2.0-flash" })).toBeNull();
+    // Still a different model: a longer name that only starts the same.
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["gpt-4.1-mini"] }, typed)?.field).toBe("conductor");
+  });
+  it("never fails a name on one page of a list that says more follows (first-run-x7-1)", async () => {
+    // Anthropic's GET /v1/models: 20 models a page, with has_more and last_id; the name typed is on the next page.
+    const page = Array.from({ length: 20 }, (_, i) => ({ type: "model", id: `claude-model-${i}-20250101` }));
+    const agreedFor = (host: string) => ({ ...DEFAULT_SETTINGS.provider, on: true, type: "anthropic" as const, baseUrl: `https://${host}`, consent: { version: FEATURE_CONSENT_VERSION.provider, at: "2026-11-08T12:00:00Z", host } });
+    const typed = { type: "anthropic" as const, conductor: "claude-haiku-4-5", worker: "" };
+    const answers = (body: unknown) => (async () => ({ ok: true, status: 200, json: async () => body })) as unknown as Parameters<typeof testConnection>[2];
+    for (const rest of [{ has_more: true, last_id: "claude-model-19-20250101" }, { next_page_token: "abc" }, { nextPageToken: "abc" }, { next: "https://a.example/v1/models?page=2" }, { next_cursor: "abc" }]) {
+      const r = await testConnection(agreedFor("a.example"), null, answers({ data: page, ...rest }));
+      expect(r).toMatchObject({ ok: true, models: 20, more: true });
+      if (r.ok) expect(providerModelMissing(r, typed)).toBeNull();
+    }
+    // A list that says it ends there is read whole, and still fails a name it doesn't hold.
+    for (const rest of [{}, { has_more: false, last_id: "x" }, { next_page_token: "" }, { next: null }]) {
+      const r = await testConnection(agreedFor("a.example"), null, answers({ data: page, ...rest }));
+      expect(r).not.toHaveProperty("more");
+      if (r.ok) expect(providerModelMissing(r, typed)?.field).toBe("conductor");
+    }
+  });
+  it("never fails a name the service takes but lists differently (first-run-x7-2)", () => {
+    const typed = (conductor: string) => ({ type: "openai" as const, conductor, worker: "" });
+    const one = (id: string) => ({ host: "a.b", models: 1, ids: [id] });
+    // "-latest" for an id with no date, and Anthropic's "-0" for a model's first snapshot.
+    expect(providerModelMissing(one("grok-3"), typed("grok-3-latest"))).toBeNull();
+    expect(providerModelMissing(one("claude-opus-4-20250514"), typed("claude-opus-4-0"))).toBeNull();
+    // A ":latest" or a path typed that the list leaves off.
+    expect(providerModelMissing(one("llama3.2"), typed("llama3.2:latest"))).toBeNull();
+    expect(providerModelMissing(one("models/gemini-2.0-flash"), typed("models/gemini-2.0-flash"))).toBeNull();
+    expect(providerModelMissing(one("gemini-2.0-flash"), typed("models/gemini-2.0-flash"))).toBeNull();
+    // A dated preview of the model named.
+    expect(providerModelMissing(one("gpt-4-1106-preview"), typed("gpt-4"))).toBeNull();
+    // A server that lists its model's file (llama.cpp's) answers whatever name is sent: its list holds no names.
+    expect(providerModelMissing(one("/models/x.gguf"), typed("gpt-4.1"))).toBeNull();
+    expect(providerModelMissing(one("mistral-7b-instruct.Q4_K_M.gguf"), typed("gpt-4.1"))).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 2, ids: ["llama3.2:3b", "C:/models/x.gguf"] }, typed("gpt-4.1"))).toBeNull();
+    // Still different models: another tag, another size, another model under the same path.
+    expect(providerModelMissing(one("llama3.2:3b"), typed("llama3.2:latest"))?.field).toBe("conductor");
+    expect(providerModelMissing(one("gpt-4o-mini-2024-07-18"), typed("gpt-4o"))?.field).toBe("conductor");
+    expect(providerModelMissing(one("gpt-4.1-mini"), typed("gpt-4.1-latest"))?.field).toBe("conductor");
+    expect(providerModelMissing(one("models/gemini-2.0-flash"), typed("models/gemini-2.5-pro"))?.field).toBe("conductor");
+    expect(providerModelMissing(one("-20250101"), typed("-latest"))?.field).toBe("conductor");
+    expect(providerModelMissing(one("meta/llama-3.3-70b"), typed("other/llama-3.3-70b"))?.field).toBe("conductor");
   });
 });
 

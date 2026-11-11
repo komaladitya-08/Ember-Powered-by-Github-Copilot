@@ -85,6 +85,19 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   const status = ctx.statusCode ?? Number(/\b(?:HTTP|status|code)?\s*\(?(40[1-4]|429)\b/i.exec(raw)?.[1] ?? 0);
   const mine = ctx.provider === "user";
   const service = mine ? "your model service" : ctx.provider ? "your organisation's model service" : "Copilot";
+  // The runtime couldn't write the conversation's events in Ember's data folder (a full disk, live: reliability-c7-3):
+  // this computer's trouble, not the model service's, whatever words the file's path holds. Never the path itself.
+  // Only where saving is what failed (reliability-x7-2): a full disk anywhere else on this computer (a task's session
+  // that couldn't start) is said as the disk, with no conversation "not saved"; one in the model service's own answer
+  // (an HTTP status with it: the user's model server out of room) is that service's problem, as before.
+  const theirs = ctx.statusCode !== undefined || /\bHTTP\b[^a-z\d]{0,6}\d{3}\b|\bstatus(?: code)?:? ?\d{3}\b/i.test(raw);
+  const full = /\b(ENOSPC|EDQUOT)\b|no space left on device|disk quota exceeded/i.test(raw);
+  if (errorType === "persistence" || (!theirs && /failed to persist session events/i.test(raw))) {
+    if (full) return "I couldn't save this conversation: the disk (or your storage quota) is full. Free some space, then ask again.";
+    if (/\b(EACCES|EPERM|EROFS)\b|permission denied|read-only file system/i.test(raw)) return "I couldn't save this conversation: I'm not allowed to write in my data folder on this computer. Check the folder's permissions, then ask again.";
+    return "I couldn't save this conversation on this computer. Check that its disk has free space, then ask again.";
+  }
+  if (full && !theirs) return "This computer's disk (or your storage quota) is full, so I couldn't go on. Free some space, then ask again.";
   // Before the policy rule: a filtered prompt mentions a "content management policy", not the user's seat.
   if (/content.?(management|filter)|content_filter|filtered due to|responsible ?ai/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} content filter blocked that request. Try asking in other words.`;
   // A model that takes no images was sent a screenshot (the user's own provider's models are taken to read them unless
@@ -100,7 +113,15 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (status === 403) return refused;
   if (errorType === "authentication" || status === 401 || /authenticat|unauthori[sz]ed|bad credentials|not signed in/i.test(m)) return SIGN_IN_REFUSED;
   if (errorType === "rate_limit" || status === 429 || /quota|rate.?limit|\b402\b|credits/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} usage limit was reached for now. Try again a bit later.`;
-  if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one ${inSettings(false)}.`;
+  const modelGone = /model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m);
+  // A 404 from the user's own provider that names no model: an endpoint without its path (no /v1) answers the same, and
+  // Test connection says of that address that it has no model list there. The two agree (integrations-r7-2).
+  // The service's own words for a model that isn't there name it without those phrases (integrations-x7-3): OpenAI's
+  // "The model `x` does not exist…", Anthropic's not_found_error "model: x", Azure's DeploymentNotFound (its deployment
+  // is the model) and "No such model". Azure's "Resource not found", for a wrong address, names none.
+  const namedGone = modelGone || /model.{0,40}(does not|doesn't) exist|no such model|\bmodel: ?\S|deployment.?not.?found|deployment.{0,60}(does not|doesn't) exist/i.test(m);
+  if (!namedGone && mine && status === 404) return `The model I'm set to use isn't available, or the endpoint's address is wrong. Check both ${inSettings(true)}.`;
+  if (modelGone || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one ${inSettings(false)}.`;
   if (/policy|\b403\b|forbidden|\bseat\b|subscription/i.test(m)) return refused;
   // The whole conversation (not this request) went over the model's limit: a new conversation starts from Home's New conversation button.
   if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens/i.test(m)) return CONVERSATION_TOO_LONG;
@@ -169,6 +190,8 @@ export function settingsHelps(said: string): boolean {
  */
 export function problemTitle(said: string, provider: ServiceKind = false): string {
   const service = provider ? "The model service" : "Copilot";
+  if (/couldn't save this conversation/i.test(said)) return "I couldn't save this conversation";
+  if (/disk \(or your storage quota\) is full/i.test(said)) return "The disk is full";
   if (/content filter/i.test(said)) return "Request blocked";
   if (/didn't accept the sign-in/i.test(said)) return "Copilot didn't accept the sign-in";
   if (/\brefused\b/i.test(said)) return `${service} refused it`;

@@ -24,18 +24,20 @@
         <div class="hero-text">
           <h1 id="home-h" tabindex="-1">Ember</h1>
           <p class="state-word after-setup"><span id="state-word">Starting…</span> <button type="button" id="p-waiting" class="link" hidden>Open approval</button></p>
-          <p id="tagline" role="status">Starting…</p>
+          <p id="tagline" role="status" tabindex="-1">Starting…</p>
           <p class="sr" id="home-live" role="status"></p>
           <button type="button" id="p-setup" class="link setup-link after-setup" hidden></button>
+          <button type="button" id="p-retry" class="link setup-link" hidden>Try again</button>
         </div>
       </div>
       <dl class="status-facts after-setup">
-        <div><dt>Features</dt><dd id="whats-on">Listening off · Memory off · Commands off</dd></div>
+        <div><dt>Features</dt><dd id="whats-on">Checking…</dd></div>
         <div><dt>Today</dt><dd id="today">No tasks yet</dd></div>
       </dl>
       <div class="status-actions after-setup">
         <div class="agent-actions">
           <button type="button" id="p-connect" class="btn" hidden>Connect Copilot…</button>
+          <button type="button" id="p-restart" class="btn" hidden>Restart Ember</button>
           <button type="button" id="p-ask" class="btn">Ask Ember…</button>
           <button type="button" id="p-stop" class="btn quiet">Stop everything</button>
         </div>
@@ -56,7 +58,7 @@
         <div class="w-heading">
           <p class="w-count" id="w-count">Step 1 of 6</p>
           <h2 id="w-title" tabindex="-1">Hi, I'm Ember.</h2>
-          <p class="w-lead" id="w-lead"></p>
+          <p class="w-lead" id="w-lead" tabindex="-1"></p>
         </div>
       </div>
 
@@ -285,7 +287,7 @@
         <label class="switch-row"><input type="checkbox" id="byok-on" role="switch" aria-describedby="byok-hint"><span>Use my own model provider</span></label>
         <div id="byok-consent" class="consent" role="group" aria-label="Before Ember uses your model provider" hidden>
           <p id="byok-consent-text"></p>
-          <div class="agent-actions"><button type="button" id="byok-yes" class="btn" aria-describedby="byok-consent-text">I agree, use this provider</button><button type="button" id="byok-no" class="btn quiet">Not now</button></div>
+          <div class="agent-actions"><button type="button" id="byok-yes" class="btn" aria-describedby="byok-consent-text">I agree, use this provider</button><button type="button" id="byok-no" class="btn quiet">Not now</button><button type="button" id="byok-as-typed" class="btn quiet" aria-describedby="byok-msg" hidden>Use it as typed</button></div>
         </div>
         <label class="choice byok-field"><span>Provider</span><select id="byok-type"><option value="openai">OpenAI-compatible</option><option value="azure">Azure OpenAI</option><option value="anthropic">Anthropic</option></select></label>
         <div class="field-row byok-field"><label for="byok-url">Endpoint</label><input id="byok-url" type="url" maxlength="2048" spellcheck="false" autocomplete="off" placeholder="https://api.openai.com/v1" aria-describedby="byok-msg"></div>
@@ -470,7 +472,7 @@
           <p class="hint" id="match-text"></p>
           <p class="match-prompt" id="match-prompt" hidden></p>
           <progress id="match-progress" max="4" value="0" aria-label="Phrases Ember has heard" hidden></progress>
-          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="Also forgets the words Ember learnt from what you said." hidden>Forget my voice</button><span id="match-forget-hint" hidden>Also forgets the words Ember learnt from what you said.</span><button type="button" id="match-reset" class="btn quiet" aria-describedby="match-learnt" hidden>Reset to my enrolment</button></div>
+          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-teach-said">Teach my voice</button><span id="match-teach-said" hidden></span><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="Also forgets the words Ember learnt from what you said." hidden>Forget my voice</button><span id="match-forget-hint" hidden>Also forgets the words Ember learnt from what you said.</span><button type="button" id="match-reset" class="btn quiet" aria-describedby="match-learnt" hidden>Reset to my enrolment</button></div>
           <div class="noted-row" id="match-learn-row" hidden>
             <label class="switch-row"><input type="checkbox" id="match-learn" role="switch" aria-describedby="match-learn-hint match-learnt"><span id="match-learn-label">Keep learning my voice</span></label>
             <p class="row-note" id="match-learn-hint"></p>

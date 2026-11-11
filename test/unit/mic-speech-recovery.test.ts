@@ -141,6 +141,24 @@ describe("mic renderer speech recovery", () => {
     expect(r.api.speech).not.toHaveBeenCalled();
   });
 
+  it("tells main each time a reply finds no voice, so a second Hear Ember answers as soon as the first did, not after 12 s (voice-speaking-r6-2)", async () => {
+    const r = await renderer(); r.synth.getVoices.mockReturnValue([]);
+    r.speak({ text: "This is how I sound when I answer you." });
+    vi.advanceTimersByTime(3000);
+    expect(r.api.speech).toHaveBeenCalledTimes(1);
+    r.speak({ text: "This is how I sound when I answer you." });
+    vi.advanceTimersByTime(3000);
+    expect(r.api.speech).toHaveBeenCalledTimes(2);
+    expect(r.api.speech).toHaveBeenLastCalledWith(false);
+    // A voice that starts but never speaks (no speech-dispatcher module): each reply's watch says so too.
+    r.synth.getVoices.mockReturnValue([r.local]);
+    r.speak({ text: "Once." }); vi.advanceTimersByTime(8000);
+    r.speak({ text: "Twice." }); vi.advanceTimersByTime(8000);
+    expect(r.api.speech).toHaveBeenCalledTimes(4);
+    expect(r.api.speech).not.toHaveBeenCalledWith(true);
+    r.hush();
+  });
+
   it("reports unavailable rather than submitting an unrestricted utterance", async () => {
     const r = await renderer(); r.synth.getVoices.mockReturnValue([]);
     r.speak({ text: "Private words." });

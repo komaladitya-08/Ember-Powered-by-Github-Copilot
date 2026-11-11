@@ -54,8 +54,9 @@ export interface ActionRequest {
   /** Keys: the focused element takes no typing (a page's document, not a field or an editable area of it). */
   notEditable?: boolean;
   /**
-   * Where an element without a name is, for the question only (never judged): the named control it sits in ("Save"
-   * push button), or its place in the window ("top right").
+   * Where an element without a name is, for the question: the named control it sits in ("Save" push button), or its
+   * place in the window ("top right"). A button with no name of its own is also judged by that control's name, which
+   * can only make it ask (BARE_BUTTON).
    */
   place?: { role: string; name: string } | { at: string };
   /** For text: what will be typed; for settings: the new value; for keys: the combination. */
@@ -113,6 +114,12 @@ export interface ActionRequest {
   dialog?: { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[]; messageBox?: boolean };
   /** For keys: the focused element is in a web page (Chromium's, Firefox's or an Electron app's), where Enter can send. */
   inPage?: boolean;
+  /**
+   * For clicks and toggles: the element is in a web page, as the worker found it in the tree. Only ever a reason to ask
+   * (a button with no name there, BARE_BUTTON; any button of a page that takes payment, PAYMENT_PAGE); `inPage` stays
+   * the keys' and the typing's, and a page's link is judged as content only by it.
+   */
+  onPage?: boolean;
   /**
    * For text: the field's labels and the names of the panes and tabs around it, up to its window (a "Python Console"
    * tab, an "Output" pane), as the worker read them: plainEditorLines refuses a console's field by them.
@@ -393,10 +400,14 @@ const RISKY_INTL = new RegExp(RISKY_INTL_SOURCE, "u");
  * change a shared repository. Risky on a button, link or menu item, and on anything clicked but a check box, radio
  * button or switch (a click on text goes to the link or row around it): a "Block selection" check item, or a "Comments"
  * heading a key lands on, isn't one. English verbs that are nouns too count where they lead the label
- * ("Report", "Block user"; not "Download report", "Add block").
+ * ("Report", "Block user"; not "Download report", "Add block"). Also the everyday words that grant access ("Allow",
+ * "Permit", "Continue as Sam"), commit money or a place ("Place bid", "Sell", "Reserve", "Check out"; "Book", "Bet",
+ * "Vote", "Deposit", "Refund", "Email" and "Call" alone or before what they act on, not "Bookmarks" or "Call history"),
+ * change who can see or join ("Make public", "Add member"), drop work ("Purge", "Drop changes", "Mark as spam") or turn a
+ * protection off ("Turn off firewall"): audit of 2026-11-11, safety-privacy-r7-1.
  */
-const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget)\b/u;
-const RISKY_ACT = /\b(add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream)|refresh (firefox|chrome|chromium|(the |your )?browser))\b/;
+const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget|allow|permit|sell|reserve|purge|(?:book|bid|bet|vote|deposit|refund|redirect|bounce|email|call)(?=[^\p{L}\p{N}]*$| (?:now|it|this|that|these|those|a|an|my|your|the|all|selected)\b))\b/u;
+const RISKY_ACT = /\b(add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream)|refresh (firefox|chrome|chromium|(the |your )?browser)|place (a |my |your )?(bid|bet|wager)|apply now|mark (as |this as )?(spam|junk)|check out(?=[^a-z0-9]*$| now\b| as guest\b| securely\b)|make (it |this )?(public|private)|make (an? |them |him |her )?(admin|administrator|owner|moderator)|change (the )?visibility|add (a |an |new )?(members?|collaborators?|admin|owner)|continue as|drop changes|(turn off|switch off|disable|deactivate|pause) (the |my |your )?(firewall|antivirus|virus protection|real-time protection|protection|two-factor|two-step|2-step|2fa|encryption|screen lock))\b/;
 /** The same in the languages of RISKY_WORDS (written with their accents, folded when the pattern is built). */
 export const RISKY_ACT_WORDS: Record<string, string[]> = {
   fr: ["commenter", "commentez", "inviter", "invitez", "refuser", "refusez", "décliner", "résilier", "annuler (l'|mon |votre )?abonnement",
@@ -482,7 +493,7 @@ const isAffirmative = (s: string) => AFFIRMATIVE.test(normalizeLabel(s)) || AFFI
 /** A button that is only "Confirm" or "Approve": it agrees to what is asked, as "OK" does. */
 const LONE_AGREE = /^\s*(yes,?\s*)?(confirm|approve)\s*[.!]?\s*$/;
 /** Fields Ember never fills: secrets and payment details (an expiry date only beside a card: the screen reader's list has those). */
-const SECRET_FIELD = /\b(password|passphrase|passcode|pin|card ?number|credit ?card|cvv|cvc|security code|iban|routing number|account number|one-time code|otp|2fa|recovery code|secret)\b/;
+const SECRET_FIELD = /\b(password|passphrase|passcode|pass phrase|pin|card ?number|card (details|information|info)|credit ?card|debit ?card|name on (the )?card|card ?holder|cvv|cvc|security code|iban|routing number|account number|one-time code|otp|2fa|recovery code|secret)\b/;
 /**
  * Is this an authentication or security prompt (polkit, sudo, keyring…)? Ember stays out of those. By `os`'s
  * vocabulary (./vocabulary.ts): its prompts' programs and titles, and the window classes its backend reports as the
@@ -1715,11 +1726,13 @@ export const plainQuestion = (r: ActionRequest, kc: KeyConventions = KEYS.linux)
  */
 /** What an element without a name is called in a question: "the text area", not "the text" ("replace the text in the text"). */
 const UNNAMED: Record<string, string> = { text: "text area", "document text": "document", paragraph: "paragraph", entry: "text field", "password text": "password field", "table cell": "row", "list item": "row", "tree item": "row" };
+/** What an unnamed control sits in, in a question: a page's document is "page" (not the reader's "document web"; safety-privacy-x7-7). */
+const placeWord = (role: string): string => role === "document web" ? "page" : /^document\b/.test(role) ? "document" : roleWord(role);
 
 function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.linux): string {
   const cell = !!r.element && isSheetCell(r.element);
   // Controls are called by the plain words the activity list uses ("the “Save” button", not "“Save” push button").
-  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on the ${quote(r.place.name, 40)} ${roleWord(r.place.role)}`;
+  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on the ${quote(r.place.name, 40)} ${placeWord(r.place.role)}`;
   const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `the ${quote(r.element.name)} ${roleWord(r.element.role)}` : `the ${UNNAMED[r.element.role] ?? roleWord(r.element.role)}${r.element.withheld ? "" : place}`;
   const desk = r.onDesk ? " on my desk" : "";
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
@@ -2062,13 +2075,29 @@ const REACHES_OUT: Risk = { reason: "this formula can fetch from the internet or
 const TEXT_FIELD = /^(entry|text|paragraph|section|document text|document web|document frame|spin button|combo box|heading|block quote|static)$/;
 const ENTER_IN_FIELD: Risk = { reason: "Enter in a text field can send or submit what is in it", note: "Enter there may send or submit it." };
 /**
- * A one-line field that only looks something up or goes somewhere: a browser's address bar, a page's search box. Enter
- * there can't send what it holds to anyone, so what asks is only Ember's doubt, which "Work without asking" may cover (an
- * allow-list that fails closed: by role and name, never in a dialog, and it never makes another field's Enter any safer).
- * Without it, Enter in Edge's address bar asked on every task (owner report of 2026-11-05).
+ * A one-line field that only looks something up or goes somewhere: a browser's own address bar, a page's search box.
+ * Enter there can't send what it holds to anyone, so what asks is only Ember's doubt, which "Work without asking" may
+ * cover. Without it, Enter in Edge's address bar asked on every task (owner report of 2026-11-05). An allow-list that
+ * fails closed, and never makes another field's Enter any safer:
+ * - the bar (`addressBar`): a browser's (BROWSER, BAR_BROWSER) own field, outside any page, named as a search, address,
+ *   URL or location;
+ * - a search box (`searchBox`), a page's or an app's own: named as a search and nothing risky ("Search people to share
+ *   with"), and not in a window titled as taking payment.
+ * (Narrowing the bar to Edge, Chrome, Firefox and Safari made GNOME Web, Falkon and Arc ask again, and a mail app's own
+ * search box with them: regression review of round seven, safety-privacy-x7-3.)
+ * A page's own "Email address", "Delivery address", "Webhook URL" or "Location" is a form's field, where Enter submits
+ * the form: it asks like any other (audit of 2026-11-11, safety-privacy-c7-1). Never a multi-line field or one in a dialog.
  */
 const GOES_SOMEWHERE = /(^|[^\p{L}\p{N}])(search|address|url|location)(?![\p{L}\p{N}])/iu;
-const goesSomewhere = (r: ActionRequest, role: string, name: string): boolean => /^(entry|combo box|text)$/.test(role) && !r.multiLine && !r.dialog && GOES_SOMEWHERE.test(name);
+const SEARCHES = /(^|[^\p{L}\p{N}])search(?![\p{L}\p{N}])/iu;
+const oneLineField = (r: ActionRequest, role: string): boolean => /^(entry|combo box|text)$/.test(role) && !r.multiLine && !r.dialog;
+/** A word that acts on others anywhere in a name, not only leading it ("Search and invite"). */
+const actsAnywhere = (name: string): boolean => name.trim().split(/\s+/).some((_, i, words) => isRiskyActLabel(words.slice(i).join(" ")));
+const addressBar = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
+  oneLineField(r, role) && !r.inPage && (BROWSER.test(r.app) || BAR_BROWSER.test(r.app)) && tabbed(r.app, os) && GOES_SOMEWHERE.test(name);
+const searchBox = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
+  oneLineField(r, role) && SEARCHES.test(name) && !isRiskyLabel(name, os) && !actsAnywhere(name) && !PAYMENT_PAGE.test(normalizeLabel(r.window));
+const goesSomewhere = (r: ActionRequest, role: string, name: string, os: OS): boolean => addressBar(r, role, name, os) || searchBox(r, role, name, os);
 /**
  * Keys that only move a browser between its pages and tabs, or reload one (an allow-list, for browsers alone: an app that
  * merely has a page in it may use them otherwise). Any other shortcut Ember doesn't know keeps asking.
@@ -2080,8 +2109,16 @@ const BROWSER_KEYS: Readonly<Record<OS, RegExp>> = {
 };
 /** Web browsers themselves, by program name. */
 const BROWSER = /msedge|chrome|chromium|firefox|librewolf|brave|opera|vivaldi|safari|iexplore/i;
+/**
+ * The other browsers of TABBED_APP, for the address bar alone (GNOME Web is "epiphany" or "Web"). Not SeaMonkey, whose
+ * windows are also a mail app's, where an "address" field is a message's.
+ */
+const BAR_BROWSER = /epiphany|^web$|falkon|midori|konqueror|waterfox|floorp|thorium|\barc\b|\borion\b/i;
 /** A page that takes payment: a button on it may buy something whatever its label says ("Activate now"; audit of 2026-11-01). */
 const PAYMENT_PAGE = /\b(checkout|check out|payment|billing)\b/;
+/** A window or dialog titled for a protection of the account or the computer, and the bare answers that turn one off there. */
+const PROTECTION_TITLE = /\b(two[- ]factor|two[- ]step|2[- ]step|2fa|multi[- ]factor|mfa|firewall|antivirus|security|protection|verification|passkeys?|encryption)\b/;
+const TURNS_OFF = /^[^a-z0-9]*(disable|turn (it )?off|switch (it )?off|deactivate)\b/;
 /** Titles of file dialogs (open, save, export, attach). */
 const FILE_DIALOG_TITLE = /^\s*(save|save as|save a copy|save file|save image|export|export as|open|open files?|select files?|choose files?|insert (file|image|picture)|upload|attach)\b/i;
 /**
@@ -2176,6 +2213,20 @@ const APPLY = new RegExp(`^\\s*(${foldLabel(["apply", "übernehmen", "anwenden",
 /** Controls that set something: check boxes, radio buttons, switches (and their menu items). */
 const SETTING_ROLES = /^(check box|radio button|toggle button|switch|check menu item|radio menu item)$/;
 const SECURITY_SETTING = "this changes a security or privacy setting";
+/**
+ * Buttons judged when their name says nothing (no letter or digit: none at all, or only a symbol): by the named control
+ * around them wherever they are, and in a web page as Ember's doubt, since a page's send, confirm and delete buttons are
+ * often an icon alone (audit of 2026-11-11, safety-privacy-c7-2). A desktop app's unnamed tool button, and a page's
+ * unnamed link (it leads somewhere), go as before.
+ */
+const BARE_BUTTON = /^(push button|button|split button|toggle button|push button menu)$/;
+/** Symbols that stand for sending, confirming or deleting (arrows, a paper plane, an envelope, a tick, a bin): never only doubt. */
+const SENDS_GLYPH = /[\u2190-\u21ff\u2794-\u27bf\u2b05-\u2b0d\u23ce\u2708\u2709\u2713\u2714\u2705\u{1f4e4}\u{1f4e8}\u{1f4e9}\u{1f4e7}\u{1f5d1}\u{1f680}]/u;
+const BARE: Risk = { reason: "this button has no name, so Ember can't tell what it does", note: "I can't tell what it does: it has no name.", plain: true };
+const BARE_GLYPH: Risk = { reason: "this button has only a symbol for a name, one that may send, confirm or delete", note: "I can't tell what it does: it may send, confirm or delete something." };
+/** What is around an unnamed button but named by what it holds or shows, not by what it does: a page, a row, a link's text. */
+const NAMED_BY_CONTENT = /^(document\b.*|list item|table row|table cell|tree item|row|cell|grid cell|icon|image|link|heading|paragraph|article|option|label|static|text)$/;
+const BARE_IN = (around: string): Risk => ({ reason: "this button has no name, and what it sits in is named for something hard to undo or visible to others", about: around });
 /** A control whose name the screen reader withheld (it may say what a secret field holds): what it does can't be shown. */
 const WITHHELD: Risk = { reason: "Ember can't show what this control says (it may reveal something private)", note: "I can't show what it says: it may reveal something private." };
 
@@ -2420,8 +2471,18 @@ export class PolicyEngine {
     const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name);
     const riskyNamed = (role === "link" && content ? linkCommands(name, !selects, os) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
+    // A bare "Disable" or "Turn off" on a page or dialog titled for a protection ("Two-factor authentication") turns it off.
+    const unprotects = ACTIVATING_ROLES.test(role) && TURNS_OFF.test(normalizeLabel(name)) && PROTECTION_TITLE.test(normalizeLabel(`${r.window} ${r.dialog?.name ?? ""}`));
+    // A button with no name, or only a symbol for one (BARE_BUTTON): its name says nothing of what it does.
+    const bare = !!r.element && !r.element.withheld && BARE_BUTTON.test(role) && !/[\p{L}\p{N}]/u.test(name.normalize("NFKC"));
+    // The named control it sits in says it (the worker's `place`: a form named "Send message"), judged as a button's name would be.
+    // (Not the page's document itself, which is named by the page's title: every unnamed button of a page titled "Send
+    // feedback" isn't a send button. In a page it asks as Ember's doubt below. Nor a row, cell, item, link or heading,
+    // named by what it holds: a mail's row "Re: please delete the old report" asked as a delete the user didn't ask for,
+    // and put the task back to asking; regression review of round seven, safety-privacy-x7-5.)
+    const around = bare && r.place && "name" in r.place && !NAMED_BY_CONTENT.test(r.place.role) && isRiskyControl("push button", r.place.name, os) ? r.place.name : "";
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
-    const named = riskyNamed && !opensDialog(role, name);
+    const named = (riskyNamed && !opensDialog(role, name)) || unprotects;
     // A lone "Confirm" or "Approve" agrees to what its dialog (or the window's title) says, as "OK" does: it is judged by that.
     const lone = LONE_AGREE.test(normalizeLabel(name)) && (!!r.dialog || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window));
     // A dialog asked about only as one that may hold the app's settings: its title says which.
@@ -2443,13 +2504,15 @@ export class PolicyEngine {
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
         if (named && !lone) return { reason: "this action may be hard to undo or visible to others", about: name };
-        if (ACTIVATING_ROLES.test(role) && r.inPage && PAYMENT_PAGE.test(normalizeLabel(r.window))) return { reason: "this button is on a payment page, where it may buy something", about: name };
+        if (ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) && PAYMENT_PAGE.test(normalizeLabel(r.window))) return { reason: "this button is on a payment page, where it may buy something", about: name };
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
+        if (around) return BARE_IN(around);
         if (SETTING_ROLES.test(role) && (securitySetting(name) || secureDialog)) return secure(name);
         if (SETTING_ROLES.test(role) && systemSettings) return system(name);
         if (answer) return answer;
         if (conflict) return goesAhead;
+        if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
         return null;
       case "select": {
         const value = r.value ?? "";
@@ -2475,7 +2538,7 @@ export class PolicyEngine {
         // What this task typed there itself is no one else's: rewriting it is no loss.
         if (r.mode === "replace" && !r.ownText && (current.length > 80 || current.includes("\n"))) {
           // (A browser's own address bar holds a long address, which is no one's work: only Ember's doubt.)
-          const bar = !r.inPage && tabbed(r.app, os) && goesSomewhere(r, role, name);
+          const bar = addressBar(r, role, name, os);
           return { reason: `this replaces ${howMany(current.length)} already there`, note: `This replaces ${howMany(current.length)} there.`, ...(bar ? { plain: true as const } : {}) };
         }
         // A rich-text editor's paragraphs (or a picture) stand in its text as U+FFFC: how much it holds can't be told.
@@ -2516,10 +2579,12 @@ export class PolicyEngine {
           if (r.element?.withheld) return WITHHELD;
           if (ACTIVATING_ROLES.test(role) && answer) return { ...answer, reason: settings ? answer.reason : "this answers a dialog, and Ember can't be sure what it agrees to" };
           if (ACTIVATING_ROLES.test(role) && conflict) return goesAhead;
+          if (around) return BARE_IN(around);
+          if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };
           // Enter in a text field is a typed line break (as type_text's is): where it may send a chat message or submit a
           // form, it is asked about (enterMaySend).
-          if (!/space$/.test(k) && enterMaySend(r, role, os)) return goesSomewhere(r, role, name) ? { ...ENTER_IN_FIELD, plain: true } : ENTER_IN_FIELD;
+          if (!/space$/.test(k) && enterMaySend(r, role, os)) return goesSomewhere(r, role, name, os) ? { ...ENTER_IN_FIELD, plain: true } : ENTER_IN_FIELD;
           return null;
         }
         if (MNEMONIC_KEY.test(k)) return { reason: "this shortcut presses whichever button has that letter, and Ember can't tell which" };

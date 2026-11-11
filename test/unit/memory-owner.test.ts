@@ -29,7 +29,7 @@ it("keeps saved memory closed across restart until its verified account returns"
   expect(restarted.mayEraseOnSignOut).toBe(true);
 });
 
-it.each(["memory.json", "memory.json.tmp", "memory.json.broken", "memory-vectors.json"])(
+it.each(["memory.json", "memory.json.tmp", "memory.json.broken", "memory.json.broken.2", "memory-vectors.json"])(
   "keeps unowned data in %s locked until explicit cleanup completes", file => {
     fs.writeFileSync(saved(file), "old memory");
     const owner = new MemoryOwner(dir);

@@ -951,3 +951,114 @@ describe("matchIntent: things kept together, and a folder named after a comma (c
     expect(announce(cmd, words, { git: FEATURE })).toBe(said);
   });
 });
+
+describe("matchIntent: a place in the words that isn't where the command works (commands-remote-r5-2, c3-1, i5b, i6b)", () => {
+  it.each([
+    // "at the root of X", "at the top of X": X is the folder.
+    ["rm -rf build", "delete the build folder at the root of frontend/"],
+    ["rm -rf build", "delete the build folder at the top of the frontend repo"],
+    ["rm -rf build", "delete the build folder at the top level of frontend"],
+    ["rm -rf build", "delete the build folder in the root of frontend"],
+    // A place said after "but only", "only" or "just".
+    ["rm -rf build", "delete the build folder, but only the one in frontend"],
+    ["rm -rf build", "delete the build folder but only in frontend"],
+    ["rm -rf build", "delete the build folder, just the one inside frontend"],
+    // A place Ember can't check against the path: beside something, or on another computer.
+    ["rm -rf build", "delete the build folder next to frontend"],
+    ["rm -rf build", "delete the build folder beside the src folder"],
+    ["rm -rf build", "delete the build folder near frontend"],
+    ["rm -rf build", "delete the build folder above frontend"],
+    ["rm -rf build", "delete the old build folder on the server"],
+    ["rm -rf build", "delete the build folder on staging"],
+    ["rm -rf build", "delete the build folder on the other machine"],
+    ["rm -rf build", "delete the build folder on the remote"],
+    ["rm notes.txt", "delete notes.txt on the server"],
+    ["echo hi > out.txt", "overwrite out.txt on the server with hi"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
+    // The command changes folder first: the name as written is no longer the one in the task's folder.
+    ["cd .. && rm -rf build", "delete the build folder"],
+    ["cd ~ && rm -rf build", "delete the build folder"],
+    ["cd ../other && rm -rf build", "delete the build folder"],
+    ["(cd .. && rm -rf build)", "delete the build folder"],
+    ["pushd .. && rm -rf build", "delete the build folder"],
+    ["cd .. && rm notes.txt", "delete notes.txt"],
+    ["cd .. && echo hi > out.txt", "overwrite out.txt with hi"],
+    ["cd sub && cd ../.. && rm -rf build", "delete the build folder"],
+  ])("asks for `%s` after %j, which works outside the task's folder (commands-remote-r5-2)", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
+    ["rm -rf build", "delete the build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder at the root of the project", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder at the top level", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder here", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder on this computer", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder on my laptop", "Deleting build, as you asked."],
+    ["rm -rf frontend/build", "delete the build folder at the root of frontend/", "Deleting frontend/build, as you asked."],
+    ["rm -rf frontend/build", "delete the build folder, but only the one in frontend", "Deleting frontend/build, as you asked."],
+    ["cd frontend && rm -rf build", "delete the build folder in frontend", "Deleting build, as you asked."],
+    ["cd sub && cd .. && rm -rf build", "delete the build folder", "Deleting build, as you asked."],
+  ])("still announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+});
+
+describe("matchIntent: a place said anywhere in the words, or a folder the command moves into (commands-remote-x7-6)", () => {
+  it.each([
+    // The place said before the thing.
+    ["rm -rf build", "on the server, delete the build folder"],
+    ["rm -rf build", "on staging, delete the build folder"],
+    ["rm -rf build", "on web1: delete the build folder"],
+    ["rm notes.txt", "on the server, delete notes.txt"],
+    ["echo hi > out.txt", "on the server, overwrite out.txt with hi"],
+    // A folder to go into first.
+    ["rm -rf build", "cd into frontend and delete the build folder"],
+    ["rm -rf build", "go to frontend and delete the build folder"],
+    ["rm -rf build", "at the root of frontend, delete the build folder"],
+    // The place said after a break, or in other words.
+    ["rm -rf build", "delete the build folder, the frontend one"],
+    ["rm -rf build", "delete the build folder — the one in frontend"],
+    ["rm -rf build", "delete the build folder in the folder called frontend"],
+    ["rm -rf build", "delete the build folder in the directory frontend"],
+    ["rm -rf build", "delete the build folder back in frontend"],
+    ["rm -rf build", "delete the build folder up one level"],
+    ["rm -rf build", "delete the build folder in the folder above"],
+    ["rm -rf build", "delete the build folder in .."],
+    ["rm -rf build", "delete the build folder over ssh"],
+    ["rm -rf build", "delete the build folder remotely"],
+    ["rm -rf build", "delete the build folder by the src folder"],
+    ["rm -rf build", "delete the build folder on my desktop"],
+    ["rm -rf build", "delete the build folder off the server"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
+    ["cd frontend && rm -rf build", "delete the build folder"],
+    ["pushd frontend && rm -rf build", "delete the build folder"],
+    ["(cd frontend && rm -rf build)", "delete the build folder"],
+    ["cd frontend && rm notes.txt", "delete notes.txt"],
+  ])("asks for `%s` after %j, which names no folder the command moves into", (cmd, words) => {
+    expect(announce(cmd, words)).toBeNull();
+  });
+
+  it.each([
+    ["rm -rf build", "delete the build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder in this folder", "Deleting build, as you asked."],
+    ["rm -rf build", "please delete the build folder now", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder, the old one", "Deleting build, as you asked."],
+    ["rm -rf frontend/build", "go to frontend and delete the build folder", "Deleting frontend/build, as you asked."],
+    ["rm -rf frontend/build", "delete the build folder, the frontend one", "Deleting frontend/build, as you asked."],
+    ["cd frontend && rm -rf build", "cd into frontend and delete the build folder", "Deleting build, as you asked."],
+    ["cd frontend && rm -rf build", "delete the build folder in frontend", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder with everything in it", "Deleting build, as you asked."],
+    ["rm -rf build", "on the desktop delete the build folder", "Deleting build, as you asked."],
+  ])("still announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+});

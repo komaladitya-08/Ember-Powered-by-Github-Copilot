@@ -23,7 +23,9 @@ Ember's desk, a private display where Ember can work out of your way, is Linux-o
   but takes no screenshots and doesn't borrow the mouse or keyboard.
 - About 1 GB of disk for Ember and its standard speech models, and each optional extra's size again if you turn it on
   (**Computers without internet access** lists them).
-- About 600 MB of memory while Ember is idle and listening, and about 550 MB more with **Hear me more clearly**.
+- About 900 MB of memory while Ember is idle and listening (about 1.1 GB where listening runs on WebAssembly, as it
+  does when the faster speech libraries can't load), and about 550 MB more with **Hear me more clearly**. Measured on
+  Linux, signed in, with Ember's window open.
 - A microphone only for “Hey Ember”: everything else works typed.
 
 ## Download
@@ -216,8 +218,8 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
    file, and the npm launcher with `ember`. Its first window takes you
    through 6 steps: a hello, **What I do, and what I don't** (nothing is read, heard or sent until you agree), **Sign
    in to GitHub** (or **Use my own provider**), **Checking this computer** (what to fix, with a button where Ember can
-   do it), **Try me out** (stop Ember, ask it something, and say “Hey Ember” if you like) and **Your Ember**, a summary
-   of what you chose.
+   do it), **Try me out** (stop Ember, ask it something, and say “Hey Ember” if you like) and **Ready to start**, a
+   summary of what you chose.
 2. To ask, press Ctrl+Alt+Space (on Windows Win+Alt+Space, on a Mac Control+Shift+Command+Space; see **Shortcuts**),
    type your request and press Enter. Ember answers in its bubble beside your cursor, and asks "May I?" before it does
    something in an app.

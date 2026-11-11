@@ -4,6 +4,7 @@
  * only with a real keyring and never in settings, logs or answers, Home's IPC checks, and "Test connection".
  */
 
+import { problemInHome } from "../../app/renderer/home/copy";
 import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -11,7 +12,7 @@ import path from "node:path";
 import { AdminPolicySchema, applyAdminPolicy, managedKeys, parseAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "../../app/main/admin";
 import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore, repairSettings, type Settings } from "../../app/main/settings";
 import {
-  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, checkAgain, listedModelIds, providerSummary, providerWaitingHost, testConnection, testRequest, userProviderConfig, userProviderFromFile,
+  KEY_NO_KEYRING, ProviderKeyStore, TEST_IDS_MAX, activeProvider, apiKeyProblem, checkAgain, listedModelIds, modelList, providerDown, providerSummary, providerWaitingHost, testConnection, testRequest, userProviderConfig, userProviderFromFile,
   userProviderInForce, type FetchLike,
 } from "../../app/main/provider";
 import { PROVIDER_BAD_REQUEST, PROVIDER_FAILED, registerProviderIpc, type ProviderApi, type ProviderIpcEvent } from "../../app/main/provider-ipc";
@@ -358,6 +359,35 @@ describe("Test connection", () => {
     expect(fetch.mock.calls[0][1]).toMatchObject({ method: "GET", redirect: "error" });
   });
 
+  it("says Connected only to an answer with a model list: a web page or other JSON that answers 200 is no model service (integrations-c7-1)", async () => {
+    const page = vi.fn<FetchLike>(async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("Unexpected token < in JSON"); } }));
+    const no = { ok: false, why: "models.example.com answered, but not as a model service does. Check the endpoint.", cause: "no-list" };
+    expect(await testConnection(settings(), STORED, page)).toEqual(no);
+    expect(await testConnection(settings(), STORED, answer(200, { hello: "world" }))).toEqual(no);
+    expect(await testConnection(settings(), STORED, answer(200, null))).toEqual(no);
+    // Something is there, so the status never calls the provider down for it.
+    expect(providerDown(await testConnection(settings(), STORED, page), "models.example.com", false)).toBeNull();
+    // A list, even an empty one or Ollama's, is a model service's answer.
+    expect(await testConnection(settings(), STORED, answer(200, { data: [] }))).toEqual({ ok: true, host: "models.example.com", models: 0 });
+    expect(await testConnection(settings(), STORED, answer(200, { models: [{ name: "llama3.2:3b" }] }))).toEqual({ ok: true, host: "models.example.com", models: 1, ids: ["llama3.2:3b"] });
+  });
+
+  it("says Connected to a model list in whatever shape the service writes it, and still not to other JSON (integrations-x7-1)", async () => {
+    const ok = (models: number, ids: string[]) => ({ ok: true, host: "models.example.com", models, ...(ids.length ? { ids } : {}) });
+    // A bare array, as some OpenAI-compatible services answer /v1/models.
+    expect(await testConnection(settings(), STORED, answer(200, [{ id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", object: "model" }]))).toEqual(ok(1, ["meta-llama/Llama-3.3-70B-Instruct-Turbo"]));
+    expect(await testConnection(settings(), STORED, answer(200, []))).toEqual(ok(0, []));
+    // The list under another name, and models keyed by id.
+    expect(await testConnection(settings(), STORED, answer(200, { object: "list", result: [{ id: "a" }, { id: "b" }] }))).toEqual(ok(2, ["a", "b"]));
+    expect(await testConnection(settings(), STORED, answer(200, { data: { a: { id: "a" } } }))).toEqual(ok(1, ["a"]));
+    expect(modelList({ object: "list", result: [{ id: "a" }] })).toEqual([{ id: "a" }]);
+    // JSON that names no model is still no model service's answer (integrations-c7-1).
+    for (const body of [{ hello: "world" }, {}, null, "ok", 7, [1, 2], ["<html>"], { items: [1, 2] }, { data: { message: "Welcome" } }, { data: "none" }, { error: { message: "no" } }, { errors: [{ id: "E42" }] }]) {
+      expect(modelList(body), JSON.stringify(body)).toBeNull();
+      expect(await testConnection(settings(), STORED, answer(200, body))).toMatchObject({ ok: false, cause: "no-list" });
+    }
+  });
+
   it("says in one sentence why it failed, never with the service's raw text or the key", async () => {
     expect(await testConnection(settings(), STORED, answer(401))).toEqual({ ok: false, why: "models.example.com didn't accept the API key. Check it, or replace it." });
     expect(await testConnection(settings(), null, answer(403))).toEqual({ ok: false, why: "models.example.com needs an API key." });
@@ -399,6 +429,31 @@ describe("Test connection", () => {
 });
 
 describe("errors with the user's own provider", () => {
+  it("say a 404 may be the endpoint's address as well as the model, as Test connection says of that address (integrations-r7-2)", () => {
+    const both = "The model I'm set to use isn't available, or the endpoint's address is wrong. Check both in Ember's settings (Ctrl+Alt+E).";
+    expect(friendlyError("404 page not found", undefined, { provider: "user", statusCode: 404 })).toBe(both);
+    expect(friendlyError("HTTP 404", undefined, { provider: "user" })).toBe(both);
+    expect(friendlyError("404 Not Found", undefined, { provider: "user", statusCode: 404, settingsKey: null })).toBe("The model I'm set to use isn't available, or the endpoint's address is wrong. Check both in Ember's settings.");
+    // The service names the model: it is the model.
+    expect(friendlyError("404 The model `gpt-9` does not exist: model_not_found", undefined, { provider: "user", statusCode: 404 })).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
+    // In each service's own words for a model that isn't there (integrations-x7-3).
+    for (const raw of [
+      "404 The model `gpt-9` does not exist or you do not have access to it.",
+      '404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-9"}}',
+      "DeploymentNotFound: The API deployment for this resource does not exist. If you created the deployment within the last 5 minutes, please wait a moment and try again.",
+      "404 model 'llama9' not found",
+      "404 No such model: gpt-9",
+    ]) expect(friendlyError(raw, undefined, { provider: "user", statusCode: 404 }), raw).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
+    // A 404 that names no model is still either: a wrong path, or Azure's answer for a wrong resource address.
+    for (const raw of ['404 {"type":"error","error":{"type":"not_found_error","message":"Not Found"}}', '404 {"error":{"code":"404","message":"Resource not found"}}', "404 The requested URL does not exist"]) {
+      expect(friendlyError(raw, undefined, { provider: "user", statusCode: 404 }), raw).toBe(both);
+    }
+    // The organisation's service is the administrator's to address: the old words.
+    expect(friendlyError("404 page not found", undefined, { provider: true, statusCode: 404 })).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
+    // In Home the way there is Models & connections, with its button.
+    expect(problemInHome(both)).toEqual({ text: "The model I'm set to use isn't available, or the endpoint's address is wrong. Check both in Models & connections.", settings: true });
+  });
+
   it("point at the key in Ember's settings, not at a GitHub sign-in or an administrator", () => {
     expect(friendlyError("401 Unauthorized", undefined, { provider: "user" })).toBe("Your model service refused the request. Check its API key in Ember's settings (Ctrl+Alt+E).");
     expect(friendlyError("HTTP 502 bad gateway", undefined, { provider: "user" })).toBe("Your model service had a problem on its side. Try again in a moment.");

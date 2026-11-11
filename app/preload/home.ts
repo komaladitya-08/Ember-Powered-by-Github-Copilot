@@ -104,6 +104,7 @@ const api: EmberHomeApi = {
   onAdminChanged: fn => listen<Status["admin"]>(IPC.adminChanged, fn),
   onVisibility: fn => listen<boolean>(IPC.homeVisibility, v => fn(v !== false)),
   quit: () => ipcRenderer.invoke(IPC.quit),
+  restart: () => ipcRenderer.invoke(IPC.restart),
   openAsk: () => ipcRenderer.invoke(IPC.openAsk),
   stopEverything: () => ipcRenderer.invoke(IPC.stopEverything),
   onStopped: fn => listen<string>(IPC.homeStopped, fn),

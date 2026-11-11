@@ -6,7 +6,7 @@ import type { EmberHomeApi, MemoryView } from "../../shared/ipc";
 import { MEMORY_CORRECTION as words, memoryCorrectionFailedText, memoryProvenanceLabel } from "./copy";
 
 type MemoryRow = MemoryView["rows"][number];
-const same = (a: MemoryRow, b: MemoryRow) => a.id === b.id && a.text === b.text && a.source === b.source && a.at === b.at && (a.revision ?? 0) === (b.revision ?? 0);
+const same = (a: MemoryRow, b: MemoryRow) => a.id === b.id && a.text === b.text && a.source === b.source && a.at === b.at && (a.revision ?? 0) === (b.revision ?? 0) && a.until === b.until;
 
 /** Mounts a deliberately submitted correction; typing, cancelling and live-list changes never write a fact. */
 export function mountMemoryCorrection(api: Pick<EmberHomeApi, "correctMemory">, fallback: () => HTMLElement, saved?: (expected: MemoryRow, corrected: MemoryRow) => void): {

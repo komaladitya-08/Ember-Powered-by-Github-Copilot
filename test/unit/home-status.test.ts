@@ -7,10 +7,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
+import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOn, whatsOnLine, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage, shownText, type ShownNode } from "../../app/renderer/home/search-copy";
-import { checksNote, COMPOSER_HELD, COMPOSER_THINKING, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
+import { checksNote, STATUS_FAILED, COMPOSER_HELD, COMPOSER_THINKING, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import { formatDoctor } from "../../app/main/doctor";
+import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
 import { IPC, TASKS_PUSH_MS } from "../../app/shared/ipc";
 
@@ -41,7 +42,7 @@ describe("Home's status panel", () => {
     expect(statusWord({ ...base, answering: true, asking: 1 }).word).toBe("A task needs you");
     expect(statusWord({ ...base, answering: true, phase: "starting" }).word).toBe("Connecting…");
     // The composer's own line: thinking, then (while the bubble says it: main's "slow") still waiting for the service in use, and how to stop.
-    expect(COMPOSER_THINKING).toBe("Thinking… Ember's reply will appear above.");
+    expect(COMPOSER_THINKING).toBe("Thinking… The reply will appear above.");
     expect(composerStillWaiting()).toBe("Still waiting for Copilot… Stop response ends this reply.");
     expect(composerStillWaiting("user")).toBe("Still waiting for your model provider… Stop response ends this reply.");
     expect(composerStillWaiting("admin")).toBe("Still waiting for the model service… Stop response ends this reply.");
@@ -76,6 +77,35 @@ describe("Home's status panel", () => {
     expect(fs.readFileSync("app/renderer/home/main.ts", "utf8")).toContain("setText(\"p-connect\", connectLabel(agent?.service?.kind, !!waitingFor(), runtimeState(agent)));");
   });
 
+  it("says Copilot can't be reached while offline and signed in, never to connect Copilot, and points to where Check again is (home-r7-1)", () => {
+    expect(runtimeState({ phase: "error", reason: "network" })).toBe("offline");
+    // Another model service's own lines say it can't connect; signed out is still signed out.
+    expect(runtimeState({ phase: "error", reason: "network", service: { kind: "user" } })).toBeNull();
+    expect(runtimeState({ phase: "signed-out" })).toBeNull();
+    const t = { failing: 0, onboarded: true, phase: "error", hidden: false, overlay: true, runtime: "offline" as const };
+    expect(tagline(t)).toBe("Beside your cursor. Copilot can't be reached right now: reconnecting once you're online.");
+    expect(tagline(t)).not.toMatch(/Connect Copilot|Ember/);
+    expect(connectLabel(undefined, false, "offline")).toBe("Models & connections…");
+    expect(statusWord({ phase: "error", failing: 0, running: 0, asking: 0, runtime: "offline" })).toEqual({ word: "Not connected", ring: "error" });
+    // Tasks at work come first, as before.
+    expect(tagline({ ...t, waitingForTasks: true })).toMatch(/isn't answering: reconnecting once the tasks/);
+  });
+
+  it("never promises Copilot comes back once online when it is GitHub's certificate Ember can't verify, and points to where it says why (home-x7-2)", () => {
+    // Main gives a certificate failure the reason "network" too (startErrorReason), with its own words (explainStartError).
+    const cert = { phase: "error", reason: "network", detail: "Ember can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember." };
+    expect(runtimeState(cert)).toBe("unreachable");
+    // Offline, in main's words and with none, is as before; another model service keeps its own lines.
+    expect(runtimeState({ ...cert, detail: "Ember can't reach GitHub right now. It will try again when the network is back." })).toBe("offline");
+    expect(runtimeState({ ...cert, service: { kind: "user" } })).toBeNull();
+    const t = { failing: 0, onboarded: true, phase: "error", hidden: false, overlay: true, runtime: runtimeState(cert) };
+    // Before: "Copilot can't be reached right now: reconnecting once you're online." to someone online, waiting on IT.
+    expect(tagline(t)).toBe("Beside your cursor. Copilot can't be reached: Models & connections says why.");
+    expect(tagline(t)).not.toMatch(/online|Connect Copilot|reconnecting/);
+    expect(connectLabel(undefined, false, "unreachable")).toBe("Models & connections…");
+    expect(statusWord({ phase: "error", failing: 0, running: 0, asking: 0, runtime: "unreachable" })).toEqual({ word: "Not connected", ring: "error" });
+  });
+
   it("says Ember is reconnecting while its model connection starts again, as the handle and Ask do, and never sends the person to a provider that is fine (accessibility-visual-c1-2)", () => {
     // The runtime stopped under the user's own provider (lost(): runtimeWords("user").stopped), then gave up.
     const crashed = { phase: "error", reason: "runtime", detail: "Ember's model connection stopped unexpectedly. Reconnecting…" };
@@ -84,7 +114,7 @@ describe("Home's status panel", () => {
     expect(runtimeState({ ...crashed, detail: "Copilot stopped unexpectedly. Reconnecting…" })).toBe("reconnecting");
     expect(runtimeState({ phase: "error", reason: "not-answering", detail: "Your model provider isn't answering. Reconnecting…" })).toBe("reconnecting");
     expect(runtimeState(gaveUp)).toBe("stopped");
-    for (const other of [{ phase: "error", reason: "network", detail: "" }, { phase: "error", reason: "not-answering", detail: "Your model provider isn't answering." }, { phase: "signed-out", detail: "" }, { phase: "ready", detail: "" }, null]) expect(runtimeState(other)).toBeNull();
+    for (const other of [{ phase: "error", reason: "network", detail: "", service: { kind: "user" } }, { phase: "error", reason: "not-answering", detail: "Your model provider isn't answering." }, { phase: "signed-out", detail: "" }, { phase: "ready", detail: "" }, null]) expect(runtimeState(other)).toBeNull();
     const base = { phase: "error", failing: 0, running: 0, asking: 0, service: "user" };
     // Before, "Not connected" (the error ring) whatever the reason, while the handle and Ask said "Reconnecting…".
     expect(statusWord({ ...base, runtime: "reconnecting" })).toEqual({ word: "Reconnecting…", ring: "starting" });
@@ -132,6 +162,66 @@ describe("Home's status panel", () => {
     expect(whatsOnText(off)).toBe("Listening off · Memory off · Commands off");
     expect(whatsOnText({ ...off, voice: "listening", memory: true, commands: 2, computers: 2, wsl: true })).toBe("Listening on · Memory on · Commands on · 2 computers over SSH · WSL");
     expect(whatsOnText({ ...off, voice: "muted", computers: 1 })).toBe("Microphone off · Memory off · Commands off · 1 computer over SSH");
+  });
+
+  it("says what is in force, not what the settings ask for: policy, a lockdown, missing speech models and a microphone error turn the line off (home-r6-1)", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS, wakeWord: true, voice: { ...DEFAULT_SETTINGS.voice, consent: true },
+      commands: { local: { ...DEFAULT_SETTINGS.commands.local, on: true }, "ssh:build-01": { on: true } },
+      targets: { ...DEFAULT_SETTINGS.targets, wsl: { ...DEFAULT_SETTINGS.targets.wsl, on: true }, hosts: [{ id: "build-01" }] },
+    } as unknown as typeof DEFAULT_SETTINGS;
+    const admin = { source: null, error: null, features: {}, commands: { local: "on", wsl: "on", ssh: "on" } } as const;
+    const line = (o: Partial<Parameters<typeof whatsOn>[0]> = {}) => whatsOnText(whatsOn({ settings, admin, mic: "waiting", memory: true, ...o }));
+    expect(line()).toBe("Listening on · Memory on · Commands on · 1 computer over SSH · WSL");
+    expect(line({ mic: "active" })).toContain("Listening on");
+    // The organisation turned commands and SSH off: neither is on, whatever the user's switches say.
+    expect(line({ admin: { ...admin, source: "/etc/ember/policy.json", features: { ssh: false, wsl: false }, commands: { local: "off", wsl: "off", ssh: "off" } } })).toBe("Listening on · Memory on · Commands off");
+    // Commands off on this computer only: the SSH host's still count.
+    expect(line({ admin: { ...admin, commands: { local: "off", wsl: "on", ssh: "ask" } } })).toBe("Listening on · Memory on · Commands on · 1 computer over SSH · WSL");
+    expect(line({ admin: { ...admin, commands: { local: "on", wsl: "on", ssh: "off" } }, settings: { ...settings, commands: { "ssh:build-01": { on: true } } } as unknown as typeof settings })).toContain("Commands off");
+    expect(line({ admin: { ...admin, features: { voice: false, memory: false } } })).toBe("Listening off · Memory off · Commands on · 1 computer over SSH · WSL");
+    // Locked down, fresh or held until a restart (no settings push comes with a held one): nothing is on.
+    expect(line({ admin: { ...admin, error: "policy.json has a mistake" } })).toBe("Listening off · Memory off · Commands off");
+    expect(line({ admin: { ...admin, error: "The policy changed", held: true } })).toBe("Listening off · Memory off · Commands off");
+    // Listening is wanted and can't run: never "Listening on".
+    expect(line({ mic: "needs-models" })).toMatch(/^Listening needs its speech models · /);
+    expect(line({ mic: "downloading" })).toMatch(/^Listening needs its speech models · /);
+    expect(line({ mic: "error" })).toMatch(/^Microphone problem · /);
+    expect(line({ mic: "off" })).toMatch(/^Listening off · /);
+    expect(line({ mic: "muted" })).toMatch(/^Microphone off · /);
+    expect(line({ mic: "starting" })).toMatch(/^Listening starting… · /);
+    expect(line({ mic: null })).toMatch(/^Listening starting… · /);
+    // Listening not turned on or not agreed to is off whatever the microphone's state.
+    expect(line({ settings: { ...settings, wakeWord: false } })).toMatch(/^Listening off · /);
+    expect(line({ settings: { ...settings, voice: { ...settings.voice, consent: false } } })).toMatch(/^Listening off · /);
+    // Memory paused stays paused; before the first status nothing is on.
+    expect(line({ memory: "paused" })).toContain("Memory paused");
+    expect(line({ settings: null, admin: null, mic: null, memory: false })).toBe("Listening off · Memory off · Commands off");
+  });
+
+  it("says Checking… on the Features line until a status has arrived, never the defaults as if they were the truth (home-r7-2)", () => {
+    const admin = { source: null, error: null, features: {} };
+    expect(whatsOnLine({ settings: null, admin: null, mic: null, memory: false })).toBe("Checking…");
+    // Settings pushed before the first status: what the organisation allows isn't known yet.
+    expect(whatsOnLine({ settings: DEFAULT_SETTINGS, admin: null, mic: null, memory: false })).toBe("Checking…");
+    expect(whatsOnLine({ settings: DEFAULT_SETTINGS, admin, mic: null, memory: false })).toBe("Listening off · Memory off · Commands off");
+    expect(fs.readFileSync("app/renderer/home/index.html", "utf8")).toContain('<dd id="whats-on">Checking…</dd>');
+    // After the last failed try the caption says so, without the name (it is said aloud), and offers the way on.
+    expect(STATUS_FAILED).toBe("The settings couldn't be loaded. Try again, or restart if it keeps happening.");
+    expect(STATUS_FAILED).not.toMatch(/Ember/);
+  });
+
+  it("offers Restart Ember on Home while a changed policy holds Ember locked, and main restarts only then (home-r7-3)", () => {
+    const html = fs.readFileSync("app/renderer/home/index.html", "utf8");
+    expect(html).toContain('<button type="button" id="p-restart" class="btn" hidden>Restart Ember</button>');
+    const home = fs.readFileSync("app/renderer/home/main.ts", "utf8");
+    expect(home).toContain('$("p-restart").hidden = !lastAdmin?.held;');
+    expect(home).toContain('$("p-restart").addEventListener("click", () => { void window.ember.restart(); });');
+    expect(fs.readFileSync("app/preload/home.ts", "utf8")).toContain("restart: () => ipcRenderer.invoke(IPC.restart),");
+    // Main checks the sender (guard) and restarts only while the lockdown is held: nothing else restarts Ember from a page.
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("ipcMain.handle(IPC.restart, guard(() => { if (admin.held) restartForPolicy(); }));");
+    expect(IPC.restart).toBe("ember:restart");
   });
 
   it("says memory is paused, not on, while its owner isn't verified (memory-2)", () => {

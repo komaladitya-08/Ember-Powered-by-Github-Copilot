@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { friendlyError } from "../../app/main/agent/presenter";
+import { friendlyError, problemTitle } from "../../app/main/agent/presenter";
 
 describe("friendlyError: what used to show raw", () => {
   it("a timeout is Copilot taking too long, not a code error", () => {
@@ -22,6 +22,44 @@ describe("friendlyError: what used to show raw", () => {
     }
     expect(friendlyError("odd", undefined, { provider: true })).toMatch(/ reported a problem\. Try again/);
     expect(friendlyError("odd", undefined, { provider: true })).not.toMatch(/odd/);
+  });
+
+  it("a conversation the runtime couldn't write to disk is this computer's disk, not the model service (reliability-c7-3)", () => {
+    // What the runtime reports with the data folder's disk full (errorType "persistence"); the cause may or may not be in it.
+    const persist = "Failed to persist session events: GenericFailure, Failed to append to JSONL file /home/u/.config/ember/copilot/session-state/ember-conductor-1/events.jsonl: Failed to back up recoverable JSONL";
+    const full = "I couldn't save this conversation: the disk (or your storage quota) is full. Free some space, then ask again.";
+    for (const provider of [false, true, "user"] as const) {
+      expect(friendlyError(`${persist}: ENOSPC: no space left on device, write`, "persistence", { provider })).toBe(full);
+      expect(friendlyError(`${persist}: No space left on device (os error 28)`, undefined, { provider })).toBe(full);
+      expect(friendlyError(`${persist}: EDQUOT: disk quota exceeded, write`, undefined, { provider })).toBe(full);
+      const said = friendlyError(persist, "persistence", { provider });
+      expect(said).toBe("I couldn't save this conversation on this computer. Check that its disk has free space, then ask again.");
+      // No path, and nothing sends the person to the model's settings.
+      expect(said).not.toMatch(/events\.jsonl|model service|Copilot/);
+      expect(problemTitle(said, provider)).toBe("I couldn't save this conversation");
+      expect(problemTitle(full, provider)).toBe("I couldn't save this conversation");
+    }
+  });
+
+  it("says a full disk as the conversation's only where saving it failed, and never for the model service's own error (reliability-x7-2)", () => {
+    const save = /couldn't save this conversation/;
+    // The user's own model server ran out of room: its problem, with the way to Models & connections, as before.
+    const theirs = friendlyError('HTTP 500: {"error":"write /root/.ollama/models/blobs/x: no space left on device"}', "query", { provider: "user" });
+    expect(theirs).not.toMatch(save);
+    expect(theirs).not.toMatch(/disk/);
+    expect(friendlyError("no space left on device", undefined, { provider: "user", statusCode: 500 })).not.toMatch(/disk/);
+    // A task's worker session that couldn't start on a full disk: the disk, but no conversation failed to save.
+    const start = friendlyError("Request session.create failed with message: session construction failed: ENOSPC: No space left on device (os error 28)");
+    expect(start).toBe("This computer's disk (or your storage quota) is full, so I couldn't go on. Free some space, then ask again.");
+    expect(problemTitle(start)).toBe("The disk is full");
+    expect(problemTitle(start, "user")).toBe("The disk is full");
+    // A conversation that couldn't be written for want of permission isn't told to free space, and names no path.
+    const denied = friendlyError("Failed to persist session events: EACCES: permission denied, open '/home/u/.config/ember/copilot/x'", "persistence");
+    expect(denied).toBe("I couldn't save this conversation: I'm not allowed to write in my data folder on this computer. Check the folder's permissions, then ask again.");
+    expect(problemTitle(denied)).toBe("I couldn't save this conversation");
+    expect(friendlyError("Failed to persist session events: EROFS: read-only file system, write", "persistence")).toBe(denied);
+    // A bare "os error 28" beside something else is no full disk.
+    expect(friendlyError("curl: (28) Operation timed out; os error 28")).not.toMatch(/disk|save/);
   });
 
   it("a long conversation's token limit says so", () => {

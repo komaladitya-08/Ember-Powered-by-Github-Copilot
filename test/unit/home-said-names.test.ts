@@ -5,11 +5,13 @@
  * (design-system.md "Screen readers").
  */
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED,
-  HEAR_WAITING, composerStillWaiting, hearEmberLine, presenceLine, tagline, updateStatusText,
+  HEAR_WAITING, LISTEN_CONSENT_NOT_SAVED, STARTED_TEXT, composerStillWaiting, hearEmberLine, presenceLine, tagline, updateStatusText,
 } from "../../app/renderer/home/copy";
-import { matchAnnouncement } from "../../app/renderer/home/match-copy";
+import { NAV, START_LABEL, STEP_TEXT, TRY_TEXT, WELCOME_STEPS, signInText, stepLanding, stepPosition } from "../../app/renderer/home/welcome-copy";
+import { MATCH_TEXT, matchAnnouncement, matchView } from "../../app/renderer/home/match-copy";
 import { composerRefusal } from "../../app/main/agent/composer-refusal";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 import type { UpdateStatus, VoiceMatchStatus } from "../../app/shared/ipc";
@@ -58,6 +60,15 @@ describe("what Home tells a screen reader", () => {
     expect(named(lines)).toEqual([]);
   });
 
+  it("never says Ember's name at all, not even “Ember's”, in the line said on every typed send (voice-listening-r6-1)", () => {
+    // "Thinking… Ember's reply will appear above." woke Ember in 2 of 24 real-model placements and was sent as "Thinking
+    // numbers reply will appear above."; the wake also stopped the typed request's answer on its way. `calledByName`
+    // leaves "Ember's" out, but the recogniser joins the word before it to the name (voice.ts, voice-listening-y6-1).
+    // The same line without the name: 0 of 20.
+    for (const line of [COMPOSER_THINKING, COMPOSER_HELD, COMPOSER_OVER, composerStillWaiting(), composerStillWaiting("user"), composerStillWaiting("admin")])
+      expect(line, line).not.toMatch(/\bEmber/i);
+  });
+
   it("never calls Ember by name, nor says a phrase it answers, as Voice Match's teaching ends or the voice is forgotten (voice-listening-r5-1)", () => {
     // "Ember knows your voice now. On: …" woke Ember in 22 of 40 placements, "Ember forgot your voice…" in 24, and the
     // line shown for no voice quotes “Ember, stop”, which said into the microphone stops Ember.
@@ -77,6 +88,40 @@ describe("what Home tells a screen reader", () => {
     for (const line of lines) expect(line, line).not.toMatch(/\bEmber\b/);
   });
 
+  it("never says Ember's name in the Teach button's name or the description read with it, where focus is moved to it (voice-listening-r6-2, voice-listening-q6-1)", () => {
+    // Home moves focus to Teach after Cancel, as teaching ends and after Forget my voice, and a screen reader then reads
+    // the button. "Teach Ember my voice, button. Ember hears anyone who talks to it. Teach it your voice…" woke Ember
+    // and was sent as a request in 18 of 20 real-model placements, "Teach Ember my voice, button." alone in 14.
+    const none: VoiceMatchStatus = { enrolled: false, on: false, model: true, wanted: false, enrolling: null, learnt: 0 };
+    const on: VoiceMatchStatus = { ...none, enrolled: true, on: true, wanted: true };
+    const lines: string[] = [MATCH_TEXT.teach, MATCH_TEXT.teachAgain];
+    for (const m of [none, on, { ...on, on: false }]) for (const ended of [undefined, "learnt", "cancelled", "stopped", "gave-up", "timeout", "interrupted"] as const) {
+      const teach = matchView({ ...m, ...(ended ? { ended } : {}) }, { listening: true, managed: false }).teach;
+      expect(teach.said, teach.label).toBeTruthy();
+      lines.push(`${teach.label}, button. ${teach.said}`);
+    }
+    expect(new Set(lines).size).toBeGreaterThan(8);
+    expect(named(lines)).toEqual([]);
+    for (const line of lines) expect(line, line).not.toMatch(/\bEmber/i);
+    // The page reads that description with the button, not the line shown (which names Ember and quotes “Ember, stop”).
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    expect(page).toMatch(/<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-teach-said">Teach my voice<\/button><span id="match-teach-said" hidden><\/span>/);
+    expect(readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8")).toContain('$("match-teach-said").textContent = view.teach.said;');
+  });
+
+  it("never says Ember's name where Teach is refused, a phrase is asked for again or listening's consent couldn't be saved (voice-listening-r6-3, voice-listening-c7-1, voice-listening-r7-1)", () => {
+    // "Ember isn't listening just now, so it can't learn your voice. Try again once it's listening for “Ember”." is said
+    // as Teach is refused, also while listening starts, and said whole into an idle wake microphone it woke Ember and
+    // was sent as a request in 3 of 4 real-model placements; the line now said in 0 of 20.
+    const lines = [MATCH_TEXT.notListening, LISTEN_CONSENT_NOT_SAVED, ...Object.values(MATCH_TEXT.again)];
+    expect(named(lines)).toEqual([]);
+    for (const line of lines) expect(line, line).not.toMatch(/\bEmber/i);
+    // A refused Teach says where to look: the microphone may be why (voice-listening-r7-1).
+    expect(MATCH_TEXT.notListening).toBe("Not listening just now, so your voice can't be learnt. Check the microphone and the voice status above, then try again.");
+    expect(LISTEN_CONSENT_NOT_SAVED).toBe("Your choice couldn't be saved, so listening is still off. Press “I agree, start listening” to try again.");
+    expect(readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8")).toContain("consentError(LISTEN_CONSENT_NOT_SAVED)");
+  });
+
   it("never calls Ember by name in what Hear Ember found (voice-listening-r5-1)", () => {
     // Said just after the sample, into the wake word's microphone.
     const lines = [HEAR_WAITING, ...(["kitten", "kokoro", "supertonic", "system"] as const).map(voice => hearEmberLine({ spoke: true, voice })),
@@ -92,5 +137,49 @@ describe("what Home tells a screen reader", () => {
       for (const checkedAt of [null, "2026-11-05T10:01:00.000Z"]) if (phase !== "available" || latest) lines.push(updateStatusText({ phase, latest, checkedAt } satisfies UpdateStatus));
     expect(new Set(lines.filter(Boolean)).size).toBeGreaterThan(5);
     expect(named(lines)).toEqual([]);
+  });
+
+  it("never says Ember's name where first run moves focus or speaks once the consent is agreed, nor as Start ends it (first-run-r6-1)", () => {
+    // After a changed consent is agreed again, a returning user's “Hey Ember” listens through the rest of first run.
+    // Start's "Ember has started." and the bare "Ember" heading it moved focus to both call Ember by name, and so did
+    // the last step's title "Your Ember" and its button "Start Ember" from the name on: the words after the name are
+    // sent as a request ("Has started.").
+    const titles = [
+      ...WELCOME_STEPS.filter(s => stepPosition(s) > stepPosition("consent")).map(s => STEP_TEXT[s].title), STEP_TEXT.provider.title, STEP_TEXT.about.title,
+      ...[{ managed: false }, { managed: true }, { managed: false, locked: true }, { managed: false, locked: true, held: true }, { managed: false, own: "localhost:11434" }, { managed: false, ownOffered: false }]
+        .map(o => signInText(o).title),
+    ];
+    const lines = [
+      ...titles.map(t => `${t}, heading level 2`), `${START_LABEL}, button`, ...Object.values(NAV).map(l => `${l}, button`),
+      TRY_TEXT.stop.done, TRY_TEXT.voice.done, TRY_TEXT.ask.done, STARTED_TEXT,
+    ];
+    expect(named(lines)).toEqual([]);
+    for (const line of lines) expect(line, line).not.toMatch(/\bEmber/i);
+    expect(STARTED_TEXT).toBe("Setup is finished.");
+    expect(STEP_TEXT.done.title).toBe("Ready to start");
+    expect(START_LABEL).toBe("Start");
+    // Start lands on the status line under the heading, which `tagline()` words without the name (the first test
+    // here), never on the heading itself: "Ember, heading level 1".
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    expect(page).toContain('<p id="tagline" role="status" tabindex="-1">Starting…</p>');
+    const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    const started = /if \(started\) \{\n([^]*?)\n {2}\}\n/.exec(main)?.[1] ?? "";
+    expect(started).toContain('$("tagline").focus({ preventScroll: true });');
+    expect(started).not.toContain('$("home-h")');
+  });
+
+  it("lands on the hello step's lead, not its title “Hi, I'm Ember.”, when Back reaches it after the consent is agreed (first-run-r6-1)", () => {
+    // A returning user who agreed again is heard from then on, and Back twice from the sign-in step moved focus to the
+    // title that ends in the name: the lead read after it would be taken as the request.
+    expect(named([`${STEP_TEXT.hello.title}, heading level 2`])).toHaveLength(1);
+    expect(stepLanding("hello", true)).toBe("w-lead");
+    expect(named([STEP_TEXT.hello.lead])).toEqual([]);
+    // Before any agreement nothing is heard, and every other step's title has no name (the test above).
+    expect(stepLanding("hello", false)).toBe("w-title");
+    for (const step of [...WELCOME_STEPS, "character", "about", "provider"] as const) if (step !== "hello") for (const consented of [true, false]) expect(stepLanding(step, consented), step).toBe("w-title");
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    expect(page).toContain('<p class="w-lead" id="w-lead" tabindex="-1"></p>');
+    const go = /function go\(to: WelcomeStep\): void \{\n([^]*?)\n {2}\}\n/.exec(readFileSync(new URL("../../app/renderer/home/welcome.ts", import.meta.url), "utf8"))?.[1] ?? "";
+    expect(go).toContain("$(stepLanding(step, consented())).focus({ preventScroll: true });");
   });
 });

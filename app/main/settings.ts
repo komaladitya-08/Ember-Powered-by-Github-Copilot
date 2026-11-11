@@ -644,18 +644,21 @@ export class SettingsStore {
     }
     // Keep what is valid (down to single entries), reset only what isn't; from a file that can't be
     // read at all, at least the never-look list.
+    let whole: string | null = null;
     if (parsed.success) this.current = parsed.data;
     else if (json && typeof json === "object" && !Array.isArray(json)) this.current = repairSettings(json as Record<string, unknown>);
     else {
       const neverLook = salvageNeverLook(raw);
       this.current = neverLook ? { ...DEFAULT_SETTINGS, privacy: { neverLook } } : DEFAULT_SETTINGS;
+      // Nothing else could be kept, the welcome and what was agreed included: say that, not "some" (reliability-r7-3).
+      whole = neverLook ? "every setting but your never-look list" : "every setting";
     }
     const backup = this.keep();
     // A full disk must not stop Ember starting: the repaired settings are used from memory.
     try { this.save(this.current); } catch { /* kept in memory; saved with the next change */ }
     this.problem(parsed.success
       ? `settings.json had a small mistake (a comma or comment JSON doesn't allow); Ember read it anyway and tidied the file${backup ? ` (your version is saved as ${path.basename(backup)})` : ""}.`
-      : `Some of settings.json couldn't be used, so those settings went back to their defaults${backup ? `; your version is saved as ${path.basename(backup)}` : ""}.`);
+      : `${whole ? `settings.json couldn't be read, so ${whole} went back to its default and Ember asks you to set it up again` : "Some of settings.json couldn't be used, so those settings went back to their defaults"}${backup ? `; your version is saved as ${path.basename(backup)}` : ""}.`);
     return { settings: this.current, recoveredFrom: backup ?? undefined };
   }
 

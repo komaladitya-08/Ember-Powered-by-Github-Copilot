@@ -1,7 +1,7 @@
 /**
  * First run in the settings window (`#welcome`): Ember introduces itself, optional character choice, the consent is
  * agreed (the gate: nothing is read, heard or sent before it, M8.8), GitHub is signed in to, the computer is checked,
- * the stop shortcut, "Hey Ember" and a first request are tried for real, and "Your Ember" sums it up before Start.
+ * the stop shortcut, "Hey Ember" and a first request are tried for real, and "Ready to start" sums it up before Start.
  * One decision a step, a still step indicator, Back on every step after the first, and a reason beside any button
  * that can't be pressed yet (UI audit #7). The words and decisions are in welcome-copy.ts; this module only applies
  * them. It borrows two of the page's own parts while it runs, the character canvas and the character cards, and puts
@@ -21,11 +21,11 @@ import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
 import { noteProviderChoice, onProviderChoice, providerChoice } from "./provider-choice";
 import {
-  ACTION_LABEL, failureView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices, type FailureAction,
+  ACTION_LABEL, failureView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerModelMissing, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
-  DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepPosition, summaryRows, voiceTry, type WelcomeStep,
+  DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepLanding, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
 /** What the settings window lends the welcome. */
@@ -88,7 +88,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let switchedSaid = false;
   let voice: VoiceStatus | null = null;
   let signingIn = false;
-  let signInMessage: { text: string; tone: string } | null = null;
+  /** `github`: what a GitHub sign-in said, which says nothing about the user's own provider once that is in use (first-run-c7-3). */
+  let signInMessage: { text: string; tone: string; github?: boolean } | null = null;
   let saving = false;
   let navigation = 0;
   /** The page main offers while it waits for a sign-in made elsewhere ("Open cli.github.com"), or null. */
@@ -165,6 +166,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     void readOwn();
     root.hidden = false;
     render();
+    // The step it opens on is read from its title too, not left to the page (first-run-r7-3): once the page shows (it
+    // is hidden while it loads, and takes no focus then), and only while nothing else has the focus.
+    setTimeout(() => { if (active && document.activeElement === document.body) $(stepLanding(step, consented())).focus({ preventScroll: true }); }, 0);
     // Ember lands, then greets: one happy hop (none in Calm, where the rig holds still).
     setTimeout(() => { if (active) deps.arrived(); }, 600);
   }
@@ -204,7 +208,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (step === "try") heardBefore = -1;
     render();
     window.scrollTo({ top: 0, behavior: "auto" });
-    $("w-title").focus({ preventScroll: true });
+    $(stepLanding(step, consented())).focus({ preventScroll: true });
   }
 
   // ───── Drawing the step ─────
@@ -310,8 +314,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     }
     if (signingIn || v.primary !== "sign-in") switchedSaid = false;
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
-    const detail = signInMessage?.text ?? (agent?.phase === "error" && !signingIn ? agent.detail : switchedSaid ? switchedLine(agent?.signInWith) : v.line);
-    line.className = `w-status ${signInMessage?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
+    // A GitHub sign-in's outcome isn't the line under "Your own model provider": it is kept for Copilot's step (first-run-c7-3).
+    const said = signInMessage?.github && ownInUse() && !signingIn ? null : signInMessage;
+    const detail = said?.text ?? (agent?.phase === "error" && !signingIn ? agent.detail : switchedSaid ? switchedLine(agent?.signInWith) : v.line);
+    line.className = `w-status ${said?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
     $("w-signin-later").hidden = v.primary === "continue" && !v.why;
     // The user's own provider has nothing to sign in to, later or now (first-run-1).
     $("w-signin-later").textContent = ownInUse() ? SKIP_OWN : SKIP_SIGN_IN;
@@ -459,7 +465,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
    * provider in use as the step opened, the details typed are asked first, as they are, and saved only once they
    * answer (`kept`: the host still in use after a check that failed).
    */
-  const checkProvider = latestOnly<{ epoch: number; result: ProviderTest; kept?: string }>(
+  const checkProvider = latestOnly<{ epoch: number; result: ProviderTest; kept?: string; field?: "conductor" | "worker" }>(
     async () => {
       const epoch = checkEpoch;
       const mine = ++checkRun;
@@ -476,6 +482,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
         const tried = await api.test({ type: f.type, baseUrl: f.baseUrl, host, ...(f.key.trim() ? { key: f.key } : {}) });
         if (epoch !== checkEpoch) return { epoch, result: { ok: false, why: "" } };
         if (!tried.ok) return { epoch, result: tried, kept: keep };
+        // It answers, but doesn't list a model named here: nothing is adopted (first-run-c7-1).
+        const absent = providerModelMissing(tried, f);
+        if (absent) return { epoch, result: { ok: false, why: absent.line }, kept: keep, field: absent.field };
         // It answers: adopted whole (moments, not a network wait), unless a choice made since (“Use GitHub Copilot
         // instead”, or Home's own) owns the provider now. The details go with the card's yes for their host in one
         // change, so the provider in use never leaves force for Copilot between, then a typed key for it, as Home's
@@ -512,6 +521,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (!agreed.ok) return { epoch, result: { ok: false, why: agreed.why } };
       const tested = await api.test();
       if (abandoned()) return dropped();
+      // It answers, but doesn't list a model named here: the check fails on that field, as the first request would
+      // ("That model isn't available."), and says what is listed (first-run-c7-1).
+      const absent = tested.ok ? providerModelMissing(tested, f) : null;
+      if (absent) return { epoch, result: { ok: false, why: absent.line }, field: absent.field };
       return { epoch, result: tested };
     },
     r => {
@@ -519,19 +532,20 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (!active || step !== "provider") return;
       if (!r.ok) { if (providerCheck.phase === "checking") finishCheck(false, "I couldn't check the provider. Try again."); return; }
       if (r.value.epoch !== checkEpoch) return;
-      const { result, kept } = r.value;
+      const { result, kept, field } = r.value;
       const line = providerCheckLine(result);
-      finishCheck(result.ok, !result.ok && kept ? providerKeptLine(line, kept) : line, result.ok ? undefined : providerFailField(result), result.ok ? undefined : kept);
+      finishCheck(result.ok, !result.ok && kept ? providerKeptLine(line, kept) : line, result.ok ? undefined : field ?? providerFailField(result), result.ok ? undefined : kept);
     },
   );
-  function finishCheck(ok: boolean, line: string, field: "address" | "key" = "key", kept?: string): void {
+  function finishCheck(ok: boolean, line: string, field: "address" | "key" | "conductor" | "worker" = "key", kept?: string): void {
     providerCheck = { phase: ok ? "ok" : "failed", line, ...(kept ? { kept } : {}) };
     // Not verified: nothing stays pointed at a service that didn't answer. One in use as the step opened is left as it
     // was: its edit was checked before it replaced anything (first-run-r2-1); one this check turned on goes (first-run-r3-1).
     if (!ok && checkSaves) void turnOwnOff();
     render();
-    // The field the failure names takes the focus: the address when nothing answered there (first-run-r2-1).
-    if (!ok) provField(field === "address" ? "w-p-url" : "w-p-key").focus(); else next.focus();
+    // The field the failure names takes the focus: the address when nothing answered there (first-run-r2-1), the model
+    // name the service doesn't list (first-run-c7-1).
+    if (!ok) provField(field === "address" ? "w-p-url" : `w-p-${field}`).focus(); else next.focus();
   }
   /**
    * Puts the user's own provider away. `force`: also when the page's copy of the settings doesn't show it on yet (the
@@ -791,9 +805,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     chord("ask", "w-ask-keys");
     mark("w-try-stop", tried.stop, tried.stop ? TRY_TEXT.stop.done : stopHeld ? TRY_TEXT.stop.ask : TRY_TEXT.stop.fallback);
     const vs = voiceState();
-    $("w-try-voice").hidden = vs === "off";
-    $("w-voice-later").hidden = vs !== "off";
-    $("w-voice-later").textContent = TRY_TEXT.voiceLater;
+    $("w-try-voice").hidden = vs === "off" || vs === "no-models";
+    $("w-voice-later").hidden = !$("w-try-voice").hidden;
+    $("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : TRY_TEXT.voiceLater;
     mark("w-try-voice", tried.voice, tried.voice ? TRY_TEXT.voice.done : vs === "listening" ? TRY_TEXT.voice.ask : TRY_TEXT.voiceWaiting);
     $("w-meter").classList.toggle("off", vs !== "listening");
     // (While Ember finishes before it moves to Copilot, there is no sign-in to do yet: first-run-v4-1.)
@@ -918,7 +932,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     next.focus();
     window.ember.signIn().catch(err => {
       signingIn = false;
-      signInMessage = { text: ipcErrorText(err), tone: "error" };
+      signInMessage = { text: ipcErrorText(err), tone: "error", github: true };
       render();
       leaveAlt();
     });
@@ -935,7 +949,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     waitLink = null;
     $("w-code").replaceChildren();
     // Main's sign-in words, as mine (first-run-r4-2).
-    signInMessage = p.message ? { text: inMyVoice(p.message), tone: p.state === "error" || p.state === "unavailable" ? "error" : "warn" } : null;
+    signInMessage = p.message ? { text: inMyVoice(p.message), tone: p.state === "error" || p.state === "unavailable" ? "error" : "warn", github: true } : null;
     render();
     // Signed in: Continue takes focus, so the next step is one key away.
     if (p.state === "done" && step === "sign-in") next.focus();

@@ -37,12 +37,14 @@ export function conversationTurnOf(value: unknown): ConversationTurn | null {
 
 /**
  * How the turn Home was told of ended, when a Stop ended it (home-c2-2): "stopped" by the conversation's Stop (Home's
- * Stop response, the bubble's Stop, New conversation), "stopped-everything" by the kill switch. Any other end has none:
- * Home says what the lines that came since its request show, which main sends before the turn's end (home-r2-1).
+ * Stop response, the bubble's Stop, New conversation), "stopped-everything" by the kill switch. "read-out": the request
+ * asked for the last answer aloud and Ember is reading it out, with no line written and no turn of the model's, which
+ * Home's composer would otherwise wait for for good (voice-speaking-x7-2). Any other end has none: Home says what the
+ * lines that came since its request show, which main sends before the turn's end (home-r2-1).
  */
-export type ConversationTurnEnd = "stopped" | "stopped-everything";
+export type ConversationTurnEnd = "stopped" | "stopped-everything" | "read-out";
 
-/** The conversation's turn as main pushes it to Home: its state, and with "idle" how a Stop ended it. */
+/** The conversation's turn as main pushes it to Home: its state, and with "idle" how a Stop or a reading out ended it. */
 export interface ConversationTurnChange { turn: ConversationTurn; ended?: ConversationTurnEnd }
 
 /** A turn change as main pushes it (or a bare state, as Home's conversationTurn() answers), or null for anything else. */
@@ -53,7 +55,7 @@ export function conversationTurnChangeOf(value: unknown): ConversationTurnChange
   const v = value as { turn?: unknown; ended?: unknown };
   const turn = conversationTurnOf(v.turn);
   if (!turn) return null;
-  return turn === "idle" && (v.ended === "stopped" || v.ended === "stopped-everything") ? { turn, ended: v.ended } : { turn };
+  return turn === "idle" && (v.ended === "stopped" || v.ended === "stopped-everything" || v.ended === "read-out") ? { turn, ended: v.ended } : { turn };
 }
 
 /**

@@ -22,7 +22,7 @@ import { mountAboutYou } from "./about-you";
 import { mountReminders } from "./reminders";
 import { dismissForgetConfirms, mountForgetConfirms } from "./forget-confirm";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
+import { MATCH_TEXT, matchAnnouncement, matchRefusalHolds, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { AGREE_ARM_MS } from "../../shared/provider";
@@ -50,12 +50,12 @@ import { keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOf
 import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { holdTaskNews, startTasks } from "./tasks";
-import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
+import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnLine } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { problemInHome, PROBLEM_SETTINGS, composerCount, composerGivenBack, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
-import { composerEditAgain, composerEditCancelled, composerLineFits } from "./copy";
+import { problemInHome, PROBLEM_SETTINGS, composerCount, composerDraftBack, composerGivenBack, composerLineBase, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, LISTEN_CONSENT_NOT_SAVED, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { composerEditAgain, composerEditCancelled, composerLineConnected, composerLineDisconnected, composerLineFits, STATUS_FAILED } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
 import { mountForgotUndo, mountLearnedUndo } from "./learned-undo";
@@ -195,8 +195,10 @@ function applySettings(s: Settings): void {
   if ($("handle-corner").textContent !== corner) $("handle-corner").textContent = corner;
   if (presence) renderPresence(presence);
   // First run (or changed terms): its steps come first, the consent among them (welcome.ts); everything else waits
-  // until Ember has started. Start pressed here: focus moves to the top of the settings, and Ember says it started
-  // (review #50), rather than dropping to the page.
+  // until Ember has started. Start pressed here: focus moves to the top of the settings, and Home says setup is
+  // finished (review #50), rather than dropping to the page. It lands on the status line, worded without the name,
+  // never on the "Ember" heading: “Hey Ember” may listen by now, and a screen reader's "Ember, heading" calls it
+  // (first-run-r6-1).
   const started = welcome.settings(s);
   document.body.classList.toggle("first-run", !s.onboarded);
   document.body.classList.remove("loading");
@@ -207,7 +209,7 @@ function applySettings(s: Settings): void {
     $("home-live").textContent = STARTED_TEXT;
     showPane("home");
     window.scrollTo({ top: 0 });
-    $("home-h").focus({ preventScroll: true });
+    $("tagline").focus({ preventScroll: true });
   }
   renderStatus();
 }
@@ -256,11 +258,15 @@ const waitingFor = (): string | null => {
   return agent?.phase === "signed-out" && own.on ? own.card : null;
 };
 let failing = 0;
+/** Home's first status never arrived, after every retry (startStatus): said, with Try again, until one does (home-r7-2). */
+let statusFailed = false;
 /** Setup rows that don't fail but need the user: the status panel's link under the tagline names them (it opens the pane). */
 let toLook = 0;
 /** Setup rows that hold Ember back (failing, or it can't read or use apps): to fix, as first run says (first-run-5). */
 let toFix = 0;
 function renderTagline(): void {
+  // Every try to read the first status failed: that is what the caption says until Try again (home-r7-2).
+  if (statusFailed) { if ($("tagline").textContent !== STATUS_FAILED) $("tagline").textContent = STATUS_FAILED; return; }
   // The tagline leaves the rows worth a look to the link under it, which goes to them (owner review).
   const text = tagline({
     failing, look: 0, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
@@ -284,20 +290,18 @@ function renderStatus(): void {
   setText("state-word", s.word);
   $("ring").dataset.ring = s.ring;
   $("state-word").dataset.ring = s.ring;
-  const v = voice?.state;
-  const listening = !!settings?.wakeWord && !!settings?.voice.consent;
-  setText("whats-on", whatsOnText({
-    voice: !listening ? "off" : v === "muted" ? "muted" : "listening",
+  // What is in force, not what the switches ask for: policy, a lockdown and the microphone's real state (home-r6-1).
+  setText("whats-on", whatsOnLine({
+    settings, admin: lastAdmin, mic: voice?.state ?? null,
     memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner, memoryTrouble),
-    commands: Object.values(settings?.commands ?? {}).filter(c => c?.on).length,
-    computers: settings?.targets.hosts.length ?? 0,
-    wsl: !!settings?.targets.wsl.on,
   }));
   setText("today", todaySummary(tasksNow, today));
   // Copilot not connected: connecting it is the one prominent action here, and Ask steps back.
   const notConnected = (agent?.phase === "signed-out" || agent?.phase === "error") && agent?.waitingForTasks !== true;
   // Locked down, connecting can't help (safety-privacy-4): no Connect button.
   $("p-connect").hidden = !notConnected || locked;
+  // Held locked until a restart, the way on is here too, not only in the bubble (home-r7-3).
+  $("p-restart").hidden = !lastAdmin?.held;
   setText("p-connect", connectLabel(agent?.service?.kind, !!waitingFor(), runtimeState(agent)));
   $("p-ask").classList.toggle("quiet", notConnected);
   $("p-waiting").hidden = !asking;
@@ -310,6 +314,7 @@ $("p-setup").addEventListener("click", () => showSection("checks"));
 $("p-write").addEventListener("click", () => showSection("conversation:message"));
 $("p-tasks").addEventListener("click", () => showSection("tasks"));
 $("p-connect").addEventListener("click", () => showSection("copilot"));
+$("p-restart").addEventListener("click", () => { void window.ember.restart(); });
 // Home opens the exact live approval in its own focusable window; main owns question identity and authority.
 const openApproval = () => { void window.ember.openApproval(); };
 $("p-waiting").addEventListener("click", openApproval);
@@ -458,6 +463,7 @@ function render(status: Status): void {
   // A policy main sent since this status was read is the newer: the held lockdown lasts until a restart.
   if (pushedAdmin) status = { ...status, admin: pushedAdmin };
   statusNow = status;
+  if (statusFailed) { statusFailed = false; $("p-retry").hidden = true; }
   renderPlatform(status.platform);
   renderChecks(status.environment);
   renderAdmin(status.admin);
@@ -892,6 +898,10 @@ function renderTaskReasoning(): void {
 const projectReady = mountProject();
 function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
+  // Connected again after a send was refused for want of a connection: its reason no longer holds (reliability-c7-2).
+  if (a.phase === "ready" && agent && agent.phase !== "ready") composerConnected();
+  // And dropped again while the line says "Connected again… send it now.": that no longer holds either (reliability-x7-1).
+  if (a.phase !== "ready" && agent?.phase === "ready") composerDisconnected();
   agent = a;
   projectReady(a.phase === "ready", a.service?.host ?? "GitHub Copilot", a.conductorModel);
   const had = document.activeElement;
@@ -1095,10 +1105,22 @@ function loadStatus(): Promise<Status> {
 }
 function startStatus(attempt = 0): void {
   loadStatus().then(render, () => {
-    if (attempt < STATUS_RETRIES) setTimeout(() => startStatus(attempt + 1), STATUS_RETRY_MS * (attempt + 1));
+    if (attempt < STATUS_RETRIES) { setTimeout(() => startStatus(attempt + 1), STATUS_RETRY_MS * (attempt + 1)); return; }
+    // The last try failed: say so and offer another, instead of the defaults for good with no word (home-r7-2).
+    if (statusNow) return;
+    statusFailed = true;
+    $("p-retry").hidden = false;
+    renderTagline();
   });
 }
 startStatus();
+$("p-retry").addEventListener("click", () => {
+  statusFailed = false;
+  $("p-retry").hidden = true;
+  $("tagline").textContent = "Starting…";
+  $("home-h").focus({ preventScroll: true });
+  startStatus();
+});
 window.ember.onSettingsChanged(s => statusFence.pushedSettings(s));
 window.ember.onSettingsChanged(applySettings);
 // Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
@@ -1120,6 +1142,19 @@ let shownConversation: Entry[] = [];
 const conversationMessage = $("conversation-message") as HTMLTextAreaElement;
 const conversationSearch = $("conversation-search") as HTMLInputElement;
 const conversationComposeStatus = $("conversation-compose-status");
+/** The reason the last refused send gave, while the composer's line may still say it (reliability-c7-2). */
+let conversationRefused: string | null = null;
+/** Ember is connected again: a refused send's reason still on the composer's line becomes that the message can go now. */
+function composerConnected(): void {
+  const next = composerLineConnected(conversationComposeStatus.textContent ?? "", conversationRefused, !!conversationMessage.value.trim());
+  conversationRefused = null;
+  if (next !== null) keepingComposer(() => { conversationComposeStatus.textContent = next; });
+}
+/** Ember is no longer connected: "Connected again… send it now." goes from the composer's line. */
+function composerDisconnected(): void {
+  const next = composerLineDisconnected(conversationComposeStatus.textContent ?? "");
+  if (next !== null) keepingComposer(() => { conversationComposeStatus.textContent = next; });
+}
 let conversationAwaitingReply = false;
 /**
  * Whether the conversation answers a request now, as main says (home-c1-1): from the composer, the Ask box or voice.
@@ -1150,7 +1185,8 @@ function endComposerWait(): void {
   const said = since.filter(e => e.who === "ember" || e.who === "problem").at(-1);
   // A Stop that ended it left no line to read it from (the bubble's own Stop: home-c2-2).
   const stopped = conversationTurnEnded === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : conversationTurnEnded === "stopped" ? CONVERSATION_STOPPED : null;
-  const words = stopped ? stoppedLine(stopped)
+  // (Read out: Ember says its last answer aloud and writes no line: voice-speaking-x7-2.)
+  const words = stopped ? stoppedLine(stopped) : conversationTurnEnded === "read-out" ? COMPOSER_SAYS.readOut
     : said?.who === "problem" ? problemSaid(since) : said?.stopped ? COMPOSER_SAYS.replyStopped : said ? COMPOSER_SAYS.replied : COMPOSER_SAYS.noReply;
   if (stopped) conversationStopTold = words;
   keepingComposer(() => { conversationComposeStatus.textContent = words; });
@@ -1214,7 +1250,7 @@ function conversationTurn(value: unknown): void {
     // switch of model service, it says so until it is sent (home-r4-4).
     if (turn === "slow" && !answerStream.row) keepingComposer(() => { conversationComposeStatus.textContent = waiting; });
     else if (turn === "held") keepingComposer(() => { conversationComposeStatus.textContent = COMPOSER_HELD; });
-    else if (turn === "thinking" && (conversationComposeStatus.textContent === waiting || conversationComposeStatus.textContent === COMPOSER_HELD)) conversationComposeStatus.textContent = COMPOSER_THINKING;
+    else if (turn === "thinking" && [waiting, COMPOSER_HELD].includes(composerLineBase(conversationComposeStatus.textContent ?? ""))) conversationComposeStatus.textContent = COMPOSER_THINKING;
   } else if (!conversationAwaitingReply) {
     // A request from the Ask box or by voice that the bubble says is still waiting: the line under Stop response (where
     // the settings key lands then) says so, not an older message's outcome, and goes once the wait does (home-r2-3). A
@@ -1227,7 +1263,7 @@ function conversationTurn(value: unknown): void {
     // Nothing waits in main now. With no Stop, every message it took has its line, or never will (home-v4-1); a Stop
     // dropped those still without one, given back though the composer waited for none of them (a later send was
     // refused: home-v4-2).
-    if (!change.ended) conversationUnsent = conversationUnsent.filter(u => !u.taken);
+    if (!change.ended || change.ended === "read-out") conversationUnsent = conversationUnsent.filter(u => !u.taken);
     else if (conversationUnsent.some(u => u.taken)) keepingComposer(() => { conversationComposeStatus.textContent = conversationStopTold = stoppedLine(change.ended === "stopped-everything" ? COMPOSER_SAYS.stoppedAll : CONVERSATION_STOPPED); });
   }
   renderStatus();
@@ -1258,6 +1294,8 @@ let conversationGivenBack: string | null = null;
  */
 let conversationStopTold: string | null = null;
 let conversationDraftBeforeEdit: string | null = null;
+/** Which edit is open: counted up as each begins, so a send's answer knows whether the edit it was sent from is still the one open (home-c7-2). */
+let conversationEditSeq = 0;
 /**
  * Words a Stop gave back while Edit was open, followed through each change the person makes to the field: Cancel edit
  * keeps them as the person left them (home-r4-1, home-v5-1), and never what they typed into the request (home-w5-1).
@@ -1333,7 +1371,7 @@ function conversationRow(e: Entry): HTMLLIElement {
     edit.setAttribute("aria-label", `Edit your message from ${when} as a new request`);
     edit.addEventListener("click", () => {
       // Editing has no IPC side effect: Send is a new, deliberate typed request, never a tool/voice/suggestion replay.
-      if (conversationDraftBeforeEdit === null) conversationDraftBeforeEdit = conversationMessage.value;
+      if (conversationDraftBeforeEdit === null) { conversationDraftBeforeEdit = conversationMessage.value; conversationEditSeq++; }
       // Words a Stop gave back above an earlier edit stay above this request, as the person left them, still words given
       // back: Cancel edit counts them, names them and judges them with that draft, never folded into it (home-w5-3).
       const given = followGivenBack();
@@ -1547,7 +1585,7 @@ window.ember.onConversationStream(e => {
   keepingComposer(() => syncStreamRow($("conversation")));
   // Written to at last: no longer a wait (the reply, or what stopped it, says the rest). The composer's own request is
   // thinking still; another's wait goes with the turn's next word (home-c3-1).
-  if (conversationAwaitingReply && answerStream.row && conversationComposeStatus.textContent === composerStillWaiting(agent?.service?.kind)) conversationComposeStatus.textContent = COMPOSER_THINKING;
+  if (conversationAwaitingReply && answerStream.row && composerLineBase(conversationComposeStatus.textContent ?? "") === composerStillWaiting(agent?.service?.kind)) conversationComposeStatus.textContent = COMPOSER_THINKING;
 });
 /** New conversation asks first while there are messages to clear (home-9): Keep, or Escape, leaves them be. */
 const newConfirm = $("conversation-new-confirm");
@@ -1604,6 +1642,8 @@ $("conversation-compose").addEventListener("submit", event => {
   const generation = conversationGeneration;
   // Kept from now, so its own line coming before main answers the send still takes it off (home-v4-1).
   const unsent: Unsent = { text, taken: false };
+  // The edit this request is sent from, if one is open (home-c5-1, home-c7-2).
+  const edit = conversationDraftBeforeEdit !== null ? conversationEditSeq : null;
   conversationUnsent.push(unsent);
   conversationSending = unsent;
   // Each of the line's words while the send goes is brought into view under the buttons, where they push it (home-c3-2).
@@ -1612,11 +1652,22 @@ $("conversation-compose").addEventListener("submit", event => {
     if (generation !== conversationGeneration) return;
     if (conversationSending === unsent) conversationSending = null;
     // Preserve any edits made while the acknowledgement was pending (and words a Stop gave back in its place: home-r4-2).
-    if (conversationMessage.value === text && !unsent.displaced) conversationMessage.value = "";
-    syncComposerCount();
-    conversationDraftBeforeEdit = null;
-    conversationEditGivenBack = null;
-    $("conversation-cancel-edit").hidden = true;
+    const cleared = conversationMessage.value === text && !unsent.displaced;
+    if (cleared) conversationMessage.value = "";
+    // The edited request went: the draft Edit set aside comes back, and the line says so (home-c5-1). Only this send's
+    // own edit ends with it: one opened while it was on its way keeps its Cancel edit, and so does one whose field holds
+    // something else by now (home-c7-2).
+    let restored = false;
+    if (edit !== null && edit === conversationEditSeq && conversationDraftBeforeEdit !== null) {
+      if (cleared) {
+        if (conversationDraftBeforeEdit.trim()) { conversationMessage.value = conversationDraftBeforeEdit; restored = true; }
+        conversationDraftBeforeEdit = null;
+        conversationEditGivenBack = null;
+        $("conversation-cancel-edit").hidden = true;
+      }
+    } else if (conversationDraftBeforeEdit === text) conversationDraftBeforeEdit = ""; // Sent: no longer a draft for Cancel edit to bring back.
+    syncComposerCount(restored);
+    const say = (line: string) => (restored ? composerDraftBack(line) : line);
     // A typed "stop" stopped everything at once: no turn comes, so nothing is awaited (home-c1-1). Its stop was told
     // already (onStopped), words given back with it: said once, and kept (home-r4-2, home-r4-3).
     if (sent === "stopped") {
@@ -1630,11 +1681,11 @@ $("conversation-compose").addEventListener("submit", event => {
     }
     // Main has it: given back if a Stop drops it before its line comes (home-r3-1), whichever send the composer waits for.
     unsent.taken = true;
-    if (!conversationAwaitingReply) return;
+    if (!conversationAwaitingReply) { if (restored) keepingComposer(() => { conversationComposeStatus.textContent = say(conversationComposeStatus.textContent ?? ""); }); return; }
     conversationSendTaken = true;
     // Main answers already (this request, or one before it that it waits behind): its end is this one's too.
     if (conversationTurnNow !== "idle") conversationTurnSeen = true;
-    keepingComposer(() => { conversationComposeStatus.textContent = conversationTurnNow === "slow" && !answerStream.row ? composerStillWaiting(agent?.service?.kind) : conversationTurnNow === "held" ? COMPOSER_HELD : COMPOSER_THINKING; });
+    keepingComposer(() => { conversationComposeStatus.textContent = say(conversationTurnNow === "slow" && !answerStream.row ? composerStillWaiting(agent?.service?.kind) : conversationTurnNow === "held" ? COMPOSER_HELD : COMPOSER_THINKING); });
     endComposerWait();
   }, error => {
     if (generation !== conversationGeneration) return;
@@ -1649,7 +1700,7 @@ $("conversation-compose").addEventListener("submit", event => {
       syncComposerCount(true);
     }
     awaitingReply(false);
-    keepingComposer(() => { conversationComposeStatus.textContent = ipcErrorText(error) || COMPOSER_SAYS.sendFailed; });
+    keepingComposer(() => { conversationComposeStatus.textContent = conversationRefused = ipcErrorText(error) || COMPOSER_SAYS.sendFailed; });
   }).finally(() => { if (generation === conversationGeneration) { send.removeAttribute("aria-disabled"); send.textContent = "Send"; } });
 });
 $("conversation-cancel-edit").addEventListener("click", () => {
@@ -1759,13 +1810,13 @@ memorySource.replaceChildren(...["", ...MEMORY_SOURCES].map(source => Object.ass
 $("memory-more").textContent = MEMORY_SHOW_MORE;
 const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
   key: row => row.id,
-  empty: () => memoryQuery.value.trim() || memorySource.value ? MEMORY_NO_MATCHES : memoryEmptyText(memoryOn()),
+  empty: () => memoryQuery.value.trim() || memorySource.value ? MEMORY_NO_MATCHES : memoryEmptyText(memoryOn(), memoryTrouble),
   fallback: memoryRest,
   create: read => {
     const row = read();
     const li = document.createElement("li");
     const fact = Object.assign(document.createElement("span"), { className: "mem-fact" });
-    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memoryProvenanceLabel(row.source, row.correctedAt, row.kind) }));
+    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memoryProvenanceLabel(row.source, row.correctedAt, row.kind, row.until) }));
     const button = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
     button.setAttribute("aria-label", forgetMemoryLabel(row.text));
     button.dataset.memoryForget = "";
@@ -1780,16 +1831,27 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
     });
     const correct = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: MEMORY_CORRECTION.correct });
     correct.dataset.memoryCorrect = row.id;
-    correct.addEventListener("click", () => memoryCorrection.open(read()));
+    // What is no longer true can be forgotten, never corrected: a correction is for what holds now (memory-c7-2).
+    correct.hidden = !!row.until;
+    correct.addEventListener("click", () => {
+      if (read().until) return;
+      // An earlier Forget's failure is about that Forget, not this (memory-r7-4).
+      $("memory-error").textContent = "";
+      memoryCorrection.open(read());
+    });
     const actions = Object.assign(document.createElement("div"), { className: "agent-actions" });
     actions.append(button, correct); li.append(fact, actions);
     return li;
   },
   update: (li, row) => {
     li.querySelector<HTMLElement>(".mem-fact > span")!.textContent = row.text;
-    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt, row.kind);
+    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt, row.kind, row.until);
     li.querySelector<HTMLElement>("[data-memory-forget]")!.setAttribute("aria-label", forgetMemoryLabel(row.text));
-    li.querySelector<HTMLElement>("[data-memory-correct]")!.setAttribute("aria-label", correctMemoryLabel(row.text));
+    const correct = li.querySelector<HTMLElement>("[data-memory-correct]")!;
+    correct.setAttribute("aria-label", correctMemoryLabel(row.text));
+    // Replaced while its Correct… had focus: focus goes to the row's Forget, never to the page.
+    if (row.until && !correct.hidden && document.activeElement === correct) li.querySelector<HTMLElement>("[data-memory-forget]")!.focus();
+    correct.hidden = !!row.until;
   },
 });
 function renderMemory(rows: MemoryRow[]): void {
@@ -1836,7 +1898,8 @@ function renderMemory(rows: MemoryRow[]): void {
   const ownerText = memoryOwnerText(memoryReason, memoryOwner === "locked");
   $("memory-owner").textContent = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn()) ? "" : ownerText;
   // Tell Ember about you can't keep answers then: it says why instead of its questions.
-  aboutYou.owner(memoryOwner === "ready" || !memoryOn() ? null : ownerText);
+  // Nor while memory.json can't be read: nothing new is kept until Ember starts again (memory-r7-1).
+  aboutYou.owner(!memoryOn() ? null : memoryOwner !== "ready" ? ownerText : memoryTrouble === "unreadable" ? memoryTroubleText("unreadable") : null);
   // First run's "Tell me about you" too, and before memory is on while a model service keeps it paused (memory-c1-2).
   const provider = memoryReason === "own-provider" || memoryReason === "org-provider";
   welcome.memoryOwner(memoryOwner === "ready" || (!memoryOn() && !provider) ? null : ownerText);
@@ -1968,6 +2031,8 @@ async function deleteMemory(button: HTMLButtonElement, remove: () => Promise<unk
   catch (err) { $("memory-error").textContent = memoryDeleteFailedText(err); }
   finally { button.removeAttribute("aria-disabled"); }
 }
+// Forget everything's question opens: an earlier Forget's failure is no longer what is being asked about (memory-r7-4).
+$("memory-forget-all").addEventListener("click", () => { $("memory-error").textContent = ""; });
 window.ember.onSettingsChanged(applyMemorySettings);
 let receivedMemory = false;
 void window.ember.memory().then(view => { if (!receivedMemory) showMemory(view); });
@@ -2223,8 +2288,25 @@ function showPane(p: string, glide = false, remember = true): void {
     else a.removeAttribute("aria-current");
   }
   placeHighlight(glide);
+  showCurrentLink();
   // Home's characters draw only while they show (the observer sees them go).
   drawSoon();
+}
+/**
+ * In the narrow row of section links (it scrolls sideways), the link of the pane shown is brought into the row: a link
+ * in the page that opened a pane, or the window reopening on the pane it remembers, left the row on Home, Projects
+ * and the like with the current link and its badge off to the side (home-c7-1), as did links that show after the page
+ * has loaded (Computers, Commands: home-x7-1). The row alone scrolls, never the page.
+ */
+function showCurrentLink(): void {
+  const row = $("jump");
+  const a = jumpLinks.find(l => l.getAttribute("aria-current") === "true");
+  if (!a || row.scrollWidth <= row.clientWidth) return;
+  const r = row.getBoundingClientRect();
+  const l = a.getBoundingClientRect();
+  // 4 px to spare, as a focused link has for its ring (scroll-margin-inline).
+  if (l.left < r.left + 4) row.scrollLeft += l.left - r.left - 4;
+  else if (l.right > r.right - 4) row.scrollLeft += l.right - r.right + 4;
 }
 /**
  * The sidebar's selection: one highlight that glides to the link of the pane shown when the user picks it, and is put
@@ -2291,10 +2373,15 @@ const panesSeen = new MutationObserver(() => {
 });
 for (const s of document.querySelectorAll(".home > [data-pane]")) panesSeen.observe(s, { attributes: true, attributeFilter: ["hidden"] });
 // Links that show or step out later (Computers, Commands, a search) move the others, and a text size or window change
-// resizes them: the highlight follows at once.
-const linksMoved = new MutationObserver(() => placeHighlight(false));
+// resizes them: the highlight follows at once. A link that shows or steps out pushes the open pane's link along the
+// narrow row without resizing it, so that link is brought back in (home-x7-1: 186 px out once Computers and Commands
+// showed); a change of look alone leaves a row the person scrolled where they put it.
+const linksMoved = new MutationObserver(changes => {
+  placeHighlight(false);
+  if (changes.some(c => c.attributeName === "hidden")) showCurrentLink();
+});
 for (const a of jumpLinks) linksMoved.observe(a, { attributes: true, attributeFilter: ["hidden", "class"] });
-new ResizeObserver(() => placeHighlight(false)).observe($("jump"));
+new ResizeObserver(() => { placeHighlight(false); showCurrentLink(); }).observe($("jump"));
 
 // ───── Search settings: at the top of the sidebar, it narrows the panes to those that hold the words typed, and
 // Enter goes to the first setting found (System Settings' search, HIG/search-fields) ─────
@@ -2554,8 +2641,11 @@ const showListenOnce = mountListenOnce(
 );
 /** No voice spoke Ember's replies (main found it): said under the Speak switch, with a row in the setup check. */
 let speechMissing = false;
-/** Screen readers hear the voice line when it changes, and a download only every 25 %. */
-const voiceLive = (text: string) => { const live = $("voice-live"); if ((live.textContent || voiceTold) !== text) live.textContent = text; };
+/**
+ * Screen readers hear the voice line when it changes, and a download only every 25 %. `again`: a press asked, so its
+ * answer is written (and so said) even in the words the line holds (a second refused Teach, voice-listening-x7-2).
+ */
+const voiceLive = (text: string, again = false) => { const live = $("voice-live"); if (again || (live.textContent || voiceTold) !== text) live.textContent = text; };
 /** What `#voice-live` said before a window emptied it (below): the line it comes back to isn't said again. */
 let voiceTold = "";
 /**
@@ -2626,11 +2716,13 @@ function renderVoice(v: VoiceStatus): void {
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
   ($("voice-progress") as HTMLProgressElement).hidden = !downloading;
-  // Its Cancel, while it runs (voice-listening-6); when it goes with focus on it, focus goes back to Download.
+  // Its Cancel, while it runs (voice-listening-6); when it goes with focus on it, focus goes back to Download, or with
+  // every model in to Listen once: never to the switch, as listening starts then and a screen reader reading "Listen
+  // for “Hey Ember”, switch, on" into the wake word's microphone woke Ember (voice-listening-r7-2).
   const cancel = $("voice-download-cancel") as HTMLButtonElement;
   const hadCancel = document.activeElement === cancel;
   cancel.hidden = !downloading;
-  if (hadCancel && cancel.hidden) focusFirst(["voice-download", "wake"]);
+  if (hadCancel && cancel.hidden) focusFirst(["voice-download", "voice-listen-once", "wake"]);
   // The consent card says that agreeing downloads the models, and how much (modelsDownloadLabel's size).
   $("consent-models").hidden = !v.modelsMissing.length;
   $("consent-models-size").textContent = modelsSize(v.modelsMissing, v.modelsBytes);
@@ -2648,12 +2740,17 @@ let voiceLine = "";
 /** Voice Match as last drawn, and whether the user pressed Cancel since (for what is said when teaching ends). */
 let shownMatch: VoiceStatus["match"];
 let matchCancelled = false;
+/** Teach was pressed and refused: its line stays under the switch while that holds (match-copy.ts matchRefusalHolds). */
+let matchRefused = false;
 /** Draws Voice Match (match-copy.ts matchView) and returns what screen readers should hear, if anything. */
 function renderMatch(): string | null {
   const m = voice?.match;
   // Voice Match's model alone missing: its size, for the note that says to download it.
   const speakerBytes = voice?.modelsMissing.length === 1 && voice.modelsMissing[0] === "speaker" ? voice.modelsBytes : null;
-  const view = matchView(m, { listening: voiceSettings.wakeWord && voiceSettings.consent, managed: managed.has("wakeWord"), speakerBytes });
+  if (matchRefused && !matchRefusalHolds(voice?.state, m)) matchRefused = false;
+  const view = matchView(m, { listening: voiceSettings.wakeWord && voiceSettings.consent, managed: managed.has("wakeWord"), speakerBytes, refused: matchRefused });
+  // (Listening turned off hides the row: turned on again, it starts with where Voice Match stands.)
+  if (view.hidden) matchRefused = false;
   const group = $("match");
   // The control that has focus, if this draw hides or disables it: focus moves on (as after Download and the consent buttons).
   const had = document.activeElement instanceof HTMLElement && group.contains(document.activeElement) ? document.activeElement : null;
@@ -2671,6 +2768,8 @@ function renderMatch(): string | null {
   else bar.removeAttribute("aria-valuetext");
   $("match-teach").hidden = view.teach.hidden;
   $("match-teach").textContent = view.teach.label;
+  // Read with the button where focus is moved to it: without Ember's name, unlike the line shown (voice-listening-r6-2).
+  $("match-teach-said").textContent = view.teach.said;
   $("match-cancel").hidden = view.cancelHidden;
   $("match-forget").hidden = view.forgetHidden;
   // Keep learning my voice and Reset to my enrolment, once Voice Match knows the voice.
@@ -2682,9 +2781,10 @@ function renderMatch(): string | null {
   return view.hidden ? null : said;
 }
 const startEnrol = () => {
-  // Ember not listening just now: said where the switch's description is, and to screen readers. Otherwise focus
-  // moves to Cancel once the first phrase is shown (renderMatch).
-  void window.ember.enrolVoice().then(ok => { if (!ok) { $("match-text").textContent = MATCH_TEXT.notListening; voiceLive(MATCH_TEXT.notListening); } });
+  // Ember not listening just now: said where the switch's description is, and to screen readers, at every press, and
+  // kept there while it holds (voice-listening-x7-2). Otherwise focus moves to Cancel once the first phrase is shown
+  // (renderMatch).
+  void window.ember.enrolVoice().then(ok => { if (!ok) { matchRefused = true; $("match-text").textContent = MATCH_TEXT.notListening; voiceLive(MATCH_TEXT.notListening, true); } });
 };
 $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
@@ -2741,11 +2841,14 @@ $("consent-yes").addEventListener("click", () => {
     if (run !== consentRun) return; // closed meanwhile: nothing more to do here
     consentSaving = false;
     $("consent-yes").removeAttribute("aria-busy");
-    if (!ok) { consentError("Ember couldn't save your choice, so it isn't listening. Press “I agree, start listening” to try again."); $("consent-yes").focus(); return; }
+    if (!ok) { consentError(LISTEN_CONSENT_NOT_SAVED); $("consent-yes").focus(); return; }
     $("consent").hidden = true;
     // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
     if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
-    $("wake").focus();
+    // Listening starts now: focus goes to Listen once, the next control, whose name and line don't say Ember's name.
+    // On the switch, a screen reader read "Listen for “Hey Ember”, switch, on" as the microphone opened, which woke
+    // Ember in 20 of 20 real-model placements and sent "Switch on." in 18 (voice-listening-r7-2).
+    $("voice-listen-once").focus();
   });
 });
 $("consent-no").addEventListener("click", () => { consentClosed(); $("consent").hidden = true; $("wake").focus(); });

@@ -24,6 +24,8 @@ export interface PredictInput {
   lastReply: string;
   /** The reply was spoken aloud. */
   spoken: boolean;
+  /** Ember speaks replies now. False: "Read it out" isn't offered, since it couldn't be (voice-speaking-r6-1). */
+  speaks?: boolean;
   /** A task the request started, when one did, and how it went. */
   task?: { status: "done" | "failed" | "stopped" | "running"; app?: string } | null;
   /**
@@ -81,8 +83,8 @@ export function predictNext(p: PredictInput, risky: (words: string) => boolean):
   if (p.task?.status === "done" && /\b(this|the first|the top|the last|the next|that) (one|email|mail|message|file|page|row|item|document|photo|tab|line)\b/.test(req)) add("Do the same for the next one", false, true);
   // A failed task: why, in a word.
   if (p.task?.status === "failed") add("What went wrong?", false, true);
-  // An answer with something to it that wasn't said aloud.
-  if (!p.spoken && p.lastReply.trim().length > 60 && !asked) add("Read it out", false, true);
+  // An answer with something to it that wasn't said aloud, where Ember can say it.
+  if (!p.spoken && p.speaks !== false && p.lastReply.trim().length > 60 && !asked) add("Read it out", false, true);
   // Sending, only after the user's own words were about sending: to someone they told Ember about.
   const own = p.lastRequestOwn === true;
   if (own && /\b(send|email|mail|message|forward|share)\b/.test(req) && risky(p.lastRequest)) {

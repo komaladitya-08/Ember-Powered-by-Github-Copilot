@@ -32,6 +32,7 @@ import {
   type PsParamKind,
 } from "./tables";
 import { commandLineSecret } from "./redact";
+import { judgedText } from "./unroll";
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
 
@@ -145,6 +146,12 @@ export interface ClassificationExtra extends Classification {
    */
   holdsFlow?: boolean;
   /**
+   * The line was judged as its written-out form (unroll.ts: a simple `[[ … ]]` as `[ … ]`): it runs, asks or is
+   * refused as that form is, but never runs with a Stop because the user's words asked for what it does
+   * (commands-b7-2 stands; decide.ts).
+   */
+  writtenOut?: boolean;
+  /**
    * Downloads that are the download only while the target doesn't say they are a folder: a download moved or copied
    * to a name that may be one (`mv x.py tools`), whose file is then tools/x.py, also in `downloads`. Until the target
    * says so (withRealPaths) the name counts too, so a path that skips the check stays on the safe side.
@@ -196,7 +203,9 @@ export const SAYS = {
   downloadsAndRuns: "Downloads code and runs it.",
   opensProgram: "Opens a program that keeps running after Ember stops.",
   runsDownloaded: "Runs a file downloaded in this task.",
+  mayRunDownloaded: "May run a file downloaded in this task: Ember can't tell which files an earlier command downloaded or changed.",
   downloadsUnnamed: "Downloads to a file Ember can't name.",
+  guardedWord: "It uses a ${…:?} word, which Ember reads as the folder it names but can't be sure of.",
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
   unclear: "Ember can't tell exactly what this does.",
@@ -273,6 +282,8 @@ interface Simple {
   pipedOn?: boolean;
   /** What it prints is the next simple command's input, which judges what echo or printf printed (printedBy). */
   carriedOn?: boolean;
+  /** Its words or here-string hold text a substitution fetched, as written or through a variable (commands-remote-c7-3). */
+  fetched?: boolean;
   /** PowerShell: the parsed command (for cmdlet parameters). */
   ps?: PsCommand;
 }
@@ -290,7 +301,7 @@ interface Printed { text: string | null; vars?: HereVars }
 const varNames = (a: Arg): string[] => (a.parts ?? []).flatMap(p => (typeof p !== "string" && p.name !== null ? [p.name] : []));
 
 /**
- * What a POSIX echo or printf prints (Printed), or null for any other program. echo prints its words with spaces;
+ * What the shell's own echo or printf prints (Printed), or null for any other program. echo prints its words with spaces;
  * printf each argument through a format of one %s and separators, or a plain format with no arguments (`printf
  * 'FLUSHALL\n'`). Anything else, a pattern or a backslash in a word (echo's escapes differ between shells) is text
  * Ember doesn't see.
@@ -298,7 +309,9 @@ const varNames = (a: Arg): string[] => (a.parts ?? []).flatMap(p => (typeof p !=
 function printedBy(words: readonly Arg[]): Printed | null {
   let k = 0;
   while (k < words.length - 1 && words[k].v !== null && ASSIGNS_AFTER.has(words[k].v ?? "")) k++;
-  const prog = (words[k]?.v ?? "").split("/").pop();
+  // Only the shell's own, by its bare name: `./echo` or `/tmp/printf` is a program that prints what it likes
+  // (commands-remote-c7-2).
+  const prog = words[k]?.v ?? "";
   if (prog !== "echo" && prog !== "printf") return null;
   let rest = words.slice(k + 1);
   let shown: Arg[];
@@ -349,6 +362,12 @@ const accessOf = (use: PathUse): "read" | "safety" => (READ_USES.has(use) ? "rea
  * earlier element read a file this task downloaded (`cat x.py | tee y.py` writes the download out again).
  */
 interface PipeState { fetch: boolean; program: string; carried?: boolean }
+
+/**
+ * The findings of sh's and bash's flow words alone (`if`, `then`, `do`…): a command line or script reads through them
+ * (scripts.ts's SCRIPT_FLOW), so one of them never stands for a command's own finding.
+ */
+const READ_FLOW_RULE = /^unclear\.(if|then|elif|else|fi|for|while|until|do|done|in)$/;
 
 /** The classifier's state for one command text. */
 class Classifier {
@@ -437,6 +456,10 @@ class Classifier {
   protected payloadWords = new WeakSet<Arg>();
   /** A loop's or `if`'s closer given text that uses variables (`done <<< "$d"`), for the reads in it (feedReads). */
   protected hereVarsAt = new Map<number, HereVars>();
+  /** POSIX variables set from a substitution that fetched (`x=$(curl …)`): written to a file, the file is a download (commands-remote-c7-3). */
+  protected fetchedVars = new Set<string>();
+  /** A command since this was last cleared fetched from the network or printed fetched text (a group's redirection). */
+  protected gaveFetched = false;
   /** `set -a`: every variable set after it is exported to the programs that run (commands-remote-v5-2). */
   allExport = false;
   /** The same for a PowerShell variable (lower case, `env:` kept): only for Ember's own refusal (commands-remote-c3-2). */
@@ -455,6 +478,10 @@ class Classifier {
 
   add(cls: DangerClass, rule: string, said: string, o: { objects?: Obj[]; widening?: string[]; ifExists?: string; program?: string; inFolder?: { says: string; objects: Obj[]; ifExists: string } } = {}): void {
     const program = o.program ?? this.program;
+    // When nothing on this line was found to be a download the task saved under a name Ember knows, it can't say the
+    // file that runs is one: it may be (commands-remote-r6-4; whatever else the task saved by name, a `> /dev/null`
+    // included: x7-4). It asks all the same.
+    if (rule === "escape.run-downloaded" && said === SAYS.runsDownloaded && !this.namedHit) return this.add(cls, rule, SAYS.mayRunDownloaded, o);
     const wrappers = this.commands[this.at]?.wrappers ?? [];
     // A POSIX shell's home folder is said as ~, as the card's header says it (commands-remote-r2-3).
     const home = this.topShell === "bash" || this.topShell === "zsh" || this.topShell === "sh" ? this.ctx.home : null;
@@ -496,6 +523,35 @@ class Classifier {
     if (this.refuse && !(this.refusedRead && kind !== "read")) return;
     this.refuse = { rule, says: kind === "safety" ? SAYS.refuseSafety : kind === "read" ? SAYS.refuseRead : SAYS.refuseInput };
     this.refusedRead = kind === "read";
+  }
+
+  /**
+   * Whether `judge` finds anything to ask about, judged apart: what it finds is not kept (a refusal, and what it notes
+   * of files and variables, is). For a form Ember judges a second way, which must never decide less safely than the
+   * first (commands-remote-r7-2). `apartFrom`: rules that don't count as asking (a flow word's own, which the command
+   * proper finds too).
+   */
+  asksApart(judge: () => void, apartFrom?: RegExp): boolean {
+    const kept = this.findings;
+    this.findings = [];
+    try {
+      judge();
+      return apartFrom ? this.findings.some(f => !apartFrom.test(f.rule)) : this.findings.length > 0;
+    } finally {
+      this.findings = kept;
+    }
+  }
+
+  /**
+   * Makes what was found since `from` ask whatever the user's words say (the "fed" widening, which no intent row
+   * covers); with nothing found that stands whatever the target's files are, an unclear finding asks instead. A flow
+   * word's own finding (`then` before the command) doesn't stand: on an sh or bash line it is read through, so the
+   * command would run (commands-remote-x7-4).
+   */
+  asksAtLeast(from: number, rule: string, says: string): void {
+    const found = this.findings.slice(from);
+    for (const f of found) if (!f.widening.includes("fed")) f.widening.push("fed");
+    if (!found.some(f => f.ifExists === undefined && !READ_FLOW_RULE.test(f.rule))) this.unclear(rule, says);
   }
 
   noteUnclear(list: readonly Unclear[]): void {
@@ -1134,6 +1190,27 @@ class Classifier {
   }
 
   /**
+   * The names a download may be saved under when it takes the name its address ends in (`curl -O`, wget, aria2c), for
+   * an address Ember sees or one a variable holds part of (commands-remote-r6-1): the last part of each form the text
+   * gives the word, before any `?` or `#` (`fallback` for an address that ends in `/`). `unnamed`: a form whose last
+   * part Ember can't see (`$URL`, `…/tool-$V.sh` with V unset in the text), or with `patterns` one that holds curl's
+   * `[1-3]` or `{a,b}`, which name several files; the caller records those as unnamed in the folder it saves into.
+   */
+  addressNames(a: Arg, o: { fallback?: string; patterns?: boolean } = {}): { names: string[]; unnamed: boolean } {
+    const names: string[] = [];
+    let unnamed = false;
+    for (const f of this.knownForms(a, true)) {
+      const form = f ?? UNSEEN;
+      const q = form.search(/[?#]/);
+      const path = q >= 0 ? form.slice(0, q) : form;
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      if (name.includes(UNSEEN) || (o.patterns === true && /[[\]{}]/.test(name))) unnamed = true;
+      else if (name !== "" || o.fallback !== undefined) names.push(name || (o.fallback ?? ""));
+    }
+    return { names: [...new Set(names)], unnamed };
+  }
+
+  /**
    * A download saved as a word Ember can't see all of (`-o "$f"`, `-OutFile $f`, `-OutFile (Join-Path …)`): judged as
    * the file it writes (Ember's own refusal), each name the text gives the word recorded as the download, and a name
    * with a part Ember can't see recorded as unnamed in the folder its seen start names (downloadUnnamed). It asks
@@ -1202,12 +1279,24 @@ class Classifier {
   }
 
   /**
+   * Whether a check on this line found a file to be a download the task saved under a name Ember knows (isDownloaded,
+   * downloadedProjectFile), not only one that may be, by a mark for a download or copy Ember couldn't name
+   * (UNNAMED_DOWNLOAD, UNNAMED_COPY). It only chooses the card's words (`add`).
+   */
+  private namedHit = false;
+
+  /**
    * Whether this task downloaded, under `folder`, a file a build tool, test runner or package manager there runs
    * or follows by its name (a Makefile, package.json, conftest.py, a test file: PROJECT_FILE), so running the tool
    * runs the download (commands-remote-c2-2).
    */
   downloadedProjectFile(folder: string, sc: Scope): boolean {
     const all = [...this.ctx.downloaded, ...this.downloads];
+    // One of the tool's files, saved under its name.
+    if (all.some(d => d !== folder && unnamedFolder(d, sc.path) === null && isUnder(d, folder, sc.path) && PROJECT_FILE.test(baseName(d, sc.path.flavour)))) {
+      this.namedHit = true;
+      return true;
+    }
     // A download of a name Ember can't tell may be any of the tool's files, in its folder or one it works in.
     if (all.some(d => {
       const f = baseName(d, sc.path.flavour) === UNNAMED_DOWNLOAD ? unnamedFolder(d, sc.path) : null;
@@ -1260,13 +1349,19 @@ class Classifier {
     const phys = this.physical(a.v, "exec", sc);
     const names = [abs, this.ctx.real?.get(abs), phys === null ? undefined : this.ctx.real?.get(phys)].filter((n): n is string => typeof n === "string");
     // Downloaded by an earlier command of this task, or earlier in this same command (`curl -o x … && sh x`).
-    if (all.some(d => names.some(n => inDownload(n, d, sc.path)))) return true;
+    const hits = all.filter(d => names.some(n => inDownload(n, d, sc.path)));
+    if (hits.length > 0) {
+      if (hits.some(d => unnamedFolder(d, sc.path) === null)) this.namedHit = true;
+      return true;
+    }
     // A Windows path in cmd or PowerShell reached from a distro: the distro recorded it under the drive mount.
     if (sc.fromWsl && /^[A-Za-z]:[\\/]/.test(abs) && this.ctx.wsl) {
       const mount = this.ctx.wsl.mountRoot;
       const env = pathEnv({ flavour: "posix", os: "linux", home: null, cwd: null, mountRoot: mount });
       const m = toMount(abs, mount);
-      return all.some(d => inDownload(m, d, env));
+      const under = all.filter(d => inDownload(m, d, env));
+      if (under.some(d => unnamedFolder(d, env) === null)) this.namedHit = true;
+      return under.length > 0;
     }
     return false;
   }
@@ -1289,7 +1384,11 @@ function internalUnclear(shell: ShellId, cwd: string): ClassificationExtra {
  */
 export function classifyCommand(text: string, shell: ShellId, ctx: ClassifyContext): Classification {
   try {
-    return new Engine(ctx, shell).run(text);
+    // A command line's simple `[[ … ]]` is judged as `[ … ]` (unroll.ts, commands-remote-r6-2); anything else, every
+    // loop and a script's text included, as written.
+    const judged = SHELL_FAMILY[shell] === "posix" && ctx.script !== true ? judgedText(text) : text;
+    const cls = new Engine(ctx, shell).run(judged);
+    return judged === text ? cls : ({ ...cls, writtenOut: true } as ClassificationExtra);
   } catch {
     return internalUnclear(shell, ctx.cwd);
   }
@@ -1345,6 +1444,9 @@ function lonePsLocation(list: PsStatement[]): boolean {
 const STDIN_NAME = /^(-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/(self|\d+)\/fd\/0)$/;
 /** A file name that is one of the program's open descriptors (`/dev/fd/3`, `/proc/self/fd/3`); fd 0 is STDIN_NAME. */
 const STREAM_NAME = /^(\/dev\/fd\/\d+|\/proc\/(self|\d+)\/fd\/\d+)$/;
+
+/** Programs that print the text they are given: fetched text they print on is still the download (afterRun). */
+const PRINTS_TEXT = new Set(["echo", "printf", "print", "cat"]);
 
 /** A URL (`https://…`, `file:///…`, `s3://…`, `git@host:…`). */
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -1732,6 +1834,29 @@ function child(sc: Scope, o: Partial<Scope> = {}, m?: ScopeMore): Scope {
 class Engine extends Classifier {
   /** The folder a `cd` just set (undefined: the command wasn't a cd). */
   cdTarget: string | null | undefined = undefined;
+
+  /**
+   * asksApart for a whole command judged a second way: the commands it registers, and where it leaves the pipeline, the
+   * current command and the folder, are taken back too, so the command proper is judged as if this never ran.
+   */
+  asksApartWhole(judge: () => void, apartFrom?: RegExp): boolean {
+    const n = this.commands.length;
+    const kept = { count: this.simpleCount, at: this.at, program: this.program, pipe: this.pipe, state: { ...this.pipe }, cd: this.cdTarget, top: this.topCd };
+    try {
+      return this.asksApart(judge, apartFrom);
+    } finally {
+      this.commands.length = n;
+      this.simpleCount = kept.count;
+      this.at = kept.at;
+      this.program = kept.program;
+      this.pipe = kept.pipe;
+      this.pipe.fetch = kept.state.fetch;
+      this.pipe.program = kept.state.program;
+      if (kept.state.carried === undefined) delete this.pipe.carried; else this.pipe.carried = kept.state.carried;
+      this.cdTarget = kept.cd;
+      this.topCd = kept.top;
+    }
+  }
   /** The single top-level cd, for cdOnly. */
   topCd: { at: number; abs: string | null } | null = null;
 
@@ -1925,8 +2050,14 @@ class Engine extends Classifier {
         if (background) this.add("escape", "escape.background", SAYS.keepsRunning);
       }
       const savedPipe = this.pipe;
+      const outer = this.gaveFetched;
+      this.gaveFetched = false;
       this.posixList(c.body, inner);
       this.pipe = savedPipe;
+      // What a group or subshell fetched, or fetched text it printed, written to the file its own redirection names is
+      // the download (`{ curl …; } > x.sh`, `(echo "$x") > x.sh`: commands-remote-x7-8).
+      if (this.gaveFetched) for (const r of redirs) if ((r.kind === "write" || r.kind === "append") && !r.op.startsWith("2") && r.target?.v) this.download(r.target.v, sc);
+      this.gaveFetched ||= outer;
       prev = this.at;
     });
     return cd;
@@ -1955,29 +2086,61 @@ class Engine extends Classifier {
     const allWords: PWord[] = [...c.words, ...c.assigns.map(a => a.value), ...c.redirs.flatMap(r => (r.target ? [r.target] : []))];
     for (const w of allWords) for (const sub of w.subs) if (this.subList(sub, sc)) fetchOf.set(w, true);
     for (const r of c.redirs) for (const sub of r.heredoc?.subs ?? []) this.subList(sub, sc);
-    const words = c.words.map(w => this.posixWord(w, sc, fetchOf.get(w) ?? false));
-    const redirs = c.redirs.map(r => this.posixRedir(r, sc));
-    const stdin: Simple["stdin"] = c.redirs.some(r => r.op === "<<" || r.op === "<<-" || r.op === "<<<") ? "heredoc"
-      : c.redirs.some(r => r.op === "<") ? "file" : o.stdinPipe ? "pipe" : null;
-    // Text echo or printf pipes in is its input as a here-string's would be (commands-remote-c5-1).
-    const piped = stdin === "pipe" ? o.given ?? undefined : undefined;
-    const stdinText = stdin === "heredoc" ? this.hereText(c.redirs, sc) : piped?.text;
-    const stdinVars = stdin === "heredoc" ? (stdinText === null ? this.hereVars(c.redirs, sc) : undefined) : piped?.vars;
-    // Written-out text only: a here-string with no tilde, variable or substitution (`<<< "$HOME"` is a value Ember
-    // follows, not text written out), a here-document Ember sees whole (commands-a7-2).
-    const hereOnly = c.redirs.every(r => (r.fd === null || r.fd === 0) && r.dup === undefined && (r.op === "<<" || r.op === "<<-" || (r.op === "<<<" && r.target !== null && WRITTEN_OUT.test(r.target.raw))));
-    const ownInput: Simple["ownInput"] = o.stdinPipe ? "other" : c.redirs.length === 0 ? "none" : hereOnly && typeof stdinText === "string" ? "seen" : "other";
+    // Text a substitution fetched, kept in a variable (`x=$(curl …)`, `export x=$(curl …)`): commands-remote-c7-3.
+    // A copy of such a variable holds it too (`y=$x`), and so does one `read` fills from a fetch (`read x < <(curl …)`):
+    // commands-remote-x7-8. A variable is never taken off the list: a later `x=hello` may not have run.
+    const holdsFetched = (w: PWord): boolean => fetchOf.get(w) === true || [...w.raw.matchAll(/\$\{?[#!]?([A-Za-z_]\w*)/g)].some(m => this.fetchedVars.has(m[1]));
+    for (const a of c.assigns) if (holdsFetched(a.value)) this.fetchedVars.add(a.name);
+    for (const w of c.words) { const m = /^([A-Za-z_]\w*)=/.exec(w.raw); if (m && holdsFetched(w)) this.fetchedVars.add(m[1]); }
+    if (READS_LINES.has(c.words[0]?.raw ?? "") && ((o.stdinPipe && this.pipe.fetch) || c.redirs.some(r => r.target !== null && (r.fd === null || r.fd === 0) && r.op.startsWith("<") && holdsFetched(r.target)))) {
+      for (const w of c.words.slice(1)) if (/^[A-Za-z_]\w*$/.test(w.raw)) this.fetchedVars.add(w.raw);
+    }
+    // The command as Ember reads its words, redirections and input.
+    const read = (): { words: Arg[]; redirs: Redir[]; carried: boolean; s: Simple } => {
+      const words = c.words.map(w => this.posixWord(w, sc, fetchOf.get(w) ?? false));
+      const redirs = c.redirs.map(r => this.posixRedir(r, sc));
+      const stdin: Simple["stdin"] = c.redirs.some(r => r.op === "<<" || r.op === "<<-" || r.op === "<<<") ? "heredoc"
+        : c.redirs.some(r => r.op === "<") ? "file" : o.stdinPipe ? "pipe" : null;
+      // Text echo or printf pipes in is its input as a here-string's would be (commands-remote-c5-1).
+      const piped = stdin === "pipe" ? o.given ?? undefined : undefined;
+      const stdinText = stdin === "heredoc" ? this.hereText(c.redirs, sc) : piped?.text;
+      const stdinVars = stdin === "heredoc" ? (stdinText === null ? this.hereVars(c.redirs, sc) : undefined) : piped?.vars;
+      // Written-out text only: a here-string with no tilde, variable or substitution (`<<< "$HOME"` is a value Ember
+      // follows, not text written out), a here-document Ember sees whole (commands-a7-2).
+      const hereOnly = c.redirs.every(r => (r.fd === null || r.fd === 0) && r.dup === undefined && (r.op === "<<" || r.op === "<<-" || (r.op === "<<<" && r.target !== null && WRITTEN_OUT.test(r.target.raw))));
+      const ownInput: Simple["ownInput"] = o.stdinPipe ? "other" : c.redirs.length === 0 ? "none" : hereOnly && typeof stdinText === "string" ? "seen" : "other";
+      // What it prints reaches the next command only without a redirection of its output.
+      const carried = o.pipedOn === true && o.carriedOn === true && !redirs.some(r => r.kind !== "none" && r.kind !== "read" && !r.op.startsWith("2"));
+      const fetched = c.words.some(holdsFetched) || words.some(w => w.fetch === true || varNames(w).some(n => this.fetchedVars.has(n))) || (stdinVars?.names ?? []).some(n => this.fetchedVars.has(n))
+        || c.redirs.some(r => r.op === "<<<" && r.target !== null && holdsFetched(r.target));
+      const s: Simple = { words, redirs, stdin, stdinText, stdinVars, ownInput, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried, ...(fetched ? { fetched } : {}) };
+      return { words, redirs, carried, s };
+    };
+    // A `${HOME:?}` or `${PWD:?}` in a word or a redirection is read as the home or current folder, so Ember's own
+    // refusal and the rules for the path it names apply; before round five it was a word Ember couldn't see, and many
+    // commands asked for that alone (`ls ${HOME:?}/x`, `bash "${HOME:?}/x.sh"`, `test -d ${HOME:?}/x`). The command is
+    // judged that way too, apart, and where that asks this one asks (commands-remote-r7-2).
+    const guards = (w: PWord): boolean => w.segs.some(seg => seg.t === "unres" && seg.of !== undefined && seg.exact === true && (seg.of === "HOME" ? sc.home : seg.of === "PWD" ? sc.cwd : null) != null);
+    const guarded = [...c.words, ...c.redirs.flatMap(r => (r.target ? [r.target] : []))].some(guards);
+    const asked = guarded && this.asksApartWhole(() => {
+      this.asWritten = true;
+      let unseen: ReturnType<typeof read>;
+      try { unseen = read(); } finally { this.asWritten = false; }
+      if (c.words.length === 0) { this.newCommand("", [], sc, unseen.redirs, o.background, o.pipedFrom); this.redirects(unseen.redirs, sc); } else this.simple(unseen.s, sc);
+    }, READ_FLOW_RULE);
+    const before = this.findings.length;
+    const { words, redirs, carried, s } = read();
     if (c.words.length === 0) {
       this.newCommand("", [], sc, redirs, o.background, o.pipedFrom);
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, null, false);
       this.redirects(redirs, sc);
+      if (asked) this.asksAtLeast(before, "unclear.guarded-word", SAYS.guardedWord);
       return null;
     }
-    // What it prints reaches the next command only without a redirection of its output.
-    const carried = o.pipedOn === true && o.carriedOn === true && !redirs.some(r => r.kind !== "none" && r.kind !== "read" && !r.op.startsWith("2"));
-    this.simple({ words, redirs, stdin, stdinText, stdinVars, ownInput, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried }, sc, () => {
+    this.simple(s, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
+    if (asked) this.asksAtLeast(before, "unclear.guarded-word", SAYS.guardedWord);
     return carried ? printedBy(words) : null;
   }
 
@@ -2012,6 +2175,12 @@ class Engine extends Classifier {
     const names = [...last.heredoc.body.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map(m => m[1]);
     return names.length ? { names, word: null } : undefined;
   }
+
+  /**
+   * While set, `${HOME:?}` and `${PWD:?}` stay words Ember can't see, as they were before round five: the command is
+   * judged that way too, apart, so reading them as the home folder never decides less safely (posixSimple).
+   */
+  private asWritten = false;
 
   /** A POSIX word's value with the scope's home and folder (`~`, `$HOME`, `$PWD`, `$(pwd)`); anything else unresolved. */
   posixWord(w: PWord, sc: Scope, fetch: boolean): Arg {
@@ -2056,7 +2225,7 @@ class Engine extends Classifier {
         // `${url##*/}`, `${d:-x}`) may be other text too, so a part Ember can't see stays as well: the near rule and a
         // copied download still see it (commands-remote-w5-1). HOME and PWD are the scope's, as `$HOME` is (w5-3).
         const val = seg.of === "HOME" ? sc.home : seg.of === "PWD" ? sc.cwd : null;
-        if (val !== null && seg.exact) { v += val; parts.push(val); pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
+        if (val !== null && seg.exact && !this.asWritten) { v += val; parts.push(val); pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
         else {
           unresolved = true;
           // A default's plain text (`${d:-build}`, `${XDG_CONFIG_HOME:-$HOME/.config}`, `${d:-~/x}`) is a value too.
@@ -2437,7 +2606,13 @@ class Engine extends Classifier {
     // Where what it prints goes: the terminal, the next command as its input, or on to a file, a substitution or a
     // command that isn't handed it (commands-remote-c5-1).
     const toFile = s.redirs.some(r => (r.kind === "write" || r.kind === "append") && !r.op.startsWith("2") && !(r.target?.v != null && NULL_SINKS.has(r.target.v.toLowerCase())));
-    const out = toFile || (s.pipedOn === true && s.carriedOn !== true) ? "onward" : s.carriedOn === true ? "carried" : "shown";
+    // Only the shell's own echo and printf hand their words on as the next command's input (printedBy): a program
+    // merely named so (`./echo "$d" | xargs rm -rf`) prints what it likes, so its variables are judged here
+    // (commands-remote-c7-2).
+    const handsOn = s.carriedOn === true && !(sc.family === "posix" && (key === "echo" || key === "printf") && nameArg.v !== key);
+    const out = toFile || (s.pipedOn === true && !handsOn) ? "onward" : handsOn ? "carried" : "shown";
+    // Its written-out words too, which the next command may get as names: judged for Ember's own refusal.
+    if (s.carriedOn === true && !handsOn) this.judgeInput(args.map(a => a.v ?? "").join("\n"), sc);
     this.noteVarUses(key, this.commands.length === inner ? args : args.filter(a => !this.payloadWords.has(a)), out);
     if ((key === "done" || key === "fi" || key === "esac") && out !== "shown") this.compoundOnward = true;
     this.unnamedWrites(key, args, sc);
@@ -2565,18 +2740,35 @@ class Engine extends Classifier {
   unwrap(h: H, all: Arg[], wrapper: string, o: Partial<Scope> = {}): void {
     if (all.length === 0) return;
     for (const w of all) this.payloadWords.add(w);
-    const pc = this.commands[this.at];
     // After a reserved word the shell still takes `NAME=value` words as assignments: `then LD_PRELOAD=./x.so ls` runs ls
     // with the library loaded, and `do PATH=/tmp/x:/usr/bin` changes where later commands are found. They are judged as
     // at the start of a command, never as the program (commands-remote-c1-1).
     let lead = 0;
     if (h.sc.family === "posix" && ASSIGNS_AFTER.has(wrapper)) while (lead < all.length && ASSIGNMENT_WORD.test(all[lead].raw)) lead++;
+    // Before these were read as assignments the first one stood as a program Ember didn't know, and with a word after
+    // it that names a program that runs others (`time x=1 sh -c '…'`, `if IFS= read -r l <<< 'a'`) it asked how the one
+    // runs the other (generic()). Such a command still asks, after a flow word as after `time` (commands-remote-x7-5).
+    const askedAsProgram = lead > 0 && all.slice(1).some(a => {
+      const base = (a.v ?? "").split(/[\\/]/).pop() ?? "";
+      return a.v !== null && /^[A-Za-z]/.test(base) && runners().has(base.toLowerCase().replace(/\.(exe|com)$/, ""));
+    });
+    const from = this.findings.length;
+    this.unwrapped(h, all, lead, wrapper, o);
+    if (askedAsProgram) this.asksAtLeast(from, "unclear.assignment-program", "It sets a variable where a command could stand.");
+  }
+
+  /** unwrap's work: the first `lead` words are assignments, the rest the command. */
+  private unwrapped(h: H, all: Arg[], lead: number, wrapper: string, o: Partial<Scope>): void {
+    const pc = this.commands[this.at];
     const assigns = all.slice(0, lead).map(a => {
       const eq = a.raw.indexOf("=");
       const value: Arg = { v: a.v === null ? null : a.v.slice(a.v.indexOf("=") + 1), raw: a.raw.slice(eq + 1), glob: false };
       return { name: a.raw.slice(0, eq).replace(/\+$/, ""), value };
     });
     const words = all.slice(lead);
+    // One whose value Ember can't see (`time x=$(…)`) stood as a program it couldn't name before these were read as
+    // assignments, and asked: it still asks (commands-remote-r7-2).
+    if (all.slice(0, lead).some(a => a.v === null)) this.unclear("unclear.assignment-unseen", "It sets a variable to text Ember can't see, where a command could stand.");
     const sc = child(h.sc, { ...o, wrappers: [...h.sc.wrappers, wrapper] }, more(h.sc));
     pc.wrappers = [...sc.wrappers];
     if (words.length === 0) {
@@ -2702,24 +2894,35 @@ class Engine extends Classifier {
     const known = this.ctx.downloaded.size > 0 || this.downloads.length > 0;
     const carried = known && (this.pipe.carried === true || args.some(a => !isOption(a) && this.isDownloaded(a, sc)) || s.redirs.some(r => r.kind === "read" && r.target !== null && this.isDownloaded(r.target, shellSc)));
     if (carried) this.pipe.carried = true;
-    if (s.fetchBefore || FETCHERS.has(key) || carried) {
+    // Fetched text that echo, printf or cat prints on (`x=$(curl …); echo "$x" > a.py`, `… | tee a.py`) is the download
+    // still (commands-remote-c7-3). Whatever program is given fetched text, the file it writes its output to is one
+    // too (`sed … <<< "$x" > a.py`, `tee a.py <<< "$x"`, `dd of=a.py <<< "$x"`: commands-remote-x7-8).
+    const prints = s.fetched === true && PRINTS_TEXT.has(key);
+    if (prints) this.pipe.fetch = true;
+    if (prints || carried || FETCHERS.has(key)) this.gaveFetched = true;
+    if (s.fetchBefore || FETCHERS.has(key) || carried || s.fetched === true) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
       if (/^(tee|tee-object|out-file|set-content|add-content)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
       }
+      if (key === "dd") for (const a of args) { const m = a.v === null ? null : /^of=(.+)$/.exec(a.v); if (m && !NULL_SINKS.has(m[1].toLowerCase())) this.download(m[1], sc); }
     }
     const runner = PROJECT_RUNNERS.has(key) || ((key === "docker" || key === "podman") && /^(compose|build|buildx)$/.test(args[0]?.v ?? ""));
     if (!runner || !known) return;
     const folderOf = (v: string): string | null => (sc.cwd ? resolveTargetPath(v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd }) : null);
-    const inDownloaded = this.isDownloaded(lit("."), sc) || args.some(a => {
+    // Every check is made, not only up to the first that holds: one of them may find a download saved by name, which
+    // the card then says as a fact (`namedHit`: commands-remote-x7-4).
+    const hits = [this.isDownloaded(lit("."), sc), ...args.map(a => {
       if (a.v === null || URL_LIKE.test(a.v)) return false;
       const v = a.v.replace(/^--?[A-Za-z][A-Za-z-]*=/, "");
       if (v === "" || v.startsWith("-")) return false;
       // A file it is given, or a folder it works in (`make -C sub`) holding a project file this task downloaded.
       const f = folderOf(v);
-      return this.isDownloaded({ ...a, v }, sc, false) || (f !== null && this.downloadedProjectFile(f, sc));
-    }) || (sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc));
-    if (inDownloaded) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      const file = this.isDownloaded({ ...a, v }, sc, false);
+      const project = f !== null && this.downloadedProjectFile(f, sc);
+      return file || project;
+    }), sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc)];
+    if (hits.some(Boolean)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   }
 
   /** Classifies a nested shell text (sh -c, cmd /c, powershell -Command) in a child scope. */
@@ -3368,13 +3571,30 @@ reg(NATIVE, ["mysql", "mariadb", "mysqldump", "mysqladmin", "mysqlimport"], h =>
   if (h.args.some(a => a.v !== null && /^-p.+/.test(a.v))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   if (h.key === "mysql" || h.key === "mariadb") {
     interactive(h);
-    databaseText(h, inlineSql(h, ["e"], ["execute"]));
+    databaseText(h, [...inlineSql(h, ["e"], ["execute"]), ...clusterSql(h, "e")], "mysql");
     // SQL read from stdin or a here-document (`mysql <<< 'system id'`): judge the seen text, else ask (review #166).
-    if (!inlineSql(h, ["e"], ["execute"]).length) sqlFromStdin(h);
+    if (!inlineSql(h, ["e"], ["execute"]).length) sqlFromStdin(h, "mysql");
+    // The file --tee copies everything to, the program --pager shows results through, the SQL --init-command runs
+    // first and the folder client plugins load from (commands-remote-c7-1).
+    const p = opts(h, { shortValue: "hPuDeS", shortOptional: "p", longValue: MYSQL_VALUES, longOptional: ["password", "pager"] });
+    for (const o of p.opts) {
+      if (o.value === undefined) continue;
+      const a: Arg = o.value === null ? { v: null, raw: "?", glob: false, ...(o.parts ? { parts: o.parts } : {}) } : lit(o.value);
+      if (optIs(o.name, "tee")) h.e.usePath(a, "write", h.sc);
+      else if (optIs(o.name, "init-command")) databaseText(h, [o.value], "mysql");
+      else if (optIs(o.name, "pager")) clientShell(h, o.value);
+      else if (optIs(o.name, "plugin-dir")) { h.e.usePath(a, "read", h.sc); h.e.unclear("unclear.sql", "It loads client plugins from a folder Ember doesn't read."); }
+    }
   }
   if (h.key === "mysqladmin" && h.args.some(a => /^(drop|shutdown|flush-|kill|password|reload|refresh)/.test(a.v ?? ""))) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   for (const r of h.args) if (r.v && /^--result-file=/.test(r.v)) h.e.usePath(lit(r.v.slice(14)), "write", h.sc);
 });
+
+/** mysql's long options that take the next word (the ones a command line commonly carries). */
+const MYSQL_VALUES = [
+  "host", "port", "user", "database", "execute", "socket", "tee", "init-command", "defaults-file", "defaults-extra-file", "defaults-group-suffix", "default-character-set",
+  "plugin-dir", "ssl-ca", "ssl-capath", "ssl-cert", "ssl-key", "ssl-mode", "protocol", "delimiter", "login-path", "connect-timeout", "max-allowed-packet", "prompt",
+];
 
 /** Statements that change or delete what a database holds (D4.3 a: destroying data). */
 const SQL_WRITE = /\b(drop|delete|truncate|update|alter|insert|replace|merge|upsert|grant|revoke|create|rename|vacuum|reindex|attach|detach|flushall|flushdb|dropdatabase|deletemany|deleteone|remove|load\s+data)\b|\binto\s+(out|dump)file\b/i;
@@ -3382,6 +3602,15 @@ const SQL_WRITE = /\b(drop|delete|truncate|update|alter|insert|replace|merge|ups
 const SQL_ESCAPE = /(^|[\s;])(\\(!|(o|g|gx|w|copy|i|ir|include|setenv|lo_export|lo_import|s)\b)|\.(shell|system|output|once|import|load|read|save|backup|restore|excel|open|cd|log|dump)\b|system\s)|\bprogram\s+'|\bcopy\b[^;]*\b(to|from)\b/i;
 
 /** The SQL (or client commands) given on a database client's command line. */
+/**
+ * The word after a cluster of short options that ends in the client's text option (`psql -Atc '…'`, `mysql -Ne '…'`):
+ * judged as its text as well, which only adds findings (commands-remote-y7-5).
+ */
+function clusterSql(h: H, letter: string): (string | null)[] {
+  const cluster = new RegExp(`^-[A-Za-z]+${letter}$`);
+  return h.args.flatMap((a, j) => (a.v !== null && cluster.test(a.v) && j + 1 < h.args.length ? [h.args[j + 1].v] : []));
+}
+
 function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
   const out: (string | null)[] = [];
   for (let k = 0; k < h.args.length; k++) {
@@ -3403,8 +3632,8 @@ function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
  * SQL a client reads from stdin: a here-document or another program's output is judged when seen, else asks (review
  * #166). A file redirect (`psql < dump.sql`) runs as `psql -f dump.sql` does (stdinFile).
  */
-function sqlFromStdin(h: H): void {
-  if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t]));
+function sqlFromStdin(h: H, client?: SqlClient): void {
+  if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t], client));
   else if (h.s.stdin === "file") stdinFile(h);
 }
 
@@ -3433,11 +3662,107 @@ function redisCommand(h: H, words: readonly (string | null)[]): void {
   if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(words[1] ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
 }
 
+/** The clients whose own commands Ember reads (clientCommands): psql's `\x`, sqlite3's and duckdb's `.x`, mysql's words. */
+type SqlClient = "psql" | "sqlite" | "mysql";
+
+const SAYS_CLIENT = "It runs database client commands that can run programs or write files.";
+/**
+ * sqlite3's and duckdb's client commands that only show things or set how results look. Only written whole: sqlite3
+ * takes any shortening (`.sh` is `.shell`, `.o` is `.output`), so every other word after a dot asks
+ * (commands-remote-c7-1).
+ */
+const SQLITE_SHOWS = new Set([
+  "bail", "binary", "changes", "columns", "databases", "dbinfo", "echo", "eqp", "exit", "explain", "fullschema", "header", "headers", "help", "indexes", "indices", "limit",
+  "lint", "mode", "nullvalue", "print", "prompt", "quit", "schema", "separator", "show", "stats", "tables", "timeout", "timer", "version", "width",
+]);
+/** SQL functions of sqlite3's shell that read or write files, load code or open an editor. */
+const SQLITE_FUNCTIONS = /\b(load_extension|writefile|readfile|edit|fts3_tokenizer)\s*\(/i;
+/** psql's backslash commands that only describe, show or set how results look (`\dt+`, `\l`, `\x`, `\timing`). */
+const PSQL_SHOWS = /^(d[A-Za-z]*\+?|l\+?|x|a|t|H|q|z|h|\?|timing|pset|echo|qecho|warn|conninfo|encoding|set|unset|C|f|T|sf\+?|sv\+?|errverbose|crosstabview|p|r|reset|print|if|elif|else|endif)$/;
+
+/** A program a database client's own command or option runs through the shell (`.shell …`, `\! …`, `--pager=…`): judged as shell text. */
+function clientShell(h: H, text: string | null): void {
+  h.e.unclear("unclear.sql", SAYS_CLIENT);
+  if (text === null || text.trim() !== "") h.e.payload([lit("sh"), lit("-c"), text === null ? { v: null, raw: "?", glob: false } : lit(text)], h.sc, h.prog || "sql");
+}
+
+/** The words after a client command that asks: a program after `|`, else files it may write, judged for Ember's own refusal. */
+function clientWords(h: H, rest: string, use: PathUse = "write"): void {
+  h.e.unclear("unclear.sql", SAYS_CLIENT);
+  const t = rest.trim();
+  if (t.startsWith("|")) { clientShell(h, t.slice(1)); return; }
+  for (const w of t.split(/\s+/)) {
+    const name = w.replace(/^['"]|['"];?$|;$/g, "");
+    if (name !== "" && !name.startsWith("-")) h.e.usePath(lit(name), use, h.sc);
+  }
+}
+
+/**
+ * psql's backslash commands in its text, each with the words after it up to the line's end or the next backslash. psql
+ * takes any backslash outside quotes as one, straight after SQL too (`select 1\g out.txt`, `select 'x'\gexec`:
+ * commands-remote-x7-7); one after a blank or `;` counts whatever the quotes around it seem to be, since Ember's
+ * reading of them is only a guess (`E'…\'…'`, `$$…$$`).
+ */
+function psqlCommands(t: string): { name: string; rest: string }[] {
+  const out = new Map<number, { name: string; rest: string }>();
+  const command = /\\([A-Za-z!?][\w!?+]*)[ \t]*([^\n\\]*)/y;
+  const take = (at: number): number => {
+    command.lastIndex = at;
+    const m = command.exec(t);
+    if (!m) return at;
+    out.set(at, { name: m[1], rest: m[2] });
+    return at + m[0].length - 1;
+  };
+  for (const m of t.matchAll(/(?:^|[\s;])(?=\\[A-Za-z!?])/g)) take(m.index + m[0].length);
+  // A comment, a dollar-quoted string or an escaped quote can hold a quote that pairs with nothing: then every backslash
+  // counts, in quotes or not (commands-remote-y7-4).
+  const guess = /--|\/\*|\$\w*\$|\\['"]/.test(t);
+  let quote: string | null = null;
+  for (let k = 0; k < t.length; k++) {
+    const c = t[k];
+    if (quote !== null && !guess) { if (c === quote) quote = null; } else if (c === "'" || c === "\"") quote = c; else if (c === "\\") k = take(k);
+  }
+  return [...out.entries()].sort((a, b) => a[0] - b[0]).map(e => e[1]);
+}
+
+/**
+ * A database client's own commands in its text (commands-remote-c7-1): any that isn't on its short list of ones that
+ * only show things asks, and the shell command or the files it names are judged, so Ember's own are refused.
+ */
+function clientCommands(h: H, client: SqlClient, t: string): void {
+  if (client === "sqlite") {
+    for (const line of t.split("\n")) {
+      const m = /^\s*\.([A-Za-z]\w*)[ \t]*(.*)$/.exec(line);
+      if (!m || SQLITE_SHOWS.has(m[1].toLowerCase())) continue;
+      const name = m[1].toLowerCase();
+      if ("shell".startsWith(name) || "system".startsWith(name)) clientShell(h, m[2]);
+      else clientWords(h, m[2]);
+    }
+    if (SQLITE_FUNCTIONS.test(t)) h.e.unclear("unclear.sql", SAYS_CLIENT);
+  } else if (client === "psql") {
+    for (const m of psqlCommands(t)) {
+      // A backquoted word in any of them runs a program.
+      if (PSQL_SHOWS.test(m.name) && !m.rest.includes("`")) continue;
+      if (m.name === "!") clientShell(h, m.rest);
+      else clientWords(h, m.rest);
+    }
+  } else {
+    // A client word starts a statement: after `;`, or on a line of its own (`use app` ends at its line: x7-7).
+    for (const m of t.matchAll(/(?:^|;)\s*(source|tee|pager|edit|system)\b[ \t]*([^;\n]*)|\\([.!TPe])[ \t]*([^;\n\\]*)/gim)) {
+      const word = (m[1] ?? "").toLowerCase();
+      const rest = m[2] ?? m[4] ?? "";
+      if (word === "system" || word === "pager" || m[3] === "!" || m[3] === "P") clientShell(h, rest);
+      else clientWords(h, rest, word === "source" || m[3] === "." ? "read" : "write");
+    }
+  }
+}
+
 /** A database client's own text: changing data is class a; running programs or touching files from it is unclear. */
-function databaseText(h: H, texts: (string | null)[]): void {
+function databaseText(h: H, texts: (string | null)[], client?: SqlClient): void {
   for (const t of texts) {
     if (t === null) { h.e.unclear("unclear.sql", "It runs database commands Ember can't see."); continue; }
-    if (SQL_ESCAPE.test(t)) h.e.unclear("unclear.sql", "It runs database client commands that can run programs or write files.");
+    if (SQL_ESCAPE.test(t)) h.e.unclear("unclear.sql", SAYS_CLIENT);
+    if (client) clientCommands(h, client, t);
     if (SQL_WRITE.test(t)) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   }
 }
@@ -3446,11 +3771,22 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   if (INTERACTIVE.has(h.key)) interactive(h);
   const k = h.key;
   if (k === "psql") {
-    databaseText(h, inlineSql(h, ["c"], ["command"]));
+    databaseText(h, [...inlineSql(h, ["c"], ["command"]), ...clusterSql(h, "c")], "psql");
+    // The file its results go to (-o, or a program after `|`) and the one it logs every query to (-L), judged as
+    // files it writes (commands-remote-c7-1).
+    const p = opts(h, { shortValue: "cdfFhLopPRTUv", longValue: ["command", "dbname", "file", "field-separator", "host", "log-file", "output", "port", "pset", "record-separator", "table-attr", "username", "set", "variable"] });
+    for (const o of p.opts) {
+      if (o.value === undefined) continue;
+      const a: Arg = o.value === null ? { v: null, raw: "?", glob: false, ...(o.parts ? { parts: o.parts } : {}) } : lit(o.value);
+      if (optIs(o.name, "o") || optIs(o.name, "output")) {
+        if (o.value !== null && o.value.trim().startsWith("|")) clientShell(h, o.value.trim().slice(1));
+        else overwrites(h, a);
+      } else if (optIs(o.name, "L") || optIs(o.name, "log-file")) h.e.usePath(a, "write", h.sc);
+    }
     // SQL read from stdin or a here-document (`psql <<< '\! id'`, `psql -f - <<< …`): judge the seen text, else ask;
     // a file given as another descriptor (`-f /dev/fd/3`) can't be read first (review #166).
     const files = inlineSql(h, ["f"], ["file"]);
-    if (files.some(f => f !== null && STDIN_NAME.test(f)) || (!inlineSql(h, ["c"], ["command"]).length && !files.length)) sqlFromStdin(h);
+    if (files.some(f => f !== null && STDIN_NAME.test(f)) || (!inlineSql(h, ["c"], ["command"]).length && !files.length)) sqlFromStdin(h, "psql");
     if (files.some(f => f !== null && !STDIN_NAME.test(f) && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
   }
   else if (k === "sqlcmd") databaseText(h, inlineSql(h, ["Q", "q"], []));
@@ -3459,12 +3795,14 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
     // -cmd's and -init's values are not the database or its SQL.
     const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));
-    databaseText(h, [...ops.slice(1).map(a => a.v), ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))]);
+    // duckdb's -c and -s take the text to run, with a database named or not (commands-remote-x7-7).
+    const given = k === "duckdb" ? h.args.flatMap((a, j) => (/^--?[cs]$/.test(a.v ?? "") ? [h.args[j + 1]?.v ?? null] : [])) : [];
+    databaseText(h, [...ops.slice(1).map(a => a.v), ...given, ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))], "sqlite");
     // -init FILE runs the file's commands first, as `.read FILE` does (review #166): stdin is judged as below, another
     // descriptor can't be read first, and any other file asks.
     const init = h.args.flatMap((a, j) => (/^--?init$/.test(a.v ?? "") ? [h.args[j + 1]?.v ?? null] : []));
     for (const f of init) {
-      if (f !== null && STDIN_NAME.test(f)) sqlFromStdin(h);
+      if (f !== null && STDIN_NAME.test(f)) sqlFromStdin(h, "sqlite");
       else if (f !== null && STREAM_NAME.test(f)) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
       else {
         if (f) h.e.usePath(lit(f), "read", h.sc);
@@ -3472,7 +3810,7 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
       }
     }
     // SQL read from stdin or a here-document (`sqlite3 <<< '.shell id'`): judge the seen text, else ask (review #166).
-    if (ops.length < 2 && !inlineSql(h, [], ["cmd"]).length && !h.args.some(a => a.v === "-cmd") && !init.some(f => f !== null && STDIN_NAME.test(f))) sqlFromStdin(h);
+    if (ops.length < 2 && !inlineSql(h, [], ["cmd"]).length && !h.args.some(a => a.v === "-cmd") && !init.some(f => f !== null && STDIN_NAME.test(f))) sqlFromStdin(h, "sqlite");
     if (ops[0]) h.e.readArgs([ops[0]], h.sc);
     return;
   } else if (k === "mongo" || k === "mongosh") {
@@ -3510,7 +3848,7 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     // With no command on its line it runs the commands its input gives, one a line (`redis-cli <<< FLUSHALL`, `echo
     // DEL x | redis-cli`); with -x its input is the last argument's value (commands-remote-c5-3).
     if (p.operands.length === 0 && !has(p, "x")) {
-      if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => { for (const l of t.split("\n")) redisCommand(h, l.trim().split(/\s+/)); });
+      if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => { for (const l of t.split("\n")) redisCommand(h, l.trim().split(/\s+/)); }, false);
       else if (h.s.stdin === "file") stdinFile(h);
     }
   }
@@ -3675,34 +4013,115 @@ reg(NATIVE, ["xargs"], h => {
   // A bare -i or --replace replaces {}.
   const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
-  const shell = POSIX_SHELLS[(ops[0].v ?? "").split("/").pop() ?? ""];
   // A here-string whose variables Ember follows (`xargs rm -rf <<< "$d"`): its pieces stand where the input goes, so the
   // command judges the variable's values as it uses them (commands-remote-w5-5).
   const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
+  // Input Ember sees whole (a here-string, a here-document, what echo or printf prints) with no quotes or backslashes
+  // for xargs to read.
+  const text = h.s.stdinText;
+  const seen = typeof text === "string" && !/['"\\]/.test(text) && !values(p, "a", "arg-file", "d", "delimiter").length && !has(p, "0", "null") ? text : null;
+  // The command as main read it (its options, and input it never saw), judged apart: where that asks, this asks, so no
+  // way of writing an option decides less safely than it did (`xargs -l chmod +x`, `xargs -i npm`: commands-remote-x7-5);
+  // a job count is the one thing read as now.
+  const askedOnMain = h.e.asksApart(() => {
+    const m = parseOpts(h.args, {
+      shortValue: "adEILlnPs", longValue: ["arg-file", "delimiter", "eof", "replace", "max-lines", "max-args", "max-procs", "max-chars", "process-slot-var"], stopAtOperand: true,
+      jobCounts: ["P", "max-procs"],
+    });
+    const was = xargsUnseen(m.operands.length ? m.operands : [lit("echo")], values(m, "I", "replace", "i")[0] ?? undefined, undefined);
+    if (was.intoCode) h.e.unclear("unclear.input-in-code", "It puts its input into shell text, where it can run as code.");
+    h.e.payload(was.words, h.sc, "xargs", { stdin: null });
+  });
+  const from = h.e.findings.length;
+  const judge = (repl: string | undefined): void => {
+    const { words: unseen, intoCode } = xargsUnseen(ops, repl, fed);
+    if (intoCode) h.e.unclear("unclear.input-in-code", "It puts its input into shell text, where it can run as code.");
+    // The commands xargs builds from input Ember sees (commands-remote-v4-4), one per batch (commands-remote-r7-1).
+    // Where it can't tell the batches (-x, -s, -E, a count that is no number), what it read is still judged, as one
+    // command or with a placeholder line by line, as before it read batches (commands-remote-x7-1).
+    const built = seen === null || intoCode ? null : xargsBuilds(p, seen, repl, ops) ?? xargsWhole(seen, repl, ops);
+    if (built === null) { h.e.payload(unseen, h.sc, "xargs", { stdin: null }); return; }
+    // Never decided less safely than with input Ember can't see, which is how these forms were judged before Ember read
+    // what is printed: where that asks, what Ember read asks too, in its own words (commands-remote-r7-2).
+    const asked = h.e.asksApart(() => h.e.payload(unseen, h.sc, "xargs", { stdin: null }));
+    const before = h.e.findings.length;
+    for (const b of built) h.e.payload(b, h.sc, "xargs", { stdin: null });
+    // More lines for a placeholder than Ember judges one by one: the rest are unread, so it asks (commands-remote-y7-3).
+    const cut = repl !== undefined && seen !== null && seen.split("\n").filter(l => l.trim() !== "").length > MAX_FORMS;
+    if (asked || cut) h.e.asksAtLeast(before, "unclear.xargs-input", "xargs builds this command from its input.");
+  };
+  judge(repl);
+  // GNU's xargs takes the last of -I (or -i) and -L, -l or -n and ignores the others, so with both written the input
+  // may be added in batches after all (`xargs -I{} -L1 git` runs git with each line's words): judged that way too
+  // (commands-remote-x7-3).
+  if (repl !== undefined && has(p, "n", "max-args", "L", "l", "max-lines")) judge(undefined);
+  if (askedOnMain) h.e.asksAtLeast(from, "unclear.xargs-input", "xargs builds this command from its input.");
+});
+
+/**
+ * xargs's command with input Ember can't see standing as one unknown word: with a placeholder where it is, otherwise
+ * after the words. The input put into shell text (`sh -c 'rm {}'`) is still read, the input standing as an unknown
+ * word, and it is unclear (a name holding `;` or `$(…)` runs as code): intoCode.
+ */
+function xargsUnseen(ops: readonly Arg[], repl: string | undefined, fed: Arg["parts"]): { words: Arg[]; intoCode: boolean } {
+  const shell = POSIX_SHELLS[(ops[0].v ?? "").split("/").pop() ?? ""];
   let intoCode = false;
   const words = ops.map((w, k) => {
     if (!repl || w.v === null || !w.v.includes(repl)) return w;
-    // The input put into shell text (`sh -c 'rm {}'`): the text is still read, the input standing as an unknown
-    // word, and it is unclear (a name holding `;` or `$(…)` runs as code).
     if (shell && k > 0 && /^-[a-zA-Z]*c$/.test(ops[k - 1].v ?? "")) { intoCode = true; return { ...w, v: w.v.split(repl).join("\"$XARGS_INPUT\"") }; }
     const a: Arg = { v: null, raw: w.raw, glob: false };
     if (fed) a.parts = w.v.split(repl).flatMap((piece, j) => (j === 0 ? [piece] : [...fed, piece]));
     return a;
   });
-  if (intoCode) h.e.unclear("unclear.input-in-code", "It puts its input into shell text, where it can run as code.");
-  // Input Ember sees whole (a here-string or here-document) with no quotes or backslashes for xargs to read: its words,
-  // or with -I its lines, are what the command gets (commands-remote-v4-4).
-  const text = h.s.stdinText;
-  const seen = typeof text === "string" && !/['"\\]/.test(text) && !values(p, "a", "arg-file", "d", "delimiter").length && !has(p, "0", "null") ? text : null;
-  if (seen !== null && repl && !intoCode) {
+  return { words: repl ? words : [...words, { v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }], intoCode };
+}
+
+/** The input Ember sees with no batches told apart: with a placeholder one command per line, otherwise one with every word. */
+function xargsWhole(seen: string, repl: string | undefined, ops: readonly Arg[]): Arg[][] | null {
+  if (repl) {
     const lines = seen.split("\n").map(l => l.trim()).filter(l => l !== "").slice(0, MAX_FORMS);
-    for (const l of lines) h.e.payload(ops.map(w => (w.v !== null && w.v.includes(repl) ? lit(w.v.split(repl).join(l)) : w)), h.sc, "xargs", { stdin: null });
-    if (lines.length) return;
+    return lines.length ? lines.map(l => ops.map(w => (w.v !== null && w.v.includes(repl) ? lit(w.v.split(repl).join(l)) : w))) : null;
   }
-  const input = seen !== null && !repl ? seen.split(/\s+/).filter(w => w !== "").map(w => lit(w)) : [];
-  // With -I the input replaces the placeholder; otherwise it is added after the words.
-  h.e.payload(repl ? words : [...words, ...(input.length ? input : [{ v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }])], h.sc, "xargs", { stdin: null });
-});
+  const all = seen.split(/\s+/).filter(w => w !== "").map(w => lit(w));
+  return all.length ? [[...ops, ...all]] : null;
+}
+
+/**
+ * The commands xargs builds from input Ember sees whole: with -I one per line, the line where the placeholder is;
+ * with -n or -L one per batch of words or lines; otherwise one, the words after the command's own. null when Ember
+ * can't tell the batches (a size limit, an end-of-input word, a count that is no number, a line that continues, more
+ * batches than it judges, or no input at all), which is then judged as input it can't see.
+ */
+function xargsBuilds(p: Parsed, seen: string, repl: string | undefined, ops: readonly Arg[]): Arg[][] | null {
+  if (has(p, "s", "max-chars", "x", "exit", "E", "e", "eof")) return null;
+  const lines = seen.split("\n").filter(l => l.trim() !== "");
+  if (repl) {
+    const each = lines.map(l => l.trim());
+    return each.length && each.length <= MAX_FORMS ? each.map(l => ops.map(w => (w.v !== null && w.v.includes(repl) ? lit(w.v.split(repl).join(l)) : w))) : null;
+  }
+  const count = (vs: (string | null)[], bare: boolean): number | null | undefined => {
+    if (vs.length === 0) return bare ? 1 : undefined;
+    const v = vs[vs.length - 1];
+    return v !== null && /^[1-9]\d{0,5}$/.test(v) ? Number(v) : null;
+  };
+  const perWords = count(values(p, "n", "max-args"), false);
+  const perLines = count(values(p, "L", "l", "max-lines"), has(p, "l", "max-lines"));
+  if (perWords === null || perLines === null || (perWords !== undefined && perLines !== undefined)) return null;
+  const wordsOf = (t: string): Arg[] => t.split(/\s+/).filter(w => w !== "").map(w => lit(w));
+  let batches: Arg[][];
+  if (perLines !== undefined) {
+    // A line that ends in a blank continues on the next one.
+    if (lines.some(l => /[ \t]$/.test(l))) return null;
+    batches = [];
+    for (let k = 0; k < lines.length; k += perLines) batches.push(wordsOf(lines.slice(k, k + perLines).join(" ")));
+  } else {
+    const all = wordsOf(seen);
+    batches = [];
+    for (let k = 0; k < all.length; k += perWords ?? all.length) batches.push(all.slice(k, k + (perWords ?? all.length)));
+  }
+  return batches.length && batches.length <= MAX_FORMS ? batches.map(b => [...ops, ...b]) : null;
+}
+
 reg(NATIVE, ["parallel"], h => {
   if (h.args.some(a => a.v !== null && /^:::+\+?$/.test(a.v))) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
   // -X (context replace) is a switch, and -l, -i and -e take a value only attached (commands-remote-c4-1).
@@ -4036,8 +4455,21 @@ reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma
   const p = opts(h, { shortValue: valueShort[h.key] ?? "S", longValue: ["suffix", "format", "threads", "memlimit", "output", "quality", "window", "processes", "blocksize", "patch-from"] });
   const keeps = has(p, "k", "keep", "c", "stdout", "to-stdout", "t", "test", "l", "list", "h", "help", "V", "version");
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
-  const ins = objsOf(h, p.operands, "write");
-  if (removes && p.operands.length && !keeps) h.e.add("destroy", "archive.in-place", `Replaces ${listOf(ins)} with a packed or unpacked copy.`, { objects: ins });
+  // The word after a count or format option (`xz -T big.tar`, `xz -M 1G`, `pigz -p "$N"`, `xz -T
+  // ~/.config/ember/settings.json`) is judged as a file the tool packs as well, as it was before these options took a
+  // value: main asked for it whatever it was, a count or a format too, a processor count's substitution included
+  // (`xz -T $(nproc)` with nothing else to pack asked on main, as `xz -T 4` did: commands-remote-r7-2, x7-5).
+  const stray = p.opts.flatMap(o => {
+    const next = h.args[o.at + 1];
+    const word = h.args[o.at]?.v ?? "";
+    const short = /^-[A-Za-z]$/.test(o.name) && "TMFCpbqw".includes(o.name[1]) && (valueShort[h.key] ?? "").includes(o.name[1]) && word.endsWith(o.name[1]) && !word.startsWith("--");
+    const long = /^--(processes|blocksize|quality|window|patch-from)$/.test(o.name) && word === o.name;
+    if (o.value === undefined || !next || !(short || long)) return [];
+    return [next];
+  });
+  const packed = [...p.operands, ...stray];
+  const ins = objsOf(h, packed, "write");
+  if (removes && packed.length && !keeps) h.e.add("destroy", "archive.in-place", `Replaces ${listOf(ins)} with a packed or unpacked copy.`, { objects: ins });
   // zstd's and brotli's -o names the file they write (with -f, over one that is there), and zstd's -D a dictionary it
   // reads: judged as that file is (commands-remote-v5-1). Unpacked from a download, it is one too.
   if (!["zstd", "unzstd", "brotli"].includes(h.key)) return;
@@ -4213,9 +4645,18 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
  * when Ember can see all of the text (a quoted here-document or a here-string), `judge` it; otherwise a fetch before it
  * is download-and-run, and anything else is unclear (it runs code Ember can't see). The dangerous cases ask either way.
  */
-function fromStdin(h: H, judge: (text: string) => void): void {
+function fromStdin(h: H, judge: (text: string) => void, printedAsks = true): void {
   const t = h.s.stdinText;
-  if (t !== undefined && t !== null) { judge(t); return; }
+  if (t !== undefined && t !== null) {
+    judge(t);
+    // Text echo or printf prints into it is judged, and never decided less safely than a pipe Ember can't see, which
+    // is how it was judged before Ember read what is printed: it asks as well (commands-remote-r7-2). `printedAsks`
+    // false: a client whose piped input never asked by itself (redis-cli).
+    if (h.s.stdin !== "pipe" || !printedAsks) return;
+    if (h.s.fetchBefore) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
+    else h.e.unclear("unclear.stdin-code", "It runs the text another command prints into it.");
+    return;
+  }
   if (h.s.fetchBefore && (h.s.stdin === "pipe" || h.s.stdin === "heredoc")) { h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns); return; }
   h.e.unclear("unclear.stdin-code", "Runs code Ember can't see.");
 }
@@ -4251,10 +4692,15 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   }
   if (script.v === "-" || script.v === "/dev/stdin") { intoInterpreter(h); return; }
   h.e.usePath(script, "exec", h.sc);
-  if (h.e.isDownloaded(script, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  // A folder given as the program (`node .`, `python3 tool`) runs its entry file (commands-remote-c7-3).
+  const folder = script.v.replace(/\/+$/, "") || "/";
+  const entry = /(^|\/)\.{1,2}$|\/$/.test(script.v) || !/\.[^./]+$/.test(folder) ? ENTRY_FILES.some(n => h.e.isDownloaded(lit(`${folder}/${n}`), h.sc)) : false;
+  if (h.e.isDownloaded(script, h.sc) || entry) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   else if (readAs !== undefined) h.e.recordScript(script, readAs, h.sc);
   nameCheck(h, script.v, script.v);
 }
+/** The files node or python runs when given a folder (package.json names node's). */
+const ENTRY_FILES = ["index.js", "index.mjs", "index.cjs", "index.json", "index.node", "package.json", "__main__.py"];
 
 /** Inline code: unclear, and refused when it names Ember's own paths (§3.5.8). */
 function emberText(h: H, code: string): void {
@@ -5092,9 +5538,22 @@ git(["clone"], h => {
   if (values(p, "template", "u", "upload-pack").length) h.e.unclear("unclear.git-template", "Runs code from a git setting.");
   const [url, dir] = p.operands;
   if (url && url.v && !URL_LIKE.test(url.v) && !SCP_LIKE.test(url.v)) h.e.usePath(url, "readTree", h.sc);
-  const name = dir?.v ?? (url?.v ? url.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop()?.replace(/\.git$/, "") ?? null : null);
   if (dir) h.e.usePath(dir, "write", h.sc);
-  h.e.download(name, h.sc);
+  // The folder it makes: the one named, else the address's last part; with a part Ember can't see, the names the text
+  // gives it, else a folder of no name Ember knows, here (the address's) or anywhere (`git clone … "$d"`), so building
+  // in it later asks (commands-remote-r6-1).
+  const from = dir ?? url;
+  if (!from) return;
+  for (const f of h.e.knownForms(from, true)) {
+    const form = (f ?? UNSEEN).replace(/[\\/]+$/, "");
+    const name = dir ? form : (form.split(/[\\/:]/).pop() ?? "").replace(/\.git$/, "");
+    if (!name.includes(UNSEEN)) h.e.download(name || null, h.sc);
+    else if (!dir) h.e.markUnnamed(".", h.sc);
+    else { const seen = name.slice(0, name.indexOf(UNSEEN)); h.e.markUnnamed(seen.includes("/") ? seen.slice(0, seen.lastIndexOf("/") + 1) : seen === "" ? null : ".", h.sc); }
+  }
+  // With a folder word Ember can't see, the address's own name is marked as well, as on main: no form of the word
+  // decides less safely than it did (commands-remote-x7-2).
+  if (dir && dir.v === null && url?.v) h.e.download(url.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop()?.replace(/\.git$/, "") ?? null, h.sc);
 });
 git(["archive"], h => {
   const p = opts(h, { shortValue: "o", longValue: ["output", "format", "prefix", "remote", "exec", "add-file", "add-virtual-file"] });
@@ -5172,7 +5631,14 @@ reg(NATIVE, ["gh"], h => {
   const what = GH_WHAT[group];
   if (!what) { h.e.unclear("unclear.gh-verb", "Ember can't tell which gh command this runs."); return; }
   if (sub === null) return;
-  if (group === "release" && sub === "download") { h.e.download(".", h.sc); return; }
+  // A release's files or a workflow run's artifacts land in the folder, or in -D's (and -O's file): running one later
+  // is running a download (commands-remote-r7-3).
+  if ((group === "release" || group === "run") && sub === "download") {
+    h.e.download(".", h.sc);
+    const dp = parseOpts(rest, { shortValue: "DOnpAR", longValue: ["dir", "output", "name", "pattern", "archive", "repo"] });
+    for (const d of values(dp, "D", "dir", "O", "output")) { if (d) h.e.download(d, h.sc); else h.e.markUnnamed(null, h.sc); }
+    return;
+  }
   if (group === "repo" && sub === "clone") { const [r, d] = rest.filter(a => !isOption(a)).slice(1); h.e.download(d?.v ?? r?.v?.split("/").pop() ?? null, h.sc); return; }
   if (group === "repo" && sub === "deploy-key" && rest.some(a => a.v === "delete")) { h.e.add("remote-delete", "gh.repo.deploy-key", "Deletes a deploy key on GitHub."); return; }
   if ((GH_DELETE[group] ?? []).includes(sub)) {
@@ -5318,6 +5784,8 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
     const remote = (a: Arg | undefined): boolean => !!a?.v && /^[A-Za-z0-9_.-]+:/.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v);
     if (src && !remote(src)) h.e.usePath(src, "readTree", h.sc);
     if (dst && !remote(dst)) { const obj = h.e.usePath(dst, "write", h.sc); if (obj.abs) h.e.add("destroy", "posix.cp", `Replaces ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
+    // A file copied out of a container is a download where it lands (commands-remote-r7-3).
+    if (dst && !remote(dst) && src && (remote(src) || src.v === null)) { if (dst.v) h.e.download(dst.v, h.sc); else h.e.markUnnamed(null, h.sc); }
     return;
   }
   if (v === "save" || v === "export") { for (const o of values(parseOpts(rest, { shortValue: "o", longValue: ["output"] }), "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); } return; }
@@ -5483,7 +5951,12 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     if (h.key === "ansible" || h.key === "ansible-playbook") { h.e.add("publish", "cloud.change", checkRun ? `Ember can't tell whether this changes ${service}.` : `Changes ${service}.`); return; }
     return;
   }
-  if (verbs.includes("?")) { h.e.unclear("unclear.cloud-verb", "Ember can't tell which command this runs."); return; }
+  if (verbs.includes("?")) {
+    h.e.unclear("unclear.cloud-verb", "Ember can't tell which command this runs.");
+    // A copy or a download with a word Ember can't see may save a file anywhere (commands-remote-r7-3).
+    if (verbs.some(v => /^(cp|mv|rsync|download|download-batch)$/.test(v))) h.e.markUnnamed(null, h.sc);
+    return;
+  }
   let verb: string;
   switch (h.key) {
     case "aws": verb = verbs[0] === "s3" ? `s3 ${verbs[1] ?? ""}` : verbs[1] ?? verbs[0]; break;
@@ -5530,6 +6003,24 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   if (h.key === "gsutil" && /^(cp|mv|rsync)$/.test(verb)) {
     const ops = rest.filter(a => !isOption(a)).slice(1).map(a => a.v ?? "");
     if (ops[ops.length - 1]?.startsWith("gs://")) { h.e.add("publish", "upload.cloud", "Sends data to Google Cloud Storage."); return; }
+  }
+  // A file copied down from a bucket, a pod or a storage account is a download where it lands (commands-remote-r7-3):
+  // the words after the one that names the remote place; anywhere, when Ember can't see a word. It asks as before.
+  {
+    const words = rest.filter(a => !isOption(a));
+    const copies = (h.key === "gsutil" && /^(cp|mv|rsync)$/.test(verbs[0] ?? "")) || (h.key === "gcloud" && verbs[0] === "storage" && /^(cp|mv|rsync)$/.test(verbs[1] ?? ""))
+      || ((h.key === "kubectl" || h.key === "oc") && verbs[0] === "cp");
+    const remote = (a: Arg): boolean => a.v === null || /^gs:\/\//.test(a.v) || ((h.key === "kubectl" || h.key === "oc") && /^[^/\\:]+(\/[^/\\:]+)?:/.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v));
+    // Every word after the remote one that isn't remote itself (an option's value among them: marking more is safe).
+    const from = copies ? words.findIndex(a => a.v !== null && remote(a)) : -1;
+    if (from >= 0) for (const dest of words.slice(from + 1)) { if (dest.v === null) h.e.markUnnamed(null, h.sc); else if (!remote(dest)) h.e.download(dest.v, h.sc); }
+    else if (copies && words.some(a => a.v === null)) h.e.markUnnamed(null, h.sc);
+    if (h.key === "az" && verbs.some(v => v === "download" || v === "download-batch")) {
+      const ap = parseOpts(h.args, { shortValue: "fdncs", longValue: ["file", "destination", "name", "container-name", "source", "account-name", "pattern", "path"] });
+      const to = values(ap, "f", "file", "d", "destination");
+      if (to.length === 0) h.e.markUnnamed(".", h.sc);
+      for (const f of to) { if (f) h.e.download(f, h.sc); else h.e.markUnnamed(null, h.sc); }
+    }
   }
   if ((h.key === "terraform" || h.key === "tofu" || h.key === "pulumi") && verb === "apply" && h.args.some(a => a.v === "-destroy")) verb = "destroy";
   if ((h.key === "kubectl" || h.key === "oc") && (verb === "edit" || (verb === "exec" && h.args.some(a => /^-[a-z]*i[a-z]*t|^-[a-z]*t[a-z]*i/.test(a.v ?? ""))))) h.e.unclear("unclear.interactive", SAYS.interactive);
@@ -6226,14 +6717,21 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
   // -J saves under the name the server sends, when it sends one (commands-remote-c5-2).
   if (has(p, "O", "remote-name", "remote-name-all") && has(p, "J", "remote-header-name")) h.e.downloadUnnamed(outDir ?? ".", h.sc);
   if (has(p, "O", "remote-name", "remote-name-all")) {
-    for (const u of urls) {
-      const name = u.replace(/[?#].*$/, "").split("/").pop();
-      if (!name) continue;
-      const path = outDir ? `${outDir}/${name}` : name;
-      const obj = h.e.usePath(lit(path), "write", h.sc);
-      if (obj.abs) h.e.add("destroy", "download.output", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
-      h.e.download(path, h.sc);
+    // The name each address ends in; an address a variable holds part of gives the names the text gives it, and one
+    // whose name Ember can't see, or that curl's `[1-3]` or `{a,b}` makes several of, is a download of no name Ember
+    // knows in the folder it saves into (commands-remote-r6-1).
+    let unnamed = false;
+    for (const w of [...p.operands, ...optionWords(h.args, p, "url")]) {
+      const got = h.e.addressNames(w, { patterns: !has(p, "g", "globoff") });
+      unnamed ||= got.unnamed;
+      for (const name of got.names) {
+        const path = outDir ? `${outDir}/${name}` : name;
+        const obj = h.e.usePath(lit(path), "write", h.sc);
+        if (obj.abs) h.e.add("destroy", "download.output", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
+        h.e.download(path, h.sc);
+      }
     }
+    if (unnamed && !values(p, "output-dir").some(d => d === null)) h.e.downloadUnnamed(outDir ?? ".", h.sc);
   }
   for (const f of values(p, "c", "cookie-jar", "D", "dump-header", "trace", "trace-ascii", "stderr", "etag-save", "hsts", "alt-svc")) if (f && f !== "-") h.e.usePath(lit(f), "write", h.sc);
 });
@@ -6246,8 +6744,7 @@ reg(NATIVE, ["wget", "wget2"], h => {
       "regex-type", "reject-regex", "rejected-log", "remote-encoding", "report-speed", "retry-on-http-error", "secure-protocol", "start-pos", "use-askpass",
       "waitretry", "warc-dedup", "warc-file", "warc-header", "warc-max-size", "warc-tempdir"],
   });
-  const urls = p.operands.map(a => a.v ?? "").filter(u => u);
-  const host = hostOf(urls[0] ?? "") || "another computer";
+  const host = hostOf(p.operands.map(a => a.v ?? "").filter(u => u)[0] ?? "") || "another computer";
   const method = (values(p, "method")[0] ?? "").toUpperCase();
   for (const f of values(p, "post-file", "body-file", "i", "input-file", "load-cookies", "certificate", "private-key")) if (f && f !== "-") h.e.usePath(lit(f), "read", h.sc);
   if (values(p, "post-data", "post-file", "body-data", "body-file").length || /^(POST|PUT|PATCH|DELETE)$/.test(method)) h.e.add("publish", "send.http", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }], program: "wget" });
@@ -6268,10 +6765,37 @@ reg(NATIVE, ["wget", "wget2"], h => {
     // included (review #169); wget may pick another name (a redirect, -r's folders), so the folder is judged too.
     if (dir === null) h.e.downloadUnnamed(null, h.sc);
     else if (dir !== undefined) writeInto(h, dir);
-    for (const u of urls) {
-      const name = u.replace(/[?#].*$/, "").split("/").pop() || "index.html";
-      saveAs(h, dir ? `${dir}/${name}` : name);
+    // -x keeps the address's folders, under the host's (with its port, as written): the file lands at host/path
+    // (commands-remote-c7-3). The name alone is marked as well, as on main, whatever the options: -nd, or -nH with no
+    // folders left, saves it there, and both may stand in a cluster or be cut short (`-xnH`, `--no-host-dir`), so a
+    // hint of -nH marks the place with the host's folder and without it (commands-remote-x7-2).
+    const tree = has(p, "x", "force-directories");
+    const noHost = h.args.some(a => a.v !== null && (/^-[A-Za-z]*nH/.test(a.v) || (a.v.length >= 6 && "--no-host-directories".startsWith(a.v))));
+    // A count of folders to drop that Ember can't read leaves a name it can't place.
+    const cuts = values(p, "cut-dirs");
+    const cutWord = cuts.length ? cuts[cuts.length - 1] : "0";
+    const cut = cutWord !== null && /^\d{1,3}$/.test(cutWord) ? Number(cutWord) : null;
+    let unnamed = false;
+    for (const u of p.operands) {
+      // An address a variable holds part of gives the names the text gives it; a name Ember can't see is a download
+      // of no name it knows, in the folder it saves into (commands-remote-r6-1).
+      const got = h.e.addressNames(u, { fallback: "index.html" });
+      unnamed ||= got.unnamed;
+      for (const name of got.names) saveAs(h, dir ? `${dir}/${name}` : name);
+      if (!tree) continue;
+      const m = u.v === null ? null : /^(?:([a-z][a-z0-9+.-]*):\/\/)?(?:[^@/]*@)?([^/?#]+)(\/[^?#]*)?/i.exec(u.v);
+      if (!m || cut === null) unnamed = true;
+      if (!m) continue;
+      const dirs = (m[3] ?? "/").split("/").slice(1);
+      const name = dirs.pop() || "index.html";
+      // wget drops the scheme's own port from the folder's name (`https://host:443/…` saves under host/), so the
+      // folder is marked with the port and without it (commands-remote-y7-2).
+      for (const host of [...(noHost ? [[]] : []), ...[...new Set([m[2], m[2].replace(/:\d+$/, "")])].map(x => [x])]) {
+        const under = [...(has(p, "protocol-directories") ? [m[1] ?? "http"] : []), ...host, ...dirs.slice(cut ?? 0), name].join("/");
+        saveAs(h, dir ? `${dir}/${under}` : under);
+      }
     }
+    if (unnamed && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
     // Names the server or a list picks, and a recursion's or a page's files (commands-remote-c5-2).
     const picked = has(p, "r", "recursive", "m", "mirror", "p", "page-requisites", "content-disposition", "trust-server-names") || values(p, "i", "input-file").length > 0;
     if (picked && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
@@ -6286,6 +6810,17 @@ reg(NATIVE, ["http", "https", "xh", "xhs", "httpie"], h => {
   const items = ops.slice(hasMethod ? 2 : 1);
   if (hasMethod || items.some(i => /^[^=:@]+(:?=|@)/.test(i)) || h.args.some(a => /^(-f|--form|--raw)$/.test(a.v ?? ""))) h.e.add("publish", "send.http", `Sends data to ${hostOf(url ?? "")}.`);
   for (const i of items) { const m = /^[^=:@]+(?:=@|:=@|@)(.+)$/.exec(i); if (m) h.e.usePath(lit(m[1]), "read", h.sc); }
+  // -o saves the answer to a file; -d (--download) without one saves it under the name the server or the address
+  // gives, which Ember can't be sure of (commands-remote-c7-3).
+  // The name may be written straight after -o, in a cluster too (`-orun.sh`, `-dorun.sh`: commands-remote-x7-8).
+  const k = h.args.findIndex(a => a.v === "-o" || a.v === "--output" || /^-[A-Za-z]*o$/.test(a.v ?? ""));
+  const attached = h.args.find(a => /^--output=/.test(a.v ?? ""));
+  const short = /^-[A-Za-np-z]*o(.+)$/.exec(h.args.find(a => /^-[A-Za-np-z]*o./.test(a.v ?? "") && !(a.v ?? "").startsWith("--"))?.v ?? "");
+  const out = k >= 0 ? h.args[k + 1] : attached?.v ? lit(attached.v.slice("--output=".length)) : short ? lit(short[1]) : undefined;
+  if (out !== undefined) {
+    if (out.v === null) h.e.downloadTo(out, h.sc);
+    else { overwrites(h, out, "download.output"); h.e.download(out.v, h.sc); }
+  } else if (h.args.some(a => a.v === "--download" || /^-[A-Za-z]*d[A-Za-z]*$/.test(a.v ?? ""))) h.e.downloadUnnamed(".", h.sc);
 });
 /**
  * A folder a program saves files into by names Ember can't be sure of (wget -P, aria2c -d, git checkout-index
@@ -6315,6 +6850,13 @@ reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
   else if (dir !== undefined) writeInto(h, dir);
   const at = (name: string): string => (dir ? `${dir}/${name}` : name);
   const named = (u: Arg): string | null => (u.v ? u.v.replace(/[?#].*$/, "").split("/").pop() || "index.html" : null);
+  // An address a variable holds part of: the names the text gives it, else a download of no name Ember knows in the
+  // folder it saves into (commands-remote-r6-1).
+  const byAddress = (u: Arg): void => {
+    const got = h.e.addressNames(u, { fallback: "index.html" });
+    for (const name of got.names) saveAs(h, at(name));
+    if (got.unnamed && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
+  };
   const outs = optionWords(h.args, p, "o", "out", "output");
   for (const w of outs) {
     if (w.v === null) h.e.downloadTo(dir ? { ...w, parts: [`${dir}/`, ...(w.parts ?? [{ name: null }])] } : w, h.sc);
@@ -6329,7 +6871,7 @@ reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
     if (name) h.e.usePath(lit(`${to.v.replace(/[\\/]+$/, "")}/${name}`), "write", h.sc);
     return;
   }
-  if (outs.length === 0) for (const u of p.operands) { const name = named(u); if (name) saveAs(h, at(name)); }
+  if (outs.length === 0) for (const u of p.operands) byAddress(u);
   // aria2c's list of addresses (-i): names Ember can't see, in its folder (commands-remote-c5-2).
   if (h.key === "aria2c" && values(p, "i", "input-file").length && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
 });
@@ -6357,6 +6899,9 @@ reg(NATIVE, ["scp", "pscp"], h => {
     return;
   }
   copyLike({ ...h, args: ops }, "cp");
+  // A source Ember can't see may be another computer's file (`scp "$H:run.sh" .`): where it lands is a download
+  // (commands-remote-r7-3).
+  if (sources.some(s => s.v === null)) h.e.download(dest.v, h.sc);
 });
 /** ssh-family options: code-running settings, identity files, port forwarding, background. */
 function sshOptions(h: H, p: Parsed): void {

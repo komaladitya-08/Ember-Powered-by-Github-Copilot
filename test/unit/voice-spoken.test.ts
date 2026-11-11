@@ -186,6 +186,46 @@ describe("spokenText says money, times, paths and numbers as people say them, an
   ])("leaves %j as it is", text => expect(spokenText(text)).toBe(text.replace("John 3:16", "John 3 16")));
 });
 
+describe("spokenText leaves markup that is only for the eye unsaid, and says a path through a dot folder as any other (round seven)", () => {
+  it.each([
+    ["It is at /home/me/.config/ember/settings.json now.", "It is at settings.json in ember now."],
+    ["It is in ~/.config/ember.", "It is in ember."],
+    ["See ~/.bashrc and /home/me/.ssh/config.", "See .bashrc in your home folder and config."],
+    // As before: a file with its folder, anything else by its last part, and no path in an address or a version.
+    ["Saved to /home/me/Documents/notes.txt.", "Saved to notes.txt in Documents."],
+    ["Version 1.2/.3 and and/or stay.", "Version 1.2/.3 and and/or stay."],
+  ])("says %j as %j (voice-speaking-r7-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    ["- [ ] Buy milk.\n- [x] Call Ana.\n- [X] Pay rent.", "Buy milk.\nDone: Call Ana.\nDone: Pay rent."],
+    ["Water is H<sub>2</sub>O, and <b>this</b> is <em class=\"x\">bold</em>.", "Water is H2O, and this is bold."],
+    ["First line.<br>Second line.<br/>Third.", "First line. Second line. Third."],
+    ["Fish &amp; chips, &quot;to go&quot;, 3&nbsp;portions, a&lt;b.", "Fish and chips, \"to go\", 3 portions, a<b."],
+    ["See the note[^1] here.[^note]", "See the note here."],
+    // What isn't markup is said as written: a placeholder, a comparison, a tag shown as code, a list in brackets.
+    ["Type <name> here, if a < b and c > d.", "Type <name> here, if a < b and c > d."],
+    ["Wrap it in `<b>` and `&amp;`.", "Wrap it in <b> and &amp;."],
+    ["Pick [x] or [ ] in the form.", "Pick [x] or [ ] in the form."],
+  ])("says %j as %j (voice-speaking-r7-3)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    // A comparison or a type with a one-letter name, and an answer about HTML, keep their words.
+    ["if x<p or y>q then", "if x<p or y>q then"],
+    ["If a <b and c> d then stop.", "If a <b and c> d then stop."],
+    ["Use <p> for a paragraph and <b> for bold.", "Use <p> for a paragraph and <b> for bold."],
+    ["Type <s> to search, <i> for insert, <u> to undo.", "Type <s> to search, <i> for insert, <u> to undo."],
+    ["Close it with </p>.", "Close it with </p>."],
+    // A regex's negated set isn't a footnote; a footnote's definition loses its mark and colon.
+    ["The regex [^abc] matches others.", "The regex [^abc] matches others."],
+    ["See the note[^1] here.\n\n[^1]: The note itself is here.", "See the note here.\nThe note itself is here."],
+    // A ticked item that says it is done isn't told twice.
+    ["* [x] Done: paid rent", "Done: paid rent."],
+    ["1. [x] Done already\n2. [ ] Not yet", "1. Done already.\n2. Not yet."],
+    // Markup around words is still unsaid.
+    ["<b>Important.</b> Press <kbd>Ctrl</kbd>, then <span style=\"color:red\">red</span>.", "Important. Press Ctrl, then red."],
+  ])("says %j as %j, dropping no words that only look like markup (voice-speaking-x7-5)", (text, said) => expect(spokenText(text)).toBe(said));
+});
+
 describe("spokenText", () => {
   it.each([
     ["Run this:\n\n```bash\nsudo dnf install foo\n```\n\nThen restart.", "Run this:\n(code shown in the bubble)\nThen restart."],
@@ -433,6 +473,88 @@ describe("speechLanguage: which language a reply is in, so Kitten (English only)
     ["« Merci beaucoup, je vous remercie. »", "fr"],
     ["Ich habe „Bericht.pdf“ geöffnet und die Tabelle ist fertig.", "de"],
   ])("still finds %j is %j, beside what it quotes, or all quotes (voice-speaking-r2-1)", (text, lang) => expect(speechLanguage(text)).toBe(lang));
+});
+
+describe("speechLanguage tells Spanish from French, which share their commonest short words (voice-speaking-c7-1)", () => {
+  it.each([
+    "Listo. Abrí la configuración y activé la luz nocturna.",
+    "Abrí Firefox y busqué la receta de paella.",
+    "Ya cerré la ventana y guardé la hoja.",
+    "Guardé la nota y la envié a tu teléfono.",
+    "Moví la ventana a la otra pantalla y la maximicé.",
+    "Abrí la carpeta de descargas.",
+    "¿Quieres que la cierre de nuevo?",
+  ])("says %j with a Spanish voice, never a French one (voice-speaking-c7-1)", text => {
+    expect(speechLanguage(text)).toBe("es");
+    const streamed = new AnswerLanguage();
+    streamed.reset("");
+    expect(streamed.take([text], true)).toEqual([{ text, lang: "es" }]);
+  });
+
+  it("follows the request's language where a reply's short words fit two languages alike (voice-speaking-c7-1)", () => {
+    const a = new AnswerLanguage();
+    a.reset("abre la carpeta de mis documentos, por favor");
+    expect(a.take(["Hecho, la carpeta de Marta se ve en la pantalla."], true)[0].lang).toBe("es");
+  });
+
+  it.each([
+    "La réunion est à quinze heures.", "J'ai fermé la fenêtre et enregistré le fichier.", "Il y a trois fichiers dans le dossier.",
+    "On y va : la fenêtre de la calculatrice se ferme.", "J'ai ouvert la fenêtre de la calculatrice.",
+  ])("still says %j with a French voice (voice-speaking-c7-1)", text => expect(speechLanguage(text)).toBe("fr"));
+});
+
+describe("AnswerLanguage says an English answer's own closing words in Ember's voice after a passage it read out in another language", () => {
+  const said = (pieces: string[]) => { const a = new AnswerLanguage(); a.reset(""); return pieces.flatMap((p, i) => a.take([p], i === pieces.length - 1)).map(p => p.lang); };
+  it("asks “Shall I reply to it?” in English after reading out a Spanish email, never in the Spanish voice (voice-speaking-c7-3)", () => {
+    expect(said(["Here is the email from José:", "Nos vemos mañana a las diez en la oficina.", "Trae los documentos del proyecto, por favor.", "Shall I reply to it?"]).filter((_l, i) => i !== 1)).toEqual([null, "es", null]);
+    expect(said(["The note in Notes.txt says:", "Ne pas oublier de payer le loyer et les factures avant la fin du mois.", "Want me to set a reminder for you?"]).at(-1)).toBeNull();
+  });
+
+  it("keeps a reply in another language in that language's voice, its names and what it quotes in English too (voice-speaking-c7-3)", () => {
+    expect(said(["J'ai ouvert le fichier que vous avez demandé dans le dossier des documents.", "Le film The Thing est dans la liste.", "Ça veut dire « I don't know what you have »."])).toEqual(["fr", "fr", "fr"]);
+  });
+
+  it.each([
+    ["fr", ["Le film que vous cherchez est très connu et il est dans la liste que je vous ai donnée hier.", "Il s'appelle Gone with the Wind."]],
+    ["es", ["La película que buscas es muy conocida y está en la lista que te mandé por la mañana.", "Se llama Gone with the Wind."]],
+    ["it", ["La canzone che cerchi è molto famosa e non è difficile da trovare nella lista che ti ho dato.", "Si chiama Gone with the Wind."]],
+    ["ru", ["Файл сохранён на рабочем столе, и вы можете открыть его в любое время, чтобы посмотреть содержимое.", "Ошибка: The file was not found."]],
+    ["zh", ["文件已经保存在桌面上了，你可以随时打开它来查看里面的全部内容和图片。请在设置里打开 Do Not Disturb，然后再试一次。错误信息是 The file was not found，请检查路径。"]],
+    ["ja", ["ファイルはデスクトップに保存しました。いつでも開いて中身を確認できますので、どうぞご利用ください。", "エラーメッセージは The file was not found です。"]],
+  ])("keeps a %s answer's own sentence that names an English title, button or error in that answer's voice, never Ember's English one (voice-speaking-x7-1)", (lang, pieces) => {
+    expect(said(pieces)).toEqual(pieces.map(() => lang));
+  });
+
+  it.each(["Sure.", "Of course!", "Got it.", "José wrote:", "The email reads:", "One new email, from José:", "Here is the email from José:"])("asks the closing question in Ember's voice after a Spanish email, in an answer that opens with “%s” (voice-speaking-y7-1)", opener => {
+    expect(said([opener, "Nos vemos mañana a las diez en la oficina.", "Trae los documentos del proyecto, por favor.", "Shall I reply to it?"]).slice(2)).toEqual(["es", null]);
+  });
+
+  it("asks the closing question in Ember's voice after a message that ended before a tool call (voice-speaking-y7-1)", () => {
+    const answer = new AnswerLanguage();
+    answer.reset("");
+    answer.take(["Sure, one moment."], true, true);
+    const pieces = ["José wrote:", "Nos vemos mañana a las diez en la oficina.", "Trae los documentos del proyecto, por favor.", "Shall I reply to it?"];
+    expect(pieces.flatMap((p, i) => answer.take([p], i === pieces.length - 1)).map(p => p.lang).slice(1)).toEqual(["es", "es", null]);
+  });
+
+  it("says a passage's sentence that only carries English words in the passage's voice, in an answer that opened in English (voice-speaking-x7-1)", () => {
+    expect(said(["Here is the note you asked for:", "Le film que vous cherchez est très connu et il est dans la liste.", "Il s'appelle Gone with the Wind.", "Ошибка: The file was not found.", "Shall I reply to it?"]).slice(1)).toEqual(["fr", "fr", "fr", null]);
+  });
+});
+
+describe("speechLanguage finds a whole sentence of French, Italian, Portuguese or German (voice-speaking-r7-1)", () => {
+  it.each([
+    ["Bonjour, comment ça va aujourd'hui ? Je peux vous aider à ouvrir vos fichiers.", "fr"],
+    ["Ho aperto la cartella Download. Vuoi che ordini i file per data?", "it"],
+    ["Hai tre nuove email. Vuoi che te le legga?", "it"],
+    ["Tem três emails novos. Quer que eu os leia?", "pt"],
+    ["Du hast drei neue E-Mails.", "de"],
+  ])("says %j with a voice for %j, not Ember's English one (voice-speaking-r7-1)", (text, lang) => expect(speechLanguage(text)).toBe(lang));
+
+  it.each([
+    "Um, the den is at the back, ma.", "Al and Ti are in the den.", "Ho ho ho! Merry Christmas to you.", "Open the La Scala page, Al.", "Mon to Fri, um, it is open.",
+    "The du Pont file is in the den.", "I moved Aus Open to Mon.", "Tem and Quer are the two folders.", "Ma, the ho-hum report is in La Jolla.",
+  ])("still takes %j as English (voice-speaking-r7-1)", text => expect(speechLanguage(text)).toBeNull());
 });
 
 describe("AnswerLanguage: an answer is said in one language, decided once from enough of it (voice-speaking-r1, voice-speaking-11)", () => {

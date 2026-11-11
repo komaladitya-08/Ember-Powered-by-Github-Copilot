@@ -493,6 +493,22 @@ describe("ExtensionsService", () => {
     expect(pluginPath("/m", "/other", path.posix)).toBeNull();
   });
 
+  it("lists no marketplaces while Ember isn't connected yet, without a warning and its stack in the log each time (reliability-r7-4)", async () => {
+    const logged: { level: string; event: string; fields?: Record<string, unknown> }[] = [];
+    const at = (level: string) => (event: string, fields?: Record<string, unknown>) => { logged.push({ level, event, fields }); };
+    const log = { info: at("info"), warn: at("warn"), error: at("error"), debug: at("debug"), child: () => undefined } as never;
+    // Home asks at start and at every reconnect, before the runtime is there: that is expected, not a fault.
+    expect(await new ExtensionsService(deps({ client: () => null, log })).marketplaces()).toEqual([]);
+    // Nothing is asked of a runtime that isn't there, so nothing is logged (safety-privacy-r7-4); a runtime that goes
+    // away between the check and the call leaves one debug line, never a warning.
+    expect(logged).toEqual([]);
+    // A real failure still warns, with its error.
+    logged.length = 0;
+    const failing = { rpc: { plugins: { marketplaces: { list: async () => { throw new Error("catalog refresh failed"); } } } } } as never;
+    expect(await new ExtensionsService(deps({ client: () => failing, log })).marketplaces()).toEqual([]);
+    expect(logged).toMatchObject([{ level: "warn", event: "extensions.marketplaces_failed" }]);
+  });
+
   it("lists only plugins with a server Ember can run, and where each reaches", async () => {
     const s = new ExtensionsService(deps());
     const entries = await s.browse("local-market");
@@ -739,6 +755,16 @@ describe("ExtensionsService", () => {
     expect(new ExtensionsService(deps({ client: () => null })).connected()).toBe(false);
     expect(await new ExtensionsService(deps({ client: () => null })).marketplaces()).toEqual([]);
     expect(new ExtensionsService(deps()).connected()).toBe(true);
+  });
+
+  it("logs no warning for a list asked before the runtime is connected, only for one that failed (safety-privacy-r7-4)", async () => {
+    const warned: string[] = [];
+    const log = { info: () => undefined, warn: (event: string) => { warned.push(event); }, error: () => undefined, debug: () => undefined, child: () => undefined } as never;
+    expect(await new ExtensionsService(deps({ client: () => null, log })).marketplaces()).toEqual([]);
+    expect(warned).toEqual([]);
+    const broken = { rpc: { plugins: { marketplaces: { list: async () => { throw new Error("boom"); } } } } } as never;
+    expect(await new ExtensionsService(deps({ client: () => broken, log })).marketplaces()).toEqual([]);
+    expect(warned).toEqual(["extensions.marketplaces_failed"]);
   });
 
   it("refuses to install or list marketplaces while the organisation turns extensions off", async () => {

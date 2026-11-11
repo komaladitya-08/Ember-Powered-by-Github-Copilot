@@ -36,10 +36,13 @@ export type ActivityEvent =
   | { type: "question"; asked?: string; askedIn?: AskedIn }
   /** It was answered (or not). */
   | { type: "answer"; answer: Answer }
-  /** A step wasn't allowed; `reason` is Ember's (policy's) words. */
-  | { type: "refused"; reason: string }
-  /** The step under way was turned down (a "Not now", a refusal, a stop): stopped, not a step that didn't work. */
-  | { type: "denied" }
+  /**
+   * A step wasn't allowed; `reason` is Ember's (policy's) words. `id`: the call it was (its tool-start's), since a
+   * reply's calls all begin at once and only the first is the one decided (tasks-approvals-c5-1).
+   */
+  | { type: "refused"; reason: string; id?: string }
+  /** The step under way (`id`) was turned down (a "Not now", a refusal, a stop): stopped, not a step that didn't work. */
+  | { type: "denied"; id?: string }
   /** The task now works with another hand. */
   | { type: "hand"; hand: TaskHand }
   /** A call to the model failed and is tried again. */
@@ -137,7 +140,7 @@ export class ActivityLog {
         const group = STEP_GROUP[e.tool] ?? "other";
         const words = doingWords(e.step, e.app);
         this.push({ id: e.id, kind: "step", at, state: "running", words, group, ...(e.app ? { app: e.app } : {}) });
-        this.setDoing(words);
+        this.setDoing(this.atWork());
         return true;
       }
       case "tool-end": {
@@ -149,7 +152,7 @@ export class ActivityLog {
         a.steps++;
         a.counts[it.group ?? "other"] = (a.counts[it.group ?? "other"] ?? 0) + 1;
         if (!e.ok) a.failedSteps++;
-        this.setDoing("Thinking…");
+        this.setDoing(this.atWork());
         return true;
       }
       case "picture": {
@@ -197,7 +200,7 @@ export class ActivityLog {
       case "refused": {
         const words = refusedWords(clip(e.reason, REASON_MAX));
         // The step it stopped becomes the refusal (one row, not a failed step beside it); it isn't counted as a step.
-        const i = a.items.findLastIndex(x => x.kind === "step" && x.state === "running");
+        const i = this.running(e.id);
         const step = a.items[i];
         if (step) {
           Object.assign(step, { kind: "refused", state: "stopped", words, endedAt: at });
@@ -205,15 +208,15 @@ export class ActivityLog {
           // it), it goes last, at its own time: never a refusal above the user's Allow (tasks-approvals-v5-1).
           if (i < a.items.length - 1) { a.items.splice(i, 1); step.at = at; a.items.push(step); }
         } else this.push({ id: this.id("r"), kind: "refused", at, state: "stopped", words });
-        this.setDoing("Thinking…");
+        this.setDoing(this.atWork());
         return true;
       }
       case "denied": {
         // Not counted as a step, nor as one that didn't work: the user (or policy) said no, nothing failed.
-        const step = a.items.findLast(i => i.kind === "step" && i.state === "running");
+        const step = a.items[this.running(e.id)];
         if (!step) return false;
         Object.assign(step, { state: "stopped", words: triedWords(step.group ?? "other", 1, step.app), endedAt: at });
-        this.setDoing("Thinking…");
+        this.setDoing(this.atWork());
         return true;
       }
       case "hand":
@@ -271,6 +274,24 @@ export class ActivityLog {
     if (a.retry) return retryWords(a.retry);
     if (a.slow) return this.slowWords;
     return this.doing;
+  }
+
+  /**
+   * Where the step under way that an event is about sits in the items (-1: none). By its call's id where the event
+   * has one: a reply's calls all begin before the first runs, so several are under way at once and a "no" belongs to
+   * one of them (tasks-approvals-c5-1). Without an id, the first: tools run one at a time, in the order called.
+   */
+  private running(id: string | undefined): number {
+    return this.a.items.findIndex(x => x.kind === "step" && x.state === "running" && (id === undefined || x.id === id));
+  }
+
+  /**
+   * The live line's words for what is done now: the first step under way, or thinking. A reply's calls all begin at
+   * once and run in the order called, so the first is the one at work (or asked about); the ones queued behind it
+   * take the line as their turn comes (tasks-approvals-r7-1).
+   */
+  private atWork(): string {
+    return this.a.items[this.running(undefined)]?.words ?? "Thinking…";
   }
 
   private setDoing(words: string): boolean {

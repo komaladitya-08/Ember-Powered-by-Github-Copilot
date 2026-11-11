@@ -40,7 +40,7 @@ function recordingJudge() {
   return decided;
 }
 
-function commandService(binding: TargetBinding, o: { cap?: CommandCapability["state"]; shells?: ("bash" | "sh" | "cmd" | "powershell")[]; answer?: "deny" } = {}): CommandService & { starts: RunSpec[] } {
+function commandService(binding: TargetBinding, o: { cap?: CommandCapability["state"]; shells?: ("bash" | "sh" | "cmd" | "powershell")[]; answer?: "deny"; exit?: (spec: RunSpec) => Partial<RunExit> } = {}): CommandService & { starts: RunSpec[] } {
   const starts: RunSpec[] = [];
   return {
     binding, starts,
@@ -53,7 +53,7 @@ function commandService(binding: TargetBinding, o: { cap?: CommandCapability["st
       gitFacts: async () => null,
       start: (spec: RunSpec): RunningCommand => {
         starts.push(spec);
-        const exit: RunExit = { code: 0, signal: null, ended: "exit", ms: 5 };
+        const exit: RunExit = { code: 0, signal: null, ended: "exit", ms: 5, ...o.exit?.(spec) };
         return { runId: spec.runId, interactive: false, onOutput: () => () => undefined, input: () => undefined, typedLines: () => [], forgetTyped: () => undefined, stop: () => undefined, done: Promise.resolve(exit) };
       },
       stopAll: async () => undefined,
@@ -147,6 +147,60 @@ describe("run_command is offered only with commands (§3.2)", () => {
     expect(svc.starts).toHaveLength(1);
     expect(svc.starts[0]).toMatchObject({ command: "make test", taskId: "t1", cols: 120, rows: 32 });
     expect((await call("run_command", { target: "build-02", command: "make test", why: "to run the tests" })).textResultForLlm).toBe("This task runs on build-01; run_command can only run there.");
+  });
+});
+
+describe("calls sent in one reply with a step that failed or only reported back", () => {
+  const cmd = (command: string) => ({ target: "This computer", command, why: "to check the project" });
+
+  it("a command that ended with an exit code, a signal or no code at all holds back the commands sent with it: a Ctrl+C in the command window ends that way (tasks-approvals-y7-1)", async () => {
+    for (const exit of [{ code: 130 }, { code: 1 }, { code: null, signal: "SIGKILL" }, { code: null }] as Partial<RunExit>[]) {
+      recordingJudge();
+      const svc = commandService(LOCAL, { exit: spec => (spec.command.startsWith("sleep") ? exit : {}) });
+      const { call } = makeWorker({ target: LOCAL, commands: svc, spec: { userWords: "check the project for me" } });
+      // One reply: both are queued before the first one's result is known.
+      const [first, second] = await Promise.all([call("run_command", cmd("sleep 30; echo after")), call("run_command", cmd("touch ran-after.txt"))]);
+      expect(first.textResultForLlm, JSON.stringify(exit)).toMatch(/^It ended with /);
+      expect(second.resultType, JSON.stringify(exit)).toBe("denied");
+      expect(second.textResultForLlm, JSON.stringify(exit)).toBe("An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened to that step and decide afresh.");
+      expect(svc.starts.map(s => s.command), JSON.stringify(exit)).toEqual(["sleep 30; echo after"]);
+    }
+  });
+
+  it("a command that was stopped, timed out or never started still holds back the commands sent with it (tasks-approvals-x7-1)", async () => {
+    for (const ended of ["stopped-user", "timeout", "failed-to-start"] as const) {
+      recordingJudge();
+      const svc = commandService(LOCAL, { exit: spec => (spec.command.startsWith("make") ? { code: null, ended } : {}) });
+      const { call } = makeWorker({ target: LOCAL, commands: svc, spec: { userWords: "build and publish it" } });
+      const [first, second] = await Promise.all([call("run_command", cmd("make")), call("run_command", cmd("ls"))]);
+      expect(first.resultType, ended).toBe("failure");
+      expect(second.resultType, ended).toBe("denied");
+      expect(second.textResultForLlm, ended).toBe("An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened to that step and decide afresh.");
+      expect(svc.starts.map(s => s.command), ended).toEqual(["make"]);
+    }
+  });
+
+  it("a progress note or a card view that was refused holds back neither the step nor the finish sent with it (tasks-approvals-x7-2)", async () => {
+    const a = makeWorker();
+    await a.call("perceive_window", {});
+    const [note, click] = await Promise.all([a.call("report_progress", { text: "x".repeat(300) }), a.call("click", { id: 1 })]);
+    expect(note.textResultForLlm).toMatch(/^Invalid arguments for report_progress/);
+    expect(click.resultType).toBe("success");
+    expect(a.events).toContain("doAction");
+    const b = makeWorker();
+    const [view, finish] = await Promise.all([b.call("update_view", { ops: [{ op: "remove", id: "x" }] }), b.call("finish_task", { success: true, summary: "Pressed Next." })]);
+    expect(view.resultType).toBe("failure");
+    expect(finish.resultType).toBe("success");
+  });
+
+  it("a step in an app that didn't work, and one the user turned down, still hold back the step sent with them (tasks-approvals-x7-1)", async () => {
+    const failed = makeWorker();
+    const [, behind] = await Promise.all([failed.call("click", { id: 99 }), failed.call("click", { id: 1 })]);
+    expect(behind.textResultForLlm).toBe("An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened to that step and decide afresh.");
+    const no = makeWorker({ grants: {}, answer: "deny" });
+    const [, , after, last] = await Promise.all([no.call("perceive_window", {}), no.call("click", { id: 1 }), no.call("click", { id: 1 }), no.call("click", { id: 1 })]);
+    for (const r of [after, last]) expect(r.textResultForLlm).toBe("An earlier step in this reply wasn't done, so this one wasn't either. Nothing was changed by it. Look at what happened and decide afresh; don't retry or work around a step the user said no to.");
+    expect([failed.events.includes("doAction"), no.events.includes("doAction")]).toEqual([false, false]);
   });
 });
 

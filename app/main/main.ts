@@ -68,7 +68,8 @@ import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
-import { projectAfterStatus, projectJobStops, projectMay, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
+import { projectAfterStatus, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
+import { projectUnavailable } from "../renderer/home/project-copy";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, readProjectPatch, type ProjectPatch } from "./agent/project-patch";
@@ -81,7 +82,7 @@ import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { AnswerLanguage, cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
-import { SpeechStream } from "../voice/tts";
+import { answerPieces, SpeechStream } from "../voice/tts";
 import { ENROL_PHRASES, encodePrint } from "../voice/voiceprint";
 import { voiceprintStore } from "./voiceprint-store";
 import { PersonalVoice } from "./personal/service";
@@ -808,6 +809,8 @@ function start(): void {
    * question at a time: Quit chosen again while it is up (perhaps behind a window now) closes it and asks again on top.
    */
   let quitAsking: AbortController | null = null;
+  /** The administrator's policy changed while Ember ran: a restart reads it whole (run from an AppImage, the AppImage). */
+  const restartForPolicy = (): void => { app.relaunch(restartOptions(process.env, process.argv, process.execPath)); app.quit(); };
   const quitEmber = async (): Promise<void> => {
     const words = quitWords();
     if (!words) { app.quit(); return; }
@@ -1213,6 +1216,20 @@ function start(): void {
     const open = !!agent?.answerOpen;
     resetAnswerSpeech();
     answerHushed = open;
+  };
+  /**
+   * "Read it out": Ember's last answer said once, as it would have been said (code and addresses left to the bubble, its
+   * language's voice), in place of whatever Ember is saying. False, and nothing said, where Ember may not speak now
+   * (voice-speaking-r6-1), or while a question is up, as no answer is said then: its own voice isn't cut
+   * (voice-speaking-x7-4).
+   */
+  const readOut = (answer: string): boolean => {
+    if (!voice || !maySpeak() || confirmer?.waiting) return false;
+    const pieces = answerPieces(answer);
+    if (!pieces.length) return false;
+    resetAnswerSpeech();
+    pieces.forEach((p, i) => voice?.speak(p.text, { append: i > 0, lang: p.lang }));
+    return true;
   };
   /** A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. */
   const pauseAnswerSpeech = () => {
@@ -1633,7 +1650,8 @@ function start(): void {
     betterRecall.settingsChanged();
   });
   const memoryView = () => ({
-    rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.list() : [],
+    // What holds now, then what is no longer true: it is kept and can reach the model, so it is shown too (memory-c7-2).
+    rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.review() : [],
     ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason, erasesOnSignOut: memoryOwner.mayEraseOnSignOut,
     // After the rows, which read memory.json first: what was wrong with it, only for the account's open memory (memory-r2).
     trouble: memoryOwner.ready ? memory.trouble : null,
@@ -2132,7 +2150,7 @@ function start(): void {
     // Still starting, offline or reconnecting is said as such: Models & connections can't help with those. Signed out
     // while the user's own provider waits for its note, the host it waits for is named (integrations-r4-3).
     const status = agent?.getStatus() ?? { phase: "signed-out" as const };
-    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null);
+    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held);
     if (refusal) throw new Error(refusal);
     // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
     void askEmber(text, {}, Promise.resolve(null));
@@ -2229,6 +2247,10 @@ function start(): void {
   ipcMain.handle(IPC.signIn, guard(async () => {
     // Nothing connects before the user has agreed to what Ember does.
     if (!consented()) { showHome(); throw new Error("Agree to how Ember works first (at the top of this window)."); }
+    // Under a lockdown no sign-in could be used (refuseConnect): nothing is asked of GitHub and no page is opened, and
+    // the lockdown's own sentence says why, a restart where the policy only changed (safety-privacy-c7-3).
+    const lockedDown = modelServiceRefusal(admin);
+    if (lockedDown) { progress({ state: "error", message: lockedDown }); return; }
     // This flow only: a second click cancels the first, and an old flow never overwrites a newer one's messages.
     const ac = new AbortController();
     signInAbort?.abort();
@@ -2321,11 +2343,18 @@ function start(): void {
     return presence();
   }));
   ipcMain.handle(IPC.quit, guard(() => quitEmber()));
+  // Home's Restart Ember, shown while a changed policy holds Ember locked: the bubble's may be closed or hidden (home-r7-3).
+  ipcMain.handle(IPC.restart, guard(() => { if (admin.held) restartForPolicy(); }));
   // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
   ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
   /** Project work under way may go on: the settings window open, shown or not (integrations-6). */
   const projectContinues = () => consented() && screenLock?.locked === false && policy.features.actions !== false &&
     agent?.getStatus().phase === "ready" && !!home && !home.isDestroyed();
+  /**
+   * Why a Projects action can't run now, in words (integrations-r7-1): the organisation's switch, which never comes back
+   * by waiting (a lockdown has its own notice), or another project step under way (`busy`: false from inside that step).
+   */
+  const projectRefusal = (busy = projectPicking || !!projectJob) => projectUnavailable({ managed: policy.features.actions === false && admin.error === undefined, busy });
   /** Project work may start: also with the settings window in view, where it is asked for. */
   const projectAvailable = () => projectContinues() && home?.isVisible() && !home.isMinimized();
   /**
@@ -2339,18 +2368,18 @@ function start(): void {
   ipcMain.handle(IPC.projectPick, guard(async (): Promise<ProjectSelection> => {
     const names = projectFiles.length ? projectNames(projectFiles) : [];
     const owner = home;
-    if (!owner || !projectAvailable() || projectPicking || projectJob) return { names, error: "Project work is unavailable right now." };
+    if (!owner || !projectAvailable() || projectPicking || projectJob) return { names, error: projectRefusal() };
     const previous = projectFiles;
     projectPicking = true;
     try {
       const selected = await dialog.showOpenDialog(owner, { title: "Choose project files", properties: ["openFile", "multiSelections"] });
       if (home !== owner || projectFiles !== previous) return { names: [] };
       // Not connected now (integrations-r1): the selection Home shows stays.
-      if (!projectAvailable()) return { ...await projectSelection(previous), error: "Project work is unavailable right now." };
+      if (!projectAvailable()) return { ...await projectSelection(previous), error: projectRefusal(false) };
       if (selected.canceled) return await projectSelection(previous);
       const next = await projectSelection(selected.filePaths);
       if (home !== owner || projectFiles !== previous) return { names: [] };
-      if (!projectAvailable()) return { ...await projectSelection(previous), error: "Project work is unavailable right now." };
+      if (!projectAvailable()) return { ...await projectSelection(previous), error: projectRefusal(false) };
       projectFiles = selected.filePaths;
       projectPatch = null;
       projectExchange = null;
@@ -2364,13 +2393,13 @@ function start(): void {
   }));
   ipcMain.handle(IPC.projectRemove, guard(async (name: unknown): Promise<ProjectSelection> => {
     const files = projectFiles;
-    if (!projectLocal() || projectPicking || projectJob) return { names: files.length ? projectNames(files) : [], error: "Project work is unavailable right now." };
+    if (!projectLocal() || projectPicking || projectJob) return { names: files.length ? projectNames(files) : [], error: projectRefusal() };
     projectPicking = true;
     try {
       const next = removeProjectFile(files, name);
       const selection = await projectSelection(next);
       if (projectFiles !== files) return { names: [] };
-      if (!projectLocal()) return { ...await projectSelection(files), error: "Project work is unavailable right now." };
+      if (!projectLocal()) return { ...await projectSelection(files), error: projectRefusal(false) };
       projectFiles = next;
       projectPatch = null;
       projectExchange = null;
@@ -2407,7 +2436,7 @@ function start(): void {
     const input = projectTurnRequest.safeParse(request);
     if (!input.success) return { error: "Enter a project request of up to 4,000 characters." };
     const host = agent;
-    if (!host || !projectAvailable() || projectJob || projectPicking) return { error: "Project work is unavailable right now." };
+    if (!host || !projectAvailable() || projectJob || projectPicking) return { error: projectRefusal() };
     const { mode, question, includePrevious } = input.data;
     // An answer from another model service or account is never sent to this one (integrations-r1): Home hides the choice.
     if (includePrevious && projectExchange && projectExchangeScope !== host.projectWorkspaceScope()) {
@@ -2474,7 +2503,7 @@ function start(): void {
   }));
   ipcMain.handle(IPC.projectChooseFolder, guard(async () => {
     const owner = home;
-    if (!owner || !projectAvailable() || projectPicking || projectJob) return { folder: null, message: "Project work is unavailable right now." };
+    if (!owner || !projectAvailable() || projectPicking || projectJob) return { folder: null, message: projectRefusal() };
     const previous = projectFiles;
     projectPicking = true;
     try {
@@ -2490,10 +2519,10 @@ function start(): void {
   }));
   ipcMain.handle(IPC.projectRunCommand, guard(async (raw: unknown): Promise<string> => {
     const parsed = projectCommandText.safeParse(raw);
-    if (!parsed.success) return "Enter one line of up to 2,000 characters without passwords or keys.";
+    if (!parsed.success) return projectCommandProblem(raw);
     const host = agent;
     const folder = projectFolder;
-    if (!host || !projectAvailable() || projectPicking || projectJob) return "Project work is unavailable right now.";
+    if (!host || !projectAvailable() || projectPicking || projectJob) return projectRefusal();
     if (!folder?.current()) return "Choose a current command folder.";
     const service = targets?.localProjectCommands();
     if (!service) return "Commands are off on this computer. Check the Commands settings.";
@@ -2512,7 +2541,7 @@ function start(): void {
     if (!input.success) return { message: "Enter a workspace name of up to 64 characters." };
     const host = agent;
     const owner = home;
-    if (!host || !owner || !projectAvailable() || projectPicking || projectJob) return { message: "Project work is unavailable right now." };
+    if (!host || !owner || !projectAvailable() || projectPicking || projectJob) return { message: projectRefusal() };
     const scope = host.projectWorkspaceScope();
     if (!scope) return { message: "Connect with a verified GitHub account or model provider to use saved workspaces." };
     const run = projectJob = new AbortController();
@@ -2835,7 +2864,7 @@ function start(): void {
     if (id === "ui:conversation") { readLastAnswer(); return; }
     if (id === "ui:close") { closeExpanded(); return; }
     // The administrator's policy changed while Ember ran: a restart reads it whole (run from an AppImage, the AppImage).
-    if (id === "ui:restart" && admin.held) { app.relaunch(restartOptions(process.env, process.argv, process.execPath)); app.quit(); return; }
+    if (id === "ui:restart" && admin.held) { restartForPolicy(); return; }
     // The targets runtime's own: a target picked, an offer, a connection, a panel to show, an announced command's Stop.
     if (targets?.bubbleAction(id)) return;
     if (task) {
@@ -3495,7 +3524,7 @@ function start(): void {
         // What the user might say next (personal/predict.ts): chips under this answer, and a longer follow-up window
         // after a spoken reply when a follow-up is likely.
         const task = aborted ? null : agent?.tasks?.list().filter(t => t.started >= askedAt).at(-1);
-        const next = aborted ? null : personal.answered(lastReply || turnAnswer, { spoken: answerSpoken, task: task ? { status: task.status === "cancelled" ? "stopped" : task.status === "queued" ? "running" : task.status } : null });
+        const next = aborted ? null : personal.answered(lastReply || turnAnswer, { spoken: answerSpoken, speaks: !!voice && maySpeak(), task: task ? { status: task.status === "cancelled" ? "stopped" : task.status === "queued" ? "running" : task.status } : null });
         if (next?.suggestions.length && lastState.bubble.visible) showState({ suggest: { thought: lastState.bubble.thought, items: next.suggestions.map(s => s.text) } });
         lastReply = "";
         answerSpeech.reset();
@@ -3554,6 +3583,7 @@ function start(): void {
       onRemindersChanged: rows => broadcast(IPC.remindersChanged, reminderRows(rows)),
       // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
       health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
+      readOut,
       // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
       voiceTrust,
       autonomy: {

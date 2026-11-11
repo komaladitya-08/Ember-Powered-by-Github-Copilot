@@ -68,9 +68,9 @@ describe("the Size slider says its value once (review #56)", () => {
 });
 
 describe("Start hands focus on when it goes (review #50)", () => {
-  it("has a status line that says Ember started, there from the start", () => {
-    expect(STARTED_TEXT).toBe("Ember has started.");
-    expect(page).toMatch(/<p id="tagline" role="status">Starting…<\/p>\s*<p class="sr" id="home-live" role="status"><\/p>/);
+  it("has a status line that says setup is finished, without Ember's name, there from the start (first-run-r6-1)", () => {
+    expect(STARTED_TEXT).toBe("Setup is finished.");
+    expect(page).toMatch(/<p id="tagline" role="status" tabindex="-1">Starting…<\/p>\s*<p class="sr" id="home-live" role="status"><\/p>/);
   });
 });
 

@@ -38,7 +38,11 @@ export const UNDO_FORGET_MS = MEMORY_UNDO_MS;
  * One remembered fact as Settings lists it. `kind`: one of Ember's own notes, its summary of a subject or a guess drawn
  * from several facts (./refine.ts), which Home labels as Ember's rather than as the conversation (memory-3).
  */
-export interface MemoryItem { id: string; text: string; source: Source; at: string; revision?: number; correctedAt?: string; kind?: "summary" | "guess" }
+export interface MemoryItem {
+  id: string; text: string; source: Source; at: string; revision?: number; correctedAt?: string; kind?: "summary" | "guess";
+  /** Since when it is no longer true (a newer fact replaced it): kept as history, listed only by `review` (memory-c7-2). */
+  until?: string;
+}
 
 /** Which of Ember's own notes a fact is, if it is one (`summary`, `reflection`). */
 export const noteKind = (f: Pick<Fact, "predicate">): MemoryItem["kind"] => (f.predicate === "summary" ? "summary" : f.predicate === "reflection" ? "guess" : undefined);
@@ -46,7 +50,19 @@ export const noteKind = (f: Pick<Fact, "predicate">): MemoryItem["kind"] => (f.p
 const memoryItem = (f: Fact): MemoryItem => {
   const kind = noteKind(f);
   return { id: f.id, text: f.text, source: f.source, at: f.validAt,
-    ...(f.revision === undefined ? {} : { revision: f.revision }), ...(f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt }), ...(kind ? { kind } : {}) };
+    ...(f.revision === undefined ? {} : { revision: f.revision }), ...(f.correctedAt === undefined ? {} : { correctedAt: f.correctedAt }), ...(kind ? { kind } : {}),
+    ...(f.invalidAt ? { until: f.invalidAt } : {}) };
+};
+
+/**
+ * An earlier wording of one of Ember's own notes: closed by a newer note of the same kind (each sleep-time pass
+ * rewords a subject's summary: ./refine.ts). It is the note's history, not something that stopped being true, so
+ * Settings lists the note once, and it goes whenever the wording that replaced it does (memory-x7-4).
+ */
+const reworded = (g: MemoryGraph, f: Fact): boolean => {
+  const kind = noteKind(f);
+  const by = f.invalidAt && f.supersededBy ? g.fact(f.supersededBy) : undefined;
+  return !!kind && !!by && noteKind(by) === kind;
 };
 
 /** What is wrong with memory.json this run (MemoryService.trouble; memory-r2). */
@@ -133,6 +149,16 @@ export class MemoryService {
   /** What is wrong with memory.json this run, or null (memory-r2). */
   get trouble(): MemoryTrouble | null { return this.problem; }
 
+  /**
+   * memory.json is there and couldn't be read (it is read now if it hasn't been): nothing new is kept this run, as
+   * Settings › Memory says. A fact kept in RAM alone would go with requests, be gone at the next start, and couldn't
+   * be forgotten, since no save may replace the file (memory-r7-1).
+   */
+  get unreadable(): boolean {
+    void this.g;
+    return this.problem === "unreadable";
+  }
+
   private get g(): MemoryGraph {
     if (!this.graph) {
       this.graph = this.file.load(this.o.clock);
@@ -174,14 +200,15 @@ export class MemoryService {
   remember(fact: string, about: AboutRef[], said: string, replaces?: string): string {
     const refs = (about.length ? about : [{ name: "User", kind: "person" }]).map(a => ({ name: a.name, kind: kindOf(a.kind) }));
     const source: Source = ownFact(fact, said) ? "user" : "conversation";
+    if (this.unreadable) return "Not remembered: Ember couldn't read its saved memory, so nothing new is kept until it starts again. Tell the user plainly.";
     const r = this.g.add({ text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
     if (r.kind === "refused") return `Not remembered: ${r.reason}. Tell the user plainly if they asked you to remember it.`;
     this.dirty();
     this.o.semantic?.changed(this.g);
     this.o.log.info("memory.remembered", { kind: r.kind, source: r.fact.source, chars: r.fact.text.length, ...(r.kind === "added" ? { closed: r.closed.length } : {}) });
-    // Saving is failing (memory.json couldn't be saved or read this run): kept for now, and the model is told so it
-    // never promises more (memory-r2).
-    const unkept = this.problem === "unsaved" || this.problem === "unreadable" ? " Saving memory on this computer is failing, so tell the user it may be gone when Ember closes." : "";
+    // Saving is failing (memory.json couldn't be saved this run): kept for now, and the model is told so it never
+    // promises more (memory-r2).
+    const unkept = this.problem === "unsaved" ? " Saving memory on this computer is failing, so tell the user it may be gone when Ember closes." : "";
     if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].${unkept}`;
     return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.${unkept}`;
   }
@@ -272,10 +299,12 @@ export class MemoryService {
     return this.forgetCounted(id, reopen) !== null;
   }
 
-  /** The words of an open fact, or null (forget_memory checks the user asked about it: memory-v2). */
+  /**
+   * The words of a kept fact, or null (forget_memory checks the user asked about it: memory-v2). What is no longer
+   * true has words too: recall gives the model its id, and the user may ask for it to go (memory-c7-2).
+   */
   factText(id: string): string | null {
-    const f = this.g.fact(id);
-    return f && !f.invalidAt ? f.text : null;
+    return this.g.fact(id)?.text ?? null;
   }
 
   /**
@@ -293,13 +322,24 @@ export class MemoryService {
     const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
     const f = next.fact(id)!;
     const notes = next.notesFrom(id);
-    // The notes the user could see in the list: older closed ones are history.
-    const shownNotes = notes.filter(n => !next.fact(n)!.invalidAt).length;
+    // The notes the user could see in the list: Settings lists the closed ones too (memory-c7-2), but a note's
+    // earlier wordings never (memory-x7-4).
+    const shownNotes = notes.filter(n => !reworded(next, next.fact(n)!)).length;
     let reopened = 0;
     // What the fact itself gives back, in its words, so whoever says what went says this too (memory-12).
     const back = reopen && !f.invalidAt ? next.allFacts().filter(o => o.supersededBy === id && !notes.includes(o.id)).map(o => o.text) : [];
     // A note that replaced an older one gives it back, unless that one goes too.
     for (const x of [id, ...notes]) if (!next.fact(x)?.invalidAt && (reopen || x !== id)) reopened += next.reopenSuperseded(x);
+    // A note's earlier wordings aren't listed, so they go with the wording that replaced them: none is left on disk
+    // behind a note that is gone (memory-x7-4). One that was just given back is open, and stays.
+    const going = new Set([id, ...notes]);
+    for (let more = true; more;) {
+      more = false;
+      for (const o of next.allFacts()) {
+        if (going.has(o.id) || !o.supersededBy || !going.has(o.supersededBy) || !reworded(next, o)) continue;
+        going.add(o.id); notes.push(o.id); more = true;
+      }
+    }
     for (const x of [id, ...notes]) next.forgetFact(x);
     try {
       // Derived data first. If the graph write fails, missing vectors can safely be rebuilt from the retained graph.
@@ -392,6 +432,18 @@ export class MemoryService {
       .map(memoryItem);
   }
 
+  /**
+   * Everything kept, for Settings › Memory (memory-c7-2): what holds now as `list` gives it, then what is no longer
+   * true (`until`), most recently replaced first. That history stays on disk for HISTORY_DAYS and recall can give it
+   * to the model as what used to be true, so the user can see it and forget it. Not an earlier wording of one of
+   * Ember's own notes (`reworded`): the note is listed once, as it reads now (memory-x7-4).
+   */
+  review(): MemoryItem[] {
+    const closed = this.g.allFacts().filter(f => f.invalidAt && !reworded(this.g, f))
+      .sort((a, b) => b.invalidAt!.localeCompare(a.invalidAt!) || b.id.localeCompare(a.id));
+    return [...this.list(), ...closed.map(memoryItem)];
+  }
+
   /** Joins the current sleep-time pass. False if it was cancelled or no longer allowed. */
   upkeep(): Promise<boolean> {
     if (this.upkeepRun) return this.upkeepRun.done;
@@ -434,6 +486,7 @@ export class MemoryService {
    * decided its source; the graph's guard still refuses any secret whole.
    */
   learn(input: NewFact): AddResult {
+    if (this.unreadable) return { kind: "refused", reason: "saved memory can't be read" };
     const r = this.g.add(input);
     if (r.kind === "refused") return r;
     this.dirty();

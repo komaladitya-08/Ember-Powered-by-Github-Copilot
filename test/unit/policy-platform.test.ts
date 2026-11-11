@@ -232,7 +232,9 @@ describe("windows and labels by each OS's vocabulary", () => {
     same(TERMINAL_REQUEST.linux.asks, new RegExp(String.raw`\b(?:open|use|launch|start|run|type(?:\s+(?:in|into))?|work\s+in)\s+(?:up\s+)?(?:(?:a|an|the|my|your)\s+)?(?:new\s+)?(?:${TERMINAL})\b|\b(?:in|into|from|via|using|with|through|on)\s+(?:(?:a|an|the|my|your)\s+)?(?:${TERMINAL})\b`, "i"));
     same(TERMINAL_REQUEST.linux.refuses, new RegExp(String.raw`\b(?:not|never|without|instead\s+of|rather\s+than|don['’]?t)\s+(?:(?:use|using|open|opening)\s+)?(?:(?:in|into|from|via|using|with|through|on)\s+)?(?:(?:a|an|the|my|your)\s+)?(?:${TERMINAL})\b`, "gi"));
     same(TERMINAL_REQUEST.linux.names, /\b(?:terminal|shell|command[- ]line|command prompt|console)\b/i);
-    expect([SECURITY_CLASS.linux, RISKY_EXTRA.linux, RUNS_PROGRAM_EXTRA.linux, RUN_FILE_DIALOG_EXTRA.linux, TYPING_REFUSED.linux]).toEqual([[], [], [], [], []]);
+    expect([SECURITY_CLASS.linux, RISKY_EXTRA.linux, RUNS_PROGRAM_EXTRA.linux, RUN_FILE_DIALOG_EXTRA.linux, TYPING_REFUSED.linux]).toEqual([[],
+      // Files' British bin labels (safety-privacy-r7-1): the one addition since the port.
+      ["move to (the )?wastebasket", "move to (the )?rubbish bin", "move to (the )?bin"], [], [], []]);
   });
 
   it("judges a security window by the OS asked for (Linux by default)", () => {

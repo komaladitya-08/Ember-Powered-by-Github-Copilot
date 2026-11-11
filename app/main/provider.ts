@@ -587,9 +587,12 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
 /**
  * What a test of the endpoint found. `cause`, for a failure: nothing answered (refused, timed out, unreachable: the
  * provider is down), or it answered but has no model list at that address (`no-list`: 404, 405 or 501 on GET /models,
- * as some gateways that answer chat only do), which a held edit's check takes as an answer (integrations-r4-2).
+ * as some gateways that answer chat only do, and as a mistyped path does; or a 200 that isn't a model list, as a web
+ * page is: integrations-c7-1). Something is there, so the provider isn't down, but a held edit's check adopts it only
+ * on the person's own "Use it as typed" (integrations-c5-1). `more`, for an answer: the list says it goes on past
+ * this page (listSaysMore), so a model it doesn't name may still be one the service has (first-run-x7-1).
  */
-export type TestResult = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
+export type TestResult = { ok: true; host: string; models: number | null; ids?: string[]; more?: true } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
 /** The most model ids the test passes on for the model fields' suggestions. */
 export const TEST_IDS_MAX = 50;
@@ -610,6 +613,44 @@ export function listedModelIds(list: readonly unknown[]): string[] {
   return out;
 }
 
+/** An entry that names a model as listedModelIds reads one: an object with a string `id`, `name` or `model`. */
+const namesModel = (m: unknown): boolean => {
+  const o = m && typeof m === "object" ? m as { id?: unknown; name?: unknown; model?: unknown } : null;
+  return typeof o?.id === "string" || typeof o?.name === "string" || typeof o?.model === "string";
+};
+
+/**
+ * The model list in a GET /models answer, or null when the body holds none (a web page's JSON, a greeting, an error:
+ * integrations-c7-1). Services write it in several shapes, and each is a list (integrations-x7-1): an array under
+ * `data` (OpenAI, Azure, Anthropic) or `models` (Ollama), whatever it holds; the body itself as an array, empty or
+ * with an entry that names a model; models keyed by id under `data` or `models`; or an array under another name
+ * (`result`) with an entry that names a model, never one under `error` or `errors`.
+ */
+export function modelList(body: unknown): unknown[] | null {
+  const listed = (v: unknown): v is unknown[] => Array.isArray(v) && (v.length === 0 || v.some(namesModel));
+  if (Array.isArray(body)) return listed(body) ? body : null;
+  if (!body || typeof body !== "object") return null;
+  const o = body as Record<string, unknown>;
+  for (const key of ["data", "models"]) {
+    const v = o[key];
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === "object") { const values = Object.values(v); if (values.some(namesModel)) return values; }
+  }
+  for (const [key, v] of Object.entries(o)) if (!/^errors?$/i.test(key) && Array.isArray(v) && v.some(namesModel)) return v;
+  return null;
+}
+
+/**
+ * A model list's answer says more models follow on another page (first-run-x7-1): Anthropic's and OpenAI's `has_more`,
+ * or a next page's token, cursor or address (`next_page_token`, Google's `nextPageToken`, `next_cursor`, `next`). The
+ * test asks for one page only, so such a list was not read whole.
+ */
+export function listSaysMore(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const o = body as Record<string, unknown>;
+  return o.has_more === true || ["next_page_token", "nextPageToken", "next_cursor", "next"].some(k => typeof o[k] === "string" && o[k] !== "");
+}
+
 /**
  * Makes testRequest's request and says what came of it, in plain words (never the service's raw text). Nothing at all is
  * sent to a host whose card the user hasn't agreed to, and the key goes only to the host it was entered for. Redirects
@@ -627,15 +668,14 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
     if (res.status === 401 || res.status === 403) return { ok: false, why: key ? `${host} didn't accept the API key. Check it, or replace it.` : `${host} needs an API key.` };
     if (res.status === 404 || res.status === 405 || res.status === 501) return { ok: false, why: `${host} answered, but has no model list at that address. Check the endpoint and the provider.`, cause: "no-list" };
     if (!res.ok) return { ok: false, why: friendlyError(`HTTP ${res.status}`, undefined, { statusCode: res.status, provider: "user", settingsKey: null }) };
-    let models: number | null = null;
-    let ids: string[] = [];
-    try {
-      const body = await res.json() as { data?: unknown; models?: unknown };
-      const list = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
-      models = list ? list.length : null;
-      if (list) ids = listedModelIds(list);
-    } catch { /* answered, with a body that isn't a list: still connected */ }
-    return { ok: true, host, models, ...(ids.length ? { ids } : {}) };
+    // A 200 says only that something is there: a web front end, a sign-in page or a parked domain answers every path
+    // with one. Connected means it answered as a model service does, with a model list (integrations-c7-1).
+    let list: unknown[] | null = null;
+    let more = false;
+    try { const body: unknown = await res.json(); list = modelList(body); more = !!list && listSaysMore(body); } catch { /* a body that isn't JSON (a web page): no model list, said below */ }
+    if (!list) return { ok: false, why: `${host} answered, but not as a model service does. Check the endpoint.`, cause: "no-list" };
+    const ids = listedModelIds(list);
+    return { ok: true, host, models: list.length, ...(ids.length ? { ids } : {}), ...(more ? { more: true as const } : {}) };
   } catch (err) {
     const msg = err instanceof Error ? `${err.name} ${err.message} ${(err as { cause?: { code?: string } }).cause?.code ?? ""}` : String(err);
     if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`, cause: "timeout" };

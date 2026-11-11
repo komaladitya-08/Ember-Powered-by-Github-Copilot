@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { MANAGED_TEXT, MATCH_SAID, MATCH_TEXT, TRUST_TEXT, matchAnnouncement, matchView, trustView } from "../../app/renderer/home/match-copy";
+import { MANAGED_TEXT, MATCH_SAID, MATCH_TEXT, TRUST_TEXT, matchAnnouncement, matchRefusalHolds, matchView, trustView } from "../../app/renderer/home/match-copy";
 import { managedKeys } from "../../app/main/admin";
 import type { VoiceMatchStatus } from "../../app/shared/ipc";
 
@@ -25,7 +25,7 @@ describe("Voice Match's states", () => {
   it("not taught: the switch is off, Teach is offered, Forget and Cancel are not", () => {
     const v = matchView(none, shown);
     expect(v).toMatchObject({ hidden: false, busy: false, checked: false, disabled: false, text: MATCH_TEXT.none, prompt: "", progress: null, cancelHidden: true, forgetHidden: true });
-    expect(v.teach).toEqual({ hidden: false, label: "Teach Ember my voice" });
+    expect(v.teach).toEqual({ hidden: false, label: "Teach my voice", said: "Requests from any voice are heard. Teach your voice, and you can answer questions out loud; other voices can't." });
   });
 
   it("while learning: the switch shows on but can't be changed, the phrase and the count show, Cancel replaces Teach", () => {
@@ -40,14 +40,14 @@ describe("Voice Match's states", () => {
   it("asks again with the reason when a phrase wasn't kept", () => {
     expect(matchView(enrolling(2, "short"), shown).prompt).toBe("That was too short. Say it again: “Ember, what's the weather like”");
     expect(matchView(enrolling(2, "unlike"), shown).prompt).toBe("That didn't sound like the others (another voice, or noise). Say it again: “Ember, what's the weather like”");
-    expect(matchView(enrolling(0, "failed"), shown).prompt).toBe("Ember couldn't hear that clearly. Say it again: “Ember, what's the weather like”");
+    expect(matchView(enrolling(0, "failed"), shown).prompt).toBe("That wasn't heard clearly. Say it again: “Ember, what's the weather like”");
     // Said while a screen reader still read the prompt, the two came as one (voice-listening-r4-1).
     expect(matchView(enrolling(1, "over"), shown).prompt).toBe("Your screen reader was still reading. Wait for it to finish, then say: “Ember, what's the weather like”");
   });
 
   it("without its model: off with a note (a kept voiceprint isn't used, so every voice is heard), nothing to switch on or teach", () => {
     const kept = matchView({ enrolled: true, on: false, model: false, wanted: true, enrolling: null }, { ...shown, speakerBytes: 26_534_365 });
-    expect(kept).toMatchObject({ checked: false, disabled: true, forgetHidden: false, focus: ["voice-download", "wake"] });
+    expect(kept).toMatchObject({ checked: false, disabled: true, forgetHidden: false, focus: ["voice-download", "voice-listen-once", "wake"] });
     expect(kept.teach.hidden).toBe(true);
     expect(kept.text).toMatch(/^Off for now: Voice Match's model is missing or was damaged, so your voice can't answer .*Download it above \(27 MB\)/);
     const fresh = matchView({ enrolled: false, on: false, model: false, enrolling: null }, shown);
@@ -59,7 +59,9 @@ describe("Voice Match's states", () => {
   it("taught and on, or taught and off: Teach again and Forget are offered", () => {
     const on = matchView(onNow, shown);
     expect(on).toMatchObject({ checked: true, disabled: false, text: MATCH_TEXT.on, forgetHidden: false, cancelHidden: true });
-    expect(on.teach).toEqual({ hidden: false, label: "Teach Ember my voice again" });
+    expect(on.teach).toEqual({ hidden: false, label: "Teach my voice again", said: MATCH_SAID.on });
+    // Why the last teaching ended is read with the button too, in the words said as it ended.
+    expect(matchView({ ...offNow, ended: "timeout" }, shown).teach.said).toBe(`${MATCH_SAID.ended.timeout} ${MATCH_SAID.off}`);
     const off = matchView(offNow, shown);
     expect(off).toMatchObject({ checked: false, text: MATCH_TEXT.off, forgetHidden: false });
     expect(off.text).toMatch(/keeps your voiceprint until you forget it/);
@@ -72,7 +74,7 @@ describe("Voice Match's states", () => {
     }
     expect(matchView(undefined, shown).hidden).toBe(true);
     // main.ts asks with the listening switch's own condition and the organisation's wakeWord key (admin.ts managedKeys).
-    expect(main).toMatch(/matchView\(m, \{ listening: voiceSettings\.wakeWord && voiceSettings\.consent, managed: managed\.has\("wakeWord"\), speakerBytes \}\)/);
+    expect(main).toMatch(/matchView\(m, \{ listening: voiceSettings\.wakeWord && voiceSettings\.consent, managed: managed\.has\("wakeWord"\), speakerBytes, refused: matchRefused \}\)/);
   });
 });
 
@@ -82,6 +84,20 @@ describe("Voice Match's focus (as after Download speech models and the consent b
     expect(matchView(onNow, shown).focus[0]).toBe("match-teach");
     expect(matchView(none, shown).focus[0]).toBe("match-teach");
     expect(matchView(onNow, { listening: false, managed: false }).focus).toEqual(["wake"]);
+  });
+
+  it("goes to Listen once, never to the “Hey Ember” switch, where focus is moved as listening starts or while Ember listens (voice-listening-r7-2)", () => {
+    // After "I agree, start listening" and as a download ended with focus on its Cancel, focus went to the switch, and a
+    // screen reader read "Listen for “Hey Ember”, switch, on": said into an open wake microphone that woke Ember in 20
+    // of 20 real-model placements and sent "Switch on." in 18. "Listen once, button. …" in 0 of 20.
+    const agree = main.slice(main.indexOf('$("consent-yes").addEventListener'), main.indexOf('$("consent-no").addEventListener'));
+    expect(agree).toContain('$("voice-listen-once").focus();');
+    expect(agree).not.toContain('$("wake").focus()');
+    expect(main).toContain('if (hadCancel && cancel.hidden) focusFirst(["voice-download", "voice-listen-once", "wake"]);');
+    // Voice Match's model gone while Ember listens, and its download under way (so no Download button).
+    expect(matchView({ enrolled: true, on: false, model: false, wanted: true, enrolling: null }, shown).focus).toEqual(["voice-download", "voice-listen-once", "wake"]);
+    // Not now leaves listening off: back to the switch that opened the note.
+    expect(main).toContain('$("consent-no").addEventListener("click", () => { consentClosed(); $("consent").hidden = true; $("wake").focus(); });');
   });
 
   it("is moved by the draw only when the control that had it was hidden or disabled", () => {
@@ -167,16 +183,37 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
     expect(page).toContain('<p class="match-prompt" id="match-prompt" hidden></p>');
     expect(main).toMatch(/const said = renderMatch\(\);\s*if \(said\) voiceLive\(said\);/);
     // A refused start is said too, not only written under the switch.
-    expect(main).toMatch(/MATCH_TEXT\.notListening; voiceLive\(MATCH_TEXT\.notListening\)/);
+    expect(main).toMatch(/matchRefused = true; \$\("match-text"\)\.textContent = MATCH_TEXT\.notListening; voiceLive\(MATCH_TEXT\.notListening, true\)/);
+  });
+
+  it("keeps the refused Teach's line while listening still can't start, and says it again at the next press (voice-listening-x7-2)", () => {
+    // With no microphone the mic page tries again after 1 s, 5 s, then every 30 s, and each failure sends the voice
+    // status again: the line was wiped at the next one, and the row read "…Teach it your voice…" as if Teach could work.
+    for (const state of ["error", "muted", "starting", "downloading", "off", undefined] as const) expect(matchRefusalHolds(state, none)).toBe(true);
+    for (const m of [none, onNow, offNow]) {
+      expect(matchView(m, { ...shown, refused: true }).text).toBe(MATCH_TEXT.notListening);
+      // Only the line changes: Teach stays where it was, to press again once the microphone is back.
+      expect({ ...matchView(m, { ...shown, refused: true }), text: "" }).toEqual({ ...matchView(m, shown), text: "" });
+    }
+    // Listening again, or teaching under way: the row says where Voice Match stands, as before.
+    for (const state of ["waiting", "active"] as const) expect(matchRefusalHolds(state, none)).toBe(false);
+    expect(matchRefusalHolds("error", enrolling(0))).toBe(false);
+    expect(matchView(enrolling(0), { ...shown, refused: true }).text).toBe(matchView(enrolling(0), shown).text);
+    expect(matchView(none, shown).text).toBe(MATCH_TEXT.none);
+    // Home drops the refusal once it no longer holds, and draws the row with it until then.
+    expect(main).toMatch(/if \(matchRefused && !matchRefusalHolds\(voice\?\.state, m\)\) matchRefused = false;/);
+    expect(main).toContain("speakerBytes, refused: matchRefused });");
+    // A second press finds the status line holding the same words: written again all the same, so it is said again.
+    expect(main).toMatch(/const voiceLive = \(text: string, again = false\) => \{ const live = \$\("voice-live"\); if \(again \|\| \(live\.textContent \|\| voiceTold\) !== text\) live\.textContent = text; \};/);
   });
 });
 
 describe("Voice Match's markup", () => {
-  it("names the group by its switch, describes the switch and Teach by the state line, and labels the bar", () => {
+  it("names the group by its switch, describes the switch by the state line and Teach in words without Ember's name, and labels the bar (voice-listening-r6-2)", () => {
     expect(page).toContain('<div id="match" class="match" role="group" aria-labelledby="match-label" hidden>');
     expect(page).toContain(`<input type="checkbox" id="match-on" role="switch" aria-describedby="match-text"><span id="match-label">${MATCH_TEXT.label}</span>`);
     expect(page).toContain(`<progress id="match-progress" max="4" value="0" aria-label="${MATCH_TEXT.progressLabel}" hidden></progress>`);
-    expect(page).toContain(`<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">${MATCH_TEXT.teach}</button>`);
+    expect(page).toContain(`<button type="button" id="match-teach" class="btn quiet" aria-describedby="match-teach-said">${MATCH_TEXT.teach}</button><span id="match-teach-said" hidden></span>`);
     expect(page).toContain(`<button type="button" id="match-cancel" class="btn quiet" hidden>${MATCH_TEXT.cancel}</button>`);
     // Forget my voice deletes the words learnt too: the button says so before it is pressed (voice-listening-9).
     expect(page).toContain(`<button type="button" id="match-forget" class="btn quiet" aria-describedby="match-forget-hint" title="${MATCH_TEXT.forgetHint}" hidden>${MATCH_TEXT.forget}</button><span id="match-forget-hint" hidden>${MATCH_TEXT.forgetHint}</span>`);

@@ -1,6 +1,6 @@
 /** Project selection, explicit context sharing and inert, reviewable output in the Projects destination. */
 import { renderProjectAnswer } from "./project-output";
-import { PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, PROJECT_COMMANDS_OPEN, projectAnswerText, projectBytes, projectCommandsState, projectConnectionText, projectSelectionText } from "./project-copy";
+import { PROJECT_ACTIONS_MANAGED, PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, PROJECT_COMMANDS_OPEN, projectAnswerText, projectBytes, projectCommandsState, projectConnectionText, projectManagedOff, projectSelectionText } from "./project-copy";
 import type { ProjectMode, ProjectWorkspaceAction } from "../../shared/ipc";
 import { statusFence } from "./status-fence";
 
@@ -64,6 +64,11 @@ export function mountProject() {
     patchSummary.textContent = "Previous diff (read-only)";
   };
   let ready = false;
+  /**
+   * The organisation turned off Ember acting in apps: main refuses every Projects action, so the pane says so and holds
+   * its controls, however connected Ember is (integrations-r7-1).
+   */
+  let managedOff = false;
   let busy: "picking" | "running" | "applying" | "command" | "workspace" | "export" | null = null;
   let revision = 0;
   /**
@@ -73,13 +78,14 @@ export function mountProject() {
   let failedLine = "";
   let failedAt = 0;
   const draw = () => {
-    pick.disabled = !ready || !!busy;
+    const can = ready && !managedOff;
+    pick.disabled = !can || !!busy;
     // Applying the reviewed patch, exporting and a file's Remove work on what is kept here and send nothing: they don't
     // wait for a connection (integrations-r3-2).
-    apply.disabled = !!busy || !patchCurrent;
+    apply.disabled = !!busy || !patchCurrent || managedOff;
     apply.hidden = !patchCurrent;
-    exportAnswer.disabled = exportDiff.disabled = !!busy;
-    for (const button of files.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !!busy;
+    exportAnswer.disabled = exportDiff.disabled = !!busy || managedOff;
+    for (const button of files.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !!busy || managedOff;
     form.setAttribute("aria-busy", String(busy === "running"));
     send.textContent = busy === "running" ? "Working…" : "Send selected files";
     const off = localCommands === "off" || localCommands === "managed";
@@ -89,17 +95,17 @@ export function mountProject() {
     // organisation holds off.
     openCommands.hidden = localCommands !== "off" || !!document.getElementById("jump-commands")?.hidden;
     // The folder can still be chosen (a saved workspace keeps it); the command waits for commands to be on.
-    folderPick.disabled = !ready || !!busy;
-    command.disabled = !ready || !!busy || off;
-    review.disabled = !ready || !!busy || off || !commandFolder || !command.value.trim();
+    folderPick.disabled = !can || !!busy;
+    command.disabled = !can || !!busy || off;
+    review.disabled = !can || !!busy || off || !commandFolder || !command.value.trim();
     stopCommand.hidden = busy !== "command";
-    workspaceName.disabled = !ready || !!busy;
-    saved.disabled = !ready || !!busy || !saved.options.length;
-    saveWorkspace.disabled = !ready || !!busy || !workspaceName.value.trim() || (!files.childElementCount && !commandFolder);
+    workspaceName.disabled = !can || !!busy;
+    saved.disabled = !can || !!busy || !saved.options.length;
+    saveWorkspace.disabled = !can || !!busy || !workspaceName.value.trim() || (!files.childElementCount && !commandFolder);
     openWorkspace.disabled = forgetWorkspace.disabled = saved.disabled;
-    includePrevious.disabled = !!busy || !ready;
+    includePrevious.disabled = !!busy || !can;
     clear.disabled = !!busy || (!files.childElementCount && !question.value && answer.hidden && !commandFolder && !command.value);
-    send.disabled = !ready || !!busy || !files.childElementCount || !question.value.trim();
+    send.disabled = !can || !!busy || !files.childElementCount || !question.value.trim();
     cancel.hidden = busy !== "running";
     folder.textContent = commandFolder ?? "No command folder selected.";
   };
@@ -223,7 +229,14 @@ export function mountProject() {
   const followCommands = (s: Parameters<typeof projectCommandsState>[0]) => { localCommands = projectCommandsState(s, adminCommands); draw(); };
   // Fenced like Home's own startup status: a push that arrives while this waits is newer than the snapshot.
   const ticket = statusFence.begin();
-  void window.ember.getStatus().then(st => statusFence.apply(ticket, st)).then(st => { adminCommands = st.admin.commands?.local; followCommands(st.settings); }, () => { /* not known: the form stays as it was */ });
+  let adminPushed = false;
+  void window.ember.getStatus().then(st => statusFence.apply(ticket, st)).then(st => {
+    // A policy pushed while this waited is newer than the snapshot's.
+    if (!adminPushed) { adminCommands = st.admin.commands?.local; followAdmin(st.admin); }
+    followCommands(st.settings);
+  }, () => { /* not known: the form stays as it was */ });
+  // The policy changed while Ember ran (a held lockdown): what it turns off here follows at once.
+  window.ember.onAdminChanged(a => { adminPushed = true; adminCommands = a.commands?.local; followAdmin(a); if (localCommands !== null) draw(); });
   window.ember.onSettingsChanged(followCommands);
   openCommands.textContent = PROJECT_COMMANDS_OPEN;
   openCommands.addEventListener("click", () => document.getElementById("jump-commands")?.click());
@@ -267,7 +280,7 @@ export function mountProject() {
     }
   });
   const workspaceAction = async (input: ProjectWorkspaceAction) => {
-    if (!ready || busy) return;
+    if (!ready || managedOff || busy) return;
     const at = revision;
     const previousName = saved.value;
     busy = "workspace";
@@ -379,13 +392,26 @@ export function mountProject() {
     if (what === "all") {
       reset();
       workspaceName.value = "";
-      status.textContent = projectConnectionText(ready, kept());
+      status.textContent = connectionLine();
     } else {
       previousControl.hidden = true;
       includePrevious.checked = false;
       draw();
     }
   });
+  /** The status line while nothing else is said: the organisation's switch first, then the connection. */
+  const connectionLine = () => (managedOff ? PROJECT_ACTIONS_MANAGED : projectConnectionText(ready, kept()));
+  /** The organisation's policy, as the status gave it or as it changed since. */
+  function followAdmin(a: Parameters<typeof projectManagedOff>[0]): void {
+    const off = projectManagedOff(a);
+    if (off === managedOff) return;
+    managedOff = off;
+    // Nothing is sent from here now: the line naming where the next send goes is put away with the controls.
+    provider.hidden = off;
+    if (off) { workspaces.open = false; saved.replaceChildren(); workspaceStatus.textContent = ""; }
+    status.textContent = connectionLine();
+    draw();
+  }
   return (on: boolean, service = "GitHub Copilot", model: string | null = null) => {
     providerText = `${service}${model ? ` · ${model}` : ""}`;
     provider.textContent = on ? `Next send uses ${providerText}.` : "Connect a model in Models & connections.";
@@ -401,7 +427,7 @@ export function mountProject() {
     // A failed request's own reason (a model server that isn't running) stays: main's check of it is what took Ember
     // off Ready (integrations-r2-5). Anything else says only that sending waits.
     const why = !on && failedLine && status.textContent === failedLine && Date.now() - failedAt < 15_000;
-    if (!why) status.textContent = projectConnectionText(on, kept());
+    if (!why) status.textContent = connectionLine();
     failedLine = "";
     draw();
   };

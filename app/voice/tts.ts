@@ -4,7 +4,7 @@
  * or fails, a voice that runs locally on the operating system speaks instead. Pure helpers; no model loads here.
  */
 
-import { type Lead, labelLine, speechMarkupOpen, spokenText } from "./spoken";
+import { AnswerLanguage, type Lead, labelLine, speechMarkupOpen, spokenText } from "./spoken";
 
 /** Persisted preference names; Kitten is the default, with Kokoro as the optional alternative. */
 export type NaturalVoiceModel = "kokoro" | "supertonic" | "kitten";
@@ -470,4 +470,12 @@ export class SpeechStream {
     this.scanFrom = Math.max(this.scanFrom, scanned);
     return best;
   }
+}
+
+/**
+ * A whole answer as the pieces to say now, each with its language: what the stream said of it as it came, for an
+ * answer read out afterwards ("Read it out": voice-speaking-r6-1). None for an answer with nothing to say.
+ */
+export function answerPieces(answer: string): { text: string; lang: string | null }[] {
+  return new AnswerLanguage().take(new SpeechStream().finish(answer), true).filter(p => p.text.trim());
 }

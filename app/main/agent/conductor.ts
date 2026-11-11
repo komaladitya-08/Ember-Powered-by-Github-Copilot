@@ -146,8 +146,9 @@ export interface ConductorMemory {
   forRequest?(request: string, own: boolean): string | Promise<string>;
   forget(id: string): boolean;
   /**
-   * The words of the open fact `id`, or null when there is none: forget_memory forgets a fact only when the user's own
-   * words this turn ask to forget it (`asksToForget`), and refuses when this is absent (memory-v2).
+   * The words of the kept fact `id` (what holds now, or what is no longer true), or null when there is none:
+   * forget_memory forgets a fact only when the user's own words this turn ask to forget it (`asksToForget`), and
+   * refuses when this is absent (memory-v2).
    */
   factText?(id: string): string | null;
   /**

@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { projectSelection, removeProjectFile } from "../../app/main/agent/project";
 import { exportProjectText } from "../../app/main/agent/project-export";
-import { PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, projectAnswerParts, projectAnswerText, projectCommandsState, projectBytes, projectCommandsOn, projectConnectionText, projectSelectionText } from "../../app/renderer/home/project-copy";
+import { PROJECT_ACTIONS_MANAGED, projectManagedOff, projectUnavailable, PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, projectAnswerParts, projectAnswerText, projectCommandsState, projectBytes, projectCommandsOn, projectConnectionText, projectSelectionText } from "../../app/renderer/home/project-copy";
 
 let dir: string;
 let privateDir: string;
@@ -51,6 +51,21 @@ it("says the organisation turned commands off, never to turn on a switch the per
   expect(projectCommandsState({ commands: {} }, "on")).toBe("off");
   expect(projectCommandsState({ commands: {} }, undefined)).toBe("off");
   expect(projectCommandsState({ commands: { local: { on: true } } }, "ask")).toBe("on");
+});
+
+it("says the organisation turned Projects off with acting in apps, in the pane and from main, never that it is unavailable right now (integrations-r7-1)", () => {
+  expect(PROJECT_ACTIONS_MANAGED).toBe("Your organisation has turned off Ember acting in apps, so Projects is off here.");
+  expect(projectManagedOff({ features: { actions: false }, error: null })).toBe(true);
+  expect(projectManagedOff({ features: {}, error: null })).toBe(false);
+  expect(projectManagedOff({ features: { actions: true }, error: null })).toBe(false);
+  expect(projectManagedOff(null)).toBe(false);
+  // A lockdown turns actions off too, and says so itself at the top of the window.
+  expect(projectManagedOff({ features: { actions: false }, error: "policy.json: unexpected token" })).toBe(false);
+  expect(projectUnavailable({ managed: true, busy: false })).toBe(PROJECT_ACTIONS_MANAGED);
+  expect(projectUnavailable({ managed: true, busy: true })).toBe(PROJECT_ACTIONS_MANAGED);
+  // Another step under way says that (integrations-i6); the rest is said where it is seen.
+  expect(projectUnavailable({ managed: false, busy: true })).toBe("Ember is still on the last project step. Wait for it to finish, or cancel it.");
+  expect(projectUnavailable({ managed: false, busy: false })).toBe("Project work is unavailable right now.");
 });
 
 it("says only sending waits while Ember isn't connected, and that the person's work stays (integrations-r1)", () => {
