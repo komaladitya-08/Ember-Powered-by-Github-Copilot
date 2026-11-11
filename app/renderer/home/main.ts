@@ -50,7 +50,7 @@ import { keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOf
 import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { holdTaskNews, startTasks } from "./tasks";
-import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
+import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOn, whatsOnText } from "./status-copy";
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
@@ -284,15 +284,11 @@ function renderStatus(): void {
   setText("state-word", s.word);
   $("ring").dataset.ring = s.ring;
   $("state-word").dataset.ring = s.ring;
-  const v = voice?.state;
-  const listening = !!settings?.wakeWord && !!settings?.voice.consent;
-  setText("whats-on", whatsOnText({
-    voice: !listening ? "off" : v === "muted" ? "muted" : "listening",
+  // What is in force, not what the switches ask for: policy, a lockdown and the microphone's real state (home-r6-1).
+  setText("whats-on", whatsOnText(whatsOn({
+    settings, admin: lastAdmin, mic: voice?.state ?? null,
     memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner, memoryTrouble),
-    commands: Object.values(settings?.commands ?? {}).filter(c => c?.on).length,
-    computers: settings?.targets.hosts.length ?? 0,
-    wsl: !!settings?.targets.wsl.on,
-  }));
+  })));
   setText("today", todaySummary(tasksNow, today));
   // Copilot not connected: connecting it is the one prominent action here, and Ask steps back.
   const notConnected = (agent?.phase === "signed-out" || agent?.phase === "error") && agent?.waitingForTasks !== true;

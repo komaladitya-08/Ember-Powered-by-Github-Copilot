@@ -7,10 +7,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
+import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOn, whatsOnText } from "../../app/renderer/home/status-copy";
 import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage, shownText, type ShownNode } from "../../app/renderer/home/search-copy";
 import { checksNote, COMPOSER_HELD, COMPOSER_THINKING, composerStillWaiting, settingsResultText, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import { formatDoctor } from "../../app/main/doctor";
+import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
 import { IPC, TASKS_PUSH_MS } from "../../app/shared/ipc";
 
@@ -132,6 +133,41 @@ describe("Home's status panel", () => {
     expect(whatsOnText(off)).toBe("Listening off · Memory off · Commands off");
     expect(whatsOnText({ ...off, voice: "listening", memory: true, commands: 2, computers: 2, wsl: true })).toBe("Listening on · Memory on · Commands on · 2 computers over SSH · WSL");
     expect(whatsOnText({ ...off, voice: "muted", computers: 1 })).toBe("Microphone off · Memory off · Commands off · 1 computer over SSH");
+  });
+
+  it("says what is in force, not what the settings ask for: policy, a lockdown, missing speech models and a microphone error turn the line off (home-r6-1)", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS, wakeWord: true, voice: { ...DEFAULT_SETTINGS.voice, consent: true },
+      commands: { local: { ...DEFAULT_SETTINGS.commands.local, on: true }, "ssh:build-01": { on: true } },
+      targets: { ...DEFAULT_SETTINGS.targets, wsl: { ...DEFAULT_SETTINGS.targets.wsl, on: true }, hosts: [{ id: "build-01" }] },
+    } as unknown as typeof DEFAULT_SETTINGS;
+    const admin = { source: null, error: null, features: {}, commands: { local: "on", wsl: "on", ssh: "on" } } as const;
+    const line = (o: Partial<Parameters<typeof whatsOn>[0]> = {}) => whatsOnText(whatsOn({ settings, admin, mic: "waiting", memory: true, ...o }));
+    expect(line()).toBe("Listening on · Memory on · Commands on · 1 computer over SSH · WSL");
+    expect(line({ mic: "active" })).toContain("Listening on");
+    // The organisation turned commands and SSH off: neither is on, whatever the user's switches say.
+    expect(line({ admin: { ...admin, source: "/etc/ember/policy.json", features: { ssh: false, wsl: false }, commands: { local: "off", wsl: "off", ssh: "off" } } })).toBe("Listening on · Memory on · Commands off");
+    // Commands off on this computer only: the SSH host's still count.
+    expect(line({ admin: { ...admin, commands: { local: "off", wsl: "on", ssh: "ask" } } })).toBe("Listening on · Memory on · Commands on · 1 computer over SSH · WSL");
+    expect(line({ admin: { ...admin, commands: { local: "on", wsl: "on", ssh: "off" } }, settings: { ...settings, commands: { "ssh:build-01": { on: true } } } as unknown as typeof settings })).toContain("Commands off");
+    expect(line({ admin: { ...admin, features: { voice: false, memory: false } } })).toBe("Listening off · Memory off · Commands on · 1 computer over SSH · WSL");
+    // Locked down, fresh or held until a restart (no settings push comes with a held one): nothing is on.
+    expect(line({ admin: { ...admin, error: "policy.json has a mistake" } })).toBe("Listening off · Memory off · Commands off");
+    expect(line({ admin: { ...admin, error: "The policy changed", held: true } })).toBe("Listening off · Memory off · Commands off");
+    // Listening is wanted and can't run: never "Listening on".
+    expect(line({ mic: "needs-models" })).toMatch(/^Listening needs its speech models · /);
+    expect(line({ mic: "downloading" })).toMatch(/^Listening needs its speech models · /);
+    expect(line({ mic: "error" })).toMatch(/^Microphone problem · /);
+    expect(line({ mic: "off" })).toMatch(/^Listening off · /);
+    expect(line({ mic: "muted" })).toMatch(/^Microphone off · /);
+    expect(line({ mic: "starting" })).toMatch(/^Listening starting… · /);
+    expect(line({ mic: null })).toMatch(/^Listening starting… · /);
+    // Listening not turned on or not agreed to is off whatever the microphone's state.
+    expect(line({ settings: { ...settings, wakeWord: false } })).toMatch(/^Listening off · /);
+    expect(line({ settings: { ...settings, voice: { ...settings.voice, consent: false } } })).toMatch(/^Listening off · /);
+    // Memory paused stays paused; before the first status nothing is on.
+    expect(line({ memory: "paused" })).toContain("Memory paused");
+    expect(line({ settings: null, admin: null, mic: null, memory: false })).toBe("Listening off · Memory off · Commands off");
   });
 
   it("says memory is paused, not on, while its owner isn't verified (memory-2)", () => {

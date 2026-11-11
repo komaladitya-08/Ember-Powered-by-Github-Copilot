@@ -5,7 +5,10 @@
  * recent entries), and reads nothing new.
  */
 
-import type { ActivityEntry } from "../../shared/ipc";
+import type { ActivityEntry, Status } from "../../shared/ipc";
+import type { MicState } from "../../shared/voice";
+import { parseTargetId } from "../../shared/targets";
+import { modeFor } from "./computers-copy";
 import { STATUS_WORDS, type TaskEntry } from "../../shared/activity";
 import { dayLabel } from "./copy";
 
@@ -112,8 +115,11 @@ export function taskCounts(tasks: readonly Pick<TaskEntry, "status">[]): { runni
 }
 
 export interface WhatsOn {
-  /** The microphone: listening for the wake word, muted, or off (listening turned off, or not agreed to). */
-  voice: "listening" | "muted" | "off";
+  /**
+   * The microphone: listening for the wake word, muted, or off (listening turned off, not agreed to, or turned off by
+   * the organisation). Wanted and not running (home-r6-1): `starting`, `needs-models` (no speech models yet) or `error`.
+   */
+  voice: "listening" | "muted" | "off" | "starting" | "needs-models" | "error";
   /** "paused": it was on, and waits for the user to agree to its changed note (FEATURE_CONSENT_VERSION.memory). */
   memory: boolean | "paused";
   /** Computers commands are on for (this one included). */
@@ -135,13 +141,56 @@ export function memoryWhatsOn(on: boolean, notePaused: boolean, ownership: "wait
   return ownership === "ready" && trouble !== "unreadable" ? true : "paused";
 }
 
+const VOICE_WORDS: Readonly<Record<WhatsOn["voice"], string>> = {
+  listening: "Listening on", muted: "Microphone off", off: "Listening off", starting: "Listening starting…",
+  "needs-models": "Listening needs its speech models", error: "Microphone problem",
+};
+
+export interface WhatsOnFacts {
+  /** The settings in use (null before the first status). */
+  settings: Status["settings"] | null;
+  /** The organisation's policy in force (Status.admin), as last heard: a held lockdown comes with no settings push. */
+  admin: Pick<Status["admin"], "source" | "error" | "held" | "features" | "commands"> | null;
+  /** The microphone's state as the voice service last said it (null: not heard yet). */
+  mic: MicState | null;
+  /** Memory as memoryWhatsOn says it. */
+  memory: WhatsOn["memory"];
+}
+
+/**
+ * What is on in fact, for the status panel's Features line (home-r6-1): the user's switches, less what the
+ * organisation's policy turned off (commands by kind of computer, SSH, WSL, listening, memory), less everything while
+ * Ember is locked down, and listening only while the microphone really waits for "Ember". Unknown counts as not on.
+ */
+export function whatsOn(f: WhatsOnFacts): WhatsOn {
+  const s = f.settings;
+  const a = f.admin;
+  if (!s || !a || a.error !== null) return { voice: "off", memory: false, commands: 0, computers: 0, wsl: false };
+  const wanted = s.wakeWord && s.voice.consent && a.features.voice !== false;
+  const m = f.mic;
+  const voice: WhatsOn["voice"] = !wanted || m === "off" ? "off"
+    : m === "waiting" || m === "active" ? "listening"
+    : m === "muted" ? "muted"
+    : m === "needs-models" || m === "downloading" ? "needs-models"
+    : m === "error" ? "error" : "starting";
+  const wsl = s.targets.wsl.on && a.features.wsl !== false;
+  const ssh = a.features.ssh !== false;
+  const hosts = new Set(s.targets.hosts.map(h => h.id));
+  const commands = Object.entries(s.commands).filter(([id, c]) => {
+    const t = parseTargetId(id);
+    if (!t || c?.on !== true || modeFor(a, t.kind) === "off") return false;
+    return t.kind === "local" || (t.kind === "wsl" ? wsl : hosts.has(t.name));
+  }).length;
+  return { voice, memory: a.features.memory === false ? false : f.memory, commands, computers: ssh ? hosts.size : 0, wsl };
+}
+
 /**
  * The main capabilities and whether each is on, in a few words ("Listening on · Memory on · Commands off"), then the
  * other computers Ember can work on, when there are any ("2 computers over SSH", "WSL").
  */
 export function whatsOnText(o: WhatsOn): string {
   return [
-    o.voice === "listening" ? "Listening on" : o.voice === "muted" ? "Microphone off" : "Listening off",
+    VOICE_WORDS[o.voice],
     o.memory === "paused" ? "Memory paused" : o.memory ? "Memory on" : "Memory off",
     o.commands ? "Commands on" : "Commands off",
     o.computers ? `${count(o.computers, "computer")} over SSH` : "",
