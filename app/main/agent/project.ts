@@ -89,6 +89,27 @@ export const projectTurnRequest = projectRequest.extend({ includePrevious: z.boo
 
 export const projectCommandText = z.string().trim().min(1).max(2000).refine(s => !/[\p{Cc}\p{Cf}]/u.test(s) && !memoryRefusal(s));
 
+/**
+ * Why a project command's text is refused, by cause (integrations-i6): nothing typed, too long, more than one line or
+ * hidden characters, or what looks like a password, token or key. Never the text itself.
+ */
+export function projectCommandProblem(raw: unknown): string {
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return "Enter a command first.";
+  if (text.length > 2000) return "That command is over 2,000 characters. Shorten it.";
+  if (/[\p{Cc}\p{Cf}]/u.test(text)) return "Enter the command on one line, without line breaks or hidden characters.";
+  return "Remove the password, token or key from the command.";
+}
+
+/**
+ * Said instead of sending a request that looks like it holds a password, token or key: with the line it is on where
+ * the request has more than one (integrations-i6), as a chosen file's refusal names its line.
+ */
+export function projectRequestSecret(question: string): string {
+  const line = question.includes("\n") ? secretLine(question) : null;
+  return `Remove passwords, tokens and keys from the request${line ? `: line ${line} appears to contain one` : ""}.`;
+}
+
 /** A native folder selection bound to its local directory identity until the run starts. */
 export function projectCommandFolder(folder: string, privateDir: string) {
   const resolved = fsSync.realpathSync(folder);
@@ -179,7 +200,7 @@ export function projectSecretFiles(found: readonly { name: string; line: number 
 /** Reads only the selected regular files. A changed file is retried by the user, never sent partly. */
 export async function projectPrompt(files: readonly string[], mode: ProjectMode, question: string, signal: AbortSignal, privateDir: string, snapshots?: ProjectSource[], previous?: ProjectExchange | null): Promise<string> {
   const names = projectNames(files);
-  if (memoryRefusal(question)) throw new ProjectInputError("Remove passwords, tokens and keys from the request.");
+  if (memoryRefusal(question)) throw new ProjectInputError(projectRequestSecret(question));
   const sources: { name: string; text: string }[] = [];
   // Every chosen file is looked at before refusing, so the refusal names each one that holds a secret (integrations-r4-1).
   const secrets: { name: string; line: number | null }[] = [];

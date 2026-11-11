@@ -225,14 +225,19 @@ runtime. It does not change the app's consent or speaking settings.
   - Switching memory off stops remembering and recall during existing turns too. Pending recall is dropped on
     Stop or Forget; unchecked speech never counts as your own words when a fact is saved.
   - It keeps this in `memory.json` in its data folder (mode 0600).
+  - A fact that a newer one replaced is kept for 180 days as what used to be true. Settings › Memory lists it
+    under what holds now, marked "No longer true since <date>", with its own Forget.
   - While it is in force, the names in what you told it (its `user` facts) also help Ember hear them right
     (app/main/personal/correct.ts); nothing more is kept for that.
   - With each request, the few facts that bear on it go to Copilot as an untrusted `<memory>` block.
   - A fact counts as yours only when it is mostly your own words. Otherwise it is the model's inference, and context
     only.
   - It never keeps passwords, codes, keys or card numbers.
-  - If `memory.json` can't be read (it is left as it was), isn't memory (it is set aside as `memory.json.broken`) or
+  - If `memory.json` can't be read (it is left as it was), isn't memory (it is set aside as `memory.json.broken`; if that
+    happens again the first copy stays and the later file goes to `memory.json.broken.2`) or
     can't be saved (a full or read-only disk), Settings › Memory says so under the list. While it can't be read,
+    nothing new is kept (the remember tool, extraction, Tell Ember about you and "get to know me" say so rather than
+    hold facts in RAM that no Forget could remove),
     Home's status line says "Memory paused" and the line says to check that your account can open `memory.json` in
     Ember's data folder (a file left by running Ember as root is the usual cause), then restart Ember.
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
@@ -1068,7 +1073,10 @@ such as Ollama at `http://localhost:11434/v1` or LM Studio at `http://localhost:
 **Conversation model** and **Model for tasks** (the conversation's when empty; it must take images), and under
 **Advanced** the wire API (`completions` or `responses`) and Azure's API version. **Test connection** makes one GET of the
 service's model list with the saved key and says in one sentence what came of it, naming one or two of the models it
-lists; up to 50 of their ids (`listedModelIds`: `data[].id`, or Ollama's `models[].name`, each a `MODEL_ID`) are
+lists ("Connected" only to an answer that holds a model list: a 200 with anything else, a web page included, says
+"<host> answered, but not as a model service does. Check the endpoint.", integrations-c7-1; `modelList` takes the
+list as services write it: an array under `data` or `models`, a bare array, models keyed by id, or an array of models
+under another name, integrations-x7-1); up to 50 of their ids (`listedModelIds`: `data[].id`, or Ollama's `models[].name`, each a `MODEL_ID`) are
 offered as suggestions in both model fields, set as option values only. It is disabled, and main refuses it,
 until the card below is agreed for the endpoint's host: nothing at all goes to a host the user hasn't agreed to, with
 or without a key. A line under it says why it waits (its `aria-describedby`), and when the card comes up for an
@@ -1085,18 +1093,24 @@ held edit is), so the provider in use never leaves force for Copilot between, an
 Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
 held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
 answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
-up for the new host, the status line says "Read the note above: Ember still uses <host in force>, and sends nothing to
-<new host> until you agree.", the hint "Ember still uses <host in force>. Agree to use <new host> to switch.", the card's
+up for the new host, the status line says "Read the note above: Ember sends nothing to <new host> until you agree."
+(as for any address just entered: the line below it says the rest once, integrations-r7-3), the hint "Ember still uses <host in force>. Agree to use <new host> to switch.", the card's
 quiet button reads "Keep using <host in force>" (it puts the details in force back, saving nothing), and a key typed for
 the new host waits in its field. "I agree" checks the held details with the same GET ("Checking <new host>…"); one that
 fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
 names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
 main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
 A host that answers but has no model list at that address (404, 405 or 501 on GET /models, as some gateways that answer
-chat only do: the test's `cause: "no-list"`, which the start probe doesn't count as down either) is adopted the same
-way, and the line says "Agreed. <new host> answered but lists no models, so Ember asks it for <model> as typed."
-(integrations-r4-2); one that can't be reached, times out, has a certificate Ember can't verify, refuses the key or
-answers with another error changes nothing.
+chat only do, and as a mistyped path does; or a 200 that isn't a model list, as a web front end, a sign-in page or a
+parked domain gives: both are the test's `cause: "no-list"`, which the start probe doesn't count as down either) is not
+adopted by the yes (integrations-c5-1, -c7-1): the line says main's sentence, then "Nothing has changed: Ember still
+uses <host in force>. If the address is right, choose “Use it as typed”.", and the card gains a quiet **Use it as
+typed**, for that very edit as it was asked (a change of its address, provider type, Azure API version or key takes the
+button and that line away, integrations-x7-2; a model typed since goes with the press). Only that press saves the edit, in the same one
+change, and the line says "Agreed. <new host> answered but lists no models, so Ember asks it for <model> as typed."
+(integrations-r4-2); until then the provider in force and its saved key stay as they were, and a key typed for the new
+host waits in its field. One that can't be reached, times out, has a certificate Ember can't verify, refuses the key or
+answers with another error changes nothing and offers nothing.
 An edit back to the host in force, or of the same host, is saved at once as before. The held card's text has no
 sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
 provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so
@@ -1233,7 +1247,7 @@ the lockdown turns off), and the restart reads the new policy whole. Every key i
 | Key | Effect |
 |---|---|
 | `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the optional native voice off and its model download from starting, shown as managed |
-| `features.actions` | Ember answers and guides ("show me") but never acts in apps |
+| `features.actions` | Ember answers and guides ("show me") but never acts in apps. Projects goes with it: its pane says "Your organisation has turned off Ember acting in apps, so Projects is off here." and holds its controls (integrations-r7-1) |
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
 | `features.screenImages` | Accessibility text only; no screenshots go to the model ("Send screenshots for tasks" off, managed) |
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
@@ -2306,7 +2320,12 @@ says "Ember isn't connected right now. Your work here stays, and you can send on
 reaches the model service waits: choosing files, sending, saved workspaces and the command (`projectAfterStatus`,
 app/main/agent/project.ts). **Export answer…**, **Export diff…**, **Apply patch…** and a file's **Remove** work on
 what is kept here and send nothing, so they go on working (`projectMay`'s `local`, integrations-r3-2); consent, the
-screen lock, the organisation's actions switch and the settings window in view still hold. A request under way then stops and
+screen lock, the organisation's actions switch and the settings window in view still hold. With that switch off
+(`features.actions: false`, not a lockdown) the pane says "Your organisation has turned off Ember acting in apps, so
+Projects is off here." in its status line, holds every control and puts away the line naming where the next send
+goes, however connected Ember is (`projectManagedOff`), and main answers a stray request with the same sentence
+(`projectUnavailable`, app/renderer/home/project-copy.ts; one made while another project step is under way hears
+"Ember is still on the last project step. Wait for it to finish, or cancel it."; integrations-r7-1). A request under way then stops and
 says the connection dropped; Apply patch…'s confirmation stays up through Copilot's reconnect tries while offline, and
 only Stop everything, the screen lock, Sign out and the lockdown close it (`projectJobStops`, integrations-v4-2). Sign out, another account and the organisation's lockdown clear it all. Once another
 model service, address, key or GitHub account is in force, the previous request and answer stay in view but are no
@@ -2316,7 +2335,10 @@ Open **Run a project command** to choose a local starting folder and enter a com
 this computer (the default), the form says so with **Open Commands** before anything is typed, and the command field
 and **Review command…** wait. Where the organisation's policy turned them off, it says "Your organisation has turned
 off commands on this computer." with no **Open Commands**. Ember applies the same settings, classifier and stop controls as its command window. Each run waits for approval of the
-exact command and folder. Output stays in the command window. The connected model does not receive it.
+exact command and folder. Output stays in the command window. The connected model does not receive it. A command
+that can't be taken says which of four reasons holds (`projectCommandProblem`: nothing typed, over 2,000 characters,
+more than one line or hidden characters, or what looks like a password, token or key), and a request of several lines
+that looks like it holds a secret names the line (`projectRequestSecret`; integrations-i6).
 
 **Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or connected
 provider configuration. Saving requires the system keyring and stores encrypted paths and the last

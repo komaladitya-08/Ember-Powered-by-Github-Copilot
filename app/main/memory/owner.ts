@@ -145,7 +145,7 @@ export class MemoryOwner {
   }
 
   private hasData(): boolean {
-    for (const name of ["memory.json", "memory-vectors.json"]) for (const suffix of ["", ".broken", ".tmp"]) {
+    for (const name of ["memory.json", "memory-vectors.json"]) for (const suffix of ["", ".broken", ".broken.2", ".tmp"]) {
       try { fs.lstatSync(path.join(this.dir, name + suffix)); return true; }
       catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
     }

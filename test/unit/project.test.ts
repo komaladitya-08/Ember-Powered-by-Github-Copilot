@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { projectAfterStatus, projectCommandFolder, projectCommandText, projectFailureText, projectJobStops, projectMay, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM, secretLine } from "../../app/main/agent/project";
+import { projectAfterStatus, projectCommandFolder, projectCommandProblem, projectCommandText, projectRequestSecret, projectFailureText, projectJobStops, projectMay, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM, secretLine } from "../../app/main/agent/project";
 import { readFileSync } from "node:fs";
 import { applyProjectPatch, draftProjectPatch, readProjectPatch } from "../../app/main/agent/project-patch";
 import type { ProjectSource } from "../../app/main/agent/project";
@@ -212,6 +212,15 @@ it("holds back a Makefile recipe, a unit file and an upgrade script that give a 
   await expect(prompt([unit])).rejects.toThrow(new Error("BACKUP.md appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
   const upgrade = await file("upgrade.sh", "#!/bin/sh\ncd /opt/lampp\nbin/mysql_upgrade -u root -pWint3r!Sh0p\n");
   await expect(prompt([upgrade])).rejects.toThrow(new Error("upgrade.sh appears to contain a password, token or key on line 3. Remove that file or the value, then send again."));
+});
+
+it("holds back a compose file whose exec-form healthcheck gives MySQL its password as a list element, and sends one that reads it from a variable (memory-q6-1)", async () => {
+  const compose = await file("docker-compose.yml", 'services:\n  db:\n    image: mysql:8\n    healthcheck:\n      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pWint3r!Sh0p"]\n');
+  await expect(prompt([compose])).rejects.toThrow(new Error("docker-compose.yml appears to contain a password, token or key on line 5. Remove that file or the value, then send again."));
+  const script = await file("backup.py", 'import subprocess\nsubprocess.run(["sshpass", "-p", "Wint3r!Sh0p", "ssh", "backup@host"])\n');
+  await expect(prompt([script])).rejects.toThrow(new Error("backup.py appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+  const safe = await file("compose.yml", 'services:\n  db:\n    healthcheck:\n      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p$MYSQL_ROOT_PASSWORD"]\n');
+  expect(await prompt([safe])).toContain("-p$MYSQL_ROOT_PASSWORD");
 });
 
 it("holds back a XAMPP guide whose prompt line and a backup script whose comment give MySQL its password, and sends one that prompts for it (memory-z6-1)", async () => {
@@ -427,6 +436,21 @@ it("accepts a single command and binds it to the chosen local folder", async () 
   await fs.rename(folder, folder + "-old");
   await fs.mkdir(folder);
   expect(selected.current()).toBe(false);
+});
+
+it("says why a project command or request is refused, by cause and by line, never in one sentence for all (integrations-i6)", () => {
+  expect(projectCommandProblem("   ")).toBe("Enter a command first.");
+  expect(projectCommandProblem(42)).toBe("Enter a command first.");
+  expect(projectCommandProblem("echo " + "a".repeat(2000))).toBe("That command is over 2,000 characters. Shorten it.");
+  expect(projectCommandProblem("npm test\necho next")).toBe("Enter the command on one line, without line breaks or hidden characters.");
+  expect(projectCommandProblem("echo \u202ereversed")).toBe("Enter the command on one line, without line breaks or hidden characters.");
+  const secret = "curl -H 'Authorization: Bearer ghp_" + "a1B2".repeat(9) + "' https://example.com";
+  expect(projectCommandText.safeParse(secret).success).toBe(false);
+  expect(projectCommandProblem(secret)).toBe("Remove the password, token or key from the command.");
+  expect(projectCommandProblem(secret)).not.toContain("ghp_");
+  // A request of several lines names the line; one line is the whole request.
+  expect(projectRequestSecret("Review this.\nThe db password is Tr0ub4dor&3\nThanks")).toBe("Remove passwords, tokens and keys from the request: line 2 appears to contain one.");
+  expect(projectRequestSecret("Connecting fails, the db password: its Tr0ub4dor&3")).toBe("Remove passwords, tokens and keys from the request.");
 });
 
 it("says why the model service refused a project request, and logs its kind, never its words (integrations-5)", async () => {

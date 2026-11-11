@@ -139,6 +139,58 @@ const OPTION_PASSWORDS: readonly RegExp[] = [
   new RegExp(String.raw`(\b(?:echo|printf)[ \t]+(?:-\w+[ \t]+)*)(["']?)(${OPTION_VALUE})\2([ \t]*\|[ \t]*sudo(?:[ \t]+-\w+)*[ \t]+-\w*S)`, "g"),
 ];
 
+/**
+ * The same passwords where the arguments are a list, each its own element, not one line (memory-q6-1): a compose
+ * file's exec-form healthcheck (`test: ["CMD", "mysqladmin", "ping", "-phunter2"]`), a subprocess or execFile list,
+ * `docker inspect`'s Test array (one element a line) and YAML's lists (`[CMD, mysqladmin, -phunter2]`, or a `- ` a
+ * line). An element is quoted or bare; elements are parted by a comma (and the bracket of a list that is the next
+ * argument: `execFile("mysql", ["-p…"])`) or by a new line's `- `.
+ */
+const LIST_SEP = String.raw`(?:[ \t]*,\s*\[?|[ \t]*\n[ \t]*-[ \t]+)`;
+const LIST_ELEMENT = String.raw`(?:"[^"\n]*"|'[^'\n]*'|[^\s"',[\]]+)`;
+/** What may stand between a program and its option in a list: at most 12 other elements. */
+const LIST_ARGS = String.raw`(?:${LIST_SEP}${LIST_ELEMENT}){0,12}?`;
+/**
+ * A program as a list's element, alone or with its folder, before the next element: after the line's start, a space,
+ * a comma, a bracket or its own quote, so a long run of other characters is looked at once; never an option's folder
+ * (`"-I/usr/include/mysql"`).
+ */
+const listProgram = (names: string): string => String.raw`(?<![^\s,["'])(?:(?!-)[^\s"',[\]]*[\/\\])?(?:${names})(?:\.[eE][xX][eE])?["']?(?=${LIST_SEP})`;
+/** An element that is exactly `option`, with the quote (`q`) it opens with, if any. */
+const listOption = (option: string): string => String.raw`${LIST_SEP}(?<q>["']?)(?:${option})`;
+const LIST_NOT_VALUE = String.raw`(?![$%{<*[])`;
+const LIST_HOLDER = String.raw`(?:[A-Z][A-Z_]*|(?:your[-_]?|my[-_]?)?(?:password|passwd|pass|pwd|secret|token|key))`;
+/**
+ * A list element's value, which is hidden: after `opened` (what the element starts with: nothing, or an attached
+ * option such as `-p`), to the element's closing quote, or for a bare element to the comma, bracket or line's end.
+ * Never a variable, a template or a placeholder, as OPTION_VALUE.
+ */
+const listValue = (opened: string, quoted = String.raw`[^\n]`): string =>
+  String.raw`(?:(?<=["']${opened})${LIST_NOT_VALUE}(?!${LIST_HOLDER}\k<q>)(?:(?!\k<q>)${quoted})+(?=\k<q>)`
+  + String.raw`|(?<!["']${opened})${LIST_NOT_VALUE}(?!${LIST_HOLDER}(?![^\s"',\]]))[^\s"',\]]+(?=[ \t]*(?:[,\]\n]|$)))`;
+/** The option as one element and its value as the next, in the same quotes. */
+const listPair = (option: string): string => String.raw`${listOption(option)}\k<q>${LIST_SEP}\k<q>`;
+const SECRET_OPTION = String.raw`--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)`;
+/**
+ * OPTION_PASSWORDS for lists of arguments: `keep` stays and `value` is hidden. MySQL's and MariaDB's `"-p…"` (a bare
+ * `"-p"` prompts, and `"-P"` is a port), `"-p", "…"` after sshpass, mongo's clients and a registry's login,
+ * `"-a", "…"` after redis-cli, `"-u", "admin:…"` after curl and wget, `"-U", "admin%…"` after smbclient, openssl's
+ * `"-k", "…"` and `"-pass", "pass:…"`, and, after any program, a quoted option named like a secret with the next
+ * quoted element as its value (`"--password", "…"`: three characters or more with no space, never another option, so
+ * `"-pass", "1"` and an option's description stay).
+ */
+const LIST_PASSWORDS: readonly RegExp[] = [
+  new RegExp(String.raw`(?<keep>${listProgram(CLIENT)}${LIST_ARGS}${listOption("-p")})(?<value>${listValue("-p")})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("sshpass|mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport")}${LIST_ARGS}${listOption("-p")}(?:\k<q>${LIST_SEP}\k<q>)?)(?<value>${listValue("(?:-p)?")})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("docker|podman|nerdctl|buildah|helm")}${LIST_ARGS}${LIST_SEP}["']?login["']?${LIST_ARGS}${listPair("-p|--password")})(?<value>${listValue("")})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("redis-cli")}${LIST_ARGS}${listPair("-a")})(?<value>${listValue("")})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("curl|wget")}${LIST_ARGS}${listPair("-u|--user")}[^\s"',:\]]*:)(?<value>${listValue(String.raw`[^\s"',:\]]*:`)})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("smbclient")}${LIST_ARGS}${listPair("-U")}[^\s"',%\]]*%)(?<value>${listValue(String.raw`[^\s"',%\]]*%`)})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("openssl")}${LIST_ARGS}${listPair("-k")})(?<value>${listValue("")})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("openssl")}${LIST_ARGS}${listPair("-pass(?:in|out)?")}pass:)(?<value>${listValue("pass:")})`, "g"),
+  new RegExp(String.raw`(?<keep>(?<![^\s,[(])(?<q>["'])${SECRET_OPTION}\k<q>${LIST_SEP}\k<q>)(?<value>(?!-)${LIST_NOT_VALUE}(?!${LIST_HOLDER}\k<q>)(?:(?!\k<q>)\S){3,})(?=\k<q>)`, "g"),
+];
+
 /** URL credentials: `://user:pass@` becomes `://[secret hidden]@`. */
 const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/g;
 
@@ -157,7 +209,7 @@ const KEY_VALUE =
 /**
  * Replaces what looks like a secret in `text` with "[secret hidden]" (§3.11 step 4): GitHub, AWS, Slack, Google, npm,
  * OpenAI, Anthropic, Stripe, Hugging Face and GitLab tokens and keys, private key blocks, JWTs, Azure account keys and SAS signatures, Authorization headers, credentials in
- * URLs, a password given to a program's short option (OPTION_PASSWORDS), and the values of keys named like passwords, tokens or
+ * URLs, a password given to a program's short option, on its line or as an element of a list of arguments (OPTION_PASSWORDS, LIST_PASSWORDS), and the values of keys named like passwords, tokens or
  * keys. Best effort: it can miss secrets.
  */
 export function redactSecrets(text: string): string {
@@ -167,6 +219,7 @@ export function redactSecrets(text: string): string {
   for (const re of OPTION_PASSWORDS) {
     out = out.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`);
   }
+  for (const re of LIST_PASSWORDS) out = out.replace(re, (...m) => `${(m[m.length - 1] as { keep: string }).keep}${SECRET_HIDDEN}`);
   out = out.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`);
   out = out.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
   return out;

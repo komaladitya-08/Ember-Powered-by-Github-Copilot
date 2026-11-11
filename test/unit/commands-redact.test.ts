@@ -175,6 +175,59 @@ describe("redactSecrets", () => {
     expect(redactSecrets(text)).toBe(text);
   });
 
+  // A password that is its own element of a list of a program's arguments: a compose file's exec-form healthcheck, a
+  // subprocess list, `docker inspect`'s Test array, a YAML list (memory-q6-1).
+  it.each([
+    ['test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-phunter2"]', `test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${SECRET_HIDDEN}"]`],
+    ['subprocess.run(["mysql", "-u", "root", "-pSummer2024!", "db"])', `subprocess.run(["mysql", "-u", "root", "-p${SECRET_HIDDEN}", "db"])`],
+    ['"Test": [\n  "CMD",\n  "/usr/bin/mysql",\n  "-uroot",\n  "-pS3cretPass",\n  "-e",\n  "SELECT 1"\n]', `"Test": [\n  "CMD",\n  "/usr/bin/mysql",\n  "-uroot",\n  "-p${SECRET_HIDDEN}",\n  "-e",\n  "SELECT 1"\n]`],
+    ["execFile('mysqldump', ['-u', 'root', '-pWint3r, Sh0p', 'shop'])", `execFile('mysqldump', ['-u', 'root', '-p${SECRET_HIDDEN}', 'shop'])`],
+    ["test: [CMD, mysqladmin, ping, -uroot, -phunter2]", `test: [CMD, mysqladmin, ping, -uroot, -p${SECRET_HIDDEN}]`],
+    ["test:\n  - CMD\n  - mysqladmin\n  - ping\n  - -phunter2\n", `test:\n  - CMD\n  - mysqladmin\n  - ping\n  - -p${SECRET_HIDDEN}\n`],
+    ['["mysql", "-u", "root", "--password", "hunter2"]', `["mysql", "-u", "root", "--password", "${SECRET_HIDDEN}"]`],
+    ['["vault", "login", "--token", "hvs.abc123"]', `["vault", "login", "--token", "${SECRET_HIDDEN}"]`],
+    ['["redis-cli", "-a", "hunter2", "ping"]', `["redis-cli", "-a", "${SECRET_HIDDEN}", "ping"]`],
+    ['["sshpass", "-p", "hunter2", "ssh", "host"]', `["sshpass", "-p", "${SECRET_HIDDEN}", "ssh", "host"]`],
+    ["command: [sshpass, -p, hunter2, ssh, host]", `command: [sshpass, -p, ${SECRET_HIDDEN}, ssh, host]`],
+    ['["curl", "-u", "admin:hunter2", "https://x"]', `["curl", "-u", "admin:${SECRET_HIDDEN}", "https://x"]`],
+    ['["curl", "-s", "--user", "admin:hunter2", "https://x"]', `["curl", "-s", "--user", "admin:${SECRET_HIDDEN}", "https://x"]`],
+    ['["docker", "login", "-u", "ci", "-p", "hunter2", "registry.example.com"]', `["docker", "login", "-u", "ci", "-p", "${SECRET_HIDDEN}", "registry.example.com"]`],
+    ['["mongosh", "-u", "admin", "-p", "hunter2", "--eval", "db.runCommand({ ping: 1 })"]', `["mongosh", "-u", "admin", "-p", "${SECRET_HIDDEN}", "--eval", "db.runCommand({ ping: 1 })"]`],
+  ])("hides the password in %j, an element of a list of arguments (memory-q6-1)", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+  it.each([
+    ['["mysql", "-u", "root", "-p", "db"]'], ['["mysql", "-h", "db", "-P", "3306", "-u", "root", "-p"]'], ['test: ["CMD", "mysqladmin", "ping", "-p"]'],
+    ['["mysql", "-u", "root", "-p$MYSQL_ROOT_PASSWORD"]'], ['["mysql", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]'], ['["mysql", "-pPASSWORD"]'],
+    ['["mysql", "--password", "$DB_PASS"]'], ['parser.add_argument("--password", "-p", help="prompt for it")'], ['["sshpass", "-p", "$SSHPASS", "ssh", "host"]'],
+    ['["curl", "-u", "admin", "https://x"]'], ['["curl", "-u", "$USER:$PASS", "https://x"]'], ['["ssh", "-p", "2222", "host"]'], ['["docker", "run", "-p", "8080:80", "nginx"]'],
+    ['["gcc", "-I/usr/include/mysql", "-pthread"]'], ['.option("--token", "the API token to use")'], ["I tried mysql, redis and -pthread builds"],
+    ['["redis-cli", "-a", "$REDIS_PASSWORD", "ping"]'], ['["redis-cli", "-h", "cache", "ping"]'],
+    ['["ffmpeg", "-i", "in.mp4", "-pass", "1", "-an"]'], ['["openssl", "rsa", "-passin", "file:key.pem"]'], ['click.option("--password", "password")'],
+  ])("leaves %j alone: an option that prompts, a variable, a port or another program's option (memory-q6-1)", text => {
+    expect(redactSecrets(text)).toBe(text);
+  });
+
+  // The pair wherever a list of arguments is built, as the first arguments of a call or a tuple too (memory-x7-1,
+  // memory-y7-2).
+  it.each([
+    ['exec.Command("vault", "login", "--token", "hvs.abc123")', `exec.Command("vault", "login", "--token", "${SECRET_HIDDEN}")`],
+    ['["deploy", "--db-pass", "Wint3r!Sh0p"]', `["deploy", "--db-pass", "${SECRET_HIDDEN}"]`],
+    ['["cast", "send", "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478"]', `["cast", "send", "--private-key", "${SECRET_HIDDEN}"]`],
+    ['["app", "--api-key", "swordfish"]', `["app", "--api-key", "${SECRET_HIDDEN}"]`],
+    ['run(\n  "app",\n  "--password",\n  "hunter2",\n)', `run(\n  "app",\n  "--password",\n  "${SECRET_HIDDEN}",\n)`],
+    ['args.push("--password", "hunter2")', `args.push("--password", "${SECRET_HIDDEN}")`],
+    ["args.push( '--api-key', 'Zx9Qw7Lm2Pa4' )", `args.push( '--api-key', '${SECRET_HIDDEN}' )`],
+    ['cmd.extend(("--password", "hunter2"))', `cmd.extend(("--password", "${SECRET_HIDDEN}"))`],
+    ['argv = ("--password", "hunter2", "--host", "db")', `argv = ("--password", "${SECRET_HIDDEN}", "--host", "db")`],
+    ['Arrays.asList("--db-password", "Tr0ub4dor&3")', `Arrays.asList("--db-password", "${SECRET_HIDDEN}")`],
+    ['listOf("--token", "s3cr3tT0ken99")', `listOf("--token", "${SECRET_HIDDEN}")`],
+    ['["--one-time-password", "482193"]', `["--one-time-password", "${SECRET_HIDDEN}"]`],
+    ['["--password", "Pa/ss.word"]', `["--password", "${SECRET_HIDDEN}"]`],
+  ])("hides the value in %j (memory-x7-1, memory-y7-2)", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+
   it("leaves ordinary text alone", () => {
     for (const text of ["sk-learn is scikit-learn", "risk-assessment-for-the-quarterly-planning-2026", "task-1234567890abcdefghijklmnopqrstuvwxyz", "hf_short", "sk_live_short", "build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value", "--compass=north", "--max-passes=3"]) {
       expect(redactSecrets(text)).toBe(text);
@@ -257,6 +310,9 @@ describe("redactSecrets on long output (review #26)", () => {
     ["a run of folders (memory-y6-1)", repeat("a/(b\\${c}/")], ["a run of settings (memory-y6-1)", repeat("a=")],
     ["a run of prompts and clients (memory-z6-1)", repeat(">mysql $(Q)MYSQL ")], ["a run of quoted clients (memory-z6-1)", repeat('"MySQL.exe" ')],
     ["a run of Windows folders (memory-z6-1)", repeat("(x86)\\%a%\\$env:a\\")], ["a run of options' values (memory-z6-1)", repeat("--a=mysql ")],
+    ["a run of quoted clients in a list (memory-q6-1)", repeat('"mysql", ')], ["a run of list elements (memory-q6-1)", repeat('"a", ')],
+    ["a run of bare clients in a list (memory-q6-1)", repeat("mysql, ")], ["a YAML list of clients (memory-q6-1)", repeat("  - mysql\n")],
+    ["a run of secret-named options in a list (memory-q6-1)", repeat('"--password", ')], ["a run of sshpass elements (memory-q6-1)", repeat('"sshpass", "-p", ')],
   ])("takes linear time on %s (1 MiB)", (_name, text) => {
     const t0 = performance.now();
     redactSecrets(text);

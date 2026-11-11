@@ -535,7 +535,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
-  it("(aj) Home holds an edit of my provider in use to another host until its note is agreed and it answers: requests stay with the one in use, and a failed check or Keep using changes nothing (integrations-c3-1)", async () => {
+  it("(aj) Home holds an edit of my provider in use to another host until its note is agreed and it answers: requests stay with the one in use, and a failed check or Keep using changes nothing; the lines under it say that once (integrations-c3-1, -r7-3)", async () => {
     const using = "127.0.0.1:18308";
     const service = { kind: "user", host: using };
     const p = await open({ home: true, liveState: true, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
@@ -547,7 +547,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.keyboard.press("Tab");
     await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
     expect(await p.locator("#byok-consent-text").innerText()).toContain("to 127.0.0.1:18309 instead");
-    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`Read the note above: Ember still uses ${using}, and sends nothing to 127.0.0.1:18309 until you agree.`);
+    // The two lines under the group say it once between them: what waits, then what is still in use (integrations-r7-3).
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Read the note above: Ember sends nothing to 127.0.0.1:18309 until you agree.");
     expect(await p.locator("#byok-hint").innerText()).toBe(`Ember still uses ${using}. Agree to use 127.0.0.1:18309 to switch.`);
     expect(await p.locator("#byok-no").innerText()).toBe(`Keep using ${using}`);
     expect(await p.locator("#byok-test").isDisabled()).toBe(true);
@@ -1009,31 +1010,102 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     for (const page of [p, q]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
-  it("(al) Home adopts an edit of my provider in use to a host that answers but lists no models, saying it asks for the model as typed; one that refuses the key changes nothing (integrations-r4-2)", async () => {
+  it("(al) Home keeps my provider in use and its key when the new address answers with no model list, until I choose “Use it as typed”; one that refuses the key changes nothing (integrations-c5-1, -c7-1, -r4-2)", async () => {
     const using = "127.0.0.1:18308";
     const service = { kind: "user", host: using };
     const p = await open({ home: true, liveState: true, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
     const provider = () => p.evaluate(() => window.__frState.settings.provider as { baseUrl: string; consent: { host: string } });
+    const changed = async () => (await calls(p)).filter(c => c.startsWith("agree:") || c === "saveKey" || c.startsWith("save:"));
     await p.locator("#byok-url").fill("http://127.0.0.1:18309/v1");
     await p.keyboard.press("Tab");
     await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
+    expect(await p.locator("#byok-as-typed").isVisible()).toBe(false);
     await p.waitForTimeout(AGREE_ARM_MS + 100);
-    // A key it refuses: nothing has changed.
+    // A key it refuses: nothing has changed, and nothing offers to use it anyway.
     await p.locator("#byok-yes").click();
     await expect.poll(() => calls(p)).toContain("test-draft:127.0.0.1:18309");
     await settle(p, "test", { ok: false, why: "127.0.0.1:18309 needs an API key." });
     await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`127.0.0.1:18309 needs an API key. Nothing has changed: Ember still uses ${using}.`);
-    expect((await calls(p)).filter(c => c.startsWith("agree:"))).toEqual([]);
-    // It answers, with no model list there: adopted with the yes, in one change, saying what Ember asks it for.
+    expect(await changed()).toEqual([]);
+    expect(await p.locator("#byok-as-typed").isVisible()).toBe(false);
+    // It answers 404 at that address (a mistyped path answers the same): still nothing saved, with a key typed for it
+    // waiting in its field, and the way on is my own second press.
+    await p.locator("#byok-key").fill("sk-new-123");
     await p.locator("#byok-yes").click();
-    await expect.poll(async () => (await calls(p)).filter(c => c === "test-draft:127.0.0.1:18309").length).toBe(2);
-    await settle(p, "test", { ok: false, why: "127.0.0.1:18309 answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" }, 1);
+    await expect.poll(async () => (await calls(p)).filter(c => c.startsWith("test-draft:127.0.0.1:18309")).length).toBe(2);
+    const missing = "127.0.0.1:18309 answered, but has no model list at that address. Check the endpoint and the provider.";
+    await settle(p, "test", { ok: false, why: missing, cause: "no-list" }, 1);
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`${missing} Nothing has changed: Ember still uses ${using}. If the address is right, choose “Use it as typed”.`);
+    expect(await changed()).toEqual([]);
+    expect(await provider()).toMatchObject({ baseUrl: `http://${using}/v1`, consent: { host: using } });
+    expect(await p.locator("#byok-as-typed").isVisible()).toBe(true);
+    expect(await p.locator("#byok-key").inputValue()).toBe("sk-new-123");
+    // The address edited again: the offer was for the one checked, so it goes.
+    await p.locator("#byok-url").fill("http://127.0.0.1:18309/v2");
+    await p.keyboard.press("Tab");
+    await expect.poll(() => p.locator("#byok-as-typed").isVisible()).toBe(false);
+    expect(await changed()).toEqual([]);
+    // A web page that answers 200 is no more an answer than the 404 was (integrations-c7-1).
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    await p.locator("#byok-yes").click();
+    await expect.poll(async () => (await calls(p)).filter(c => c.startsWith("test-draft:127.0.0.1:18309")).length).toBe(3);
+    const page = "127.0.0.1:18309 answered, but not as a model service does. Check the endpoint.";
+    await settle(p, "test", { ok: false, why: page, cause: "no-list" }, 2);
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`${page} Nothing has changed: Ember still uses ${using}. If the address is right, choose “Use it as typed”.`);
+    expect(await changed()).toEqual([]);
+    // “Use it as typed”: adopted in one change, then its key, saying what Ember asks it for.
+    await p.locator("#byok-as-typed").click();
     await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. 127.0.0.1:18309 answered but lists no models, so Ember asks it for mock-model as typed.");
-    expect(await calls(p)).toContain("agree:127.0.0.1:18309");
-    expect(await provider()).toMatchObject({ baseUrl: "http://127.0.0.1:18309/v1", consent: { host: "127.0.0.1:18309" } });
+    expect(await changed()).toEqual(["agree:127.0.0.1:18309", "saveKey"]);
+    expect(await provider()).toMatchObject({ baseUrl: "http://127.0.0.1:18309/v2", consent: { host: "127.0.0.1:18309" } });
     await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(false);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
-  }, 20_000);
+  }, 30_000);
+
+  it("(am) “Use it as typed” is for what was asked: another provider type or key takes the offer and its line away, and a model typed since goes with it (integrations-x7-2)", async () => {
+    const using = "127.0.0.1:18308";
+    const service = { kind: "user", host: using };
+    const p = await open({ home: true, liveState: true, agent: readyAgent({ login: undefined, service, detail: `Connected to your own provider (${using}).` }), provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
+    const changed = async () => (await calls(p)).filter(c => c.startsWith("agree:") || c === "saveKey" || c.startsWith("save:"));
+    const tests = async () => (await calls(p)).filter(c => c.startsWith("test-draft:127.0.0.1:18309")).length;
+    const missing = "127.0.0.1:18309 answered, but has no model list at that address. Check the endpoint and the provider.";
+    const offered = `${missing} Nothing has changed: Ember still uses ${using}. If the address is right, choose “Use it as typed”.`;
+    /** "I agree", answered with no model list: the offer comes up. */
+    const check = async (n: number) => {
+      await p.locator("#byok-yes").click();
+      await expect.poll(tests).toBe(n);
+      await settle(p, "test", { ok: false, why: missing, cause: "no-list" }, n - 1);
+      await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(offered);
+      expect(await p.locator("#byok-as-typed").isVisible()).toBe(true);
+    };
+    await p.locator("#byok-url").fill("http://127.0.0.1:18309/v1");
+    await p.keyboard.press("Tab");
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
+    await p.locator("#byok-key").fill("sk-key-a");
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    await check(1);
+    // Another key: that host was never asked with it, so the offer and the line that named it go.
+    await p.locator("#byok-key").fill("sk-key-b");
+    await expect.poll(() => p.locator("#byok-as-typed").isVisible()).toBe(false);
+    expect(await p.locator("#byok-msg").innerText()).toBe("");
+    await check(2);
+    // Another kind of provider: its list is at another path, with another key header.
+    await p.locator("#byok-type").selectOption("anthropic");
+    await expect.poll(() => p.locator("#byok-as-typed").isVisible()).toBe(false);
+    expect(await p.locator("#byok-msg").innerText()).toBe("");
+    expect(await changed()).toEqual([]);
+    await check(3);
+    // A model typed since changes nothing that was asked: the offer stays, with its line, and the model goes with it.
+    await p.locator("#byok-conductor").fill("other-model");
+    await p.keyboard.press("Tab");
+    expect(await p.locator("#byok-as-typed").isVisible()).toBe(true);
+    expect(await p.locator("#byok-msg").innerText()).toBe(offered);
+    await p.locator("#byok-as-typed").click();
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. 127.0.0.1:18309 answered but lists no models, so Ember asks it for other-model as typed.");
+    expect(await changed()).toEqual(["agree:127.0.0.1:18309", "saveKey"]);
+    expect(await p.evaluate(() => window.__frState.settings.provider)).toMatchObject({ type: "anthropic", baseUrl: "http://127.0.0.1:18309/v1", conductor: "other-model", consent: { host: "127.0.0.1:18309" } });
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 30_000);
 
   it("(ai) “Use GitHub Copilot instead” while I'm busy says I'll switch once I've finished, keeps Continue, and offers Copilot's sign-in once the switch is made (first-run-v4-1)", async () => {
     const service = { kind: "user", host: "api.example.com" };

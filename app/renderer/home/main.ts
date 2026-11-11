@@ -1759,13 +1759,13 @@ memorySource.replaceChildren(...["", ...MEMORY_SOURCES].map(source => Object.ass
 $("memory-more").textContent = MEMORY_SHOW_MORE;
 const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
   key: row => row.id,
-  empty: () => memoryQuery.value.trim() || memorySource.value ? MEMORY_NO_MATCHES : memoryEmptyText(memoryOn()),
+  empty: () => memoryQuery.value.trim() || memorySource.value ? MEMORY_NO_MATCHES : memoryEmptyText(memoryOn(), memoryTrouble),
   fallback: memoryRest,
   create: read => {
     const row = read();
     const li = document.createElement("li");
     const fact = Object.assign(document.createElement("span"), { className: "mem-fact" });
-    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memoryProvenanceLabel(row.source, row.correctedAt, row.kind) }));
+    fact.append(Object.assign(document.createElement("span"), { textContent: row.text }), Object.assign(document.createElement("span"), { className: "mem-from", textContent: memoryProvenanceLabel(row.source, row.correctedAt, row.kind, row.until) }));
     const button = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
     button.setAttribute("aria-label", forgetMemoryLabel(row.text));
     button.dataset.memoryForget = "";
@@ -1780,16 +1780,27 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
     });
     const correct = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: MEMORY_CORRECTION.correct });
     correct.dataset.memoryCorrect = row.id;
-    correct.addEventListener("click", () => memoryCorrection.open(read()));
+    // What is no longer true can be forgotten, never corrected: a correction is for what holds now (memory-c7-2).
+    correct.hidden = !!row.until;
+    correct.addEventListener("click", () => {
+      if (read().until) return;
+      // An earlier Forget's failure is about that Forget, not this (memory-r7-4).
+      $("memory-error").textContent = "";
+      memoryCorrection.open(read());
+    });
     const actions = Object.assign(document.createElement("div"), { className: "agent-actions" });
     actions.append(button, correct); li.append(fact, actions);
     return li;
   },
   update: (li, row) => {
     li.querySelector<HTMLElement>(".mem-fact > span")!.textContent = row.text;
-    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt, row.kind);
+    li.querySelector<HTMLElement>(".mem-from")!.textContent = memoryProvenanceLabel(row.source, row.correctedAt, row.kind, row.until);
     li.querySelector<HTMLElement>("[data-memory-forget]")!.setAttribute("aria-label", forgetMemoryLabel(row.text));
-    li.querySelector<HTMLElement>("[data-memory-correct]")!.setAttribute("aria-label", correctMemoryLabel(row.text));
+    const correct = li.querySelector<HTMLElement>("[data-memory-correct]")!;
+    correct.setAttribute("aria-label", correctMemoryLabel(row.text));
+    // Replaced while its Correct… had focus: focus goes to the row's Forget, never to the page.
+    if (row.until && !correct.hidden && document.activeElement === correct) li.querySelector<HTMLElement>("[data-memory-forget]")!.focus();
+    correct.hidden = !!row.until;
   },
 });
 function renderMemory(rows: MemoryRow[]): void {
@@ -1836,7 +1847,8 @@ function renderMemory(rows: MemoryRow[]): void {
   const ownerText = memoryOwnerText(memoryReason, memoryOwner === "locked");
   $("memory-owner").textContent = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn()) ? "" : ownerText;
   // Tell Ember about you can't keep answers then: it says why instead of its questions.
-  aboutYou.owner(memoryOwner === "ready" || !memoryOn() ? null : ownerText);
+  // Nor while memory.json can't be read: nothing new is kept until Ember starts again (memory-r7-1).
+  aboutYou.owner(!memoryOn() ? null : memoryOwner !== "ready" ? ownerText : memoryTrouble === "unreadable" ? memoryTroubleText("unreadable") : null);
   // First run's "Tell me about you" too, and before memory is on while a model service keeps it paused (memory-c1-2).
   const provider = memoryReason === "own-provider" || memoryReason === "org-provider";
   welcome.memoryOwner(memoryOwner === "ready" || (!memoryOn() && !provider) ? null : ownerText);
@@ -1968,6 +1980,8 @@ async function deleteMemory(button: HTMLButtonElement, remove: () => Promise<unk
   catch (err) { $("memory-error").textContent = memoryDeleteFailedText(err); }
   finally { button.removeAttribute("aria-disabled"); }
 }
+// Forget everything's question opens: an earlier Forget's failure is no longer what is being asked about (memory-r7-4).
+$("memory-forget-all").addEventListener("click", () => { $("memory-error").textContent = ""; });
 window.ember.onSettingsChanged(applyMemorySettings);
 let receivedMemory = false;
 void window.ember.memory().then(view => { if (!receivedMemory) showMemory(view); });

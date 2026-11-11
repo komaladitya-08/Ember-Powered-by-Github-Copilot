@@ -599,20 +599,27 @@ export const PROVIDER_WORDS = {
 export function providerHeldHint(from: string, to: string | null): string {
   return to ? `Ember still uses ${from}. Agree to use ${to} to switch.` : `Ember still uses ${from}. Enter the new address to switch.`;
 }
-/** Said as the note comes up for that edit (focus has moved on), in place of providerCardShown. */
-export const providerHeldShown = (from: string, to: string) => `Read the note above: Ember still uses ${from}, and sends nothing to ${to} until you agree.`;
 /** Its "I agree" asks the new details first, as Test connection would. */
 export const providerHeldChecking = (to: string) => `Checking ${to}…`;
 /** The check failed (`why`: main's sentence), or the edit was put away: nothing was saved. */
 export const providerHeldKept = (from: string, why = "") => `${why ? `${why} ` : ""}Nothing has changed: Ember still uses ${from}.`;
+/**
+ * The check found something at the new address, but no model list (`why`: main's sentence): nothing was saved, and the
+ * card's second button uses the address as typed, for a gateway that answers chat only (integrations-c5-1, -c7-1).
+ */
+export const providerHeldUnlisted = (from: string, why: string) => `${why} Nothing has changed: Ember still uses ${from}. If the address is right, choose “Use it as typed”.`;
 /** A key typed for that edit is saved with its yes, never for the host still in force. */
 export const providerHeldKey = (to: string | null) => (to ? `Ember saves this key with the new address once you agree to use ${to}.` : "Enter the service's address first.");
 
-/** Said when the card appears for an address just entered: focus has moved on, so it is announced (integrations-7, WCAG 4.1.3). */
+/**
+ * Said when the card appears for an address just entered: focus has moved on, so it is announced (integrations-7, WCAG
+ * 4.1.3). For a held edit too: that the host in force still answers is the hint's to say, directly below, once
+ * (integrations-r7-3).
+ */
 export const providerCardShown = (host: string) => `Read the note above: Ember sends nothing to ${host} until you agree.`;
 /** Said once the card is agreed to, in place of the line above (integrations-r4). */
 export const providerAgreedText = (host: string) => `Agreed. Ember now sends your requests to ${host}.`;
-/** Said instead when a held edit's new host answered but lists no models there, so it is used as typed (integrations-r4-2). */
+/** Said instead when a held edit's new host answered but lists no models there, and the person chose “Use it as typed” (integrations-r4-2, -c5-1). */
 export const providerAgreedUnlisted = (host: string, model: string | null) =>
   `Agreed. ${host} answered but lists no models, so Ember asks it for ${model ?? "the models"} as typed.`;
 
@@ -745,10 +752,18 @@ export const MEMORY_CORRECTION = {
   failed: "Ember couldn't save this correction. Your words are still here; try again.",
 } as const;
 /** A corrected sentence still names its original source, including its original authority. */
-/** Where a listed fact came from; one of Ember's own notes says so whatever it was drawn from (memory-3). */
-export function memoryProvenanceLabel(source: string, correctedAt?: string, kind?: "summary" | "guess"): string {
+/**
+ * Where a listed fact came from; one of Ember's own notes says so whatever it was drawn from (memory-3). `until`: a
+ * newer fact replaced it then, and Ember keeps it as what used to be true (memory-c7-2).
+ */
+export function memoryProvenanceLabel(source: string, correctedAt?: string, kind?: "summary" | "guess", until?: string): string {
   const from = kind === "summary" ? "Ember's summary" : kind === "guess" ? "Ember's guess" : memorySourceLabel(source);
-  return `${from}${correctedAt ? " · Corrected by you" : ""}`;
+  return `${from}${correctedAt ? " · Corrected by you" : ""}${until ? ` · ${memoryNoLongerTrue(until)}` : ""}`;
+}
+/** A replaced fact's line: since which day it is no longer true (just the words when the date can't be read). */
+export function memoryNoLongerTrue(until: string): string {
+  const d = new Date(until);
+  return Number.isNaN(d.getTime()) ? "No longer true" : `No longer true since ${d.toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" })}`;
 }
 export const correctMemoryLabel = (text: string) => `Correct memory: ${text}`;
 /** Correction failures use main's plain bounded sentences; arbitrary IPC/filesystem details remain private. */
@@ -902,8 +917,12 @@ export function routinesEmptyText(on: boolean): string {
 /** A routine's Delete button, for screen readers: which routine. */
 export const deleteRoutineLabel = (name: string) => `Delete the routine “${name}”`;
 
-/** The memory list while it is empty: `on`, memory is on. */
-export function memoryEmptyText(on: boolean): string {
+/**
+ * The memory list while it is empty: `on`, memory is on. While memory.json can't be read (`trouble`) nothing is listed
+ * and nothing new is kept, so it never invites "Remember that…" (memory-r7-1).
+ */
+export function memoryEmptyText(on: boolean, trouble?: "unreadable" | "reset" | "unsaved" | null): string {
+  if (on && trouble === "unreadable") return "Ember couldn't read your saved memory, so nothing is listed.";
   return on ? "Nothing yet. Tell Ember about yourself, or say “Remember that…”." : "Nothing remembered.";
 }
 
@@ -1631,7 +1650,8 @@ export function signOutScope(c: ForgetCounts): string {
 /** The question for Forget everything: only saved memory goes, and the other three are said to stay. */
 export function forgetEverythingScope(c: ForgetCounts): string {
   return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")}, what Ember learned from them and the conversation saved on this computer, if you keep one. `
-    + `${plural(c.tasks, "task", "tasks")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are, and so do the lines on screen now, but they aren't saved again.`
+    // The sentence's first words: "An unknown number of tasks", never "an …" after the full stop (memory-r7-3).
+    + `${plural(c.tasks, "task", "tasks").replace(/^a/, "A")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are, and so do the lines on screen now, but they aren't saved again.`
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
 }
 

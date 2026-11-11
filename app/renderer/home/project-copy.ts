@@ -13,6 +13,29 @@ export function projectCommandsState(s: Parameters<typeof projectCommandsOn>[0],
   return projectCommandsOn(s) ? "on" : "off";
 }
 /**
+ * Said in Projects where the organisation's policy turned off Ember acting in apps (`features.actions: false`): Projects
+ * goes with it, for good, so the pane says so and holds its controls rather than failing at each press, and main
+ * answers a stray request with the same words (integrations-r7-1).
+ */
+export const PROJECT_ACTIONS_MANAGED = "Your organisation has turned off Ember acting in apps, so Projects is off here.";
+/**
+ * Whether that is the case, from the policy as Home hears it. A lockdown (`error`) turns actions off too, but has its
+ * own notice at the top of the window and takes Ember off Ready: not this.
+ */
+export function projectManagedOff(admin: { features?: { actions?: boolean } | null; error?: string | null } | null | undefined): boolean {
+  return admin?.features?.actions === false && !admin.error;
+}
+/**
+ * What main answers when a Projects action can't run now (integrations-r7-1, -i6): the organisation turned it off
+ * (`managed`), another project step is still under way (`busy`), or, for the rest (no consent, the screen locked, the
+ * settings window out of view, not connected: each said where it is seen), that it can't for now.
+ */
+export function projectUnavailable(o: { managed: boolean; busy: boolean }): string {
+  if (o.managed) return PROJECT_ACTIONS_MANAGED;
+  if (o.busy) return "Ember is still on the last project step. Wait for it to finish, or cancel it.";
+  return "Project work is unavailable right now.";
+}
+/**
  * Projects' status line as Ember connects, or can't for now (integrations-r1): only sending waits, and what the person
  * chose and wrote stays. `files`: files are chosen; `work`: anything is (files, a request, an answer, a command).
  */

@@ -13,7 +13,7 @@ import { MemoryGraph } from "../../app/main/memory/graph";
 import { IntroSchema, Interview, INTRO_DONE, INTRO_OFF, answerFacts, introFacts, isGetToKnowMe, styleOf } from "../../app/main/memory/intro";
 import { CallBudget, EXTRACT_SYSTEM, Learner, MAX_ANSWER_CHARS, extractPrompt, learnedFacts, parseExtraction, soundsLikeInstruction, subjectOf, turnSource, type OneShot } from "../../app/main/memory/learn";
 import { IDLE_MS, MemoryLearning, REFINE_PER_DAY, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "../../app/main/memory/learning";
-import { FORGET_OFF, Gaps, INTRO_NOTE, NOTHING_TO_FORGET, answersQuestion, describes, forgetReply, gapQuestion, isForgetThat, looksLikeRequest, memoryActionOpens, memoryAsk, memoryNoteActions, namesIn, rememberNote } from "../../app/main/memory/questions";
+import { FORGET_OFF, Gaps, INTRO_NOTE, MEMORY_UNREADABLE, NOTHING_TO_FORGET, answersQuestion, describes, forgetReply, gapQuestion, isForgetThat, looksLikeRequest, memoryActionOpens, memoryAsk, memoryNoteActions, namesIn, rememberNote } from "../../app/main/memory/questions";
 import { negated, samePolarity } from "../../app/main/memory/text";
 import { REFINE_FACTS, REFLECTION_CONFIDENCE, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "../../app/main/memory/refine";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
@@ -491,6 +491,81 @@ describe("the conversation's memory lines after Undo (memory-c1-3)", () => {
     const gone = l.forgetCounted(id);
     expect(gone).toMatchObject({ text: "Likes to be called Ram", undo: expect.any(String) });
     expect(forgot).toHaveBeenCalledExactlyOnceWith(id, gone);
+  });
+});
+
+describe("getting to know the user while memory.json can't be read (memory-r7-1)", () => {
+  function unreadable() {
+    const dir = tmp();
+    fs.mkdirSync(path.join(dir, "memory.json"));
+    const s = new MemoryService({ dir, log: quiet });
+    const said: string[] = [];
+    const l = new MemoryLearning({ memory: s, inForce: () => true, questionsOn: () => true, askedAt: () => null, setAskedAt: () => undefined, idle: () => true, locked: () => false, say: text => { said.push(text); return true; }, log: quiet });
+    return { l, s };
+  }
+
+  it("says nothing was saved from Tell Ember about you, and starts no interview it couldn't keep the answers of (memory-r7-1)", () => {
+    const { l, s } = unreadable();
+    expect(l.introduce({ name: "Ram", work: "Platform engineer" })).toBe(0);
+    expect(l.intent("Get to know me", { own: true })).toBe(MEMORY_UNREADABLE);
+    expect(MEMORY_UNREADABLE).toBe("I can't read my saved memory right now, so I can't keep what you tell me until I start again.");
+    // No interview began: the next thing said is a request like any other.
+    expect(l.intent("Call me Ram", { own: true })).toBeNull();
+    expect(l.conductorMemory().remember("Likes tea", [{ name: "User" }], "I like tea")).toContain("Not remembered");
+    expect(s.list()).toEqual([]);
+  });
+});
+
+describe("a Forget and the turns still waiting to be learned from (memory-c7-1)", () => {
+  const VEG = answer([{ from: 1, fact: "Is vegetarian", about: [{ name: "User", kind: "person" }], predicate: "diet", single: true, confidence: 0.9, evidence: "I'm vegetarian" }]);
+  const TEA = { from: 2, fact: "Likes green tea", about: [{ name: "User", kind: "person" }], confidence: 0.9, evidence: "I like green tea" };
+
+  it("never brings back a fact forgotten within a minute of being said when the waiting turns are read, and still learns the rest (memory-c7-1)", async () => {
+    const { l, s, learned, advance } = learning({ model: async () => answer([JSON.parse(VEG).facts[0], TEA]) });
+    const tools = l.conductorMemory();
+    expect(tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian")).toContain("Remembered");
+    tools.heard("Remember that I'm vegetarian", "Got it.", true);
+    advance(5000);
+    // The "Ember learned" line's Undo.
+    expect(l.forgetCounted(s.list()[0].id)).toMatchObject({ text: "Is vegetarian" });
+    tools.heard("I like green tea", "Noted.", true);
+    advance(61_000);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text)).toEqual(["Likes green tea"]);
+    expect(learned.filter(t => t.includes("vegetarian"))).toHaveLength(1);
+  });
+
+  it("holds for “forget that”, and for a Forget while the turn that said it is still under way (memory-c7-1)", async () => {
+    const { l, s, advance } = learning({ model: async () => VEG });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian");
+    // Undo before the turn has ended: the turn is queued only afterwards.
+    expect(l.intent("forget that", { own: true })).toContain("Forgotten");
+    advance(3000);
+    tools.heard("Remember that I'm vegetarian", "Got it.", true);
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list()).toEqual([]);
+  });
+
+  it("learns it again from a later turn, keeps it when the Forget is undone, and holds nothing back once the waiting turns are read (memory-c7-1)", async () => {
+    const { l, s, advance } = learning({ model: async () => VEG });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian");
+    tools.heard("Remember that I'm vegetarian", "Got it.", true);
+    const gone = l.forgetCounted(s.list()[0].id)!;
+    // Undo of the Forget: it is back, and reading the turn changes nothing.
+    expect(l.restore(gone.undo)).toBe(true);
+    advance(61_000);
+    await l.flush();
+    expect(s.list().map(i => i.text)).toEqual(["Is vegetarian"]);
+    // Forgotten again; the turns from before it are read, and ten minutes on the user says it once more.
+    l.forgetCounted(s.list()[0].id);
+    advance(600_000);
+    tools.heard("By the way, I'm vegetarian", "Noted.", true);
+    advance(61_000);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text)).toEqual(["Is vegetarian"]);
   });
 });
 
@@ -1015,6 +1090,16 @@ describe("Home's words for memory", () => {
     expect(aboutYouSpoken(false)).toBe("Ember won't speak its replies now. You can change that in Voice.");
   });
 
+  it("says since which day a replaced fact is no longer true, after where it came from (memory-c7-2)", () => {
+    const day = new Date("2026-11-12T10:00:00Z").toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" });
+    expect(day).toContain("2026");
+    expect(memoryProvenanceLabel("user", undefined, undefined, "2026-11-12T10:00:00Z")).toBe(`You told me · No longer true since ${day}`);
+    expect(memoryProvenanceLabel("conversation", "2026-11-04T12:00:00Z", undefined, "2026-11-12T10:00:00Z")).toBe(`From our conversation · Corrected by you · No longer true since ${day}`);
+    // A date that can't be read still says what the row is.
+    expect(memoryProvenanceLabel("user", undefined, undefined, "soon")).toBe("You told me · No longer true");
+    expect(memoryProvenanceLabel("user")).toBe("You told me");
+  });
+
   it("says memory is paused for someone who agreed to the first note, until they agree to the new one", () => {
     expect(memoryPaused({ on: true, consent: { version: 1 } })).toBe(true);
     expect(memoryPaused({ on: true, consent: { version: 2 } })).toBe(true);
@@ -1429,5 +1514,38 @@ describe("live memory consent and forgetting", () => {
     if (action === "forgetAll") l.forgetAll();
     release("private facts");
     expect(await pending).toBe("");
+  });
+});
+
+describe("a Forget holds its words back from the turns around it (memory-x7-5, memory-y7-1)", () => {
+  const VEG = { from: 1, fact: "Is vegetarian", about: [{ name: "User", kind: "person" }], confidence: 0.9, evidence: "I'm vegetarian" };
+
+  it("still holds an old fact back from a turn that was waiting when it was forgotten (memory-x7-5)", async () => {
+    const { l, s, advance } = learning({ model: async () => answer([VEG]) });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian");
+    advance(24 * 3600_000);
+    tools.heard("As I said, I'm vegetarian", "I know.", true);
+    advance(10_000);
+    l.forgetCounted(s.list()[0].id);
+    advance(51_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list()).toEqual([]);
+  });
+
+  it.each([
+    [[{ name: "User", kind: "person" }, { name: "Atlas", kind: "project" }]], [[]],
+  ])("keeps a forgotten fact forgotten when its turn's reading names its subject differently: %j (memory-y7-1)", async about => {
+    const said = { from: 1, fact: "Works on the Atlas project", about, confidence: 0.9, evidence: "I work on the Atlas project" };
+    const { l, s, advance } = learning({ model: async () => answer([said]) });
+    const tools = l.conductorMemory();
+    tools.remember("Works on the Atlas project", [{ name: "Atlas", kind: "project" }], "Remember that I work on the Atlas project");
+    advance(20_000);
+    l.forgetCounted(s.list()[0].id);
+    advance(5000);
+    tools.heard("Remember that I work on the Atlas project", "Noted.", true);
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list()).toEqual([]);
   });
 });

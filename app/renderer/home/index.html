@@ -285,7 +285,7 @@
         <label class="switch-row"><input type="checkbox" id="byok-on" role="switch" aria-describedby="byok-hint"><span>Use my own model provider</span></label>
         <div id="byok-consent" class="consent" role="group" aria-label="Before Ember uses your model provider" hidden>
           <p id="byok-consent-text"></p>
-          <div class="agent-actions"><button type="button" id="byok-yes" class="btn" aria-describedby="byok-consent-text">I agree, use this provider</button><button type="button" id="byok-no" class="btn quiet">Not now</button></div>
+          <div class="agent-actions"><button type="button" id="byok-yes" class="btn" aria-describedby="byok-consent-text">I agree, use this provider</button><button type="button" id="byok-no" class="btn quiet">Not now</button><button type="button" id="byok-as-typed" class="btn quiet" aria-describedby="byok-msg" hidden>Use it as typed</button></div>
         </div>
         <label class="choice byok-field"><span>Provider</span><select id="byok-type"><option value="openai">OpenAI-compatible</option><option value="azure">Azure OpenAI</option><option value="anthropic">Anthropic</option></select></label>
         <div class="field-row byok-field"><label for="byok-url">Endpoint</label><input id="byok-url" type="url" maxlength="2048" spellcheck="false" autocomplete="off" placeholder="https://api.openai.com/v1" aria-describedby="byok-msg"></div>

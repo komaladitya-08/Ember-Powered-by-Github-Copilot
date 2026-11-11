@@ -139,6 +139,17 @@ export function agreeAction(cardHost: string | null, typed: string): { agree: st
   return { save: t };
 }
 
+/**
+ * What the check of a held edit's new address found (integrations-c5-1): `answered` with a model list, so the edit is
+ * saved with the card's yes; `unlisted`, something answered there but not with a model list (a gateway that answers
+ * chat only, and just as well a mistyped path or a web page), so the provider in force and its key stay until the
+ * person says to use the address as typed; `failed`, anything else, which changes nothing.
+ */
+export function heldAnswer(r: { ok: boolean; cause?: string }): "answered" | "unlisted" | "failed" {
+  if (r.ok) return "answered";
+  return r.cause === "no-list" ? "unlisted" : "failed";
+}
+
 /** The host (with its port, when it has one) of a valid endpoint, as the consent card and the setup check name it; null otherwise. */
 export function endpointHost(url: string): string | null {
   if (endpointProblem(url) !== null) return null;

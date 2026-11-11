@@ -23,7 +23,7 @@ import type { SecretBox } from "../../app/main/agent/auth";
 import type { Logger } from "../../app/main/logger";
 import { friendlyError } from "../../app/main/agent/presenter";
 import { settingsFromHome } from "../../app/main/windows";
-import { AGREE_ARM_MS, AgreeGuard, agreeAction } from "../../app/shared/provider";
+import { AGREE_ARM_MS, AgreeGuard, agreeAction, heldAnswer } from "../../app/shared/provider";
 
 const KEY = "sk-" + "r".repeat(40); // not a real key
 const NONE: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -546,5 +546,21 @@ describe("the key id of a key just saved (PR #188 re-review 3)", () => {
     expect(second).toBeTruthy();
     expect(second).not.toBe(first);
     expect((await keys.load())?.keyId).toBe(second);
+  });
+});
+
+describe("An edit of my provider in use, checked before it is saved", () => {
+  it("keeps the provider that works when the new address answers 404 or with a web page: only a model list is an answer, the rest waits for “Use it as typed” (integrations-c5-1)", async () => {
+    const edited = provider({ baseUrl: "https://new.example/v9typo", consent: agreedFor("new.example") });
+    const reply = (status: number, json: () => Promise<unknown>) => vi.fn<FetchLike>(async () => ({ ok: status >= 200 && status < 300, status, json }));
+    const missing = await testConnection(edited, null, reply(404, async () => ({})));
+    const page = await testConnection(edited, null, reply(200, async () => { throw new SyntaxError("Unexpected token <"); }));
+    expect(heldAnswer(missing)).toBe("unlisted");
+    expect(heldAnswer(page)).toBe("unlisted");
+    expect(heldAnswer(await testConnection(edited, null, reply(200, async () => ({ data: [{ id: "gpt-x" }] }))))).toBe("answered");
+    // A refused key, an error on its side and nothing answering change nothing, with no way on but another try.
+    expect(heldAnswer(await testConnection(edited, null, reply(401, async () => ({}))))).toBe("failed");
+    expect(heldAnswer(await testConnection(edited, null, reply(503, async () => ({}))))).toBe("failed");
+    expect(heldAnswer({ ok: false, cause: "refused" })).toBe("failed");
   });
 });

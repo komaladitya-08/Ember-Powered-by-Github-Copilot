@@ -50,7 +50,12 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     preference takes the predicate of the one it closed, so "Prefers long answers" after About you's "Prefers short
     answers" is the answer length in the profile sent with every request (memory-r1). A
     weaker source never closes what the user said,
-    and the closed fact stays as history, so Undo of the newer puts it back.
+    and the closed fact stays as history, so Undo of the newer puts it back. History is the user's to see too:
+    Settings › Memory lists it after what holds now (`MemoryService.review`, each row "… · No longer true since
+    <date>", with Forget and no Correct…), counts it, and `forget_memory` can forget one the user names, since it stays
+    on disk for 180 days and recall can give it to the model as what used to be true (memory-c7-2). An earlier
+    wording of one of Ember's own notes is not such history: a summary is listed once, as it reads now, and its
+    earlier wordings go with it, or with the fact they came from, on Forget (memory-x7-4).
 - `recall.ts`: BM25 over fact text plus entity names. The matched facts and named entities then seed a Personalized
   PageRank over the bipartite entity–fact graph:
   - edges into an entity are weighted by inverse degree, so a hub such as "User" doesn't spread the walk to
@@ -90,8 +95,17 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   WPA2-PSK / 5GHz / BlueSky99!", "Home network: HomeNet / 192.168.1.1 / admin / Summer2024!", memory-y6-3, also labelled
   or past any other field, "Wi-Fi: HomeNet / WPA2-PSK / key: BlueSky99!", "… / channel 36 / BlueSky99!", "… /
   192.168.1.1 / admin admin123", memory-z6-2), a capitals setting for a password ("DB_PASS=Tr0ub4dor&3", never a
-  filter's "LOW_PASS=8000"), a recovery or seed phrase. It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
-  GitLab keys among them), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
+  filter's "LOW_PASS=8000"), a recovery or seed phrase, a recovery code or key and a one-time code with the value straight after
+  ("GitHub recovery code abcde-12345", "verification code 482193", "wifi pass BlueSky99": memory-r7-5), a value after
+  an aside or a limit's word ("The password, salted, hunter2", "Password min. hunter2": memory-q6-4), a network's key
+  on the line under its name ("Network: HomeNet" then "Key: BlueSky99": memory-q6-5), a UK sort code with its account
+  number, a National Insurance number and a mother's maiden name with its value, in any capitals (memory-c7-3,
+  memory-x7-2); a rule, a date, a range, a count of lines, a status, hardware pins and someone else's mother are kept
+  ("Password, expires, 2026-12-01", "Password max. 1024", "sign-in code 401 403 errors", "Her mother's maiden name was
+  Smith": memory-x7-3). It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face and
+  GitLab keys among them, and a password given to a program's option, on its line or as its own element of a list of
+  arguments: a compose healthcheck's `["CMD", "mysqladmin", "ping", "-phunter2"]`, `["sshpass", "-p", "hunter2", …]`,
+  memory-q6-1), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
   "hashed" and "masked" only before more words with no digit or symbol: "password: never logged", but "Wi-Fi password
   is its BlueSky99" and "Password for Gmail is never Summer2024!" are refused, memory-v5-1; "typed", "entered",
@@ -366,6 +380,11 @@ download, so English-only MiniLM is the trade-off for now.
      where it was and says "Ember forgot: …" (with the notes that went and what holds again), with the Undo that puts
      it back; that Undo makes it "Ember remembers “…” again". Focus moves to the line's new words, never to the page
      (memory-c1-3). **Forget everything** clears the lines too.
+     A Forget is never undone by the turn that said the fact: every turn waits up to a minute (longer at the hourly
+     cap) to be read for facts, so what was forgotten is held in RAM, never on disk, while a batch that began before
+     the Forget (or within two minutes of it, `FORGOTTEN_TURN_MS`: the turn may still be under way) waits, and an
+     extracted fact at least `DUPLICATE` like it with the same polarity is skipped; the batch's other facts are still
+     learned, Undo of the Forget lifts it, and a later turn that says it again is learned from (memory-c7-1).
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
      only for Ember to forget something about the user ("forget that I…", "forget my address", "forget my wife's

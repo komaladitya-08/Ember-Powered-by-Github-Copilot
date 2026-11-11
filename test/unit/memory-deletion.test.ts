@@ -326,3 +326,88 @@ describe("Forget of what holds now (memory-12)", () => {
     s.memory.stop();
   });
 });
+
+describe("what used to be true, in Settings › Memory (memory-c7-2)", () => {
+  async function moved() {
+    const s = setup();
+    s.memory.remember("Lives at 12 Mill Lane, Leeds", [{ name: "User" }], "I live at 12 Mill Lane, Leeds", "lives_at");
+    s.memory.remember("Lives at 4 Abbey Road, York", [{ name: "User" }], "I live at 4 Abbey Road, York now", "lives_at");
+    s.memory.flush(); await s.semantic.catchUp();
+    const onDisk = () => (JSON.parse(fs.readFileSync(path.join(s.dir, "memory.json"), "utf8")) as { facts: Fact[] }).facts.map(f => f.text);
+    return { s, onDisk };
+  }
+
+  it("lists a replaced fact after what holds now, saying since when it is no longer true, so it can be reviewed (memory-c7-2)", async () => {
+    const { s } = await moved();
+    expect(s.memory.list().map(r => r.text)).toEqual(["Lives at 4 Abbey Road, York"]);
+    const review = s.memory.review();
+    expect(review.map(r => [r.text, typeof r.until])).toEqual([["Lives at 4 Abbey Road, York", "undefined"], ["Lives at 12 Mill Lane, Leeds", "string"]]);
+    expect(Number.isNaN(Date.parse(review[1].until!))).toBe(false);
+  });
+
+  it("forgets a replaced fact from the list and from memory.json, leaves what holds now alone, and Undo puts it back as history (memory-c7-2)", async () => {
+    const { s, onDisk } = await moved();
+    const old = s.memory.review()[1];
+    const gone = s.memory.forgetCounted(old.id, false)!;
+    expect(gone.text).toBe("Lives at 12 Mill Lane, Leeds");
+    expect(gone.back).toBeUndefined();
+    expect(onDisk()).toEqual(["Lives at 4 Abbey Road, York"]);
+    expect(s.memory.review().map(r => r.text)).toEqual(["Lives at 4 Abbey Road, York"]);
+    expect(s.memory.recall("where did I live in Leeds", 8, true).map(r => r.fact.text)).not.toContain("Lives at 12 Mill Lane, Leeds");
+    expect(s.memory.restore(gone.undo)).toBe(true);
+    expect(s.memory.review().map(r => [r.text, !!r.until])).toEqual([["Lives at 4 Abbey Road, York", false], ["Lives at 12 Mill Lane, Leeds", true]]);
+  });
+
+  it("still lists the old value once the current one is forgotten, and gives forget_memory its words so the user can ask for it to go (memory-c7-2)", async () => {
+    const { s, onDisk } = await moved();
+    s.memory.forgetCounted(s.memory.list()[0].id, false);
+    expect(s.memory.list()).toEqual([]);
+    const review = s.memory.review();
+    expect(review.map(r => r.text)).toEqual(["Lives at 12 Mill Lane, Leeds"]);
+    expect(s.memory.factText(review[0].id)).toBe("Lives at 12 Mill Lane, Leeds");
+    expect(s.memory.forget(review[0].id, false)).toBe(true);
+    expect(onDisk()).toEqual([]);
+  });
+
+  /** A fact of the user's and `n` wordings of Ember's summary of it, each closing the one before, as a sleep-time pass adds them. */
+  function reworded(n: number) {
+    const s = setup();
+    s.memory.remember("Works on Atlas", [{ name: "User" }], "I work on Atlas");
+    const from = s.memory.list()[0].id;
+    for (let i = 1; i <= n; i++) {
+      s.memory.refine(g => g.add({ text: `Summary v${i}: works on Atlas`, about: [{ name: "User" }], predicate: "summary", single: true, source: "conversation", confidence: 0.6, derivedFrom: [from] }).kind === "added" ? 1 : 0);
+    }
+    s.memory.flush();
+    const onDisk = () => (JSON.parse(fs.readFileSync(path.join(s.dir, "memory.json"), "utf8")) as { facts: Fact[] }).facts.map(f => f.text);
+    return { s, from, onDisk };
+  }
+
+  it("lists one summary per subject however often Ember rewords it: an earlier wording is not “No longer true” (memory-x7-4)", () => {
+    const { s, onDisk } = reworded(6);
+    expect(s.memory.review().map(r => [r.text, !!r.until])).toEqual([["Summary v6: works on Atlas", false], ["Works on Atlas", false]]);
+    expect(onDisk()).toHaveLength(7);
+  });
+
+  it("forgets a summary's earlier wordings with it from Settings, so none is left unseen, and Undo puts them back (memory-x7-4)", () => {
+    const { s, onDisk } = reworded(3);
+    const gone = s.memory.forgetCounted(s.memory.review()[0].id, false)!;
+    expect([gone.text, gone.derived]).toEqual(["Summary v3: works on Atlas", 0]);
+    expect(onDisk()).toEqual(["Works on Atlas"]);
+    expect(s.memory.review().map(r => r.text)).toEqual(["Works on Atlas"]);
+    expect(s.memory.restore(gone.undo)).toBe(true);
+    expect(onDisk()).toHaveLength(4);
+    expect(s.memory.review().map(r => r.text)).toEqual(["Summary v3: works on Atlas", "Works on Atlas"]);
+  });
+
+  it("counts only the notes that were listed when the fact they came from is forgotten, and removes every wording (memory-x7-4)", () => {
+    const { s, from, onDisk } = reworded(4);
+    expect(s.memory.forgetCounted(from, false)!.derived).toBe(1);
+    expect(onDisk()).toEqual([]);
+  });
+
+  it("refuses a correction of what is no longer true (memory-c7-2)", async () => {
+    const { s } = await moved();
+    expect(() => s.memory.correct(s.memory.review()[1], "Lives at 14 Mill Lane, Leeds")).toThrow("This memory changed");
+  });
+});
+
