@@ -105,6 +105,20 @@ describe("a short for loop written out pass by pass (commands-remote-r6-2)", () 
     ]) expect(unrollLoops(line), line).toBeNull();
   });
 
+  it("leaves a loop as written when its body uses a variable the line itself sets, or $_ (commands-remote-x7-5)", () => {
+    // The second pass of `for i in 1 2; do git reset $x; x=--hard; done` runs `git reset --hard`; main asked before every
+    // loop. bash prints `[--hard]` for `echo --hard; for i in 1; do echo "[$_]"; done` and `[]` for the written-out text.
+    for (const line of [
+      "for i in 1 2; do git reset $x; x=--hard; done", "for i in 1 2; do x=--hard; git reset $x; done", "for i in 1 2; do find . $x; x=-delete; done",
+      "x=--hard; for i in 1 2; do git reset $x; done", "for i in 1 2; do git reset \"$x\"; x=--hard; done", "for i in 1 2; do git reset ${x}; x+=--hard; done",
+      "for i in 1 2; do git reset $x; x=--hard make; done", "for i in 1; do git reset $x; done; x=--hard", "for i in 1 2\ndo\n  history $x\n  x=-c\ndone",
+      "echo --hard; for i in 1; do git reset $_; done", "echo -delete; for i in 1; do find . \"$_\"; done", "for i in 1 2; do echo $i; done; echo ${_}",
+    ]) expect(unrollLoops(line), line).toBeNull();
+    // A variable the line doesn't set, and one set but not used in a loop, are as they were.
+    expect(unrollLoops("for i in 1 2; do ls $HOME/$i; done")).toBe("i=1; ls $HOME/1; i=2; ls $HOME/2");
+    expect(unrollLoops("x=1; for i in 1 2; do echo $i; done; echo $x")).toBe("x=1; i=1; echo 1; i=2; echo 2; echo $x");
+  });
+
   it("means the same to bash, sh and zsh as the loop it was written from (commands-remote-r6-2, x7-1)", () => {
     // Every way a `$f` may stand in a word, crossed with lists; only echo and printf, which are the shell's own.
     const before = ["", "a", "/", ".", ":", ",", "@", "%", "+", "-", "--o=", "x=", "=", "~", "~/", "~a", "~a/", "[", "*", "?", "\"q\"", "'q'", "1", "$g", "${g}"];

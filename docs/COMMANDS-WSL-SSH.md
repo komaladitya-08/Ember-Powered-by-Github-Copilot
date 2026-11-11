@@ -262,7 +262,9 @@ Ember writes a loop out only when it is sure the written-out commands are what t
 - the loop's name is used only as `$NAME` or `${NAME}` inside the loop, never set, read, used after the loop or put
   in single quotes, and each `$NAME` stands where the word itself means the same: after the program's name, never
   as the program, beside `~`, in a pattern, straight before `<`, `>`, `=`, `:` or `[`, or straight after another
-  variable.
+  variable;
+- the loop's body uses no variable that the line itself sets (`for i in 1 2; do git reset $x; x=--hard; done` asks:
+  its second pass would run with what the first one set), and the line has no `$_`.
 
 Every other loop asks as before, with the loop's own words ("Ember can't tell exactly what this does."): `while`,
 `until` and `select`, `for f in *.log; do …`, `while read -r l; do echo "$l"; done <<< 'a b'`, a loop in a shell the

@@ -23,7 +23,8 @@
  * of a name, so `"$fé"` is another variable: commands-remote-x7-1); a shell command that sets a variable it is given
  * by name, an option of `print` or `printf` that could be `-v` (`print -vf` sets `f`), or `-` in front of a command
  * (commands-remote-x7-2); an assignment with a subscript (`BASH_ALIASES[p]=…`, zsh's `functions[p]=…` make `p` a
- * command that can set the variable: commands-remote-x7-3).
+ * command that can set the variable: commands-remote-x7-3); `$_`, or a loop's body that uses a variable the line
+ * itself sets (one pass would carry what another set into a command, as no loop did before: commands-remote-x7-5).
  */
 
 /** The most passes written out on one line (every loop's together); longer lists ask as before. */
@@ -252,6 +253,8 @@ function settled(toks: readonly Tok[]): boolean {
   for (const k of toks) {
     if (k.k !== "word") continue;
     if (DENIED.has(k.value) || /(?<![A-Za-z0-9_])IFS(?![A-Za-z0-9_])/.test(k.raw) || SUBSCRIPT_SET.test(k.raw)) return false;
+    // `$_` is the last word of the command before it, which the written-out assignment changes (commands-remote-x7-5).
+    if (k.refs.some(r => r.name === "_")) return false;
   }
   for (const c of simples(toks)) {
     const p = programAfterDo(c.words);
@@ -320,6 +323,12 @@ export function unrollLoops(text: string): string | null {
   if (/[^\x00-\x7f]/.test(text)) return null;
   const toks = scan(text);
   if (toks === null || !settled(toks)) return null;
+  // The variables the line sets anywhere: a body that uses one asks, as every loop did (commands-remote-x7-5).
+  const sets = new Set<string>();
+  for (const k of toks) {
+    const m = k.k === "word" ? /^([A-Za-z_][A-Za-z0-9_]*)\+?=/.exec(k.raw) : null;
+    if (m !== null) sets.add(m[1]);
+  }
   const edits: { s: number; e: number; text: string; name: Tok; refs: Set<Ref> }[] = [];
   let passes = 0;
   let from = 0;
@@ -345,6 +354,7 @@ export function unrollLoops(text: string): string | null {
       if (prog !== undefined && RESERVED.has(prog.raw)) return null;
       for (const w of b.words) {
         for (const r of w.refs) {
+          if (sets.has(r.name)) return null;
           if (r.name !== loop.name.raw) continue;
           if (prog === undefined || !standsPlain(text, w, r, w.s > prog.s && PLAIN.test(prog.raw))) return null;
           refs.add(r);
