@@ -499,7 +499,9 @@ describe("ExtensionsService", () => {
     const log = { info: at("info"), warn: at("warn"), error: at("error"), debug: at("debug"), child: () => undefined } as never;
     // Home asks at start and at every reconnect, before the runtime is there: that is expected, not a fault.
     expect(await new ExtensionsService(deps({ client: () => null, log })).marketplaces()).toEqual([]);
-    expect(logged).toEqual([{ level: "debug", event: "extensions.marketplaces_not_connected", fields: undefined }]);
+    // Nothing is asked of a runtime that isn't there, so nothing is logged (safety-privacy-r7-4); a runtime that goes
+    // away between the check and the call leaves one debug line, never a warning.
+    expect(logged).toEqual([]);
     // A real failure still warns, with its error.
     logged.length = 0;
     const failing = { rpc: { plugins: { marketplaces: { list: async () => { throw new Error("catalog refresh failed"); } } } } } as never;
