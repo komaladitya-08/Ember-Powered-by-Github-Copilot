@@ -414,6 +414,8 @@ class Classifier {
    * ones) or each line it reads (`read -r l`), for the card.
    */
   loopVars = new Map<string, "for" | "read" | readonly string[]>();
+  /** git remotes this line adds with an address (`git remote add e <url>`), UNSEEN for a name Ember can't see. */
+  addedRemotes = new Set<string>();
   /**
    * Every value the text may give a POSIX variable (a loop's list, an assignment), UNSEEN standing for a part Ember
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
@@ -2921,8 +2923,16 @@ class Engine extends Classifier {
       const file = this.isDownloaded({ ...a, v }, sc, false);
       const project = f !== null && this.downloadedProjectFile(f, sc);
       return file || project;
-    }), sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc)];
+    }), sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc),
+    // In a folder Ember can't name (after `cd x;`, `cd x || exit`, `pushd x` or a cd on its own line, any of which may
+    // have failed), the folder may be the download's: a clone entered that way is built there (commands-remote-r8-1).
+    sc.cwd === null];
     if (hits.some(Boolean)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  }
+
+  /** Whether this task holds any download, named or not: an earlier command's, or one earlier on this line. */
+  holdsAnyDownload(): boolean {
+    return this.ctx.downloaded.size > 0 || this.downloads.length > 0;
   }
 
   /** Classifies a nested shell text (sh -c, cmd /c, powershell -Command) in a child scope. */
@@ -4782,8 +4792,11 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     // finds (conftest.py, test_x.py): it runs the download (commands-remote-c2-2).
     if (mod && /^[A-Za-z_][\w.]*$/.test(mod)) {
       const file = mod.replace(/\./g, "/");
+      // In a folder Ember can't name, Python finds the module there first, so it may be the download's, and so may the
+      // tests a runner finds (commands-remote-r8-1).
       const runsDownload = [`${file}.py`, `${file}/__main__.py`, `${file}/__init__.py`].some(f => h.e.isDownloaded(lit(f), h.sc))
-        || (/^(pytest|unittest|nose2?|doctest)$/.test(mod) && h.sc.cwd !== null && h.e.downloadedProjectFile(h.sc.cwd, h.sc));
+        || (/^(pytest|unittest|nose2?|doctest)$/.test(mod) && h.sc.cwd !== null && h.e.downloadedProjectFile(h.sc.cwd, h.sc))
+        || (h.sc.cwd === null && h.e.holdsAnyDownload());
       if (runsDownload) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     }
     h.e.readArgs(p.operands, h.sc);
@@ -5283,10 +5296,24 @@ const gitFetch = (fetches: boolean): GitFn => h => {
   // git merge FETCH_HEAD`) can change any file of the work tree, as a clone's are its (commands-remote-c5-4).
   // Only the repository word is an scp-style address: a refspec after it (`main:main`) looks like one.
   const ops = h.args.filter(a => !isOption(a));
-  if (fetches && (ops.some(a => URL_LIKE.test(a.v ?? "")) || SCP_LIKE.test(ops[0]?.v ?? ""))) h.e.markUnnamed(".", h.sc);
+  // A remote this line added with an address (`git remote add e <url> && git pull e main`) is that address too
+  // (commands-remote-r8-1).
+  const added = ops[0] !== undefined && h.e.addedRemotes.size > 0 && (ops[0].v === null || h.e.addedRemotes.has(ops[0].v) || h.e.addedRemotes.has(UNSEEN));
+  if (fetches && (ops.some(a => URL_LIKE.test(a.v ?? "")) || SCP_LIKE.test(ops[0]?.v ?? "") || added)) h.e.markUnnamed(".", h.sc);
 };
 git(["fetch", "pull"], gitFetch(true));
 git(["ls-remote"], gitFetch(false));
+// `git remote add NAME <url>` and `set-url`: read as before (GIT_READ), and NAME remembered for a fetch or pull from it
+// later on this line, `-f` fetching from it at once (commands-remote-r8-1).
+git(["remote"], h => {
+  h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
+  const p = opts(h, { shortValue: "tm" });
+  const [verb, name, url] = p.operands;
+  if (!(verb?.v === "add" || verb?.v === "set-url") || !name || !url) return;
+  if (url.v !== null && !URL_LIKE.test(url.v) && !SCP_LIKE.test(url.v)) return;
+  h.e.addedRemotes.add(name.v ?? UNSEEN);
+  if (verb.v === "add" && has(p, "f", "fetch")) h.e.markUnnamed(".", h.sc);
+});
 // apply and am change the work tree's files with a patch: one this task downloaded marks them (commands-remote-c5-4).
 git(["apply", "am"], h => {
   const files = h.args.filter(a => !isOption(a));
@@ -5498,6 +5525,14 @@ git(["config"], h => {
   } else if (key !== null && /^credential\./i.test(key)) h.e.add("secret", "secret.git-credential", SAYS.secrets, { program: "git config" });
 });
 git(["submodule"], h => {
+  if (h.args[0]?.v === "add") {
+    // A submodule added from an address is a clone into its folder (named, else the address's last part): building in
+    // it later runs the download (commands-remote-r8-1).
+    const [url, dir] = parseOpts(h.args.slice(1), { shortValue: "b", longValue: ["branch", "name", "reference", "depth"] }).operands;
+    const from = dir ?? url;
+    if (from?.v === null) h.e.markUnnamed(dir ? null : ".", h.sc);
+    else if (from?.v) h.e.download(dir ? from.v : from.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop()?.replace(/\.git$/, "") || null, h.sc);
+  }
   if (h.args[0]?.v !== "foreach") { h.e.readArgs(h.args.slice(1).filter(a => !isOption(a)), h.sc); return; }
   const rest = h.args.slice(1).filter(a => !/^--(recursive|quiet)$/.test(a.v ?? "") && a.v !== "-q");
   if (rest.some(a => a.v === null)) { h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see."); return; }
@@ -5639,7 +5674,19 @@ reg(NATIVE, ["gh"], h => {
     for (const d of values(dp, "D", "dir", "O", "output")) { if (d) h.e.download(d, h.sc); else h.e.markUnnamed(null, h.sc); }
     return;
   }
-  if (group === "repo" && sub === "clone") { const [r, d] = rest.filter(a => !isOption(a)).slice(1); h.e.download(d?.v ?? r?.v?.split("/").pop() ?? null, h.sc); return; }
+  if ((group === "repo" || group === "gist") && sub === "clone") {
+    const [r, d] = rest.filter(a => !isOption(a)).slice(1);
+    if (group === "repo") h.e.download(d?.v ?? r?.v?.split("/").pop() ?? null, h.sc);
+    // The folder is named before `--`, which starts git's own options (`gh repo clone a/b -- --depth 1`), else it is the
+    // repository's or gist's name; one Ember can't see marks a folder of no name it knows. Added to the mark above, as
+    // a later round's marks are (commands-remote-r8-1).
+    const dd = rest.findIndex(a => a.v === "--");
+    const [r2, d2] = (dd < 0 ? rest : rest.slice(0, dd)).filter(a => !isOption(a)).slice(1);
+    const named = d2 ?? r2;
+    if (named?.v === null) h.e.markUnnamed(d2 ? null : ".", h.sc);
+    else if (named?.v) h.e.download(d2 ? named.v : named.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop()?.replace(/\.git$/, "") || null, h.sc);
+    return;
+  }
   if (group === "repo" && sub === "deploy-key" && rest.some(a => a.v === "delete")) { h.e.add("remote-delete", "gh.repo.deploy-key", "Deletes a deploy key on GitHub."); return; }
   if ((GH_DELETE[group] ?? []).includes(sub)) {
     h.e.add("remote-delete", `gh.${group}.delete`, `Deletes ${what} on GitHub.`, { program: `gh ${group} ${sub}`, objects, widening });

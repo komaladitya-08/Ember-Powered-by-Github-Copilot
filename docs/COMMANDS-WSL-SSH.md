@@ -216,10 +216,15 @@ Ember stops and asks before a command that:
   …); echo "$x" > a.py`, also through a copy of the variable, `y=$x`, one `read` fills, `read x < <(curl …)`, any
   program given the text that writes its output to a file, `tee a.py <<< "$x"`, `dd of=a.py`, and a group's own
   redirection, `{ echo "$x"; } > a.py`); a repository cloned from an address or into a folder Ember can't see (`git clone $REPO`)
-  makes the folder it is cloned in count, so building there asks; and `node .` or `python3 tool` asks when the
-  folder's entry file (`index.js`, `package.json`, `__main__.py`) is a download. A download Ember can name never
-  makes the project's own tools ask: after `curl -LO https://example.com/data.csv`, `python3 analyze.py` and `npm
-  test` run as before),
+  makes the folder it is cloned in count, so building there asks, and so do `gh repo clone a/b -- --depth 1` (the
+  folder is named before git's options), `gh gist clone`, `git submodule add` and a pull or fetch from a remote the
+  same line adds with an address (`git remote add e https://… && git pull e main`); and `node .` or `python3 tool` asks when the
+  folder's entry file (`index.js`, `package.json`, `__main__.py`) is a download. Once the task has downloaded
+  anything, a build tool or test runner (or `python3 -m`) in a folder Ember can't name asks as it would in the
+  download's folder: after `cd b;`, `cd b || exit`, `pushd b` or a `cd` on its own line, any of which may have
+  failed, so `git clone https://…; cd b; npm test` asks. A download Ember can name never
+  makes the project's own tools ask in a folder Ember knows: after `curl -LO https://example.com/data.csv`, `python3 analyze.py`, `npm
+  test` and `cd src && npm test` run as before; in a task that downloaded nothing, `cd src; npm test` runs too),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),

