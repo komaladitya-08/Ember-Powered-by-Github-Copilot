@@ -804,7 +804,11 @@ async function atMemory(view: MemoryView, run: (page: Page, push: (next: MemoryV
         if (name === "getStatus") return async () => seed.status;
         if (name === "memory") return async () => seed.view;
         if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
-        if (name === "forgetMemory") return async (id: string) => { test.forgot.push(id); return { derived: 0, undo: "tok-12345678" }; };
+        if (name === "forgetMemory") return async (id: string) => {
+          test.forgot.push(id);
+          if (id === "fails") throw new Error("Error invoking remote method 'memory:forget': Error: Ember couldn't finish deleting this memory. It is still listed; try Forget again.");
+          return { derived: 0, undo: "tok-12345678" };
+        };
         return () => new Promise(() => undefined);
       } }) as EmberHomeApi;
     }, { status, view });
@@ -876,3 +880,25 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("never invites “Remember that
     await expect.poll(() => page.locator("#about-you input:visible").count()).toBeGreaterThan(0);
   });
 }, 60_000);
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("takes a failed Forget's alert away once another memory action starts: a correction, or Forget everything's question (memory-r7-4)", async () => {
+  const rows: MemoryView["rows"] = [{ id: "fails", text: "Likes to be called Ram", source: "user", at: "2026-11-04" }, { id: "ok", text: "Prefers short answers", source: "user", at: "2026-11-04" }];
+  await atMemory({ rows, ownership: "ready", reason: null }, async page => {
+    const error = page.locator("#memory-error");
+    const failForget = async () => {
+      await page.locator("#memory-list li").first().locator("[data-memory-forget]").click();
+      await expect.poll(() => error.innerText()).toBe("Ember couldn't finish deleting this memory. It is still listed; try Forget again.");
+    };
+    await expect.poll(() => page.locator("#memory-list [data-memory-forget]").count()).toBe(2);
+    await failForget();
+    await page.locator('#memory-list [data-memory-correct="ok"]').click();
+    expect(await page.locator("#memory-correction").isVisible()).toBe(true);
+    expect(await error.textContent()).toBe("");
+    await page.locator("#memory-correction-cancel").click();
+    await failForget();
+    await page.locator("#memory-forget-all").click();
+    expect(await page.locator("#forget-all-confirm").isVisible()).toBe(true);
+    expect(await error.textContent()).toBe("");
+  });
+}, 60_000);
+

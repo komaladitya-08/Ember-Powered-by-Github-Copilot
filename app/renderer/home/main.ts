@@ -1782,7 +1782,12 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
     correct.dataset.memoryCorrect = row.id;
     // What is no longer true can be forgotten, never corrected: a correction is for what holds now (memory-c7-2).
     correct.hidden = !!row.until;
-    correct.addEventListener("click", () => { if (!read().until) memoryCorrection.open(read()); });
+    correct.addEventListener("click", () => {
+      if (read().until) return;
+      // An earlier Forget's failure is about that Forget, not this (memory-r7-4).
+      $("memory-error").textContent = "";
+      memoryCorrection.open(read());
+    });
     const actions = Object.assign(document.createElement("div"), { className: "agent-actions" });
     actions.append(button, correct); li.append(fact, actions);
     return li;
@@ -1975,6 +1980,8 @@ async function deleteMemory(button: HTMLButtonElement, remove: () => Promise<unk
   catch (err) { $("memory-error").textContent = memoryDeleteFailedText(err); }
   finally { button.removeAttribute("aria-disabled"); }
 }
+// Forget everything's question opens: an earlier Forget's failure is no longer what is being asked about (memory-r7-4).
+$("memory-forget-all").addEventListener("click", () => { $("memory-error").textContent = ""; });
 window.ember.onSettingsChanged(applyMemorySettings);
 let receivedMemory = false;
 void window.ember.memory().then(view => { if (!receivedMemory) showMemory(view); });
