@@ -69,6 +69,7 @@ import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERY
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
 import { projectAfterStatus, projectJobStops, projectMay, projectCommandFolder, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
+import { projectUnavailable } from "../renderer/home/project-copy";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, readProjectPatch, type ProjectPatch } from "./agent/project-patch";
@@ -2327,6 +2328,11 @@ function start(): void {
   /** Project work under way may go on: the settings window open, shown or not (integrations-6). */
   const projectContinues = () => consented() && screenLock?.locked === false && policy.features.actions !== false &&
     agent?.getStatus().phase === "ready" && !!home && !home.isDestroyed();
+  /**
+   * Why a Projects action can't run now, in words (integrations-r7-1): the organisation's switch, which never comes back
+   * by waiting (a lockdown has its own notice), or another project step under way (`busy`: false from inside that step).
+   */
+  const projectRefusal = (busy = projectPicking || !!projectJob) => projectUnavailable({ managed: policy.features.actions === false && admin.error === undefined, busy });
   /** Project work may start: also with the settings window in view, where it is asked for. */
   const projectAvailable = () => projectContinues() && home?.isVisible() && !home.isMinimized();
   /**
@@ -2340,18 +2346,18 @@ function start(): void {
   ipcMain.handle(IPC.projectPick, guard(async (): Promise<ProjectSelection> => {
     const names = projectFiles.length ? projectNames(projectFiles) : [];
     const owner = home;
-    if (!owner || !projectAvailable() || projectPicking || projectJob) return { names, error: "Project work is unavailable right now." };
+    if (!owner || !projectAvailable() || projectPicking || projectJob) return { names, error: projectRefusal() };
     const previous = projectFiles;
     projectPicking = true;
     try {
       const selected = await dialog.showOpenDialog(owner, { title: "Choose project files", properties: ["openFile", "multiSelections"] });
       if (home !== owner || projectFiles !== previous) return { names: [] };
       // Not connected now (integrations-r1): the selection Home shows stays.
-      if (!projectAvailable()) return { ...await projectSelection(previous), error: "Project work is unavailable right now." };
+      if (!projectAvailable()) return { ...await projectSelection(previous), error: projectRefusal(false) };
       if (selected.canceled) return await projectSelection(previous);
       const next = await projectSelection(selected.filePaths);
       if (home !== owner || projectFiles !== previous) return { names: [] };
-      if (!projectAvailable()) return { ...await projectSelection(previous), error: "Project work is unavailable right now." };
+      if (!projectAvailable()) return { ...await projectSelection(previous), error: projectRefusal(false) };
       projectFiles = selected.filePaths;
       projectPatch = null;
       projectExchange = null;
@@ -2365,13 +2371,13 @@ function start(): void {
   }));
   ipcMain.handle(IPC.projectRemove, guard(async (name: unknown): Promise<ProjectSelection> => {
     const files = projectFiles;
-    if (!projectLocal() || projectPicking || projectJob) return { names: files.length ? projectNames(files) : [], error: "Project work is unavailable right now." };
+    if (!projectLocal() || projectPicking || projectJob) return { names: files.length ? projectNames(files) : [], error: projectRefusal() };
     projectPicking = true;
     try {
       const next = removeProjectFile(files, name);
       const selection = await projectSelection(next);
       if (projectFiles !== files) return { names: [] };
-      if (!projectLocal()) return { ...await projectSelection(files), error: "Project work is unavailable right now." };
+      if (!projectLocal()) return { ...await projectSelection(files), error: projectRefusal(false) };
       projectFiles = next;
       projectPatch = null;
       projectExchange = null;
@@ -2408,7 +2414,7 @@ function start(): void {
     const input = projectTurnRequest.safeParse(request);
     if (!input.success) return { error: "Enter a project request of up to 4,000 characters." };
     const host = agent;
-    if (!host || !projectAvailable() || projectJob || projectPicking) return { error: "Project work is unavailable right now." };
+    if (!host || !projectAvailable() || projectJob || projectPicking) return { error: projectRefusal() };
     const { mode, question, includePrevious } = input.data;
     // An answer from another model service or account is never sent to this one (integrations-r1): Home hides the choice.
     if (includePrevious && projectExchange && projectExchangeScope !== host.projectWorkspaceScope()) {
@@ -2475,7 +2481,7 @@ function start(): void {
   }));
   ipcMain.handle(IPC.projectChooseFolder, guard(async () => {
     const owner = home;
-    if (!owner || !projectAvailable() || projectPicking || projectJob) return { folder: null, message: "Project work is unavailable right now." };
+    if (!owner || !projectAvailable() || projectPicking || projectJob) return { folder: null, message: projectRefusal() };
     const previous = projectFiles;
     projectPicking = true;
     try {
@@ -2494,7 +2500,7 @@ function start(): void {
     if (!parsed.success) return "Enter one line of up to 2,000 characters without passwords or keys.";
     const host = agent;
     const folder = projectFolder;
-    if (!host || !projectAvailable() || projectPicking || projectJob) return "Project work is unavailable right now.";
+    if (!host || !projectAvailable() || projectPicking || projectJob) return projectRefusal();
     if (!folder?.current()) return "Choose a current command folder.";
     const service = targets?.localProjectCommands();
     if (!service) return "Commands are off on this computer. Check the Commands settings.";
@@ -2513,7 +2519,7 @@ function start(): void {
     if (!input.success) return { message: "Enter a workspace name of up to 64 characters." };
     const host = agent;
     const owner = home;
-    if (!host || !owner || !projectAvailable() || projectPicking || projectJob) return { message: "Project work is unavailable right now." };
+    if (!host || !owner || !projectAvailable() || projectPicking || projectJob) return { message: projectRefusal() };
     const scope = host.projectWorkspaceScope();
     if (!scope) return { message: "Connect with a verified GitHub account or model provider to use saved workspaces." };
     const run = projectJob = new AbortController();

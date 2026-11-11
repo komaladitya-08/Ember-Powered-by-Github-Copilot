@@ -253,6 +253,31 @@ describe.skipIf(gate)("Home's Projects, as Ember's connection changes (2026-11-0
     await page.close();
   }, 20_000);
 
+  it("says my organisation turned Projects off with acting in apps and holds every control, though Ember is connected (integrations-r7-1)", async () => {
+    const off = "Your organisation has turned off Ember acting in apps, so Projects is off here.";
+    const page = await open("project", { admin: { source: "/etc/ember/policy.json", features: { actions: false } } });
+    await expect.poll(() => page.locator("#project-status").innerText()).toBe(off);
+    for (const id of ["project-pick", "project-send", "project-folder-pick", "project-command-text", "project-command-send", "project-workspace-name", "project-workspace-save"]) {
+      expect(await page.locator(`#${id}`).isDisabled(), id).toBe(true);
+    }
+    // No line names where a send would go: none goes.
+    expect(await page.locator("#project-provider").isVisible()).toBe(false);
+    await page.locator("#project-question").fill("Review this file.");
+    expect(await page.locator("#project-send").isDisabled()).toBe(true);
+    // Connecting again changes nothing about it.
+    await page.evaluate(st => window.__ixEmit("onAgentStatus", st), { ...READY, phase: "starting", detail: "Connecting…" });
+    await page.evaluate(st => window.__ixEmit("onAgentStatus", st), READY);
+    expect(await page.locator("#project-status").innerText()).toBe(off);
+    expect(await page.locator("#project-pick").isDisabled()).toBe(true);
+    // The policy as a restart reads it without that switch: the pane is as it always was.
+    await page.evaluate(() => window.__ixEmit("onAdminChanged", { source: "/etc/ember/policy.json", error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] }));
+    await expect.poll(() => page.locator("#project-status").innerText()).toBe("Choose the files for this request.");
+    expect(await page.locator("#project-pick").isEnabled()).toBe(true);
+    expect(await page.locator("#project-provider").isVisible()).toBe(true);
+    expect((page as Page & { errors: string[] }).errors).toEqual([]);
+    await page.close();
+  }, 20_000);
+
   it("keeps a failed request's reason in view when the check it starts takes Ember off Ready (integrations-r2-5)", async () => {
     const page = await open("project");
     await page.locator("#project-pick").click();

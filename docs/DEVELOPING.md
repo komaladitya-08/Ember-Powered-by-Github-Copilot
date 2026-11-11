@@ -1244,7 +1244,7 @@ the lockdown turns off), and the restart reads the new policy whole. Every key i
 | Key | Effect |
 |---|---|
 | `features.voice` / `speak` | No "Hey Ember" / no spoken replies; either one also keeps the optional native voice off and its model download from starting, shown as managed |
-| `features.actions` | Ember answers and guides ("show me") but never acts in apps |
+| `features.actions` | Ember answers and guides ("show me") but never acts in apps. Projects goes with it: its pane says "Your organisation has turned off Ember acting in apps, so Projects is off here." and holds its controls (integrations-r7-1) |
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
 | `features.screenImages` | Accessibility text only; no screenshots go to the model ("Send screenshots for tasks" off, managed) |
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
@@ -2317,7 +2317,12 @@ says "Ember isn't connected right now. Your work here stays, and you can send on
 reaches the model service waits: choosing files, sending, saved workspaces and the command (`projectAfterStatus`,
 app/main/agent/project.ts). **Export answer…**, **Export diff…**, **Apply patch…** and a file's **Remove** work on
 what is kept here and send nothing, so they go on working (`projectMay`'s `local`, integrations-r3-2); consent, the
-screen lock, the organisation's actions switch and the settings window in view still hold. A request under way then stops and
+screen lock, the organisation's actions switch and the settings window in view still hold. With that switch off
+(`features.actions: false`, not a lockdown) the pane says "Your organisation has turned off Ember acting in apps, so
+Projects is off here." in its status line, holds every control and puts away the line naming where the next send
+goes, however connected Ember is (`projectManagedOff`), and main answers a stray request with the same sentence
+(`projectUnavailable`, app/renderer/home/project-copy.ts; one made while another project step is under way hears
+"Ember is still on the last project step. Wait for it to finish, or cancel it."; integrations-r7-1). A request under way then stops and
 says the connection dropped; Apply patch…'s confirmation stays up through Copilot's reconnect tries while offline, and
 only Stop everything, the screen lock, Sign out and the lockdown close it (`projectJobStops`, integrations-v4-2). Sign out, another account and the organisation's lockdown clear it all. Once another
 model service, address, key or GitHub account is in force, the previous request and answer stay in view but are no
