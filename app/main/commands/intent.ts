@@ -1005,9 +1005,10 @@ const HOW_TO = /(^|\s)(how\s+(to|do|does|did|would|could|can|should|might|i|you|
 
 /**
  * Widening any row refuses: a differing real path, a variable set in the text, options before the program's verb, and
- * a finding that came from inside a script Ember read (the user's words name the command, never the script's text).
+ * a finding that came from inside a script Ember read (the user's words name the command, never the script's text),
+ * and one about a command built from printed input ("fed": a form that asked before Ember read what is printed).
  */
-const ALWAYS_BROADER = new Set(["real-path", "env", "global-option", "in-script"]);
+const ALWAYS_BROADER = new Set(["real-path", "env", "global-option", "in-script", "fed"]);
 
 /** Recursion words near the operand the user named (§3.7 delete.paths). */
 const RECURSION = ["folder", "folders", "directory", "directories", "dir", "dirs", "tree", "recursively", "everything", "all"];

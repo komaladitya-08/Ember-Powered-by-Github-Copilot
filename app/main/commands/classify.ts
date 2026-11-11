@@ -498,6 +498,32 @@ class Classifier {
     this.refusedRead = kind === "read";
   }
 
+  /**
+   * Whether `judge` finds anything to ask about, judged apart: what it finds is not kept (a refusal, and what it notes
+   * of files and variables, is). For a form Ember judges a second way, which must never decide less safely than the
+   * first (commands-remote-r7-2).
+   */
+  asksApart(judge: () => void): boolean {
+    const kept = this.findings;
+    this.findings = [];
+    try {
+      judge();
+      return this.findings.length > 0;
+    } finally {
+      this.findings = kept;
+    }
+  }
+
+  /**
+   * Makes what was found since `from` ask whatever the user's words say (the "fed" widening, which no intent row
+   * covers); with nothing found that stands whatever the target's files are, an unclear finding asks instead.
+   */
+  asksAtLeast(from: number, rule: string, says: string): void {
+    const found = this.findings.slice(from);
+    for (const f of found) if (!f.widening.includes("fed")) f.widening.push("fed");
+    if (!found.some(f => f.ifExists === undefined)) this.unclear(rule, says);
+  }
+
   noteUnclear(list: readonly Unclear[]): void {
     for (const u of list) this.unclear(`unclear.${u.why.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "syntax"}`, u.says ?? SAYS.unclear);
   }
@@ -3690,19 +3716,58 @@ reg(NATIVE, ["xargs"], h => {
     return a;
   });
   if (intoCode) h.e.unclear("unclear.input-in-code", "It puts its input into shell text, where it can run as code.");
-  // Input Ember sees whole (a here-string or here-document) with no quotes or backslashes for xargs to read: its words,
-  // or with -I its lines, are what the command gets (commands-remote-v4-4).
+  // Input Ember can't see stands as one unknown word: with -I where the placeholder is, otherwise after the words.
+  const unseen: Arg[] = repl ? words : [...words, { v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }];
+  // Input Ember sees whole (a here-string, a here-document, what echo or printf prints) with no quotes or backslashes
+  // for xargs to read: the commands xargs builds from it (commands-remote-v4-4), one per batch (commands-remote-r7-1).
   const text = h.s.stdinText;
   const seen = typeof text === "string" && !/['"\\]/.test(text) && !values(p, "a", "arg-file", "d", "delimiter").length && !has(p, "0", "null") ? text : null;
-  if (seen !== null && repl && !intoCode) {
-    const lines = seen.split("\n").map(l => l.trim()).filter(l => l !== "").slice(0, MAX_FORMS);
-    for (const l of lines) h.e.payload(ops.map(w => (w.v !== null && w.v.includes(repl) ? lit(w.v.split(repl).join(l)) : w)), h.sc, "xargs", { stdin: null });
-    if (lines.length) return;
-  }
-  const input = seen !== null && !repl ? seen.split(/\s+/).filter(w => w !== "").map(w => lit(w)) : [];
-  // With -I the input replaces the placeholder; otherwise it is added after the words.
-  h.e.payload(repl ? words : [...words, ...(input.length ? input : [{ v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }])], h.sc, "xargs", { stdin: null });
+  const built = seen === null || intoCode ? null : xargsBuilds(p, seen, repl, ops);
+  if (built === null) { h.e.payload(unseen, h.sc, "xargs", { stdin: null }); return; }
+  // Never decided less safely than with input Ember can't see, which is how these forms were judged before Ember read
+  // what is printed: where that asks, what Ember read asks too, in its own words (commands-remote-r7-2).
+  const asked = h.e.asksApart(() => h.e.payload(unseen, h.sc, "xargs", { stdin: null }));
+  const before = h.e.findings.length;
+  for (const b of built) h.e.payload(b, h.sc, "xargs", { stdin: null });
+  if (asked) h.e.asksAtLeast(before, "unclear.xargs-input", "xargs builds this command from its input.");
 });
+
+/**
+ * The commands xargs builds from input Ember sees whole: with -I one per line, the line where the placeholder is;
+ * with -n or -L one per batch of words or lines; otherwise one, the words after the command's own. null when Ember
+ * can't tell the batches (a size limit, an end-of-input word, a count that is no number, a line that continues, more
+ * batches than it judges, or no input at all), which is then judged as input it can't see.
+ */
+function xargsBuilds(p: Parsed, seen: string, repl: string | undefined, ops: readonly Arg[]): Arg[][] | null {
+  if (has(p, "s", "max-chars", "x", "exit", "E", "e", "eof")) return null;
+  const lines = seen.split("\n").filter(l => l.trim() !== "");
+  if (repl) {
+    const each = lines.map(l => l.trim());
+    return each.length && each.length <= MAX_FORMS ? each.map(l => ops.map(w => (w.v !== null && w.v.includes(repl) ? lit(w.v.split(repl).join(l)) : w))) : null;
+  }
+  const count = (vs: (string | null)[], bare: boolean): number | null | undefined => {
+    if (vs.length === 0) return bare ? 1 : undefined;
+    const v = vs[vs.length - 1];
+    return v !== null && /^[1-9]\d{0,5}$/.test(v) ? Number(v) : null;
+  };
+  const perWords = count(values(p, "n", "max-args"), false);
+  const perLines = count(values(p, "L", "l", "max-lines"), has(p, "l", "max-lines"));
+  if (perWords === null || perLines === null || (perWords !== undefined && perLines !== undefined)) return null;
+  const wordsOf = (t: string): Arg[] => t.split(/\s+/).filter(w => w !== "").map(w => lit(w));
+  let batches: Arg[][];
+  if (perLines !== undefined) {
+    // A line that ends in a blank continues on the next one.
+    if (lines.some(l => /[ \t]$/.test(l))) return null;
+    batches = [];
+    for (let k = 0; k < lines.length; k += perLines) batches.push(wordsOf(lines.slice(k, k + perLines).join(" ")));
+  } else {
+    const all = wordsOf(seen);
+    batches = [];
+    for (let k = 0; k < all.length; k += perWords ?? all.length) batches.push(all.slice(k, k + (perWords ?? all.length)));
+  }
+  return batches.length && batches.length <= MAX_FORMS ? batches.map(b => [...ops, ...b]) : null;
+}
+
 reg(NATIVE, ["parallel"], h => {
   if (h.args.some(a => a.v !== null && /^:::+\+?$/.test(a.v))) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
   // -X (context replace) is a switch, and -l, -i and -e take a value only attached (commands-remote-c4-1).

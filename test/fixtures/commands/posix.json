@@ -15836,6 +15836,152 @@
   {
    "cmd": "redis-cli <<< PING",
    "verdict": "run"
+  },
+  {
+   "cmd": "echo test publish | xargs -n1 npm",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "echo test publish | xargs --max-args=1 npm",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "printf 'status\\npush --force\\n' | xargs -L1 git",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "printf 'status\\nreset --hard\\n' | xargs -L 1 git",
+   "verdict": "ask",
+   "rules": [
+    "git.reset.hard"
+   ]
+  },
+  {
+   "cmd": "printf 'status\\nclean -fdx\\n' | xargs --max-lines=1 git",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "printf 'status\\nclean -fdx\\n' | xargs -l1 git",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "printf 'get pods\\ndelete ns prod\\n' | xargs -L1 kubectl",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "printf 'ps\\nsystem prune -af\\n' | xargs -L1 docker",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "echo ls reboot | xargs -n1 sh -c",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "printf 'ls\\nreboot\\n' | xargs -L1 sh -c",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "xargs -n1 npm <<< 'test publish'",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ]
+  },
+  {
+   "cmd": "xargs -n1 git <<< 'status push'",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "echo true reboot | xargs -n1 timeout 5",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "echo version login | xargs -n1 npm",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "echo test publish | xargs -P2 -n1 npm",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "echo a b c d | xargs -s 20 npm",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "printf 'a\\n/home/ana/.config/ember\\n' | xargs -n1 rm -rf",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "echo build | xargs ls",
+   "verdict": "ask",
+   "rules": [
+    "unclear.xargs-input"
+   ]
+  },
+  {
+   "cmd": "echo status | xargs git",
+   "verdict": "ask",
+   "rules": [
+    "unclear.xargs-input"
+   ]
+  },
+  {
+   "cmd": "echo build | xargs sh -c",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "xargs ls <<< 'DROP TABLE users;'",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "xargs ls <<EOF\nFLUSHALL\nEOF",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "echo build | xargs rm -rf",
+   "words": "delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "echo build | xargs -I{} rm -rf {}",
+   "words": "delete the build folder",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "echo build | xargs -I{} ls {}",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "echo --hard | xargs git reset",
+   "verdict": "ask",
+   "rules": [
+    "git.reset.hard"
+   ]
+  },
+  {
+   "cmd": "echo soft | xargs git reset",
+   "verdict": "run"
   }
  ]
 }
