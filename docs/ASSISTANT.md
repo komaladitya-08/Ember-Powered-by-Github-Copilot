@@ -432,7 +432,8 @@ Local rules only, no model and nothing sent: from the last request and reply, wh
 the request started, the time of day, this session's requests (never one heard where Ember can't tell the user from
 its speakers, a chosen suggestion, or a risky one) and (memory in force) people's names: "Yes, please" and "No,
 thanks" after a question, "Close it" after opening something, "Turn … off" after turning it on, "Do the same for the
-next one" after a task on one item, "Read it out" after an unspoken answer, "What went wrong?" after a failure, a
+next one" after a task on one item, "Read it out" after an unspoken answer (only where Ember speaks replies; it
+reads that answer once), "What went wrong?" after a failure, a
 request said twice this session, and by time of day otherwise. Nothing risky, but one built from the user's own risky
 request just now ("Send it to Priya" after a request to send). Shown under the answer in the bubble (only under the
 answer they were made for, never with a question or buttons up) and in the Ask box (only while the field is empty,

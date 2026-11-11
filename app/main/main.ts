@@ -81,7 +81,7 @@ import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { AnswerLanguage, cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
-import { SpeechStream } from "../voice/tts";
+import { answerPieces, SpeechStream } from "../voice/tts";
 import { ENROL_PHRASES, encodePrint } from "../voice/voiceprint";
 import { voiceprintStore } from "./voiceprint-store";
 import { PersonalVoice } from "./personal/service";
@@ -1213,6 +1213,19 @@ function start(): void {
     const open = !!agent?.answerOpen;
     resetAnswerSpeech();
     answerHushed = open;
+  };
+  /**
+   * "Read it out": Ember's last answer said once, as it would have been said (code and addresses left to the bubble, its
+   * language's voice), in place of whatever Ember is saying. False, and nothing said, where Ember may not speak now
+   * (voice-speaking-r6-1).
+   */
+  const readOut = (answer: string): boolean => {
+    if (!voice || !maySpeak()) return false;
+    const pieces = answerPieces(answer);
+    if (!pieces.length) return false;
+    resetAnswerSpeech();
+    pieces.forEach((p, i) => voice?.speak(p.text, { append: i > 0, lang: p.lang }));
+    return true;
   };
   /** A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. */
   const pauseAnswerSpeech = () => {
@@ -3495,7 +3508,7 @@ function start(): void {
         // What the user might say next (personal/predict.ts): chips under this answer, and a longer follow-up window
         // after a spoken reply when a follow-up is likely.
         const task = aborted ? null : agent?.tasks?.list().filter(t => t.started >= askedAt).at(-1);
-        const next = aborted ? null : personal.answered(lastReply || turnAnswer, { spoken: answerSpoken, task: task ? { status: task.status === "cancelled" ? "stopped" : task.status === "queued" ? "running" : task.status } : null });
+        const next = aborted ? null : personal.answered(lastReply || turnAnswer, { spoken: answerSpoken, speaks: !!voice && maySpeak(), task: task ? { status: task.status === "cancelled" ? "stopped" : task.status === "queued" ? "running" : task.status } : null });
         if (next?.suggestions.length && lastState.bubble.visible) showState({ suggest: { thought: lastState.bubble.thought, items: next.suggestions.map(s => s.text) } });
         lastReply = "";
         answerSpeech.reset();
@@ -3554,6 +3567,7 @@ function start(): void {
       onRemindersChanged: rows => broadcast(IPC.remindersChanged, reminderRows(rows)),
       // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
       health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
+      readOut,
       // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
       voiceTrust,
       autonomy: {

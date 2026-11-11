@@ -119,10 +119,16 @@ export function statusReply(kind: "name" | "status", tasks: readonly Task[], now
   return `${idle} The last thing was ${named(last)}: ${outcomeOf(last)}.`;
 }
 
-/** Asking to keep results on screen only: "just show me", "stop telling me", "leave it on the screen". */
-const QUIET_RE = new RegExp(String.raw`^${LEAD}(?:(?:just|only) show (?:me|it|them)|stop telling me|(?:just )?leave (?:it|them) on (?:the )?screen|stop reading (?:them|it|the results?|results)(?: out| aloud)?|don't read (?:them|it|the results?|results) (?:out|aloud))${TAIL}$`, "i");
-/** Asking for them to be read out again: "read them out again", "tell me when it's done". */
-const LOUD_RE = new RegExp(String.raw`^${LEAD}(?:read (?:them|it|the results?|results) (?:out|aloud)(?: again)?|tell me (?:again|when (?:it's|it is|they're|they are) (?:done|finished))|you can (?:talk|tell me) again)${TAIL}$`, "i");
+/**
+ * Asking to keep results on screen only: "just show me", "stop telling me", "leave it on the screen". Not "just show
+ * it", which answers Ember's "Shall I show it?" (voice-speaking-c7-2).
+ */
+const QUIET_RE = new RegExp(String.raw`^${LEAD}(?:(?:just|only) show (?:me|them)|stop telling me|(?:just )?leave (?:it|them) on (?:the )?screen|stop reading (?:them|it|the results?|results)(?: out| aloud)?|don't read (?:them|it|the results?|results) (?:out|aloud))${TAIL}$`, "i");
+/**
+ * Asking for them to be read out again: "read them out again", "tell me when it's done". "Read it out" and "tell me
+ * again" ask for the last answer, not this switch (readOutRequest: voice-speaking-r6-1, -c7-2).
+ */
+const LOUD_RE = new RegExp(String.raw`^${LEAD}(?:read (?:them|the results?|results) (?:out|aloud)(?: again)?|tell me when (?:it's|it is|they're|they are) (?:done|finished)|you can (?:talk|tell me) again)${TAIL}$`, "i");
 
 /** Whether `text` asks Ember to keep task results on screen only ("quiet") or to read them out again ("loud"). */
 export function resultsRequest(text: string): "quiet" | "loud" | null {
@@ -153,6 +159,29 @@ export function resultsReply(asked: "quiet" | "loud", o: { saved: boolean; on: b
   if (!o.on) return RESULTS_REPLY.managed;
   return o.speaks ? RESULTS_REPLY.loud : RESULTS_REPLY.loudSilent;
 }
+
+/**
+ * Asking to hear the last answer: "read it out" (the suggestion under an answer that wasn't said), "read that aloud",
+ * "tell me again", "say that again".
+ */
+const READ_OUT_RE = new RegExp(String.raw`^${LEAD}(?:(?:please[,\s]+)?(?:(?:can|could|would|will) you[,\s]+(?:please[,\s]+)?)?(?:read (?:it|that|this|the (?:last )?answer|your (?:last )?answer) (?:out(?: loud)?|aloud)(?: again| to me)?|(?:tell me|say (?:it|that)) again|repeat that))(?:[,\s]+please)?${TAIL}$`, "i");
+
+/**
+ * Whether `text` asks Ember to say its last answer aloud (voice-speaking-r6-1). It reads that answer once; it never
+ * changes "Read finished tasks out loud", which "read them out again" does (resultsRequest).
+ */
+export function readOutRequest(text: string): boolean {
+  const t = norm(text);
+  return !!t && t.length <= 60 && READ_OUT_RE.test(t);
+}
+
+/** Ember's answer to "read it out" when it doesn't read one. */
+export const READ_OUT_REPLY = {
+  /** Ember isn't speaking replies now (speaking set to Never or to a screen reader that isn't on, the organisation). */
+  silent: "I can't read it out: I'm not speaking replies right now. Speaking is under Voice in settings.",
+  /** No answer yet. */
+  none: "There's nothing to read out yet.",
+} as const;
 
 /** How far back "what did I miss?" looks. */
 export const CATCH_UP_MS = 2 * 60 * 60_000;

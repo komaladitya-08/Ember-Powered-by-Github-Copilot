@@ -647,7 +647,7 @@ record of its tasks (the step each one is on, one waiting for your answer or sto
 went), with no Copilot request, so it works offline too. A spoken request's short acknowledgement (“On it.”) comes only
 once the request has gone to Copilot, after anything Ember is already saying. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without
 reading them out, and “read them out again” undoes it (the same switch as **Read finished tasks out loud** under
-**Voice**); while Ember isn't speaking replies at all, it says results stay on screen instead of promising to read them. “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
+**Voice**); while Ember isn't speaking replies at all, it says results stay on screen instead of promising to read them. “Read it out” (the suggestion under an answer that wasn't said, typed or spoken; also “tell me again” and “say that again”) says Ember's last answer once and changes no setting; where Ember isn't speaking replies it says so on screen instead. “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
 how each went, from the same record. “Ember, systems check” (or “are you working?”) says whether Copilot is connected,
 whether Ember is listening and speaking, and what is under way, also when Copilot can't be reached. “Remind me in 20 minutes to call Priya” or “at 3 pm, remind me to stand up” sets a
 reminder: when it is due, Ember shows it in its bubble, says it when replies are spoken (after what it is saying), and

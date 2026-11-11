@@ -16,7 +16,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "../../app/main/agent/status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, READ_OUT_REPLY, readOutRequest, RESULTS_REPLY, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "../../app/main/agent/status";
 import type { Task } from "../../app/main/agent/tasks";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
@@ -102,7 +102,7 @@ describe("statusReply", () => {
 
 describe("resultsRequest", () => {
   it("hears “just show me” and its kin as results on screen only (JARVIS's “leave it on the screen”)", () => {
-    for (const t of ["Ember, just show me", "just show it", "Stop telling me.", "leave it on the screen", "leave them on screen", "stop reading them out", "don't read the results aloud"]) expect(resultsRequest(t), t).toBe("quiet");
+    for (const t of ["Ember, just show me", "only show them", "Stop telling me.", "leave it on the screen", "leave them on screen", "stop reading them out", "don't read the results aloud"]) expect(resultsRequest(t), t).toBe("quiet");
   });
 
   it("hears the way back", () => {
@@ -111,6 +111,20 @@ describe("resultsRequest", () => {
 
   it("leaves requests that only sound alike to Copilot", () => {
     for (const t of ["show me how to change the wallpaper", "just show me the downloads folder", "read this email out", "tell me a joke", "stop"]) expect(resultsRequest(t), t).toBeNull();
+  });
+
+  it("never takes “read it out” or “tell me again” for the switch that reads finished tasks out loud (voice-speaking-r6-1, voice-speaking-c7-2)", () => {
+    for (const t of ["Read it out", "read it out", "Ember, read it out", "read it aloud", "Hey Ember, read it out", "read it out again", "tell me again", "Ember, tell me again"]) {
+      expect(resultsRequest(t), t).toBeNull();
+      expect(readOutRequest(t), t).toBe(true);
+    }
+    for (const t of ["read that out loud", "could you read the answer out, please", "say that again", "repeat that"]) expect(readOutRequest(t), t).toBe(true);
+    // The switch's own words, and requests that only sound alike, aren't the last answer.
+    for (const t of ["read them out again", "read the results aloud", "read this email out", "read it", "tell me a joke", "tell me again why the sky is blue", "try again"]) expect(readOutRequest(t), t).toBe(false);
+  });
+
+  it("leaves “just show it”, an answer to Ember's “Shall I show it?”, to the conversation (voice-speaking-c7-2)", () => {
+    for (const t of ["just show it", "Ember, just show it"]) expect(resultsRequest(t), t).toBeNull();
   });
 });
 
@@ -252,6 +266,38 @@ describe("AgentHost's status answer", () => {
     await host.ask("read them out again");
     expect(settings.get().speakResults).toBe(true);
     expect(answers).toEqual([RESULTS_REPLY.quiet, RESULTS_REPLY.loud]);
+  });
+
+  it("reads the last answer out once for “Read it out”, changing no setting and adding nothing to the conversation (voice-speaking-r6-1)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    settings.update({ speakResults: false });
+    const answers: string[] = [], read: string[] = [];
+    let speaks = true;
+    const host = new AgentHost({
+      userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet,
+      setState: () => undefined, onStatus: () => undefined, onAnswer: t => answers.push(t), health: () => ({ mic: "off", speaks }),
+      readOut: t => { if (speaks) read.push(t); return speaks; },
+    });
+    // Nothing answered yet.
+    await host.ask("Read it out");
+    expect(answers).toEqual([READ_OUT_REPLY.none]);
+    await host.ask("status?");
+    const answer = answers.at(-1)!;
+    const before = host.getTranscript().length;
+    for (const t of ["Read it out", "Ember, read it out", "tell me again"]) await host.ask(t, null, host.stopEpoch, { suggested: t === "Read it out" });
+    expect(read).toEqual([answer, answer, answer]);
+    expect(settings.get().speakResults).toBe(false);
+    expect(host.getTranscript()).toHaveLength(before);
+    // Where Ember isn't speaking it says so, on screen, and a second ask still means the answer, not that line.
+    speaks = false;
+    await host.ask("read it out");
+    expect(answers.at(-1)).toBe(READ_OUT_REPLY.silent);
+    speaks = true;
+    await host.ask("read it out");
+    expect(read.at(-1)).toBe(answer);
+    expect(settings.get().speakResults).toBe(false);
   });
 
   it("never promises results read aloud when Ember isn't speaking, the organisation keeps them on screen, or the switch can't be saved (audit of the conversation features)", async () => {

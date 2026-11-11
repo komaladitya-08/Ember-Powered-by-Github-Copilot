@@ -61,7 +61,7 @@ import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
 import type { TaskVoiceTrust } from "./voice-answer";
 import { autonomyInForce } from "../policy/autonomy";
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, READ_OUT_REPLY, readOutRequest, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
 
@@ -237,6 +237,11 @@ export interface HostOptions {
   extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number; conversationEnded?(): void };
   /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
   health?: () => Pick<Health, "mic" | "speaks">;
+  /**
+   * Says `text` (Ember's last answer) aloud now, for "read it out" (voice-speaking-r6-1). False where Ember isn't
+   * speaking replies (speaking off, the organisation, no voice at all): nothing is said. Absent: never said.
+   */
+  readOut?: (text: string) => boolean;
   /**
    * Which tasks the owner asked for in a verified voice (voice-answer.ts TaskVoiceTrust): a task started in a turn whose
    * request Voice Match verified is granted it, and a task changed by a request it didn't verify loses it. Absent: none.
@@ -1552,8 +1557,10 @@ export class AgentHost {
   }
 
   /** The last retained answer. Home discloses if the explicit per-message memory bound was reached. */
-  lastAnswer(): string | null {
-    return [...this.transcript].reverse().find(e => e.who === "ember" && !e.stopped)?.text ?? null;
+  lastAnswer(o: { readable?: boolean } = {}): string | null {
+    // `readable`: not Ember's own "I can't read it out", which a second "read it out" would otherwise read.
+    const unread: readonly string[] = o.readable ? Object.values(READ_OUT_REPLY) : [];
+    return [...this.transcript].reverse().find(e => e.who === "ember" && !e.stopped && !unread.includes(e.text))?.text ?? null;
   }
 
   /**
@@ -3046,6 +3053,16 @@ export class AgentHost {
     if (remembered) {
       this.o.log.info("agent.memory_local");
       this.answerLocally(text, remembered, how);
+      return true;
+    }
+    // "Read it out" (the suggestion under an answer that wasn't said, typed or spoken): the last answer, said once.
+    // No setting changes, and the answer isn't written into the conversation a second time (voice-speaking-r6-1).
+    if (readOutRequest(text) && this.betweenTurns()) {
+      const last = this.lastAnswer({ readable: true });
+      let said = false;
+      try { said = !!last && (this.o.readOut?.(last) ?? false); } catch (err) { this.o.log.warn("agent.read_out_failed", { err }); }
+      this.o.log.info("agent.read_out", { said, answer: !!last });
+      if (!said) this.answerLocally(text, last ? READ_OUT_REPLY.silent : READ_OUT_REPLY.none, how);
       return true;
     }
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
