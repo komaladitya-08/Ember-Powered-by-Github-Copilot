@@ -450,6 +450,8 @@ class Classifier {
   protected hereVarsAt = new Map<number, HereVars>();
   /** POSIX variables set from a substitution that fetched (`x=$(curl …)`): written to a file, the file is a download (commands-remote-c7-3). */
   protected fetchedVars = new Set<string>();
+  /** A command since this was last cleared fetched from the network or printed fetched text (a group's redirection). */
+  protected gaveFetched = false;
   /** `set -a`: every variable set after it is exported to the programs that run (commands-remote-v5-2). */
   allExport = false;
   /** The same for a PowerShell variable (lower case, `env:` kept): only for Ember's own refusal (commands-remote-c3-2). */
@@ -2014,8 +2016,14 @@ class Engine extends Classifier {
         if (background) this.add("escape", "escape.background", SAYS.keepsRunning);
       }
       const savedPipe = this.pipe;
+      const outer = this.gaveFetched;
+      this.gaveFetched = false;
       this.posixList(c.body, inner);
       this.pipe = savedPipe;
+      // What a group or subshell fetched, or fetched text it printed, written to the file its own redirection names is
+      // the download (`{ curl …; } > x.sh`, `(echo "$x") > x.sh`: commands-remote-x7-8).
+      if (this.gaveFetched) for (const r of redirs) if ((r.kind === "write" || r.kind === "append") && !r.op.startsWith("2") && r.target?.v) this.download(r.target.v, sc);
+      this.gaveFetched ||= outer;
       prev = this.at;
     });
     return cd;
@@ -2045,8 +2053,14 @@ class Engine extends Classifier {
     for (const w of allWords) for (const sub of w.subs) if (this.subList(sub, sc)) fetchOf.set(w, true);
     for (const r of c.redirs) for (const sub of r.heredoc?.subs ?? []) this.subList(sub, sc);
     // Text a substitution fetched, kept in a variable (`x=$(curl …)`, `export x=$(curl …)`): commands-remote-c7-3.
-    for (const a of c.assigns) if (fetchOf.get(a.value)) this.fetchedVars.add(a.name);
-    for (const w of c.words) { const m = /^([A-Za-z_]\w*)=/.exec(w.raw); if (m && fetchOf.get(w)) this.fetchedVars.add(m[1]); }
+    // A copy of such a variable holds it too (`y=$x`), and so does one `read` fills from a fetch (`read x < <(curl …)`):
+    // commands-remote-x7-8. A variable is never taken off the list: a later `x=hello` may not have run.
+    const holdsFetched = (w: PWord): boolean => fetchOf.get(w) === true || [...w.raw.matchAll(/\$\{?[#!]?([A-Za-z_]\w*)/g)].some(m => this.fetchedVars.has(m[1]));
+    for (const a of c.assigns) if (holdsFetched(a.value)) this.fetchedVars.add(a.name);
+    for (const w of c.words) { const m = /^([A-Za-z_]\w*)=/.exec(w.raw); if (m && holdsFetched(w)) this.fetchedVars.add(m[1]); }
+    if (READS_LINES.has(c.words[0]?.raw ?? "") && ((o.stdinPipe && this.pipe.fetch) || c.redirs.some(r => r.target !== null && (r.fd === null || r.fd === 0) && r.op.startsWith("<") && holdsFetched(r.target)))) {
+      for (const w of c.words.slice(1)) if (/^[A-Za-z_]\w*$/.test(w.raw)) this.fetchedVars.add(w.raw);
+    }
     // The command as Ember reads its words, redirections and input.
     const read = (): { words: Arg[]; redirs: Redir[]; carried: boolean; s: Simple } => {
       const words = c.words.map(w => this.posixWord(w, sc, fetchOf.get(w) ?? false));
@@ -2063,7 +2077,8 @@ class Engine extends Classifier {
       const ownInput: Simple["ownInput"] = o.stdinPipe ? "other" : c.redirs.length === 0 ? "none" : hereOnly && typeof stdinText === "string" ? "seen" : "other";
       // What it prints reaches the next command only without a redirection of its output.
       const carried = o.pipedOn === true && o.carriedOn === true && !redirs.some(r => r.kind !== "none" && r.kind !== "read" && !r.op.startsWith("2"));
-      const fetched = words.some(w => w.fetch === true || varNames(w).some(n => this.fetchedVars.has(n))) || (stdinVars?.names ?? []).some(n => this.fetchedVars.has(n));
+      const fetched = c.words.some(holdsFetched) || words.some(w => w.fetch === true || varNames(w).some(n => this.fetchedVars.has(n))) || (stdinVars?.names ?? []).some(n => this.fetchedVars.has(n))
+        || c.redirs.some(r => r.op === "<<<" && r.target !== null && holdsFetched(r.target));
       const s: Simple = { words, redirs, stdin, stdinText, stdinVars, ownInput, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom, pipedOn: o.pipedOn || more(sc).captured === true, carriedOn: carried, ...(fetched ? { fetched } : {}) };
       return { words, redirs, carried, s };
     };
@@ -2844,14 +2859,17 @@ class Engine extends Classifier {
     const carried = known && (this.pipe.carried === true || args.some(a => !isOption(a) && this.isDownloaded(a, sc)) || s.redirs.some(r => r.kind === "read" && r.target !== null && this.isDownloaded(r.target, shellSc)));
     if (carried) this.pipe.carried = true;
     // Fetched text that echo, printf or cat prints on (`x=$(curl …); echo "$x" > a.py`, `… | tee a.py`) is the download
-    // still (commands-remote-c7-3).
+    // still (commands-remote-c7-3). Whatever program is given fetched text, the file it writes its output to is one
+    // too (`sed … <<< "$x" > a.py`, `tee a.py <<< "$x"`, `dd of=a.py <<< "$x"`: commands-remote-x7-8).
     const prints = s.fetched === true && PRINTS_TEXT.has(key);
     if (prints) this.pipe.fetch = true;
-    if (s.fetchBefore || FETCHERS.has(key) || carried || prints) {
+    if (prints || carried || FETCHERS.has(key)) this.gaveFetched = true;
+    if (s.fetchBefore || FETCHERS.has(key) || carried || s.fetched === true) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
       if (/^(tee|tee-object|out-file|set-content|add-content)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
       }
+      if (key === "dd") for (const a of args) { const m = a.v === null ? null : /^of=(.+)$/.exec(a.v); if (m && !NULL_SINKS.has(m[1].toLowerCase())) this.download(m[1], sc); }
     }
     const runner = PROJECT_RUNNERS.has(key) || ((key === "docker" || key === "podman") && /^(compose|build|buildx)$/.test(args[0]?.v ?? ""));
     if (!runner || !known) return;
@@ -6706,9 +6724,11 @@ reg(NATIVE, ["http", "https", "xh", "xhs", "httpie"], h => {
   for (const i of items) { const m = /^[^=:@]+(?:=@|:=@|@)(.+)$/.exec(i); if (m) h.e.usePath(lit(m[1]), "read", h.sc); }
   // -o saves the answer to a file; -d (--download) without one saves it under the name the server or the address
   // gives, which Ember can't be sure of (commands-remote-c7-3).
-  const k = h.args.findIndex(a => a.v === "-o" || a.v === "--output");
+  // The name may be written straight after -o, in a cluster too (`-orun.sh`, `-dorun.sh`: commands-remote-x7-8).
+  const k = h.args.findIndex(a => a.v === "-o" || a.v === "--output" || /^-[A-Za-z]*o$/.test(a.v ?? ""));
   const attached = h.args.find(a => /^--output=/.test(a.v ?? ""));
-  const out = k >= 0 ? h.args[k + 1] : attached?.v ? lit(attached.v.slice("--output=".length)) : undefined;
+  const short = /^-[A-Za-np-z]*o(.+)$/.exec(h.args.find(a => /^-[A-Za-np-z]*o./.test(a.v ?? "") && !(a.v ?? "").startsWith("--"))?.v ?? "");
+  const out = k >= 0 ? h.args[k + 1] : attached?.v ? lit(attached.v.slice("--output=".length)) : short ? lit(short[1]) : undefined;
   if (out !== undefined) {
     if (out.v === null) h.e.downloadTo(out, h.sc);
     else { overwrites(h, out, "download.output"); h.e.download(out.v, h.sc); }

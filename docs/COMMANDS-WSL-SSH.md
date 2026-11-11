@@ -205,7 +205,9 @@ Ember stops and asks before a command that:
   https://example.com/tool-$V.sh` records tool-1.2.sh); `wget -x` records the file under the host's folder
   (`example.com/dir/a.py`, with a port `example.com:8080/dir/a.py`) and by its name alone as well, also without the
   host's folder when `-nH` is anywhere in its options (`-xnH`, `--no-host-dir`); text a fetch printed that a variable carries into a file is the download too (`x=$(curl -s
-  …); echo "$x" > a.py`); a repository cloned from an address or into a folder Ember can't see (`git clone $REPO`)
+  …); echo "$x" > a.py`, also through a copy of the variable, `y=$x`, one `read` fills, `read x < <(curl …)`, any
+  program given the text that writes its output to a file, `tee a.py <<< "$x"`, `dd of=a.py`, and a group's own
+  redirection, `{ echo "$x"; } > a.py`); a repository cloned from an address or into a folder Ember can't see (`git clone $REPO`)
   makes the folder it is cloned in count, so building there asks; and `node .` or `python3 tool` asks when the
   folder's entry file (`index.js`, `package.json`, `__main__.py`) is a download. A download Ember can name never
   makes the project's own tools ask: after `curl -LO https://example.com/data.csv`, `python3 analyze.py` and `npm
