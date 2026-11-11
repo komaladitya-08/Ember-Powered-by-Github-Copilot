@@ -143,6 +143,15 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
     expect(local).toBeGreaterThan(remote);
   });
 
+  it("refuses Sign in under a lockdown with the lockdown's own sentence, before any request to GitHub (safety-privacy-c7-3)", () => {
+    const handler = MAIN.slice(MAIN.indexOf("ipcMain.handle(IPC.signIn,"), MAIN.indexOf("ipcMain.handle(IPC.voiceStatus,"));
+    const refuses = handler.indexOf('const lockedDown = modelServiceRefusal(admin); if (lockedDown) { progress({ state: "error", message: lockedDown }); return; }');
+    expect(refuses).toBeGreaterThan(handler.indexOf("if (!consented())"));
+    for (const later of ["signInAbort = ac", "cliWaitStart(", "startDeviceFlow(", "openSignInPage()"]) expect(handler.indexOf(later)).toBeGreaterThan(refuses);
+    // Home's composer says a held lockdown's own way on (a restart), not that the policy has a problem.
+    expect(MAIN).toContain("providerWaitingHost(settings.get(), admin) : null, !!admin.held);");
+  });
+
   it("lets the kill switch stop commands right after the agent", () => {
     expect(MAIN).toMatch(/\{ name: "agent", stop: \(\) => agent\?\.abortAll\(\) \}, \{ name: "targets", stop: \(\) => targets\?\.stopAll\(\) \},/);
   });

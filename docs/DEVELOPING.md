@@ -1211,11 +1211,13 @@ users can't loosen them. If the file exists but can't be read or has a mistake, 
 and says so in its settings window (Home's status panel reads "Locked by your organisation", with no Connect button,
 and the notice asks the user to have the computer's manager fix it; `ember doctor` and the log name the problem):
 no actions, commands or listening, nothing sent to any model service (neither
-GitHub Copilot nor the organisation's own endpoint), and nothing deleted from the audit log. Ember reads the policy
+GitHub Copilot nor the organisation's own endpoint), no GitHub sign-in started (a **Sign in** that still shows asks
+GitHub for nothing and says why), and nothing deleted from the audit log. Ember reads the policy
 again every 10 seconds. Once it changes (tightened, repaired, added or removed, and the next read says so too), Ember
 stops everything and stays locked down until the user restarts it (the bubble offers **Restart Ember**, and the
 settings window says so at once, already open or not: its notice, what it says Ember reads and sends, and the switches
-the lockdown turns off), and the restart reads the new policy whole. Every key is optional:
+the lockdown turns off; a message sent there is refused with "Restart Ember, then send again"), and the restart
+reads the new policy whole. Every key is optional:
 
 ```json
 {

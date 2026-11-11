@@ -1160,6 +1160,9 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     expect(composerRefusal({ phase: "error", reason: "not-answering" })).toBe("Reconnecting to Copilot. Your message is still here: send it again in a moment.");
     expect(composerRefusal({ phase: "error", reason: "not-answering", waitingForTasks: true })).toBe("Copilot isn't answering: reconnecting once the tasks that are running finish. Your message is still here.");
     expect(composerRefusal({ phase: "error", reason: "policy" })).toBe("Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.");
+    // A policy that only changed while Ember ran: a restart is the way on (safety-privacy-c7-3).
+    expect(composerRefusal({ phase: "error", reason: "policy" }, null, true)).toBe("Your organisation changed Ember's policy while Ember was running. Restart Ember, then send again.");
+    expect(composerRefusal({ phase: "error", reason: "network" }, null, true)).toBe("Copilot can't be reached right now. Your message is still here: send it again once you're online.");
     for (const reason of ["sign-in", "no-access", "models", "runtime", "other"] as const) {
       expect(composerRefusal({ phase: "error", reason })).toBe("Can't connect to Copilot yet: Models & connections says why. Your message is still here.");
     }
@@ -1190,7 +1193,7 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     const consent = at('if (!consented()) throw new Error("Finish setup before sending a request.");');
     const locked = at('if (screenLock?.locked) throw new Error("Unlock your screen before sending a request.");');
     const stops = at("const stops = agent?.stopsWith(text) === true;");
-    const refused = at("const refusal = composerSendRefusal(status, stops, status.phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null);");
+    const refused = at("const refusal = composerSendRefusal(status, stops, status.phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held);");
     expect(consent).toBeLessThan(locked);
     expect(locked).toBeLessThan(stops);
     expect(stops).toBeLessThan(refused);
