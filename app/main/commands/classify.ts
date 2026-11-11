@@ -2703,19 +2703,21 @@ class Engine extends Classifier {
   }
 
   /** Unwraps a wrapper: the same command now runs `words`, with the wrapper recorded (sudo rm → program rm, wrappers sudo). */
-  unwrap(h: H, all: Arg[], wrapper: string, o: Partial<Scope> = {}, asProgram = false): void {
+  unwrap(h: H, all: Arg[], wrapper: string, o: Partial<Scope> = {}): void {
     if (all.length === 0) return;
     for (const w of all) this.payloadWords.add(w);
     // After a reserved word the shell still takes `NAME=value` words as assignments: `then LD_PRELOAD=./x.so ls` runs ls
     // with the library loaded, and `do PATH=/tmp/x:/usr/bin` changes where later commands are found. They are judged as
     // at the start of a command, never as the program (commands-remote-c1-1).
     let lead = 0;
-    if (!asProgram && h.sc.family === "posix" && ASSIGNS_AFTER.has(wrapper)) while (lead < all.length && ASSIGNMENT_WORD.test(all[lead].raw)) lead++;
-    // Before these were read as assignments the first one stood as the program, with the command after it as its
-    // words, and some asked for that (`time x=1 sh -c '…'`: a program Ember doesn't know given a shell's text). Judged
-    // that way too, apart: where it asks, this asks (commands-remote-x7-5). After `time` only: after a flow word the
-    // line's `if` or loop decides (scripts.ts), and a read there is read through on purpose (commands-a7-2).
-    const askedAsProgram = lead > 0 && wrapper === "time" && this.asksApartWhole(() => this.unwrap(h, all, wrapper, o, true), READ_FLOW_RULE);
+    if (h.sc.family === "posix" && ASSIGNS_AFTER.has(wrapper)) while (lead < all.length && ASSIGNMENT_WORD.test(all[lead].raw)) lead++;
+    // Before these were read as assignments the first one stood as a program Ember didn't know, and with a word after
+    // it that names a program that runs others (`time x=1 sh -c '…'`, `if IFS= read -r l <<< 'a'`) it asked how the one
+    // runs the other (generic()). Such a command still asks, after a flow word as after `time` (commands-remote-x7-5).
+    const askedAsProgram = lead > 0 && all.slice(1).some(a => {
+      const base = (a.v ?? "").split(/[\\/]/).pop() ?? "";
+      return a.v !== null && /^[A-Za-z]/.test(base) && runners().has(base.toLowerCase().replace(/\.(exe|com)$/, ""));
+    });
     const from = this.findings.length;
     this.unwrapped(h, all, lead, wrapper, o);
     if (askedAsProgram) this.asksAtLeast(from, "unclear.assignment-program", "It sets a variable where a command could stand.");

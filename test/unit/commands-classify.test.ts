@@ -1125,8 +1125,10 @@ describe("loops and ifs (commands-remote-2)", () => {
     // An if or a read that sets no variable from text Ember can't see is read through: a here-string or here-document
     // of written-out text on the read's own input, or no variable at all.
     for (const cmd of [
-      "if [ -f package.json ]; then npm test; fi", "read -r a b <<< 'x y'; echo \"$a\"", "mapfile -t a <<< 'x'", "if IFS= read -r l <<< 'a'; then echo \"$l\"; fi",
+      "if [ -f package.json ]; then npm test; fi", "read -r a b <<< 'x y'; echo \"$a\"", "mapfile -t a <<< 'x'", "if read -r l <<< 'a'; then echo \"$l\"; fi",
     ]) expect(flow(cmd).findings, cmd).toEqual([]);
+    // With a variable set in front of it the read asks inside an if as it does alone, and as main did (commands-remote-x7-5).
+    expect(flow("if IFS= read -r l <<< 'a'; then echo \"$l\"; fi").findings.map(f => f.rule)).toContain("unclear.assignment-program");
     // A loop over written-out words or text asks for nothing more than its own words, which every loop keeps (commands-c7-1).
     for (const cmd of [
       "for i in 1 2 3; do echo $i; done", "for n in 'a b' \"c\" d-e; do echo \"$n\"; done", "while read -r l; do echo \"$l\"; done <<< 'a b'",
@@ -1188,7 +1190,7 @@ describe("loops and ifs (commands-remote-2)", () => {
       "while true; do sleep 1; break; done", "until [ -f x ]; do sleep 1; done", "while read -r l; do echo \"$l\"; done <<< 'a b'",
       "for i in 1 2\ndo echo $i\ndone", "if true; then for i in 1; do echo $i; done; fi", "for f in a b; do echo \"$f\"; done | cat",
     ]) expect(flow(cmd).findings.map(f => f.rule), cmd).toEqual(expect.arrayContaining(["unclear.do", "unclear.done"]));
-    for (const cmd of ["if [ -f package.json ]; then npm test; fi", "if git diff --quiet; then echo clean; else echo dirty; fi", "if IFS= read -r l <<< 'a'; then echo \"$l\"; fi"]) {
+    for (const cmd of ["if [ -f package.json ]; then npm test; fi", "if git diff --quiet; then echo clean; else echo dirty; fi", "if read -r l <<< 'a'; then echo \"$l\"; fi"]) {
       expect(flow(cmd).findings, cmd).toEqual([]);
     }
   });
@@ -2295,6 +2297,11 @@ describe("option values and assignments main read as words, decided no less safe
     }
     // An assignment before an ordinary command ran on main and still runs; the command is still judged as itself.
     for (const cmd of ["time FOO=1 make", "time x=1 ls", "time x=1"]) expect(decided(cmd).verdict, cmd).toBe("run");
+    // After a flow word too: an if is read through only when its commands ask for nothing.
+    for (const cmd of ["if IFS= read -r l <<< 'a'; then echo \"$l\"; fi", "if IFS=: read -r a b <<< x:y; then echo $a; fi", "if x=1 sh -c 'echo $x'; then echo y; fi"]) {
+      expect(withoutReadFlow(classifyCommand(cmd, "bash", contextOf("linux")), "bash").findings.map(f => f.rule), cmd).toContain("unclear.assignment-program");
+    }
+    expect(classifyCommand("if LC_ALL=C grep -q x f; then echo y; fi", "bash", contextOf("linux")).findings.map(f => f.rule)).not.toContain("unclear.assignment-program");
     expect(decided("time x=1 rm -rf ~/.config/ember").verdict).toBe("refuse");
     expect(decided("time x=1 sh -c 'rm -rf build'").rules).toContain("posix.rm");
   });

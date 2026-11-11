@@ -259,7 +259,10 @@ this does."), whatever it does:
   another descriptor (`read -u 3`, `read <&3`), a substitution or a variable (`<<< "$d"`, `<<< "$HOME"`) all ask, and
   a loop's card says so too when its list has any word that isn't written out (a pattern such as `*.log`, a variable,
   `~`, `{1..3}`, a substitution, `"$@"`). `IFS` in front of a loop's or an `if`'s `read` changes only how that `read`
-  splits the line (`if IFS= read -r l <<< 'a b'`); in front of any other command it asks.
+  splits the line, so Ember judges the read as it stands; a variable set in front of a `read`, a shell or another
+  program that runs commands asks all the same, after `if`, `then`, `do` or `time` as on a line of its own (`if IFS=
+  read -r l <<< 'a b'; then …`, `time x=1 sh -c '…'`: "It sets a variable where a command could stand."); in front
+  of any other command it asks.
 
 Ember's own folder named in sight is refused before any of this. zsh's, PowerShell's and cmd's `if` and `for` always
 ask, and so do an `if` in a shell the command starts (`bash -c '…'`), `case`, functions and `{ … }` groups. A loop

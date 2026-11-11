@@ -264,17 +264,22 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(file.result.resultType).toBe("denied");
   }, 20_000);
 
-  it("asks before an if runs a command with a library preloaded, and reads written-out text with an if's IFS= read without asking (commands-remote-c1-1)", async () => {
+  it("asks before an if runs a command with a library preloaded or a read with IFS set in front of it, and reads written-out text with an if's read without asking (commands-remote-c1-1, x7-5)", async () => {
     w.verdicts = () => "deny";
     const preload = await run("if true; then LD_PRELOAD=./x.so ls; fi", "");
     expect(w.cards).toHaveLength(1);
     expect(w.cards[0].says).toContain("It changes how commands are found or run.");
     expect(preload.result.resultType).toBe("denied");
     w.cards.length = 0;
-    const { result } = await run("if IFS= read -r l <<< ' a '; then echo \"got-[$l]\"; fi", "");
+    const set = await run("if IFS= read -r l <<< ' a '; then echo \"got-[$l]\"; fi", "");
+    expect(w.cards).toHaveLength(1);
+    expect(w.cards[0].says).toContain("It sets a variable where a command could stand.");
+    expect(set.result.resultType).toBe("denied");
+    w.cards.length = 0;
+    const { result } = await run("if read -r l <<< ' a '; then echo \"got-[$l]\"; fi", "");
     expect(w.cards).toEqual([]);
     expect(result.resultType).toBe("success");
-    expect(result.textResultForLlm).toContain("got-[ a ]");
+    expect(result.textResultForLlm).toContain("got-[a]");
   }, 20_000);
 
   it("asks before a copy into a folder replaces a file away from folder/name (cp --parents; a Mac's cp -R src/), and keeps it on deny (commands-remote-c2-1)", async () => {

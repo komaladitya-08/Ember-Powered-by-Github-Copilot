@@ -510,10 +510,12 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     }
     // IFS in front of a loop's or an if's read is no assignment; the line loop over a file asks because Ember can't see
     // what it reads (commands-a7-2), with the loop's own words as on main (commands-b7-2), and so does one over
-    // written-out text, as every loop does (commands-c7-1); an if's read of written-out text runs.
+    // written-out text, as every loop does (commands-c7-1); an if's read of written-out text asks with IFS set in front
+    // of it, as on main, and runs without (commands-remote-x7-5).
     expect(await judged("while IFS= read -r l; do echo \"$l\"; done < list.txt")).toMatchObject({ result: "denied", rules: ["unclear.while", "unclear.do", "unclear.done", "unclear.read-text"] });
     expect(await judged("while IFS= read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ result: "denied", rules: ["unclear.while", "unclear.do", "unclear.done"] });
-    expect(await judged("if IFS= read -r l <<< 'a b'; then echo \"$l\"; fi")).toMatchObject({ result: "success", rules: [] });
+    expect(await judged("if IFS= read -r l <<< 'a b'; then echo \"$l\"; fi")).toMatchObject({ result: "denied", rules: ["unclear.if", "unclear.assignment-program", "unclear.then", "unclear.fi"] });
+    expect(await judged("if read -r l <<< 'a b'; then echo \"$l\"; fi")).toMatchObject({ result: "success", rules: [] });
   });
 
   it("says plainly when it can't read all of a script, and not that the user didn't ask when they named it (review #27)", async () => {

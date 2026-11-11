@@ -126,8 +126,10 @@ describe("gate 2 for commands (§3.16)", () => {
       "for i in 1; do PATH=/tmp/evil:/usr/bin; done; git status",
       "time LD_PRELOAD=./x.so ls",
     ]) expect(await real(command), command).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: expect.arrayContaining(["unclear.assignment"]) });
-    // IFS in front of an if's read is no assignment; a loop's asks for the loop's own words only (commands-c7-1).
-    expect((await real("if IFS= read -r l <<< 'a b'; then echo \"$l\"; fi")).status).toBe("ok");
+    // IFS in front of an if's read asks as on main (commands-remote-x7-5), the read alone runs; a loop's asks for the
+    // loop's own words only (commands-c7-1).
+    expect(await real("if IFS= read -r l <<< 'a b'; then echo \"$l\"; fi")).toMatchObject({ status: "needs_confirm", rules: expect.arrayContaining(["unclear.assignment-program"]) });
+    expect((await real("if read -r l <<< 'a b'; then echo \"$l\"; fi")).status).toBe("ok");
     expect(await real("while IFS= read -r l; do echo \"$l\"; done <<< 'a b'")).toMatchObject({ status: "needs_confirm", rules: ["unclear.while", "unclear.do", "unclear.done"] });
   });
 
