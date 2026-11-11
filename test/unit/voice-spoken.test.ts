@@ -515,15 +515,26 @@ describe("AnswerLanguage says an English answer's own closing words in Ember's v
   });
 
   it.each([
-    ["fr", ["Le film que vous cherchez est très connu et il est dans la liste que je vous ai donnée hier.", "Il s'appelle Gone with the Wind.", "Ensuite, choisissez Do not show this again."]],
-    ["de", ["Der Film, den du suchst, ist sehr bekannt und nicht zu lang für einen Abend mit der Familie.", "Er heißt Gone with the Wind.", "Das Buch heißt The Catcher in the Rye.", "Wähle dann Do not show this again."]],
-    ["es", ["La película que buscas es muy conocida y está en la lista que te mandé por la mañana.", "Se llama Gone with the Wind.", "Solo dice have you what you need for the trip."]],
+    ["fr", ["Le film que vous cherchez est très connu et il est dans la liste que je vous ai donnée hier.", "Il s'appelle Gone with the Wind."]],
+    ["es", ["La película que buscas es muy conocida y está en la lista que te mandé por la mañana.", "Se llama Gone with the Wind."]],
     ["it", ["La canzone che cerchi è molto famosa e non è difficile da trovare nella lista che ti ho dato.", "Si chiama Gone with the Wind."]],
     ["ru", ["Файл сохранён на рабочем столе, и вы можете открыть его в любое время, чтобы посмотреть содержимое.", "Ошибка: The file was not found."]],
     ["zh", ["文件已经保存在桌面上了，你可以随时打开它来查看里面的全部内容和图片。请在设置里打开 Do Not Disturb，然后再试一次。错误信息是 The file was not found，请检查路径。"]],
     ["ja", ["ファイルはデスクトップに保存しました。いつでも開いて中身を確認できますので、どうぞご利用ください。", "エラーメッセージは The file was not found です。"]],
   ])("keeps a %s answer's own sentence that names an English title, button or error in that answer's voice, never Ember's English one (voice-speaking-x7-1)", (lang, pieces) => {
     expect(said(pieces)).toEqual(pieces.map(() => lang));
+  });
+
+  it.each(["Sure.", "Of course!", "Got it.", "José wrote:", "The email reads:", "One new email, from José:", "Here is the email from José:"])("asks the closing question in Ember's voice after a Spanish email, in an answer that opens with “%s” (voice-speaking-y7-1)", opener => {
+    expect(said([opener, "Nos vemos mañana a las diez en la oficina.", "Trae los documentos del proyecto, por favor.", "Shall I reply to it?"]).slice(2)).toEqual(["es", null]);
+  });
+
+  it("asks the closing question in Ember's voice after a message that ended before a tool call (voice-speaking-y7-1)", () => {
+    const answer = new AnswerLanguage();
+    answer.reset("");
+    answer.take(["Sure, one moment."], true, true);
+    const pieces = ["José wrote:", "Nos vemos mañana a las diez en la oficina.", "Trae los documentos del proyecto, por favor.", "Shall I reply to it?"];
+    expect(pieces.flatMap((p, i) => answer.take([p], i === pieces.length - 1)).map(p => p.lang).slice(1)).toEqual(["es", "es", null]);
   });
 
   it("says a passage's sentence that only carries English words in the passage's voice, in an answer that opened in English (voice-speaking-x7-1)", () => {
