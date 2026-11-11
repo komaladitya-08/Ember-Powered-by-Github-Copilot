@@ -856,7 +856,8 @@ label waits for its step, and what is before it is said once its line has come),
 its labelled steps too, is said as each item's line ends, not after the whole answer, each line ending as the whole
 answer's would (a colon line's run goes on past a label line among its lines: "Note: this can take a while."). What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
-last part, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
+last part (through a dot folder too: "~/.config/ember" is "ember"), a ticked task-list box as "Done:" and an open one
+not at all, common inline HTML tags, footnote marks and "&amp;" unsaid or as the character they stand for, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
 "Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", an arrow key by its name ("Press the →
 key" as "the right arrow key", "Press ← or →" as "left arrow or right arrow") or, before the word "arrow", by its
 direction ("the ← and → arrow keys" as "the left and right arrow keys"), in a chord as the other keys are ("Win+←" as

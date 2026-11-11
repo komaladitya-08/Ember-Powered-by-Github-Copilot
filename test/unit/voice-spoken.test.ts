@@ -186,6 +186,29 @@ describe("spokenText says money, times, paths and numbers as people say them, an
   ])("leaves %j as it is", text => expect(spokenText(text)).toBe(text.replace("John 3:16", "John 3 16")));
 });
 
+describe("spokenText leaves markup that is only for the eye unsaid, and says a path through a dot folder as any other (round seven)", () => {
+  it.each([
+    ["It is at /home/me/.config/ember/settings.json now.", "It is at settings.json in ember now."],
+    ["It is in ~/.config/ember.", "It is in ember."],
+    ["See ~/.bashrc and /home/me/.ssh/config.", "See .bashrc in your home folder and config."],
+    // As before: a file with its folder, anything else by its last part, and no path in an address or a version.
+    ["Saved to /home/me/Documents/notes.txt.", "Saved to notes.txt in Documents."],
+    ["Version 1.2/.3 and and/or stay.", "Version 1.2/.3 and and/or stay."],
+  ])("says %j as %j (voice-speaking-r7-2)", (text, said) => expect(spokenText(text)).toBe(said));
+
+  it.each([
+    ["- [ ] Buy milk.\n- [x] Call Ana.\n- [X] Pay rent.", "Buy milk.\nDone: Call Ana.\nDone: Pay rent."],
+    ["Water is H<sub>2</sub>O, and <b>this</b> is <em class=\"x\">bold</em>.", "Water is H2O, and this is bold."],
+    ["First line.<br>Second line.<br/>Third.", "First line. Second line. Third."],
+    ["Fish &amp; chips, &quot;to go&quot;, 3&nbsp;portions, a&lt;b.", "Fish and chips, \"to go\", 3 portions, a<b."],
+    ["See the note[^1] here.[^note]", "See the note here."],
+    // What isn't markup is said as written: a placeholder, a comparison, a tag shown as code, a list in brackets.
+    ["Type <name> here, if a < b and c > d.", "Type <name> here, if a < b and c > d."],
+    ["Wrap it in `<b>` and `&amp;`.", "Wrap it in <b> and &amp;."],
+    ["Pick [x] or [ ] in the form.", "Pick [x] or [ ] in the form."],
+  ])("says %j as %j (voice-speaking-r7-3)", (text, said) => expect(spokenText(text)).toBe(said));
+});
+
 describe("spokenText", () => {
   it.each([
     ["Run this:\n\n```bash\nsudo dnf install foo\n```\n\nThen restart.", "Run this:\n(code shown in the bubble)\nThen restart."],

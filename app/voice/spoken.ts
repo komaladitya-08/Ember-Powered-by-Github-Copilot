@@ -160,9 +160,10 @@ function clock(_m: string, h: string, mm: string, meridiem: string | undefined):
  * A file's or a folder's path ("~/Documents/report.pdf", "C:\\Users\\alex\\notes.txt", "/mnt/backup"): read out, it was
  * "tilde slash ember slash report.pdf" (and 7.9 s for a Windows one). A file is said with its folder ("report.pdf in
  * Documents"), anything else by its last part ("backup"); the bubble shows the whole path. An address, "and/or" and
- * "1/2" aren't paths.
+ * "1/2" aren't paths. A folder or a file whose name starts with a dot is one like any other ("~/.config/ember":
+ * "/home/me/.config/ember/settings.json" was "me.config/ember/settings.json", voice-speaking-r7-2).
  */
-const PATH = /(?<![\w.~/\\:-])(?:~(?:\/[\w@+-]+(?:\.[\w@+-]+)*)+|\/(?:[\w@+-]+(?:\.[\w@+-]+)*\/)+[\w@+-]+(?:\.[\w@+-]+)*|[A-Za-z]:\\(?:[\w@+$-]+(?:\.[\w@+$-]+)*\\)*[\w@+$-]+(?:\.[\w@+$-]+)*)\/?/g;
+const PATH = /(?<![\w.~/\\:-])(?:~(?:\/\.?[\w@+-]+(?:\.[\w@+-]+)*)+|\/(?:\.?[\w@+-]+(?:\.[\w@+-]+)*\/)+\.?[\w@+-]+(?:\.[\w@+-]+)*|[A-Za-z]:\\(?:[\w@+$-]+(?:\.[\w@+$-]+)*\\)*[\w@+$-]+(?:\.[\w@+$-]+)*)\/?/g;
 function pathSaid(p: string): string {
   const parts = p.split(/[/\\]/).filter(Boolean);
   const name = parts[parts.length - 1], folder = parts[parts.length - 2];
@@ -204,6 +205,18 @@ const HOURS = /((?<![\w:.,$£€¥])\d{1,2}(?::[0-5]\d)?(?:[ \t]?[ap]\.?m\.?)?)[
 /** What an amount is worth, with its scale ("2.5M"), to tell a range from a sum. */
 const SCALES: Readonly<Record<string, number>> = { k: 1e3, thousand: 1e3, m: 1e6, million: 1e6, bn: 1e9, b: 1e9, billion: 1e9, trillion: 1e12 };
 const worth = (n: string, scale?: string) => Number(n.replace(/,/g, "")) * (scale ? SCALES[scale.toLowerCase()] : 1);
+
+/**
+ * Markup that is only for the eye (voice-speaking-r7-3), outside inline code: a line break and the common inline HTML
+ * tags, a footnote's mark and the commonest character entities were read out letter by letter ("less than sub greater
+ * than"). Anything else in angle brackets is said as written ("<name>", "a < b").
+ */
+const EYE_ONLY = /(`+)(?!`)[^\n]*?(?<!`)\1(?!`)|<(br)\s*\/?>|<\/?(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)(?:\s[^<>\n]*)?>|\[\^[^\]\s]{1,24}\]|&(amp|lt|gt|quot|apos|nbsp|#39);/gi;
+const ENTITY: Readonly<Record<string, string>> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", "#39": "'", nbsp: " " };
+const withoutEyeOnly = (text: string): string =>
+  text.replace(EYE_ONLY, (m: string, code: string | undefined, br: string | undefined, entity: string | undefined) => (code ? m : br ? " " : entity ? ENTITY[entity.toLowerCase()] : ""));
+/** A task list's box: an open one is unsaid, a ticked one is "Done:" (it was read "x": voice-speaking-r7-3). */
+const TASK_BOX = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[([ xX])\][ \t]+(?=\S)/gm;
 
 /** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
@@ -327,7 +340,8 @@ export function spokenText(markdown: string, o: { ledIn?: boolean; lineStart?: s
     .replace(FENCED_CODE, `$1${CODE}`)
     // Tables: a header row and its |---| line, and the rows after it.
     .replace(/(^|\n)[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}[\s\S]*?(?=\n[ \t]*(?!\|)|$)/g, `$1${TABLE}`);
-  const plain = linkLabels(prose)
+  const plain = withoutEyeOnly(linkLabels(prose))
+    .replace(TASK_BOX, (_m, lead: string, box: string) => (box === " " ? lead : `${lead}Done: `))
     // A heart between words is a word ("I ❤️ Paris"): dropped with the other emoji, it was "I Paris".
     .replace(/([\p{L}\p{N}])[ \t]*[\u2764\u2665]\uFE0F?[ \t]*(?=[\p{L}\p{N}])/gu, "$1 love ")
     .replace(EMOJI_BETWEEN, "$1. ")
