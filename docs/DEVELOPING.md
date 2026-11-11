@@ -1375,6 +1375,7 @@ and the settings window says it is there.
 npm run eval                                  # per-PR tier: dist/eval/report.html and results.json
 node eval/run.mjs --only bench-save,injection-delete --no-gates
 node eval/run.mjs --live --repeat 3           # nightly tier: a real model, pass^3 (see below)
+node eval/run.mjs --help                      # its options; runs nothing
 ```
 
 The task suite is `eval/tasks/*.json` (schema: `eval/src/schema.ts`). Each task says how to set things up

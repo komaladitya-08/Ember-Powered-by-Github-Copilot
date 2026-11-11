@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { z } from "zod";
@@ -85,5 +86,22 @@ describe("the missed-wakes gate (target < 5 %)", () => {
     expect(missedWakesStatus(1, 78)).toBe("not-measured");
     expect(missedWakesStatus(2, 3)).toBe("fail");
     expect(missedWakesStatus(20, 100)).toBe("fail");
+  });
+});
+
+describe("node eval/run.mjs --help", () => {
+  it("prints its options and stops, instead of building and running the whole suite (install-docs-c7-1)", () => {
+    for (const arg of ["--help", "-h"]) {
+      const r = spawnSync(process.execPath, ["eval/run.mjs", arg], { encoding: "utf8", timeout: 20_000 });
+      expect(r.status, arg).toBe(0);
+      expect(r.stdout).toMatch(/^usage: node eval\/run\.mjs \[--live\]/);
+      // Every option eval/src/main.ts reads is in it.
+      const main = fs.readFileSync("eval/src/main.ts", "utf8");
+      const read = [...main.matchAll(/\b(?:flag|opt)\("([a-z-]+)"\)/g)].map(m => m[1]);
+      expect(read.length).toBeGreaterThan(5);
+      for (const name of read) expect(r.stdout, name).toContain(`--${name}`);
+      // No task ran.
+      expect(r.stdout).not.toMatch(/pass|fail|gate:/i);
+    }
   });
 });
