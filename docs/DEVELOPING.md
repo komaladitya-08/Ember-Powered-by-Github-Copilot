@@ -125,6 +125,15 @@ conversation-history-live skip), under `dbus-run-session -- xvfb-run -a -s "-scr
 speech integration tests. `node scripts/voice/prepare.mjs` includes it; the gate needs a supported native sherpa
 runtime. It does not change the app's consent or speaking settings.
 
+Three more switches belong to the tests themselves (the test process reads them, not Ember):
+`EMBER_VOICE_TEST=1` makes the voice suite (test/integration/voice.test.ts, on the models from
+`node scripts/voice/prepare.mjs`) fail instead of skipping when the models aren't there, which is how the gate and CI
+run it; `EMBER_UI_EVIDENCE=<folder>` saves the renderer journeys' screenshots there (the conversation, memory,
+natural-voice, panes, integrations and first-run journeys, and project-live), for a visual check, and should point
+outside the repository; and `EMBER_RUNTIME_ENV_LIVE=1` runs the offline check of the real Copilot runtime's
+environment, only through `scripts/runtime-env-live.sh`, which gives it a network namespace with nothing but loopback
+(not in CI).
+
 ### Using Ember
 
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words

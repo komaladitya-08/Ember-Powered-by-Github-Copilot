@@ -254,6 +254,19 @@ describe("docs/DEVELOPING.md", () => {
     expect(line).toContain("xcompmgr");
   });
 
+  it("names the voice gate's switch, the screenshot folder and the offline runtime check among the test switches (install-docs-c7-2)", () => {
+    const dev = flat(read("docs/DEVELOPING.md"));
+    // CLAUDE.md's gate and CI set the first; the tests read all three.
+    expect(read("CLAUDE.md")).toContain("EMBER_VOICE_TEST=1 npm run test:integration");
+    expect(read(".github/workflows/ci.yml")).toContain('EMBER_VOICE_TEST: "1"');
+    expect(read("test/integration/voice.test.ts")).toContain('process.env.EMBER_VOICE_TEST !== "1"');
+    expect(read("test/integration/home-conversation-renderer.test.ts")).toContain("process.env.EMBER_UI_EVIDENCE");
+    expect(read("test/integration/runtime-env-live.test.ts")).toContain('process.env.EMBER_RUNTIME_ENV_LIVE === "1"');
+    expect(dev).toMatch(/`EMBER_VOICE_TEST=1` makes the voice suite \([^)]*\) fail instead of skipping when the models aren't there/);
+    expect(dev).toContain("`EMBER_UI_EVIDENCE=<folder>` saves the renderer journeys' screenshots there");
+    expect(dev).toMatch(/`EMBER_RUNTIME_ENV_LIVE=1` runs [^.]*, only through `scripts\/runtime-env-live\.sh`/);
+  });
+
   it("gives the kill switch's real-time deadline step in the gate, right after the unit tests, as CI's three jobs run it (install-docs-r7-1)", () => {
     const ci = read(".github/workflows/ci.yml");
     const step = "npm run test:integration -- test/integration/killswitch-deadline.test.ts";
