@@ -384,19 +384,20 @@ describe("what used to be true, in Settings › Memory (memory-c7-2)", () => {
 
   it("lists one summary per subject however often Ember rewords it: an earlier wording is not “No longer true” (memory-x7-4)", () => {
     const { s, onDisk } = reworded(6);
-    expect(s.memory.review().map(r => [r.text, !!r.until])).toEqual([["Summary v6: works on Atlas", false], ["Works on Atlas", false]]);
+    // The two were kept in the same millisecond on a fast machine, so their order isn't the subject here.
+    expect(s.memory.review().map(r => [r.text, !!r.until]).sort()).toEqual([["Summary v6: works on Atlas", false], ["Works on Atlas", false]]);
     expect(onDisk()).toHaveLength(7);
   });
 
   it("forgets a summary's earlier wordings with it from Settings, so none is left unseen, and Undo puts them back (memory-x7-4)", () => {
     const { s, onDisk } = reworded(3);
-    const gone = s.memory.forgetCounted(s.memory.review()[0].id, false)!;
+    const gone = s.memory.forgetCounted(s.memory.review().find(r => r.text.startsWith("Summary"))!.id, false)!;
     expect([gone.text, gone.derived]).toEqual(["Summary v3: works on Atlas", 0]);
     expect(onDisk()).toEqual(["Works on Atlas"]);
     expect(s.memory.review().map(r => r.text)).toEqual(["Works on Atlas"]);
     expect(s.memory.restore(gone.undo)).toBe(true);
     expect(onDisk()).toHaveLength(4);
-    expect(s.memory.review().map(r => r.text)).toEqual(["Summary v3: works on Atlas", "Works on Atlas"]);
+    expect(s.memory.review().map(r => r.text).sort()).toEqual(["Summary v3: works on Atlas", "Works on Atlas"]);
   });
 
   it("counts only the notes that were listed when the fact they came from is forgotten, and removes every wording (memory-x7-4)", () => {
