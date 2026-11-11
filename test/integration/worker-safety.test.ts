@@ -1888,18 +1888,19 @@ describe("review round 9: policy and selections", () => {
     }
   });
 
-  it("a control whose name the reader withheld is asked about, in a page where names were withheld too; one simply unnamed isn't (P10-1)", async () => {
+  it("a control whose name the reader withheld is asked about, in a page where names were withheld too; one simply unnamed is asked about as Ember's doubt (P10-1, safety-privacy-c7-2)", async () => {
     const page = { id: 1, role: "document web", name: "Checkout" };
     for (const [goal, nodes, asks] of [
       ["Fill in my shipping address (withheld)", [page, { id: 2, role: "push button", name: "", withheld: true, parent: 1 }], true],
       ["Fill in my shipping address (in a page with names withheld)", [page, { id: 3, role: "label", name: "", withheld: true, parent: 1 }, { id: 2, role: "push button", name: "", parent: 1 }], true],
-      ["Fill in my shipping address (unnamed)", [page, { id: 2, role: "push button", name: "", parent: 1 }], false],
-    ] as [string, FakeNode[], boolean][]) {
+      ["Fill in my shipping address (unnamed)", [page, { id: 2, role: "push button", name: "", parent: 1 }], "doubt"],
+      ["Fill in my shipping address (unnamed, in a desktop app)", [{ id: 1, role: "panel", name: "" }, { id: 2, role: "push button", name: "", parent: 1 }], false],
+    ] as [string, FakeNode[], boolean | "doubt"][]) {
       plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }]);
       const screen = fakeScreen(nodes);
       const asked: string[] = [];
       await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-      expect(asked, goal).toEqual(asks ? ["Click the button in Testapp? I can't show what it says: it may reveal something private."] : []);
+      expect(asked, goal).toEqual(asks === "doubt" ? ["Click the button on the “Checkout” document web in Testapp? I can't tell what it does: it has no name."] : asks ? ["Click the button in Testapp? I can't show what it says: it may reveal something private."] : []);
       expect(screen.log.length, goal).toBe(asks ? 0 : 1);
     }
   });

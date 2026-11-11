@@ -2483,7 +2483,8 @@ export class Worker {
 
   /**
    * Where element `id` is when it has no name (an icon, an unnamed button), for the question asked about it: the named
-   * control around it (not the window itself), else its place in the window.
+   * control around it (not the window itself), else its place in the window. The policy also judges an unnamed button
+   * by that control's name ("Send message"), only ever towards asking.
    */
   private placeOf(id: number, element: Focus): Pick<ActionRequest, "place"> {
     // (A text area or field is named well enough by what it is: "the text area".)
@@ -2814,6 +2815,8 @@ export class Worker {
       taskId: this.spec.id, kind, app: this.window.app, window: this.window.name, element, value,
       ...(kind === "text" ? { mode: judged, currentText: node.text, ...(prior ? { typed: prior + (value ?? "") } : {}), ...this.formulaOf(node, value, judged), ...this.ownText(field, node.text) } : {}),
       ...((kind === "click" || kind === "toggle") && selects ? { clickSelects: true } : {}),
+      // A page's button with no name is asked about (policy's BARE_BUTTON): the policy is told where the click lands.
+      ...((kind === "click" || kind === "toggle") && inWebPage(node, i => this.known.get(i)) ? { onPage: true } : {}),
       ...(dialog ? { dialog } : {}),
       ...this.placeOf(id, element),
     };
@@ -3032,6 +3035,7 @@ export class Worker {
         around: fieldAround(node, this.labels.get(node.id), i => this.known.get(i), this.known.values()),
         ...(this.knownWhole && mainDocument(node, this.known.values()) ? { mainDocument: true } : {}) } : {}),
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
+      ...(kind === "cursor_click" && inWebPage(node, i => this.known.get(i)) ? { onPage: true } : {}),
       ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
     const context = this.actionContext();
     // Append/replace explicitly choose where text goes after this click. Only the target's selection may collapse

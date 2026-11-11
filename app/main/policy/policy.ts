@@ -54,8 +54,9 @@ export interface ActionRequest {
   /** Keys: the focused element takes no typing (a page's document, not a field or an editable area of it). */
   notEditable?: boolean;
   /**
-   * Where an element without a name is, for the question only (never judged): the named control it sits in ("Save"
-   * push button), or its place in the window ("top right").
+   * Where an element without a name is, for the question: the named control it sits in ("Save" push button), or its
+   * place in the window ("top right"). A button with no name of its own is also judged by that control's name, which
+   * can only make it ask (BARE_BUTTON).
    */
   place?: { role: string; name: string } | { at: string };
   /** For text: what will be typed; for settings: the new value; for keys: the combination. */
@@ -113,6 +114,11 @@ export interface ActionRequest {
   dialog?: { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[]; messageBox?: boolean };
   /** For keys: the focused element is in a web page (Chromium's, Firefox's or an Electron app's), where Enter can send. */
   inPage?: boolean;
+  /**
+   * For clicks and toggles: the element is in a web page, as the worker found it in the tree. Only ever a reason to ask
+   * (a button with no name there, BARE_BUTTON); `inPage` stays the keys' and the typing's.
+   */
+  onPage?: boolean;
   /**
    * For text: the field's labels and the names of the panes and tabs around it, up to its window (a "Python Console"
    * tab, an "Output" pane), as the worker read them: plainEditorLines refuses a console's field by them.
@@ -2196,6 +2202,18 @@ const APPLY = new RegExp(`^\\s*(${foldLabel(["apply", "übernehmen", "anwenden",
 /** Controls that set something: check boxes, radio buttons, switches (and their menu items). */
 const SETTING_ROLES = /^(check box|radio button|toggle button|switch|check menu item|radio menu item)$/;
 const SECURITY_SETTING = "this changes a security or privacy setting";
+/**
+ * Buttons judged when their name says nothing (no letter or digit: none at all, or only a symbol): by the named control
+ * around them wherever they are, and in a web page as Ember's doubt, since a page's send, confirm and delete buttons are
+ * often an icon alone (audit of 2026-11-11, safety-privacy-c7-2). A desktop app's unnamed tool button, and a page's
+ * unnamed link (it leads somewhere), go as before.
+ */
+const BARE_BUTTON = /^(push button|button|split button|toggle button|push button menu)$/;
+/** Symbols that stand for sending, confirming or deleting (arrows, a paper plane, an envelope, a tick, a bin): never only doubt. */
+const SENDS_GLYPH = /[\u2190-\u21ff\u2794-\u27bf\u2b05-\u2b0d\u23ce\u2708\u2709\u2713\u2714\u2705\u{1f4e4}\u{1f4e8}\u{1f4e9}\u{1f4e7}\u{1f5d1}\u{1f680}]/u;
+const BARE: Risk = { reason: "this button has no name, so Ember can't tell what it does", note: "I can't tell what it does: it has no name.", plain: true };
+const BARE_GLYPH: Risk = { reason: "this button has only a symbol for a name, one that may send, confirm or delete", note: "I can't tell what it does: it may send, confirm or delete something." };
+const BARE_IN = (around: string): Risk => ({ reason: "this button has no name, and what it sits in is named for something hard to undo or visible to others", about: around });
 /** A control whose name the screen reader withheld (it may say what a secret field holds): what it does can't be shown. */
 const WITHHELD: Risk = { reason: "Ember can't show what this control says (it may reveal something private)", note: "I can't show what it says: it may reveal something private." };
 
@@ -2442,6 +2460,12 @@ export class PolicyEngine {
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     // A bare "Disable" or "Turn off" on a page or dialog titled for a protection ("Two-factor authentication") turns it off.
     const unprotects = ACTIVATING_ROLES.test(role) && TURNS_OFF.test(normalizeLabel(name)) && PROTECTION_TITLE.test(normalizeLabel(`${r.window} ${r.dialog?.name ?? ""}`));
+    // A button with no name, or only a symbol for one (BARE_BUTTON): its name says nothing of what it does.
+    const bare = !!r.element && !r.element.withheld && BARE_BUTTON.test(role) && !/[\p{L}\p{N}]/u.test(name.normalize("NFKC"));
+    // The named control it sits in says it (the worker's `place`: a form named "Send message"), judged as a button's name would be.
+    // (Not the page's document itself, which is named by the page's title: every unnamed button of a page titled "Send
+    // feedback" isn't a send button. In a page it asks as Ember's doubt below.)
+    const around = bare && r.place && "name" in r.place && !/^document\b/.test(r.place.role) && isRiskyControl("push button", r.place.name, os) ? r.place.name : "";
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
     const named = (riskyNamed && !opensDialog(role, name)) || unprotects;
     // A lone "Confirm" or "Approve" agrees to what its dialog (or the window's title) says, as "OK" does: it is judged by that.
@@ -2468,10 +2492,12 @@ export class PolicyEngine {
         if (ACTIVATING_ROLES.test(role) && r.inPage && PAYMENT_PAGE.test(normalizeLabel(r.window))) return { reason: "this button is on a payment page, where it may buy something", about: name };
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
+        if (around) return BARE_IN(around);
         if (SETTING_ROLES.test(role) && (securitySetting(name) || secureDialog)) return secure(name);
         if (SETTING_ROLES.test(role) && systemSettings) return system(name);
         if (answer) return answer;
         if (conflict) return goesAhead;
+        if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
         return null;
       case "select": {
         const value = r.value ?? "";
@@ -2538,6 +2564,8 @@ export class PolicyEngine {
           if (r.element?.withheld) return WITHHELD;
           if (ACTIVATING_ROLES.test(role) && answer) return { ...answer, reason: settings ? answer.reason : "this answers a dialog, and Ember can't be sure what it agrees to" };
           if (ACTIVATING_ROLES.test(role) && conflict) return goesAhead;
+          if (around) return BARE_IN(around);
+          if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };
           // Enter in a text field is a typed line break (as type_text's is): where it may send a chat message or submit a
           // form, it is asked about (enterMaySend).

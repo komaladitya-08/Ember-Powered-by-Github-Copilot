@@ -50,3 +50,56 @@ describe("risky controls an app's “Always” never covers", () => {
     expect(engine().decide(click(name)).verdict).toBe("allow");
   });
 });
+
+describe("a button with no name, or only a symbol for one", () => {
+  const bare = (name: string, r: Partial<ActionRequest> = {}) => click(name, { window: "Chat - Mozilla Firefox", ...r });
+
+  it.each([["form", "Send message"], ["section", "Delete account"], ["panel", "Post reply"], ["group", "Pay now"]])(
+    "is judged by the named %s “%s” it sits in, and asks every time (safety-privacy-c7-2)", (role, name) => {
+      asksAlways(bare("", { place: { role, name } }));
+      asksAlways(bare("➤", { place: { role, name } }));
+      // In a desktop app's window too.
+      asksAlways(bare("", { app: "gedit", window: "notes.txt", inPage: undefined, place: { role, name } }));
+    });
+
+  it("says what it sits in when the user's words asked for that (safety-privacy-c7-2)", () => {
+    expect(engine().decide(bare("", { goal: "send the message to Ana", place: { role: "form", name: "Send message" } }))).not.toHaveProperty("aligned", false);
+    expect(engine().decide(bare("", { goal: "read the chat", place: { role: "form", name: "Send message" } }))).toMatchObject({ verdict: "confirm", aligned: false });
+  });
+
+  it.each(["➤", "↑", "→", "➜", "✈", "✉", "📨", "📤", "✓", "✔", "🗑", "⏎"])("in a page, named only “%s”, asks every time: it may send, confirm or delete (safety-privacy-c7-2)", name => {
+    asksAlways(bare(name));
+    asksAlways(bare(name, { kind: "keys", value: "Return" }));
+  });
+
+  it("in a page, with no name at all, asks as Ember's doubt: “Work without asking” announces it instead (safety-privacy-c7-2)", () => {
+    for (const r of [bare(""), bare("", { place: { at: "bottom right" } }), bare("", { place: { role: "section", name: "Toolbar" } }), bare("⋮"), bare("", { kind: "keys", value: "space" })]) {
+      expect(engine().decide(r)).toMatchObject({ verdict: "confirm" });
+      expect(engine(true).decide(r)).toMatchObject({ verdict: "allow", autonomy: true });
+    }
+  });
+
+  it("isn't judged by the page's own title, where the page's document is all that names it: only Ember's doubt (safety-privacy-c7-2)", () => {
+    const r = bare("", { place: { role: "document web", name: "Send feedback" } });
+    expect(engine().decide(r)).toMatchObject({ verdict: "confirm" });
+    expect(engine().decide(r)).not.toHaveProperty("aligned", false);
+    expect(engine(true).decide(r)).toMatchObject({ verdict: "allow", autonomy: true });
+  });
+
+  it("asks the same when the worker says the click lands in a page (`onPage`), by accessibility or the borrowed mouse (safety-privacy-c7-2)", () => {
+    for (const kind of ["click", "cursor_click", "toggle"] as const) {
+      expect(engine().decide(bare("", { kind, inPage: undefined, onPage: true })).verdict).toBe("confirm");
+      asksAlways(bare("↑", { kind, inPage: undefined, onPage: true }));
+    }
+  });
+
+  it("says in the question that it can't tell what the button does", () => {
+    expect(engine().decide(bare("")).prompt).toMatch(/I can't tell what it does: it has no name\.$/);
+  });
+
+  it("leaves a named button, a page's unnamed link and a desktop app's unnamed button as they were", () => {
+    expect(engine().decide(bare("Next")).verdict).toBe("allow");
+    expect(engine().decide(bare("", { element: { role: "link", name: "" } })).verdict).toBe("allow");
+    expect(engine().decide(bare("", { app: "gedit", window: "notes.txt", inPage: undefined, place: { role: "tool bar", name: "Tools" } })).verdict).toBe("allow");
+  });
+});
