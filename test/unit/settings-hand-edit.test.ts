@@ -73,3 +73,34 @@ describe("hand edits of settings.json while Ember runs (review #92)", () => {
     expect(JSON.parse(fs.readFileSync(f, "utf8"))).toMatchObject({ character: "glint", size: 60, speak: false });
   });
 });
+
+describe("a settings.json Ember can't read at all, at start", () => {
+  const start = (text: string) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-unread-"));
+    const f = path.join(dir, "settings.json");
+    fs.writeFileSync(f, text);
+    const store = new SettingsStore(f, null);
+    const loaded = store.load();
+    return { store, loaded, backup: path.basename(loaded.recoveredFrom ?? "") };
+  };
+
+  it("says every setting went back to its default and that Ember asks to be set up again, not that some did (reliability-r7-3)", () => {
+    // Cut off mid-write: nothing can be read, so consent and the welcome go too.
+    const { store, loaded, backup } = start('{ "version": 1, "onboarded": true, "character": "wi');
+    expect(loaded.settings.onboarded).toBe(false);
+    expect(backup).toMatch(/^settings\.json\.bad-/);
+    expect(store.lastProblem).toBe(`settings.json couldn't be read, so every setting went back to its default and Ember asks you to set it up again; your version is saved as ${backup}.`);
+  });
+
+  it("says the never-look list was kept when it could be picked out of the file (reliability-r7-3)", () => {
+    const { store, loaded, backup } = start('{ "privacy": { "neverLook": ["Bank"] }, "character": "wi');
+    expect(loaded.settings.privacy.neverLook).toEqual(["Bank"]);
+    expect(store.lastProblem).toBe(`settings.json couldn't be read, so every setting but your never-look list went back to its default and Ember asks you to set it up again; your version is saved as ${backup}.`);
+  });
+
+  it("still says only some settings went back when the rest of the file was kept", () => {
+    const { store, loaded } = start('{ "character": "wisp", "size": 800 }');
+    expect(loaded.settings.character).toBe("wisp");
+    expect(store.lastProblem).toMatch(/^Some of settings\.json couldn't be used, so those settings went back to their defaults/);
+  });
+});

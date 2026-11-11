@@ -1043,8 +1043,10 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 
 A hand edit of `settings.json` that Ember can't use is copied aside as `settings.json.bad-<time>` (the three newest
-are kept); one it can repair is tidied once it has stayed the same for 2 s. A `settings.json` that can't be read at
-start-up is never replaced with defaults: Ember says so, keeps changes in memory and saves them over the file once it
+are kept); one it can repair is tidied once it has stayed the same for 2 s. When Ember starts on one that isn't JSON
+at all (cut off mid-write, say), nothing in it can be kept but the never-look list, so Home says every setting went
+back to its default and that Ember asks to be set up again, and names the copy. A `settings.json` whose file can't be
+opened at start-up (its permissions, say) is never replaced with defaults: Ember says so, keeps changes in memory and saves them over the file once it
 reads again.
 
 A short filesystem write is completed before settings replace the previous file. If writing stops or the disk fills,
