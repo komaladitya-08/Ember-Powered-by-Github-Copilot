@@ -424,7 +424,11 @@ working: then Ember says so and points to the setup check),
 it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
 it's going ahead without asking), until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
 windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
-still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
+still asks first, the question says you didn't ask for it, and from then on that task asks before every step. A
+link, tab or menu item asked about only because its name starts with a word that grants or commits (a headline
+“Reserve Bank raises rates”, a tab “Email”, “Allow Editing”) asks every time too, but isn't called something you didn't
+ask for and doesn't put the task back to asking, since such words lead headlines, tabs and settings as well; a button so
+named is.
 **Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop”, “stop typing” or “abort” in
 the Ask box while a task is at work) stops every task, question, borrowed mouse,
 desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for

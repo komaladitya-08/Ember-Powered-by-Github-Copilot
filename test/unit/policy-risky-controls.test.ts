@@ -139,6 +139,28 @@ describe("labels that start with a word that grants or commits", () => {
     ["menu item", "Purge cache"]])("a %s named “%s” asks every time (safety-privacy-y7-1)", (role, name) => {
     asksAlways(click(name, { inPage: undefined, onPage: true, goal: "look at my account", element: { role, name } }));
   });
+
+  // Those words also lead headlines, tabs and settings: such a step still asks every time, but isn't called something
+  // the user didn't ask for, which put the rest of the task back to asking (regression review of round seven).
+  it.each([["link", "Reserve Bank raises interest rates again", "read the top story"], ["link", "Sell-off deepens as markets slide", "read the top story"],
+    ["link", "Purge of officials continues", "read the top story"], ["link", "Permit applications open on Monday", "read the top story"],
+    ["link", "Make public transport free, says mayor", "read the top story"], ["link", "Book a demo", "find out what it costs"], ["page tab", "Email", "open the email settings tab"],
+    ["page tab", "Book", "open the reading list"], ["menu item", "Allow Editing", "edit the document"], ["menu item", "Email", "look at the menus"]])(
+    "a %s named “%s” asks every time, and isn't flagged as unasked for “%s” (safety-privacy-x7-1)", (role, name, goal) => {
+      // (Enter on a tab goes as before: only a click on one is judged by its name.)
+      const enter = role === "page tab" ? [] : [click(name, { kind: "keys", value: "Return", goal, element: { role, name } })];
+      for (const r of [click(name, { inPage: undefined, onPage: true, goal, element: { role, name } }), ...enter]) {
+        asksAlways(r);
+        expect(engine().decide(r)).not.toHaveProperty("aligned", false);
+        expect(engine().decide(r).prompt).not.toMatch(/You didn't ask for this/);
+      }
+    });
+
+  it.each([["push button", "Sell BTC"], ["push button", "Reserve table"], ["toggle button", "Purge cache"], ["link", "Delete account"], ["menu item", "Send now"],
+    ["link", "Turn off firewall"], ["menu item", "Allow remote content in messages from Ana"]])(
+    "a %s named “%s” the user didn't ask for is still flagged as unasked (safety-privacy-x7-1)", (role, name) => {
+      expect(engine().decide(click(name, { inPage: undefined, onPage: true, goal: "read the top story", element: { role, name } }))).toMatchObject({ verdict: "confirm", aligned: false });
+    });
 });
 
 /** A page that takes payment is told by any mention of one in its window's title: a button there may buy something. */

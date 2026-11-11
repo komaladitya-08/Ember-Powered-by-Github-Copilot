@@ -406,8 +406,22 @@ const RISKY_INTL = new RegExp(RISKY_INTL_SOURCE, "u");
  * change who can see or join ("Make public", "Add member"), drop work ("Purge", "Drop changes", "Mark as spam") or turn a
  * protection off ("Turn off firewall"): audit of 2026-11-11, safety-privacy-r7-1.
  */
-const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget|allow|permit|sell|reserve|purge|(?:book|bid|bet|vote|deposit|refund|redirect|bounce|email|call)(?=[^\p{L}\p{N}]*$| (?:now|it|this|that|these|those|a|an|my|your|the|all|selected)\b))\b/u;
-const RISKY_ACT = /\b(add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream)|refresh (firefox|chrome|chromium|(the |your )?browser)|place (a |my |your )?(bid|bet|wager)|apply now|mark (as |this as )?(spam|junk)|check out(?=[^a-z0-9]*$| now\b| as guest\b| securely\b)|make (it |this )?(public|private)|make (an? |them |him |her )?(admin|administrator|owner|moderator)|change (the )?visibility|add (a |an |new )?(members?|collaborators?|admin|owner)|continue as|drop changes|(turn off|switch off|disable|deactivate|pause) (the |my |your )?(firewall|antivirus|virus protection|real-time protection|protection|two-factor|two-step|2-step|2fa|encryption|screen lock))\b/;
+/** RISKY_ACT_LEAD's verbs that post or act on others. */
+const ACT_LEAD_WORDS = String.raw`comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget`;
+/**
+ * Its everyday words that grant or commit (safety-privacy-r7-1): also a headline's, a tab's or a setting's first word
+ * ("Reserve Bank raises rates", "Email", "Allow Editing"), so commitsOnly() tells them apart.
+ */
+const COMMITS_LEAD_WORDS = String.raw`allow|permit|sell|reserve|purge|(?:book|bid|bet|vote|deposit|refund|redirect|bounce|email|call)(?=[^\p{L}\p{N}]*$| (?:now|it|this|that|these|those|a|an|my|your|the|all|selected)\b)`;
+const RISKY_ACT_LEAD = new RegExp(String.raw`^[^\p{L}\p{N}]*(${ACT_LEAD_WORDS}|${COMMITS_LEAD_WORDS})\b`, "u");
+/** RISKY_ACT's phrases that post, change an account or a repository. */
+const ACT_PHRASES = String.raw`add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream)|refresh (firefox|chrome|chromium|(the |your )?browser)`;
+/** Its phrases that grant, commit, change who can see or join, drop work or turn a protection off (safety-privacy-r7-1). */
+const COMMITS_PHRASES = String.raw`place (a |my |your )?(bid|bet|wager)|apply now|mark (as |this as )?(spam|junk)|check out(?=[^a-z0-9]*$| now\b| as guest\b| securely\b)|make (it |this )?(public|private)|make (an? |them |him |her )?(admin|administrator|owner|moderator)|change (the )?visibility|add (a |an |new )?(members?|collaborators?|admin|owner)|continue as|drop changes|(turn off|switch off|disable|deactivate|pause) (the |my |your )?(firewall|antivirus|virus protection|real-time protection|protection|two-factor|two-step|2-step|2fa|encryption|screen lock)`;
+const RISKY_ACT = new RegExp(String.raw`\b(${ACT_PHRASES}|${COMMITS_PHRASES})\b`);
+/** The same without the words and phrases that grant or commit: what an acting label was before the audit of 2026-11-11. */
+const ACT_LEAD_BEFORE = new RegExp(String.raw`^[^\p{L}\p{N}]*(${ACT_LEAD_WORDS})\b`, "u");
+const RISKY_ACT_BEFORE = new RegExp(String.raw`\b(${ACT_PHRASES})\b`);
 /** The same in the languages of RISKY_WORDS (written with their accents, folded when the pattern is built). */
 export const RISKY_ACT_WORDS: Record<string, string[]> = {
   fr: ["commenter", "commentez", "inviter", "invitez", "refuser", "refusez", "décliner", "résilier", "annuler (l'|mon |votre )?abonnement",
@@ -469,6 +483,22 @@ const RISKY_ACT_INTL_SOURCE = intlSource(RISKY_ACT_WORDS, RISKY_ACT_ANYWHERE);
 const RISKY_ACT_INTL = new RegExp(RISKY_ACT_INTL_SOURCE, "u");
 /** Does this label post, invite, change an account or a repository (RISKY_ACT), in any of the languages above? */
 const isRiskyActLabel = (s: string) => { const n = normalizeLabel(s); return RISKY_ACT_LEAD.test(n) || RISKY_ACT.test(n) || RISKY_ACT_INTL.test(foldLabel(s)); };
+/**
+ * Is this label risky to act on only by a word or phrase that grants or commits (COMMITS_LEAD_WORDS, COMMITS_PHRASES: the
+ * audit of 2026-11-11), and by nothing Ember asked about before (RISKY's lists, the other acting verbs, another language's,
+ * a disk's Format) nor any talk of security ("Turn off firewall")?
+ */
+const commitsOnly = (s: string, os: OS) => {
+  const n = normalizeLabel(s);
+  return isRiskyActLabel(s) && !ACT_LEAD_BEFORE.test(n) && !RISKY_ACT_BEFORE.test(n) && !RISKY_ACT_INTL.test(foldLabel(s)) && !isRiskyLabel(s, os) && !securityTalk(s);
+};
+/** Links, tabs and menu items: also named by what they lead to, show or set (a headline, a tab "Email", "Allow Editing"). */
+const COMMITS_FLAG_ROLES = /^(link|page tab|menu item)$/;
+/** Why a control is asked about by its own risky name: clicked, or pressed with Enter or Space. */
+const NAMED_RISK = "this action may be hard to undo or visible to others";
+const PRESSED_RISK = "this presses a button that may be hard to undo or visible to others";
+/** Why a link, tab or menu item is asked about only for a word that grants or commits (commitsOnly). */
+const COMMITS_RISK = "its name says it may grant access, commit to something or change who can see it";
 /** Controls whose activation does what their name says (HTML buttons and links, GTK buttons, menu items). */
 const ACTING_CONTROL = /^(push button|push button menu|button|split button|toggle button|link|menu item)$/;
 
@@ -2445,7 +2475,13 @@ export class PolicyEngine {
     // What a dialog or the window's title says, for an "OK" there (not the control's own name, nor the option chosen).
     const says = !!d.about && d.about !== r.element?.name && !(r.kind === "select" && d.about === r.value);
     // A row, cell, icon or list item is named by what it holds (a mail's subject): that isn't a request to check against.
-    const content = (CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage)) && d.about === r.element?.name;
+    // A link, tab or menu item asked about only for a word that grants or commits (commitsOnly: "Reserve Bank raises rates",
+    // a tab "Email", "Allow Editing") still asks every time, but isn't called something the user didn't ask for: those
+    // words lead headlines, tabs and settings too, and the flag put the rest of the task back to asking (regression review
+    // of round seven, safety-privacy-x7-1). riskOf gives COMMITS_RISK only where no rule older than that audit asks (before it,
+    // such a step wasn't asked about at all); a button is still flagged.
+    const committing = COMMITS_FLAG_ROLES.test(role) && d.reason === COMMITS_RISK && d.about === r.element?.name;
+    const content = ((CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage)) && d.about === r.element?.name) || committing;
     const how = { setting: TOGGLE_ROLES.test(role), disk, says };
     if (d.about && !content && !alignedWithGoal(r.goal, d.about, how)) {
       // Named in a question of Ember's the user answered with a yes or a choice ("I can delete the old installers. Shall
@@ -2567,6 +2603,11 @@ export class PolicyEngine {
     const around = bare && r.place && "name" in r.place && !NAMED_BY_CONTENT.test(r.place.role) && isRiskyControl("push button", r.place.name, os) ? r.place.name : "";
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
     const named = (riskyNamed && !opensDialog(role, name)) || unprotects;
+    // A link, tab or menu item named only by a word that grants or commits ("Reserve Bank raises rates", a tab "Email",
+    // "Allow Editing": commitsOnly) is asked about every time, but only once every rule that asked before that word was added
+    // has had its say, with its own reason and check against the request; then as COMMITS_RISK, which judge() doesn't call
+    // something the user didn't ask for (regression review of round seven, safety-privacy-x7-1).
+    const committing = riskyNamed && !opensDialog(role, name) && !unprotects && COMMITS_FLAG_ROLES.test(role) && commitsOnly(name, os);
     // A lone "Confirm" or "Approve" agrees to what its dialog (or the window's title) says, as "OK" does: it is judged by that.
     const lone = LONE_AGREE.test(normalizeLabel(name)) && (!!r.dialog || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window));
     // A dialog asked about only as one that may hold the app's settings: its title says which.
@@ -2607,7 +2648,7 @@ export class PolicyEngine {
     const payment = ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) ? onPaymentPage(r.window) : null;
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
-        if (named && !lone) return { reason: "this action may be hard to undo or visible to others", about: name };
+        if (named && !lone && !committing) return { reason: NAMED_RISK, about: name };
         if (payment) return { ...payment, about: name };
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
@@ -2618,6 +2659,7 @@ export class PolicyEngine {
         if (conflict) return goesAhead;
         if (pastWarning) return warned;
         if (questioned) return answersQuestion;
+        if (committing) return { reason: COMMITS_RISK, about: name };
         if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
         return null;
       case "select": {
@@ -2681,12 +2723,13 @@ export class PolicyEngine {
           // Enter or Space on a focused button is a click on that button; on a row, cell, icon or list item it opens or
           // does what the item does (judged as a click on it that does something of its own: riskyContent).
           if (content && named) return { reason: "this opens or uses an item whose name says it may be hard to undo or visible to others", about: name };
-          if (ACTIVATING_ROLES.test(role) && named && !lone) return { reason: "this presses a button that may be hard to undo or visible to others", about: name };
+          if (ACTIVATING_ROLES.test(role) && named && !lone && !committing) return { reason: PRESSED_RISK, about: name };
           if (r.element?.withheld) return WITHHELD;
           if (ACTIVATING_ROLES.test(role) && answer) return { ...answer, reason: settings ? answer.reason : "this answers a dialog, and Ember can't be sure what it agrees to" };
           if (ACTIVATING_ROLES.test(role) && conflict) return goesAhead;
           if (pastWarning) return warned;
           if (questioned) return answersQuestion;
+          if (ACTIVATING_ROLES.test(role) && committing) return { reason: COMMITS_RISK, about: name };
           if (around) return BARE_IN(around);
           if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };

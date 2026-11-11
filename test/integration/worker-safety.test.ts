@@ -1967,6 +1967,20 @@ describe("review round 9: policy and selections", () => {
     }
   });
 
+  it("a page's tab “Email” is asked about every time, but doesn't put the rest of the task back to asking; a button the user didn't ask for does (safety-privacy-x7-1)", async () => {
+    for (const [goal, role, name, later] of [["Open the email settings tab", "page tab", "Email", 0], ["Open the email settings tab (a button)", "push button", "Sell BTC", 1]] as const) {
+      plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }, { tool: { name: "click", args: { id: 3 } } }]);
+      const screen = fakeScreen([{ id: 1, role: "document web", name: "Settings" }, { id: 2, role, name, parent: 1 }, { id: 3, role: "push button", name: "Next", parent: 1 }]);
+      const asked: string[] = [];
+      await makeWorker(screen, goal, { confirmer: asking(["once", "once"], asked) }).run(new AbortController().signal);
+      expect(asked[0], goal).toMatch(new RegExp(`^Click the “${name}” `));
+      expect(/You didn't ask for this/.test(asked[0]), goal).toBe(later === 1);
+      // The next ordinary step, "Next" under the app's "Always": asked only once a step came up that the user didn't ask for.
+      expect(asked.length - 1, goal).toBe(later);
+      expect(screen.log.length, goal).toBe(2);
+    }
+  });
+
   it("an answer to a message box that doesn't back off, and a button that goes past a warning, are asked about by a click and by Enter under “Always” (safety-privacy-r8-1, -c8-1)", async () => {
     for (const [goal, button, enter, asks] of [
       ["Close the draft (click Leave page)", "Leave page", false, true],
