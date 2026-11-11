@@ -116,7 +116,7 @@ export interface ActionRequest {
   inPage?: boolean;
   /**
    * For clicks and toggles: the element is in a web page, as the worker found it in the tree. Only ever a reason to ask
-   * (a button with no name there, BARE_BUTTON; any button of a page titled as taking payment, PAYMENT_TITLE); `inPage` stays
+   * (a button with no name there, BARE_BUTTON; any button of a page that takes payment, PAYMENT_PAGE); `inPage` stays
    * the keys' and the typing's, and a page's link is judged as content only by it.
    */
   onPage?: boolean;
@@ -2143,16 +2143,6 @@ const BROWSER = /msedge|chrome|chromium|firefox|librewolf|brave|opera|vivaldi|sa
 const BAR_BROWSER = /epiphany|^web$|falkon|midori|konqueror|waterfox|floorp|thorium|\barc\b|\borion\b/i;
 /** A page that takes payment: a button on it may buy something whatever its label says ("Activate now"; audit of 2026-11-01). */
 const PAYMENT_PAGE = /\b(checkout|check out|payment|billing)\b/;
-/**
- * A window titled as such a page: one part of its title (between dashes, bars or after a colon) is the page's name
- * ("Billing - Example", "Acme Store | Secure checkout", "Checkout: Payment method"). For a click the worker only knows to
- * be on some page or in an Electron app (`onPage`), where the title may be a mail's subject ("Payment received"), a
- * file's name ("billing.ts") or a chat's channel: every link, tab and check box there asked every time (regression
- * review of round seven, safety-privacy-x7-4).
- */
-const PAYMENT_TITLE = /^(?:(?:secure|express|guest|your|my|order) )?(?:checkout|check out|payments?|billing|pay)(?: (?:details|information|info|methods?|options|page|settings|step \d+|(?:and|&) (?:shipping|delivery|payments?|billing|plans|review)))?$/;
-const paymentTitle = (title: string): boolean => normalizeLabel(title).split(/\s+[-|\u00b7\u2022]\s+|:\s+/).some(part => PAYMENT_TITLE.test(part.trim()));
-const ON_PAYMENT_PAGE = "It is on a payment page, so it may buy something.";
 /** A window or dialog titled for a protection of the account or the computer, and the bare answers that turn one off there. */
 const PROTECTION_TITLE = /\b(two[- ]factor|two[- ]step|2[- ]step|2fa|multi[- ]factor|mfa|firewall|antivirus|security|protection|verification|passkeys?|encryption)\b/;
 const TURNS_OFF = /^[^a-z0-9]*(disable|turn (it )?off|switch (it )?off|deactivate)\b/;
@@ -2541,7 +2531,7 @@ export class PolicyEngine {
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
         if (named && !lone) return { reason: "this action may be hard to undo or visible to others", about: name };
-        if (ACTIVATING_ROLES.test(role) && (r.inPage ? PAYMENT_PAGE.test(normalizeLabel(r.window)) : !!r.onPage && paymentTitle(r.window))) return { reason: "this button is on a payment page, where it may buy something", about: name, note: ON_PAYMENT_PAGE };
+        if (ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) && PAYMENT_PAGE.test(normalizeLabel(r.window))) return { reason: "this button is on a payment page, where it may buy something", about: name };
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
         if (around) return BARE_IN(around);

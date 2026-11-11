@@ -169,28 +169,28 @@ describe("labels that only start with a word that grants or commits", () => {
   });
 });
 
-/** A page that takes payment is told by its own title, not by any title with "payment" or "billing" somewhere in it. */
-describe("a click in a window whose title only mentions a payment (regression review of round seven)", () => {
+/** A page that takes payment is told by any mention of one in its window's title: a button there may buy something. */
+describe("a click on a page whose title mentions a payment", () => {
   const onPage = (role: string, name: string, window: string, app = "Firefox"): ActionRequest =>
     click(name, { app, window, inPage: undefined, onPage: true, goal: `use ${name}`, element: { role, name } });
   const grants = () => new PolicyEngine({ neverLook: () => [], grants: () => ({ firefox: "act", code: "act", slack: "act" }), autonomy: () => ({ ...ALL_SCOPES }), isTerminalApp: () => false });
 
-  it.each([["link", "View invoice", "Payment received - bob@example.com - Gmail — Mozilla Firefox", "Firefox"], ["link", "Next page", "About billing on GitHub - GitHub Docs — Mozilla Firefox", "Firefox"],
-    ["link", "Questions", "git - How to check out a branch - Stack Overflow — Mozilla Firefox", "Firefox"], ["push button", "Explorer", "billing.ts - app - Visual Studio Code", "code"],
-    ["page tab", "payment.py", "payment.py - app - Visual Studio Code", "code"], ["push button", "Threads", "billing (Channel) - Acme - Slack", "slack"],
-    ["check box", "Show legend", "Billing dashboard - Grafana — Mozilla Firefox", "Firefox"]])("a %s “%s” in “%s” goes without a question (safety-privacy-x7-4)", (role, name, window, app) => {
-    expect(grants().decide(onPage(role, name, window, app)).verdict).toBe("allow");
-  });
-
   it.each(["Billing - Example", "Checkout - Shop", "Checkout", "Payment", "Acme Store | Secure checkout", "Payment details - Example — Mozilla Firefox", "Billing and plans - Example",
-    "Checkout: Payment method"])("any button of a page titled “%s” asks every time, and the question says why (safety-privacy-c7-2)", window => {
+    "Checkout: Payment method"])("any button of a page titled “%s” asks every time (safety-privacy-c7-2)", window => {
     const d = grants().decide(onPage("push button", "Continue", window));
     expect(d).toMatchObject({ verdict: "confirm", risky: true });
     expect(d.autonomy).toBeUndefined();
-    expect(d.prompt).toBe("Click the “Continue” button in Firefox? It is on a payment page, so it may buy something.");
   });
 
-  it("with the element known to be in a page, any title that mentions payment still asks, as it did (safety-privacy-x7-4)", () => {
+  it.each(["Select a Payment Method - Amazon.com Checkout - Google Chrome", "PayPal Checkout", "Stripe Checkout", "Shopping Cart & Checkout - Best Buy", "Checkout (2 items) - Shop",
+    "Checkout :: Shop", "Complete your payment", "Make a payment - Barclays", "Confirm payment - Google Pay", "Billing overview - Azure",
+    "Add payment method - Google Play"])("a button “Start my plan” of a page titled “%s” asks every time, as the worker sends a click (safety-privacy-y7-2)", window => {
+    const d = grants().decide(onPage("push button", "Start my plan", window));
+    expect(d).toMatchObject({ verdict: "confirm", risky: true });
+    expect(d.autonomy).toBeUndefined();
+  });
+
+  it("with the element known to be in a page, any title that mentions payment asks too", () => {
     expect(grants().decide(click("Continue", { window: "Complete your payment today - Example" })).verdict).toBe("confirm");
   });
 });
