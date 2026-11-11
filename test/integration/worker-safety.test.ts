@@ -1967,6 +1967,26 @@ describe("review round 9: policy and selections", () => {
     }
   });
 
+  it("an answer to a message box that doesn't back off, and a button that goes past a warning, are asked about by a click and by Enter under “Always” (safety-privacy-r8-1, -c8-1)", async () => {
+    for (const [goal, button, enter, asks] of [
+      ["Close the draft (click Leave page)", "Leave page", false, true],
+      ["Close the draft (Enter on Leave page)", "Leave page", true, true],
+      ["Close the draft (click Stay on page)", "Stay on page", false, false],
+      ["Close the draft (click Keep anyway)", "Keep anyway", false, true],
+    ] as const) {
+      plan(goal, [perceive, enter ? { tool: { name: "press_keys", args: { keys: "Return" } } } : { tool: { name: "click", args: { id: 2 } } }]);
+      const screen = fakeScreen([{ id: 1, role: "alert", name: "" },
+        { id: 3, role: "label", name: "This page is asking you to confirm that you want to leave — information you've entered may not be saved.", parent: 1 },
+        { id: 2, role: "push button", name: button, parent: 1, ...(enter ? { states: ["enabled", "sensitive", "focused"] } : {}) }]);
+      const asked: string[] = [];
+      const keys: string[] = [];
+      await makeWorker(screen, goal, { confirmer: asking(["deny"], asked), cursor: borrowing(keys) }).run(new AbortController().signal);
+      expect(asked.length, goal).toBe(asks ? 1 : 0);
+      if (asks) expect(asked[0], goal).toMatch(button === "Keep anyway" ? /It goes past a warning or turns off a protection\. It says: “This page is asking you/ : /It says: “This page is asking you to confirm/);
+      expect(screen.log.length + keys.length, goal).toBe(asks ? 0 : 1);
+    }
+  });
+
   it("any button of a page on a payment site is asked about by a click, as the policy says, and the same button elsewhere isn't (safety-privacy-c7-2)", async () => {
     const nodes: FakeNode[] = [{ id: 1, role: "document web", name: "Plans" }, { id: 2, role: "push button", name: "Continue", parent: 1 }];
     for (const [title, asks] of [["Billing - Example", true], ["Plans - Example", false]] as const) {

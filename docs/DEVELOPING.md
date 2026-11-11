@@ -388,7 +388,10 @@ by accident. A hidden Ember shows itself to ask, and with **Speak replies, quest
 out loud; **Never** keeps it quiet even for a screen reader, and chosen while Ember talks it stops at once (as does a
 screen reader turned off, at the answer's next sentence). Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
-for them. After **Not now** (or a question nobody answered, a refusal, or a step that failed), a step Ember had lined
+for them. So are buttons, links and menu items that go past a security warning or turn a protection off (“Enable
+Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Remote Content”), and any answer to a message box or
+to a dialog's question but one that backs off (“Leave page”, “Resend” and “Close tabs” ask; Cancel, No, Close and
+“Stay on page” don't); the question quotes the dialog. After **Not now** (or a question nobody answered, a refusal, or a step that failed), a step Ember had lined
 up to follow it in the same breath isn't taken either: it looks again and decides afresh. A progress note or card view that
 wasn't accepted holds nothing back; a command that ended with an error does, however it ended. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
 "Waiting for you" while it asks, "Starts when another task ends" while two others are at work), how long it has worked and which step of its plan it is on, and shows what it did

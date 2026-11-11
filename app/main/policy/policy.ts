@@ -2178,6 +2178,79 @@ function plainEditorLines(r: ActionRequest, role: string, os: OS): boolean {
 const FILE_CONFLICT = /\b(document in use|locked for editing|is locked by|lock file|changed by others|(modified|changed) (by (another|someone|other)|since (you|it was) (last )?open)|save anyway|open anyway)\b/;
 const BACKS_OFF = /^\s*(cancel|close|no|help|notify|keep|open (a )?copy|open read-?only|read-?only)\b/;
 /**
+ * A button's or menu item's name that says it goes past a security warning or turns a protection off (audit of
+ * 2026-11-11, safety-privacy-r8-1): going ahead anyway ("Launch Anyway", "Keep anyway", "Trotzdem öffnen"), on to a
+ * site flagged as unsafe ("Continue to site"), macros and active content ("Enable Macros", "Enable Content", "Exit
+ * Protected View"), a mail's remote content ("Load Remote Content"), ignoring a warning, allowing for good ("Always
+ * allow", "Don't block") and trusting a file or site; WEAKENS has the rest ("(unsafe)", "Turn off Safe Browsing", "Skip
+ * verification"). "Anyway" also in the languages of RISKY_WORDS (written with their accents, folded when the pattern is
+ * built). "Enable Editing" only in a window or dialog that says it is in protected view (PROTECTED_VIEW).
+ */
+/** Phrases that go past a warning wherever they stand: also as a link's first words. */
+const PAST_WARNING_PHRASES = ["(proceed|continue|go on|go) to (the |this )?(site|website|web ?page|page)",
+  "visit this (unsafe |dangerous |deceptive |insecure |unsecure |suspicious )?(site|website|web ?page|page)", "enable (all )?macros?",
+  "enable (the |all )?(active |external |blocked )?content", "run (the |all )?macros?", "exit protected view",
+  "(load|show|display|allow|download|enable) (the |all )?(remote|external) (content|images?|pictures|resources)",
+  "(ignore|dismiss|bypass|skip|override) (the |this |these |all )?(security )?(warnings?|risks?|alerts?)", "accept (the )?risks?", "i understand the risks?"];
+const PAST_WARNING_WORDS = ["anyways?", ...PAST_WARNING_PHRASES, "always (allow|trust|accept|open|run)", "(don't|do not|never) block", "unblock",
+  "trust (this|the) (site|website|document|file|folder|publisher|authors?|app|application|certificate|source|device)", "(open|run) executable",
+  "trotzdem", "quand même", "malgré tout", "de todos modos", "de todas formas", "comunque", "mesmo assim", "assim mesmo", "toch", "mimo to", "всё равно",
+  "ändå", "alligevel", "likevel", "silti", "přesto", "yine de"];
+const PAST_WARNING_ANYWHERE = ["それでも", "仍然", "仍要", "无论如何", "無論如何", "그래도"];
+const PAST_WARNING = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(PAST_WARNING_WORDS.join("|"))})(?=$|[^\\p{L}\\p{N}])|${foldLabel(PAST_WARNING_ANYWHERE.join("|"))}`, "u");
+/**
+ * The same for a link, which may be a headline ("Why I bought it anyway", "Unsafe at any speed"): only as its first words,
+ * or a warning in brackets after them ("Proceed to example.com (unsafe)": Chrome's and Edge's).
+ */
+const LINK_PAST_WARNING = new RegExp(`^[^\\p{L}\\p{N}]*(${foldLabel([...PAST_WARNING_PHRASES,
+  "(download|keep|open|run|install|continue|proceed|launch|use|save|visit|go|load|show|allow|accept) anyway",
+  "(turn off|disable|switch off|bypass|skip)\\b.{0,40}\\b(protection|security|warnings?|verification|safe browsing)"].join("|"))})(?=$|[^\\p{L}\\p{N}])`
+  + `|[(（]\\s*(${foldLabel(["unsafe", "not secure", "insecure", "dangerous", "not recommended"].join("|"))})\\s*[)）]`, "u");
+/** A window or dialog that says its document is in protected view (Word's "[Protected View]"), where "Enable Editing" leaves it. */
+const PROTECTED_VIEW = /\bprotected (view|mode)\b/;
+const PAST_WARNING_REASON = "this goes past a warning or turns a protection off";
+/**
+ * Does pressing this control (by its own name: a button, link or menu item, ACTING_CONTROL) go past a security warning
+ * or turn a protection off? A link only by its first words (LINK_PAST_WARNING); "Enable Editing" only in protected view
+ * (`context`: the window's title and the dialog's words).
+ */
+function goesPastWarning(role: string, name: string, context: string): boolean {
+  if (!ACTING_CONTROL.test(role) || !/[\p{L}\p{N}]/u.test(name)) return false;
+  if (role === "link") return saysWord(LINK_PAST_WARNING, name);
+  if (/^\s*enable editing\s*$/.test(plainText(name)) && PROTECTED_VIEW.test(plainText(context))) return true;
+  return saysWord(PAST_WARNING, name) || saysWord(WEAKENS, name);
+}
+/**
+ * Answers that back off a dialog's question, as the whole label (an access key "(C)" or "…" may follow): Cancel, No,
+ * Close, Stay, Stay on page, Don't leave, Keep editing, Go back, Help, Not now, in the languages of RISKY_WORDS. Not
+ * BACKS_OFF, which reads only the first word ("Close tabs" and "Keep anyway" go ahead).
+ */
+const DECLINE_WORDS = ["cancel", "close", "close (this )?(dialog|message|window|notification|prompt|pop-?up)", "dismiss", "no", "no,? thanks?", "not now",
+  "never mind", "stay", "stay (here|on (this )?(page|site))", "(don't|do not) leave", "keep editing", "keep working", "go back", "back", "help", "learn more",
+  "more info(rmation)?", "(show |hide )?details",
+  "abbrechen", "schließen", "nein", "nicht jetzt", "auf (der|dieser) seite bleiben", "bleiben", "zurück", "hilfe",
+  "annuler", "fermer", "non", "pas maintenant", "rester sur (la|cette) page", "rester", "retour", "aide",
+  "cancelar", "cerrar", "no", "ahora no", "permanecer en (la|esta) página", "quedarse", "volver", "atrás", "ayuda",
+  "annulla", "chiudi", "non ora", "rimani (sulla|in questa) pagina", "resta", "indietro", "aiuto",
+  "fechar", "não", "agora não", "permanecer na página", "ficar", "voltar", "ajuda",
+  "annuleren", "sluiten", "nee", "niet nu", "op (de|deze) pagina blijven", "blijven", "terug", "hulp",
+  "anuluj", "zamknij", "nie", "nie teraz", "pozostań na stronie", "zostań", "wstecz", "pomoc",
+  "отмена", "отменить", "закрыть", "нет", "не сейчас", "остаться на странице", "остаться", "назад", "справка",
+  "avbryt", "stäng", "nej", "inte nu", "stanna kvar på sidan", "stanna", "tillbaka", "hjälp",
+  "annuller", "luk", "ikke nu", "bliv på siden", "bliv", "tilbage", "hjælp",
+  "lukk", "nei", "ikke nå", "bli på siden", "bli", "tilbake", "hjelp",
+  "peruuta", "peru", "sulje", "ei", "ei nyt", "pysy sivulla", "takaisin", "ohje",
+  "zrušit", "zavřít", "ne", "teď ne", "zůstat na stránce", "zůstat", "zpět", "nápověda",
+  "iptal", "vazgeç", "kapat", "hayır", "şimdi değil", "sayfada kal", "geri", "yardım"];
+const DECLINE_WHOLE = ["キャンセル", "閉じる", "いいえ", "このページに留まる", "戻る", "ヘルプ", "取消", "关闭", "關閉", "否", "留在此页", "留在此頁", "返回", "帮助", "說明",
+  "취소", "닫기", "아니요", "아니오", "이 페이지에 머무르기", "뒤로", "도움말"];
+const DECLINES = new RegExp(`^\\s*(${foldLabel([...DECLINE_WORDS, ...DECLINE_WHOLE].join("|"))})\\s*([(（][^)）]*[)）])?\\s*(\\.\\.\\.|…)?\\s*$`, "u");
+const declines = (name: string) => DECLINES.test(foldLabel(name)) || DECLINES.test(plainText(name));
+/** A question in a dialog's words where it may have no question mark ("This page is asking you to confirm that you want to leave"). */
+const ASKS_IF_SURE = /\b(are you sure|(do|did) you (really )?(want|mean) to|would you like to|confirm that you want)\b/;
+/** Buttons and links that answer a dialog: what they do there is its question's answer. */
+const ANSWER_ROLES = /^(push button|push button menu|button|split button|toggle button|link)$/;
+/**
  * Dialogs whose OK only shapes the open document (DSK9-3), by their titles in LibreOffice and the mail composers: its
  * formatting and styles, sizes, sorting and filtering, what is inserted (a table, a break, a caption, a link), where to
  * go, a font or a colour. A style's dialog says which after a colon ("Page Style: Default Page Style"). The commonest
@@ -2367,7 +2440,7 @@ export class PolicyEngine {
       // Named in a question of Ember's the user answered with a yes or a choice ("I can delete the old installers. Shall
       // I?" "Sure."): not flagged as unasked, but asked all the same, quoting their answer. Never a security setting.
       const about = d.about;
-      const yes = securitySetting(about) || d.reason === SECURITY_SETTING ? undefined : r.agreed?.find(a => {
+      const yes = securitySetting(about) || d.reason === SECURITY_SETTING || d.reason === PAST_WARNING_REASON ? undefined : r.agreed?.find(a => {
         const offer = offered(a.asked);
         // (No offer in it: nothing was agreed to, not everything.)
         return /[\p{L}\p{N}]/u.test(offer) && alignedWithGoal(offer, about, how);
@@ -2501,6 +2574,23 @@ export class PolicyEngine {
       about: lone ? (r.dialog ? `${r.dialog.name} ${r.dialog.text}` : r.window) : asks, note, ...doubt,
     });
     const goesAhead: Risk = { reason: "this answers a dialog about a file someone else is using or has changed", note };
+    // A button, link or menu item whose own name goes past a security warning or turns a protection off ("Enable Macros",
+    // "Keep anyway", "Proceed to example.com (unsafe)", "Load Remote Content"): asked every time, checked against the
+    // request by its name (audit of 2026-11-11, safety-privacy-r8-1). In a dialog the question quotes it too. After the
+    // rules that asked before it, whose reasons and checks against the request stand ("Accept the Risk and Continue",
+    // "Save Anyway" in a file's conflict). (A menu item that opens a dialog, "Run Macro…", does nothing yet.)
+    const pastWarning = goesPastWarning(role, name, `${r.window} ${told}`) && !opensDialog(role, name);
+    const warned: Risk = { reason: PAST_WARNING_REASON, about: name, note: `It goes past a warning or turns off a protection.${r.dialog && note ? ` ${note}` : ""}` };
+    // Any other answer to a message box (a native one: a page's own dialog is one only by what it asks), or to a dialog
+    // that asks a question in a few words (a question mark, or ASKS_IF_SURE: a browser's "Leave site?", "Reload site?",
+    // "Close 12 tabs?", Firefox's "…confirm that you want to leave"; Linux reports Firefox's "Resend" as a message box),
+    // that doesn't back off (DECLINES: Cancel, Stay on page, No, Close): asked every time, quoting the dialog, and not
+    // checked against the request (its words are the app's; audit of 2026-11-11, safety-privacy-c8-1). Not a dialog that
+    // only names something risky: Find & Replace, Share, a file chooser with a Trash place. After `answer`, so an OK that
+    // only acknowledges a message box (acknowledgesOnly) stays Ember's doubt.
+    const asksInFew = told.length <= 300 && (/[?？¿]/.test(told) || ASKS_IF_SURE.test(plainText(told)));
+    const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !declines(name) && !plainDialog;
+    const answersQuestion: Risk = { reason: "this answers a dialog's question or warning, and Ember can't be sure what that answer does", note };
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
         if (named && !lone) return { reason: "this action may be hard to undo or visible to others", about: name };
@@ -2512,6 +2602,8 @@ export class PolicyEngine {
         if (SETTING_ROLES.test(role) && systemSettings) return system(name);
         if (answer) return answer;
         if (conflict) return goesAhead;
+        if (pastWarning) return warned;
+        if (questioned) return answersQuestion;
         if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
         return null;
       case "select": {
@@ -2579,6 +2671,8 @@ export class PolicyEngine {
           if (r.element?.withheld) return WITHHELD;
           if (ACTIVATING_ROLES.test(role) && answer) return { ...answer, reason: settings ? answer.reason : "this answers a dialog, and Ember can't be sure what it agrees to" };
           if (ACTIVATING_ROLES.test(role) && conflict) return goesAhead;
+          if (pastWarning) return warned;
+          if (questioned) return answersQuestion;
           if (around) return BARE_IN(around);
           if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };
