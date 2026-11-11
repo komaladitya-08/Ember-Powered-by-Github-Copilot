@@ -394,6 +394,17 @@ const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   nl: new Set("de het een en niet ik je van dat op te met zijn voor maar ook wat om naar uit bij nog aan heb kan".split(" ")),
 };
 
+/**
+ * Letters and marks one of these languages writes and the others seldom do. Only to tell two languages apart whose
+ * short words a reply has as many of: Spanish and French share "la", "de", "un", "en", "se", "que" and "le", and a
+ * Spanish reply went to a French voice (voice-speaking-c7-1).
+ */
+const OWN_LETTERS: Readonly<Record<string, RegExp>> = {
+  es: /[ñáíóú¿¡]/giu, fr: /[àâçèêëîïôûùœ]/giu, de: /[äöß]/giu, it: /[ìò]/giu, pt: /[ãõ]/giu,
+};
+/** A short word two languages write that is far commoner in one: Spanish's "and", French's "there" ("il y a"). */
+const LEANS: Readonly<Record<string, ReadonlySet<string>>> = { es: new Set(["y"]) };
+
 /** Short lower-case words that join the parts of a name ("La Vie en Rose", "Hotel de la Paix", "Ludwig van Beethoven"). */
 const NAME_JOINS = new Set("de del della di da do dos das du des la le les el en y van von der den of the".split(" "));
 
@@ -425,11 +436,13 @@ function wordsBesidesNames(text: string): string[] {
  * The language a reply is in when it clearly isn't English, or null (English, or too little to tell): Kitten reads only
  * English, so a Chinese reply was 7 s of "Chinese letter" and a French one was gibberish (voice-speaking-11). Mostly
  * one script names its language; Latin text, less its names (wordsBesidesNames) and what it quotes, needs two different
- * short words of a language, a quarter of its words, and more than English has. Pure and local: nothing is sent
- * anywhere to tell.
+ * short words of a language, a quarter of its words, and more than English has. Where two languages have as many, it
+ * is `prefer` (the request's language) if that is one of them, else the one whose own letters it writes (OWN_LETTERS),
+ * whose way a shared word leans (LEANS), or with more short words only it has (voice-speaking-c7-1). Pure and local: nothing is sent anywhere to
+ * tell.
  */
-export function speechLanguage(text: string): string | null {
-  return languageOf(text, 2);
+export function speechLanguage(text: string, prefer: string | null = null): string | null {
+  return languageOf(text, 2, prefer);
 }
 
 /**
@@ -437,7 +450,7 @@ export function speechLanguage(text: string): string | null {
  * counted, unless it is all quotes: an English answer saying how to say something in French ("It's « je ne sais
  * pas ».") is English (voice-speaking-r2-1).
  */
-function languageOf(quoting: string, minDifferent: number): string | null {
+function languageOf(quoting: string, minDifferent: number, prefer: string | null = null): string | null {
   const text = outsideQuotes(quoting);
   const letters = text.match(/\p{L}/gu) ?? [];
   if (!letters.length) return null;
@@ -448,11 +461,20 @@ function languageOf(quoting: string, minDifferent: number): string | null {
   }
   const words = wordsBesidesNames(text);
   const english = stopwords(words, "en").length;
-  let best: string | null = null, most = 0, different = 0;
-  for (const lang of Object.keys(STOPWORDS)) {
-    if (lang === "en") continue;
+  let best: string | null = null, most = 0, different = 0, tie = [0, 0, 0, 0];
+  const others = Object.keys(STOPWORDS).filter(lang => lang !== "en");
+  for (const lang of others) {
     const found = stopwords(words, lang);
-    if (found.length > most) { best = lang; most = found.length; different = new Set(found).size; }
+    if (found.length < most || !found.length) continue;
+    // As many as the best so far: the request's language, then its own letters, a word that leans its way, then the
+    // words only it has.
+    const rank = [
+      lang === prefer ? 1 : 0, (text.match(OWN_LETTERS[lang] ?? /(?!)/gu) ?? []).length, found.filter(w => LEANS[lang]?.has(w)).length,
+      found.filter(w => others.every(o => o === lang || !STOPWORDS[o].has(w))).length,
+    ];
+    const differs = rank.findIndex((r, i) => r !== tie[i]);
+    const better = found.length > most || (differs >= 0 && rank[differs] > tie[differs]);
+    if (better) { best = lang; most = found.length; different = new Set(found).size; tie = rank; }
   }
   return best && different >= minDifferent && most * 4 >= words.length && most > english ? best : null;
 }
@@ -538,7 +560,7 @@ export class AnswerLanguage {
     let lang = this.lang;
     if (lang === undefined) {
       if (!this.text.trim()) return [];
-      const found = speechLanguage(this.text);
+      const found = speechLanguage(this.text, this.asked);
       if ((this.text.match(/\p{L}/gu) ?? []).length >= DECIDE_LETTERS) lang = this.lang = found;
       else if (end) {
         lang = found ?? this.followsRequest();

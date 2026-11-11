@@ -866,7 +866,9 @@ hyphen between amounts that go down is a sum, said as written, or "minus" before
 run of numbers, "0800–123–456"; no piece is cut at a dash between two amounts), and other emoji and typed
 smileys not at all (Kitten said "✅" as "white heavy check mark"). The bubble shows the text as written. Kitten reads only English, so a
 reply that is clearly in another language (mostly another script, or two or more different short words of a European
-language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`) is said by
+language, not counting names such as "La Vie en Rose" or "Los Angeles", or what it quotes: `speechLanguage`; where two
+languages share them, as Spanish and French do "la", "de" and "y", the request's language, then the letters only one
+of them writes, decide, so "Abrí la carpeta de descargas." is Spanish) is said by
 a local system voice for that language, or not at all when there is none, which isn't reported as Ember failing to
 speak, even with no voices installed; a Chinese reply was 7 s of "Chinese letter". An answer's language is decided
 once, from its first 60 letters (`AnswerLanguage`, app/voice/spoken.ts), and kept for every piece of it: an English

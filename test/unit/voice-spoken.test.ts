@@ -435,6 +435,34 @@ describe("speechLanguage: which language a reply is in, so Kitten (English only)
   ])("still finds %j is %j, beside what it quotes, or all quotes (voice-speaking-r2-1)", (text, lang) => expect(speechLanguage(text)).toBe(lang));
 });
 
+describe("speechLanguage tells Spanish from French, which share their commonest short words (voice-speaking-c7-1)", () => {
+  it.each([
+    "Listo. Abrí la configuración y activé la luz nocturna.",
+    "Abrí Firefox y busqué la receta de paella.",
+    "Ya cerré la ventana y guardé la hoja.",
+    "Guardé la nota y la envié a tu teléfono.",
+    "Moví la ventana a la otra pantalla y la maximicé.",
+    "Abrí la carpeta de descargas.",
+    "¿Quieres que la cierre de nuevo?",
+  ])("says %j with a Spanish voice, never a French one (voice-speaking-c7-1)", text => {
+    expect(speechLanguage(text)).toBe("es");
+    const streamed = new AnswerLanguage();
+    streamed.reset("");
+    expect(streamed.take([text], true)).toEqual([{ text, lang: "es" }]);
+  });
+
+  it("follows the request's language where a reply's short words fit two languages alike (voice-speaking-c7-1)", () => {
+    const a = new AnswerLanguage();
+    a.reset("abre la carpeta de mis documentos, por favor");
+    expect(a.take(["Hecho, la carpeta de Marta se ve en la pantalla."], true)[0].lang).toBe("es");
+  });
+
+  it.each([
+    "La réunion est à quinze heures.", "J'ai fermé la fenêtre et enregistré le fichier.", "Il y a trois fichiers dans le dossier.",
+    "On y va : la fenêtre de la calculatrice se ferme.", "J'ai ouvert la fenêtre de la calculatrice.",
+  ])("still says %j with a French voice (voice-speaking-c7-1)", text => expect(speechLanguage(text)).toBe("fr"));
+});
+
 describe("AnswerLanguage: an answer is said in one language, decided once from enough of it (voice-speaking-r1, voice-speaking-11)", () => {
   const said = (pieces: string[], o: { request?: string } = {}) => {
     const a = new AnswerLanguage();
