@@ -183,13 +183,15 @@ Ember stops and asks before a command that:
   downloaded in this task (one fetched with `curl`, `wget` and the like, cloned, or handed over by another tool:
   `gh release download` and `gh run download`, `aws s3 cp`, `gsutil cp` and `gcloud storage cp` from a bucket, `az
   storage blob download`, `docker cp` and `kubectl cp` out of a container or a pod, `scp` and `rsync` from another
-  computer, or what `ssh host …` prints, saved with `>` or piped into a shell; also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
+  computer, or what `ssh host …` prints, saved with `>` or piped into a shell; checked out or fetched with `svn
+  checkout`, `svn export`, `hg clone`, `rclone copy`, `pip download` or `git archive --remote`; also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
   `rsync`, `dd`, `cat x.py > y.py`, `tee`, `dos2unix -n`, `sort -o`, `split` and `cat` of its pieces, or a `tar` or
   `zip` of it unpacked again, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
   or a `New-Item` link, also from a pipeline (`Get-Item x.exe | Copy-Item -Destination y.exe`; when Ember can't tell
   which files a pipeline or a variable hands over, the copy counts as a download whenever the task downloaded
   something it could be: running a file from where it went asks, but that folder's own tools, such as `npm test` or
-  `make`, ask only when the download could be one of their files), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy` (a folder's copy keeps each download under its own name, so the folder's other files and tools are as before), run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
+  `make`, ask only when the download could be one of their files), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy` (a folder's copy keeps each download under its own name, so the folder's other files and tools are as before), run as a module with `python3 -m`, loaded with `node -r`,
+  built from a downloaded source and then run (a compiler's `-o` output or its default `a.out`, a file decompressed with `gunzip`, `xz -d` or `bzip2 -d`, a package unpacked with `dpkg -x`), handed to a runner Ember knows (`java -jar`, `-cp` entries or a class or source file; `mono` or `wine`; `pwsh x.ps1`; `node x` with no extension or `python3 a.p*`; `awk -f`, `sed -f` or `psql -f`; `jupyter nbconvert --execute`; `go run .` and `cargo run`, which build the folder's own `.go` or `.rs` sources), or picked up by name
   by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder;
   a download whose saved name Ember can't tell (one the server or a list picks: `curl -OJ`, `wget
   --content-disposition`, `wget -r`, `wget -i`, `aria2c -i`; one in a variable or an expression: `curl -o "$f"`,

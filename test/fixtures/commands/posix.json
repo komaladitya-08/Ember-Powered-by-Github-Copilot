@@ -13371,7 +13371,13 @@
   },
   {
    "cmd": "pip download -d build x && sh build/run.sh",
-   "verdict": "run"
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ]
   },
   {
    "cmd": "eslint -o report.json src",
@@ -16940,6 +16946,178 @@
   {
    "cmd": "git pull origin main && make",
    "verdict": "run"
+  },
+  {
+   "cmd": "java -jar x.jar",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/x.jar"
+   ]
+  },
+  {
+   "cmd": "java -cp lib/a.jar:x.jar Main",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/x.jar"
+   ]
+  },
+  {
+   "cmd": "java X.java",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/X.java"
+   ]
+  },
+  {
+   "cmd": "mono x.exe",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/x.exe"
+   ]
+  },
+  {
+   "cmd": "node x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/x.js"
+   ]
+  },
+  {
+   "cmd": "awk -f x.awk data.csv",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/x.awk"
+   ]
+  },
+  {
+   "cmd": "sed -f x.sed data.csv",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/x.sed"
+   ]
+  },
+  {
+   "cmd": "psql -f x.sql",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/x.sql"
+   ]
+  },
+  {
+   "cmd": "go run .",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/main.go"
+   ]
+  },
+  {
+   "cmd": "cargo run",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/src/main.rs"
+   ]
+  },
+  {
+   "cmd": "java -jar build/app.jar",
+   "verdict": "run",
+   "downloaded": [
+    "/home/ana/proj/data.csv"
+   ]
+  },
+  {
+   "cmd": "java -cp . Main",
+   "verdict": "run",
+   "downloaded": [
+    "/home/ana/proj/data.csv"
+   ]
+  },
+  {
+   "cmd": "go run .",
+   "verdict": "run",
+   "downloaded": [
+    "/home/ana/proj/data.csv"
+   ]
+  },
+  {
+   "cmd": "awk -f prog.awk data.csv",
+   "verdict": "run",
+   "downloaded": [
+    "/home/ana/proj/data.csv"
+   ]
+  },
+  {
+   "cmd": "svn status",
+   "verdict": "run",
+   "downloaded": [
+    "/home/ana/proj/data.csv"
+   ]
+  },
+  {
+   "cmd": "rclone ls remote:x",
+   "verdict": "run",
+   "downloaded": [
+    "/home/ana/proj/data.csv"
+   ]
   }
  ]
 }

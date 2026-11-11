@@ -5812,6 +5812,19 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "java -jar t.jar",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "C:\\Users\\ana\\proj\\t.jar"
+   ]
   }
  ]
 }

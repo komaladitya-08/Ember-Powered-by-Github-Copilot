@@ -1292,10 +1292,14 @@ class Classifier {
    * or follows by its name (a Makefile, package.json, conftest.py, a test file: PROJECT_FILE), so running the tool
    * runs the download (commands-remote-c2-2).
    */
-  downloadedProjectFile(folder: string, sc: Scope): boolean {
+  downloadedProjectFile(folder: string, sc: Scope, extra?: RegExp): boolean {
     const all = [...this.ctx.downloaded, ...this.downloads];
+    // A download whose name a build tool runs or follows: one of the shared project files, or one of the tool's own
+    // sources (`.go`/`go.mod` for go, `.rs` for cargo: extra), which `go run .` and `cargo run` build by folder
+    // (commands-remote-r8-2). `extra` is a tool's own, never widened into PROJECT_FILE for every tool.
+    const isProject = (name: string): boolean => PROJECT_FILE.test(name) || (extra?.test(name) ?? false);
     // One of the tool's files, saved under its name.
-    if (all.some(d => d !== folder && unnamedFolder(d, sc.path) === null && isUnder(d, folder, sc.path) && PROJECT_FILE.test(baseName(d, sc.path.flavour)))) {
+    if (all.some(d => d !== folder && unnamedFolder(d, sc.path) === null && isUnder(d, folder, sc.path) && isProject(baseName(d, sc.path.flavour)))) {
       this.namedHit = true;
       return true;
     }
@@ -1306,8 +1310,8 @@ class Classifier {
     })) return true;
     const unnamed = (d: string): boolean => baseName(d, sc.path.flavour) === UNNAMED_COPY;
     // A copy Ember can't name may be one, when a download of this task is one or may be a folder (no extension).
-    const mayBe = all.some(d => !unnamed(d) && (PROJECT_FILE.test(baseName(d, sc.path.flavour)) || !/\.[^.\\/]+$/.test(baseName(d, sc.path.flavour))));
-    return all.some(d => d !== folder && isUnder(d, folder, sc.path) && (unnamed(d) ? mayBe : PROJECT_FILE.test(baseName(d, sc.path.flavour))));
+    const mayBe = all.some(d => !unnamed(d) && (isProject(baseName(d, sc.path.flavour)) || !/\.[^.\\/]+$/.test(baseName(d, sc.path.flavour))));
+    return all.some(d => d !== folder && isUnder(d, folder, sc.path) && (unnamed(d) ? mayBe : isProject(baseName(d, sc.path.flavour))));
   }
 
   /**
@@ -1329,6 +1333,26 @@ class Classifier {
       try { re = globRegExp(resolveTargetPath(f.slice(1), at), sc.path, true); } catch { return true; /* a pattern the matcher can't read may match anything */ }
       // The download, or a folder above it that the pattern names (its copy holds the download).
       return all.some(d => { for (let p = d; p !== posix.dirname(p); p = posix.dirname(p)) if (re.test(p)) return true; return false; });
+    });
+  }
+
+  /**
+   * Whether a glob a program is given to run (`python3 a.p*`) matches a file this task downloaded by name: unlike
+   * `mayBeDownload`, this reads the written pattern, which has `a.v` set (commands-remote-r8-2). A pattern Ember can't
+   * resolve, or one with a part it can't see, matches anything the task downloaded (fail closed).
+   */
+  globMatchesDownload(a: Arg, sc: Scope): boolean {
+    if (!a.glob || !sc.cwd) return false;
+    const all = [...this.ctx.downloaded, ...this.downloads].filter(d => unnamedFolder(d, sc.path) === null);
+    if (all.length === 0) return false;
+    const forms = a.parts ? this.formsOf(a.parts) : [a.v === null ? UNSEEN : PATTERN + (a.pattern ?? a.v)];
+    const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd };
+    return forms.some(f => {
+      if (f.includes(UNSEEN)) return true;
+      const pat = f.startsWith(PATTERN) ? f.slice(1) : f;
+      let re: RegExp;
+      try { re = globRegExp(resolveTargetPath(pat, at), sc.path, true); } catch { return true; }
+      return all.some(d => re.test(d));
     });
   }
 
@@ -1474,6 +1498,18 @@ const PROJECT_FILE = new RegExp([
   "^composer\\.json$", "^build\\.sbt$", "^project\\.clj$", "^sconstruct$", "^(build|workspace)\\.bazel$", "^dockerfile$",
   "^(docker-)?compose\\.ya?ml$", "\\.(test|spec)\\.[cm]?[jt]sx?$", "\\.config\\.[cm]?[jt]s$", "_test\\.go$", "^deno\\.jsonc?$", "^pubspec\\.yaml$",
 ].join("|"), "i");
+
+/** Compilers whose output, built from a downloaded source, is a download too (carryCompiled; commands-remote-r8-2). */
+const COMPILERS = new Set(["gcc", "g++", "cc", "c++", "clang", "clang++", "rustc"]);
+
+/**
+ * A build tool's own sources, on top of the shared PROJECT_FILE list: `go run .` and `cargo run` build a folder, so a
+ * downloaded `.go`/`go.mod` or `.rs` there runs (commands-remote-r8-2). Kept per tool, never widened into PROJECT_FILE.
+ */
+const TOOL_PROJECT_FILES: Readonly<Record<string, RegExp>> = {
+  go: /\.go$|^go\.(mod|sum)$/i,
+  cargo: /\.rs$/i,
+};
 
 /** git verbs that change files in the work tree (a script there may not be what is on disk now). */
 const GIT_TREE_WRITERS = new Set(["apply", "am", "checkout", "switch", "restore", "pull", "merge", "rebase", "cherry-pick", "revert", "stash", "reset", "clone", "worktree", "submodule", "read-tree", "checkout-index", "mv"]);
@@ -2602,6 +2638,7 @@ class Engine extends Classifier {
     this.redirects(s.redirs, sc);
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
     const inner = this.commands.length;
+    const dlBefore = this.downloads.length;
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
     // A wrapper's own words (`sudo -D "$d" ls`, `xargs -a "$d/x" echo`; commands-remote-v5-2): the command it runs
     // (`do echo "$f"`, `sudo rm "$d"`) noted its words itself.
@@ -2619,7 +2656,7 @@ class Engine extends Classifier {
     if ((key === "done" || key === "fi" || key === "esac") && out !== "shown") this.compoundOnward = true;
     this.unnamedWrites(key, args, sc);
     this.afterArgs(args);
-    this.afterRun(key, args, s, sc);
+    this.afterRun(key, args, s, sc, sc, dlBefore);
     this.hiddenNames(key, args, sc);
     this.pipe.program = key;
     if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
@@ -2830,6 +2867,7 @@ class Engine extends Classifier {
       scriptName(inner, nameArg.v);
     }
     const n = NATIVE[key];
+    const dlBefore = this.downloads.length;
     if (n) n(inner);
     else generic(inner);
     optionPaths(inner, !n);
@@ -2837,7 +2875,7 @@ class Engine extends Classifier {
     this.afterArgs(inner.args);
     // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
     // there is a download, and a pipe after it carries what it fetched (commands-remote-c1-1).
-    this.afterRun(key, inner.args, h.s, sc, h.shellSc ?? h.sc);
+    this.afterRun(key, inner.args, h.s, sc, h.shellSc ?? h.sc, dlBefore);
     if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
     // `command printf -v …` and `time unset …` run the same built-ins.
     this.hiddenNames(key, inner.args, sc);
@@ -2889,7 +2927,7 @@ class Engine extends Classifier {
    * (`curl URL > x.sh`, `curl URL | tee x.sh`), and a build tool, test runner or package manager working in a folder
    * this task downloaded runs that folder's code (a cloned repository's Makefile or package scripts).
    */
-  afterRun(key: string, args: Arg[], s: Simple, sc: Scope, shellSc: Scope = sc): void {
+  afterRun(key: string, args: Arg[], s: Simple, sc: Scope, shellSc: Scope = sc, dlBefore = this.downloads.length): void {
     // What reads a download writes it out again (`cat x.py > y.py`, `sed … x.py > y.py`, `cat x.py | tee y.py`): the
     // new file is the download too (commands-remote-c2-2). Its redirections are the shell's, opened in its folder
     // whatever folder a wrapper moves the program into (`env -C src curl … > x.py`: commands-z6-3).
@@ -2904,16 +2942,31 @@ class Engine extends Classifier {
     if (prints || carried || FETCHERS.has(key)) this.gaveFetched = true;
     if (s.fetchBefore || FETCHERS.has(key) || carried || s.fetched === true) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
-      if (/^(tee|tee-object|out-file|set-content|add-content)$/.test(key)) {
+      if (/^(tee|tee-object|out-file|set-content|add-content|sponge)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
       }
       if (key === "dd") for (const a of args) { const m = a.v === null ? null : /^of=(.+)$/.exec(a.v); if (m && !NULL_SINKS.has(m[1].toLowerCase())) this.download(m[1], sc); }
     }
+    // A compiler builds a program from a downloaded source: the file it writes is the download too, so running it later
+    // asks (commands-remote-r8-2). Carried to `-o`/`-oX` (gcc, rustc), else the default output: `a.out` for a cc-family
+    // link, `<stem>.o` per source with `-c`, `<stem>` for rustc. The source operand itself already asks on its own row.
+    if (known && COMPILERS.has(key)) this.carryCompiled(key, args, sc);
+    // A runner Ember has no download check for (a VM or interpreter whose file operand isn't a shell script) runs a
+    // download with no question: java, mono, wine, pwsh on a POSIX shell, jupyter nbconvert --execute
+    // (commands-remote-r8-2).
+    if (known && this.runsDownloadedExec(key, args, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     const runner = PROJECT_RUNNERS.has(key) || ((key === "docker" || key === "podman") && /^(compose|build|buildx)$/.test(args[0]?.v ?? ""));
     if (!runner || !known) return;
+    const extra = TOOL_PROJECT_FILES[key];
     const folderOf = (v: string): string | null => (sc.cwd ? resolveTargetPath(v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd }) : null);
+    // Downloads this very command saved (`pip download -d build …`, which is both a fetch and a PROJECT_RUNNER, or a
+    // compiler's output) are for later commands, not a download this command runs: they don't trip its own check. So the
+    // runner check reads only the downloads that stood before this command (commands-remote-r8-2).
+    const saved = this.downloads;
+    if (this.downloads.length > dlBefore) this.downloads = this.downloads.slice(0, dlBefore);
     // Every check is made, not only up to the first that holds: one of them may find a download saved by name, which
     // the card then says as a fact (`namedHit`: commands-remote-x7-4).
+    const anyBefore = this.ctx.downloaded.size > 0 || this.downloads.length > 0;
     const hits = [this.isDownloaded(lit("."), sc), ...args.map(a => {
       if (a.v === null || URL_LIKE.test(a.v)) return false;
       const v = a.v.replace(/^--?[A-Za-z][A-Za-z-]*=/, "");
@@ -2921,13 +2974,95 @@ class Engine extends Classifier {
       // A file it is given, or a folder it works in (`make -C sub`) holding a project file this task downloaded.
       const f = folderOf(v);
       const file = this.isDownloaded({ ...a, v }, sc, false);
-      const project = f !== null && this.downloadedProjectFile(f, sc);
+      const project = f !== null && this.downloadedProjectFile(f, sc, extra);
       return file || project;
-    }), sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc),
+    }), sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc, extra),
     // In a folder Ember can't name (after `cd x;`, `cd x || exit`, `pushd x` or a cd on its own line, any of which may
     // have failed), the folder may be the download's: a clone entered that way is built there (commands-remote-r8-1).
-    sc.cwd === null];
+    sc.cwd === null && anyBefore];
+    this.downloads = saved;
     if (hits.some(Boolean)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  }
+
+  /**
+   * A compiler's output is a download when it builds a downloaded source (commands-remote-r8-2): carried to `-o`/`-oX`,
+   * else the default output. Only operands Ember sees as downloaded count as sources.
+   */
+  private carryCompiled(key: string, args: Arg[], sc: Scope): void {
+    const isRust = key === "rustc";
+    const out: string[] = [];
+    let compileOnly = false;
+    const sources: string[] = [];
+    for (let k = 0; k < args.length; k++) {
+      const a = args[k];
+      if (a.v === null) continue;
+      if (a.v === "-c" || a.v === "--compile") { compileOnly = true; continue; }
+      if (a.v === "-o" || a.v === "--output") { if (args[k + 1]?.v) out.push(args[k + 1].v as string); k++; continue; }
+      const attached = /^-o(.+)$/.exec(a.v) ?? /^--output=(.+)$/.exec(a.v);
+      if (attached) { out.push(attached[1]); continue; }
+      if (!a.v.startsWith("-") && this.isDownloaded(a, sc)) sources.push(a.v);
+    }
+    if (sources.length === 0) return;
+    for (const o of out) this.carryDownload(o, sc);
+    if (out.length > 0) return;
+    if (isRust) { for (const s of sources) { const stem = baseName(s, sc.path.flavour).replace(/\.[^.]+$/, ""); if (stem) this.carryDownload(stem, sc); } return; }
+    if (compileOnly) { for (const s of sources) this.carryDownload(s.replace(/\.[^./\\]+$/, ".o"), sc); return; }
+    this.carryDownload("a.out", sc);
+  }
+
+  /**
+   * Whether a runner Ember knows runs a file this task downloaded (commands-remote-r8-2): java's `-jar`, class-path
+   * entries and main class or source, mono's and wine's executable, PowerShell's `.ps1` on a POSIX shell, and jupyter's
+   * notebook. Each operand is checked against the downloads only (never `holdsDownload`, so `java -cp . Main` doesn't ask
+   * for an unrelated download). A bare name a runner resolves is tried with the extensions it adds.
+   */
+  private runsDownloadedExec(key: string, args: Arg[], sc: Scope): boolean {
+    const win = sc.path.flavour === "win32";
+    const hit = (name: string, exts: readonly string[] = []): boolean =>
+      this.isDownloaded(lit(name), sc) || exts.some(e => this.isDownloaded(lit(name + e), sc));
+    if (key === "java") {
+      let main: string | null = null;
+      const cp: string[] = [];
+      for (let k = 0; k < args.length; k++) {
+        const v = args[k].v;
+        if (v === null) continue;
+        if (v === "-jar") { const j = args[k + 1]?.v; if (j && hit(j)) return true; k++; continue; }
+        if (/^-(cp|classpath|p)$/.test(v) || v === "--class-path" || v === "--module-path") { if (args[k + 1]?.v) cp.push(args[k + 1].v as string); k++; continue; }
+        const m = /^--(?:class-path|module-path)=(.+)$/.exec(v) ?? /^-(?:cp|classpath|p)(.+)$/.exec(v);
+        if (m) { cp.push(m[1]); continue; }
+        const agent = /^-(?:javaagent|agentpath):([^=]+)/.exec(v);
+        if (agent) { if (hit(agent[1])) return true; continue; }
+        if (v.startsWith("-")) continue;
+        if (main === null) main = v;
+      }
+      for (const entry of cp.flatMap(c => c.split(win ? ";" : ":"))) if (entry && entry !== "." && hit(entry)) return true;
+      if (main !== null) {
+        if (/\.(jar|java|class)$/i.test(main)) return hit(main);
+        return hit(`${main.replace(/\./g, "/")}.class`) || hit(`${main.replace(/\./g, "/")}.java`);
+      }
+      return false;
+    }
+    if (key === "mono" || key === "wine" || key === "wine64") {
+      const op = args.find(a => a.v !== null && !a.v.startsWith("-"));
+      return op?.v != null && hit(op.v);
+    }
+    if ((key === "pwsh" || key === "powershell" || key === "pwsh-preview") && !win) {
+      // On a POSIX shell these run a .ps1; on Windows the PowerShell row records the script itself.
+      for (let k = 0; k < args.length; k++) {
+        const v = args[k].v;
+        if (v !== null && /^-(f|fi|fil|file)$/i.test(v)) { const f = args[k + 1]?.v; return f != null && hit(f); }
+        if (v !== null && !v.startsWith("-") && /\.ps1$/i.test(v)) return hit(v);
+      }
+      return false;
+    }
+    if (key === "jupyter") {
+      if (args[0]?.v === "nbconvert" && args.some(a => a.v === "--execute")) {
+        return args.slice(1).some(a => a.v !== null && !a.v.startsWith("-") && hit(a.v));
+      }
+      if (args[0]?.v === "run" && args[1]?.v) return hit(args[1].v);
+      return false;
+    }
+    return false;
   }
 
   /** Whether this task holds any download, named or not: an earlier command's, or one earlier on this line. */
@@ -3798,6 +3933,9 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     const files = inlineSql(h, ["f"], ["file"]);
     if (files.some(f => f !== null && STDIN_NAME.test(f)) || (!inlineSql(h, ["c"], ["command"]).length && !files.length)) sqlFromStdin(h, "psql");
     if (files.some(f => f !== null && !STDIN_NAME.test(f) && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+    // A SQL script this task downloaded, run with -f, is download-and-run (its `\!`, `COPY … FROM PROGRAM` run code):
+    // commands-remote-r8-2.
+    if (files.some(f => f !== null && !STDIN_NAME.test(f) && !STREAM_NAME.test(f) && h.e.isDownloaded(lit(f), h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   }
   else if (k === "sqlcmd") databaseText(h, inlineSql(h, ["Q", "q"], []));
   else if (k === "cqlsh") databaseText(h, inlineSql(h, ["e"], ["execute"]));
@@ -4480,6 +4618,18 @@ reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma
   const packed = [...p.operands, ...stray];
   const ins = objsOf(h, packed, "write");
   if (removes && packed.length && !keeps) h.e.add("destroy", "archive.in-place", `Replaces ${listOf(ins)} with a packed or unpacked copy.`, { objects: ins });
+  // Decompressing a download writes the uncompressed file beside it (`gunzip y.gz` writes y): that file is the download
+  // too, so running it later asks (commands-remote-r8-2). The output's name is the input with its suffix stripped (or a
+  // custom `-S .suf`), to stdout with -c, where only the pipe carries it.
+  const decompresses = /^(gunzip|bunzip2|unxz|unlzma|uncompress|unzstd|unpigz)$/.test(h.key) || has(p, "d", "decompress", "uncompress");
+  if (decompresses && !has(p, "c", "stdout", "to-stdout", "t", "test", "l", "list")) {
+    const suffix = values(p, "S", "suffix")[0] ?? null;
+    for (const o of p.operands) {
+      if (o.v === null || o.glob || !h.e.isDownloaded(o, h.sc)) continue;
+      const base = suffix && o.v.endsWith(suffix) ? o.v.slice(0, -suffix.length) : o.v.replace(/\.(gz|z|bz2|bz|xz|lzma|lz|Z|zst|zstd|lz4|br|tgz|tbz2?|txz|tzst)$/i, m => (/^\.t(gz|bz2?|xz|zst)$/i.test(m) ? ".tar" : ""));
+      if (base !== o.v) h.e.carryDownload(base, h.sc);
+    }
+  }
   // zstd's and brotli's -o names the file they write (with -f, over one that is there), and zstd's -D a dictionary it
   // reads: judged as that file is (commands-remote-v5-1). Unpacked from a download, it is one too.
   if (!["zstd", "unzstd", "brotli"].includes(h.key)) return;
@@ -4534,6 +4684,8 @@ reg(NATIVE, ["sed", "gsed"], h => {
   let files = p.operands;
   const scriptFiles = values(p, "f", "file");
   for (const f of scriptFiles) if (f) h.e.usePath(lit(f), "read", h.sc);
+  // A sed program file this task downloaded runs code (its `e`, `w`/`r` commands): download-and-run (commands-remote-r8-2).
+  if (scriptFiles.some(f => f !== null && h.e.isDownloaded(lit(f), h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   if (scripts.length === 0 && scriptFiles.length === 0) { scripts = [files[0]?.v ?? null]; files = files.slice(1); }
   for (const s of scripts) if (s === null || !sedScriptOk(s)) h.e.unclear("unclear.sed-script", "Its sed script can run commands or write files Ember can't see.");
   if (scripts.some(s => s === null || !sedScriptOk(s)) && typeof h.s.stdinText === "string") h.e.judgeInput(h.s.stdinText, h.sc);
@@ -4606,6 +4758,9 @@ reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   // `-i inplace` writes what it prints back into each file it reads, as sed -i.
   const inPlace = values(p, "i", "include").some(v => v !== null && /^inplace(\.awk)?$/.test(v));
   for (const f of progFiles) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // An awk program file this task downloaded runs code (its `system()`, `print > file`): download-and-run
+  // (commands-remote-r8-2).
+  if (progFiles.some(f => f !== null && !STDIN_NAME.test(f) && h.e.isDownloaded(lit(f), h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   // `awk -f -` / `-f /dev/stdin` reads its program from stdin: judge the seen text, else ask (review #166).
   if (progFiles.some(f => f === null || STDIN_NAME.test(f))) fromStdin(h, t => { if (!awkProgramOk(t)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files."); });
   else if (progFiles.some(f => f !== null && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
@@ -4705,12 +4860,22 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   // A folder given as the program (`node .`, `python3 tool`) runs its entry file (commands-remote-c7-3).
   const folder = script.v.replace(/\/+$/, "") || "/";
   const entry = /(^|\/)\.{1,2}$|\/$/.test(script.v) || !/\.[^./]+$/.test(folder) ? ENTRY_FILES.some(n => h.e.isDownloaded(lit(`${folder}/${n}`), h.sc)) : false;
-  if (h.e.isDownloaded(script, h.sc) || entry) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  // A bare name node or python resolves to a downloaded file by adding an extension (`node x` runs x.js), or a glob that
+  // matches a downloaded one (`python3 a.p*`): the download runs (commands-remote-r8-2).
+  const exts = SCRIPT_EXTS[h.key] ?? [];
+  const bareHit = exts.length > 0 && !/\.[^./\\]+$/.test(folder) && !script.glob && exts.some(e => h.e.isDownloaded(lit(script.v + e), h.sc));
+  const globHit = script.glob && h.e.globMatchesDownload(script, h.sc);
+  if (h.e.isDownloaded(script, h.sc) || entry || bareHit || globHit) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   else if (readAs !== undefined) h.e.recordScript(script, readAs, h.sc);
   nameCheck(h, script.v, script.v);
 }
 /** The files node or python runs when given a folder (package.json names node's). */
 const ENTRY_FILES = ["index.js", "index.mjs", "index.cjs", "index.json", "index.node", "package.json", "__main__.py"];
+/** Extensions an interpreter adds to a bare program name it is given (`node x` runs x.js), to match a download by name. */
+const SCRIPT_EXTS: Readonly<Record<string, readonly string[]>> = {
+  node: [".js", ".mjs", ".cjs", ".json", ".node"], nodejs: [".js", ".mjs", ".cjs", ".json", ".node"],
+  python: [".py"], python2: [".py"], python3: [".py"], py: [".py"], pypy: [".py"], pypy3: [".py"],
+};
 
 /** Inline code: unclear, and refused when it names Ember's own paths (§3.5.8). */
 function emberText(h: H, code: string): void {
@@ -5593,7 +5758,11 @@ git(["clone"], h => {
 git(["archive"], h => {
   const p = opts(h, { shortValue: "o", longValue: ["output", "format", "prefix", "remote", "exec", "add-file", "add-virtual-file"] });
   if (values(p, "exec").length) h.e.unclear("unclear.git-receive-pack", "It runs a program on the other computer Ember can't see.");
-  for (const o of values(p, "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
+  // `git archive --remote=…` fetches a tree from another repository: what it writes to a file, or pipes on to an
+  // unpacker (`git archive --remote=… | tar x`), is a download, like what `ssh host …` prints (commands-remote-r8-2).
+  const remote = values(p, "remote").length > 0;
+  if (remote) h.e.pipe.fetch = true;
+  for (const o of values(p, "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) { h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); if (remote) h.e.download(o, h.sc); } }
 });
 git(["lfs"], h => {
   const sub = h.args[0]?.v;
@@ -5760,6 +5929,15 @@ reg(NATIVE, ["svn"], h => {
   const rest = h.args.slice(g.verbAt + 1);
   const ops = rest.filter(a => !isOption(a));
   const urlOp = ops.some(a => URL_LIKE.test(a.v ?? ""));
+  // A checkout or export from a URL brings a working copy or files in: a clone, so building or running there asks
+  // (commands-remote-r8-2). The folder is the one named, else the URL's last part.
+  if (/^(checkout|co|export)$/.test(verb) && urlOp) {
+    const paths = ops.filter(a => !URL_LIKE.test(a.v ?? ""));
+    const dest = paths[paths.length - 1];
+    const url = ops.find(a => URL_LIKE.test(a.v ?? ""));
+    if (dest?.v) h.e.markUnnamed(dest.v, h.sc);
+    else if (url?.v) h.e.download(url.v.replace(/[\\/]+$/, "").split("/").pop() || null, h.sc);
+  }
   if (/^(commit|ci|import|lock|unlock)$/.test(verb)) h.e.add("publish", "svn.commit", "Sends changes to Subversion.");
   else if (/^(copy|cp|move|mv|rename|ren|mkdir|propset|pset|ps|propdel|pdel|pd|propedit|pedit|pe)$/.test(verb) && urlOp) h.e.add("publish", "svn.commit", "Sends changes to Subversion.");
   else if (/^(delete|del|remove|rm)$/.test(verb)) {
@@ -5776,6 +5954,16 @@ reg(NATIVE, ["hg"], h => {
   for (const o of g.opts) if (o.name === "--config" && o.value && /^(hooks|alias|ui\.(editor|merge|ssh)|extensions)/i.test(o.value)) h.e.unclear("unclear.hg-config", "Runs code from a setting.");
   const verb = h.args[g.verbAt]?.v ?? "";
   const rest = h.args.slice(g.verbAt + 1);
+  // `hg clone URL [dest]` brings a working copy in, a clone, so building there asks (commands-remote-r8-2).
+  if (verb === "clone") {
+    const ops = rest.filter(a => !isOption(a));
+    const src = ops.find(a => URL_LIKE.test(a.v ?? "") || SCP_LIKE.test(a.v ?? "")) ?? ops[0];
+    const dest = ops[1];
+    if (dest?.v) h.e.markUnnamed(dest.v, h.sc);
+    else if (dest && dest.v === null) h.e.markUnnamed(null, h.sc);
+    else if (src?.v) h.e.download(src.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop() || null, h.sc);
+    else h.e.markUnnamed(".", h.sc);
+  }
   if (verb === "push" || verb === "outgoing" && false) h.e.add("publish", "hg.push", "Sends changes to another repository.");
   else if (/^(strip|purge|clean|rollback|revert|prune|obsolete)$/.test(verb)) h.e.add("destroy", "hg.discard", "Throws away local changes.");
   else if ((verb === "update" || verb === "up" || verb === "checkout" || verb === "co") && rest.some(a => a.v === "-C" || a.v === "--clean")) h.e.add("destroy", "hg.discard", "Throws away local changes.");
@@ -6297,9 +6485,13 @@ function pip(h: H): void {
   }
   if (verb === "config" && rest.some(a => a.v === "--global")) h.e.add("system", "pip.config.global", "Changes settings for every user.");
   if (verb === "download" || verb === "wheel") {
-    // The folder it saves into (review #169).
+    // The folder it saves into (review #169), and what it downloads there: a wheel it unpacks or a script it finds is
+    // the download, so running one later asks (commands-remote-r8-2).
     const p = parseOpts(rest, { shortValue: "rcdwi", longValue: ["requirement", "constraint", "dest", "wheel-dir", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "src"] });
-    for (const d of values(p, "d", "dest", "w", "wheel-dir")) if (d) writeInto(h, d);
+    const dests = values(p, "d", "dest", "w", "wheel-dir");
+    for (const d of dests) if (d) writeInto(h, d);
+    for (const d of dests) { if (d) h.e.markUnnamed(d, h.sc); else h.e.markUnnamed(null, h.sc); }
+    if (dests.length === 0) h.e.markUnnamed(".", h.sc);
     h.e.readArgs(rest.filter(a => !isOption(a) && !URL_LIKE.test(a.v ?? "")), h.sc);
   }
 }
@@ -6392,12 +6584,16 @@ reg(NATIVE, ["go"], h => {
   if (verb === "clean" && rest.some(a => /^-(cache|modcache|testcache|fuzzcache)$/.test(a.v ?? ""))) h.e.add("destroy", "script.destroy", "Runs clean, whose name says it deletes things.");
   // build and test -c write the program where -o says, a file or a folder (review #169).
   if (verb === "build" || verb === "test") {
+    // Building a downloaded source writes the program it names (`-o app`) as a download too, so `./app` later asks
+    // (commands-remote-r8-2). A downloaded .go or go.mod in the build's folder, or a source given outright.
+    const fromDownload = (h.sc.cwd !== null && h.e.downloadedProjectFile(h.sc.cwd, h.sc, TOOL_PROJECT_FILES.go))
+      || rest.some(a => !isOption(a) && a.v !== null && /\.go$/i.test(a.v) && h.e.isDownloaded(a, h.sc));
     for (let k = 0; k < rest.length; k++) {
       const m = /^--?o(=([\s\S]*))?$/.exec(rest[k].v ?? "");
       if (!m) continue;
       const o = m[1] !== undefined ? m[2] : rest[k + 1]?.v;
       if (o === null || o === undefined) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
-      else if (!NULL_SINKS.has(o.toLowerCase())) h.e.usePath(lit(o), "write", h.sc);
+      else if (!NULL_SINKS.has(o.toLowerCase())) { h.e.usePath(lit(o), "write", h.sc); if (fromDownload) h.e.carryDownload(o, h.sc); }
     }
   }
 });
@@ -6676,6 +6872,12 @@ reg(NATIVE, ["dpkg", "rpm"], h => {
   const write = h.key === "dpkg"
     ? flags.some(f => /^-([a-zA-Z]*[irPa]|-install|-remove|-purge|-unpack|-configure|-set-selections|-add-architecture|-remove-architecture)/.test(f) || /^--(install|remove|purge|unpack|configure|triggers-only|set-selections|clear-selections|add-architecture|remove-architecture|update-avail|merge-avail)$/.test(f))
     : flags.some(f => /^-[a-zA-Z]*[iUeF]/.test(f) && !/^-q/.test(f) || /^--(install|upgrade|erase|freshen|import|reinstall|setperms|setugids|restore|initdb|rebuilddb)$/.test(f));
+  // `dpkg -x pkg.deb dir` / `--extract` / `-X` unpacks a package into a folder: a download's contents land there, so
+  // running one of them later asks (commands-remote-r8-2).
+  if (h.key === "dpkg" && flags.some(f => /^-[a-zA-Z]*[xX]/.test(f) || /^--(extract|vextract|fsys-tarfile)$/.test(f))) {
+    const ops = h.args.filter(a => !isOption(a));
+    if (ops[0] && h.e.isDownloaded(ops[0], h.sc)) { if (ops[1]?.v) h.e.markUnnamed(ops[1].v, h.sc); else h.e.markUnnamed(null, h.sc); }
+  }
   if (write) languageOrSystem(h, h.args.filter(a => !isOption(a)));
   else h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
 });
@@ -7073,10 +7275,20 @@ reg(NATIVE, ["rclone"], h => {
   if (/^(config|password|obscure|authorize)$/.test(verb)) { h.e.add("secret", "secret.program", SAYS.secrets); return; }
   if (/^(delete|purge|deletefile|rmdir|rmdirs|cleanup|dedupe)$/.test(verb)) { h.e.add(ops.some(remote) ? "remote-delete" : "destroy", ops.some(remote) ? "cloud.delete" : "posix.rm", "Deletes files."); return; }
   if (/^(copy|copyto|sync|move|moveto|copyurl|bisync|rcat|mkdir|touch|settier|link)$/.test(verb)) {
-    if (remote(ops[ops.length - 1] ?? "")) {
-      h.e.add("publish", "upload.rclone", `Sends data to ${ops[ops.length - 1].split(":")[0]}.`);
+    const dest = ops[ops.length - 1] ?? "";
+    if (remote(dest)) {
+      h.e.add("publish", "upload.rclone", `Sends data to ${dest.split(":")[0]}.`);
       if (verb === "sync" || verb === "bisync") h.e.add("remote-delete", "rsync.delete-remote", "Deletes files on the other side that aren't here.");
-    } else if (verb === "sync") h.e.add("destroy", "posix.rsync", "Deletes files here that aren't on the other side.");
+    } else {
+      if (verb === "sync") h.e.add("destroy", "posix.rsync", "Deletes files here that aren't on the other side.");
+      // Files copied here from a remote (`rclone copy remote:x .`, `copyurl URL file`) are downloads: running one later
+      // asks (commands-remote-r8-2). Into a folder (copy, sync, bisync), of unknown name; copyto/moveto name the file.
+      if (/^(copy|copyto|sync|move|moveto|copyurl|bisync|rcat)$/.test(verb) && (verb === "copyurl" || ops.slice(0, -1).some(remote))) {
+        if (/^(copyto|moveto|rcat)$/.test(verb) && dest) h.e.download(dest, h.sc);
+        else if (verb === "copyurl") { const f = ops[ops.length - 1]; if (f && !remote(f)) h.e.download(f, h.sc); else h.e.markUnnamed(".", h.sc); }
+        else h.e.markUnnamed(dest || ".", h.sc);
+      }
+    }
     if ((verb === "move" || verb === "moveto") && ops.slice(0, -1).some(remote)) h.e.add("remote-delete", "cloud.delete", "Deletes the files it moves from the other side.");
     return;
   }
