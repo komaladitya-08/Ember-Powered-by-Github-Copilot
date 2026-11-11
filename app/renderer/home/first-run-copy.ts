@@ -6,7 +6,8 @@
  * valid; that is always the answer of the real check.
  */
 
-import { onThisComputer } from "../../shared/provider";
+import { onThisComputer, type ProviderType } from "../../shared/provider";
+import { providerTestText } from "./copy";
 
 /** The ways on from a failed connection ("provider": the user's own provider's details, when it is the one failing). */
 export type FailureAction = "retry" | "switch-account" | "own-provider" | "sign-in" | "provider";
@@ -254,12 +255,40 @@ export function providerFailField(r: { why: string; cause?: string }): "address"
 
 /**
  * What the provider check found, as a status line (the real answer only; `why` is main's sentence, said as mine on
- * every visit, as after a failed edit of the provider in use: first-run-r4-2).
+ * every visit, as after a failed edit of the provider in use: first-run-r4-2). The models it lists are named, as Home's
+ * Test connection names them (first-run-c7-1).
  */
-export function providerCheckLine(r: { ok: true; host: string; models: number | null } | { ok: false; why: string }): string {
-  if (!r.ok) return inMyVoice(r.why);
-  if (r.models === null) return `Connected to ${r.host}.`;
-  return `Connected to ${r.host}. It lists ${r.models} ${r.models === 1 ? "model" : "models"}.`;
+export function providerCheckLine(r: { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string }): string {
+  return r.ok ? providerTestText(r) : inMyVoice(r.why);
+}
+
+/** A dated snapshot's ending after a model's name ("-20250929", "-2025-04-14", "-0613"). */
+const SNAPSHOT = /^-(?:\d{8}|\d{4}-\d{2}-\d{2}|\d{4})$/;
+/** `typed` may be how the service takes the listed `id`: the id itself, without its ":latest", path or snapshot date. */
+function namesListed(id: string, typed: string): boolean {
+  const want = typed.toLowerCase();
+  const stem = want.replace(/-latest$/, "");
+  return [id.toLowerCase(), id.toLowerCase().split("/").pop() ?? ""].some(have =>
+    have === want || have === `${want}:latest` || (have.startsWith(stem) && SNAPSHOT.test(have.slice(stem.length))));
+}
+
+/**
+ * A model name typed on the provider step that the service, which answered, doesn't list: the check fails on that
+ * field and names what is listed, instead of passing a name the first request then fails on ("That model isn't
+ * available.", first-run-c7-1). Only where the list was read whole (every model's id, at most main's 50) and holds
+ * model names: Azure asks for a deployment's name, which its list doesn't hold. A name the service may still take
+ * (namesListed) passes. Null when nothing is known to be missing.
+ */
+export function providerModelMissing(r: { host: string; models: number | null; ids?: string[] }, typed: { type: ProviderType; conductor: string; worker: string }): { field: "conductor" | "worker"; line: string } | null {
+  const ids = r.ids ?? [];
+  if (typed.type === "azure" || !ids.length || r.models !== ids.length) return null;
+  const field = (["conductor", "worker"] as const).find(f => typed[f] && !ids.some(id => namesListed(id, typed[f])));
+  if (!field) return null;
+  const all = (names: readonly string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0]);
+  const listed = ids.length === 1 ? `It lists 1 model: ${ids[0]}. Enter that name.`
+    : ids.length <= 4 ? `It lists ${ids.length} models: ${all(ids)}. Enter one of those names.`
+      : `It lists ${ids.length} models, such as ${all(ids.slice(0, 4))}. Enter a name it lists.`;
+  return { field, line: `${r.host} answered, but it doesn't list ${typed[field]}. ${listed}` };
 }
 
 /** A model's cost against Copilot's premium requests, in words; "" when Copilot didn't say. */

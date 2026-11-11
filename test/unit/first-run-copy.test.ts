@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, pressOnStep, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices } from "../../app/renderer/home/first-run-copy";
+import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, pressOnStep, PROVIDER_STEP, providerCheckLine, providerModelMissing, providerFailField, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices } from "../../app/renderer/home/first-run-copy";
 import { retryMessage, tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 import { KEY_NO_KEYRING, KEY_WRITE_FAILED, PROVIDER_MANAGED, PROVIDER_NO_CONSENT, providerDown, providerNotAgreed, testConnection } from "../../app/main/provider";
@@ -92,6 +92,52 @@ describe("first run: the provider check says only what it found (FE #2)", () => 
     expect(providerCheckLine({ ok: true, host: "a.b", models: 1 })).toBe("Connected to a.b. It lists 1 model.");
     expect(providerCheckLine({ ok: true, host: "a.b", models: null })).toBe("Connected to a.b.");
     expect(providerCheckLine({ ok: false, why: "The key was refused." })).toBe("The key was refused.");
+  });
+  it("names the models the service lists, as Home's Test connection does (first-run-c7-1)", () => {
+    expect(providerCheckLine({ ok: true, host: "127.0.0.1:18392", models: 1, ids: ["llama3.2:3b"] })).toBe("Connected to 127.0.0.1:18392. It lists 1 model: llama3.2:3b.");
+    expect(providerCheckLine({ ok: true, host: "a.b", models: 3, ids: ["m1", "m2", "m3"] })).toBe("Connected to a.b. It lists 3 models, such as m1 and m2.");
+  });
+  it("fails the check on the model field when the service doesn't list the name typed, naming what it lists (first-run-c7-1)", () => {
+    // The step's own example, "gpt-4.1", typed for a server that lists only llama3.2:3b: the check said "Connected…
+    // It lists 1 model." and offered Continue, and the first request failed with "That model isn't available."
+    const one = { host: "127.0.0.1:18392", models: 1, ids: ["llama3.2:3b"] };
+    expect(providerModelMissing(one, { type: "openai", conductor: "gpt-4.1", worker: "" })).toEqual({
+      field: "conductor", line: "127.0.0.1:18392 answered, but it doesn't list gpt-4.1. It lists 1 model: llama3.2:3b. Enter that name.",
+    });
+    // The neighbouring shape (integrations-9): a tag left off a name that has no “latest”.
+    expect(providerModelMissing(one, { type: "openai", conductor: "llama3.2", worker: "" })?.field).toBe("conductor");
+    expect(providerModelMissing(one, { type: "openai", conductor: "llama3.2:3b", worker: "" })).toBeNull();
+    // The model for tasks is checked too, after the conversation's.
+    const three = { host: "a.b", models: 3, ids: ["m1", "m2", "m3"] };
+    expect(providerModelMissing(three, { type: "openai", conductor: "m2", worker: "m9" })).toEqual({
+      field: "worker", line: "a.b answered, but it doesn't list m9. It lists 3 models: m1, m2 and m3. Enter one of those names.",
+    });
+    expect(providerModelMissing(three, { type: "openai", conductor: "m0", worker: "m9" })?.field).toBe("conductor");
+    expect(providerModelMissing(three, { type: "openai", conductor: "m1", worker: "m3" })).toBeNull();
+    const many = { host: "a.b", models: 7, ids: ["m1", "m2", "m3", "m4", "m5", "m6", "m7"] };
+    expect(providerModelMissing(many, { type: "anthropic", conductor: "x", worker: "" })?.line).toBe("a.b answered, but it doesn't list x. It lists 7 models, such as m1, m2, m3 and m4. Enter a name it lists.");
+    // Said as the step's own line, in the first person and without Ember's name.
+    expect(providerModelMissing(one, { type: "openai", conductor: "gpt-4.1", worker: "" })?.line).not.toMatch(/Ember/);
+  });
+  it("never fails a name the service may still take: a list it can't read whole, a deployment, a short name for a listed model (first-run-c7-1)", () => {
+    const typed = { type: "openai" as const, conductor: "gpt-4.1", worker: "" };
+    // No list, no readable ids, or more models than the ids read (the list is cut at 50, and odd ids are left out).
+    expect(providerModelMissing({ host: "a.b", models: null }, typed)).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 2 }, typed)).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 0, ids: [] }, typed)).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 60, ids: ["m1", "m2"] }, typed)).toBeNull();
+    // Azure asks for a deployment's name, which its model list doesn't hold.
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["gpt-4o"] }, { ...typed, type: "azure" })).toBeNull();
+    // Ollama takes "llama3.2" for "llama3.2:latest"; services take a model's name for its dated snapshot, and "-latest".
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["llama3.2:latest"] }, { ...typed, conductor: "llama3.2" })).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["claude-sonnet-4-5-20250929"] }, { ...typed, conductor: "claude-sonnet-4-5" })).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["claude-3-5-haiku-20241022"] }, { ...typed, conductor: "claude-3-5-haiku-latest" })).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["gpt-4.1-2025-04-14"] }, typed)).toBeNull();
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["GPT-4.1"] }, typed)).toBeNull();
+    // A model path's last part ("models/gemini-2.0-flash", "org/model").
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["models/gemini-2.0-flash"] }, { ...typed, conductor: "gemini-2.0-flash" })).toBeNull();
+    // Still a different model: a longer name that only starts the same.
+    expect(providerModelMissing({ host: "a.b", models: 1, ids: ["gpt-4.1-mini"] }, typed)?.field).toBe("conductor");
   });
 });
 

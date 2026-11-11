@@ -259,6 +259,31 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(am) a model name the service doesn't list fails the check on its field and names what is listed; the listed name then passes (first-run-c7-1)", async () => {
+    const p = await open();
+    await p.getByRole("button", { name: "Use my own provider" }).click();
+    await p.fill("#w-p-url", "http://127.0.0.1:18392/v1");
+    // The step's own example, for a model server that lists one other model.
+    await p.fill("#w-p-conductor", "gpt-4.1");
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("test");
+    await settle(p, "test", { ok: true, host: "127.0.0.1:18392", models: 1, ids: ["llama3.2:3b"] });
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("127.0.0.1:18392 answered, but it doesn't list gpt-4.1. It lists 1 model: llama3.2:3b. Enter that name.");
+    expect(await p.locator("#w-p-result").getAttribute("class")).toBe("w-status error");
+    expect(await focusedId(p)).toBe("w-p-conductor");
+    expect(await next(p).innerText()).toBe("Check again");
+    // Not verified: the provider isn't left switched on with a model it can't answer with.
+    await expect.poll(() => p.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
+    await p.fill("#w-p-conductor", "llama3.2:3b");
+    await next(p).click();
+    await expect.poll(async () => (await calls(p)).filter(c => c === "test").length).toBe(2);
+    await settle(p, "test", { ok: true, host: "127.0.0.1:18392", models: 1, ids: ["llama3.2:3b"] }, 1);
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("Connected to 127.0.0.1:18392. It lists 1 model: llama3.2:3b.");
+    expect(await focusedId(p)).toBe("w-next");
+    expect(await p.evaluate(() => window.__frState.settings.provider.on)).toBe(true);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(c) an entitlement failure offers account, access and provider remedies, not signing in again", async () => {
     for (const [detail, word] of [["Copilot isn't available to this account.", "github.com/features/copilot"], ["Copilot is disabled by your organisation's policy.", "administrator"]] as const) {
       const p = await open({ agent: { ...SIGNED_OUT, phase: "error", reason: "no-access", detail } });

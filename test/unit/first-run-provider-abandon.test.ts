@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { latestOnly, endpointHost } from "../../app/shared/provider";
-import { providerCheckLine, providerFailField, providerKeptLine, PROVIDER_STEP } from "../../app/renderer/home/first-run-copy";
+import { providerCheckLine, providerFailField, providerKeptLine, providerModelMissing, PROVIDER_STEP } from "../../app/renderer/home/first-run-copy";
 import { gated, stepPosition } from "../../app/renderer/home/welcome-copy";
 import { SettingsStore, withOwnProvider } from "../../app/main/settings";
 import { AdminPolicySchema } from "../../app/main/admin";
@@ -41,7 +41,8 @@ const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new P
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as never;
 const admin = { policy: AdminPolicySchema.parse({}), source: null };
 const FAIL = { ok: false, status: 401, json: async () => ({}) };
-const OK = { ok: true, status: 200, json: async () => ({ data: [{ id: "x" }] }) };
+// It lists the model the fields name: one it does not list fails the check (first-run-c7-1).
+const OK = { ok: true, status: 200, json: async () => ({ data: [{ id: "model-a" }] }) };
 
 async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-abandon-"));
@@ -75,7 +76,7 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
     // The visit set the provider up (it wasn't in use as the step opened): Back to Copilot puts it away (first-run-c1-2).
     visitInUse: false, checkSaves: true, edited: false, ownInForce: () => false, inUseHost: () => null, offPending: 0, see() {}, switchMade: false, switchedSaid: false,
     get settings() { return settings.get(); },
-    latestOnly, endpointHost, providerChoice, showOffFailureText: "", providerCheckLine, providerFailField, providerKeptLine, PROVIDER_STEP, gated, stepPosition,
+    latestOnly, endpointHost, providerChoice, showOffFailureText: "", providerCheckLine, providerFailField, providerModelMissing, providerKeptLine, PROVIDER_STEP, gated, stepPosition,
     root: { dataset: {} }, consented: () => true, render() {}, $: (id: string) => (nodes[id] ??= { hidden: true, textContent: "", focus() {} }), provField: () => ({ focus() {} }), next: { focus() {} },
     readProviderFields: () => ({ ...fields }), window: { emberProvider: api, scrollTo() {} },
     deps: {
@@ -246,6 +247,19 @@ describe("first run's check of an edit to the provider in use (first-run-r2-1)",
     h.http.resolve(FAIL);
     await done;
     expect((h.ctx.providerCheck as { phase: string; line: string })).toEqual({ phase: "failed", line: "b.example didn't accept the API key. Check it, or replace it. Nothing has changed: I'm still using a.example.", kept: "a.example" });
+    await unchanged(h);
+  });
+
+  it("an edit that answers but doesn't list the model named changes nothing, and says what the service lists (first-run-c7-1)", async () => {
+    const h = await inUse();
+    const done = h.f.checkProvider();
+    await vi.waitFor(() => expect(h.tested()).toBe(true));
+    h.http.resolve({ ok: true, status: 200, json: async () => ({ data: [{ id: "x" }] }) });
+    await done;
+    expect((h.ctx.providerCheck as { phase: string; line: string })).toEqual({
+      phase: "failed", kept: "a.example",
+      line: "b.example answered, but it doesn't list model-a. It lists 1 model: x. Enter that name. Nothing has changed: I'm still using a.example.",
+    });
     await unchanged(h);
   });
 

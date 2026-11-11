@@ -577,6 +577,12 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
+  A service that answers has its models named (“It lists 1 model: llama3.2:3b.”, Home's `providerTestText`), and a
+  model name typed that its list doesn't hold fails the check on that field, naming what is listed (“<host> answered,
+  but it doesn't list gpt-4.1. It lists 1 model: llama3.2:3b. Enter that name.”), instead of passing a name the first
+  request then fails on; only where the list was read whole and holds model names (never Azure's deployments), and a
+  name the service may still take passes: without “:latest”, a path or a snapshot's date (`providerModelMissing`,
+  first-run-c7-1).
   Main's words for a check or a connection (written for Models & connections, which speaks of Ember) are said in first
   run's own voice on every visit, on the sign-in step too: “I can't reach <host>…”, “…and I'll connect in a moment.”
   (`inMyVoice`, first-run-r4-2), and what they call Ember's comes along: “…the GitHub sign-in I found (my saved

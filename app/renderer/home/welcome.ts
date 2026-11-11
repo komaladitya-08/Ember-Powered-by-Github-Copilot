@@ -21,7 +21,7 @@ import { mountAboutYou } from "./about-you";
 import { providerConsentText } from "./copy";
 import { noteProviderChoice, onProviderChoice, providerChoice } from "./provider-choice";
 import {
-  ACTION_LABEL, failureView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices, type FailureAction,
+  ACTION_LABEL, failureView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerModelMissing, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
@@ -459,7 +459,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
    * provider in use as the step opened, the details typed are asked first, as they are, and saved only once they
    * answer (`kept`: the host still in use after a check that failed).
    */
-  const checkProvider = latestOnly<{ epoch: number; result: ProviderTest; kept?: string }>(
+  const checkProvider = latestOnly<{ epoch: number; result: ProviderTest; kept?: string; field?: "conductor" | "worker" }>(
     async () => {
       const epoch = checkEpoch;
       const mine = ++checkRun;
@@ -476,6 +476,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
         const tried = await api.test({ type: f.type, baseUrl: f.baseUrl, host, ...(f.key.trim() ? { key: f.key } : {}) });
         if (epoch !== checkEpoch) return { epoch, result: { ok: false, why: "" } };
         if (!tried.ok) return { epoch, result: tried, kept: keep };
+        // It answers, but doesn't list a model named here: nothing is adopted (first-run-c7-1).
+        const absent = providerModelMissing(tried, f);
+        if (absent) return { epoch, result: { ok: false, why: absent.line }, kept: keep, field: absent.field };
         // It answers: adopted whole (moments, not a network wait), unless a choice made since (“Use GitHub Copilot
         // instead”, or Home's own) owns the provider now. The details go with the card's yes for their host in one
         // change, so the provider in use never leaves force for Copilot between, then a typed key for it, as Home's
@@ -512,6 +515,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (!agreed.ok) return { epoch, result: { ok: false, why: agreed.why } };
       const tested = await api.test();
       if (abandoned()) return dropped();
+      // It answers, but doesn't list a model named here: the check fails on that field, as the first request would
+      // ("That model isn't available."), and says what is listed (first-run-c7-1).
+      const absent = tested.ok ? providerModelMissing(tested, f) : null;
+      if (absent) return { epoch, result: { ok: false, why: absent.line }, field: absent.field };
       return { epoch, result: tested };
     },
     r => {
@@ -519,19 +526,20 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (!active || step !== "provider") return;
       if (!r.ok) { if (providerCheck.phase === "checking") finishCheck(false, "I couldn't check the provider. Try again."); return; }
       if (r.value.epoch !== checkEpoch) return;
-      const { result, kept } = r.value;
+      const { result, kept, field } = r.value;
       const line = providerCheckLine(result);
-      finishCheck(result.ok, !result.ok && kept ? providerKeptLine(line, kept) : line, result.ok ? undefined : providerFailField(result), result.ok ? undefined : kept);
+      finishCheck(result.ok, !result.ok && kept ? providerKeptLine(line, kept) : line, result.ok ? undefined : field ?? providerFailField(result), result.ok ? undefined : kept);
     },
   );
-  function finishCheck(ok: boolean, line: string, field: "address" | "key" = "key", kept?: string): void {
+  function finishCheck(ok: boolean, line: string, field: "address" | "key" | "conductor" | "worker" = "key", kept?: string): void {
     providerCheck = { phase: ok ? "ok" : "failed", line, ...(kept ? { kept } : {}) };
     // Not verified: nothing stays pointed at a service that didn't answer. One in use as the step opened is left as it
     // was: its edit was checked before it replaced anything (first-run-r2-1); one this check turned on goes (first-run-r3-1).
     if (!ok && checkSaves) void turnOwnOff();
     render();
-    // The field the failure names takes the focus: the address when nothing answered there (first-run-r2-1).
-    if (!ok) provField(field === "address" ? "w-p-url" : "w-p-key").focus(); else next.focus();
+    // The field the failure names takes the focus: the address when nothing answered there (first-run-r2-1), the model
+    // name the service doesn't list (first-run-c7-1).
+    if (!ok) provField(field === "address" ? "w-p-url" : `w-p-${field}`).focus(); else next.focus();
   }
   /**
    * Puts the user's own provider away. `force`: also when the page's copy of the settings doesn't show it on yet (the
