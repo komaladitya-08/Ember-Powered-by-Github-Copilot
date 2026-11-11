@@ -548,7 +548,8 @@ const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.tes
  * isn't: voice-speaking-r3-2). A message that ends shorter is judged by itself, or by the request's
  * language when it can't be told and has fewer English words than that language's. A message before a tool call that
  * ends shorter decides nothing for the messages after it (voice-speaking-r2-1: "Sure, one moment." had fixed a whole
- * turn to the request's language).
+ * turn to the request's language). Once an answer is in another language, a piece of it that is clearly English
+ * outside what it quotes is still said in Ember's own voice (voice-speaking-c7-3).
  */
 export class AnswerLanguage {
   private text = "";
@@ -581,7 +582,11 @@ export class AnswerLanguage {
         if (!more) this.lang = lang;
       } else if (found || (this.asked && !englishClearly(outsideQuotes(this.text))) || mayBeAnother(this.text)) return [];
     }
-    const out = this.held.map(text => ({ text, lang: lang ?? null }));
+    // An answer in another language's voice because of a passage it read out says its own clearly English pieces (its
+    // closing "Shall I reply to it?") in Ember's voice: said by the passage's voice, or unsaid with none installed,
+    // the question went unheard while Ember waited for its answer (voice-speaking-c7-3). What a piece quotes isn't
+    // counted, so a French reply's "« I don't know »" stays with it.
+    const out = this.held.map(text => ({ text, lang: lang && englishClearly(text.replace(QUOTED, " ")) ? null : lang ?? null }));
     this.held = [];
     return out;
   }

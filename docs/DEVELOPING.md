@@ -874,7 +874,9 @@ of them writes, decide, so "Abrí la carpeta de descargas." is Spanish) is said 
 a local system voice for that language, or not at all when there is none, which isn't reported as Ember failing to
 speak, even with no voices installed; a Chinese reply was 7 s of "Chinese letter". An answer's language is decided
 once, from its first 60 letters (`AnswerLanguage`, app/voice/spoken.ts), and kept for every piece of it: an English
-list's "1. La La Land." is Kitten's too. Until then a piece that may be another language's ("Bien sûr !", with letters
+list's "1. La La Land." is Kitten's too. (One way only: in an answer said in another language, a piece that is clearly
+English outside what it quotes is Kitten's, so "Shall I reply to it?" after a Spanish email read out is asked in
+English.) Until then a piece that may be another language's ("Bien sûr !", with letters
 English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
 typed in another language (three different short words of it outside quotes, and none only English writes:
 `requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer, unless its words outside quotes are clearly English. A reply too short to tell follows that

@@ -486,6 +486,18 @@ describe("speechLanguage tells Spanish from French, which share their commonest 
   ])("still says %j with a French voice (voice-speaking-c7-1)", text => expect(speechLanguage(text)).toBe("fr"));
 });
 
+describe("AnswerLanguage says an English answer's own closing words in Ember's voice after a passage it read out in another language", () => {
+  const said = (pieces: string[]) => { const a = new AnswerLanguage(); a.reset(""); return pieces.flatMap((p, i) => a.take([p], i === pieces.length - 1)).map(p => p.lang); };
+  it("asks “Shall I reply to it?” in English after reading out a Spanish email, never in the Spanish voice (voice-speaking-c7-3)", () => {
+    expect(said(["Here is the email from José:", "Nos vemos mañana a las diez en la oficina.", "Trae los documentos del proyecto, por favor.", "Shall I reply to it?"]).filter((_l, i) => i !== 1)).toEqual([null, "es", null]);
+    expect(said(["The note in Notes.txt says:", "Ne pas oublier de payer le loyer et les factures avant la fin du mois.", "Want me to set a reminder for you?"]).at(-1)).toBeNull();
+  });
+
+  it("keeps a reply in another language in that language's voice, its names and what it quotes in English too (voice-speaking-c7-3)", () => {
+    expect(said(["J'ai ouvert le fichier que vous avez demandé dans le dossier des documents.", "Le film The Thing est dans la liste.", "Ça veut dire « I don't know what you have »."])).toEqual(["fr", "fr", "fr"]);
+  });
+});
+
 describe("AnswerLanguage: an answer is said in one language, decided once from enough of it (voice-speaking-r1, voice-speaking-11)", () => {
   const said = (pieces: string[], o: { request?: string } = {}) => {
     const a = new AnswerLanguage();
