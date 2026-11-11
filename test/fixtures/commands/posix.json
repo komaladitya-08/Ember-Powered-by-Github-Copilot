@@ -16543,6 +16543,70 @@
   {
    "cmd": "x=$(ls | wc -l); echo $x",
    "verdict": "run"
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder at the root of frontend/",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder, but only the one in frontend",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder next to frontend",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder at the top of the frontend repo",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the old build folder on the server",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "cd .. && rm -rf build",
+   "words": "delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf frontend/build",
+   "words": "delete the build folder at the root of frontend/",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder at the root of the project",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }

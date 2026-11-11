@@ -150,9 +150,13 @@ function pathToken(obj: CommandObject, w: Words, ctx: Ctx): number {
   const text = normPath(obj.text);
   const last = lastSegment(obj.text);
   const env = envOf(ctx);
+  // A name written without its folder is the one in the task's folder: after `cd ..` the same word is another file
+  // (`cd .. && rm -rf build` after "delete the build folder": commands-remote-r5-2).
+  const moved = obj.kind !== "glob" && obj.resolved !== undefined && ctx.cwd !== "" && !isAbsoluteText(obj.text, ctx.os) && !obj.text.startsWith("~")
+    && resolveTargetPath(obj.text, { os: ctx.os, home: ctx.home, cwd: ctx.cwd }).toLowerCase() !== obj.resolved.toLowerCase();
   return w.tokens.findIndex(t => {
     const n = normPath(t);
-    if (n === text) return true;
+    if (n === text && !moved) return true;
     if (obj.kind === "glob" || !obj.resolved) return false;
     const bare = n.replace(/[\\/]+$/, "");
     if (/[\\/]/.test(bare) || bare.startsWith("~")) {
@@ -788,26 +792,60 @@ function onlyPlace(tokens: readonly string[]): boolean {
  * there names a folder (commands-remote-c3-1: "the build folder in dist" is dist/build, never ./build); amounts ("in 5
  * minutes"), times and ways ("in a moment", "in the background") and the task's own folder ("in this repo") name none.
  */
-function folderNamed(idx: number, w: Words): string | null {
+function folderNamed(idx: number, w: Pick<Words, "tokens">): string | null {
   // "dist's build folder" (commands-remote-v4-3).
   const owner = /^(.+?)['’]s$/u.exec(w.tokens[idx - 1] ?? "")?.[1];
   if (owner !== undefined && !PRONOUN.has(owner) && !RELATIVE.has(owner) && !HERE_FOLDER.has(owner)) return owner === "home" ? "~" : owner;
   let k = idx + 1;
-  while (AFTER_OBJECT.has(w.tokens[k] ?? "") || SAYS_WHERE.has(w.tokens[k] ?? "")) k++;
+  while (AFTER_OBJECT.has(w.tokens[k] ?? "") || SAYS_WHERE.has(w.tokens[k] ?? "") || NARROWS.has(w.tokens[k] ?? "")) k++;
   if (placeWord(w.tokens, k)) return folderAfter(k, w);
+  const other = elsewhere(w.tokens, k);
+  if (other !== null) return other;
   // "in dist delete the build folder", "in dist, delete the build folder": a place before the verb (commands-remote-c3-1).
   let s = 0;
   while (FILLERS.has(w.tokens[s] ?? "")) s++;
   return s < idx && IN_FOLDER.has(w.tokens[s] ?? "") ? folderAfter(s, w) : null;
 }
 
+/** Words before a place that narrow the thing to it ("the build folder, but only the one in frontend", "just in dist"). */
+const NARROWS = new Set(["but", "only", "just", "specifically"]);
+/** A folder no path is in: the words put the thing somewhere Ember can't check against the path (elsewhere). */
+const ELSEWHERE = "\u0000";
+/** Words that put a thing beside another one ("the build folder next to frontend", "beside src", "above frontend"). */
+const BESIDE = new Set(["beside", "near", "above", "below", "alongside", "outside", "behind", "beneath", "underneath", "opposite"]);
+/** Words after "on" that name this computer, said with "this" or "my" ("on this computer", "on my laptop"), or no place. */
+const ON_HERE = new Set(["computer", "machine", "pc", "mac", "laptop", "desktop", "box", "system", "disk", "drive"]);
+const ON_NO_PLACE = new Set(["behalf", "purpose", "demand", "request", "time", "disk", "second"]);
+/**
+ * The place the words at `k` put the thing before them in, when it is one Ember can't check the path against
+ * (ELSEWHERE; commands-remote-r5-2): beside something ("next to frontend", "near src"), or on another computer or
+ * service ("on the server", "on staging", "on the remote"); "on the desktop" is the Desktop folder. null for no such
+ * place ("on this computer", "on my laptop", "on purpose"). The command may be right, but the words don't say so.
+ */
+function elsewhere(tokens: readonly string[], k: number): string | null {
+  const t = tokens[k] ?? "";
+  if (BESIDE.has(t) || ((t === "next" || t === "close") && tokens[k + 1] === "to")) return ELSEWHERE;
+  if (t !== "on") return null;
+  const own = tokens[k + 1] === "this" || tokens[k + 1] === "my";
+  let m = k + 1;
+  while (BEFORE_FOLDER.has(tokens[m] ?? "")) m++;
+  const what = (tokens[m] ?? "").replaceAll(PLACED, "");
+  if (what === "" || ON_NO_PLACE.has(what) || /^\d/.test(what) || (own && ON_HERE.has(what))) return null;
+  return what === "desktop" ? "desktop" : ELSEWHERE;
+}
+
 /** The folder after the place word at `k` ("in dist", "inside the frontend folder"), "~" for the home folder, or null. */
-function folderAfter(k: number, w: Words): string | null {
+function folderAfter(k: number, w: Pick<Words, "tokens">): string | null {
   const via = w.tokens[k] ?? "";
   k++;
   while (BEFORE_FOLDER.has(w.tokens[k] ?? "")) k++;
   const t = (w.tokens[k] ?? "").replaceAll(PLACED, "");
   if (t === "" || /^\d+(?:[.,:/-]\d+)*[a-z]{0,3}$/i.test(t)) return null;
+  // "at the root of frontend/", "at the top of the frontend repo", "in the top level of web": the folder after "of".
+  if (t === "root" || t === "top" || t === "toplevel" || t === "top-level") {
+    const of = w.tokens[k + 1] === "level" ? k + 2 : k + 1;
+    if (w.tokens[of] === "of") return folderAfter(of, w);
+  }
   if (NOT_A_FOLDER.has(t) || HERE_FOLDER.has(t) || (!IN_FOLDER.has(via) && NOT_A_PLACE_AFTER.has(t))) return null;
   if (t === "home" || t === "~") return "~";
   return t;
@@ -832,8 +870,28 @@ function inNamedFolder(resolved: string, folder: string, home: string): boolean 
 /** The path at `idx` is where the words put it: in the folder they named after it, when they named one. */
 const whereNamed = (resolved: string, idx: number, w: Words, ctx: Ctx): boolean => {
   const folder = folderNamed(idx, w);
-  return folder === null || inNamedFolder(resolved, folder, ctx.home);
+  return folder === null || (folder !== ELSEWHERE && inNamedFolder(resolved, folder, ctx.home));
 };
+
+/**
+ * Whether the user's words, read whole, put one of these paths somewhere it isn't (commands-remote-r5-2): a row reads
+ * only the verb's own phrase, which leaves out what follows "of", "beside" or a comma, so "the build folder at the root
+ * of frontend/", "…, but only the one in frontend", "… next to frontend" and "… on the server" placed nothing and
+ * ./build was deleted with a Stop. Each word that names the path is read again where it stands in all the words.
+ */
+function placedElsewhere(fs: readonly Finding[], whole: Words, ctx: Ctx): boolean {
+  for (const f of fs) {
+    for (const o of f.objects) {
+      if (!o.resolved || (o.kind !== "path" && o.kind !== "glob")) continue;
+      for (let k = 0; k < whole.tokens.length; k++) {
+        if (!namesObject(o, whole.tokens[k])) continue;
+        const folder = folderNamed(k, whole);
+        if (folder !== null && (folder === ELSEWHERE || !inNamedFolder(o.resolved, folder, ctx.home))) return true;
+      }
+    }
+  }
+  return false;
+}
 
 /**
  * Whether the user's words name a script: its file name ("build.sh", "./ci/test.sh"), or its name without the
@@ -1374,6 +1432,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     // Words that hold the step back: an announcement would run it now (commands-remote-c4-4); a time or a condition of
     // another step said after this one's is that step's (v5-5).
     if (holdsBack(userWords, verbs)) return null;
+    if (placedElsewhere(fs, w, ctx)) return null;
     let m: IntentMatch | null = null;
     const acted = actedOn(w.raw, verbs, names, ROW_SHAPE[row]);
     for (const part of acted) if ((m = fn(fs, wordsOf(part), ctx, F, w))) break;
