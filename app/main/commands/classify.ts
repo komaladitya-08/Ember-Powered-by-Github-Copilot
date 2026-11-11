@@ -3533,7 +3533,7 @@ reg(NATIVE, ["mysql", "mariadb", "mysqldump", "mysqladmin", "mysqlimport"], h =>
   if (h.args.some(a => a.v !== null && /^-p.+/.test(a.v))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   if (h.key === "mysql" || h.key === "mariadb") {
     interactive(h);
-    databaseText(h, inlineSql(h, ["e"], ["execute"]), "mysql");
+    databaseText(h, [...inlineSql(h, ["e"], ["execute"]), ...clusterSql(h, "e")], "mysql");
     // SQL read from stdin or a here-document (`mysql <<< 'system id'`): judge the seen text, else ask (review #166).
     if (!inlineSql(h, ["e"], ["execute"]).length) sqlFromStdin(h, "mysql");
     // The file --tee copies everything to, the program --pager shows results through, the SQL --init-command runs
@@ -3564,6 +3564,15 @@ const SQL_WRITE = /\b(drop|delete|truncate|update|alter|insert|replace|merge|ups
 const SQL_ESCAPE = /(^|[\s;])(\\(!|(o|g|gx|w|copy|i|ir|include|setenv|lo_export|lo_import|s)\b)|\.(shell|system|output|once|import|load|read|save|backup|restore|excel|open|cd|log|dump)\b|system\s)|\bprogram\s+'|\bcopy\b[^;]*\b(to|from)\b/i;
 
 /** The SQL (or client commands) given on a database client's command line. */
+/**
+ * The word after a cluster of short options that ends in the client's text option (`psql -Atc '…'`, `mysql -Ne '…'`):
+ * judged as its text as well, which only adds findings (commands-remote-y7-5).
+ */
+function clusterSql(h: H, letter: string): (string | null)[] {
+  const cluster = new RegExp(`^-[A-Za-z]+${letter}$`);
+  return h.args.flatMap((a, j) => (a.v !== null && cluster.test(a.v) && j + 1 < h.args.length ? [h.args[j + 1].v] : []));
+}
+
 function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
   const out: (string | null)[] = [];
   for (let k = 0; k < h.args.length; k++) {
@@ -3667,10 +3676,13 @@ function psqlCommands(t: string): { name: string; rest: string }[] {
     return at + m[0].length - 1;
   };
   for (const m of t.matchAll(/(?:^|[\s;])(?=\\[A-Za-z!?])/g)) take(m.index + m[0].length);
+  // A comment, a dollar-quoted string or an escaped quote can hold a quote that pairs with nothing: then every backslash
+  // counts, in quotes or not (commands-remote-y7-4).
+  const guess = /--|\/\*|\$\w*\$|\\['"]/.test(t);
   let quote: string | null = null;
   for (let k = 0; k < t.length; k++) {
     const c = t[k];
-    if (quote !== null) { if (c === quote) quote = null; } else if (c === "'" || c === "\"") quote = c; else if (c === "\\") k = take(k);
+    if (quote !== null && !guess) { if (c === quote) quote = null; } else if (c === "'" || c === "\"") quote = c; else if (c === "\\") k = take(k);
   }
   return [...out.entries()].sort((a, b) => a[0] - b[0]).map(e => e[1]);
 }
@@ -3721,7 +3733,7 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   if (INTERACTIVE.has(h.key)) interactive(h);
   const k = h.key;
   if (k === "psql") {
-    databaseText(h, inlineSql(h, ["c"], ["command"]), "psql");
+    databaseText(h, [...inlineSql(h, ["c"], ["command"]), ...clusterSql(h, "c")], "psql");
     // The file its results go to (-o, or a program after `|`) and the one it logs every query to (-L), judged as
     // files it writes (commands-remote-c7-1).
     const p = opts(h, { shortValue: "cdfFhLopPRTUv", longValue: ["command", "dbname", "file", "field-separator", "host", "log-file", "output", "port", "pset", "record-separator", "table-attr", "username", "set", "variable"] });
@@ -3746,7 +3758,7 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     // -cmd's and -init's values are not the database or its SQL.
     const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));
     // duckdb's -c and -s take the text to run, with a database named or not (commands-remote-x7-7).
-    const given = k === "duckdb" ? h.args.flatMap((a, j) => (a.v === "-c" || a.v === "-s" ? [h.args[j + 1]?.v ?? null] : [])) : [];
+    const given = k === "duckdb" ? h.args.flatMap((a, j) => (/^--?[cs]$/.test(a.v ?? "") ? [h.args[j + 1]?.v ?? null] : [])) : [];
     databaseText(h, [...ops.slice(1).map(a => a.v), ...given, ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))], "sqlite");
     // -init FILE runs the file's commands first, as `.read FILE` does (review #166): stdin is judged as below, another
     // descriptor can't be read first, and any other file asks.
@@ -3996,7 +4008,9 @@ reg(NATIVE, ["xargs"], h => {
     const asked = h.e.asksApart(() => h.e.payload(unseen, h.sc, "xargs", { stdin: null }));
     const before = h.e.findings.length;
     for (const b of built) h.e.payload(b, h.sc, "xargs", { stdin: null });
-    if (asked) h.e.asksAtLeast(before, "unclear.xargs-input", "xargs builds this command from its input.");
+    // More lines for a placeholder than Ember judges one by one: the rest are unread, so it asks (commands-remote-y7-3).
+    const cut = repl !== undefined && seen !== null && seen.split("\n").filter(l => l.trim() !== "").length > MAX_FORMS;
+    if (asked || cut) h.e.asksAtLeast(before, "unclear.xargs-input", "xargs builds this command from its input.");
   };
   judge(repl);
   // GNU's xargs takes the last of -I (or -i) and -L, -l or -n and ignores the others, so with both written the input
@@ -6704,7 +6718,9 @@ reg(NATIVE, ["wget", "wget2"], h => {
       if (!m) continue;
       const dirs = (m[3] ?? "/").split("/").slice(1);
       const name = dirs.pop() || "index.html";
-      for (const host of noHost ? [[], [m[2]]] : [[m[2]]]) {
+      // wget drops the scheme's own port from the folder's name (`https://host:443/…` saves under host/), so the
+      // folder is marked with the port and without it (commands-remote-y7-2).
+      for (const host of [...(noHost ? [[]] : []), ...[...new Set([m[2], m[2].replace(/:\d+$/, "")])].map(x => [x])]) {
         const under = [...(has(p, "protocol-directories") ? [m[1] ?? "http"] : []), ...host, ...dirs.slice(cut ?? 0), name].join("/");
         saveAs(h, dir ? `${dir}/${under}` : under);
       }

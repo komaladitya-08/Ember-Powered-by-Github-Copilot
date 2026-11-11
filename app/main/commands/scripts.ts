@@ -241,7 +241,7 @@ export function readThrough(f: Finding, got: Classification, shell: ShellId): bo
  * with any loop (for, while, until; select asks by its own word) keeps them and asks, as on main, whatever its body:
  * the classifier judges a body once, and what it knows of a loop's list or a read's text serves only Ember's own
  * refusal, so a written-out list can carry a value past a program's row (`for f in --hard; do git reset $f; done`:
- * commands-c7-1). Anything else keeps them and asks as on main, where every loop and `if` asked: a command in the line
+ * commands-c7-1), and so does a line with a `!` (commands-remote-y7-1). Anything else keeps them and asks as on main, where every loop and `if` asked: a command in the line
  * that has any finding (one that asks, or an overwrite whether or not the file is there; a dangerous one the user's
  * words asked for is never announced from inside an `if`: commands-b7-2), a `[[ … ]]` test (main reads one through only
  * in a script: commands-b7-4), or a line that sets a variable or changes the folder (holdsFlow), since the commands
@@ -250,6 +250,8 @@ export function readThrough(f: Finding, got: Classification, shell: ShellId): bo
  */
 export function withoutReadFlow(cls: Classification, shell: ShellId): Classification {
   if (cls.findings.some(f => LOOP_FLOW.has(f.rule))) return cls;
+  // A `!` in the line keeps them too: main asked for more than the if under one (`if ! test -d "$d"`: commands-remote-y7-1).
+  if (cls.commands.some(c => c.wrappers.includes("!"))) return cls;
   const findings = cls.findings.filter(f => !(SCRIPT_FLOW.has(f.rule) && readThrough(f, cls, shell)));
   const x = cls as Partial<ClassificationExtra>;
   if (findings.length === cls.findings.length || findings.length > 0 || x.holdsFlow !== false) return cls;

@@ -140,7 +140,9 @@ Ember stops and asks before a command that:
   `mysql --tee` logs to, and Ember's own files are refused there too; a client's own commands that can run a
   program or write a file ask, with the shell command or file they name judged as if written out: psql's `\!`,
   `\o`, `\copy` and any other backslash command that doesn't only describe or show, written straight after SQL too
-  (`select 1\g out.txt`; a backslash inside a quoted string is text), mysql's `system`, `source`,
+  (`select 1\g out.txt`; a backslash inside a quoted string is text, unless the text has a comment, a `$$` string or
+  an escaped quote, where every backslash counts), psql's `-c` and mysql's `-e` at the end of a cluster of options
+  read as well (`psql -Atc '…'`, `mysql -Ne '…'`), mysql's `system`, `source`,
   `tee` and `pager` after a `;` or at the start of a line, `--pager` and `--init-command`, and every sqlite3 or
   duckdb dot-command (in duckdb's `-c` and `-s` text as well) but the ones that only
   show things written whole, `.tables`, `.schema`, `.mode`, `.headers` and the like, because sqlite3 takes any
@@ -203,7 +205,7 @@ Ember stops and asks before a command that:
   build.sh` asks). An address a variable holds only the start of still ends in a name Ember can read, so `curl -LO
   "$BASE/run.sh"` records run.sh, and a variable the command line sets is followed (`V=1.2; curl -LO
   https://example.com/tool-$V.sh` records tool-1.2.sh); `wget -x` records the file under the host's folder
-  (`example.com/dir/a.py`, with a port `example.com:8080/dir/a.py`) and by its name alone as well, also without the
+  (`example.com/dir/a.py`, with a port both `example.com:8080/dir/a.py` and `example.com/dir/a.py`) and by its name alone as well, also without the
   host's folder when `-nH` is anywhere in its options (`-xnH`, `--no-host-dir`); text a fetch printed that a variable carries into a file is the download too (`x=$(curl -s
   …); echo "$x" > a.py`, also through a copy of the variable, `y=$x`, one `read` fills, `read x < <(curl …)`, any
   program given the text that writes its output to a file, `tee a.py <<< "$x"`, `dd of=a.py`, and a group's own
@@ -250,6 +252,8 @@ this does."), whatever it does:
   `declare`, `typeset`, `local`, `readonly`, `printf -v`, `set`, `unset`, `shift`, `wait -p`, `exec`, `${x:=…}`), or a
   file sourced (`source`, `.`): `if x=$(cat f); then echo $x; fi` and `if [ -f x ]; then y=1; fi` ask. A `read` of
   written-out text (below) is the exception.
+- **a `!`** in front of a command in the `if`: `if ! [ -f "$f" ]; then echo no; fi` and `if ! mkdir -p x; then echo no;
+  fi` ask.
 - **a `[[ … ]]` test**, in an `if` or not: `if [[ -d build ]]; then make; fi` and `[[ -d build ]] && make` ask. (In a
   script, a plain one is read; below.)
 - **text Ember can't see.** A `read`, `mapfile`, `readarray`, `select` or `getopts`, in an `if`, a loop or neither,
@@ -516,7 +520,8 @@ builds from text Ember reads is judged batch by batch (`echo test publish | xarg
 `printf 'status\nclean -fdx\n' | xargs -L1 git` about the clean); with an option Ember can't batch by (`-x`, `-s`,
 `-E`, a count that is no number) the text is still judged, as one command (`echo publish | xargs -x cargo` asks,
 `echo ~/.config/ember | xargs -x rm -rf` is refused), and with `-I` or `-i` beside `-L` or `-n`, where xargs keeps
-only the later one, both ways are judged (`xargs -I{} -L1 git` given `push --force` asks). Reading the text, or an
+only the later one, both ways are judged (`xargs -I{} -L1 git` given `push --force` asks). With `-I` or `-i` and more than 32 lines of text
+it asks, having judged the first 32. Reading the text, or an
 option's value, never makes it run or announce
 where it asked before (a database client, `make -f -` or `awk -f -` given printed text asks too, "It runs the text
 another command prints into it.", saying as well when the text changes data: `echo 'drop table users;' | psql app`): `echo build | xargs ls` asks ("xargs builds this command from its input."), and `echo build |
