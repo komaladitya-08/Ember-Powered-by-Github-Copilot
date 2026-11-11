@@ -1503,6 +1503,33 @@ const PROJECT_FILE = new RegExp([
 const COMPILERS = new Set(["gcc", "g++", "cc", "c++", "clang", "clang++", "rustc"]);
 
 /**
+ * Variables whose value is a command a build tool runs (`CC='sh -c …' make`, `PSQL_PAGER=…`): the value is judged as a
+ * command, so an ordinary name (`CC=clang`) runs (commands-remote-c8-1). Wrapper variables that always name a program
+ * are in RISKY_ASSIGNMENTS instead (`RUSTC_WRAPPER`, `CARGO_BUILD_RUSTC_WRAPPER`): those ask however they are set.
+ */
+const PROGRAM_CMD_VARS = new Set([
+  "CC", "CXX", "CPP", "LD", "RUSTC", "OBJC", "OBJCXX", "HOSTCC", "HOSTCXX", "AS", "AR", "NM", "RANLIB", "STRIP",
+  "PSQL_PAGER", "GH_PAGER", "AWS_PAGER", "GCLOUD_PAGER", "DELTA_PAGER", "KUBECTL_EXTERNAL_DIFF", "CLOUDSDK_PYTHON",
+]);
+/** Variables holding a tool's options where a sub-option names a program it runs (`GOFLAGS=-toolexec=…`). */
+const PROGRAM_OPT_VARS = /^(GOFLAGS|GOTESTFLAGS|CGO_[A-Z]*FLAGS|TAR_OPTIONS|RUSTFLAGS|CARGO_[A-Z_]*RUSTFLAGS|PYTEST_ADDOPTS)$/;
+/** A sub-option whose value is a program a build tool runs (go's toolexec/exec, tar's --to-command, pytest's -p). */
+const SUBOPT_PROGRAM = /(^|[\s,'"=])--?(toolexec|exec|vettool|to-command|ldflags|p|plugins?)(=|\s|$)/;
+/** A value that looks like a shell command (a shell operator, or a leading shell or interpreter), not a plain word. */
+const SHELL_SHAPE = /[$`;|&<>()\n]/;
+const SHELL_LEAD = /^\s*(sh|bash|zsh|dash|ksh|fish|ash|busybox|env|eval|exec|command|xargs|python[0-9.]*|perl|ruby|node|nodejs|php|lua|awk|sed|curl|wget)(\s|$)/;
+/**
+ * Whether a variable set in front of a command names a program or command the command runs (commands-remote-c8-1), so
+ * its value must be judged. A value Ember can't see counts only for a listed program variable, never for an ordinary
+ * name (a URL or a path there wouldn't, so `DATABASE_URL=… npm test` runs).
+ */
+function namesProgram(name: string, value: string | null): boolean {
+  if (value === null) return PROGRAM_CMD_VARS.has(name);
+  if (PROGRAM_OPT_VARS.test(name)) return SUBOPT_PROGRAM.test(value);
+  return SHELL_SHAPE.test(value) || SHELL_LEAD.test(value);
+}
+
+/**
  * A build tool's own sources, on top of the shared PROJECT_FILE list: `go run .` and `cargo run` build a folder, so a
  * downloaded `.go`/`go.mod` or `.rs` there runs (commands-remote-r8-2). Kept per tool, never widened into PROJECT_FILE.
  */
@@ -2322,6 +2349,12 @@ class Engine extends Classifier {
       if (RISKY_ASSIGNMENTS.has(a.name) || RISKY_ASSIGNMENT_PREFIX.test(a.name)) {
         this.unclear("unclear.assignment", "It changes how commands are found or run.");
       }
+      // A variable set in front of a command whose value names a program or command the command runs is judged, so
+      // `CC='sh -c "curl|sh"' make` asks where `make CC='…'` does (commands-remote-c8-1). A compiler or pager variable
+      // (PROGRAM_CMD_VARS) and any other name hold a command when the value looks like one; an option variable
+      // (PROGRAM_OPT_VARS) when a sub-option names a program (`-toolexec=`, `--to-command=`). An ordinary value
+      // (`CC=clang`, `GOFLAGS=-mod=vendor`) runs. Ember's own refusal from the value comes through its row.
+      else if (beforeCommand && namesProgram(a.name, a.value.v)) this.unclear("unclear.assignment", "It changes how commands are found or run.");
       if (a.value.v !== null && commandLineSecret(`${a.name}=${a.value.v}`)) this.add("secret", "secret.token-arg", SAYS.tokenArg);
       this.setVar(a.name, [a.value], sc, false, beforeCommand);
     }
@@ -6409,6 +6442,10 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   const verbArg = h.args[g.verbAt];
   const verb = verbArg?.v ?? null;
   const rest = h.args.slice(g.verbAt + 1);
+  // `--script-shell <program>` changes the shell every package script runs in: a program Ember can't vouch for
+  // (commands-remote-c8-1). `npm config set script-shell …` makes that change last for every later run.
+  if (h.args.some(a => /^--script-shell(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
+  if ((verb === "config" || verb === "c" || verb === "set") && h.args.some(a => a.v === "set" || a.v === verb) && h.args.some(a => /^script-shell$/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
   const global = g.opts.some(o => o.name === "-g" || o.name === "--global") || rest.some(a => a.v === "-g" || a.v === "--global" || a.v === "--location=global");
   const widening = global ? ["--global"] : [];
   if (verbArg && verb === null) { h.e.unclear("unclear.npm-verb", "Ember can't tell which command this runs."); return; }
@@ -6578,6 +6615,14 @@ reg(NATIVE, ["cargo"], h => {
 reg(NATIVE, ["go"], h => {
   const verb = firstOperand(h.args).v;
   const rest = h.args.slice(firstOperand(h.args).at + 1);
+  // `go test -exec`, `go build -toolexec` and `-vettool` name a program go runs over the build: a value that looks like
+  // a command asks, as `GOFLAGS=-toolexec=…` does (commands-remote-c8-1).
+  for (let k = 0; k < rest.length; k++) {
+    const m = /^-(exec|toolexec|vettool)(=(.*))?$/.exec(rest[k].v ?? "");
+    if (!m) continue;
+    const prog = m[2] !== undefined ? m[3] : rest[k + 1]?.v ?? null;
+    if (prog === null || namesProgram("CC", prog) || /[\\/]/.test(prog)) h.e.unclear("unclear.assignment", "It runs a program Ember can't vouch for.");
+  }
   if (verb === "install" || verb === "get") { languageInstall(h, rest.filter(a => !isOption(a))); return; }
   if (verb === "run" && rest.some(a => /@/.test(a.v ?? "") && !isOption(a))) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return; }
   if (verb === "run") { const s = rest.find(a => !isOption(a)); if (s) runScript(h, s); return; }
@@ -6763,6 +6808,15 @@ reg(NATIVE, ["cmake"], h => {
   if (e >= 0) { cmakeCommand(h, h.args[e + 1], h.args.slice(e + 2)); return; }
   // `-D NAME[:TYPE]=VALUE` written apart: VALUE is read as an argument is (`-DNAME=VALUE` already is).
   h.e.readArgs(h.args.flatMap((a, k) => (h.args[k - 1]?.v === "-D" && a.v?.includes("=") ? [lit(a.v.slice(a.v.indexOf("=") + 1))] : [])), h.sc);
+  // A `-DCMAKE_<lang>_COMPILER` or `_COMPILER_LAUNCHER` override names the program cmake builds with: a value that looks
+  // like a command (`sh -c "curl|sh"`) asks, as the same thing set as `CC=…` does (commands-remote-c8-1). An ordinary
+  // compiler name (`clang`) runs.
+  for (let k = 0; k < h.args.length; k++) {
+    const a = h.args[k];
+    const dash = a.v === "-D" ? (h.args[k + 1]?.v ?? "") : /^-D(.+)$/.exec(a.v ?? "")?.[1] ?? "";
+    const m = /^CMAKE_[A-Z0-9_]*(COMPILER|COMPILER_LAUNCHER|RC_COMPILER|LINKER)(:[A-Za-z]+)?=(.*)$/s.exec(dash);
+    if (m && namesProgram("CC", m[3])) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+  }
   const p = h.args.findIndex(a => a.v === "-P");
   if (p >= 0) {
     const script = h.args[p + 1];

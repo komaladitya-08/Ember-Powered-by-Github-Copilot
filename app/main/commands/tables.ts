@@ -147,6 +147,8 @@ export const RISKY_ASSIGNMENTS = new Set([
   "HOME", "XDG_CONFIG_HOME", "GIT_CONFIG", "DOCKER_CONFIG", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "GCONV_PATH",
   "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_HOME", "GRADLE_USER_HOME",
   "PIP_CONFIG_FILE", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_FIND_LINKS",
+  // Wrapper and hook variables that always name a program a build tool runs (commands-remote-c8-1).
+  "CARGO_BUILD_RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "JDK_JAVA_OPTIONS", "DOTNET_STARTUP_HOOKS", "DOTNET_ADDITIONAL_DEPS",
   // The folder a shell started with it believes it is in, when it names the same folder another way (a link to it):
   // its `cd ..` then leaves from there, not from where Ember judged (§3.6, L25).
   "PWD",
