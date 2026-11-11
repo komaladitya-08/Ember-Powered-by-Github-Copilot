@@ -1113,12 +1113,11 @@ const STATE_ASIDE = new RegExp(String.raw`\b(?:pass(?:word|phrase|code|wd)|pw|pi
   + String.raw`(?!${STATE_LENGTH})(?!${STATE_ALGORITHM})(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{4,}`, "i");
 /**
  * A network's key labelled "Key" on the line after the network's name ("Network: HomeNet\nKey: BlueSky99"): six
- * characters or more with a digit or a symbol, never its mode, standard or band ("Key: WPA2-PSK"): memory-q6-5. The
- * key ends its line (a bracketed note may follow), and the network is no interface ("Network: eth0\nKey: value3",
- * "Network: Tube map\nKey: zone1-2 fares"): memory-x7-3.
+ * characters or more with a digit or a symbol, never its mode, standard or band ("Key: WPA2-PSK"): memory-q6-5. Any
+ * network's name and anything after the key ("Network: Brent5G", "Key: BlueSky99, ask Dana"): memory-y7-3.
  */
-const NETWORK_KEY_LINE = new RegExp(String.raw`(?:^|\n)[ \t]*(?:network|ssid|wi-?fi|wlan|wireless)(?:[ \t]+(?:name|ssid))?[ \t]*[:=](?![ \t]*(?:eth|en[ops]|wlan|wl[opx]|br|veth|tun|tap|docker)\w*\d\w*[ \t]*\n)[^\n]*\n[ \t]*key[ \t]*[:=][ \t]*["'“]?`
-  + String.raw`(?!(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*(?![^\s"'”]))(?!802\.11|\d+(?:\.\d+)?\s?(?:ghz|mhz|[kmg]bps))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}["'”]?[ \t]*(?:\([^\n)]{0,80}\)[ \t]*)?(?:\n|$)`, "i");
+const NETWORK_KEY_LINE = new RegExp(String.raw`(?:^|\n)[ \t]*(?:network|ssid|wi-?fi|wlan|wireless)(?:[ \t]+(?:name|ssid))?[ \t]*[:=][^\n]*\n[ \t]*key[ \t]*[:=][ \t]*["'“]?`
+  + String.raw`(?!(?:wpa[23]?|wep|tkip|aes|ccmp|sae)(?:[-/][a-z0-9]+)*(?![^\s"'”]))(?!802\.11|\d+(?:\.\d+)?\s?(?:ghz|mhz|[kmg]bps))(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[^\s"'”]{6,}`, "i");
 /**
  * A network and its key said together ("Guest Wi-Fi: BlueSky / BlueSky99", "Home network: BlueSky, key BlueSky99"),
  * the key with a digit or a symbol: safety-privacy-c4-2. Never its router's address, its standard, its mode or its band
@@ -1304,13 +1303,10 @@ const UK_SORT = String.raw`\bsort\s+code\b[^\d\n]{0,20}\d{2}[- ]?\d{2}[- ]?\d{2}
 const UK_ACCOUNT = String.raw`\baccount(?:\s+(?:number|no\.?))?\b(?!\s+(?:opened|closed|created|reference|ref|manager|team|balance|since|id)\b)[^\d\n]{0,20}\d{8}(?!\d)`;
 const UK_BANK = new RegExp(String.raw`${UK_SORT}[^\n]{0,60}?${UK_ACCOUNT}|${UK_ACCOUNT}[^\n]{0,60}?${UK_SORT}`, "i");
 /**
- * A UK National Insurance number after its name, in any capitals ("National Insurance number is QQ123456C", "my nino
- * is QQ123456C": memory-x7-2), or after "NI number", "NI no." or "NI:" ("NI number: AB 12 34 56 C"): memory-c7-3.
- * "NI" alone is Northern Ireland or an airline ("NI flight BA 12 34 56 A", "NI team id XY123456A"): memory-x7-3.
+ * A UK National Insurance number after its name, in any capitals ("national insurance number is QQ123456C", "NI
+ * number: AB 12 34 56 C", "my nino is QQ123456C", "NI QQ123456C"): memory-c7-3, memory-x7-2, memory-y7-4.
  */
-const UK_NUMBER = String.raw`(?:[Nn]umber|NUMBER|[Nn]o\.?|NO\.?)`;
-const UK_NINO = new RegExp(String.raw`\b(?:(?:[Nn]ational\s+[Ii]nsurance|NATIONAL\s+INSURANCE|[Nn][Ii][Nn][Oo])(?:\s+${UK_NUMBER})?\b[^\n]{0,20}?`
-  + String.raw`|NI(?:\s+${UK_NUMBER}\b[^\n]{0,20}?|\s*[:=]\s*|\s+is\s+))(?<![A-Za-z])[A-Za-z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-Da-d](?![A-Za-z0-9])`);
+const UK_NINO = /\b(?:national\s+insurance|NI|NINO)(?:\s+(?:number|no\.?))?\b[^\n]{0,20}?(?<![A-Za-z])[A-Za-z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-Da-d](?![A-Za-z0-9])/i;
 /**
  * A security question's usual answer, with its value ("My mother's maiden name is Smith"); never the question alone:
  * memory-c7-3. In any capitals: a capitalised word, or any one word that ends its sentence ("my mother's maiden name is

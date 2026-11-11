@@ -917,8 +917,8 @@ describe("what memory never keeps", () => {
     ["Password, policy, NIST-800-63"], ["Password, bcrypt, cost=12"], ["My passwords, unfortunately, 2019-era and weak"], ["pins, GPIO, 3.3V tolerant"],
     ["The pins, though, 10mm long"], ["Recovery keys 2024-2025 budget"], ["Recovery key rotation-2024 policy is on the wiki"], ["recovery key KB5034441 article explains it"],
     ["The authentication code 200300 lines of C"], ["sign-in code 401 403 errors"], ["login code 100 200 lines long"], ["Conference wifi pass 2024-25"],
-    ["The WiFi pass 3-day costs £10"], ["Network: eth0\nKey: value3"], ["Network: Tube map\nKey: zone1-2 fares"],
-    ["Our sort code is 12-34-56 and the account opened 20240115"], ["Sort code 12-34-56. Account reference 12345678"], ["NI flight BA 12 34 56 A"], ["NI team id XY123456A"],
+    ["The WiFi pass 3-day costs £10"],
+    ["Our sort code is 12-34-56 and the account opened 20240115"], ["Sort code 12-34-56. Account reference 12345678"],
     ["Her mother's maiden name was Smith"], ["Mother's maiden name: Unknown"], ["Mother's maiden name is Not required on this form"],
     ["My mother's maiden name is often the security question"],
   ])("keeps %j, a rule, a date, a part, a status or someone else's (memory-x7-3)", text => {
@@ -928,6 +928,9 @@ describe("what memory never keeps", () => {
     ["Password, changed, hunter2"], ["PIN, changed, 4821"], ["Password max. hunter2!"], ["My password, sadly, Summer2024!"], ["Recovery key rotation-20240115x"],
     ["login code 482 193"], ["authentication code 482193 expires soon"], ["Network: Office Guest\nKey: BlueSky99"], ["Wi-Fi pass BlueSky-2024"],
     ["Sort code 12-34-56. Account 12345678"], ["Account no. 12345678, sort code 12 34 56"],
+    // A network named like an interface, a key with words after it and "NI" in any shape (memory-y7-3, memory-y7-4).
+    ["Network: Brent5G\nKey: BlueSky99"], ["SSID: Brooklyn5G\nKey: Summer2024!"], ["Network: HomeNet\nKey: BlueSky99, ask Dana"],
+    ["Network: HomeNet\r\nKey: BlueSky99\r\nRouter in hall"], ["NI QQ123456C"], ["My NI, QQ123456C"], ["Ni number QQ123456C"], ["National INSURANCE number QQ123456C"],
   ])("still refuses %j (memory-x7-3)", text => {
     expect(memoryRefusal(text)).not.toBeNull();
   });

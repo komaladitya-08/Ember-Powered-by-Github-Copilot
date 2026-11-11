@@ -1516,3 +1516,36 @@ describe("live memory consent and forgetting", () => {
     expect(await pending).toBe("");
   });
 });
+
+describe("a Forget holds its words back from the turns around it (memory-x7-5, memory-y7-1)", () => {
+  const VEG = { from: 1, fact: "Is vegetarian", about: [{ name: "User", kind: "person" }], confidence: 0.9, evidence: "I'm vegetarian" };
+
+  it("still holds an old fact back from a turn that was waiting when it was forgotten (memory-x7-5)", async () => {
+    const { l, s, advance } = learning({ model: async () => answer([VEG]) });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian");
+    advance(24 * 3600_000);
+    tools.heard("As I said, I'm vegetarian", "I know.", true);
+    advance(10_000);
+    l.forgetCounted(s.list()[0].id);
+    advance(51_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list()).toEqual([]);
+  });
+
+  it.each([
+    [[{ name: "User", kind: "person" }, { name: "Atlas", kind: "project" }]], [[]],
+  ])("keeps a forgotten fact forgotten when its turn's reading names its subject differently: %j (memory-y7-1)", async about => {
+    const said = { from: 1, fact: "Works on the Atlas project", about, confidence: 0.9, evidence: "I work on the Atlas project" };
+    const { l, s, advance } = learning({ model: async () => answer([said]) });
+    const tools = l.conductorMemory();
+    tools.remember("Works on the Atlas project", [{ name: "Atlas", kind: "project" }], "Remember that I work on the Atlas project");
+    advance(20_000);
+    l.forgetCounted(s.list()[0].id);
+    advance(5000);
+    tools.heard("Remember that I work on the Atlas project", "Noted.", true);
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list()).toEqual([]);
+  });
+});
