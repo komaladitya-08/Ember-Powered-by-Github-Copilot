@@ -2261,7 +2261,8 @@ function showPane(p: string, glide = false, remember = true): void {
 /**
  * In the narrow row of section links (it scrolls sideways), the link of the pane shown is brought into the row: a link
  * in the page that opened a pane, or the window reopening on the pane it remembers, left the row on Home, Projects
- * and the like with the current link and its badge off to the side (home-c7-1). The row alone scrolls, never the page.
+ * and the like with the current link and its badge off to the side (home-c7-1), as did links that show after the page
+ * has loaded (Computers, Commands: home-x7-1). The row alone scrolls, never the page.
  */
 function showCurrentLink(): void {
   const row = $("jump");
@@ -2338,8 +2339,13 @@ const panesSeen = new MutationObserver(() => {
 });
 for (const s of document.querySelectorAll(".home > [data-pane]")) panesSeen.observe(s, { attributes: true, attributeFilter: ["hidden"] });
 // Links that show or step out later (Computers, Commands, a search) move the others, and a text size or window change
-// resizes them: the highlight follows at once.
-const linksMoved = new MutationObserver(() => placeHighlight(false));
+// resizes them: the highlight follows at once. A link that shows or steps out pushes the open pane's link along the
+// narrow row without resizing it, so that link is brought back in (home-x7-1: 186 px out once Computers and Commands
+// showed); a change of look alone leaves a row the person scrolled where they put it.
+const linksMoved = new MutationObserver(changes => {
+  placeHighlight(false);
+  if (changes.some(c => c.attributeName === "hidden")) showCurrentLink();
+});
 for (const a of jumpLinks) linksMoved.observe(a, { attributes: true, attributeFilter: ["hidden", "class"] });
 new ResizeObserver(() => { placeHighlight(false); showCurrentLink(); }).observe($("jump"));
 

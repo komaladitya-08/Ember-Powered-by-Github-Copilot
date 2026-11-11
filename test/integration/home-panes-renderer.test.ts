@@ -33,7 +33,7 @@ declare global {
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
-interface Seed { settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean }
+interface Seed { settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean; /** The targets runtime, answering after this many ms as in the app (Computers and Commands show then). */ targets?: number }
 
 let browser: Browser;
 let server: http.Server;
@@ -64,7 +64,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
   const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
-  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider }) => {
+  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider, targets }) => {
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     // Main's list as last pushed: what a read after a task control gets.
     let tasks: unknown = [];
@@ -78,6 +78,11 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
     };
     // Main's provider bridge, as in Electron: each state read answers when the test says (home-mic-recipient's pattern).
     if (provider) (window as unknown as { emberProvider: unknown }).emberProvider = { state: () => new Promise(resolve => { h.providerReads.push(resolve); }), onChanged: () => () => undefined };
+    if (targets !== null) (window as unknown as { emberTargets: unknown }).emberTargets = new Proxy({}, { get: (_t, name: string) => {
+      if (name.startsWith("on")) return () => () => undefined;
+      if (name === "list") return () => new Promise(resolve => setTimeout(() => resolve([{ id: "local", kind: "local", label: "This computer", state: "ready" }]), targets));
+      return () => new Promise(() => undefined);
+    } });
     const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}) });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
@@ -91,7 +96,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "activity") return async (limit?: number) => { h.reads++; h.limits.push(limit ?? 500); if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
-  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false });
+  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false, targets: seed.targets ?? null });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   await page.waitForSelector(`a[href='#${pane}-h']`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
@@ -409,6 +414,30 @@ describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-
     await expect.poll(current).toEqual({ name: "#checks-h", out: 0 });
     // The remembered pane is this test's alone: the next page opens on Home.
     await page.locator("#checks-h").evaluate(() => { localStorage.removeItem("ember.home.pane"); });
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("keeps the open pane's link in the narrow row when Computers and Commands appear beside it after the window opened (home-x7-1)", async () => {
+    // The app always has the targets runtime: its two links show once it answers, and push the links after them along.
+    const page = await open("home", { viewport: { width: 500, height: 800 }, targets: 300 });
+    await page.evaluate(() => { localStorage.setItem("ember.home.pane", "checks"); });
+    await page.reload();
+    await page.waitForSelector("#jump-commands:not([hidden])");
+    await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
+    const current = () => page.evaluate(() => {
+      const row = document.getElementById("jump")!.getBoundingClientRect();
+      const a = document.querySelector<HTMLElement>("#jump a[aria-current]")!;
+      const r = a.getBoundingClientRect();
+      return { name: a.getAttribute("href"), out: Math.max(0, Math.round(row.left - r.left)) + Math.max(0, Math.round(r.right - row.right)) };
+    });
+    // It was 186 px outside the 460 px row (the link is 109 px wide: wholly out), and stayed there.
+    await expect.poll(current).toEqual({ name: "#checks-h", out: 0 });
+    // A row the person scrolled themselves stays where they put it when a link only changes its look.
+    await page.evaluate(() => { document.getElementById("jump")!.scrollLeft = 0; document.querySelector("#jump a")!.classList.toggle("probe"); });
+    await page.waitForTimeout(200);
+    expect(await page.evaluate(() => document.getElementById("jump")!.scrollLeft)).toBe(0);
+    await page.evaluate(() => { localStorage.removeItem("ember.home.pane"); });
     expect(page.errors).toEqual([]);
     await page.close();
   });
