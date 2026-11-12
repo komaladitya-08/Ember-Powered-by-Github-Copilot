@@ -2573,4 +2573,20 @@ describe("the answer window after one of Ember's questions (owner's report of 20
     const named = run(saying({ 5: "Ember, allow." }), (e, c) => { e.questionUp(true); e.otherSound(true); e.answerWindow(8000); say(e, c, 5); }, asking);
     expect(utterances(named)).toEqual([{ type: "utterance", text: "Allow.", ms: 0, window: "answer" }]);
   });
+
+  it("takes a video's “Okay.” for no one's yes in a follow-up window too, when other sound is known to play (Codex review of #211)", () => {
+    // A question that comes up while a follow-up window is open keeps that window (answerWindow leaves it), so the same
+    // "Okay." that the answer window marks went out unmarked and, with Voice Match off, could allow the question.
+    const okay = run(saying({ 5: "Okay." }), (e, c) => { e.questionUp(true); e.otherSound(true); e.followUp(8000); say(e, c, 5); }, asking);
+    expect(utterances(okay)).toEqual([{ type: "utterance", text: "Okay.", ms: 0, window: "follow-up", overSound: true }]);
+    const opened = run(saying({ 5: "Okay." }), (e, c) => { e.otherSound(true); e.followUp(8000); e.questionUp(true); e.answerWindow(8000); say(e, c, 5); }, asking);
+    expect(utterances(opened)).toEqual([{ type: "utterance", text: "Okay.", ms: 0, window: "follow-up", overSound: true }]);
+    // A no is anyone's, a yes said with the name is the user's, and a follow-up with no question up is as before.
+    const no = run(saying({ 5: "Not now." }), (e, c) => { e.questionUp(true); e.otherSound(true); e.followUp(8000); say(e, c, 5); }, asking);
+    expect(utterances(no)).toEqual([{ type: "utterance", text: "Not now.", ms: 0, window: "follow-up" }]);
+    const named = run(saying({ 5: "Ember, allow." }), (e, c) => { e.questionUp(true); e.otherSound(true); e.followUp(8000); say(e, c, 5); }, asking);
+    expect(utterances(named)).toEqual([{ type: "utterance", text: "Allow.", ms: 0, window: "follow-up" }]);
+    const request = run(saying({ 5: "Open the downloads folder." }), (e, c) => { e.otherSound(true); e.followUp(8000); say(e, c, 5); }, asking);
+    expect(utterances(request)).toEqual([{ type: "utterance", text: "Open the downloads folder.", ms: 0, window: "follow-up" }]);
+  });
 });

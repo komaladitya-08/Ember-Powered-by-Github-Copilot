@@ -2100,9 +2100,15 @@ export class VoiceEngine {
     }
     // Where nothing can tell whether other sound plays (soundKnown), a yes to a question said without the name may be a
     // video's or a call's "Okay.": it is taken as said over other sound, which the voice gate drops without a voiceprint
-    // (owner's report of 2026-11-12). A no is anyone's, and what is said by name is the user's, as ever.
+    // (owner's report of 2026-11-12). A no is anyone's, and what is said by name is the user's, as ever. So in a follow-up
+    // window where other sound is known to play: a question that comes up while one is open keeps it (answerWindow), and
+    // its "Okay." went out unmarked where the answer window's is marked above (Codex review of #211). A conversation's is
+    // judged above, by NAME_HEARD_MS.
     const nameless = conversation || this.mode.reason === "answer" || this.mode.reason === "follow-up";
-    if (nameless && !this.overSound && this.questionWaiting && spokenAnswer(text) === "allow" && !calledByName(heard) && !this.soundKnown(t0)) { this.overSound = true; this.soundUnknown = true; }
+    if (nameless && !this.overSound && this.questionWaiting && spokenAnswer(text) === "allow" && !calledByName(heard)) {
+      if (!this.soundKnown(t0)) { this.overSound = true; this.soundUnknown = true; }
+      else if (this.mode.reason === "follow-up" && this.soundPlaying(t0)) this.overSound = true;
+    }
     this.sendRequest(text, audio, withWake, cut, t0);
   }
 
