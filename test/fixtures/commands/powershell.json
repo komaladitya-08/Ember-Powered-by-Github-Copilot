@@ -5955,6 +5955,27 @@
    "rules": [
     "path.startup"
    ]
+  },
+  {
+   "cmd": "rimraf '{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{build,dist}'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf \"{$HOME,x}\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }

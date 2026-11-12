@@ -12,7 +12,7 @@ import type {
   Classification, ClassifyContext, CommandObject, DangerClass, Finding, ParsedCommand, ShellFamily, ShellId, WindowsContext,
 } from "./types";
 import { PKG_CLEANS, PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY } from "./types";
-import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
+import { braceGroup, lexPosix, MAX_SIMPLE, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
 import {
@@ -4180,6 +4180,27 @@ reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir", "grm", "grmdir", "
 });
 
 /**
+ * The words a pattern's brace groups and extglob groups stand for, as rimraf's and del-cli's matchers expand them
+ * (`{a,b}`, `{1..3}`, `+(a|b)`, `@(…)`; `?(…)` and `*(…)` may be empty; `!(…)` is anything, `*`), or null past
+ * MAX_SIMPLE of them (commands-remote-x8-8). What is left may still hold `*`, `?` or `[…]`.
+ */
+function patternWords(s: string): string[] | null {
+  const out: string[] = [];
+  const go = (w: string): boolean => {
+    const g = braceGroup(w);
+    if (g !== null && g !== "partial") return g.alts.every(alt => go(w.slice(0, g.from) + alt + w.slice(g.to + 1)));
+    const m = /([?*+@!])\(([^()]*)\)/.exec(w);
+    if (m) {
+      const alts = m[1] === "!" ? ["*"] : [...m[2].split("|"), ...(m[1] === "?" || m[1] === "*" ? [""] : [])];
+      return alts.every(alt => go(w.slice(0, m.index) + alt + w.slice(m.index + m[0].length)));
+    }
+    out.push(w);
+    return out.length <= MAX_SIMPLE;
+  };
+  return go(s) ? out : null;
+}
+
+/**
  * rimraf and del-cli (`del`), which a JavaScript project's scripts reach for: they delete each folder and all that is in
  * it, and expand a pattern themselves, quoted or not (rimraf unless `-G`/`--no-glob`; del-cli always), so a word that
  * holds one is judged as a pattern and the step is never announced (commands-remote-c8-2).
@@ -4200,6 +4221,11 @@ reg(NATIVE, ["rimraf", "del", "del-cli"], h => {
       const k = segs.findIndex(x => /[*?[\]{}()!+@]/.test(x));
       const fixed = resolveTargetPath(k <= 0 ? (a.v.startsWith("/") ? "/" : ".") : segs.slice(0, k).join("/") || "/", { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd });
       if (isEmberPath(fixed, h.sc.path) || holdsEmberPath(fixed, h.sc.path)) h.e.refuseWith("ember.path", "safety");
+      // Each word the groups stand for is judged as an operand of its own (`'{..,x}'` is `..`, `'{/home/ana,x}'` the
+      // home folder: commands-remote-x8-8); past MAX_SIMPLE of them Ember can't tell what the pattern reaches.
+      const alts = patternWords(a.v);
+      if (alts === null) h.e.refuseWith("ember.path", "safety");
+      else for (const x of alts) if (x !== a.v) h.e.usePath(/[*?[]/.test(x) ? { ...a, v: x, glob: true, pattern: x } : { ...a, v: x, glob: false, pattern: undefined }, "deleteTree", h.sc);
     }
     return h.e.usePath({ ...a, glob: true, pattern: a.v }, "deleteTree", h.sc);
   });

@@ -2384,6 +2384,13 @@
   {
    "cmd": "./configure --prefix ~/.local",
    "verdict": "run"
+  },
+  {
+   "cmd": "rimraf '{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }

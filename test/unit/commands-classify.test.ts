@@ -324,6 +324,21 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
     }
     for (const cmd of ["stow -t ~ dotfiles", "stow --target ~ dotfiles", "mytool --verbose ~"]) expect(run(cmd).decision.verdict, cmd).toBe("ask");
   });
+
+  it("refuses a rimraf or del-cli pattern whose braces or extglob group stand for Ember's folder, the home folder or the one above (commands-remote-x8-8)", () => {
+    for (const cmd of ["rimraf '{/home/ana/.config/ember,x}'", "rimraf \"{$HOME,x}\"", "rimraf '{/home/ana,x}'", "rimraf '{..,x}'", "del-cli '{..,x}'",
+      "rimraf './{..,x}'", "rimraf 'src/{../..,x}'", "rimraf '+(..)'", "rimraf '@(..|x)'", "rimraf '{..,x}/*'", "del-cli '{x,{y,~/.config/ember}}'",
+      "rimraf '{a,b}/{c,..}/{..,e}'"]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("refuse");
+    }
+    // Over 64 alternatives Ember can't tell what the pattern reaches.
+    expect(run(`rimraf '${"{a,b}".repeat(7)}'`).decision.verdict).toBe("refuse");
+    // Patterns in the project's folder ask, as before.
+    for (const cmd of ["rimraf '{build,dist}'", "rimraf 'src/**/*.{js,map}'", "rimraf 'dist/@(a|b)'", "rimraf 'file (copy)'", "del-cli 'dist/!(keep.js)'",
+      "rimraf '{build,dist}/*'"]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("ask");
+    }
+  });
 });
 
 describe("downloads by a config file or a file-transfer client (commands-remote-r8-3)", () => {

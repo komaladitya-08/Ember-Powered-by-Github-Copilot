@@ -20198,6 +20198,200 @@
    "rules": [
     "unclear.broad-folder"
    ]
+  },
+  {
+   "cmd": "rimraf '{/home/ana/.config/ember,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf \"{$HOME,x}\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{/home/ana,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "del-cli '{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf './{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf 'src/{../..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '+(..)'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '@(..|x)'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{..,x}/*'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{a,b}/{c,..}/{..,e}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "del-cli '{x,{y,~/.config/ember}}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{~,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '?(..)'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '*(..)'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{/,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{/usr,x}'",
+   "verdict": "ask",
+   "rules": [
+    "path.system",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "npx rimraf '{..,x}'",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "yarn rimraf '{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "node_modules/.bin/rimraf '{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf -G '{..,x}'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf 'src/**/*.{js,map}'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf 'dist/@(a|b)'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf 'file (copy)'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "del-cli 'dist/!(keep.js)'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf '{build,dist}/*'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf '{1..3}'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf 'build/{a,b,c}'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }
