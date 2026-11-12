@@ -1162,7 +1162,11 @@ the address in force and its saved key are kept and come back with the switch (i
   minute, and at once on the next request), each try only that GET, and a background try leaves the status as it is
   while nothing answers, so no "Connecting…" comes and goes every minute (integrations-c1-2). A remote host isn't asked at a start: Electron's
   fetch follows the system's proxy settings, which can differ from the runtime's, so its test may not veto a connect.
-  So a server on this computer that answered reads "Connected to <host>.", and a remote host only "Using <host>.",
+  So a server on this computer that answered with a model list reads "Connected to <host>."; one that answered
+  without one (Ollama's address entered without `/v1`, a web page, a chat-only gateway taken with "Use it as typed")
+  reads "Using <host>. It answered, but without a model list: Test connection under Model provider says more.", and
+  one that answered otherwise (a key refused, an error) only "Using <host>." (`localProviderLine`, integrations-r8-1).
+  A remote host reads only "Using <host>.",
   or "Using <host>, with no API key saved. If it needs one, save it under Model provider." when no key is saved for
   it (a keyless gateway still works); the setup check's model row then warns rather than says OK (integrations-r3).
   An answer that refuses the key or has no model list never counts as down: the request says that itself.

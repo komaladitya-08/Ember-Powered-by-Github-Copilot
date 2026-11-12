@@ -16,7 +16,7 @@ import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, lostWords, noAnswer, plainText, SIGN_IN_REFUSED, type LostWords, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
-import { providerDown, type ActiveProvider, type TestResult } from "../provider";
+import { localProviderLine, providerDown, type ActiveProvider, type TestResult } from "../provider";
 import { keyNeeded } from "../../shared/provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
 import { modelsManaged, type AdminPolicy } from "../admin";
@@ -1877,12 +1877,15 @@ export class AgentHost {
       service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl) } : undefined,
     });
     let unreachable = false;
+    // What that check answered, for the ready status: "Connected" only with a model list (integrations-r8-1).
+    let checked: TestResult | null = null;
     try {
       // A model server on this computer (Ollama, LM Studio) is asked first whether it listens: nothing else would ask it
       // before the first request, which then waits about 24 s to fail (integrations-1). Only there: a remote host's
       // test goes through Electron's proxy settings, which may differ from the runtime's, so it can't veto a connect.
       if (provider?.kind === "user" && this.o.probeProvider && !keyNeeded(provider.config.baseUrl)) {
-        const down = providerDown(await this.o.probeProvider(), serviceHost(provider.config.baseUrl), true);
+        checked = await this.o.probeProvider();
+        const down = providerDown(checked, serviceHost(provider.config.baseUrl), true);
         if (gen !== this.gen) return;
         if (down) throw new ProviderDown(down);
       }
@@ -2344,10 +2347,11 @@ export class AgentHost {
       })(system, prompt, signal);
       this.projectService = kindOf(provider);
       const where = provider?.kind === "user" ? serviceHost(provider.config.baseUrl) : null;
-      // A model server on this computer answered the start's probe: connected. A host elsewhere isn't asked until a
-      // request reaches it, so it is only in use, and one with no key saved may refuse requests (integrations-r3).
+      // A model server on this computer answered the start's probe with a model list: connected; answered without one,
+      // in use, with Test connection to say more (integrations-r8-1). A host elsewhere isn't asked until a request
+      // reaches it, so it is only in use, and one with no key saved may refuse requests (integrations-r3).
       const remote = provider?.kind === "user" && keyNeeded(provider.config.baseUrl);
-      const using = remote ? `Using ${where}${provider.config.apiKey ? "." : ", with no API key saved. If it needs one, save it under Model provider."}` : `Connected to ${where}.`;
+      const using = remote ? `Using ${where}${provider.config.apiKey ? "." : ", with no API key saved. If it needs one, save it under Model provider."}` : where ? localProviderLine(checked, where) : "";
       const signedIn = login ? `Signed in as ${login}.` : where ? using : "Connected.";
       this.setStatus({
         phase: "ready",

@@ -206,6 +206,31 @@ describe("AgentHost with the user's own model provider", () => {
     await host.stop();
   });
 
+  it("never says Connected to a server on this computer whose start check answered without a model list, and points to Test connection; one that answered otherwise is only in use (integrations-r8-1)", async () => {
+    // Ollama's address entered without /v1 answers 404 to GET /models; a web page answers 200 with HTML: both "no-list".
+    for (const why of ["127.0.0.1:18109 answered, but has no model list at that address. Check the endpoint and the provider.", "127.0.0.1:18109 answered, but not as a model service does. Check the endpoint."]) {
+      sim.clients = []; sim.sessions = [];
+      const { host } = makeHost(() => LOCAL, async () => ({ ok: false, why, cause: "no-list" }));
+      // Something answers there, so it connects (a chat-only gateway the person chose "Use it as typed" for works).
+      expect(await host.start(null)).toBe("ready");
+      expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "127.0.0.1:18109" } });
+      expect(host.getStatus().detail).toBe("Using 127.0.0.1:18109. It answered, but without a model list: Test connection under Model provider says more.");
+      await host.stop();
+    }
+    // A key refused or another error: something is there, but nothing says it is connected.
+    sim.clients = []; sim.sessions = [];
+    const refused = makeHost(() => LOCAL, async () => ({ ok: false, why: "127.0.0.1:18109 needs an API key." }));
+    expect(await refused.host.start(null)).toBe("ready");
+    expect(refused.host.getStatus().detail).toBe("Using 127.0.0.1:18109.");
+    await refused.host.stop();
+    // A model list: connected, as before.
+    sim.clients = []; sim.sessions = [];
+    const listed = makeHost(() => LOCAL, async () => ({ ok: true, host: "127.0.0.1:18109", models: 1 }));
+    expect(await listed.host.start(null)).toBe("ready");
+    expect(listed.host.getStatus().detail).toBe("Connected to 127.0.0.1:18109.");
+    await listed.host.stop();
+  });
+
   it("keeps its status still while a model server on this computer stays off, rather than saying Connecting… at every retry (integrations-c1-2)", async () => {
     vi.useFakeTimers();
     try {
