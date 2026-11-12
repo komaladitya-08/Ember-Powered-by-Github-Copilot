@@ -268,6 +268,11 @@ Ember stops and asks before a command that:
   a line both ways and keeps the stricter answer, with what the older reading named still on the card, so `sudo -h
   host rm -rf ~` is refused and `sudo -h host printenv` still says what printenv prints. Write the value attached
   (`git commit -SKEY -m wip`, `redis-cli --tls=1 PING`) or after the message (`git commit -m wip -S`) and it runs.
+  The same holds for every tool whose options Ember has learned to read better since (tar, rsync, cp, grep, ls, curl,
+  gh, make and Maven, pip, `docker run`, `uv run` and its like, pkill): a word the older reading took for a file, a
+  target or a command is still judged as one, so `tar -xf a.tar --exclude-tag ~/.ssh/id_rsa` and `uv run --cache-dir
+  printenv` ask, and `ls --cached ~/.config/ember/settings.json` is refused. Everyday lines are untouched: `tar -xf
+  a.tar --strip-components 1`, `uv run --cache-dir .cache pytest`, `mvn -T 4 package` and `docker run -P nginx` run.
 
 **Loops on a command line** in bash or sh always ask, whatever their body: a line with `for`, `while`, `until` or
 `select` anywhere in it asks with the loop's own words ("Ember can't tell exactly what this does."), so `for i in 1 2

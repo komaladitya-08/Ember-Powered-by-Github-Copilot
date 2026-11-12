@@ -3019,4 +3019,56 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     expect(decided("time x=$(cat f)").classes).toEqual(["unclear"]);
     expect(decided("time x=1 ls").verdict).toBe("run");
   });
+
+  it("holds every other option table corrected since 4d64d3a to main's, so no word behind an option decides less safely than it did (commands-held-8)", () => {
+    // Each line with main's verdict for it at 4d64d3a and the dangers it named there: by today's table alone it ran, or asked
+    // where main refused, or asked without them. Found by running every option whose table changed in both trees.
+    const rows: [string, "ask" | "refuse", string[]][] = [
+      ["git config --fixed-value x core.hooksPath ./x", "ask", ["system"]], ["miniserve --qrcode x ~/.ssh/id_rsa", "ask", ["publish", "secret"]],
+      ["miniserve --qrcode x ~/.config/ember/settings.json", "refuse", []], ["tar -xf a.tar --exclude-tag ~/.ssh/id_rsa", "ask", ["secret"]],
+      ["tar -xf a.tar --exclude-tag ~/.config/ember/settings.json", "refuse", []], ["tar -xf a.tar --rsh-command ~/.ssh/id_rsa", "ask", ["secret"]],
+      ["tar -xf a.tar --rsh-command ~/.config/ember/settings.json", "refuse", []], ["bsdtar -xf a.tar --exclude-tag ~/.ssh/id_rsa", "ask", ["secret"]],
+      ["bsdtar -xf a.tar --exclude-tag ~/.config/ember/settings.json", "refuse", []], ["awk --exec --force", "ask", []], ["rsync --cc a.txt b.txt", "ask", ["destroy"]],
+      ["script -m ~/.ssh/id_rsa", "ask", ["destroy", "secret"]], ["script -m ~/.config/ember/settings.json", "refuse", []],
+      ["touch --time ~/.ssh/id_rsa", "ask", ["secret"]], ["touch --time ~/.config/ember/settings.json", "refuse", []], ["mkdir --time ~/.ssh/id_rsa", "ask", ["secret"]],
+      ["mkdir --time ~/.config/ember/settings.json", "refuse", []], ["mkfifo --time ~/.ssh/id_rsa", "ask", ["secret"]],
+      ["mkfifo --time ~/.config/ember/settings.json", "refuse", []], ["mknod --context x ~/.ssh/id_rsa", "ask", ["secret"]],
+      ["mknod --context x ~/.config/ember/settings.json", "refuse", []], ["pip install --cache-dir ~/.ssh/id_rsa", "ask", ["system", "escape"]],
+      ["patch --merge x secret ~/.ssh/id_rsa", "ask", ["secret"]], ["patch --reject-format ~/.config/ember/settings.json", "refuse", []],
+      ["ssh -M rm -rf build", "ask", ["escape"]], ["make --activate-profiles install", "ask", ["system"]], ["mvn --activate-profiles install", "ask", ["system"]],
+      ["node -C ~/.ssh/id_rsa", "ask", ["secret"]], ["node -C ~/.config/ember/settings.json", "refuse", []],
+      ["docker compose run --pull -v /:/host alpine sh", "ask", ["system"]], ["uv run --cache-dir printenv", "ask", ["secret"]],
+      ["uv run --cache-dir rm -rf ~", "refuse", []], ["poetry run --cache-dir printenv", "ask", ["secret"]], ["poetry run --cache-dir rm -rf ~", "refuse", []],
+      ["docker run -P x -d v1", "ask", ["escape"]], ["rg --colors x ~/.ssh/id_rsa", "ask", ["secret"]], ["rg --colors x ~/.config/ember/settings.json", "refuse", []],
+      ["ag --ignore x ~/.ssh/id_rsa", "ask", ["secret"]], ["ag --ignore x ~/.config/ember/settings.json", "refuse", []], ["ack -f ~/.ssh/id_rsa", "ask", ["secret"]],
+      ["ack -f ~/.config/ember/settings.json", "refuse", []], ["gzip --output ~/.ssh/id_rsa", "ask", ["destroy", "secret"]],
+      ["gzip --output printenv", "ask", ["destroy"]], ["xz --output ~/.ssh/id_rsa", "ask", ["destroy", "secret"]], ["xz --output printenv", "ask", ["destroy"]],
+      ["pkill --older x a.txt b.txt", "refuse", []], ["killall --older x rm -rf build", "refuse", []], ["skill --older x rm -rf build", "refuse", []],
+      ["cp --backup rm -rf ~", "ask", ["secret"]], ["mv --backup rm -rf ~", "refuse", []], ["install --backup rm -rf ~", "ask", ["secret"]],
+      ["watch --differences x printenv", "ask", ["secret"]], ["watch --equexit rm -rf ~", "refuse", []],
+      ["gh pr merge --add-assignee -d v1", "ask", ["publish", "remote-delete"]], ["gh gist create --add-assignee ~/.ssh/id_rsa", "ask", ["publish", "secret"]],
+      ["gh gist create --add-assignee ~/.config/ember/settings.json", "refuse", []], ["perf record -a x printenv", "ask", ["secret"]],
+      ["perf record -m ~/.config/ember/settings.json", "refuse", []], ["curl -Q -d v1", "ask", ["publish"]], ["ls --cached ~/.config/ember/settings.json", "refuse", []],
+      ["tree --cached ~/.config/ember/settings.json", "refuse", []], ["stat --cached ~/.config/ember/settings.json", "refuse", []],
+      ["file --cached ~/.config/ember/settings.json", "refuse", []], ["uniq --all-repeated x secret ~/.ssh/id_rsa", "ask", ["destroy", "secret"]],
+    ];
+    for (const [cmd, verdict, classes] of rows) {
+      const got = decided(cmd);
+      expect(got.verdict, cmd).toBe(verdict);
+      for (const c of classes) expect(got.classes, cmd).toContain(c);
+    }
+    // The corrected tables still read what main's couldn't, and everyday lines run as before: main's reading is held to what
+    // main asked, never to a check the row has learned since (`docker run -P nginx`).
+    for (const cmd of [
+      "tar -xf a.tar --strip-components 1", "tar -xf a.tar --strip-components=1 -C build", "bsdtar -xf a.tar --strip-components 1", "uv run --cache-dir .cache pytest",
+      "uv run --python 3.12 pytest", "poetry run pytest -q", "conda run -n env python3 a.py", "ls --color auto", "ls --color=auto src", "tree --charset ascii src",
+      "du --time src", "grep --color auto foo a.txt", "rg --colors match:fg:red foo src", "ag --ignore node_modules foo", "ack -f src", "zstd -o out.zst a.txt",
+      "perf stat -a sleep 1", "perf record -a ls", "curl -Q \"CWD /x\" ftp://e.com/a.txt", "curl --max-redirs 3 https://e.com/a.txt", "make -j4", "make -j$(nproc)",
+      "make -j $((2*4)) all", "make --jobs=$(nproc) all", "mvn -T 4 package", "mvn --threads 4 package", "mvn --threads $(nproc) package", "mvn -pl core -am package",
+      "mvn -X package", "mvn -gs settings.xml package", "gradle --max-workers 4 build", "./gradlew --max-workers=$(nproc) build", "ninja -j 8", "nox -r -s tests",
+      "tox -r -e py312", "node -C development app.js", "node --test-reporter spec --test", "docker run -P nginx", "touch --time=atime a.txt", "mkdir --context=x d",
+      "mktemp --tmpdir x.XXXX", "patch --merge -p1 -i x.patch", "patch --reject-format=context -p1 -i x.patch", "uniq --group a.txt", "awk -i inplace '{print}' a.txt",
+      "gawk --exec prog.awk a.txt", "git config --fixed-value user.name x",
+    ]) expect(decided(cmd).verdict, cmd).toBe("run");
+  });
 });
