@@ -431,7 +431,7 @@ link, tab or menu item asked about only because its name starts with a word that
 “Reserve Bank raises rates”, a tab “Email”, “Allow Editing”) asks every time too, but isn't called something you didn't
 ask for and doesn't put the task back to asking, since such words lead headlines, tabs and settings as well; a button so
 named is, and so is a name that grants rights, changes who can see something or turns a protection off (“Make admin”,
-“Change visibility”, “Turn off antivirus”, “Continue as Ana”) or a lone “Allow”.
+“Change visibility”, “Turn off antivirus”, “Continue as Ana”) or grants access (“Allow”, “Allow notifications”).
 **Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop”, “stop typing” or “abort” in
 the Ask box while a task is at work) stops every task, question, borrowed mouse,
 desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for

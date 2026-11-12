@@ -487,20 +487,25 @@ const isRiskyActLabel = (s: string) => { const n = normalizeLabel(s); return RIS
 /** COMMITS_LEAD_WORDS leading a label, and COMMITS_PHRASES anywhere in it. */
 const COMMITS_LEAD = new RegExp(String.raw`^[^\p{L}\p{N}]*(${COMMITS_LEAD_WORDS})\b`, "u");
 const COMMITS_PHRASE = new RegExp(String.raw`\b(${COMMITS_PHRASES})\b`);
-/** A lone word that grants access: "Allow", "Permit". */
-const LONE_GRANT = /^[^\p{L}\p{N}]*(allow|permit)[^\p{L}\p{N}]*$/u;
+/**
+ * A word that grants access, alone ("Allow", "Permit"), before what it lets in or for how long ("Allow notifications",
+ * "Allow pop-ups", "Allow once", "Allow while using the app", "Permit access"), or as a verb before the words that tell
+ * one (COMMITS_LEAD_WORDS's: "Allow now", "Allow the file", "Allow all", and who: "Allow everyone"). Not a setting's or
+ * a headline's "Allow Editing", "Permit applications open on Monday" (x7-1).
+ */
+const GRANTS_ACCESS = /^[^\p{L}\p{N}]*(allow|permit)([^\p{L}\p{N}]*$|\s+(now|it|this|that|these|those|a|an|my|your|the|all|selected|everyone|anyone|others|people|users?|guests?|once|always|everything|access|notifications?|pop-?ups?|redirects?|camera|microphone|mic|location|cookies|tracking|remote|screen|clipboard|downloads?|sync|usb|bluetooth|devices?|sensors?|storage|installs?|installation|scripts?|javascript|apps?|extensions?|plugins?|sharing|control|them|while|on every visit|for (this|the) (site|app|session|visit|time))(?![\p{L}\p{N}]))/u;
 /**
  * Is this label risky to act on only by a word that grants or commits as it leads the label (COMMITS_LEAD_WORDS: the
  * audit of 2026-11-11), and by nothing Ember asked about before (RISKY's lists, the other acting verbs, another language's,
  * a disk's Format) nor any talk of security ("Turn off firewall")? Those words lead headlines, tabs and settings too
  * ("Reserve Bank raises rates", "Email", "Allow Editing"). Never a phrase (COMMITS_PHRASES) that grants rights, changes
  * who can see something, drops work or turns a protection off ("Make admin", "Change visibility", "Drop changes", "Turn
- * off antivirus", "Continue as Ana"), nor a lone "Allow" or "Permit": those mean what they say wherever they stand
- * (regression review of round eight, safety-privacy-x8-4).
+ * off antivirus", "Continue as Ana"), nor a grant of access (GRANTS_ACCESS: "Allow", "Allow notifications"): those mean
+ * what they say wherever they stand (regression review of round eight, safety-privacy-x8-4).
  */
 const commitsOnly = (s: string, os: OS) => {
   const n = normalizeLabel(s);
-  return COMMITS_LEAD.test(n) && !COMMITS_PHRASE.test(n) && !LONE_GRANT.test(n) && !ACT_LEAD_BEFORE.test(n) && !RISKY_ACT_BEFORE.test(n)
+  return COMMITS_LEAD.test(n) && !COMMITS_PHRASE.test(n) && !GRANTS_ACCESS.test(n) && !ACT_LEAD_BEFORE.test(n) && !RISKY_ACT_BEFORE.test(n)
     && !RISKY_ACT_INTL.test(foldLabel(s)) && !isRiskyLabel(s, os) && !securityTalk(s);
 };
 /** Links, tabs and menu items: also named by what they lead to, show or set (a headline, a tab "Email", "Allow Editing"). */

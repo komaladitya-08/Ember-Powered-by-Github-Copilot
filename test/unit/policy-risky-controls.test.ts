@@ -167,7 +167,9 @@ describe("labels that start with a word that grants or commits", () => {
   // that grants rights, changes who can see something, drops work or turns a protection off, or a lone "Allow", keeps it.
   it.each([["menu item", "Make admin"], ["menu item", "Add member"], ["menu item", "Change visibility"], ["menu item", "Make public"], ["menu item", "Allow"],
     ["menu item", "Mark as spam"], ["menu item", "Drop changes"], ["menu item", "Pause protection"], ["menu item", "Turn off antivirus"], ["menu item", "Disable screen lock"],
-    ["menu item", "Pause real-time protection"], ["link", "Continue as Ana"], ["page tab", "Make public"], ["link", "Permit"],
+    ["menu item", "Pause real-time protection"], ["link", "Continue as Ana"], ["page tab", "Make public"], ["link", "Permit"], ["menu item", "Allow access"],
+    ["menu item", "Allow notifications"], ["menu item", "Allow once"], ["menu item", "Allow while using the app"], ["menu item", "Allow pop-ups"], ["link", "Allow camera and microphone"],
+    ["link", "Permit access"], ["menu item", "Always allow"], ["menu item", "Allow now"], ["link", "Allow the file"], ["menu item", "Allow everyone"], ["page tab", "Permit all"],
     ["link", "Make public transport free, says mayor"]])(
     "a %s named “%s” the user didn't ask for asks every time and is flagged as unasked (safety-privacy-x8-4)", (role, name) => {
       // (Enter on a page's link is judged by what it leads to, as before; on a menu item, by its name.)
