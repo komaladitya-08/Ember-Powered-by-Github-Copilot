@@ -3,7 +3,7 @@ import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, 
 import { retryMessage, tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 import { KEY_NO_KEYRING, KEY_WRITE_FAILED, PROVIDER_MANAGED, PROVIDER_NO_CONSENT, providerDown, providerNotAgreed, testConnection } from "../../app/main/provider";
-import { explainSignInError, explainStartError, runtimeWords, START_TIMEOUT_DETAIL } from "../../app/main/agent/host";
+import { explainSignInError, explainStartError, runtimeWords, START_TIMEOUT_DETAIL, startErrorReason, USER_PROVIDER_NO_MODEL } from "../../app/main/agent/host";
 import { PROVIDER_BAD_REQUEST } from "../../app/main/provider-ipc";
 import { cliTimedOutMessage } from "../../app/main/agent/github-app";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
@@ -69,6 +69,13 @@ describe("a failing own provider is explained as the provider's, never Copilot's
     // Main's other reasons are said in its own words.
     expect(homeConnectionView({ ...base, detail: "None of the models you entered for your provider are allowed by your administrator." }).line).toBeUndefined();
     expect(homeConnectionView({ ...base, service: "admin", detail: "Enter the model your provider should use in Ember's settings, under Models & connections." }).line).toBeUndefined();
+  });
+  it("names that field for main's own no-model sentence as main's start says it, so a change to main's words can't bring the pane's name back unseen (integrations-x8-3)", () => {
+    // The status a start that names no model gives: its reason and detail, made by main from its own constant.
+    const err = new Error(USER_PROVIDER_NO_MODEL);
+    const v = homeConnectionView({ phase: "error", reason: startErrorReason(err), detail: explainStartError(err), ownOffered: true, signingIn: false, waiting: false, service: "user" });
+    expect(v.line).toBe("Enter the model your provider should use in “Conversation model”, below.");
+    expect(v.primary).toBe("provider");
   });
   it("says in Home's tagline and status that the provider can't connect, never to connect Copilot", () => {
     const t = { failing: 0, onboarded: true, hidden: false, overlay: true, service: "user" };

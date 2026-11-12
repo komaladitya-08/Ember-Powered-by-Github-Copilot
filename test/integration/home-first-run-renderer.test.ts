@@ -8,6 +8,7 @@ import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { USER_PROVIDER_NO_MODEL } from "../../app/main/agent/host";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
 
@@ -554,9 +555,9 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
-  it("(ap) Models & connections names the field below for my provider's missing model, never the pane I'm on, and its button takes me there (integrations-r8-3)", async () => {
+  it("(ap) Models & connections names the field below for my provider's missing model, never the pane I'm on, and its button takes me there (integrations-r8-3, -x8-3)", async () => {
     const service = { kind: "user", host: "127.0.0.1:18392" };
-    const p = await open({ home: true, provider: { on: true, baseUrl: "http://127.0.0.1:18392/v1", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: "127.0.0.1:18392" } }, agent: { ...SIGNED_OUT, phase: "error", reason: "models", detail: "Enter the model your provider should use in Ember's settings, under Models & connections.", service } });
+    const p = await open({ home: true, provider: { on: true, baseUrl: "http://127.0.0.1:18392/v1", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: "127.0.0.1:18392" } }, agent: { ...SIGNED_OUT, phase: "error", reason: "models", detail: USER_PROVIDER_NO_MODEL, service } });
     await expect.poll(() => p.locator("#agent-text").innerText()).toBe("Enter the model your provider should use in “Conversation model”, below.");
     expect(await p.locator("#agent-text").innerText()).not.toContain("Models & connections");
     // The field it names is there, below, under that label, and the leading button moves the focus into it.
