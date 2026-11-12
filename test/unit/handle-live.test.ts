@@ -49,6 +49,22 @@ describe("the corner card's live region", () => {
     expect(live.bubble(ask(), 1)).toBeNull();
   });
 
+  it("says a question covered and shown again only once: one event main tells twice is said once (accessibility-c8-1)", () => {
+    const live = new HandleLive();
+    const listening: BubbleView = { visible: true, mood: "listening", title: "Listening…", thought: "", streaming: false };
+    expect(live.bubble(ask(), 1)).not.toBeNull();
+    // "Ember, …" to answer it by voice: "Listening…" covers it, then it shows again, unanswered.
+    expect(live.bubble(listening, null)).toBe("");
+    expect(live.bubble(ask(), 1)).toBeNull();
+    // Its whole text read meanwhile: only that news, after the cover too.
+    const text = "Dear team, the figures are attached. Bye";
+    expect(live.bubble(ask({ whole: text, wholeSeen: false }), 2)).toContain(text);
+    expect(live.bubble(listening, null)).toBe("");
+    expect(live.bubble(ask({ whole: text, wholeSeen: true }), 2)).toBe(`${WHOLE_READ_SAID} Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+    expect(live.bubble(carryingOn, null)).toBe("");
+    expect(live.bubble(ask({ whole: text, wholeSeen: true }), 2)).toBeNull();
+  });
+
   it("says an answer in the same words as the last again after Ember thought in between, as the overlay's bubble does", () => {
     const live = new HandleLive();
     expect(live.bubble(answer, null)).toBe("Ember says: 12 GB free.");

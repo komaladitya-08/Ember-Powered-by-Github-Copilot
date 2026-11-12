@@ -41,11 +41,12 @@ export function questionOf(actions: readonly { id: string }[]): number | null {
 export class HandleLive {
   /**
    * The bubble's announcement last said on the card ("" once a bubble with nothing to say showed), what it said that from
-   * (wholeReadNews compares the two), the question it was (its number, or null) and whether its words are in the region.
+   * (wholeReadNews compares the two), the last question said (its number, words and view, kept through any bubble with
+   * nothing to say) and whether the bubble's words are in the region.
    */
   private announced = "";
   private announcedView: BubbleView | null = null;
-  private question: number | null = null;
+  private asked: { n: number; text: string; view: BubbleView } | null = null;
   private inRegion = false;
   /** Each task's state as last said (or first seen): its end is news once. */
   private tasksSaid = new Map<string, TaskCard["status"]>();
@@ -61,22 +62,28 @@ export class HandleLive {
   /**
    * What the card says of the bubble with this update (no compositor: nothing else speaks for Ember): finished answers,
    * questions and problems, once (`announcement`); null for nothing new; "" when the words it said have gone (a bubble
-   * with nothing to say, or none), so the page empties its region. As the overlay's bubble does, a bubble with nothing to
-   * say ("Thanks! Carrying on.", "Thinking…") forgets what was said, so the next question in the same words is said
-   * again, and so is another question (`question`, its number) after no bubble at all: kept from the one before, every
-   * command question of a task after the first went unsaid (accessibility-c8-1). The same question shown again after a
-   * hide isn't said again, and the same question with its whole text now all shown says only that news (wholeReadNews).
+   * with nothing to say, or none), so the page empties its region. A question is known by its number (`question`): each
+   * new one is said, in the words of the one before too (kept from it, every command question of a task after the first
+   * went unsaid: accessibility-c8-1), and the same one shown again after a cover ("Listening…") or a hide isn't, but for
+   * the news that its whole text has all been shown (wholeReadNews). Anything else is said when its words differ from
+   * the last said, and as the overlay's bubble does, a bubble with nothing to say ("Thinking…") forgets them.
    */
   bubble(view: BubbleView, question: number | null, speaker = "Ember"): string | null {
     const gone = (): string | null => { if (!this.inRegion) return null; this.inRegion = false; return ""; };
     // Hidden: what was said is kept (shown again, it isn't news), but its words leave the region.
     if (!view.visible) return gone();
     const text = announcement(view, speaker);
-    const fresh = question !== null && question !== this.question;
-    this.question = question;
-    if (!fresh && text === this.announced) return null;
-    // Another question in the same words is said whole, never as the news that its text was read.
-    const said = fresh ? text : wholeReadNews(this.announcedView, view) ?? text;
+    const was = this.asked;
+    let said: string;
+    if (question !== null && text) {
+      const same = was?.n === question;
+      if (same && text === was.text) { this.announced = text; this.announcedView = view; return null; }
+      said = same ? wholeReadNews(was.view, view) ?? text : text;
+      this.asked = { n: question, text, view };
+    } else {
+      if (text === this.announced) return null;
+      said = wholeReadNews(this.announcedView, view) ?? text;
+    }
     this.announced = text;
     this.announcedView = view;
     if (!said) return gone();
