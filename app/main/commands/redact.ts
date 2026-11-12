@@ -182,13 +182,24 @@ const listValue = (opened: string, quoted = String.raw`[^\n]`): string =>
 /** The option as one element and its value as the next, in the same quotes. */
 const listPair = (option: string): string => String.raw`${listOption(option)}\k<q>${LIST_SEP}\k<q>`;
 const SECRET_OPTION = String.raw`--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)`;
+/** An option that switches the secret off and takes no value (`"--no-password"`: memory-x7-1). */
+const LIST_SWITCH_OFF = String.raw`--?no[-_]`;
+/**
+ * Words that say an option has no value or what type its value is, never a secret themselves (`["--token", "none"]`,
+ * argparse's `"store_true"`, a table's `"string"`), whole: `"none1234"` and `"strings"` are values (memory-x7-1).
+ */
+const LIST_NO_VALUE = String.raw`(?:[Nn]one|[Nn]ull|nil|undefined|[Ss]tr(?:ing)?|int(?:eger)?|bool(?:ean)?|float|store_(?:true|false|const))`;
 /**
  * OPTION_PASSWORDS for lists of arguments: `keep` stays and `value` is hidden. MySQL's and MariaDB's `"-p…"` (a bare
  * `"-p"` prompts, and `"-P"` is a port), `"-p", "…"` after sshpass, mongo's clients and a registry's login,
  * `"-a", "…"` after redis-cli, `"-u", "admin:…"` after curl and wget, `"-U", "admin%…"` after smbclient, openssl's
  * `"-k", "…"` and `"-pass", "pass:…"`, and, after any program, a quoted option named like a secret with the next
  * quoted element as its value (`"--password", "…"`: three characters or more with no space, never another option, so
- * `"-pass", "1"` and an option's description stay).
+ * `"-pass", "1"` and an option's description stay). That last one is told by how it is written, wherever the list is
+ * built (a call's first arguments, a tuple: memory-y7-2), so it leaves only what can't be a value (memory-x7-1): after
+ * an option that takes none (`LIST_SWITCH_OFF`), a word for no value or a type (`LIST_NO_VALUE`), and, checked where
+ * it's replaced, a mapping's value and next key (`inMapping`: `"name": "--password", "description": …`) and the
+ * option's own name exactly (`ownName`: click's `"--api-key", "api_key"`).
  */
 const LIST_PASSWORDS: readonly RegExp[] = [
   new RegExp(String.raw`(?<keep>${listProgram(CLIENT)}${LIST_ARGS}${listOption("-p")})(?<value>${listValue("-p")})`, "g"),
@@ -199,8 +210,26 @@ const LIST_PASSWORDS: readonly RegExp[] = [
   new RegExp(String.raw`(?<keep>${listProgram("smbclient")}${LIST_ARGS}${listPair("-U")}[^\s"',%\]]*%)(?<value>${listValue(String.raw`[^\s"',%\]]*%`)})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("openssl")}${LIST_ARGS}${listPair("-k")})(?<value>${listValue("")})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("openssl")}${LIST_ARGS}${listPair("-pass(?:in|out)?")}pass:)(?<value>${listValue("pass:")})`, "g"),
-  new RegExp(String.raw`(?<keep>(?<![^\s,[(])(?<q>["'])${SECRET_OPTION}\k<q>${LIST_SEP}\k<q>)(?<value>(?!-)${LIST_NOT_VALUE}(?!${LIST_HOLDER}\k<q>)(?:(?!\k<q>)\S){3,})(?=\k<q>)`, "g"),
+  new RegExp(String.raw`(?<keep>(?<![^\s,[(])(?<q>["'])(?!${LIST_SWITCH_OFF})(?<option>${SECRET_OPTION})\k<q>${LIST_SEP}\k<q>)(?<value>(?!-)${LIST_NOT_VALUE}(?!(?:${LIST_HOLDER}|${LIST_NO_VALUE})\k<q>)(?:(?!\k<q>)\S){3,})(?=\k<q>)`, "g"),
 ];
+
+/**
+ * Whether a list element after `option` is that option's own name as code writes it, not its value: exactly its name
+ * with "_" for "-" (click's `"--api-key", "api_key"`: memory-x7-1). Anything more is a value: `"api_key_9f8e7d6c"`,
+ * `"Auth_Token"`, and a dest with words before it (`"--token", "auth_token"`), since `"s3cr3t_token"` would pass too.
+ */
+function ownName(option: string, value: string): boolean {
+  return value === option.replace(/^-+/, "").toLowerCase().replace(/[-.]/g, "_");
+}
+
+/**
+ * Whether the pair at `at` (from its option's opening quote, `q`) is a mapping's value and the next key, not an option
+ * and its value: the option follows a ":" and what would be its value is followed by one (`"name": "--password",
+ * "description": …`: memory-x7-1). Never a `case "--password", "…":` with no ":" before it. Looks a bounded way back.
+ */
+function inMapping(text: string, at: number, end: number, q: string): boolean {
+  return /:[ \t]*$/.test(text.slice(Math.max(0, at - 32), at)) && new RegExp(String.raw`^${q}[ \t]*:`).test(text.slice(end, end + 34));
+}
 
 /** URL credentials: `://user:pass@` becomes `://[secret hidden]@`. */
 const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/g;
@@ -230,7 +259,14 @@ export function redactSecrets(text: string): string {
   for (const re of OPTION_PASSWORDS) {
     out = out.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`);
   }
-  for (const re of LIST_PASSWORDS) out = out.replace(re, (...m) => `${(m[m.length - 1] as { keep: string }).keep}${SECRET_HIDDEN}`);
+  for (const re of LIST_PASSWORDS) {
+    out = out.replace(re, (...m) => {
+      const g = m[m.length - 1] as { keep: string; value: string; q?: string; option?: string };
+      const [match, at, whole] = [String(m[0]), m[m.length - 3] as number, m[m.length - 2] as string];
+      const leave = g.option !== undefined && (ownName(g.option, g.value) || inMapping(whole, at, at + match.length, g.q ?? ""));
+      return leave ? match : `${g.keep}${SECRET_HIDDEN}`;
+    });
+  }
   out = out.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`);
   out = out.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
   return out;

@@ -223,6 +223,17 @@ it("holds back a compose file whose exec-form healthcheck gives MySQL its passwo
   expect(await prompt([safe])).toContain("-p$MYSQL_ROOT_PASSWORD");
 });
 
+it("sends a command-line tool that only declares its secret options, and holds back one that passes a password (memory-x7-1)", async () => {
+  const cli = await file("cli.py", [
+    "import click", "", "@click.command()", '@click.option("--api-key", "api_key", envvar="API_KEY", help="API key")',
+    '@click.option("--db-password", "db_password", prompt=True, hide_input=True)', "def main(api_key, db_password):",
+    '    run(["pg_dump", "--no-password", "shop"])', '    run(["vault", "login", "--token", "none"])', "",
+  ].join("\n"));
+  expect(await prompt([cli])).toContain(JSON.stringify('@click.option("--api-key", "api_key"').slice(1, -1));
+  const passes = await file("deploy.py", 'args = ["deploy"]\nargs.push("--password", "Wint3r!Sh0p")\n');
+  await expect(prompt([passes])).rejects.toThrow(new Error("deploy.py appears to contain a password, token or key on line 2. Remove that file or the value, then send again."));
+});
+
 it("holds back a XAMPP guide whose prompt line and a backup script whose comment give MySQL its password, and sends one that prompts for it (memory-z6-1)", async () => {
   const setup = await file("SETUP.md", "# Setup\n\nOpen the XAMPP shell and run:\n\n    C:\\xampp\\mysql\\bin>mysql -u root -pWint3r!Sh0p shop < schema.sql\n");
   await expect(prompt([setup])).rejects.toThrow(new Error("SETUP.md appears to contain a password, token or key on line 5. Remove that file or the value, then send again."));

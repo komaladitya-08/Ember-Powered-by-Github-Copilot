@@ -551,7 +551,8 @@ Enter, or to the end when the command can't take typing), and hides the password
 (GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face, GitLab, SendGrid, DigitalOcean and Twilio tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, a Docker config's `"auth"`, a one-line `.netrc` entry's password, passwords
 in URLs, a password given to a program's short option such as `mysql -p…` (also after a prompt such as `C:\>`, a
 comment's `#` or from a quoted folder), `curl -u user:…`, `docker login -p …` or `sshpass -p …`, the same where the arguments are a list
-(`["mysql", "-uroot", "-p…"]`, `["sshpass", "-p", "…"]`, `"--password", "…"`), and the like). Hiding is best effort: a secret in a form Ember doesn't recognise can get through, so don't print
+(`["mysql", "-uroot", "-p…"]`, `["sshpass", "-p", "…"]`, `"--password", "…"`, but not after `"--no-password"`, nor `"none"`,
+`"string"` or the option's own name, as in `"--api-key", "api_key"`), and the like). Hiding is best effort: a secret in a form Ember doesn't recognise can get through, so don't print
 secrets on purpose.
 
 Output that reads like instructions to Ember ("ignore previous instructions", "you are an AI assistant", `curl … |
