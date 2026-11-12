@@ -807,6 +807,60 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     for (const room of [inRoom(cat(silence(0.5), trimmed("chat"), silence(2))), said("Let's meet at the station after lunch.")]) expect(sent(asked(room))).toEqual([]);
   }, 120_000);
 
+  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("never takes a refusal said as Ember stops reading its question for a yes, and hears an answer said just after it whole (owner's report of 2026-11-12)", () => {
+    // As on Windows and macOS: the microphone hears Ember's read-out (an echo 10 dB under the user) until 0.1 s after the
+    // page says it stopped, when main opens the answer window (or a follow-up). The answer starts `on` s from "stopped".
+    const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(readerVoice, "en_US-ryan-low.onnx"), tokens: path.join(readerVoice, "tokens.txt"), dataDir: path.join(readerVoice, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
+    const rms = (x: Float32Array) => Math.sqrt(x.reduce((n, v) => n + v * v, 0) / x.length);
+    const voiced = (text: string, level: number) => {
+      const raw: Float32Array = tts.generate({ text, sid: 0, speed: 1 }).samples;
+      let a = 0, b = raw.length;
+      while (a < b && Math.abs(raw[a]) < 0.01) a++;
+      while (b > a && Math.abs(raw[b - 1]) < 0.01) b--;
+      const k = level / rms(raw.subarray(a, b));
+      return raw.slice(a, b).map(x => x * k);
+    };
+    const own = voiced("To allow, press Control Alt Y; for not now, press Control Alt N.", 0.03);
+    const stop = 0.5 + own.length / 16000 - 0.1;
+    const heard = (speech: Float32Array | null, on: number, window: "answer" | "follow-up" = "answer") => {
+      const mic = new Float32Array(at(stop + Math.max(0, on) + 3));
+      mic.set(own, at(0.5));
+      if (speech) for (let i = 0; i < speech.length; i++) mic[at(stop + on) + i] += speech[i];
+      const s = session();
+      s.engine.questionUp(true);
+      const asks = Math.round(at(0.5) / 512), stops = Math.round(at(stop) / 512);
+      s.hear(inRoom(mic), { onFrame: k => {
+        if (k === asks) s.engine.selfSpeaking(true);
+        if (k !== stops) return;
+        s.engine.selfSpeaking(false);
+        if (window === "answer") s.engine.answerWindow(8000); else s.engine.followUp(8000);
+      } });
+      s.end();
+      return s.events;
+    };
+    // Begun under Ember's voice or right as it ends: only its end can be heard ("Do it."), so it is asked for again,
+    // never allowed. (On 64a6405 these came out as "Do it." or "Allow it." and allowed, 28 of 180 between -0.6 and 0.6 s.)
+    const taken: string[] = [];
+    for (const text of ["Don't do it.", "No, don't do it.", "Don't allow it.", "Do not allow it."]) {
+      const speech = voiced(text, 0.1);
+      for (const on of [-0.1, 0, 0.1, 0.2]) for (const window of ["answer", "follow-up"] as const) {
+        for (const e of sent(heard(speech, on, window))) if (spokenAnswer(e.text) === "allow") taken.push(`${text} at ${on} s in ${window}: “${e.text}”`);
+      }
+    }
+    expect(taken).toEqual([]);
+    // Begun after a moment's quiet (a turn's gap): heard whole, though it starts in the tail. (On 64a6405 nothing
+    // begun within 0.4 s of "stopped" was heard whole.) Phrases this voice is written right in nearly every time: its
+    // "Allow it." often comes out "Lollet", and a lone "Okay." now and then "Oh, today.".
+    for (const [text, answer] of [["Yes, please.", "allow"], ["Okay, go with it.", "allow"], ["No, thanks.", "deny"]] as const) {
+      const events = heard(voiced(text, 0.1), 0.3);
+      const u = sent(events);
+      expect(u.map(e => e.window), `${text}: ${JSON.stringify(events)}`).toEqual(["answer"]);
+      expect(spokenAnswer(u[0].text), `${text} heard as “${u[0].text}”`).toBe(answer);
+    }
+    // Ember's own read-out, and nothing after it: nothing, and nothing to say it again for.
+    expect(heard(null, 0).filter(e => e.type === "utterance" || e.type === "answer-over")).toEqual([]);
+  }, 180_000);
+
   it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
     // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for
     // phrases: the owner's held-out clips then scored 0.47-0.66 against the voiceprint, the screen reader's 0.70-0.82.

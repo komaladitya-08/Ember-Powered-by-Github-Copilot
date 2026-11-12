@@ -500,8 +500,14 @@ answer it didn't take, it listens for 8 s (`ANSWER_WINDOW_MS`, app/main/voice.ts
 bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). Only what the list
 reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
 wake, “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere. It opens no conversation, is
-no follow-up, ends with the question, never replays what the microphone caught at the end of Ember's voice, and takes
-nothing said over other sound unless it is said with the name (the question then says so, once). Nothing Ember says
+no follow-up, ends with the question, and takes nothing said over other sound unless it is said with the name (the
+question then says so, once). An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
+voice ended is heard whole from its start, also when it starts in the 400 ms after Ember says it stopped; one that
+runs on from Ember's voice with no such gap began under it, so only its end was heard (“Don't do it.” came out as “Do
+it.” and allowed: owner's report of 2026-11-12). That one is never taken, in the answer window or a follow-up: Ember
+says once a question that it was still speaking and to say it again (`answer-over`). Measured on the real models with
+Ember's read-out in the microphone until 0.1 s after it stopped: refusals begun from 0.6 s before to 0.6 s after taken
+as a yes went from 28 of 180 to none, and answers begun 0.3 s after are heard (none were within 0.4 s). Nothing Ember says
 while a question is up ends on words that read as an answer: it says the keys as “To allow, press Control Alt Y; for
 not now, press Control Alt N.” (`keysSaid`, app/main/agent/voice-answer.ts).
 With **Only my voice can say yes (Voice Match)** off, its default, a yes or a no from anyone heard answers it (owner

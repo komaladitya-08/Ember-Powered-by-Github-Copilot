@@ -123,7 +123,8 @@ export type VoiceEvent =
    * In a conversation, while one of Ember's questions is up, an answer ("Allow.", "Not now.") was said over Ember's voice
    * in words Ember was saying itself (its read-out names them): never taken, as it may be Ember's own, but no longer
    * dropped without a word. Main stops Ember speaking and says once a question to say it again (owner's report of
-   * 2026-11-12). Only which answer it read as, never the words.
+   * 2026-11-12). Only which answer it read as, never the words. So for an answer in a question's answer window or a
+   * follow-up that began before Ember's voice had ended (TURN_GAP_FRAMES): only its end was heard.
    */
   | { type: "answer-over"; answer: "allow" | "deny" };
 
@@ -650,6 +651,16 @@ const SEGMENT_FRAMES = LONG_CAP_FRAMES + 32;
 const TAIL_KEEP_FRAMES = 32;
 const TAIL_FRAMES = 13;
 const TAIL_HOLD_FRAMES = 8;
+/**
+ * A turn's gap: sound after this many quiet frames in a row (160 ms) starts a new run of it (VoiceEngine.soundFrom), and
+ * one that starts that long after Ember's voice ended is someone's own, heard whole from its start (TURN_LEAD_MS before
+ * it). A run joined to Ember's voice by less began under it: its start was never heard, so it is never taken as an
+ * answer (owner's report of 2026-11-12: "Don't do it." begun as Ember stopped was heard as "Do it." and allowed, and
+ * "No, don't | do it" was cut at its own pause, the last quiet pair in the tail). Shorter than the pause between
+ * sentences, longer than the closure in "don't do".
+ */
+const TURN_GAP_FRAMES = 5;
+const TURN_LEAD_MS = 64;
 /** The microphone's lag behind the speakers' stream is measured up to 0.4 s; a match this good says it hears them at all. */
 const MAX_LAG_FRAMES = 12;
 const LAG_MIN_CORRELATION = 0.5;
@@ -719,6 +730,14 @@ export class VoiceEngine {
   /** When Ember said it had stopped speaking (the tail after it is under way), and the frames heard around then. */
   private tailFrom = 0;
   private tail: { frame: Float32Array; energy: number; at: number }[] = [];
+  /** When the latest run of sound began (TURN_GAP_FRAMES): the frame the microphone heard it start in. */
+  private soundFrom = Number.NEGATIVE_INFINITY;
+  /**
+   * An answer or follow-up window has heard whole only what began after this: when Ember's voice ended (afterTail). Speech
+   * whose run began before it (`clipped`, decided where the VAD hears it start) is never taken as an answer.
+   */
+  private hearFrom = Number.NEGATIVE_INFINITY;
+  private clipped = false;
   private monitorHits: { keyword: string; at: number }[] = [];
   /**
    * A spotted wake word waiting out the speakers check; a spotted stop waiting out it and its transcript check
@@ -931,22 +950,25 @@ export class VoiceEngine {
    * finished saying the question, or a note about it, and as a question comes up where Ember doesn't speak. Only what
    * answersQuestion reads as an answer leaves it, as an utterance of window "answer" for main's voiceAnswer to judge
    * (with the echo guard, Voice Match and the Confirmer's own checks); a request said by name in it is a wake's; the
-   * room's talk without the name goes nowhere. It opens no conversation, isn't a follow-up (MAX_FOLLOW_UPS), ends with the
-   * question, and never replays what the microphone heard in the tail of Ember's voice (the follow-up window does, for a
-   * reply said right at its end: here that could be Ember's own "…for not now"). A window already listening hears answers
-   * already; an answer window open now starts its time again, with nothing held from before.
+   * room's talk without the name goes nowhere. It opens no conversation, isn't a follow-up (MAX_FOLLOW_UPS) and ends with
+   * the question. Opened in the tail of Ember's voice, it hears what began after that voice ended, from its start and at
+   * once (afterTail: "Okay." said as Ember stopped was lost, owner's report of 2026-11-12); what began under it is never
+   * an answer (TURN_GAP_FRAMES), and nothing Ember says while a question is up ends on words that read as one. A window
+   * already listening hears answers already; an answer window open now starts its time again.
    */
   answerWindow(ms = 8000): void {
     if (this.onlyStops || !this.questionWaiting) return;
     if (this.mode.kind === "listening") {
       if (this.mode.reason !== "answer") return;
-      this.tail = [];
       this.mode.until = Math.max(this.mode.until, this.now() + ms);
       return;
     }
     this.resetListening();
     this.peak = 0;
-    this.tail = [];
+    this.hearFrom = Number.NEGATIVE_INFINITY;
+    // In the tail of Ember's voice: what the microphone heard since it ended (before the page said so) may be the answer.
+    if (this.tailFrom && this.now() < this.selfSpeakingUntil) this.tail = this.recentFrames(TAIL_KEEP_FRAMES);
+    else { this.tail = []; this.tailFrom = 0; }
     this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: false, reason: "answer", checkAt: null, keyword: "" };
     this.emit({ type: "listening", on: true, reason: "answer", window: "answer" });
   }
@@ -1028,6 +1050,7 @@ export class VoiceEngine {
     // before "a bit bigger". Admission still uses the original wake's unchanged `voice` in mustBeClose/loudFrames;
     // quieter room talk cannot start a request or lower that reference over successive follow-ups.
     this.peak = 0;
+    this.hearFrom = Number.NEGATIVE_INFINITY;
     this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: false, reason: "follow-up", checkAt: null, keyword: "", afterQuestion: !!o.afterQuestion };
     // Opened during the tail after Ember's answer: what was heard since its voice ended (before it said so) may be a reply.
     if (this.tailFrom) this.tail = this.recentFrames(TAIL_KEEP_FRAMES);
@@ -1189,7 +1212,7 @@ export class VoiceEngine {
     // last words ("Hey Ember." then a pause: the cue came 0.44 s after the name; now 0.1 s).
     const sound = rms >= Math.max(base, this.floor * 2.5);
     let paused = false;
-    if (sound) { if (this.pauseRun >= PAUSE_FRAMES) this.soundRun = 0; this.soundRun++; this.pauseRun = 0; }
+    if (sound) { if (this.pauseRun >= TURN_GAP_FRAMES) this.soundFrom = now; if (this.pauseRun >= PAUSE_FRAMES) this.soundRun = 0; this.soundRun++; this.pauseRun = 0; }
     else if (++this.pauseRun === PAUSE_FRAMES && this.soundRun >= SOUND_FRAMES && toSpot.length && this.backend.padSpot) {
       const early = this.backend.padSpot();
       paused = early.length > 0;
@@ -1311,8 +1334,7 @@ export class VoiceEngine {
       if (this.tail.length > TAIL_KEEP_FRAMES) this.tail.shift();
       return;
     }
-    // (An answer window never replays the tail: what it held may be Ember's own last words, see answerWindow.)
-    if (this.tailFrom && this.mode.reason !== "conversation" && this.mode.reason !== "answer" && !this.afterTail(frame, energy, now)) return;
+    if (this.tailFrom && this.mode.reason !== "conversation" && !this.afterTail(frame, energy, now)) return;
     this.listen(frame, energy);
     // A conversation lasts while the user speaks and while Ember has something at work.
     if (this.mode.kind === "listening" && this.mode.reason === "conversation" && (this.busy || this.backend.speaking())) this.mode.until = Math.max(this.mode.until, now + this.mode.ms);
@@ -1553,11 +1575,15 @@ export class VoiceEngine {
   }
 
   /**
-   * Ember's tail is over. If the user was already replying, what they said around its end is heard too: from
-   * the speakers' own silence (plus the microphone's lag) when their stream says when that was; otherwise, once
-   * the sound has gone on for 8 frames past the tail (Ember's own voice, when it was said to have ended early,
-   * stops sooner), from where it went quiet in the tail (2 quiet frames: a pause between Ember's own words is
-   * shorter). Returns whether this frame is still to be heard (false: it's held, or was heard with the tail).
+   * Ember's tail is over. If the user was already replying, what they said around its end is heard too. Where their
+   * words began a turn's gap after Ember's voice ended (TURN_GAP_FRAMES: when the speakers' stream says it ended, plus
+   * the microphone's lag; otherwise when the page said so), from their start. Otherwise they are joined to Ember's voice
+   * and may have begun under it: from the speakers' own silence where their stream says when that was, or, once the
+   * sound has gone on for 8 frames past the tail (Ember's own voice, when it was said to have ended early, stops
+   * sooner), from where it went quiet in the tail (2 quiet frames: a pause between Ember's own words is shorter); and
+   * never as an answer (`hearFrom`, `clipped`). A question's answer window waits for nothing: what it hears there is
+   * only ever an answer, never a request. Returns whether this frame is still to be heard (false: it's held, or was
+   * heard with the tail).
    */
   private afterTail(frame: Float32Array, energy: number, now: number): boolean {
     const quiet = (e: number) => Math.sqrt(e) < Math.max(this.o.silenceRms ?? 0.0008, this.floor * 2.5);
@@ -1566,21 +1592,28 @@ export class VoiceEngine {
       this.tailFrom = 0;
       for (const t of frames) this.listen(t.frame, t.energy);
     };
-    if (now - this.monitorFrameAt < 200) {
+    const speakers = now - this.monitorFrameAt < 200;
+    this.hearFrom = speakers ? this.monitorSoundAt + this.micLag : this.tailFrom;
+    const fresh = this.soundFrom >= this.hearFrom;
+    const ownStart = () => this.tail.filter(t => t.at >= this.soundFrom - TURN_LEAD_MS);
+    if (speakers) {
       // From the frame the microphone heard the speakers' last sound in, and one before it (their last sounds are a
       // faint fade, and the lag is known to a frame): a reply said right at the end keeps its first word.
       const quietAt = this.monitorSoundAt + this.micLag - 32;
-      replay(this.tail.filter(t => t.at >= quietAt));
+      replay(fresh ? ownStart() : this.tail.filter(t => t.at >= quietAt));
       return true;
     }
     const tail = this.tail.filter(t => t.at >= this.tailFrom && t.at < this.selfSpeakingUntil).slice(-TAIL_FRAMES);
     const held = this.tail.filter(t => t.at >= this.selfSpeakingUntil);
+    let from = tail.length;
+    for (let i = tail.length - 1; i > 0; i--) if (quiet(tail[i].energy) && quiet(tail[i - 1].energy)) { from = i - 1; break; }
+    // ("Okay." said as Ember stopped ended before 8 frames past the tail, and was lost.) Sound joined to Ember's voice that
+    // ended in the tail was its last words: replayed, the VAD joined them to the answer that followed, which was lost.
+    if (this.mode.kind === "listening" && this.mode.reason === "answer") { replay(fresh ? ownStart() : quiet(energy) ? [] : [...tail.slice(from), ...held]); return true; }
     if (quiet(energy)) { replay([]); return true; } // nothing, or only Ember's last sounds, went on past the tail
     this.tail.push({ frame, energy, at: now });
     if (held.length + 1 < TAIL_HOLD_FRAMES) return false;
-    let from = tail.length;
-    for (let i = tail.length - 1; i > 0; i--) if (quiet(tail[i].energy) && quiet(tail[i - 1].energy)) { from = i - 1; break; }
-    replay([...tail.slice(from), ...held, { frame, energy }]);
+    replay(fresh ? ownStart() : [...tail.slice(from), ...held, { frame, energy }]);
     return false;
   }
 
@@ -1643,6 +1676,8 @@ export class VoiceEngine {
       // it no "listening off" ("I remember…" left "Listening…" up for good). It's told once the wake shows (handleSegment).
       if (this.mode.kind !== "listening" || this.mode.announced !== false) this.emit({ type: "speech", on: speaking });
       if (speaking && this.mode.kind === "listening") this.mode.heardSpeech = true;
+      // Its run of sound began before the window heard whole (Ember's voice ending: afterTail): only its end was heard.
+      if (speaking && this.soundFrom < this.hearFrom && this.mode.kind === "listening" && (this.mode.reason === "answer" || this.mode.reason === "follow-up")) this.clipped = true;
       // Listen once: where this speech began (the VAD says so MANUAL_VAD_LAG frames into it), for roomBefore.
       if (speaking && this.mode.kind === "listening" && this.mode.reason === "manual") {
         this.manualSpeechAt = Math.max(0, this.manualLevels.length - 1 - MANUAL_VAD_LAG);
@@ -1739,6 +1774,7 @@ export class VoiceEngine {
     this.afterHush = 0;
     this.overEmber = false;
     this.overSound = false;
+    this.clipped = false;
     this.cutIn = false;
     this.cutInCheckedAt = 0;
     if (this.ducked) { this.ducked = false; this.emit({ type: "duck", on: false }); }
@@ -1974,6 +2010,14 @@ export class VoiceEngine {
       this.pendingStop = null;
       this.emit({ type: "stop" });
       this.endListening("stop");
+      return;
+    }
+    if (this.clipped && this.answering(text)) {
+      // Begun before Ember's voice had ended (no turn's gap after it): only its end was heard ("Don't do it." as "Do it."),
+      // and it may be Ember's own. Never taken: main stops Ember, says once to say it again, and listens again.
+      this.peak = 0;
+      const answer = spokenAnswer(text);
+      if (answer) this.emit({ type: "answer-over", answer });
       return;
     }
     if (this.mode.reason === "answer" && !this.answering(text)) {

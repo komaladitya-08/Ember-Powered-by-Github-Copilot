@@ -2454,21 +2454,82 @@ describe("the answer window after one of Ember's questions (owner's report of 20
     expect(utterances(events)).toEqual([{ type: "utterance", text: "Open my mail.", ms: 0, window: "follow-up" }]);
   });
 
-  it("never hears Ember's own last words: what the microphone heard in the tail of its voice is never replayed into it", () => {
-    // The follow-up window replays a reply said right at the end of Ember's voice; an answer window must not, or the end
-    // of its own read-out ("…for not now") would answer its question.
-    const events = run(saying({ 7: "Not now.", 5: "Allow." }), (e, c) => {
+  /**
+   * Ember reads the question out (its voice, tag 8, in the microphone as it is on Windows and macOS), the page says it
+   * stopped and main opens the window (VoiceService does both at once), and then `after` is what the microphone hears.
+   */
+  const asked = (words: Record<number, string>, after: (e: VoiceEngine, c: { t: number }) => void, window: "answer" | "follow-up" = "answer") =>
+    run(saying({ 8: "To allow, press Control Alt Y; for not now, press Control Alt N.", ...words }), (e, c) => {
       e.questionUp(true);
       e.selfSpeaking(true);
-      for (let i = 0; i < 20; i++) { c.t += 32; e.feed(frame(0)); }
+      for (let i = 0; i < 40; i++) { c.t += 32; e.feed(frame(8, true)); }
+      e.selfSpeaking(false);
+      if (window === "answer") e.answerWindow(8000); else e.followUp(8000);
+      after(e, c);
+      for (let i = 0; i < 40; i++) { c.t += 32; e.feed(frame(0)); }
+    }, asking);
+  const overs = (events: VoiceEvent[]) => events.filter(v => v.type === "answer-over");
+
+  it("never takes an answer begun before Ember had stopped speaking: “Don't do it.” heard only as “Do it.” is asked for again, never allowed (owner's report of 2026-11-12)", () => {
+    // The user's "Don't" (tag 7) runs on from Ember's voice, unheard in the 400 ms tail; only "Do it." (tag 6) is heard after it.
+    for (const window of ["answer", "follow-up"] as const) {
+      const events = asked({ 7: "Don't do it.", 6: "Do it." }, (e, c) => {
+        for (let i = 0; i < 12; i++) { c.t += 32; e.feed(frame(7, true)); }
+        for (let i = 0; i < 12; i++) { c.t += 32; e.feed(frame(6, true)); }
+      }, window);
+      expect(utterances(events), window).toEqual([]);
+      expect(overs(events), window).toEqual([{ type: "answer-over", answer: "allow" }]);
+    }
+  });
+
+  it("hears an answer begun just after Ember's voice ended whole, also a short one over before the tail is (owner's report of 2026-11-12: it was lost)", () => {
+    // 160 ms of quiet after Ember's voice (TURN_GAP_FRAMES), then "Okay." (tag 5), all of it in the 400 ms tail.
+    const events = asked({ 5: "Okay." }, (e, c) => {
+      for (let i = 0; i < 5; i++) { c.t += 32; e.feed(frame(0)); }
+      for (let i = 0; i < 6; i++) { c.t += 32; e.feed(frame(5, true)); }
+    });
+    expect(utterances(events)).toEqual([{ type: "utterance", text: "Okay.", ms: 0, window: "answer" }]);
+    expect(overs(events)).toEqual([]);
+    // "Don't do it." begun a moment after Ember's voice ended, with its own pause in the tail: heard from its start.
+    const refusal = asked({ 7: "Don't do it.", 6: "Do it." }, (e, c) => {
+      for (let i = 0; i < 6; i++) { c.t += 32; e.feed(frame(0)); }
+      for (let i = 0; i < 3; i++) { c.t += 32; e.feed(frame(7, true)); }
+      for (let i = 0; i < 3; i++) { c.t += 32; e.feed(frame(0)); }
+      for (let i = 0; i < 8; i++) { c.t += 32; e.feed(frame(6, true)); }
+    });
+    expect(utterances(refusal)).toEqual([{ type: "utterance", text: "Don't do it.", ms: 0, window: "answer" }]);
+  });
+
+  it("never takes an answer begun under Ember's voice where the speakers' own stream says when it ended either (Linux with parec; owner's report of 2026-11-12)", () => {
+    // The tail ends with the speakers' last sound, and what the microphone heard from it on is heard: here "Do it." (tag 6),
+    // the end of a "Don't do it." whose "Don't" (tag 7) was said under Ember's last words (tag 8).
+    const b = saying({ 8: "To allow, press Control Alt Y; for not now, press Control Alt N.", 7: "Don't do it.", 6: "Do it." });
+    b.spotMonitor = () => [];
+    const playing = new Float32Array(512).fill(0.05), silent = new Float32Array(512);
+    const events = run(b, (e, c) => {
+      e.questionUp(true);
+      e.selfSpeaking(true);
+      const both = (tag: number, n: number, speakers: Float32Array) => { for (let i = 0; i < n; i++) { c.t += 32; e.feedMonitor(speakers); e.feed(frame(tag, true)); } };
+      both(8, 30, playing);
+      both(7, 4, playing);
+      both(6, 2, playing);
       e.selfSpeaking(false);
       e.answerWindow(8000);
-      for (let i = 0; i < 2; i++) { c.t += 32; e.feed(frame(0)); }
-      for (let i = 0; i < 10; i++) { c.t += 32; e.feed(frame(7, true)); }
-      for (let i = 0; i < 10; i++) { c.t += 32; e.feed(frame(5, true)); }
-      c.t += 32; e.feed(frame(0));
+      both(6, 8, silent);
+      for (let i = 0; i < 40; i++) { c.t += 32; e.feedMonitor(silent); e.feed(frame(0)); }
     }, asking);
-    expect(utterances(events)).toEqual([{ type: "utterance", text: "Allow.", ms: 0, window: "answer" }]);
+    expect(utterances(events)).toEqual([]);
+    expect(overs(events)).toEqual([{ type: "answer-over", answer: "allow" }]);
+  });
+
+  it("never hears Ember's own last words, whether they end in the tail or go on past it after an early “stopped” (owner's report of 2026-11-12)", () => {
+    // Its voice runs into the tail and stops there: nothing, and no note.
+    const inTail = asked({}, (e, c) => { for (let i = 0; i < 4; i++) { c.t += 32; e.feed(frame(8, true)); } });
+    expect(inTail.filter(v => v.type !== "listening")).toEqual([]);
+    // The page said it stopped 0.6 s early: "…press Control Alt N." (tag 9) goes on past the tail. Never an answer.
+    const past = asked({ 9: "Press Control Alt N." }, (e, c) => { for (let i = 0; i < 19; i++) { c.t += 32; e.feed(frame(9, true)); } });
+    expect(utterances(past)).toEqual([]);
+    expect(overs(past)).toEqual([]);
   });
 
   it("marks what it hears over other sound, which the voice gate drops without a voiceprint, unless said by name", () => {
