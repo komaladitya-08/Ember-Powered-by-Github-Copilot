@@ -146,6 +146,25 @@ function people(text: string, about: readonly { name: string; kind?: string }[])
 /** A turn's sentences and clauses, as `samePolarity` cuts them, and at "and" and "also" too. */
 const CLAUSE = /[.;!?\n,]+|\s+(?:and|also|but|although|though|whereas)\s+/i;
 
+/**
+ * One key for a verb's forms, roughly ("teaches", "teach" and "teaching" are all "teach", and "lives", "live" and
+ * "living" all "liv"), used only to tell two facts apart: `terms` folds plurals alone, so "Teaches in Paris" never found
+ * the user's "teach" (review of PR #210). A doubled consonant ("running"), "-ed", "goes" and irregular forms stay words
+ * of their own.
+ */
+const verbKey = (t: string): string => t.replace(/(?<=\p{L}{3})ing$/u, "").replace(/(?<=\p{L}{3})e$/u, "");
+
+/**
+ * Whether each of two facts holds a word the other lacks that was said: the candidate's (`C`) in its evidence (`E`),
+ * what was kept's (`K`) there or in the clause of the turn that holds it.
+ */
+function saidApart(C: ReadonlySet<string>, K: ReadonlySet<string>, E: ReadonlySet<string>, clause: ReadonlySet<string>): boolean {
+  return [...C].some(t => !K.has(t) && E.has(t)) && [...K].some(t => !C.has(t) && (E.has(t) || clause.has(t)));
+}
+
+/** `words` with each one's verb forms as one (`verbKey`). */
+const verbKeys = (words: Iterable<string>): Set<string> => new Set([...words].map(verbKey));
+
 /** The clauses of `said` (by CLAUSE) that hold the most of `want`; none when no clause holds any of it. */
 function holding(said: string, want: ReadonlySet<string>): number[] {
   const n = said.split(CLAUSE).map(clause => share(want, new Set(terms(clause))));
@@ -165,7 +184,8 @@ function holding(said: string, want: ReadonlySet<string>): number[] {
  *   vegetarian too.").
  * - Otherwise only when its evidence is in the one clause of the turn that holds the most of what was kept, and
  *   neither leaves out a word the other says, the candidate one of its evidence, what was kept one of it or of its
- *   clause ("allergic to peanuts and shellfish" holds two, "I live in Paris where I work" too, review of PR #210): half
+ *   clause, in any of a verb's forms ("allergic to peanuts and shellfish" holds two, and so do "I live in Paris where
+ *   I work", "…where I teach" and "I'm living in Paris where I work", review of PR #210): half
  *   or more of the smaller one's content words in common, the same way round ("Works at Globex", "Employed by
  *   Globex"); or evidence holding half or more of what was kept in words the candidate mostly doesn't use ("I'm
  *   vegetarian" read as "Does not eat meat"). A fact said in a clause of its own ("…My sister Jo lives in York") is
@@ -178,6 +198,9 @@ export function keptInTurn(c: Pick<Candidate, "fact" | "evidence" | "about">, ke
   // The clause that holds the evidence: what was kept may say its own word there and not in the evidence ("I live
   // in Paris where I work", evidence "Paris where I work"), which still makes them two (review of PR #210).
   const clause = new Set(at.length === 1 ? terms(said.split(CLAUSE)[at[0]] ?? "") : []);
+  // The same with each verb's forms as one, on both sides ("Teaches" and "teach", "Lives" and "living"): it only adds a
+  // reading that makes them two, so nothing the words as written make two is ever one (review of PR #210).
+  const [Cv, Ev, clauseV] = [verbKeys(C), verbKeys(E), verbKeys(clause)];
   return kept.some(k => {
     const K = content(k.text);
     if (!K.size || !C.size) return false;
@@ -188,8 +211,7 @@ export function keptInTurn(c: Pick<Candidate, "fact" | "evidence" | "about">, ke
     const apart = where.length === 1 && at.length === 1 && at[0] !== where[0];
     if (sameWay && !apart && [...C].every(t => K.has(t))) return true;
     if (!here) return false;
-    const two = [...C].some(t => !K.has(t) && E.has(t)) && [...K].some(t => !C.has(t) && (E.has(t) || clause.has(t)));
-    if (two) return false;
+    if (saidApart(C, K, E, clause) || saidApart(Cv, verbKeys(K), Ev, clauseV)) return false;
     return (sameWay && Math.max(share(K, C), share(C, K)) >= SAME_IN_TURN) || (share(K, E) >= SAME_IN_TURN && share(C, E) < SAME_IN_TURN);
   });
 }

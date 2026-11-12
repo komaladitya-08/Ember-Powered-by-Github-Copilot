@@ -379,7 +379,8 @@ download, so English-only MiniLM is the trade-off for now.
      is the same fact is kept again (`keptInTurn`, memory-c8-1): every content word of it in what was kept, the same
      way round, unless its evidence is plainly in another clause; or, only when its evidence is in the one clause of
      the turn that holds the most of what was kept and neither leaves out a word the other says (the candidate one of
-     its evidence, what was kept one of it or of its clause: "I live in Paris where I work", review of PR #210), half
+     its evidence, what was kept one of it or of its clause, in any of a verb's forms: "I live in Paris where I work",
+     "…where I teach" and "I'm living in Paris where I work" beside "Lives in Paris", review of PR #210), half
      or more of the smaller one's content words in common, or evidence that holds half of what was kept in words the
      candidate mostly doesn't use. A person one of them names in its own words and the other's words don't makes them
      two facts; otherwise `about` is not compared, since the two models choose it apart and the graph's own check
@@ -387,7 +388,9 @@ download, so English-only MiniLM is the trade-off for now.
      line, a dropped fact would be lost without a word. So a fact said in a clause of its own ("…My sister Jo lives
      in York"), about someone else, or beside what was kept in one clause ("…peanuts and shellfish") is learned
      whatever words it shares. It still can't tell two apart when one only adds to the other in its clause with no
-     person named ("Lives in Leeds with my wife" after "Lives in Leeds": not learned), and a fact the remember tool
+     person named ("Lives in Leeds with my wife" after "Lives in Leeds": not learned), nor when the word that tells
+     them apart is said in a form `verbKey` doesn't fold (a doubled consonant, "-ed", an irregular verb: "I live in
+     Leeds where I'm swimming" loses "Swims in Leeds"), and a fact the remember tool
      kept in words that share none with what the user said ("Is vegetarian" for "I don't eat meat") can still be
      learned a second time in the user's words.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten

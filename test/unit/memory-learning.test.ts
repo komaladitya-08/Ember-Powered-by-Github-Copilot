@@ -844,6 +844,14 @@ describe("what the user asks Ember to remember is kept once, however its turn's 
     ["I teach maths at the school my kids attend.", "Teaches maths", "Kids attend the school where the user teaches", "the school my kids attend", "learned too"],
     ["I live in Leeds near my office.", "Lives in Leeds", "Office is in Leeds", "Leeds near my office", "learned too"],
     ["I use Linux at work where I write Rust.", "Uses Linux at work", "Writes Rust at work", "at work where I write Rust", "learned too"],
+    // The word that tells them apart said in another of its verb's forms: "teaches" for "teach", "living" for "live".
+    ["I live in Paris where I teach.", "Lives in Paris", "Teaches in Paris", "Paris where I teach", "learned too"],
+    ["I teach in Paris where I live.", "Teaches in Paris", "Lives in Paris", "Paris where I live", "learned too"],
+    ["I teach at Lincoln High where I coach.", "Teaches at Lincoln High", "Coaches at Lincoln High", "Lincoln High where I coach", "learned too"],
+    ["I teach at Lincoln High where I coach football.", "Teaches at Lincoln High", "Coaches football at Lincoln High", "Lincoln High where I coach football", "learned too"],
+    ["I live in Oxford where I research.", "Lives in Oxford", "Researches in Oxford", "Oxford where I research", "learned too"],
+    ["I'm living in Paris where I work.", "Lives in Paris", "Works in Paris", "Paris where I work", "learned too"],
+    ["I live in Paris where I'm working.", "Lives in Paris", "Works in Paris", "Paris where I'm working", "learned too"],
     // A rewording of what was kept, its other words never said: the remember tool's fact in other words.
     ["Remember I'm vegetarian.", "Is vegetarian", "Does not eat meat", "I'm vegetarian", "not kept again"],
     ["Remember that I'm a strict vegetarian.", "Is vegetarian", "Does not eat meat", "I'm a strict vegetarian", "not kept again"],
@@ -853,6 +861,10 @@ describe("what the user asks Ember to remember is kept once, however its turn's 
     ["Remember that home for me is Leeds", "Lives in Leeds", "Home is Leeds", "home for me is Leeds", "not kept again"],
     ["Remember I write with my left hand", "Is left-handed", "Writes with the left hand", "I write with my left hand", "not kept again"],
     ["Remember I'd rather have tea than coffee", "Prefers tea to coffee", "Would rather have tea than coffee", "I'd rather have tea than coffee", "not kept again"],
+    // What was kept in another of its verb's forms is the same fact, whichever form the user said.
+    ["Remember that I'm living in Paris.", "Lives in Paris", "Living in Paris", "I'm living in Paris", "not kept again"],
+    ["Remember that I teach at Lincoln High.", "Teaches at Lincoln High", "Teaching at Lincoln High", "I teach at Lincoln High", "not kept again"],
+    ["Remember that I'm teaching at Lincoln High.", "Teaches at Lincoln High", "Is a teacher at Lincoln High", "I'm teaching at Lincoln High", "not kept again"],
     // The limit docs/MEMORY.md names: one only adds to the other in its clause, with no person named.
     ["Remember that I live in Leeds with my wife", "Lives in Leeds", "Lives in Leeds with wife", "I live in Leeds with my wife", "not kept again"],
     ...TWICE.map(([kept, , said, fact, , evidence]): [string, string, string, string, "not kept again"] => [said, kept, fact, evidence, "not kept again"]),
@@ -876,6 +888,20 @@ describe("what the user asks Ember to remember is kept once, however its turn's 
     expect(await l.flush()).toBe(1);
     expect(s.list().map(i => i.text).sort()).toEqual(["Lives in Paris", "Works in Paris"]);
     expect(learned.map(line => line.replace(/^\w+: /, ""))).toEqual(["Lives in Paris", "Works in Paris"]);
+  });
+
+  it("learns where the user teaches when they said “teach” and “living” and what was kept says “Lives” (review of PR #210)", async () => {
+    const SAID = "Remember that I'm living in Leeds where I teach.";
+    const { l, s, learned, advance } = learning({ model: async () => answer([
+      { from: 1, fact: "Teaches in Leeds", about: [USER], confidence: 0.9, evidence: "Leeds where I teach" },
+    ]) });
+    const tools = l.conductorMemory();
+    expect(tools.remember("Lives in Leeds", [USER], SAID)).toContain("Remembered");
+    tools.heard(SAID, "Got it.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text).sort()).toEqual(["Lives in Leeds", "Teaches in Leeds"]);
+    expect(learned.map(line => line.replace(/^\w+: /, ""))).toEqual(["Lives in Leeds", "Teaches in Leeds"]);
   });
 });
 
