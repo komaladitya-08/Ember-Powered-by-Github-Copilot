@@ -2142,11 +2142,33 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
       expect(r.resultType).toBe("denied");
       expect(r.textResultForLlm).toContain(why.slice(1));
       expect(made.audit.filter(e => e.event === "decision").at(-1)).toMatchObject({ verdict: "deny", reason: why });
-      // (A borrow asks every time: its question, then the refusal.)
+      // (Refused before the borrow's question: nobody is asked about a step that would be refused, owner's report of
+      // 2026-11-12.)
       const { card, home } = rowsOf(made.activity, from, "press_keys");
-      expect(card).toEqual(["Asked you: you allowed it", row]);
+      expect(card).toEqual([row]);
+      expect(made.asked).toEqual([]);
       expect(home).toEqual(card);
       expect(card.at(-1)!.endsWith("…")).toBe(false);
+    }
+  });
+
+  it("asks nothing about a step with the user's mouse or keyboard that the window system's check would refuse: a Wayland session, secure keyboard entry, Windows' secure desktop (owner's report of 2026-11-12)", async () => {
+    const secure = `${secureInputCause("Terminal")}, so Ember won't look at the screen or use the mouse or keyboard until it's off`;
+    const cell: AxNode = { id: 5, parent: null, depth: 1, role: "table cell", name: "B5", text: "", states: ["enabled", "focusable", "editable"], bounds: { x: 10, y: 40, width: 80, height: 20 } };
+    for (const why of [WAYLAND_REASON, secure, null]) {
+      const input: string[] = [];
+      const made = makeWorker({ grants: {}, systemDialogOpen: () => true, systemDialogReason: () => why, more: [cell], states: () => ["enabled", "focused"],
+        canDo: () => ({ tier1: false, why: "it takes no click by accessibility" }), onInput: k => { input.push(k); } });
+      await made.call("perceive_window", {});
+      for (const step of [() => made.call("click", { id: 1 }), () => made.call("press_keys", { keys: "ctrl+b" }), () => made.call("fill_cells", { cells: [{ cell: "B5", text: "42" }] })]) {
+        const r = await step();
+        expect(r.resultType).toBe("denied");
+        expect(r.textResultForLlm.startsWith(why ? `${why[0]!.toUpperCase()}${why.slice(1)}` : "A system dialog (such as a password prompt) is open")).toBe(true);
+      }
+      expect(made.asked).toEqual([]);
+      expect(input).toEqual([]);
+      expect(made.audit.some(e => e.event === "confirm")).toBe(false);
+      expect(made.audit.filter(e => e.event === "decision").map(e => e.verdict)).toEqual(["deny", "deny", "deny"]);
     }
   });
 

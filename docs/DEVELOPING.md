@@ -430,7 +430,9 @@ prompt program (pinentry, ssh-askpass, a polkit agent or gcr's prompter) is open
 because the shell is too busy or didn't answer, the window list can't be read, or the accessibility helper isn't
 working: then Ember says so and points to the setup check),
 it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
-it's going ahead without asking), until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
+it's going ahead without asking), until the prompt is done. On a Wayland session, while macOS's secure keyboard entry
+is on or while Windows shows its secure desktop, Ember doesn't ask to borrow your mouse or keyboard either: it says why
+it can't, where before it asked first and refused only after your Allow. A request carries only the window you're in (its app, title, focused control and selected text); other
 windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
 still asks first, the question says you didn't ask for it, and from then on that task asks before every step. A
 link, tab or menu item asked about only because its name starts with a word that grants or commits (a headline

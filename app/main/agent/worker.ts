@@ -1452,6 +1452,50 @@ export class Worker {
   }
 
   /**
+   * The window system's check, as the borrow makes it right before input (Perception.systemDialogOpen: GNOME Shell's
+   * prompts and a prompt's own window, Windows' secure desktop and credential prompts, macOS's SecurityAgent and secure
+   * keyboard entry, a Wayland session). "unchecked" when it couldn't be made (fail closed, safety-privacy-r1).
+   */
+  private systemDialogNow(): Promise<boolean | "unchecked"> {
+    return Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => "unchecked" as const);
+  }
+
+  /** The borrow refused for the window system's check (`dialog`, systemDialogNow), audited, with its card's reason. */
+  private async systemDialogRefusal(kind: ActionKind, element: Focus | undefined, dialog: true | "unchecked"): Promise<ToolResultObject> {
+    // Not always a dialog: macOS's secure keyboard entry (Terminal's, a focused password field) is named as itself.
+    const why = dialog === "unchecked" ? null : await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
+    // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2), and a helper that
+    // can't work here as the helper (reliability-performance-r2-1).
+    const unchecked = dialog === "unchecked" ? "unchecked" : !why && await this.promptUnchecked();
+    const reason = why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open");
+    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason });
+    // The card's row keeps a line of a reason: the window system's says its cause there, whole, and the audit and the
+    // model get all of it (tasks-approvals-v5-3).
+    this.activity({ type: "refused", reason: why ? causeOf(why) : reason });
+    return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
+      : unchecked ? PROMPT_REFUSAL[unchecked]
+        : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+  }
+
+  /**
+   * Before a question about a step with the user's mouse or keyboard: what the borrow would refuse it for once the user
+   * said yes, so nobody is asked about it (safety-privacy-3, safety-privacy-v4-3). The window system's check is made
+   * first, as the borrow makes it: a Wayland session, macOS's secure keyboard entry and Windows' secure desktop were
+   * asked about and only then refused (owner's report of 2026-11-12). It looks through the shell as promptOpen does, so
+   * one look does for both while nothing is up; the shell's prompt is looked for again only to say it in its words.
+   * On Ember's desk, which has no such prompt, only the shell's own prompt is looked for, as before.
+   */
+  private async beforeBorrowQuestion(kind: ActionKind, element?: Focus): Promise<ToolResultObject | null> {
+    const taken = this.keyboardTaken(kind, element);
+    if (taken) return taken;
+    if (this.place) return this.promptRefusal(kind, element);
+    const dialog = await this.systemDialogNow();
+    if (this.isOver) return STOPPED();
+    if (!dialog) return null;
+    return await this.promptRefusal(kind, element) ?? await this.systemDialogRefusal(kind, element, dialog);
+  }
+
+  /**
    * How question `q` was answered, for its audit entry: a spoken answer says so, whether Voice Match verified it, and
    * `trust: "task-voice"` for a short yes taken on this task's voice trust.
    */
@@ -3589,7 +3633,7 @@ export class Worker {
     // safety-privacy-3, safety-privacy-v4-3). A batch going ahead without asking is looked at by the borrow alone.
     if (!no && !alone && asks) {
       const cells: Focus = { role: "table cell", name: jobs.map(j => j.cell).join(", ") };
-      const prompt = this.keyboardTaken("cursor_text", cells) ?? await this.promptRefusal("cursor_text", cells);
+      const prompt = await this.beforeBorrowQuestion("cursor_text", cells);
       if (prompt) return prompt;
     }
     const entries: AuditEntry[] = judged.map(({ req, d }, i) => {
@@ -4266,22 +4310,8 @@ export class Worker {
     if (taken) return taken;
     // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too. A check that fails refuses
     // (fail closed, safety-privacy-r1).
-    const dialog = await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => "unchecked" as const);
-    if (dialog) {
-      // Not always a dialog: macOS's secure keyboard entry (Terminal's, a focused password field) is named as itself.
-      const why = dialog === "unchecked" ? null : await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
-      // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2), and a helper that
-      // can't work here as the helper (reliability-performance-r2-1).
-      const unchecked = dialog === "unchecked" ? "unchecked" : !why && await this.promptUnchecked();
-      const reason = why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open");
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason });
-      // The card's row keeps a line of a reason: the window system's says its cause there, whole, and the audit and the
-      // model get all of it (tasks-approvals-v5-3).
-      this.activity({ type: "refused", reason: why ? causeOf(why) : reason });
-      return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
-        : unchecked ? PROMPT_REFUSAL[unchecked]
-          : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
-    }
+    const dialog = await this.systemDialogNow();
+    if (dialog) return this.systemDialogRefusal(kind, element, dialog);
     // Only now is a borrow Work without asking let through recorded and said (safety-privacy-v4-2, safety-privacy-v4-3).
     this.goAhead();
     const check = () => {
@@ -4576,7 +4606,7 @@ export class Worker {
     // safety-privacy-v4-3). Looked at here only for a step that asks, since a walk of the shell costs up to a second on
     // the target; the look right before acting (act, system, withCursor) still keeps the rule for every step.
     if (decision.verdict === "confirm" && !sessionAllowed) {
-      const prompt = (BORROWED.has(req.kind) ? this.keyboardTaken(req.kind, req.element) : null) ?? await this.promptRefusal(req.kind, req.element);
+      const prompt = BORROWED.has(req.kind) ? await this.beforeBorrowQuestion(req.kind, req.element) : await this.promptRefusal(req.kind, req.element);
       if (prompt) return prompt;
     }
     const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}) };
