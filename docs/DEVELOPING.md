@@ -1120,7 +1120,10 @@ That yes is followed at once by the same one GET, to that host only, as first ru
 the line then says what it found after the agreement: "Agreed. Ember now sends your requests to <host>, which lists 1
 model: llama3.2:3b.", or main's sentence for an address that answers without a model list (Ollama's without `/v1`),
 wants a key or can't be reached, in red (`providerAgreedChecked`, integrations-r8-2). It only says it: the yes stands,
-and an answer that comes after the switch, the address, the type or the key changed says nothing. It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
+and an answer that comes after the switch, the address, the type or the key changed says nothing. Nor does it
+take the place of a line said meanwhile: a refused edit's reason (a model name with a space, an address Ember can't
+use, an Azure version written otherwise, an empty key) and Test connection's own answer stay the last word
+(integrations-x8-1). It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
 headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever address the service named.
 First run's provider step, opened for a provider already in use, checks edited details before any of them replaces the
 details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the

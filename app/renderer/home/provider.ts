@@ -376,7 +376,8 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     const run = ++agreedRun;
     void a.agree(next.agree).then(async r => {
       if (!r.ok) { say(r.why, true); return; }
-      say(providerAgreedText(next.agree));
+      const agreed = providerAgreedText(next.agree);
+      say(agreed);
       $("byok-consent").hidden = true;
       input("byok-url").focus();
       // Then asked at once, as first run's step and a held edit are, so a wrong address shows now rather than at the
@@ -384,6 +385,11 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
       // only said: the yes stands.
       const tried = await a.test().catch(() => ({ ok: false as const, why: PROVIDER_WORDS.testFailed }));
       if (run !== agreedRun || held || !own?.on || endpointHost(own.baseUrl) !== next.agree) return;
+      // It takes the place of the yes's own line, or of one a model accepted meanwhile cleared, never of anything said
+      // since: a refused edit's reason (a model name, an address, Azure's version, an empty key) or Test connection's own
+      // answer stays the last word (integrations-x8-1).
+      const line = $("byok-msg").textContent ?? "";
+      if (line !== agreed && line !== "") return;
       say(providerAgreedChecked(next.agree, tried), !tried.ok);
       if (tried.ok) suggestModels(tried.ids ?? []);
     });

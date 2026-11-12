@@ -645,6 +645,73 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((r as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
+  it("(aq) after a first “I agree” in Home, an edit refused while its check is out keeps its red reason: the check's late answer never says over it that all is well (integrations-x8-1)", async () => {
+    const answer = { ok: true, host: "models.example.com", models: 2, ids: ["gpt-4.1", "gpt-4o"] };
+    const agreeTo = async (page: Page) => {
+      await expect.poll(() => page.locator("#byok-consent").isVisible()).toBe(true);
+      await page.waitForTimeout(AGREE_ARM_MS + 100);
+      await page.locator("#byok-yes").click();
+      await expect.poll(() => calls(page)).toContain("test");
+    };
+    const refused = [
+      { field: "#byok-conductor", value: "llama 3", why: "A model name has no spaces in it, such as gpt-4.1 or llama3.2:3b.", key: "conductor", was: null, type: "openai" },
+      { field: "#byok-url", value: "ftp://models.example.com/v1", why: "Enter the service's full address, starting with https://.", key: "baseUrl", was: "https://models.example.com/v1", type: "openai" },
+      { field: "#byok-azure", value: "not a version", why: "Enter the API version as Azure writes it, such as 2024-10-21.", key: "azureApiVersion", was: null, type: "azure" },
+    ];
+    for (const r of refused) {
+      const p = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "https://models.example.com/v1", type: r.type } });
+      await agreeTo(p);
+      // Azure's version is under Advanced.
+      if (r.type === "azure") await p.locator("#byok-fold summary").click();
+      await p.locator(r.field).fill(r.value);
+      await p.keyboard.press("Tab");
+      await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(r.why);
+      // The check answers only now (a remote host can take up to 10 s): the refused edit's reason is the last word.
+      await settle(p, "test", answer);
+      await p.waitForTimeout(200);
+      expect(await p.locator("#byok-msg").innerText(), r.field).toBe(r.why);
+      expect(await p.locator("#byok-msg").getAttribute("class"), r.field).toContain("error");
+      expect(await p.locator(r.field).inputValue()).toBe(r.value);
+      expect(await p.evaluate(k => window.__frState.settings.provider[k], r.key)).toBe(r.was);
+      expect((p as Page & { errors: string[] }).errors).toEqual([]);
+      await p.close();
+    }
+    // An empty key field saved meanwhile: its reason stays too.
+    const k = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "https://models.example.com/v1" } });
+    await agreeTo(k);
+    await k.locator("#byok-key-form button[type='submit']").click();
+    await expect.poll(() => k.locator("#byok-msg").innerText()).toBe("Paste the API key first.");
+    await settle(k, "test", answer);
+    await k.waitForTimeout(200);
+    expect(await k.locator("#byok-msg").innerText()).toBe("Paste the API key first.");
+    expect(await calls(k)).not.toContain("saveKey");
+    await k.close();
+    // Test connection pressed meanwhile: its own answer is the one said.
+    const t = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "https://models.example.com/v1" } });
+    await agreeTo(t);
+    await t.locator("#byok-test").click();
+    await expect.poll(async () => (await calls(t)).filter(c => c === "test").length).toBe(2);
+    await settle(t, "test", answer);
+    await t.waitForTimeout(200);
+    expect(await t.locator("#byok-msg").innerText()).toBe("Testing…");
+    await settle(t, "test", { ok: false, why: "models.example.com needs an API key." }, 1);
+    await expect.poll(() => t.locator("#byok-msg").innerText()).toBe("models.example.com needs an API key.");
+    expect((t as Page & { errors: string[] }).errors).toEqual([]);
+    await t.close();
+    // A model accepted meanwhile only clears the line: the answer is still said, and its models offered.
+    const m = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "https://models.example.com/v1" } });
+    await agreeTo(m);
+    await m.locator("#byok-conductor").fill("gpt-4.1");
+    await m.keyboard.press("Tab");
+    await expect.poll(() => m.evaluate(() => window.__frState.settings.provider.conductor)).toBe("gpt-4.1");
+    await settle(m, "test", answer);
+    await expect.poll(() => m.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to models.example.com, which lists 2 models, such as gpt-4.1 and gpt-4o.");
+    expect(await m.locator("#byok-msg").getAttribute("class")).not.toContain("error");
+    expect(await m.locator("#byok-models option").evaluateAll(os => os.map(o => (o as HTMLOptionElement).value))).toEqual(["gpt-4.1", "gpt-4o"]);
+    expect((m as Page & { errors: string[] }).errors).toEqual([]);
+    await m.close();
+  }, 30_000);
+
   it("(aj) Home holds an edit of my provider in use to another host until its note is agreed and it answers: requests stay with the one in use, and a failed check or Keep using changes nothing; the lines under it say that once (integrations-c3-1, -r7-3)", async () => {
     const using = "127.0.0.1:18308";
     const service = { kind: "user", host: using };
