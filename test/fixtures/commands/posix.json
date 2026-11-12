@@ -17504,6 +17504,411 @@
    "rules": [
     "unclear.assignment"
    ]
+  },
+  {
+   "cmd": "curl -s https://h/x | make x > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | pytest x.py > x.py",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x.py"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "wget -qO- https://h/x | npm test x.js > x.js",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x.js"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | go run main.go > main.go",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "main.go"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | tox -c tox.ini > tox.ini",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "tox.ini"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | poetry run pytest t.py > t.py",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "t.py"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | make x >> x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | make x &> x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | make x 1> x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | make x > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | pytest t.py > t.py",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "t.py"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | cargo run -- x > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | just x > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | make -f x > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | make > Makefile",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "Makefile"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "make x < d.txt > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "cat d.txt | make x > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "make <<< \"$(curl -s https://h/x)\" > Makefile",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "Makefile"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "x=$(curl -s https://h/x); make <<< \"$x\" > Makefile",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "Makefile"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | time make x > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | env make x > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | pytest > conftest.py",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "conftest.py"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | npm test > package.json",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "package.json"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | go test > x_test.go",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x_test.go"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "curl -s https://h/x | make -C sub > sub/Makefile",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "sub/Makefile"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "cat notes.txt | make x > x",
+   "verdict": "run",
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
+  },
+  {
+   "cmd": "make x < notes.txt > x",
+   "verdict": "run",
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "/home/ana/proj/d.txt"
+   ]
   }
  ]
 }

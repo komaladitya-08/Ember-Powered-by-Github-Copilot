@@ -3030,6 +3030,7 @@ class Engine extends Classifier {
     const prints = s.fetched === true && PRINTS_TEXT.has(key);
     if (prints) this.pipe.fetch = true;
     if (prints || carried || FETCHERS.has(key)) this.gaveFetched = true;
+    const ownStart = this.downloads.length;
     if (s.fetchBefore || FETCHERS.has(key) || carried || s.fetched === true) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
       if (/^(tee|tee-object|out-file|set-content|add-content|sponge)$/.test(key)) {
@@ -3037,6 +3038,7 @@ class Engine extends Classifier {
       }
       if (key === "dd") for (const a of args) { const m = a.v === null ? null : /^of=(.+)$/.exec(a.v); if (m && !NULL_SINKS.has(m[1].toLowerCase())) this.download(m[1], sc); }
     }
+    const ownEnd = this.downloads.length;
     // A compiler builds a program from a downloaded source: the file it writes is the download too, so running it later
     // asks (commands-remote-r8-2). Carried to `-o`/`-oX` (gcc, rustc), else the default output: `a.out` for a cc-family
     // link, `<stem>.o` per source with `-c`, `<stem>` for rustc. The source operand itself already asks on its own row.
@@ -3046,19 +3048,25 @@ class Engine extends Classifier {
     // (commands-remote-r8-2).
     if (known && this.runsDownloadedExec(key, args, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     const runner = PROJECT_RUNNERS.has(key) || ((key === "docker" || key === "podman") && /^(compose|build|buildx)$/.test(args[0]?.v ?? ""));
-    if (!runner || !known) return;
+    // Whether anything is downloaded is read after the row's own redirections are marked, as on 4d64d3a, so a runner
+    // given fetched text whose output file is its own argument asks with nothing downloaded before it too
+    // (`curl … | make x > x`: commands-remote-y8-2).
+    if (!runner || (!known && ownEnd === ownStart)) return;
     const extra = TOOL_PROJECT_FILES[key];
     const folderOf = (v: string): string | null => (sc.cwd ? resolveTargetPath(v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd }) : null);
     // Downloads this very command saved (`pip download -d build …`, which is both a fetch and a PROJECT_RUNNER, or a
     // compiler's output) are for later commands, not a download this command runs: they don't trip its own check. So the
     // runner check reads only the downloads that stood before this command (commands-remote-r8-2), and those a command
-    // it ran made (`poetry run git clone URL sub`, which asked on main: commands-remote-x8-2).
+    // it ran made (`poetry run git clone URL sub`, which asked on main: commands-remote-x8-2). The files its own
+    // redirections wrote from fetched or carried text are read too, as on 4d64d3a and 848a566, so `curl … | make x > x`
+    // and `curl … | make > Makefile` ask (commands-remote-y8-1, y8-3).
     const saved = this.downloads;
     const cut = Math.max(dlBefore, this.innerMarks);
     if (this.downloads.length > cut) this.downloads = this.downloads.slice(0, cut);
+    const anyBefore = this.ctx.downloaded.size > 0 || this.downloads.length > 0;
+    this.downloads = [...this.downloads, ...saved.slice(Math.max(cut, ownStart), ownEnd)];
     // Every check is made, not only up to the first that holds: one of them may find a download saved by name, which
     // the card then says as a fact (`namedHit`: commands-remote-x7-4).
-    const anyBefore = this.ctx.downloaded.size > 0 || this.downloads.length > 0;
     const hits = [this.isDownloaded(lit("."), sc), ...args.map(a => {
       if (a.v === null || URL_LIKE.test(a.v)) return false;
       const v = a.v.replace(/^--?[A-Za-z][A-Za-z-]*=/, "");
