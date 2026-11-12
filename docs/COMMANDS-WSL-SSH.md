@@ -73,7 +73,10 @@ can't bring up the card: turn the switch on yourself. If Ember can't show the ca
 WSL card or a computer's card), nothing changes and it says "Ember couldn't show the card that asks you first, so
 nothing changed." (when connecting, in the bubble with **Try again**). If a later Ember changes what the card says, the
 next command a task runs there shows the new card first. Under each switch, **Ask me before every command** makes every
-command on that computer ask. **Open the command window** shows it.
+command on that computer ask. **Open the command window** shows it. Where commands run as root or as an administrator
+(Ember itself, a distro or a login that is, or one where Ember can't tell), every command asks anyway, so **Ask me
+before every command** shows on there, can't be turned off, and says why under it, as it does where your organisation
+asks.
 
 To turn commands off again, turn the switch off. This cancels commands still waiting for approval, a countdown or a
 free slot. Turning the switch back on does not revive them. Commands already running keep running. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,

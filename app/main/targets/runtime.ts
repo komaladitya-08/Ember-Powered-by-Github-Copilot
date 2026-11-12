@@ -650,12 +650,17 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   };
   const activeId = (): TargetId => activeOf(entries, settings.get().targets.active);
   const entryOf = (id: TargetId) => entries.find(e => e.id === id) ?? null;
-  /** Each target's summary, with why a host's last connection failed while it isn't connected (the settings row keeps it). */
+  /**
+   * Each target's summary, with why a host's last connection failed while it isn't connected (the settings row keeps it),
+   * and whether its commands run as root or an administrator, so every one asks (the settings window's switch shows it:
+   * accessibility-c8-3).
+   */
   const summaries = (): TargetSummary[] => {
     const a = activeId();
     return entries.map(e => {
       const problem = e.kind === "ssh" && e.host && (e.state === "off" || e.state === "lost") ? conns.get(e.host.id)?.problem : undefined;
-      return { ...summaryOf(e, a), ...(problem ? { problem } : {}) };
+      const privileged = safeCap(commandsOf(e.id))?.askEvery === "root";
+      return { ...summaryOf(e, a), ...(problem ? { problem } : {}), ...(privileged ? { privileged: true as const } : {}) };
     });
   };
   const ipc = registerTargetsIpc({
