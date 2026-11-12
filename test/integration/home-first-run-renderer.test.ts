@@ -8,6 +8,7 @@ import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { USER_PROVIDER_NO_MODEL } from "../../app/main/agent/host";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
 
@@ -550,7 +551,24 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#retry").click();
     await settle(p, "retry", { found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason: "models" } });
     await expect.poll(() => p.locator("#sign-in-msg").innerText()).toBe("Checked again: Ember still can't use 127.0.0.1:18408. The line above says why.");
-    expect(await p.locator("#agent-text").innerText()).toBe(noModel.detail);
+    expect(await p.locator("#agent-text").innerText()).toBe("Enter the model your provider should use in “Conversation model”, below.");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(ap) Models & connections names the field below for my provider's missing model, never the pane I'm on, and its button takes me there (integrations-r8-3, -x8-3)", async () => {
+    const service = { kind: "user", host: "127.0.0.1:18392" };
+    const p = await open({ home: true, provider: { on: true, baseUrl: "http://127.0.0.1:18392/v1", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: "127.0.0.1:18392" } }, agent: { ...SIGNED_OUT, phase: "error", reason: "models", detail: USER_PROVIDER_NO_MODEL, service } });
+    await expect.poll(() => p.locator("#agent-text").innerText()).toBe("Enter the model your provider should use in “Conversation model”, below.");
+    expect(await p.locator("#agent-text").innerText()).not.toContain("Models & connections");
+    // The field it names is there, below, under that label, and the leading button moves the focus into it.
+    expect(await p.locator("label[for='byok-conductor']").innerText()).toBe("Conversation model");
+    expect(await p.locator("#byok-conductor").isVisible()).toBe(true);
+    await p.locator("#provider-details").click();
+    expect(await focusedId(p)).toBe("byok-conductor");
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "byok-no-model.png"), fullPage: true });
+    }
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
@@ -582,6 +600,117 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18108.");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
+
+  it("(ao) a first “I agree” in Home asks that host once and says what it found, and an answer that comes after the switch went off says nothing (integrations-r8-2)", async () => {
+    const agreeTo = async (page: Page) => {
+      await expect.poll(() => page.locator("#byok-consent").isVisible()).toBe(true);
+      await page.waitForTimeout(AGREE_ARM_MS + 100);
+      await page.locator("#byok-yes").click();
+      await expect.poll(() => calls(page)).toContain("test");
+    };
+    // Ollama's address without /v1: it answers 404 to GET /models.
+    const p = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "http://127.0.0.1:18108" } });
+    await agreeTo(p);
+    // Only after the yes, and only of the saved details (no draft, no other host).
+    expect((await calls(p)).filter(c => c === "test" || c.startsWith("test-draft:") || c.startsWith("agree:"))).toEqual(["agree:127.0.0.1:18108", "test"]);
+    expect(await p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18108.");
+    await settle(p, "test", { ok: false, why: "127.0.0.1:18108 answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" });
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18108. 127.0.0.1:18108 answered, but has no model list at that address. Check the endpoint and the provider.");
+    expect(await p.locator("#byok-msg").getAttribute("class")).toContain("error");
+    // The yes stands: nothing was turned off or taken back.
+    expect(await p.evaluate(() => window.__frState.settings.provider)).toMatchObject({ on: true, consent: { host: "127.0.0.1:18108" } });
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "byok-agreed-checked.png"), fullPage: true });
+    }
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+
+    // A service that lists models: named, and offered in both model fields.
+    const q = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "http://127.0.0.1:18109/v1" } });
+    await agreeTo(q);
+    await settle(q, "test", { ok: true, host: "127.0.0.1:18109", models: 1, ids: ["llama3.2:3b"] });
+    await expect.poll(() => q.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18109, which lists 1 model: llama3.2:3b.");
+    expect(await q.locator("#byok-msg").getAttribute("class")).not.toContain("error");
+    expect(await q.locator("#byok-models option").evaluateAll(os => os.map(o => (o as HTMLOptionElement).value))).toEqual(["llama3.2:3b"]);
+    expect((q as Page & { errors: string[] }).errors).toEqual([]);
+
+    // The switch turned off while the check was out: its answer is about a provider no longer in use, and says nothing.
+    const r = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "http://127.0.0.1:18110/v1" } });
+    await agreeTo(r);
+    await r.locator("#byok-on").uncheck();
+    await expect.poll(() => r.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
+    await settle(r, "test", { ok: false, why: "Ember can't reach 127.0.0.1:18110. Check the address and the network.", cause: "refused" });
+    await r.waitForTimeout(200);
+    expect(await r.locator("#byok-msg").innerText()).toBe("");
+    expect((r as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it("(aq) after a first “I agree” in Home, an edit refused while its check is out keeps its red reason: the check's late answer never says over it that all is well (integrations-x8-1)", async () => {
+    const answer = { ok: true, host: "models.example.com", models: 2, ids: ["gpt-4.1", "gpt-4o"] };
+    const agreeTo = async (page: Page) => {
+      await expect.poll(() => page.locator("#byok-consent").isVisible()).toBe(true);
+      await page.waitForTimeout(AGREE_ARM_MS + 100);
+      await page.locator("#byok-yes").click();
+      await expect.poll(() => calls(page)).toContain("test");
+    };
+    const refused = [
+      { field: "#byok-conductor", value: "llama 3", why: "A model name has no spaces in it, such as gpt-4.1 or llama3.2:3b.", key: "conductor", was: null, type: "openai" },
+      { field: "#byok-url", value: "ftp://models.example.com/v1", why: "Enter the service's full address, starting with https://.", key: "baseUrl", was: "https://models.example.com/v1", type: "openai" },
+      { field: "#byok-azure", value: "not a version", why: "Enter the API version as Azure writes it, such as 2024-10-21.", key: "azureApiVersion", was: null, type: "azure" },
+    ];
+    for (const r of refused) {
+      const p = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "https://models.example.com/v1", type: r.type } });
+      await agreeTo(p);
+      // Azure's version is under Advanced.
+      if (r.type === "azure") await p.locator("#byok-fold summary").click();
+      await p.locator(r.field).fill(r.value);
+      await p.keyboard.press("Tab");
+      await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(r.why);
+      // The check answers only now (a remote host can take up to 10 s): the refused edit's reason is the last word.
+      await settle(p, "test", answer);
+      await p.waitForTimeout(200);
+      expect(await p.locator("#byok-msg").innerText(), r.field).toBe(r.why);
+      expect(await p.locator("#byok-msg").getAttribute("class"), r.field).toContain("error");
+      expect(await p.locator(r.field).inputValue()).toBe(r.value);
+      expect(await p.evaluate(k => window.__frState.settings.provider[k], r.key)).toBe(r.was);
+      expect((p as Page & { errors: string[] }).errors).toEqual([]);
+      await p.close();
+    }
+    // An empty key field saved meanwhile: its reason stays too.
+    const k = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "https://models.example.com/v1" } });
+    await agreeTo(k);
+    await k.locator("#byok-key-form button[type='submit']").click();
+    await expect.poll(() => k.locator("#byok-msg").innerText()).toBe("Paste the API key first.");
+    await settle(k, "test", answer);
+    await k.waitForTimeout(200);
+    expect(await k.locator("#byok-msg").innerText()).toBe("Paste the API key first.");
+    expect(await calls(k)).not.toContain("saveKey");
+    await k.close();
+    // Test connection pressed meanwhile: its own answer is the one said.
+    const t = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "https://models.example.com/v1" } });
+    await agreeTo(t);
+    await t.locator("#byok-test").click();
+    await expect.poll(async () => (await calls(t)).filter(c => c === "test").length).toBe(2);
+    await settle(t, "test", answer);
+    await t.waitForTimeout(200);
+    expect(await t.locator("#byok-msg").innerText()).toBe("Testing…");
+    await settle(t, "test", { ok: false, why: "models.example.com needs an API key." }, 1);
+    await expect.poll(() => t.locator("#byok-msg").innerText()).toBe("models.example.com needs an API key.");
+    expect((t as Page & { errors: string[] }).errors).toEqual([]);
+    await t.close();
+    // A model accepted meanwhile only clears the line: the answer is still said, and its models offered.
+    const m = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "https://models.example.com/v1" } });
+    await agreeTo(m);
+    await m.locator("#byok-conductor").fill("gpt-4.1");
+    await m.keyboard.press("Tab");
+    await expect.poll(() => m.evaluate(() => window.__frState.settings.provider.conductor)).toBe("gpt-4.1");
+    await settle(m, "test", answer);
+    await expect.poll(() => m.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to models.example.com, which lists 2 models, such as gpt-4.1 and gpt-4o.");
+    expect(await m.locator("#byok-msg").getAttribute("class")).not.toContain("error");
+    expect(await m.locator("#byok-models option").evaluateAll(os => os.map(o => (o as HTMLOptionElement).value))).toEqual(["gpt-4.1", "gpt-4o"]);
+    expect((m as Page & { errors: string[] }).errors).toEqual([]);
+    await m.close();
+  }, 30_000);
 
   it("(aj) Home holds an edit of my provider in use to another host until its note is agreed and it answers: requests stay with the one in use, and a failed check or Keep using changes nothing; the lines under it say that once (integrations-c3-1, -r7-3)", async () => {
     const using = "127.0.0.1:18308";
@@ -763,6 +892,35 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#w-back").click();
     expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
     expect(await p.inputValue("#w-p-url")).toBe("https://api.example.com/v1");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(ar) reopened with my own provider on this computer, whose start check answered without a model list, first run says it is using it, never connected, on both its steps, as Models & connections does (integrations-x8-2)", async () => {
+    const host = "127.0.0.1:18593";
+    const provider = { on: true, baseUrl: `http://${host}`, conductor: "llama3.2:3b", consent: { version: 1, at: "2026-11-08T12:00:00Z", host } };
+    const inForce = { inForce: true, host, agreed: true, keySaved: false };
+    const detail = `Using ${host}. It answered, but without a model list: Test connection under Model provider says more.`;
+    const p = await open({ provider, providerState: inForce, agent: readyAgent({ login: undefined, models: [], conductorModel: "llama3.2:3b", workerModel: null, detail, service: { kind: "user", host, listed: false } }) });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe(`Using your own provider (${host}).`);
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await p.locator("#w-lead").innerText()).toBe(`I'm using the model provider you set up (${host}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.`);
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "first-run-own-unlisted.png"), fullPage: true });
+    }
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
+    expect(await p.locator("#w-p-result").innerText()).toBe(`Using your own provider (${host}).`);
+    // The same server reconnected with a model list: connected, on both.
+    const listed = readyAgent({ login: undefined, models: [], conductorModel: "llama3.2:3b", workerModel: null, detail: `Connected to ${host}.`, service: { kind: "user", host, listed: true } });
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, listed);
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe(`Connected to your own provider (${host}).`);
+    await p.locator("#w-back").click();
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe(`Connected to your own provider (${host}).`);
+    expect(await p.locator("#w-lead").innerText()).toMatch(/^I'm connected to the model provider you set up/);
+    for (const id of ["#w-title", "#w-lead", "#w-signin-line"]) expect(await p.locator(id).innerText(), id).not.toContain("Copilot");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 

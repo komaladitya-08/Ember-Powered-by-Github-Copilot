@@ -36,9 +36,10 @@ export type TextMode = "replace" | "insert" | "append";
 
 /**
  * A control in a dialog (ActionRequest.dialog.controls): its role and name, as the screen reader gives them.
- * `caption`: the Close of the dialog's own title bar (its other standard caption buttons are left out).
+ * `caption`: the Close of the dialog's own title bar (its other standard caption buttons are left out). `editable`: text
+ * can be typed or written into it (a field, a mail's body), as the reader says.
  */
-export interface DialogControl { role: string; name: string; caption?: boolean }
+export interface DialogControl { role: string; name: string; caption?: boolean; editable?: boolean }
 
 export interface ActionRequest {
   taskId: string;
@@ -406,8 +407,22 @@ const RISKY_INTL = new RegExp(RISKY_INTL_SOURCE, "u");
  * change who can see or join ("Make public", "Add member"), drop work ("Purge", "Drop changes", "Mark as spam") or turn a
  * protection off ("Turn off firewall"): audit of 2026-11-11, safety-privacy-r7-1.
  */
-const RISKY_ACT_LEAD = /^[^\p{L}\p{N}]*(comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget|allow|permit|sell|reserve|purge|(?:book|bid|bet|vote|deposit|refund|redirect|bounce|email|call)(?=[^\p{L}\p{N}]*$| (?:now|it|this|that|these|those|a|an|my|your|the|all|selected)\b))\b/u;
-const RISKY_ACT = /\b(add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream)|refresh (firefox|chrome|chromium|(the |your )?browser)|place (a |my |your )?(bid|bet|wager)|apply now|mark (as |this as )?(spam|junk)|check out(?=[^a-z0-9]*$| now\b| as guest\b| securely\b)|make (it |this )?(public|private)|make (an? |them |him |her )?(admin|administrator|owner|moderator)|change (the )?visibility|add (a |an |new )?(members?|collaborators?|admin|owner)|continue as|drop changes|(turn off|switch off|disable|deactivate|pause) (the |my |your )?(firewall|antivirus|virus protection|real-time protection|protection|two-factor|two-step|2-step|2fa|encryption|screen lock))\b/;
+/** RISKY_ACT_LEAD's verbs that post or act on others. */
+const ACT_LEAD_WORDS = String.raw`comment|invite|decline|withdraw|deactivate|push(?! notifications?\b)|revert|commit|tweet|retweet|repost|reblog|block|unfriend|report|ban|kick|forget`;
+/**
+ * Its everyday words that grant or commit (safety-privacy-r7-1): also a headline's, a tab's or a setting's first word
+ * ("Reserve Bank raises rates", "Email", "Allow Editing"), so commitsOnly() tells them apart.
+ */
+const COMMITS_LEAD_WORDS = String.raw`allow|permit|sell|reserve|purge|(?:book|bid|bet|vote|deposit|refund|redirect|bounce|email|call)(?=[^\p{L}\p{N}]*$| (?:now|it|this|that|these|those|a|an|my|your|the|all|selected)\b)`;
+const RISKY_ACT_LEAD = new RegExp(String.raw`^[^\p{L}\p{N}]*(${ACT_LEAD_WORDS}|${COMMITS_LEAD_WORDS})\b`, "u");
+/** RISKY_ACT's phrases that post, change an account or a repository. */
+const ACT_PHRASES = String.raw`add (a )?comment|cancel (my |your |the |this )?(subscription|membership|account|plan|trial|booking|reservation)|(close|deactivate) (my |your |the |this )?account|close (the |this )?(issue|pull request|merge request)|(create|open) (a |the )?(pull|merge) request|request (a )?review|request changes|force push|go live|start (the |a )?(broadcast|stream|livestream|live stream)|refresh (firefox|chrome|chromium|(the |your )?browser)`;
+/** Its phrases that grant, commit, change who can see or join, drop work or turn a protection off (safety-privacy-r7-1). */
+const COMMITS_PHRASES = String.raw`place (a |my |your )?(bid|bet|wager)|apply now|mark (as |this as )?(spam|junk)|check out(?=[^a-z0-9]*$| now\b| as guest\b| securely\b)|make (it |this )?(public|private)|make (an? |them |him |her )?(admin|administrator|owner|moderator)|change (the )?visibility|add (a |an |new )?(members?|collaborators?|admin|owner)|continue as|drop changes|(turn off|switch off|disable|deactivate|pause) (the |my |your )?(firewall|antivirus|virus protection|real-time protection|protection|two-factor|two-step|2-step|2fa|encryption|screen lock)`;
+const RISKY_ACT = new RegExp(String.raw`\b(${ACT_PHRASES}|${COMMITS_PHRASES})\b`);
+/** The same without the words and phrases that grant or commit: what an acting label was before the audit of 2026-11-11. */
+const ACT_LEAD_BEFORE = new RegExp(String.raw`^[^\p{L}\p{N}]*(${ACT_LEAD_WORDS})\b`, "u");
+const RISKY_ACT_BEFORE = new RegExp(String.raw`\b(${ACT_PHRASES})\b`);
 /** The same in the languages of RISKY_WORDS (written with their accents, folded when the pattern is built). */
 export const RISKY_ACT_WORDS: Record<string, string[]> = {
   fr: ["commenter", "commentez", "inviter", "invitez", "refuser", "refusez", "décliner", "résilier", "annuler (l'|mon |votre )?abonnement",
@@ -469,6 +484,37 @@ const RISKY_ACT_INTL_SOURCE = intlSource(RISKY_ACT_WORDS, RISKY_ACT_ANYWHERE);
 const RISKY_ACT_INTL = new RegExp(RISKY_ACT_INTL_SOURCE, "u");
 /** Does this label post, invite, change an account or a repository (RISKY_ACT), in any of the languages above? */
 const isRiskyActLabel = (s: string) => { const n = normalizeLabel(s); return RISKY_ACT_LEAD.test(n) || RISKY_ACT.test(n) || RISKY_ACT_INTL.test(foldLabel(s)); };
+/** COMMITS_LEAD_WORDS leading a label, and COMMITS_PHRASES anywhere in it. */
+const COMMITS_LEAD = new RegExp(String.raw`^[^\p{L}\p{N}]*(${COMMITS_LEAD_WORDS})\b`, "u");
+const COMMITS_PHRASE = new RegExp(String.raw`\b(${COMMITS_PHRASES})\b`);
+/**
+ * A word that grants access, alone ("Allow", "Permit"), before what it lets in or for how long ("Allow notifications",
+ * "Allow pop-ups", "Allow once", "Allow while using the app", "Permit access"), or as a verb before the words that tell
+ * one (COMMITS_LEAD_WORDS's: "Allow now", "Allow the file", "Allow all", and who: "Allow everyone"). Not a setting's or
+ * a headline's "Allow Editing", "Permit applications open on Monday" (x7-1).
+ */
+const GRANTS_ACCESS = /^[^\p{L}\p{N}]*(allow|permit)([^\p{L}\p{N}]*$|\s+(now|it|this|that|these|those|a|an|my|your|the|all|selected|everyone|anyone|others|people|users?|guests?|once|always|everything|access|notifications?|pop-?ups?|redirects?|camera|microphone|mic|location|cookies|tracking|remote|screen|clipboard|downloads?|sync|usb|bluetooth|devices?|sensors?|storage|installs?|installation|scripts?|javascript|apps?|extensions?|plugins?|sharing|control|them|while|on every visit|for (this|the) (site|app|session|visit|time))(?![\p{L}\p{N}]))/u;
+/**
+ * Is this label risky to act on only by a word that grants or commits as it leads the label (COMMITS_LEAD_WORDS: the
+ * audit of 2026-11-11), and by nothing Ember asked about before (RISKY's lists, the other acting verbs, another language's,
+ * a disk's Format) nor any talk of security ("Turn off firewall")? Those words lead headlines, tabs and settings too
+ * ("Reserve Bank raises rates", "Email", "Allow Editing"). Never a phrase (COMMITS_PHRASES) that grants rights, changes
+ * who can see something, drops work or turns a protection off ("Make admin", "Change visibility", "Drop changes", "Turn
+ * off antivirus", "Continue as Ana"), nor a grant of access (GRANTS_ACCESS: "Allow", "Allow notifications"): those mean
+ * what they say wherever they stand (regression review of round eight, safety-privacy-x8-4).
+ */
+const commitsOnly = (s: string, os: OS) => {
+  const n = normalizeLabel(s);
+  return COMMITS_LEAD.test(n) && !COMMITS_PHRASE.test(n) && !GRANTS_ACCESS.test(n) && !ACT_LEAD_BEFORE.test(n) && !RISKY_ACT_BEFORE.test(n)
+    && !RISKY_ACT_INTL.test(foldLabel(s)) && !isRiskyLabel(s, os) && !securityTalk(s);
+};
+/** Links, tabs and menu items: also named by what they lead to, show or set (a headline, a tab "Email", "Allow Editing"). */
+const COMMITS_FLAG_ROLES = /^(link|page tab|menu item)$/;
+/** Why a control is asked about by its own risky name: clicked, or pressed with Enter or Space. */
+const NAMED_RISK = "this action may be hard to undo or visible to others";
+const PRESSED_RISK = "this presses a button that may be hard to undo or visible to others";
+/** Why a link, tab or menu item is asked about only for a word that grants or commits (commitsOnly). */
+const COMMITS_RISK = "its name says it may grant access, commit to something or change who can see it";
 /** Controls whose activation does what their name says (HTML buttons and links, GTK buttons, menu items). */
 const ACTING_CONTROL = /^(push button|push button menu|button|split button|toggle button|link|menu item)$/;
 
@@ -2082,7 +2128,8 @@ const ENTER_IN_FIELD: Risk = { reason: "Enter in a text field can send or submit
  * - the bar (`addressBar`): a browser's (BROWSER, BAR_BROWSER) own field, outside any page, named as a search, address,
  *   URL or location;
  * - a search box (`searchBox`), a page's or an app's own: named as a search and nothing risky ("Search people to share
- *   with"), and not in a window titled as taking payment.
+ *   with") nor anything that sends or picks people (PICKS_OR_SENDS), and not in a window titled as taking payment, sending
+ *   money or sharing (PICKS_WHO).
  * (Narrowing the bar to Edge, Chrome, Firefox and Safari made GNOME Web, Falkon and Arc ask again, and a mail app's own
  * search box with them: regression review of round seven, safety-privacy-x7-3.)
  * A page's own "Email address", "Delivery address", "Webhook URL" or "Location" is a form's field, where Enter submits
@@ -2093,10 +2140,26 @@ const SEARCHES = /(^|[^\p{L}\p{N}])search(?![\p{L}\p{N}])/iu;
 const oneLineField = (r: ActionRequest, role: string): boolean => /^(entry|combo box|text)$/.test(role) && !r.multiLine && !r.dialog;
 /** A word that acts on others anywhere in a name, not only leading it ("Search and invite"). */
 const actsAnywhere = (name: string): boolean => name.trim().split(/\s+/).some((_, i, words) => isRiskyActLabel(words.slice(i).join(" ")));
+/**
+ * Words that say a box also sends or picks people, whatever else it searches ("Search or type a message", "Search people
+ * to add", "Search for a recipient"): never only a search (audit of 2026-11-11, safety-privacy-r8-3). Not a box that
+ * only searches messages, chats or add-ons ("Search messages", "Search chats", "Search add-ons"; regression review of
+ * round eight, safety-privacy-x8-3).
+ */
+const PICKS_OR_SENDS = /(^|[^\p{L}\p{N}])((type|write|send|start|compose|new|enter)\b[^.]{0,20}\b(messages?|chats?|repl(y|ies)|conversations?)|recipients?|to add|add (and |or )?(people|persons?|members?|users?|contacts?|participants?|someone|guests?|collaborators?))(?![\p{L}\p{N}])/iu;
+/**
+ * A window titled for sending money or sharing with people ("Send money - PayPal", "Share with people"), where a search
+ * box picks who: never only a search. Not any risky word in the title, which is a page's content (a video's "Send Me On
+ * My Way", a folder's "Trash", an issue's "Delete old branches"): the owner's search on YouTube asked again
+ * (safety-privacy-x8-3).
+ */
+const PICKS_WHO = /(^|[^\p{L}\p{N}])((send|request|transfer|move) (money|funds|payments?|a payment)|new (transfer|payment)|pay (someone|people|a friend|friends)|share with|share [“"'‘][^”"'’]*[”"'’]|invite (people|members|others|someone|guests|collaborators)|add (people|members|collaborators))(?![\p{L}\p{N}])/iu;
 const addressBar = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
   oneLineField(r, role) && !r.inPage && (BROWSER.test(r.app) || BAR_BROWSER.test(r.app)) && tabbed(r.app, os) && GOES_SOMEWHERE.test(name);
 const searchBox = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
-  oneLineField(r, role) && SEARCHES.test(name) && !isRiskyLabel(name, os) && !actsAnywhere(name) && !PAYMENT_PAGE.test(normalizeLabel(r.window));
+  oneLineField(r, role) && SEARCHES.test(name) && !isRiskyLabel(name, os) && !actsAnywhere(name) && !saysWord(PICKS_OR_SENDS, name)
+  // Nor in a window titled for sending money or sharing ("Send money - PayPal", "Share with people"), or for a payment.
+  && !PAYMENT_PAGE.test(normalizeLabel(r.window)) && !saysWord(PICKS_WHO, r.window);
 const goesSomewhere = (r: ActionRequest, role: string, name: string, os: OS): boolean => addressBar(r, role, name, os) || searchBox(r, role, name, os);
 /**
  * Keys that only move a browser between its pages and tabs, or reload one (an allow-list, for browsers alone: an app that
@@ -2116,6 +2179,17 @@ const BROWSER = /msedge|chrome|chromium|firefox|librewolf|brave|opera|vivaldi|sa
 const BAR_BROWSER = /epiphany|^web$|falkon|midori|konqueror|waterfox|floorp|thorium|\barc\b|\borion\b/i;
 /** A page that takes payment: a button on it may buy something whatever its label says ("Activate now"; audit of 2026-11-01). */
 const PAYMENT_PAGE = /\b(checkout|check out|payment|billing)\b/;
+/**
+ * Why a control in such a window asks, in words true of any title that names one of PAYMENT_PAGE's words (a mail's subject,
+ * "billing.ts", "How to check out a branch" ask too, and the question used to say nothing: safety-privacy-x7-4). The
+ * word is Ember's own, never the title's text.
+ */
+const onPaymentPage = (window: string): Risk | null => {
+  const word = PAYMENT_PAGE.exec(normalizeLabel(window))?.[1];
+  if (!word) return null;
+  const what = word === "billing" ? "billing" : word === "payment" ? "a payment" : "a checkout";
+  return { reason: `this is in a window whose title mentions ${what}, where it may pay for something`, note: `The window's title mentions ${what}, so this may pay for something.` };
+};
 /** A window or dialog titled for a protection of the account or the computer, and the bare answers that turn one off there. */
 const PROTECTION_TITLE = /\b(two[- ]factor|two[- ]step|2[- ]step|2fa|multi[- ]factor|mfa|firewall|antivirus|security|protection|verification|passkeys?|encryption)\b/;
 const TURNS_OFF = /^[^a-z0-9]*(disable|turn (it )?off|switch (it )?off|deactivate)\b/;
@@ -2177,6 +2251,114 @@ function plainEditorLines(r: ActionRequest, role: string, os: OS): boolean {
  */
 const FILE_CONFLICT = /\b(document in use|locked for editing|is locked by|lock file|changed by others|(modified|changed) (by (another|someone|other)|since (you|it was) (last )?open)|save anyway|open anyway)\b/;
 const BACKS_OFF = /^\s*(cancel|close|no|help|notify|keep|open (a )?copy|open read-?only|read-?only)\b/;
+/**
+ * A button's or menu item's name that says it goes past a security warning or turns a protection off (audit of
+ * 2026-11-11, safety-privacy-r8-1): going ahead anyway ("Launch Anyway", "Keep anyway", "Trotzdem öffnen"), on to a
+ * site flagged as unsafe ("Continue to site"), macros and active content ("Enable Macros", "Enable Content", "Exit
+ * Protected View"), a mail's remote content ("Load Remote Content"), ignoring a warning, allowing for good ("Always
+ * allow", "Don't block") and trusting a file or site; WEAKENS has the rest ("(unsafe)", "Turn off Safe Browsing", "Skip
+ * verification"). "Anyway" also in the languages of RISKY_WORDS (written with their accents, folded when the pattern is
+ * built). "Enable Editing" only in a window or dialog that says it is in protected view (PROTECTED_VIEW).
+ */
+/**
+ * Phrases that go past a warning wherever they stand: also as a link's first words. On to a site by "proceed",
+ * "continue" or "go on" only: a list's "Go to page 2" (MUI's pagination), a business's "Go to website" and a form's
+ * "Continue to page 2" go nowhere a warning stood (regression review of round eight, safety-privacy-x8-1).
+ */
+const PAST_WARNING_PHRASES = ["(proceed|continue|go on) to (the |this )?(site|website|web ?page)",
+  "visit this (unsafe |dangerous |deceptive |insecure |unsecure |suspicious )?(site|website|web ?page|page)", "enable (all )?macros?",
+  "enable (the |all )?(active |external |blocked )?content", "run (the |all )?macros?", "exit protected view",
+  "(load|show|display|allow|download|enable) (the |all )?(remote|external) (content|images?|pictures|resources)",
+  "(ignore|dismiss|bypass|skip|override) (the |this |these |all )?(security )?(warnings?|risks?|alerts?)", "accept (the )?risks?", "i understand the risks?"];
+const PAST_WARNING_WORDS = ["anyways?", ...PAST_WARNING_PHRASES, "always (allow|trust|accept|open|run)", "(don't|do not|never) block", "unblock",
+  "trust (this|the) (site|website|document|file|folder|publisher|authors?|app|application|certificate|source|device)", "(open|run) executable",
+  "trotzdem", "quand même", "malgré tout", "de todos modos", "de todas formas", "comunque", "mesmo assim", "assim mesmo", "toch", "mimo to", "всё равно",
+  "ändå", "alligevel", "likevel", "silti", "přesto", "yine de"];
+const PAST_WARNING_ANYWHERE = ["それでも", "仍然", "仍要", "无论如何", "無論如何", "그래도"];
+const PAST_WARNING = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(PAST_WARNING_WORDS.join("|"))})(?=$|[^\\p{L}\\p{N}])|${foldLabel(PAST_WARNING_ANYWHERE.join("|"))}`, "u");
+/**
+ * The same for a link, which may be a headline ("Why I bought it anyway", "Unsafe at any speed"): only as its first words,
+ * or a warning in brackets after them ("Proceed to example.com (unsafe)": Chrome's and Edge's).
+ */
+const LINK_PAST_WARNING = new RegExp(`^[^\\p{L}\\p{N}]*(${foldLabel([...PAST_WARNING_PHRASES,
+  "(download|keep|open|run|install|continue|proceed|launch|use|save|visit|go|load|show|allow|accept) anyway",
+  "(turn off|disable|switch off|bypass|skip)\\b.{0,40}\\b(protection|security|warnings?|verification|safe browsing)"].join("|"))})(?=$|[^\\p{L}\\p{N}])`
+  + `|[(（]\\s*(${foldLabel(["unsafe", "not secure", "insecure", "dangerous", "not recommended"].join("|"))})\\s*[)）]`, "u");
+/** A window or dialog that says its document is in protected view (Word's "[Protected View]"), where "Enable Editing" leaves it. */
+const PROTECTED_VIEW = /\bprotected (view|mode)\b/;
+const PAST_WARNING_REASON = "this goes past a warning or turns a protection off";
+/** Checks of a text's spelling or grammar ("Disable spell check", "Turn off spelling and grammar checking"): no protection. */
+const WRITING_CHECKS = /\b(spell(ing)?|grammar)( and (spelling|grammar))?[ -]?check(s|ing|er)?\b/giu;
+/**
+ * Does pressing this control (by its own name: a button, link or menu item, ACTING_CONTROL) go past a security warning
+ * or turn a protection off? A link only by its first words (LINK_PAST_WARNING); "Enable Editing" only in protected view
+ * (`context`: the window's title and the dialog's words).
+ */
+function goesPastWarning(role: string, name: string, context: string): boolean {
+  // An answer that backs off ("Thanks anyway", DECLINES) goes past nothing.
+  if (!ACTING_CONTROL.test(role) || !/[\p{L}\p{N}]/u.test(name) || declines(name)) return false;
+  if (role === "link") return saysWord(LINK_PAST_WARNING, name);
+  if (/^\s*enable editing\s*$/.test(plainText(name)) && PROTECTED_VIEW.test(plainText(context))) return true;
+  // (WEAKENS was written for settings: its checks are a protection's, never spelling's or grammar's.)
+  return saysWord(PAST_WARNING, name) || saysWord(WEAKENS, name.replace(WRITING_CHECKS, " "));
+}
+/**
+ * Answers that back off a dialog's question, as the whole label (an access key "(C)" or "…" may follow): Cancel, No,
+ * Close, Stay, Stay on page, Don't leave, Keep editing, Go back, Help, Not now, in the languages of RISKY_WORDS. Not
+ * BACKS_OFF, which reads only the first word ("Close tabs" and "Keep anyway" go ahead).
+ */
+const DECLINE_WORDS = ["cancel", "close", "close (this )?(dialog|message|window|notification|prompt|pop-?up)", "dismiss", "no", "no,? thanks?", "(no,? )?thanks,? anyway", "not now",
+  "never mind", "stay", "stay (here|on (this )?(page|site))", "(don't|do not) leave", "keep editing", "keep working", "go back", "back", "help", "learn more",
+  "more info(rmation)?", "(show |hide )?details",
+  // Putting it off or refusing it: "Remind Me Later", "Skip for now", "Don't Allow" (regression review of round eight,
+  // safety-privacy-x8-6). Never a lone "Skip" or "Ignore", which may go on past what the dialog warns of.
+  "no,? thank you", "not (right now|yet)", "(maybe |remind me |ask (me )?)?later", "skip for now", "(don't|do not) allow",
+  "abbrechen", "schließen", "nein", "nicht jetzt", "auf (der|dieser) seite bleiben", "bleiben", "zurück", "hilfe", "später", "nicht (erlauben|zulassen)",
+  "annuler", "fermer", "non", "pas maintenant", "rester sur (la|cette) page", "rester", "retour", "aide", "plus tard", "ne pas autoriser",
+  "cancelar", "cerrar", "no", "ahora no", "permanecer en (la|esta) página", "quedarse", "volver", "atrás", "ayuda", "más tarde", "no permitir",
+  "annulla", "chiudi", "non ora", "rimani (sulla|in questa) pagina", "resta", "indietro", "aiuto", "più tardi", "non consentire",
+  "fechar", "não", "agora não", "permanecer na página", "ficar", "voltar", "ajuda", "mais tarde", "não permitir",
+  "annuleren", "sluiten", "nee", "niet nu", "op (de|deze) pagina blijven", "blijven", "terug", "hulp", "niet toestaan",
+  "anuluj", "zamknij", "nie", "nie teraz", "pozostań na stronie", "zostań", "wstecz", "pomoc", "później", "nie zezwalaj",
+  "отмена", "отменить", "закрыть", "нет", "не сейчас", "остаться на странице", "остаться", "назад", "справка", "позже", "не разрешать",
+  "avbryt", "stäng", "nej", "inte nu", "stanna kvar på sidan", "stanna", "tillbaka", "hjälp", "senare", "tillåt inte",
+  "annuller", "luk", "ikke nu", "bliv på siden", "bliv", "tilbage", "hjælp", "senere", "tillad ikke",
+  "lukk", "nei", "ikke nå", "bli på siden", "bli", "tilbake", "hjelp", "ikke tillat",
+  "peruuta", "peru", "sulje", "ei", "ei nyt", "pysy sivulla", "takaisin", "ohje", "myöhemmin", "älä salli",
+  "zrušit", "zavřít", "ne", "teď ne", "zůstat na stránce", "zůstat", "zpět", "nápověda", "později", "nepovolit",
+  "iptal", "vazgeç", "kapat", "hayır", "şimdi değil", "sayfada kal", "geri", "yardım", "daha sonra", "izin verme"];
+const DECLINE_WHOLE = ["キャンセル", "閉じる", "いいえ", "このページに留まる", "戻る", "ヘルプ", "取消", "关闭", "關閉", "否", "留在此页", "留在此頁", "返回", "帮助", "說明",
+  "취소", "닫기", "아니요", "아니오", "이 페이지에 머무르기", "뒤로", "도움말", "後で", "許可しない", "稍后", "稍後", "不允许", "不允許", "나중에", "허용 안 ?함"];
+const DECLINES = new RegExp(`^\\s*(${foldLabel([...DECLINE_WORDS, ...DECLINE_WHOLE].join("|"))})\\s*([(（][^)）]*[)）])?\\s*(\\.\\.\\.|…)?\\s*$`, "u");
+const declines = (name: string) => DECLINES.test(foldLabel(name)) || DECLINES.test(plainText(name));
+/** A bare "No", in the languages of DECLINE_WORDS: in a dialog that asks to save (SAVES), it throws the changes away. */
+const SAYS_NO = new RegExp(`^\\s*(${foldLabel(["no", "nein", "non", "não", "nee", "nie", "нет", "nej", "nei", "ei", "ne", "hayır", "いいえ", "否", "아니요", "아니오"].join("|"))})\\s*([(（][^)）]*[)）])?\\s*$`, "u");
+/**
+ * A dialog that asks to save or keep the work ("Save changes to document “notes.txt” before closing?", "Do you want to
+ * keep this new document?"), in the languages of RISKY_WORDS: its "No" doesn't back off (safety-privacy-x8-7).
+ */
+const SAVES = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(["save", "saving", "keep", "speichern", "enregistrer", "guardar", "salvare", "salva", "salvar", "opslaan",
+  "zapisać", "zapisz", "сохранить", "spara", "gem", "lagre", "tallenna", "tallentaa", "uložit", "kaydet", "kaydedilsin"].join("|"))})(?=$|[^\\p{L}\\p{N}])|保存|儲存|저장`, "u");
+/** Does this answer back off the dialog it answers (DECLINES), but for a "No" to saving the work? */
+const backsOffDialog = (name: string, told: string) => declines(name) && !((SAYS_NO.test(foldLabel(name)) || SAYS_NO.test(plainText(name))) && SAVES.test(foldLabel(told)));
+/** A question in a dialog's words where it may have no question mark ("This page is asking you to confirm that you want to leave"). */
+const ASKS_IF_SURE = /\b(are you sure|(do|did) you (really )?(want|mean) to|would you like to|confirm that you want)\b/;
+/**
+ * A warning that going on sends what was sent before once more, which asks without a question mark: Firefox's "…must
+ * send information that will repeat any action (such as a search or order confirmation)…", Chrome's "Confirm Form
+ * Resubmission". Linux reports Firefox's prompt as an alert; Windows and macOS as a plain dialog (regression review of
+ * round eight, safety-privacy-x8-5).
+ */
+const SENDS_AGAIN = /\b(repeat (any|the|an|this|that|your) (actions?|orders?|purchases?|payments?|transactions?|submissions?)|actions? (you took )?(to|will) be repeated|resubmi(t|ts|tting|ssion)|re-?send (the |this |that |your )?(information|data|form)|(send|submit|post) (a |the |this |that |your )?(form|information|data) again)\b/;
+/** Buttons and links that answer a dialog: what they do there is its question's answer. */
+const ANSWER_ROLES = /^(push button|push button menu|button|split button|toggle button|link)$/;
+/**
+ * A control one types or writes into (a field, a mail's body, an editable page section: `editable`, as the reader says,
+ * or a password field): a dialog that holds one is a working dialog, and its words may be what was written there ("Hi
+ * Ana, are you free on Friday?", the text being found). Never by a role alone that a dialog's own words may have (a
+ * document, text, a section): Firefox's prompt is a document.
+ */
+const typedIn = (c: DialogControl) => c.editable === true || c.role === "password text";
 /**
  * Dialogs whose OK only shapes the open document (DSK9-3), by their titles in LibreOffice and the mail composers: its
  * formatting and styles, sizes, sorting and filtering, what is inserted (a table, a break, a caption, a link), where to
@@ -2361,13 +2543,19 @@ export class PolicyEngine {
     // What a dialog or the window's title says, for an "OK" there (not the control's own name, nor the option chosen).
     const says = !!d.about && d.about !== r.element?.name && !(r.kind === "select" && d.about === r.value);
     // A row, cell, icon or list item is named by what it holds (a mail's subject): that isn't a request to check against.
-    const content = (CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage)) && d.about === r.element?.name;
+    // A link, tab or menu item asked about only for a word that grants or commits (commitsOnly: "Reserve Bank raises rates",
+    // a tab "Email", "Allow Editing") still asks every time, but isn't called something the user didn't ask for: those
+    // words lead headlines, tabs and settings too, and the flag put the rest of the task back to asking (regression review
+    // of round seven, safety-privacy-x7-1). riskOf gives COMMITS_RISK only where no rule older than that audit asks (before it,
+    // such a step wasn't asked about at all); a button is still flagged.
+    const committing = COMMITS_FLAG_ROLES.test(role) && d.reason === COMMITS_RISK && d.about === r.element?.name;
+    const content = ((CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage)) && d.about === r.element?.name) || committing;
     const how = { setting: TOGGLE_ROLES.test(role), disk, says };
     if (d.about && !content && !alignedWithGoal(r.goal, d.about, how)) {
       // Named in a question of Ember's the user answered with a yes or a choice ("I can delete the old installers. Shall
       // I?" "Sure."): not flagged as unasked, but asked all the same, quoting their answer. Never a security setting.
       const about = d.about;
-      const yes = securitySetting(about) || d.reason === SECURITY_SETTING ? undefined : r.agreed?.find(a => {
+      const yes = securitySetting(about) || d.reason === SECURITY_SETTING || d.reason === PAST_WARNING_REASON ? undefined : r.agreed?.find(a => {
         const offer = offered(a.asked);
         // (No offer in it: nothing was agreed to, not everything.)
         return /[\p{L}\p{N}]/u.test(offer) && alignedWithGoal(offer, about, how);
@@ -2483,6 +2671,11 @@ export class PolicyEngine {
     const around = bare && r.place && "name" in r.place && !NAMED_BY_CONTENT.test(r.place.role) && isRiskyControl("push button", r.place.name, os) ? r.place.name : "";
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
     const named = (riskyNamed && !opensDialog(role, name)) || unprotects;
+    // A link, tab or menu item named only by a word that grants or commits ("Reserve Bank raises rates", a tab "Email",
+    // "Allow Editing": commitsOnly) is asked about every time, but only once every rule that asked before that word was added
+    // has had its say, with its own reason and check against the request; then as COMMITS_RISK, which judge() doesn't call
+    // something the user didn't ask for (regression review of round seven, safety-privacy-x7-1).
+    const committing = riskyNamed && !opensDialog(role, name) && !unprotects && COMMITS_FLAG_ROLES.test(role) && commitsOnly(name, os);
     // A lone "Confirm" or "Approve" agrees to what its dialog (or the window's title) says, as "OK" does: it is judged by that.
     const lone = LONE_AGREE.test(normalizeLabel(name)) && (!!r.dialog || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window));
     // A dialog asked about only as one that may hold the app's settings: its title says which.
@@ -2501,10 +2694,37 @@ export class PolicyEngine {
       about: lone ? (r.dialog ? `${r.dialog.name} ${r.dialog.text}` : r.window) : asks, note, ...doubt,
     });
     const goesAhead: Risk = { reason: "this answers a dialog about a file someone else is using or has changed", note };
+    // A button, link or menu item whose own name goes past a security warning or turns a protection off ("Enable Macros",
+    // "Keep anyway", "Proceed to example.com (unsafe)", "Load Remote Content"): asked every time, checked against the
+    // request by its name (audit of 2026-11-11, safety-privacy-r8-1). In a dialog the question quotes it too. After the
+    // rules that asked before it, whose reasons and checks against the request stand ("Accept the Risk and Continue",
+    // "Save Anyway" in a file's conflict). (A menu item that opens a dialog, "Run Macro…", does nothing yet.)
+    const pastWarning = goesPastWarning(role, name, `${r.window} ${told}`) && !opensDialog(role, name);
+    const warned: Risk = { reason: PAST_WARNING_REASON, about: name, note: `It goes past a warning or turns off a protection.${r.dialog && note ? ` ${note}` : ""}` };
+    // Any other answer to a message box (a native one: a page's own dialog is one only by what it asks), or to a dialog
+    // that asks a question in a few words (a question mark, or ASKS_IF_SURE: a browser's "Leave site?", "Reload site?",
+    // "Close 12 tabs?", Firefox's "…confirm that you want to leave"; or SENDS_AGAIN: Firefox's "Resend", a message box on
+    // Linux only), that doesn't back off (backsOffDialog: Cancel, Stay on page, Close, Later, and No but to saving):
+    // asked every time, quoting the dialog, and not
+    // checked against the request (its words are the app's; audit of 2026-11-11, safety-privacy-c8-1). Not a dialog that
+    // only names something risky: Find & Replace, Share, a file chooser with a Trash place. After `answer`, so an OK that
+    // only acknowledges a message box (acknowledgesOnly) stays Ember's doubt.
+    // Its words count unless a whole read shows a field in it (typedIn: a mail's compose window, a card's comment box,
+    // Find & Replace's), where they may be what was written there and its title is what asks (regression review of round
+    // eight, safety-privacy-x8-2). Where nothing is known, a page's own dialog too, the words count: an "Unsaved changes"
+    // modal read in part still asks at "Leave" (safety-privacy-y8-1).
+    const written = !!r.dialog?.controls?.some(typedIn);
+    const asked = r.dialog ? (written ? r.dialog.name : told) : "";
+    const asksInFew = asked.length <= 300 && (/[?？¿]/.test(asked) || ASKS_IF_SURE.test(plainText(asked)) || SENDS_AGAIN.test(plainText(asked)));
+    const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !backsOffDialog(name, told) && !plainDialog;
+    const answersQuestion: Risk = { reason: "this answers a dialog's question or warning, and Ember can't be sure what that answer does", note };
+    // Any control of a page (or an Electron app's window) whose title mentions a payment: it may buy something whatever its
+    // label says. The question says why, in words true of a title that only mentions one (a mail's subject, a file's name).
+    const payment = ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) ? onPaymentPage(r.window) : null;
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
-        if (named && !lone) return { reason: "this action may be hard to undo or visible to others", about: name };
-        if (ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) && PAYMENT_PAGE.test(normalizeLabel(r.window))) return { reason: "this button is on a payment page, where it may buy something", about: name };
+        if (named && !lone && !committing) return { reason: NAMED_RISK, about: name };
+        if (payment) return { ...payment, about: name };
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
         if (around) return BARE_IN(around);
@@ -2512,6 +2732,9 @@ export class PolicyEngine {
         if (SETTING_ROLES.test(role) && systemSettings) return system(name);
         if (answer) return answer;
         if (conflict) return goesAhead;
+        if (pastWarning) return warned;
+        if (questioned) return answersQuestion;
+        if (committing) return { reason: COMMITS_RISK, about: name };
         if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
         return null;
       case "select": {
@@ -2575,10 +2798,13 @@ export class PolicyEngine {
           // Enter or Space on a focused button is a click on that button; on a row, cell, icon or list item it opens or
           // does what the item does (judged as a click on it that does something of its own: riskyContent).
           if (content && named) return { reason: "this opens or uses an item whose name says it may be hard to undo or visible to others", about: name };
-          if (ACTIVATING_ROLES.test(role) && named && !lone) return { reason: "this presses a button that may be hard to undo or visible to others", about: name };
+          if (ACTIVATING_ROLES.test(role) && named && !lone && !committing) return { reason: PRESSED_RISK, about: name };
           if (r.element?.withheld) return WITHHELD;
           if (ACTIVATING_ROLES.test(role) && answer) return { ...answer, reason: settings ? answer.reason : "this answers a dialog, and Ember can't be sure what it agrees to" };
           if (ACTIVATING_ROLES.test(role) && conflict) return goesAhead;
+          if (pastWarning) return warned;
+          if (questioned) return answersQuestion;
+          if (ACTIVATING_ROLES.test(role) && committing) return { reason: COMMITS_RISK, about: name };
           if (around) return BARE_IN(around);
           if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };

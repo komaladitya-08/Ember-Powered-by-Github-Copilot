@@ -1062,3 +1062,130 @@ describe("matchIntent: a place said anywhere in the words, or a folder the comma
     expect(announce(cmd, words)).toBe(said);
   });
 });
+
+describe("matchIntent: a deletion the words describe as another one, or hold back (commands-remote-y7-6)", () => {
+  it.each([
+    // A word before the folder's name, or between it and "folder", that names nothing in the path the command deletes.
+    ["rm -rf build", "delete the production build folder"],
+    ["rm -rf build", "delete the staging build folder"],
+    ["rm -rf build", "delete the frontend build folder"],
+    ["rm -rf build", "delete the other build folder"],
+    ["rm -rf build", "delete the remote build folder"],
+    ["rm -rf build", "delete the shared build folder"],
+    ["rm -rf build", "delete the Android build folder"],
+    ["rm -rf build", "delete the release build folder"],
+    ["rm -rf build", "delete my debug build folder"],
+    ["rm -rf build", "delete the build output folder"],
+    ["rm -rf build", "delete the local build folder"],
+    ["rm -rf build", "delete the current build folder"],
+    ["rm -rf build", "delete the existing build folder"],
+    ["rm -rf staging/build", "delete the production build folder"],
+    ["rm notes.txt", "delete the draft notes.txt file"],
+    ["Remove-Item -Recurse build", "delete the production build folder", "win32"],
+    ["rimraf build", "delete the production build folder"],
+  ] as [string, string, ContextName?][])("asks for `%s` after %j, which describes another one (commands-remote-y7-6)", (cmd, words, where) => {
+    expect(announce(cmd, words, { where })).toBeNull();
+  });
+
+  it.each([
+    // A word that only says what the folder is like, or a folder in the path the command deletes.
+    ["rm -rf build", "delete the old build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the stale build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the whole build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the entire build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the generated build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the huge build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the folder called build", "Deleting build, as you asked."],
+    ["rm -rf staging/build", "delete the staging build folder", "Deleting staging/build, as you asked."],
+    ["rm -rf frontend/build", "delete the frontend build folder", "Deleting frontend/build, as you asked."],
+    ["rm -rf build dist", "delete the old build and dist folders", "Deleting build and dist, as you asked."],
+  ])("announces `%s` after %j (commands-remote-y7-6)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    // A deadline, a later day, each time something happens, and a step that keeps a copy first.
+    "delete the build folder before Friday",
+    "delete the build folder before the release",
+    "delete the build folder before the weekend",
+    "delete the build folder before 5pm",
+    "delete the build folder ahead of the release",
+    "before the demo, delete the build folder",
+    "delete the build folder first thing Monday",
+    "delete the build folder Monday",
+    "delete the build folder this Friday",
+    "delete the build folder each time the tests pass",
+    "delete the build folder every time the tests pass",
+    "delete the build folder any time the tests pass",
+    "back up then delete the build folder",
+    "make a backup and then delete the build folder",
+    "back up the project, then delete the build folder",
+    "copy build/ to /tmp, then delete the build folder",
+    "commit my changes and delete the build folder",
+    "archive it first, then delete the build folder",
+  ])("asks for `rm -rf build` after %j, which holds the step back (commands-remote-y7-6)", words => {
+    expect(announce("rm -rf build", words)).toBeNull();
+  });
+
+  it.each([
+    // Another step of the user's after "before", a step after the deletion, and a folder named backup.
+    ["rm -rf build", "delete build/ before you rebuild", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ before running the tests", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ and back up src/", "Deleting build, as you asked."],
+    ["rm -rf backup", "delete the backup folder", "Deleting backup, as you asked."],
+    ["rm -rf build", "list the files, then delete the build folder", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder before you do anything else", "Deleting build, as you asked."],
+    ["rm -rf build", "delete build/ as before", "Deleting build, as you asked."],
+  ])("still announces `%s` after %j (commands-remote-y7-6)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+});
+
+describe("matchIntent: a folder's name said first as another word (commands-remote-x8-6)", () => {
+  it.each([
+    // The first word in all the words that names the folder is a verb, far from "folder": main asked for these.
+    "before you build, delete the build folder",
+    "before you build again, delete the build folder",
+    "the build is broken, delete the build folder",
+    "build it, then delete the build folder",
+  ])("asks for `rm -rf build` after %j, as main did (commands-remote-x8-6)", words => {
+    expect(announce("rm -rf build", words)).toBeNull();
+  });
+
+  it.each([
+    ["rm -rf build", "delete the build folder before you build", "Deleting build, as you asked."],
+    ["rm -rf build", "before building, delete the build folder", "Deleting build, as you asked."],
+    ["rm -rf dist", "before you build, delete the dist folder", "Deleting dist, as you asked."],
+    ["rm -rf build", "delete the build folder", "Deleting build, as you asked."],
+  ])("still announces `%s` after %j (commands-remote-x8-6)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+});
+
+describe("matchIntent: \"before\" that only puts the user's steps in order (commands-remote-x8-9)", () => {
+  it.each([
+    ["rm -rf node_modules", "delete the node_modules folder before npm install", "Deleting node_modules, as you asked."],
+    ["rm -rf node_modules", "delete the node_modules folder before running npm install", "Deleting node_modules, as you asked."],
+    ["rm -rf build", "delete the build folder before I run make", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder before we start", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder before that", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder as we did before", "Deleting build, as you asked."],
+    ["rm -rf dist", "delete the dist folder like we did before", "Deleting dist, as you asked."],
+  ])("announces `%s` after %j (commands-remote-x8-9)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    "delete the build folder before Friday",
+    "delete the build folder before the release",
+    "delete the build folder before we ship on Friday",
+    "delete the build folder before we start the release",
+    // A tool's name followed by an event, not one of its commands.
+    "delete the build folder before npm publishes it",
+    "delete the build folder before python 3.13 comes out",
+    "delete the build folder before npm 11 ships",
+    "delete the build folder before cargo 2.0",
+  ])("still asks for `rm -rf build` after %j, a deadline (commands-remote-x8-9)", words => {
+    expect(announce("rm -rf build", words)).toBeNull();
+  });
+});

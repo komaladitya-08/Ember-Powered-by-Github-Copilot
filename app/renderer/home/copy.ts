@@ -690,15 +690,40 @@ export function providerTestWaits(o: { host: string | null; agreed: boolean; man
   return `Test connection works once you agree to the note above for ${o.host}.`;
 }
 
+/**
+ * Models & connections' status line for the user's own provider with no model named, in place of main's sentence
+ * (USER_PROVIDER_NO_MODEL), which sends the person to this very pane from the bubble: here it names the field below,
+ * where its "Check my provider's details" moves the focus (integrations-r8-3).
+ */
+export const PROVIDER_NO_MODEL_HERE = "Enter the model your provider should use in “Conversation model”, below.";
+
+/** A connection test's answer as main gives it (ProviderTest): the models it lists, or why not in one sentence. */
+type TestAnswer = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: string };
+
+/** "lists 1 model: llama3.2:3b", for an answer that holds a model list. */
+function listsModels(models: number, ids: readonly string[]): string {
+  // Named, so the exact id ("llama3.2:3b", not "llama3.2") can be chosen rather than typed blind (integrations-9).
+  if (models === 1 && ids.length) return `lists 1 model: ${ids[0]}`;
+  if (ids.length) return `lists ${models} models, such as ${ids.slice(0, 2).join(" and ")}`;
+  return `lists ${models} ${models === 1 ? "model" : "models"}`;
+}
+
 /** What "Test connection" found, in one sentence: connected (with how many models it lists), or main's reason why not. */
-export function providerTestText(r: { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string }): string {
+export function providerTestText(r: TestAnswer): string {
   if (!r.ok) return r.why;
   if (r.models === null) return `Connected to ${r.host}.`;
-  // Named, so the exact id ("llama3.2:3b", not "llama3.2") can be chosen rather than typed blind (integrations-9).
-  const ids = r.ids ?? [];
-  if (r.models === 1 && ids.length) return `Connected to ${r.host}. It lists 1 model: ${ids[0]}.`;
-  if (ids.length) return `Connected to ${r.host}. It lists ${r.models} models, such as ${ids.slice(0, 2).join(" and ")}.`;
-  return `Connected to ${r.host}. It lists ${r.models} ${r.models === 1 ? "model" : "models"}.`;
+  return `Connected to ${r.host}. It ${listsModels(r.models, r.ids ?? [])}.`;
+}
+
+/**
+ * Said once a first "I agree" in Home is recorded and the one check that follows it has answered (Test connection's GET,
+ * to that host only): where requests go now, then what it found, so an address that answers without a model list
+ * (Ollama's without /v1, a web page) or wants a key shows at once rather than at the first request (integrations-r8-2).
+ * The agreement stands whatever it found.
+ */
+export function providerAgreedChecked(host: string, r: TestAnswer): string {
+  if (!r.ok) return `${providerAgreedText(host)} ${r.why}`;
+  return `Agreed. Ember now sends your requests to ${host}, which ${r.models === null ? "answered" : listsModels(r.models, r.ids ?? [])}.`;
 }
 
 /**

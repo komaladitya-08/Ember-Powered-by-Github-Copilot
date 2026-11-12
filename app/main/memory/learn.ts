@@ -19,7 +19,7 @@
 import { z } from "zod";
 import { MAX_FACT_CHARS, type AddResult, type Fact, type NewFact, type Source } from "./graph";
 import type { MemoryLog } from "./service";
-import { fold, samePolarity, terms } from "./text";
+import { fold, negated, samePolarity, terms } from "./text";
 import { viewNorm } from "../agent/view-schema";
 
 /** A model call with no tools: Ember's instructions, one prompt, an answer (null on no answer, error or stop). */
@@ -74,9 +74,15 @@ export const EXTRACT_SYSTEM = [
   "At most 5 facts. If there is nothing worth keeping, answer {\"facts\":[]}.",
 ].join("\n");
 
-/** One thing to learn from. */
+/** A fact the remember tool kept (or found already kept) in a turn: its words, and what it was said to be about. */
+export interface KeptFact { text: string; about: readonly { name: string; kind?: string }[] }
+
+/**
+ * One thing to learn from. A turn's `kept`: the facts the remember tool kept (or found already kept) in that turn,
+ * which its reading never keeps again (`keptInTurn`: memory-c8-1).
+ */
 export type LearnItem =
-  | { kind: "turn"; said: string; reply: string; own: boolean }
+  | { kind: "turn"; said: string; reply: string; own: boolean; kept?: readonly KeptFact[] }
   | { kind: "task"; title: string; result: string };
 
 const esc = (s: string, n = ITEM_CHARS) => s.slice(0, n).replace(/</g, "‹");
@@ -116,6 +122,99 @@ export function jsonOf(raw: string | null | undefined): unknown {
  * preferring, working or using is here: "I quit Globex" must never give "Works at Globex" (review of PR #142).
  */
 const GLUE = new Set(["user", "name", "named", "called", "doesn", "don", "didn", "isn", "aren", "wasn", "weren", "won", "can", "cannot", "not", "no", "never"]);
+
+/** A fact's content words: its `terms` without GLUE. */
+const content = (s: string): Set<string> => new Set(terms(s).filter(t => !GLUE.has(t)));
+
+/** How much of `a` is in `b`, 0 to 1; 0 when `a` is empty. */
+function share(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
+  if (!a.size) return 0;
+  let n = 0;
+  for (const t of a) if (b.has(t)) n++;
+  return n / a.size;
+}
+
+/** At least this much of the smaller side's words in common makes a candidate the fact its turn already kept. */
+export const SAME_IN_TURN = 0.5;
+
+/** The words of the people a fact names in its own words: the persons of its `about` (never the user, a GLUE word). */
+function people(text: string, about: readonly { name: string; kind?: string }[]): string[] {
+  const own = content(text);
+  return about.filter(a => a.kind === "person").flatMap(a => [...content(a.name)].filter(t => own.has(t)));
+}
+
+/** A turn's sentences and clauses, as `samePolarity` cuts them, and at "and" and "also" too. */
+const CLAUSE = /[.;!?\n,]+|\s+(?:and|also|but|although|though|whereas)\s+/i;
+
+/**
+ * One key for a verb's forms, roughly ("teaches", "teach" and "teaching" are all "teach", and "lives", "live" and
+ * "living" all "liv"), used only to tell two facts apart: `terms` folds plurals alone, so "Teaches in Paris" never found
+ * the user's "teach" (review of PR #210). A doubled consonant ("running"), "-ed", "goes" and irregular forms stay words
+ * of their own.
+ */
+const verbKey = (t: string): string => t.replace(/(?<=\p{L}{3})ing$/u, "").replace(/(?<=\p{L}{3})e$/u, "");
+
+/**
+ * Whether each of two facts holds a word the other lacks that was said: the candidate's (`C`) in its evidence (`E`),
+ * what was kept's (`K`) there or in the clause of the turn that holds it.
+ */
+function saidApart(C: ReadonlySet<string>, K: ReadonlySet<string>, E: ReadonlySet<string>, clause: ReadonlySet<string>): boolean {
+  return [...C].some(t => !K.has(t) && E.has(t)) && [...K].some(t => !C.has(t) && (E.has(t) || clause.has(t)));
+}
+
+/** `words` with each one's verb forms as one (`verbKey`). */
+const verbKeys = (words: Iterable<string>): Set<string> => new Set([...words].map(verbKey));
+
+/** The clauses of `said` (by CLAUSE) that hold the most of `want`; none when no clause holds any of it. */
+function holding(said: string, want: ReadonlySet<string>): number[] {
+  const n = said.split(CLAUSE).map(clause => share(want, new Set(terms(clause))));
+  const most = Math.max(0, ...n);
+  return most ? n.flatMap((x, i) => (x === most ? [i] : [])) : [];
+}
+
+/**
+ * Whether a candidate from a turn is a fact the remember tool kept in that same turn (`kept`), in other words or
+ * about other names (memory-c8-1). Where the two models disagree or it can't be told, it is learned: a second copy
+ * shows its own "Ember learned" line, a fact dropped here is lost without a word (memory-x8-1).
+ * - A person that one of them names in its own words and the other's words don't name makes them two facts ("Is
+ *   vegetarian", "Partner Sam is vegetarian"): `about` only ever tells them apart, never makes them one.
+ * - The same fact when every content word of the candidate is in what was kept, said the same way round ("Is
+ *   vegetarian", "The user is a vegetarian"; "Works on the Atlas project", "Works on Atlas"), unless its evidence is
+ *   plainly in another clause than the one that holds the most of what was kept ("…Partner Sam is vegetarian. I'm
+ *   vegetarian too.").
+ * - Otherwise only when its evidence is in the one clause of the turn that holds the most of what was kept, and
+ *   neither leaves out a word the other says, the candidate one of its evidence, what was kept one of it or of its
+ *   clause, in any of a verb's forms ("allergic to peanuts and shellfish" holds two, and so do "I live in Paris where
+ *   I work", "…where I teach" and "I'm living in Paris where I work", review of PR #210): half
+ *   or more of the smaller one's content words in common, the same way round ("Works at Globex", "Employed by
+ *   Globex"); or evidence holding half or more of what was kept in words the candidate mostly doesn't use ("I'm
+ *   vegetarian" read as "Does not eat meat"). A fact said in a clause of its own ("…My sister Jo lives in York") is
+ *   learned whatever words it shares, and so is one when what was kept is said in two clauses alike.
+ */
+export function keptInTurn(c: Pick<Candidate, "fact" | "evidence" | "about">, kept: readonly KeptFact[], said: string): boolean {
+  const C = content(c.fact);
+  const E = new Set(terms(c.evidence));
+  const at = holding(said, E);
+  // The clause that holds the evidence: what was kept may say its own word there and not in the evidence ("I live
+  // in Paris where I work", evidence "Paris where I work"), which still makes them two (review of PR #210).
+  const clause = new Set(at.length === 1 ? terms(said.split(CLAUSE)[at[0]] ?? "") : []);
+  // The same with each verb's forms as one, on both sides ("Teaches" and "teach", "Lives" and "living"): it only adds a
+  // reading that makes them two, so nothing the words as written make two is ever one (review of PR #210).
+  const [Cv, Ev, clauseV] = [verbKeys(C), verbKeys(E), verbKeys(clause)];
+  return kept.some(k => {
+    const K = content(k.text);
+    if (!K.size || !C.size) return false;
+    if (people(c.fact, c.about).some(t => !K.has(t)) || people(k.text, k.about).some(t => !C.has(t))) return false;
+    const sameWay = negated(c.fact) === negated(k.text);
+    const where = holding(said, K);
+    const here = where.length === 1 && at.length === 1 && at[0] === where[0];
+    const apart = where.length === 1 && at.length === 1 && at[0] !== where[0];
+    if (sameWay && !apart && [...C].every(t => K.has(t))) return true;
+    if (!here) return false;
+    if (saidApart(C, K, E, clause) || saidApart(Cv, verbKeys(K), Ev, clauseV)) return false;
+    return (sameWay && Math.max(share(K, C), share(C, K)) >= SAME_IN_TURN) || (share(K, E) >= SAME_IN_TURN && share(C, E) < SAME_IN_TURN);
+  });
+}
 
 /** Every content word of the fact is in the evidence (its own word, as `terms` folds it). */
 function covered(fact: string, evidence: string): boolean {
@@ -205,6 +304,8 @@ export function learnedFacts(x: Extraction, items: LearnItem[]): NewFact[] {
   for (const c of x.facts.slice(0, 5)) {
     const item = items[c.from - 1];
     if (!item) continue;
+    // Kept already by the remember tool in this turn: never a second copy (memory-c8-1).
+    if (item.kind === "turn" && item.kept && keptInTurn(c, item.kept, item.said)) continue;
     const source: Source = item.kind === "task" ? "task" : turnSource(c, item.said, item.own);
     // An instruction is never learned, whoever said it: a one-off order ("…without asking me") isn't a lasting
     // preference. Only the remember tool, asked by the user, and the introduction keep such words.
@@ -307,11 +408,12 @@ export class Learner {
 
   /**
    * A conversation turn ended: the user's own words and Ember's reply. `own`: heard from the user (false for speech
-   * Ember can't tell from its own speakers: a video, a call, its own echo), whose facts are never theirs.
+   * Ember can't tell from its own speakers: a video, a call, its own echo), whose facts are never theirs. `kept`: what
+   * the remember tool kept in it (memory-c8-1).
    */
-  heard(said: string, reply: string, own = true): void {
+  heard(said: string, reply: string, own = true, kept: readonly KeptFact[] = []): void {
     if (!said.trim() || !this.d.inForce()) return;
-    this.add({ kind: "turn", said, reply, own });
+    this.add({ kind: "turn", said, reply, own, ...(kept.length ? { kept } : {}) });
   }
 
   /** A task finished with this result. */

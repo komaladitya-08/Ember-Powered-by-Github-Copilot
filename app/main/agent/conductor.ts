@@ -152,11 +152,21 @@ export interface ConductorMemory {
    */
   factText?(id: string): string | null;
   /**
+   * A request is being asked (`Conductor.ask`, before anything waits): a mark its turn's `heard` gives back, so a turn
+   * whose words were said before a Forget, a correction or Forget everything is never learned from (memory-r8-1).
+   */
+  asked?(): number;
+  /**
    * A turn ended (not stopped): what the user said in it and Ember's answer, for memory to learn from off the hot path
    * (app/main/memory/learning.ts). `own`: the request was heard from the user (not where Ember can't tell them from its
-   * speakers). Absent: nothing is learned but what remember saves.
+   * speakers). `asked`: its request's mark from `asked`, if any. Absent: nothing is learned but what remember saves.
    */
-  heard?(said: string, reply: string, own: boolean): void;
+  heard?(said: string, reply: string, own: boolean, asked?: number): void;
+  /**
+   * A turn began: what the remember tool kept before now belongs to a turn that has ended, read or not (a stopped, cut
+   * short or silent one isn't), never to this one (memory-x8-2).
+   */
+  began?(): void;
 }
 
 export interface ConductorTasks {
@@ -740,6 +750,8 @@ export class Conductor {
   private said = "";
   /** The turn under way's request was heard from the user (ask()'s `own`), for memory to learn from. */
   private saidOwn = false;
+  /** Memory's mark from when the turn under way's request was asked (ConductorMemory.asked: memory-r8-1). */
+  private saidMark: number | undefined;
   /**
    * The steps of the routines run_routine ran this turn: the user's own words when they saved them, so a reminder or a
    * fact one sets counts as theirs, and a task one starts checks its risky steps against them (AgentHost.userWordsOf).
@@ -753,7 +765,7 @@ export class Conductor {
    * Requests whose turn hasn't begun, oldest first; `prompt` is filled just before dispatch. `own`: heard
    * from the user (ask()'s `own`), carried with each request so two of the same words can't swap it.
    */
-  private unstarted: { text: string; own: boolean; prompt?: string }[] = [];
+  private unstarted: { text: string; own: boolean; prompt?: string; mark?: number }[] = [];
   /** Recall and dispatch follow request order; recalled text never waits past a later consent change. */
   private dispatch: Promise<void> = Promise.resolve();
 
@@ -765,6 +777,11 @@ export class Conductor {
   /** The steps of the routines run this turn ("" when none), in the user's words: AgentHost adds them to the turn's. */
   get routineSaid(): string {
     return this.routineWords.join("\n");
+  }
+
+  /** Memory's mark for the turn under way's request (ConductorMemory.asked), for the tasks it starts (memory-x8-4). */
+  get askedMark(): number | undefined {
+    return this.saidMark;
   }
 
   /**
@@ -781,10 +798,13 @@ export class Conductor {
     if (i >= 0) this.stopping = false;
     this.said = i < 0 ? "" : this.unstarted[i].text;
     this.saidOwn = i >= 0 && this.unstarted[i].own;
+    this.saidMark = i < 0 ? undefined : this.unstarted[i].mark;
     this.routineWords = [];
     this.routinesRan.clear();
     this.answered = "";
     if (i >= 0) this.unstarted.splice(i, 1);
+    // Every turn begins here, whether or not the one before it was read: what remember kept then goes with no turn now.
+    try { this.deps.memory?.began?.(); } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
     // A new turn: a tool the user refused last turn may be asked about again (never retried within the turn). At the
     // turn's start, not at ask(), so a request sent during a turn can't clear that turn's refusals.
     this.deps.extensions?.newTurn?.();
@@ -973,15 +993,15 @@ export class Conductor {
         const aborted = (e.data as { aborted?: boolean }).aborted === true || this.answerMuted;
         d.onTurnEnd?.(aborted);
         // Memory learns from the turn (the user's own words and the answer), after it and off its path.
-        if (!aborted && this.said) this.learnFrom(this.said, this.answered, this.saidOwn);
+        if (!aborted && this.said) this.learnFrom(this.said, this.answered, this.saidOwn, this.saidMark);
         this.answerMuted = true;
       }
     });
   }
 
   /** Hands a finished turn to memory (while it is on): a failure there never touches the conversation. */
-  private learnFrom(said: string, reply: string, own: boolean): void {
-    try { this.deps.memory?.heard?.(said, reply, own); } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
+  private learnFrom(said: string, reply: string, own: boolean, mark: number | undefined): void {
+    try { this.deps.memory?.heard?.(said, reply, own, mark); } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
   }
 
   /**
@@ -995,13 +1015,17 @@ export class Conductor {
     this.dispatch = new Promise<void>(resolve => { release = resolve; });
     const stops = this.stops;
     const session = this.session;
+    // Memory's mark of when the user said it, before anything waits: a Forget after it keeps its turn from being
+    // learned from (memory-r8-1). A failure there never touches the conversation: with no mark, memory fails closed.
+    let mark: number | undefined;
+    try { mark = this.deps.memory?.asked?.(); } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
     try {
-      await this.dispatchRequest(text, context, line, own, prepared, previous, stops, session);
+      await this.dispatchRequest(text, context, line, own, prepared, previous, stops, session, mark);
     } finally { release(); }
   }
 
   private async dispatchRequest(text: string, context: string | undefined, line: string | undefined, own: boolean,
-    prepared: ((prompt: string) => void) | undefined, previous: Promise<void>, stops: number, session: CopilotSession | null): Promise<void> {
+    prepared: ((prompt: string) => void) | undefined, previous: Promise<void>, stops: number, session: CopilotSession | null, mark: number | undefined): Promise<void> {
     // A turn that went silent is being ended: a request sent now would run (and show) only after it.
     if (this.endingTurn) await this.endingTurn;
     if (this.stops !== stops) return;
@@ -1009,7 +1033,7 @@ export class Conductor {
     this.deps.presenter.userPrompt(text);
     this.deps.log.info("conductor.ask", { chars: text.length });
     const reports = this.deps.takeReports?.() ?? [];
-    const entry: { text: string; own: boolean; prompt?: string } = { text, own };
+    const entry: { text: string; own: boolean; prompt?: string; mark?: number } = { text, own, ...(mark !== undefined ? { mark } : {}) };
     this.unstarted.push(entry);
     // What Ember remembers that bears on the request (while memory is on): before it, as information. Better recall
     // may take up to its wait for this (memory/embed.ts), so a Stop meanwhile drops the request, through either path.
@@ -1240,6 +1264,7 @@ export class Conductor {
     this.unstarted = [];
     this.said = "";
     this.saidOwn = false;
+    this.saidMark = undefined;
     this.routineWords = [];
     this.routinesRan.clear();
     this.answered = "";

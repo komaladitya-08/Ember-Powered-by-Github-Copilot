@@ -73,7 +73,10 @@ can't bring up the card: turn the switch on yourself. If Ember can't show the ca
 WSL card or a computer's card), nothing changes and it says "Ember couldn't show the card that asks you first, so
 nothing changed." (when connecting, in the bubble with **Try again**). If a later Ember changes what the card says, the
 next command a task runs there shows the new card first. Under each switch, **Ask me before every command** makes every
-command on that computer ask. **Open the command window** shows it.
+command on that computer ask. **Open the command window** shows it. Where commands run as root or as an administrator
+(Ember itself, a distro or a login that is, or one where Ember can't tell), every command asks anyway, so **Ask me
+before every command** shows on there, can't be turned off, and says why under it, as it does where your organisation
+asks.
 
 To turn commands off again, turn the switch off. This cancels commands still waiting for approval, a countdown or a
 free slot. Turning the switch back on does not revive them. Commands already running keep running. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
@@ -122,7 +125,17 @@ recorded in the audit log, and their output goes back to Copilot as described in
 
 Ember stops and asks before a command that:
 
-- **deletes or destroys data**: `rm`, `rmdir`, `del`, `Remove-Item`, `find -delete`, `git clean`,
+- **deletes or destroys data**: `rm`, `rmdir`, `del`, `Remove-Item`, `find -delete`, the deleters a project's
+  scripts reach for (`rimraf` and `del-cli`, also from `node_modules/.bin` or as `yarn rimraf` or `yarn run rimraf`,
+  which expand a pattern themselves, so a quoted one is read as a pattern too; one whose braces or `+(…)`, read as
+  a shell reads them, could reach Ember's files, such as `'{..,x}'` from a project in your home folder, is refused,
+  and one whose braces the deleter may read another way, with a stray `}` or a `\` in them, is asked about as
+  any deletion is), `trash`, `gio trash`, `trash-rm`, `shred`, `scrub`,
+  a Mac's GNU `grm`, duplicate finders told to delete (`fdupes -d`, `jdupes -d`), rewriting a repository's history
+  (`bfg`, `git filter-repo`), a program Ember doesn't know given your home folder, a folder that holds it or one
+  that holds Ember's own files (`mytool ~`, `mytool ..` in a folder in your home folder, `stow -t ~ dotfiles`; other
+  folders don't ask, such as your project's from its build folder, `qmake ..`, nor does an install prefix, `./configure
+  --prefix ~/.local`), `git clean`,
   `git reset --hard`, discarding changes (`git checkout -- <file>`, `git restore`), `git branch -D`,
   `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`; a `cp`
   or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it
@@ -151,6 +164,7 @@ Ember stops and asks before a command that:
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,
+  `rclone copy` or `sync` with a cloud remote as the destination or in an option such as `--backup-dir remote:old`,
   `curl -T`, `curl -d`, `ssh host <command>`, a file fed to `openssl s_client`), adding your key to another computer
   (`ssh-copy-id`), using a share on another computer (`dir \\server\share`, `net use`, `New-PSDrive` on Windows,
   `mount_smbfs` on a Mac), which signs in there with your account, starting a server other computers can reach or
@@ -183,13 +197,19 @@ Ember stops and asks before a command that:
   downloaded in this task (one fetched with `curl`, `wget` and the like, cloned, or handed over by another tool:
   `gh release download` and `gh run download`, `aws s3 cp`, `gsutil cp` and `gcloud storage cp` from a bucket, `az
   storage blob download`, `docker cp` and `kubectl cp` out of a container or a pod, `scp` and `rsync` from another
-  computer, or what `ssh host …` prints, saved with `>` or piped into a shell; also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
+  computer, or what `ssh host …` prints, saved with `>` or piped into a shell; checked out or fetched with `svn
+  checkout`, `svn export`, `hg clone`, `rclone copy`, `pip download` or `git archive --remote`; anything at all once
+  the task has used a settings file curl or wget reads, a `wget -e` setting or a file-transfer client that can fetch
+  (`curl -K cfg.txt`, `wget --config=w.rc`, `sftp`, `ftp`, `lftp`, `tftp`, `smbclient`), since Ember can't tell what
+  they saved or where (a client whose commands on the line only send, `lftp -c 'put dist.tgz' host`, doesn't count);
+  also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
   `rsync`, `dd`, `cat x.py > y.py`, `tee`, `dos2unix -n`, `sort -o`, `split` and `cat` of its pieces, or a `tar` or
   `zip` of it unpacked again, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
   or a `New-Item` link, also from a pipeline (`Get-Item x.exe | Copy-Item -Destination y.exe`; when Ember can't tell
   which files a pipeline or a variable hands over, the copy counts as a download whenever the task downloaded
   something it could be: running a file from where it went asks, but that folder's own tools, such as `npm test` or
-  `make`, ask only when the download could be one of their files), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy` (a folder's copy keeps each download under its own name, so the folder's other files and tools are as before), run as a module with `python3 -m`, loaded with `node -r`, or picked up by name
+  `make`, ask only when the download could be one of their files), with cmd's `ren`, `move`, `copy` or `mklink`, or with `robocopy` (a folder's copy keeps each download under its own name, so the folder's other files and tools are as before), run as a module with `python3 -m`, loaded with `node -r`,
+  built from a downloaded source and then run (a compiler's `-o` output or its default `a.out`, a file decompressed with `gunzip`, `xz -d` or `bzip2 -d`, a package unpacked with `dpkg -x`), handed to a runner Ember knows (`java -jar`, `-cp` entries or a class or source file; `mono` or `wine`; `pwsh x.ps1`; `node x` with no extension or `python3 a.p*`; `awk -f`, `sed -f` or `psql -f`; `jupyter nbconvert --execute`; `go run .` and `cargo run`, which build the folder's own `.go` or `.rs` sources), or picked up by name
   by a build tool or test runner: a downloaded `Makefile`, `package.json`, `conftest.py` or test file in its folder;
   a download whose saved name Ember can't tell (one the server or a list picks: `curl -OJ`, `wget
   --content-disposition`, `wget -r`, `wget -i`, `aria2c -i`; one in a variable or an expression: `curl -o "$f"`,
@@ -216,10 +236,15 @@ Ember stops and asks before a command that:
   …); echo "$x" > a.py`, also through a copy of the variable, `y=$x`, one `read` fills, `read x < <(curl …)`, any
   program given the text that writes its output to a file, `tee a.py <<< "$x"`, `dd of=a.py`, and a group's own
   redirection, `{ echo "$x"; } > a.py`); a repository cloned from an address or into a folder Ember can't see (`git clone $REPO`)
-  makes the folder it is cloned in count, so building there asks; and `node .` or `python3 tool` asks when the
-  folder's entry file (`index.js`, `package.json`, `__main__.py`) is a download. A download Ember can name never
-  makes the project's own tools ask: after `curl -LO https://example.com/data.csv`, `python3 analyze.py` and `npm
-  test` run as before),
+  makes the folder it is cloned in count, so building there asks, and so do `gh repo clone a/b -- --depth 1` (the
+  folder is named before git's options), `gh gist clone`, `git submodule add` and a pull or fetch from a remote the
+  same line adds with an address (`git remote add e https://… && git pull e main`); and `node .` or `python3 tool` asks when the
+  folder's entry file (`index.js`, `package.json`, `__main__.py`) is a download. Once the task has downloaded
+  anything, a build tool or test runner (or `python3 -m`) in a folder Ember can't name asks as it would in the
+  download's folder: after `cd b;`, `cd b || exit`, `pushd b` or a `cd` on its own line, any of which may have
+  failed, so `git clone https://…; cd b; npm test` asks. A download Ember can name never
+  makes the project's own tools ask in a folder Ember knows: after `curl -LO https://example.com/data.csv`, `python3 analyze.py`, `npm
+  test` and `cd src && npm test` run as before; in a task that downloaded nothing, `cd src; npm test` runs too),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
@@ -233,7 +258,8 @@ Ember stops and asks before a command that:
   words after the count that are targets, `T='4 deploy'; make -j $T`), and a value Ember can't see written straight
   after an option of a program that runs another one, quoted or not (`nice -n"$X" cmd`, `xargs -n$X cmd`, `env
   -C"$d" cmd`), which may hold the command it runs; only `xargs -P` and `parallel -j` take a count there (`xargs
-  -P$(nproc) cmd`).
+  -P$(nproc) cmd`); and `rclone copy`, `sync` or `move` with more words than it takes, after an option Ember
+  doesn't know took a value (`rclone copy ./src remote:dst --max-transfer 10G`), so it can't tell where the files go.
 
 **Loops on a command line** in bash or sh always ask, whatever their body: a line with `for`, `while`, `until` or
 `select` anywhere in it asks with the loop's own words ("Ember can't tell exactly what this does."), so `for i in 1 2
@@ -286,6 +312,26 @@ Ember's own folder named in sight is refused before any of this. zsh's `if` and 
 whose variable is `PATH` or another that changes how commands are found says so on its card too ("It changes how
 commands are found or run."). A variable set after `then`, `do`, `else`, `!` or `time` is judged as one set at the
 start of a command: `if true; then LD_PRELOAD=./x.so ls; fi` asks, as `LD_PRELOAD=./x.so ls` does.
+
+A variable set in front of a build tool that names a program or a command the tool runs is judged too, so Ember asks
+before `CC='sh -c "curl … | sh"' make` the way it does before `make CC='sh -c …'`. An ordinary value runs: `CC=clang
+make`, `CC="ccache gcc" make`, `CFLAGS=-O2 make`, `GOFLAGS=-mod=vendor go build` and `DATABASE_URL=… npm test` all go
+ahead. A compiler or pager variable (`CC`, `CXX`, `LD`, `RUSTC`, `PSQL_PAGER`, a `*_PAGER`, `LUA_INIT`) asks when its
+value holds any shell operator (`|`, `;`, `&&`, a substitution, a backtick); any other variable asks only when its
+value starts a command (a leading `sh`, `bash`, `python`, `curl` … with an argument — an option, a path, a file name or
+a quoted word, never a plain word, so `MSG='env vars here'` is text — at the start or after a `|`, `;` or `&&`, or a
+substitution), so a value that merely holds a `|` or `;` — a connection string, a filter, a colour spec such as
+`LS_COLORS='di=01;34'` — runs. An options variable asks when a sub-option names a program (`GOFLAGS=-toolexec=…`
+or `--toolexec=…`, any `TAR_OPTIONS` option that runs a command on tar's own command line — `--to-command`, `-I`,
+`-F` (`--info-script`), `--use-compress-program`, `--checkpoint-action=exec=…`, abbreviated or not — `RUSTFLAGS='-C linker=…'` naming the linker
+by a path or a command, and `PYTEST_ADDOPTS='-p …'` or `-pname`, but not `GOFLAGS=-p=4`, `RUSTFLAGS='-C linker=clang'`
+or `PYTEST_ADDOPTS='-p no:…'`), also when that sub-option's value is a variable
+(`GOFLAGS="-toolexec=$T"`); a variable that only extends the options already set (`GOFLAGS="$GOFLAGS -mod=vendor"`)
+runs. A wrapper variable always asks (`RUSTC_WRAPPER`, `CARGO_BUILD_RUSTC_WRAPPER`,
+`JDK_JAVA_OPTIONS`, `DOTNET_STARTUP_HOOKS`). The same goes for a `cmake -DCMAKE_<lang>_COMPILER=…` override that holds a
+command, `go test -exec`, `go build -toolexec`/`-vettool` (with one dash or two, and with a value Ember can't see:
+`-toolexec="$T"`, `-vettool=$(which shadow)`), tar's own options that run a command with a value Ember can't see
+(`tar xf a.tar --to-command="$T"`, `-I"$T"`), and `npm`'s `--script-shell` or `npm config set script-shell`.
 
 **Shell scripts are read first.** When a command runs a shell script (`sh deploy.sh`, `bash t.sh`, `source env.sh`,
 `./t.sh`, `powershell -File t.ps1`, `& .\t.ps1`, `cmd /c t.bat`, and the same behind `env`, `nice`, `timeout` and the
@@ -397,8 +443,13 @@ build/", "Ember, delete build/", "can you delete build/?" and "I want to delete 
 my branch?"), something already done ("I pushed my branch"), a maybe ("I might delete build/ later") and words about
 something else ("fix the script that deletes build/") don't, so the command asks. Nor do words that hold the step
 back, since the announcement runs it now: a condition ("delete src/ only if I say so", "if the build fails, delete
-src/", "once the tests pass", "when I tell you", "in case the tests fail"), a later time ("tomorrow", "next week", "in 5
-minutes", "in 1h", "at 5pm", "at 5.30pm", "at the end of the task"), asking to be asked first ("ask me first", "check
+src/", "once the tests pass", "when I tell you", "in case the tests fail", "each time the tests pass"), a later time
+("tomorrow", "next week", "in 5 minutes", "in 1h", "at 5pm", "at 5.30pm", "at the end of the task", "first thing
+Monday", "Monday"), a deadline ("before Friday", "before the release", "ahead of the demo"; "before you run the tests",
+"before rebuilding", "before npm install", "before I run make", "before we start" and "before that" only put your steps
+in order, and "as we did before" says how), a step that keeps a copy of what a deletion or discard throws
+away asked for first ("back up then delete the build folder", "commit my changes and delete build/", "make a backup
+and then delete …"; Ember can't tell it was done), asking to be asked first ("ask me first", "check
 with me", "wait for my ok", "show me the command first", "let me see the command", "run it by me", "on my go", "hold
 off", "I'll say when") or asking how ("explain how to delete build/ and delete src/"); "tell me if it worked", "say if it
 worked", "let me know when it's done", "let me see the output", "if you can", "as soon as possible", "if it exists" and a time or
@@ -442,10 +493,16 @@ the Desktop folder). Ember reads places loosely, so a folder named for something
 tests in frontend and delete the build folder") asks too. A name written without a folder is the one in the folder
 the task works in, so a command that changes folder first asks unless your words named a folder the file is in: after
 "delete the build folder", `cd .. && rm -rf build` and `cd frontend && rm -rf build` ask; after "delete the build
-folder in frontend", `cd frontend && rm -rf build` is announced. Anything broader than what you named asks: a force flag, a
+folder in frontend", `cd frontend && rm -rf build` is announced. A word before a deleted path's name, or between it
+and "folder", that names nothing in the path describes another one, so it asks: "delete the production build folder"
+(or the staging, frontend, other, remote, shared, release or debug one, or "the build output folder") never covers `rm
+-rf build`, nor `rm -rf staging/build`, which "delete the staging build folder" covers; a word that only says what it
+is like ("the old, stale, whole, entire, generated, empty or huge build folder") doesn't. Anything broader than what you named asks: a force flag, a
 wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
 as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
-build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).
+build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`). The
+first word in what you said that names the folder must say so too: "before you build, delete the build folder" and
+"the build is broken, delete the build folder" ask, because their first "build" isn't the folder.
 
 **When your words name another computer.** If your words for the task also name a computer other than the one the task
 runs on, even without a place word ("build-01 delete build/" while Ember works on this computer), or a place that
@@ -551,7 +608,8 @@ Enter, or to the end when the command can't take typing), and hides the password
 (GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face, GitLab, SendGrid, DigitalOcean and Twilio tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, a Docker config's `"auth"`, a one-line `.netrc` entry's password, passwords
 in URLs, a password given to a program's short option such as `mysql -p…` (also after a prompt such as `C:\>`, a
 comment's `#` or from a quoted folder), `curl -u user:…`, `docker login -p …` or `sshpass -p …`, the same where the arguments are a list
-(`["mysql", "-uroot", "-p…"]`, `["sshpass", "-p", "…"]`, `"--password", "…"`), and the like). Hiding is best effort: a secret in a form Ember doesn't recognise can get through, so don't print
+(`["mysql", "-uroot", "-p…"]`, `["sshpass", "-p", "…"]`, `"--password", "…"`, but not after `"--no-password"`, nor `"none"`,
+`"string"` or the option's own name, as in `"--api-key", "api_key"`), and the like). Hiding is best effort: a secret in a form Ember doesn't recognise can get through, so don't print
 secrets on purpose.
 
 Output that reads like instructions to Ember ("ignore previous instructions", "you are an AI assistant", `curl … |

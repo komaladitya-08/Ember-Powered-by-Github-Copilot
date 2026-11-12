@@ -1,8 +1,8 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character, type Emotion } from "@ember/characters";
-import { AUTONOMOUS_TAG, RISKY_TAG, WHOLE_READ_HINT, announcement, onPress, plainStream, stepParts, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
-import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type WholeText } from "../../shared/overlay";
+import { AUTONOMOUS_TAG, RISKY_TAG, WHOLE_READ_HINT, onPress, plainStream, stepParts, wholeInView, wholeJudged, wholeNext, wholePage, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
+import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type TaskCard, type WholeText } from "../../shared/overlay";
 import { cardAutonomous, cardRisky, cardTask, cardText } from "./card";
 import { cardClear, cardNeed, linesKept, waitsForRoom, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
@@ -11,7 +11,8 @@ import { cardLines, cardStateWord } from "../overlay/stack";
 import type { Settings } from "../../main/settings";
 import { micBadge } from "../../shared/mic";
 import { presenceOf } from "../../shared/presence";
-import { HandleLive } from "./live";
+import { HandleLive, micOpen, questionOf } from "./live";
+import { LIVE_SETTLE_MS } from "../shared/held-live";
 import { mayRest } from "./rest";
 import { watchPixels } from "../shared/pixels";
 import { handleLine, pillLine } from "./line";
@@ -81,30 +82,45 @@ $("risk").textContent = RISKY_TAG;
 $("auto").textContent = AUTONOMOUS_TAG;
 let wasStreaming = false;
 /**
- * Without a compositor nothing else speaks for Ember: finished answers, questions and problems are said once
- * in the card's live region, as the overlay's bubble does (with one, the bubble does it and the pill says nothing).
+ * Without a compositor nothing else speaks for Ember: finished answers, questions and problems are said once in the
+ * card's live region, as the overlay's bubble does (with one, the bubble does it and the pill says nothing), and so are
+ * the status line and the microphone's news (live.ts): in the card, and the microphone's in the pill.
  */
-let announced = "";
-/** What it last said that from (only the news once a question's whole text has all been shown: wholeReadNews). */
-let announcedView: BubbleView | null = null;
-/** The status line and the microphone's news, each said once (live.ts): in the card, and the microphone's in the pill. */
 const live = new HandleLive();
 /**
  * Reads out what changed: the bubble's words, and the status line ("Using your mouse: move it to take over", "I only
  * caught the first part…"), which the card shows even under a bubble, and news about the microphone. All at once go
- * out together (one live update).
+ * out together (one live update). Once the bubble's words have gone and nothing else is said, the region is emptied, so
+ * a browse-mode read never finds a question that has gone, and the next one in the same words is a change.
  */
 function announce(b: BubbleState, status: string | null, micNews: string | null): void {
   const parts: string[] = [];
-  // What was said while the card showed nothing new isn't repeated when it shows again.
-  if (b.visible) {
-    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}), ...(b.risky ? { risky: true } : {}), ...(b.stalled ? { stalled: true } : {}) };
-    const text = announcement(view, name);
-    // The same question, its whole text now all shown: only that news, not the question and its text again.
-    if (text && text !== announced) { parts.push(wholeReadNews(announcedView, view) ?? text); announced = text; announcedView = view; }
-  }
+  const view: BubbleView = b.visible
+    ? { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}), ...(b.risky ? { risky: true } : {}), ...(b.stalled ? { stalled: true } : {}) }
+    : { visible: false, mood: b.mood, title: "", thought: "", streaming: false };
+  const said = live.bubble(view, questionOf(b.actions), name);
+  if (said) parts.push(said);
   parts.push(...live.news(status, micNews));
   if (parts.length) $("live").textContent = parts.join(" ");
+  else if (said === "" && $("live").textContent) $("live").textContent = "";
+}
+/**
+ * A task's end, said on the card in a status region of its own (`#task-live`): with Home closed nothing else said it,
+ * and a task that worked in the corner shows no bubble as it ends (accessibility-c8-2). Held while the microphone opens
+ * or is open for a request (micOpen) and for LIVE_SETTLE_MS after it closes, as Home holds its own (holdTaskNews).
+ */
+let tasksNow: readonly TaskCard[] = [];
+let newsHeld = false;
+let newsSoon: ReturnType<typeof setTimeout> | undefined;
+function sayTasks(): void {
+  const news = live.taskNews(tasksNow, newsHeld);
+  if (news) $("task-live").textContent = news;
+}
+function tasksNews(s: EmberState): void {
+  tasksNow = s.tasks;
+  if (micOpen(s)) { clearTimeout(newsSoon); newsSoon = undefined; newsHeld = true; }
+  else if (newsHeld && newsSoon === undefined) newsSoon = setTimeout(() => { newsSoon = undefined; newsHeld = false; sayTasks(); }, LIVE_SETTLE_MS);
+  sayTasks();
 }
 // ── A question's whole text (review #116): all of a long typed text under its sentence, as the bubble shows it, and
 // its Allow waiting until all of it has been in view on the card (packages/bubble/src/whole.ts judges it) ──
@@ -270,7 +286,8 @@ api.onState(s => {
     return;
   }
   announce(b, s.status ?? null, micNews);
-  // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
+  tasksNews(s);
+  // The card:a short label or title in bold, the words under it, then the question's buttons and the running task.
   const task = cardTask(s.tasks, b.visible ? b : undefined);
   // Beside Ember's name: where the bubble's task acts (its question is about that computer), else the picker's choice.
   renderTarget(s, cardBadge({ where: b.visible ? b.where : undefined, task: b.visible && !!b.task }, s.target));

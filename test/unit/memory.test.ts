@@ -950,6 +950,25 @@ describe("what memory never keeps", () => {
   ])("keeps %j, a list of arguments that prompts for its password or names a port (memory-q6-1)", text => {
     expect(memoryRefusal(text)).toBeNull();
   });
+  // An option that takes no value, the option's own name, a null or type word, a mapping's key (memory-x7-1), each
+  // with its look-alike that holds a value, which is refused.
+  it.each([
+    ['The backup runs ["pg_dump", "--no-password", "mydb"]'], ['The default is ["--token", "none"]'], ['parser.add_argument("--debug", action="store_true"); ("--password", "store_true")'],
+    ['@click.option("--api-key", "api_key", envvar="API_KEY", help="API key")'],
+    ['{"name": "--password", "description": "Password for the database"}'], ['  ["--password", "string", "The password"],'],
+  ])("keeps %j, which only declares or switches off an option named like a secret (memory-x7-1)", text => {
+    expect(memoryRefusal(text)).toBeNull();
+  });
+  it.each([
+    ['The backup runs ["pg_dump", "--no-password", "--password", "Wint3r!Sh0p"]'], ['The default is ["--token", "none1234"]'], ['("--password", "store_true!")'],
+    ['@click.option("--api-key", "api_key_9f8e7d6c")'], ['["--token", "Auth_Token"]'], ['["--nonce-token", "abc123xyz"]'],
+    ['{"cmd": ["--password", "hunter2"], "description": "x"}'], ['args.push("--password", "hunter2")'], ['["--password", "strings"]'],
+    ['["--secret", "top_secret"]'], ['["--token", "s3cr3t_token"]'], ['("--password", "winter2024_password")'],
+    ['parser.add_argument("--token", "auth_token", help="x")'], ['case "--password", "hunter2":'],
+  ])("refuses %j and saves nothing, the look-alike that holds a value (memory-x7-1)", text => {
+    expect(memoryRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: [{ name: "User" }], source: "user" }).kind).toBe("refused");
+  });
 
   it.each([
     [`My OpenAI key is sk-proj-${run(48)}_${run(20)}`], [`OpenAI key sk-${run(48)}`], [`Anthropic key sk-ant-api03-${run(90)}`],

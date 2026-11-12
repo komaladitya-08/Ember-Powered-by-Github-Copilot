@@ -689,8 +689,8 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
 
 /**
  * Why the user's own provider can't take a request now, from a connection test (integrations-1): one sentence for the
- * status, or null when something answered (a refused key or a missing model list is the request's to say, not
- * this). `local`: the endpoint is on this computer (shared/provider.ts keyNeeded false), where nothing listening means
+ * status, or null when something answered (a refused key or a missing model list is the request's to say, and the
+ * ready status's: localProviderLine, never this). `local`: the endpoint is on this computer (shared/provider.ts keyNeeded false), where nothing listening means
  * the model server (Ollama, LM Studio) isn't running. Each says Ember tries again: the host does (retryLater).
  */
 export function providerDown(r: TestResult, host: string, local: boolean): string | null {
@@ -698,4 +698,16 @@ export function providerDown(r: TestResult, host: string, local: boolean): strin
   if (r.cause === "timeout") return `${r.why} Ember will try again in a moment.`;
   if (local) return `Ember can't reach the model server on this computer (${host}). Start it, and Ember will connect in a moment.`;
   return `Ember can't reach ${host}. Check the address and the network: Ember will try again in a moment.`;
+}
+
+/**
+ * The ready status for the user's own provider on this computer, by the start's connection test of it (`r`; null when
+ * none was made): "Connected" only to an answer with a model list. One without (Ollama's address with no /v1, a web
+ * page, or a chat-only gateway adopted with "Use it as typed") is in use, and Test connection says what it answered,
+ * in words that don't call a gateway that works wrong; one that answered otherwise (a key refused, an error) is in use
+ * too, and its first request says the rest. Never "Connected" to either (integrations-r8-1).
+ */
+export function localProviderLine(r: TestResult | null, host: string): string {
+  if (!r || r.ok) return `Connected to ${host}.`;
+  return r.cause === "no-list" ? `Using ${host}. It answered, but without a model list: Test connection under Model provider says more.` : `Using ${host}.`;
 }

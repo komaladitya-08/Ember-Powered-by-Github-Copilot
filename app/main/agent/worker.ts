@@ -914,14 +914,17 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
       const controls = complete ? nodes.flatMap((n): DialogControl[] => {
         const up = chain(n);
         if (!up || n.role === "title bar") return [];
-        const control = CONTROL_ROLE.test(n.role) || n.editable === true || n.states.includes("editable") || (n.actions?.length ?? 0) > 0;
+        const editable = n.editable === true || n.states.includes("editable");
+        const control = CONTROL_ROLE.test(n.role) || editable || (n.actions?.length ?? 0) > 0;
         if (!control) return [];
         if (CAPTION_ROLE.test(n.role) && up.some(a => a.role === "title bar")) {
           const label = normalizeLabel(n.name).trim();
           if (CAPTION_CLOSE.test(label)) return [{ role: n.role, name: n.name, caption: true }];
           if (CAPTION_OTHER.test(label)) return [];
         }
-        return [{ role: n.role, name: n.name }];
+        // (Whether it can be typed into: policy.ts judges a working dialog by its title alone, since its words may be what
+        // was written there.)
+        return [{ role: n.role, name: n.name, ...(editable ? { editable: true } : {}) }];
       }) : undefined;
       return {
         name: cur.name, text: words.slice(0, DIALOG_TEXT_MAX), ...(alert ? { alert } : {}), ...(page ? { page } : {}),

@@ -2341,6 +2341,56 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "mytool ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ..",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "rimraf ~",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "mytool src",
+   "verdict": "run"
+  },
+  {
+   "cmd": "fdupes -o ~/.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "env jdupes -o ~/.profile .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "./configure --prefix ~/.local",
+   "verdict": "run"
+  },
+  {
+   "cmd": "rimraf '{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   }
  ]
 }

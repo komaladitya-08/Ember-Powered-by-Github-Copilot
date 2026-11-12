@@ -16,7 +16,7 @@ import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, lostWords, noAnswer, plainText, SIGN_IN_REFUSED, type LostWords, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
-import { providerDown, type ActiveProvider, type TestResult } from "../provider";
+import { localProviderLine, providerDown, type ActiveProvider, type TestResult } from "../provider";
 import { keyNeeded } from "../../shared/provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
 import { modelsManaged, type AdminPolicy } from "../admin";
@@ -150,9 +150,12 @@ export interface AgentStatus {
   switchPending?: boolean;
   /**
    * The model service this connection uses when it isn't GitHub Copilot: the organisation's ("admin"), the user's own
-   * ("user") or a development test server ("test"), by its host only (never the key).
+   * ("user") or a development test server ("test"), by its host only (never the key). `listed`, ready with the user's
+   * own provider on this computer: whether the start's check of it answered with a model list (only then does the
+   * detail say "Connected to"), so first run says what Models & connections says (integrations-r8-1, -x8-2). Absent
+   * for a host elsewhere, which isn't asked at a start.
    */
-  service?: { kind: ActiveProvider["kind"]; host: string };
+  service?: { kind: ActiveProvider["kind"]; host: string; listed?: boolean };
 }
 
 /** One line of the conversation, kept in memory for this session only (the settings window shows them). */
@@ -214,7 +217,11 @@ export interface HostOptions {
     pauseAccount?(why?: MemoryWait): void;
     accountReady?(): boolean;
     useModel?(model: OneShot | null): void;
-    taskDone?(title: string, result: string): void;
+    /**
+     * A task finished with this result. `asked`: the mark (`asked`) of the request that started it, so a result from a
+     * task asked before a Forget is never learned from, however long it ran (memory-x8-4); absent when it can't be told.
+     */
+    taskDone?(title: string, result: string, asked?: number): void;
     intent?(text: string, how: { own: boolean }): string | null;
     /**
      * "Remember…" while memory isn't in force: what Ember says after the conversation's answer, since the conversation
@@ -1116,6 +1123,8 @@ export class AgentHost {
   private finishedLately: Task[] = [];
   /** The target each task started by the conversation acts on, until it finishes (its result names a remote). */
   private readonly taskBindings = new Map<string, TargetBinding>();
+  /** Memory's mark of the request that started each task the conversation started, until it finishes (memory-x8-4). */
+  private readonly taskMarks = new Map<string, number>();
   /** Whether each running remote task has used its computer's desktop (a lock there stops only those, §5.3.4 step 8). */
   private readonly taskDesktop = new Map<string, () => boolean>();
   /** Each running task's hold on its command runner's status line (followStatus), let go when it finishes. */
@@ -1877,12 +1886,15 @@ export class AgentHost {
       service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl) } : undefined,
     });
     let unreachable = false;
+    // What that check answered, for the ready status: "Connected" only with a model list (integrations-r8-1).
+    let checked: TestResult | null = null;
     try {
       // A model server on this computer (Ollama, LM Studio) is asked first whether it listens: nothing else would ask it
       // before the first request, which then waits about 24 s to fail (integrations-1). Only there: a remote host's
       // test goes through Electron's proxy settings, which may differ from the runtime's, so it can't veto a connect.
       if (provider?.kind === "user" && this.o.probeProvider && !keyNeeded(provider.config.baseUrl)) {
-        const down = providerDown(await this.o.probeProvider(), serviceHost(provider.config.baseUrl), true);
+        checked = await this.o.probeProvider();
+        const down = providerDown(checked, serviceHost(provider.config.baseUrl), true);
         if (gen !== this.gen) return;
         if (down) throw new ProviderDown(down);
       }
@@ -2036,6 +2048,8 @@ export class AgentHost {
           const text = why ? `${task.title}: ${why}` : taskOutcome(task);
           const binding = this.taskBindings.get(task.id);
           this.taskBindings.delete(task.id);
+          const mark = this.taskMarks.get(task.id);
+          this.taskMarks.delete(task.id);
           this.taskDesktop.delete(task.id);
           this.taskStatus.get(task.id)?.();
           this.taskStatus.delete(task.id);
@@ -2048,7 +2062,7 @@ export class AgentHost {
           const asked = tasks?.askedWith(task.id);
           if (asked && !why) this.retryWords.set(said, { ...asked, task: task.id });
           // Memory learns from what a finished task found (source `task`: context, never the user's word).
-          if (this.memoryOn && task.status === "done" && summary && !why) this.o.memory?.taskDone?.(task.title, view ? `${summary}\n${view}` : summary);
+          if (this.memoryOn && task.status === "done" && summary && !why) this.o.memory?.taskDone?.(task.title, view ? `${summary}\n${view}` : summary, mark);
           // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).
           // Quitting: nothing more is shown or said.
           if ((this.stoppedByAll.delete(task.id) && task.status === "cancelled") || this.quitting) { presenter.quiet(); return; }
@@ -2061,6 +2075,7 @@ export class AgentHost {
           this.outcomes.set(task.id, presenter);
         },
         onRemoved: (task, byUser) => {
+          this.taskMarks.delete(task.id);
           const p = this.outcomes.get(task.id);
           this.outcomes.delete(task.id);
           // The user closed the card: its result, if it hasn't shown yet, doesn't pop up afterwards.
@@ -2257,6 +2272,8 @@ export class AgentHost {
           }
           const binding = bound?.binding;
           const where = binding ? whereWords(binding) : undefined;
+          // When its request was asked, for memory: a Forget since then keeps its result from being learned (memory-x8-4).
+          const mark = this.conductor?.askedMark ?? this.o.memory?.asked?.();
           const t = tasks.start(goal, {
             target: this.contextFor(r, binding), userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined,
             ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}), ...(said.typedOnly ? { typedOnly: true } : {}),
@@ -2271,6 +2288,7 @@ export class AgentHost {
           // That task's card goes, as its Try again's does: a press of it can't start a second attempt (tasks-approvals-r2).
           if (said.retried) tasks.dismiss(said.retried.task);
           if (binding) this.taskBindings.set(t.id, binding);
+          if (mark !== undefined) this.taskMarks.set(t.id, mark);
           // Asked for in the owner's verified voice: its own questions may take a short spoken yes (owner decision of
           // 2026-11-03; voice-answer.ts TaskVoiceTrust).
           if (r?.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
@@ -2305,7 +2323,9 @@ export class AgentHost {
           // Stop, or a restart or sign-out, came while the window was read: nothing starts (as the conductor refuses after Stop).
           if (stops !== this.stops || gen !== this.gen) return "The user just stopped everything. Don't start anything now; say you've stopped.";
           if (why) return `Ember can't guide here: ${why} Don't tell the user to follow Ember's pointer; explain the steps in words instead, briefly.`;
+          const mark = this.conductor?.askedMark ?? this.o.memory?.asked?.();
           const t = tasks.start(goal, { target, mode: "guide" });
+          if (mark !== undefined) this.taskMarks.set(t.id, mark);
           touch(read, t.id);
           this.announced.add(t.id);
           // Guides have a limit of their own: this one waits for one before it to end (nothing points yet, so no "follow me").
@@ -2344,10 +2364,11 @@ export class AgentHost {
       })(system, prompt, signal);
       this.projectService = kindOf(provider);
       const where = provider?.kind === "user" ? serviceHost(provider.config.baseUrl) : null;
-      // A model server on this computer answered the start's probe: connected. A host elsewhere isn't asked until a
-      // request reaches it, so it is only in use, and one with no key saved may refuse requests (integrations-r3).
+      // A model server on this computer answered the start's probe with a model list: connected; answered without one,
+      // in use, with Test connection to say more (integrations-r8-1). A host elsewhere isn't asked until a request
+      // reaches it, so it is only in use, and one with no key saved may refuse requests (integrations-r3).
       const remote = provider?.kind === "user" && keyNeeded(provider.config.baseUrl);
-      const using = remote ? `Using ${where}${provider.config.apiKey ? "." : ", with no API key saved. If it needs one, save it under Model provider."}` : `Connected to ${where}.`;
+      const using = remote ? `Using ${where}${provider.config.apiKey ? "." : ", with no API key saved. If it needs one, save it under Model provider."}` : where ? localProviderLine(checked, where) : "";
       const signedIn = login ? `Signed in as ${login}.` : where ? using : "Connected.";
       this.setStatus({
         phase: "ready",
@@ -2365,7 +2386,8 @@ export class AgentHost {
         }),
         conductorModel: choice.conductor,
         workerModel: choice.worker,
-        service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl) } : undefined,
+        // What the start's check found goes with it, for first run's words (integrations-x8-2).
+        service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl), ...(checked ? { listed: checked.ok } : {}) } : undefined,
       });
       this.o.log.info("agent.ready", { login, conductorModel: choice.conductor, workerModel: choice.worker, models: models.length, runtimeDefault });
       // Connected: the wait before the next offline try starts short again. (Crashes count for ten minutes:

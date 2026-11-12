@@ -11,6 +11,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Conductor, conductorTools, type ConductorDeps } from "../../app/main/agent/conductor";
 import { Reminders } from "../../app/main/agent/reminders";
+import { MemoryLearning } from "../../app/main/memory/learning";
+import { MemoryService } from "../../app/main/memory/service";
 import { emberSystemMessage, NO_CAPS } from "../../app/main/agent/persona";
 import { Presenter, stepOf } from "../../app/main/agent/presenter";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
@@ -215,6 +217,59 @@ describe("the user's words a turn's tools check against", () => {
     emit({ type: "session.idle", data: {} });
     expect(m.calls.heard).toEqual([["I prefer short answers", "Noted.", false], ["I work on Ember", "Nice.", true]]);
     expect(m.calls.forRequest).toEqual([["I prefer short answers", false], ["I work on Ember", true]]);
+    await c.stop();
+  });
+
+  it("hands memory each turn with the mark of when its request was asked, also for a request that waited behind another (memory-r8-1)", async () => {
+    let drops = 0;
+    const heard: [string, number | undefined][] = [];
+    const store = { ...memoryProbe().store, asked: () => drops, heard: (said: string, _reply: string, _own: boolean, asked?: number) => { heard.push([said, asked]); } };
+    const { c, emit } = await conductorWith({ memory: store });
+    await c.ask("Remember that I'm vegetarian");
+    emit({ type: "user.message", data: { content: "Remember that I'm vegetarian" } });
+    // The user forgets the fact while that turn's answer is still coming, then asks something else.
+    drops++;
+    await c.ask("I live in Leeds");
+    emit({ type: "assistant.message", data: { content: "Got it." } });
+    emit({ type: "session.idle", data: {} });
+    emit({ type: "user.message", data: { content: "I live in Leeds" } });
+    emit({ type: "assistant.message", data: { content: "Noted." } });
+    emit({ type: "session.idle", data: {} });
+    expect(heard).toEqual([["Remember that I'm vegetarian", 0], ["I live in Leeds", 1]]);
+    await c.stop();
+  });
+
+  const CUT_SHORT: [string, (c: Conductor) => Promise<void> | void, Record<string, unknown>][] = [
+    // A wake while Ember answers (main.ts's onVoice "wake"), or a conversation cut-in: the answer is quietened.
+    ["a wake", c => c.interruptAnswer(), {}],
+    // Stop, or a cut-in that replaces the turn: the runtime aborts it.
+    ["Stop", c => c.abort(), { aborted: true }],
+  ];
+
+  it.each(CUT_SHORT)("gives what the remember tool kept in a turn ended by %s to no later turn, whose own facts are still learned (memory-x8-2)", async (_how, cut, idle) => {
+    let now = Date.parse("2026-11-12T10:00:00Z");
+    let n = 0;
+    const memory = new MemoryService({ dir: fs.mkdtempSync(path.join(dir, "memory-")), log: quiet, clock: { now: () => new Date(now), id: p => `${p}${++n}` } });
+    const learning = new MemoryLearning({
+      memory, inForce: () => true, questionsOn: () => false, askedAt: () => null, setAskedAt: () => undefined, idle: () => true, locked: () => false, say: () => true, log: quiet, now: () => now,
+    });
+    learning.setModel(async () => JSON.stringify({ facts: [{ from: 1, fact: "Works from home on Fridays", about: [{ name: "User", kind: "person" }], confidence: 0.9, evidence: "I work from home on Fridays" }] }));
+    const { c, sent, config, emit } = await conductorWith({ memory: learning.conductorMemory() });
+    await c.ask("Remember that I work at Globex");
+    emit({ type: "user.message", data: { content: sent.at(-1) } });
+    expect(await run(byName(config().tools, "remember"), { fact: "Works at Globex", about: [{ name: "User", kind: "person" }] })).toMatch(/^Remembered/);
+    // The turn is cut short: it ends, and isn't read.
+    await cut(c);
+    emit({ type: "session.idle", data: idle });
+    now += 4000;
+    await c.ask("I work from home on Fridays");
+    emit({ type: "user.message", data: { content: sent.at(-1) } });
+    emit({ type: "assistant.message", data: { content: "Noted." } });
+    emit({ type: "session.idle", data: {} });
+    now += 61_000;
+    expect(await learning.flush()).toBe(1);
+    expect(memory.list().map(i => i.text).sort()).toEqual(["Works at Globex", "Works from home on Fridays"]);
+    memory.stop();
     await c.stop();
   });
 

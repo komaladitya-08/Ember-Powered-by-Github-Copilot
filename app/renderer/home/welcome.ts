@@ -223,6 +223,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const text = step === "sign-in" ? signInText({
       managed: !!status?.admin.provider, locked: locked(), held: !!status?.admin.held,
       own: ownInUse() ? agent?.service?.host : null, ownPhase: agent?.phase === "ready" || agent?.phase === "error" ? agent.phase : "starting", ownOffered: ownOffer().offered,
+      ownListed: ownInUse() ? agent?.service?.listed : undefined,
     }) : step === "consent" && changes().length ? CONSENT_AGAIN : using ? providerInUse(using) : STEP_TEXT[step];
     $("w-title").textContent = text.title;
     $("w-lead").textContent = text.lead;
@@ -631,7 +632,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const using = visitInUse && !edited && providerCheck.phase === "idle" && settings?.provider.on ? inUseHost() : null;
     providerGoesOn = !!using || providerCheck.phase === "ok";
     if (using) {
-      const v = providerInUseLine({ host: using, phase: ownInUse() ? agent?.phase ?? null : "starting", detail: agent?.detail });
+      const v = providerInUseLine({ host: using, phase: ownInUse() ? agent?.phase ?? null : "starting", detail: agent?.detail, listed: ownInUse() ? agent?.service?.listed : undefined });
       if (result.textContent !== v.line) result.textContent = v.line;
       result.className = `w-status ${v.tone}`;
       return { label: NAV.next, why: "" };

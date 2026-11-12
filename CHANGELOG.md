@@ -236,7 +236,7 @@ the automated tests don't stand in for them.
 - **Not yet**: connectors (GitHub-hosted services), Copilot `extension.mjs` extensions, extensions in tasks (only the
   conversation uses them), programs from extensions on macOS, and servers that need you to sign in to them.
 
-### Product audit fixes, 7 to 11 November
+### Product audit fixes, 7 to 12 November
 
 #### First run
 
@@ -244,8 +244,9 @@ the automated tests don't stand in for them.
   step is titled “Your own model provider” and offers **Check my provider's details**, and the last step says it isn't
   connected yet instead of “Not signed in yet”; once it answers, first run says “Connected to your own provider” instead
   of “Connected to Copilot”, or, as Home does, “Using your own provider” (and “I'm using” in the step's own words) for
-  one at an address elsewhere. Back from the setup check returns to the provider's step, and where your organisation
-  turned your own provider off, first run doesn't offer it.
+  one at an address elsewhere, or one on this computer that answered without a model list or refused the key. Back from
+  the setup check returns to the provider's step, and where your organisation turned your own provider off, first run
+  doesn't offer it.
 - **A provider of your own that is already in use shows as in use** on its step, and Back leaves it on: **Use GitHub
   Copilot instead** is the way back to Copilot from there. New details typed there are checked before they replace the
   ones in use: a check that fails, or that you leave the step during, changes nothing, and the step says so in first
@@ -441,6 +442,9 @@ the automated tests don't stand in for them.
   inside it, a Mac's four keys at Larger text included: a shortcut wraps under its own keycaps only where it alone is
   wider than the line, no line starts or ends with a “·”, and screen readers hear no “·” before the first key.
 - **Until first run is finished, the handle says “Finish setting up”,** and its menu starts with a way back to setup.
+- **Without a compositor, screen readers hear every question on the corner card,** one in the same words as the last
+  too, and what comes back after “Listening…” only once. The card also says when a task ends (“Print two lines: Done”),
+  with Home closed too, holding it while the microphone or Listen once is open.
 
 #### Voice
 
@@ -651,8 +655,19 @@ the automated tests don't stand in for them.
   a form or panel named for a risky act, a page's button with no name at all (as Ember's doubt), and any button of a
   payment page, which a real click used to miss. Ember never types into card-detail, cardholder or pass-phrase fields,
   and under a lockdown **Sign in** starts nothing at GitHub. In places this asks more than it should: a headline link
-  such as “Reserve Bank raises interest rates again”, a tab named “Email”, any control on a page whose title only
-  mentions a payment, and “Disable Line Numbers” in a window titled for security.
+  such as “Reserve Bank raises interest rates again” or a tab named “Email” (though no longer as something you didn't
+  ask for that keeps the rest of the task asking), any control on a page whose title only mentions a payment (the
+  question now says why: “The window's title mentions billing, so this may pay for something.”), and “Disable Line
+  Numbers” in a window titled for security.
+- **Going past a warning asks every time.** “Enable Macros”, “Enable Content”, “Keep anyway”, “Open Anyway”, “Proceed to
+  example.com (unsafe)”, “Turn off Safe Browsing”, “Load Remote Content” and their like ask by a click or by Enter,
+  never with Always and never only announced, and the question says it goes past a warning or turns off a protection;
+  “Go to page 2” and “Disable spell check” don't. In a dialog whose words ask (“Are you sure…?”), or a message box on
+  Linux, an answer that doesn't back off asks every time, quoting the dialog: a browser's “Leave page”, “Reload”, “Close
+  tabs” and “Resend” (on every system) and “No” to saving your changes; Cancel, Stay, “Not now” and “Remind Me Later”
+  don't. In a window Ember could read only in part, a question written in it, as in a mail you're composing, makes its
+  buttons ask too. With Work without asking on, Enter in a search box that also types a message or picks people (“Search
+  or type a message”, “Search people to add”), or in a window for sending money or sharing, asks.
 
 #### Commands and other computers
 
@@ -680,9 +695,9 @@ the automated tests don't stand in for them.
   `move`, `ren`, `xcopy`, `robocopy` and `mklink` on Windows, and when `make`, `pytest`, `npm`, `python3 -m` or `node
   -r` picks up a downloaded Makefile, test file, `package.json` or module, the card says “Runs a file downloaded in this
   task.” A downloaded data file copied, moved, rsynced or robocopied into a folder, in WSL too, marks only that file, so
-  `npm test` or `make` in that folder doesn't ask because of it. After files Ember can't name are copied into a folder,
-  running or reading a file from there asks, while the folder's own tools ask only when a download could be one of their
-  files.
+  `npm test` or `make` in that folder doesn't ask because of it where Ember can tell which folder it is. After files
+  Ember can't name are copied into a folder, running or reading a file from there asks, while the folder's own tools ask
+  only when a download could be one of their files.
 - **A download whose saved name Ember can't tell asks** (“Downloads to a file Ember can't name.”): one the server or a
   list names (`curl -OJ`, `wget -r`, `wget -i`, `aria2c -i`), one saved under a name or folder held in a variable (`curl
   -o "$f"`, and the same with wget, aria2c, axel, fetch, lwp-download or PowerShell's `-OutFile`) a WebClient's
@@ -697,6 +712,30 @@ the automated tests don't stand in for them.
   downloaded where the shell put it, and a downloaded patch applied (`patch`, `git apply`, `git am`, also with `-d` or
   `-C`) or code pulled from an address (`git pull https://…`) marks the files it changes, so the next `make`, `npm test`
   or build script there asks.
+- **What a download brings in asks in more ways.** Once a task has downloaded anything, a build tool, test runner or
+  `python3 -m` in a folder Ember can't name asks (“May run a file downloaded in this task”), so `git clone …; cd app;
+  npm test` asks as `cd app && npm test` did, and so does `cd src; npm test` after an unrelated download. Java (`-jar`,
+  `-cp`, a source file), mono, wine, `node x`, `awk -f`, `sed -f` and `psql -f` given a downloaded file, and `go run .`
+  or `cargo run` over downloaded code ask; a compiler's output, a decompressed file and `dpkg -x`'s folder keep the
+  mark; svn, hg, rclone, `pip download -d`, sponge, `gh gist clone` and `git submodule add` mark where they save; and
+  curl's `-K`, wget's `--config` and an sftp, ftp, lftp, tftp or smbclient session count as a download Ember can't name,
+  unless Ember can see that all it does is send. Fetched text given to a program that writes a file it reads (`curl -s
+  URL | make x > x`) asks.
+- **A variable that names the program a build tool runs is read:** `CC='sh -c "curl …|sh"' make` asks as `make CC='…'`
+  does, and so do `GOFLAGS=-toolexec=…`, `TAR_OPTIONS=--to-command=…` (and tar's own `--to-command`, `-I` or
+  `--use-compress-program` given a variable, or GNU's `-F`), `PYTEST_ADDOPTS='-p …'`, cmake's compiler and npm's
+  script shell holding a command, while `CC=clang`, `CFLAGS=-O2`, a connection string, a filter such as
+  `TEST_FILTER='unit|integration'` and a linker's name run. An rclone copy with more words than it takes asks (“Ember
+  can't tell where it copies files to.”).
+- **rimraf, del-cli and other deleters ask or are refused as rm is:** `rimraf ~` and `yarn run rimraf ~` are refused,
+  `rimraf src` asks, and so do grm, scrub, gvfs-rm, trash-rm, fdupes or jdupes with `-d`, bfg and git-filter-repo. A
+  pattern they expand themselves is judged as one, and one whose braces, read as the shell reads them, reach Ember's
+  folder or your home folder is refused. A program Ember doesn't know, given your home folder, a folder that holds it
+  or one holding Ember's files, asks (`mytool ~`, `stow -t ~ dotfiles`); `cd build && qmake ..` and `./configure
+  --prefix ~/.local` run.
+- **Where every command asks because commands run as root or an administrator,** Settings shows **Ask me before every
+  command** on, with “Commands here run as the administrator, so Ember asks before every one.” under it, and it can't
+  be turned off there.
 - **Command questions say what really happens:** “the current folder” (“Deletes what it finds under the current
   folder.”) instead of “.”, “..” or “{}”; “Deletes everything in the current folder.” for `rm -rf *`, and after a cd the
   folder it works in (“Deletes everything in ~/Documents.”), as for an unpack; folders in your home folder from ~, as
@@ -741,7 +780,10 @@ the automated tests don't stand in for them.
   delete dist/”, “kill these processes: 1234 and 5678”), and a bare `gh pr merge`, which merges the current branch's
   pull request, asks when your words number one. A place said anywhere in your words that isn't where the command works
   asks too (“at the root of frontend/”, “on the server, delete the build folder”, “the frontend one”), as does a `cd` to
-  another folder before the step.
+  another folder before the step. So do words that describe another folder than the one deleted (“delete the
+  production build folder” for `rm -rf build`), a deadline, a day or each time something happens (“before Friday”,
+  “each time the tests pass”) and a copy asked for first (“back up then delete the build folder”), while an order of
+  steps (“before npm install”, “before we start”) is announced.
 - **Ember refuses a command that reaches its own settings and records through a variable**, as it does when they are
   named. In bash and other POSIX shells that is through a loop's list (`for f in ~/.config/ember/*; do rm -f "$f";
   done`), an assignment (`d=~/.config/ember; rm -rf "$d"`), a pattern after a variable, `set --`, `printf -v`, a
@@ -811,7 +853,10 @@ the automated tests don't stand in for them.
   you to sign in to GitHub, and says so while Ember still can't: that it can't connect when nothing answered, and that
   it still can't use it when the provider answered but a model name or a key is missing.
 - **Your own model provider at a remote address reads “Using” and its address,** not “Connected”, says when no API
-  key is saved for it, and the setup check warns about that.
+  key is saved for it, and the setup check warns about that. A model server on this computer that answered without a
+  model list (Ollama's address without /v1) reads “Using” too, with “It answered, but without a model list: Test
+  connection under Model provider says more.” With no model named, the status line points to the “Conversation model”
+  field below.
 - **Messages about a model service that isn't answering name the one in use,** your own model provider or your
   organisation's, when Ember reconnects and when it stops a task, not Copilot. One behind a proxy that refuses it, or
   whose name doesn't resolve, is said to be out of reach (“Check the network, then ask again.”). Under either, a task
@@ -821,7 +866,8 @@ the automated tests don't stand in for them.
 - **Test connection names your provider's models** (“It lists 1 model: llama3.2:3b.”), and both model fields suggest
   them, so you pick the exact name instead of typing it blind.
 - **The provider's note is announced when you enter its address,** a line under Test connection says why it waits, and
-  once you agree it says where your requests now go. While it waits for you to agree to a new address with nothing else
+  once you agree it says where your requests now go and, after one check of that address, which models it lists or why
+  it isn't answering as a model service. While it waits for you to agree to a new address with nothing else
   connected, Models & connections says so (“Not connected: Ember is waiting for you to agree to use …”) and points to
   the note or the switch, not to a GitHub sign-in. With no GitHub sign-in, a request from the Ask box or your voice gets
   “Your provider needs your OK…”, Home's composer names it (“Agree to use new.example.com in Models & connections, then
@@ -940,9 +986,14 @@ the automated tests don't stand in for them.
   forgetting a learnt word in Settings › Voice says which went. Ember forgets a memory in conversation only when you
   ask, then names it (“Ember forgot: …”) with any notes of its own that went with it and what it remembers again, and
   offers Undo. Undo beside “Ember learned” or “Ember forgot” changes that line in place and keeps focus on it.
-- **A fact you forget stays forgotten** when the turn that said it is read a minute later, and **Settings › Memory lists
-  what is no longer true** (“No longer true since …”) after what holds now, each with its own Forget and counted with
-  the rest, so a replaced fact is never kept out of sight.
+- **A fact you forget or correct stays forgotten** however the turn that said it is worded: a Forget, a correction and
+  Forget everything drop what was said before them and not yet read, and a task you started in the conversation is never
+  learned from after a later Forget (Ember learns those turns' other facts only when you say them again). **Settings ›
+  Memory lists what is no longer true** (“No longer true since …”) after what holds now, each with its own Forget and
+  counted with the rest, so a replaced fact is never kept out of sight.
+- **What you ask Ember to remember is kept once:** reading that turn later no longer adds it again (one kept in quite
+  other words, or a part of it, still may), and the turn's other facts are still learned, except one that only adds to
+  the kept fact's own sentence.
 - **Forgetting a fact forgets Ember's summaries and guesses made from it,** which the list now labels “Ember's
   summary” and “Ember's guess” instead of “From our conversation”, as a summary's Correct… form does.
 - **Forgetting what holds now doesn't bring back the old value.** Forget “Works at Initech” and Ember no longer takes
@@ -975,6 +1026,9 @@ the automated tests don't stand in for them.
 - **Ember notices at once when Copilot stops mid-answer.** It used to show a half answer as “Answering” for up to 20
   seconds; now it says the connection stopped within about 3 seconds and reconnects, and a running task's card says so
   as fast.
+- **Ember no longer holds a processor core when whatever reads its printed log goes away** (`| head` or a closed
+  terminal, with `EMBER_LOG_STDOUT=1`): it stops printing there, instead of rotating its own log away within seconds
+  and ignoring a request to quit.
 - **A Copilot that never answers no longer leaves Ember “Connecting…” for good.** Each step of connecting has a time
   limit; Ember then says “Copilot isn't answering. Ember will try again in a moment.” and tries again.
 - **A crashing accessibility helper no longer spins a processor core.** One that crashed on every request was started
@@ -1098,7 +1152,9 @@ the automated tests don't stand in for them.
 ### Fewer questions while browsing on 5 November
 
 - With **Work without asking** on, Enter in a browser's address bar or a page's search box, a long address, moving between
-  pages and tabs, and closing a tab you asked to close no longer ask. Chat boxes, forms and composers still do.
+  pages and tabs, and closing a tab you asked to close no longer ask. Chat boxes, forms and composers still do, and so
+  does a search box that also types a message or picks people, or one on a payment page or in a window for sending
+  money or sharing.
 - A link whose title has a risky word in it (“Post Malone”) no longer asks, or holds the whole task to asking.
 - Every button on a checkout, payment or billing page now asks, as do “Activate now”, “Start free trial” and “Upgrade now”.
   “Activate now” on a checkout page had gone through unconfirmed.

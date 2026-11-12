@@ -12,7 +12,7 @@ import type {
   Classification, ClassifyContext, CommandObject, DangerClass, Finding, ParsedCommand, ShellFamily, ShellId, WindowsContext,
 } from "./types";
 import { PKG_CLEANS, PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY } from "./types";
-import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
+import { braceGroup, lexPosix, MAX_SIMPLE, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
 import {
@@ -414,6 +414,8 @@ class Classifier {
    * ones) or each line it reads (`read -r l`), for the card.
    */
   loopVars = new Map<string, "for" | "read" | readonly string[]>();
+  /** git remotes this line adds with an address (`git remote add e <url>`), UNSEEN for a name Ember can't see. */
+  addedRemotes = new Set<string>();
   /**
    * Every value the text may give a POSIX variable (a loop's list, an assignment), UNSEEN standing for a part Ember
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
@@ -1290,10 +1292,14 @@ class Classifier {
    * or follows by its name (a Makefile, package.json, conftest.py, a test file: PROJECT_FILE), so running the tool
    * runs the download (commands-remote-c2-2).
    */
-  downloadedProjectFile(folder: string, sc: Scope): boolean {
+  downloadedProjectFile(folder: string, sc: Scope, extra?: RegExp): boolean {
     const all = [...this.ctx.downloaded, ...this.downloads];
+    // A download whose name a build tool runs or follows: one of the shared project files, or one of the tool's own
+    // sources (`.go`/`go.mod` for go, `.rs` for cargo: extra), which `go run .` and `cargo run` build by folder
+    // (commands-remote-r8-2). `extra` is a tool's own, never widened into PROJECT_FILE for every tool.
+    const isProject = (name: string): boolean => PROJECT_FILE.test(name) || (extra?.test(name) ?? false);
     // One of the tool's files, saved under its name.
-    if (all.some(d => d !== folder && unnamedFolder(d, sc.path) === null && isUnder(d, folder, sc.path) && PROJECT_FILE.test(baseName(d, sc.path.flavour)))) {
+    if (all.some(d => d !== folder && unnamedFolder(d, sc.path) === null && isUnder(d, folder, sc.path) && isProject(baseName(d, sc.path.flavour)))) {
       this.namedHit = true;
       return true;
     }
@@ -1304,8 +1310,8 @@ class Classifier {
     })) return true;
     const unnamed = (d: string): boolean => baseName(d, sc.path.flavour) === UNNAMED_COPY;
     // A copy Ember can't name may be one, when a download of this task is one or may be a folder (no extension).
-    const mayBe = all.some(d => !unnamed(d) && (PROJECT_FILE.test(baseName(d, sc.path.flavour)) || !/\.[^.\\/]+$/.test(baseName(d, sc.path.flavour))));
-    return all.some(d => d !== folder && isUnder(d, folder, sc.path) && (unnamed(d) ? mayBe : PROJECT_FILE.test(baseName(d, sc.path.flavour))));
+    const mayBe = all.some(d => !unnamed(d) && (isProject(baseName(d, sc.path.flavour)) || !/\.[^.\\/]+$/.test(baseName(d, sc.path.flavour))));
+    return all.some(d => d !== folder && isUnder(d, folder, sc.path) && (unnamed(d) ? mayBe : isProject(baseName(d, sc.path.flavour))));
   }
 
   /**
@@ -1327,6 +1333,26 @@ class Classifier {
       try { re = globRegExp(resolveTargetPath(f.slice(1), at), sc.path, true); } catch { return true; /* a pattern the matcher can't read may match anything */ }
       // The download, or a folder above it that the pattern names (its copy holds the download).
       return all.some(d => { for (let p = d; p !== posix.dirname(p); p = posix.dirname(p)) if (re.test(p)) return true; return false; });
+    });
+  }
+
+  /**
+   * Whether a glob a program is given to run (`python3 a.p*`) matches a file this task downloaded by name: unlike
+   * `mayBeDownload`, this reads the written pattern, which has `a.v` set (commands-remote-r8-2). A pattern Ember can't
+   * resolve, or one with a part it can't see, matches anything the task downloaded (fail closed).
+   */
+  globMatchesDownload(a: Arg, sc: Scope): boolean {
+    if (!a.glob || !sc.cwd) return false;
+    const all = [...this.ctx.downloaded, ...this.downloads].filter(d => unnamedFolder(d, sc.path) === null);
+    if (all.length === 0) return false;
+    const forms = a.parts ? this.formsOf(a.parts) : [a.v === null ? UNSEEN : PATTERN + (a.pattern ?? a.v)];
+    const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd };
+    return forms.some(f => {
+      if (f.includes(UNSEEN)) return true;
+      const pat = f.startsWith(PATTERN) ? f.slice(1) : f;
+      let re: RegExp;
+      try { re = globRegExp(resolveTargetPath(pat, at), sc.path, true); } catch { return true; }
+      return all.some(d => re.test(d));
     });
   }
 
@@ -1472,6 +1498,94 @@ const PROJECT_FILE = new RegExp([
   "^composer\\.json$", "^build\\.sbt$", "^project\\.clj$", "^sconstruct$", "^(build|workspace)\\.bazel$", "^dockerfile$",
   "^(docker-)?compose\\.ya?ml$", "\\.(test|spec)\\.[cm]?[jt]sx?$", "\\.config\\.[cm]?[jt]s$", "_test\\.go$", "^deno\\.jsonc?$", "^pubspec\\.yaml$",
 ].join("|"), "i");
+
+/** Compilers whose output, built from a downloaded source, is a download too (carryCompiled; commands-remote-r8-2). */
+const COMPILERS = new Set(["gcc", "g++", "cc", "c++", "clang", "clang++", "rustc"]);
+
+/**
+ * Variables whose value is a command a build tool runs (`CC='sh -c …' make`, `PSQL_PAGER=…`): the value is judged as a
+ * command, so an ordinary name (`CC=clang`) runs (commands-remote-c8-1). Wrapper variables that always name a program
+ * are in RISKY_ASSIGNMENTS instead (`RUSTC_WRAPPER`, `CARGO_BUILD_RUSTC_WRAPPER`): those ask however they are set.
+ */
+const PROGRAM_CMD_VARS = new Set([
+  "CC", "CXX", "CPP", "LD", "RUSTC", "OBJC", "OBJCXX", "HOSTCC", "HOSTCXX", "AS", "AR", "NM", "RANLIB", "STRIP",
+  "PSQL_PAGER", "GH_PAGER", "AWS_PAGER", "GCLOUD_PAGER", "DELTA_PAGER", "KUBECTL_EXTERNAL_DIFF", "CLOUDSDK_PYTHON", "LUA_INIT",
+]);
+/** Variables holding a tool's options where a sub-option names a program it runs (`GOFLAGS=-toolexec=…`). */
+const PROGRAM_OPT_VARS = /^(GOFLAGS|GOTESTFLAGS|CGO_[A-Z]*FLAGS|TAR_OPTIONS|RUSTFLAGS|CARGO_[A-Z_]*RUSTFLAGS|PYTEST_ADDOPTS)$/;
+/**
+ * A listed program variable's value that looks like a shell command: any operator that chains or substitutes (`|`, `;`,
+ * `&&`, a substitution, a backtick, a newline — never a lone `&`, `<`, `>` or parenthesis, which a URL or a flag holds),
+ * or a leading shell or interpreter with an argument after it (`sh -c …`, never a bare `python3`): commands-remote-c8-1.
+ */
+const SHELL_SHAPE = /[|;`\n]|&&|\$\(/;
+const SHELL_WORD = String.raw`(?:sh|bash|zsh|dash|ksh|fish|ash|busybox|env|eval|exec|command|xargs|python[0-9.]*|perl|ruby|node|nodejs|php|lua|awk|sed|curl|wget)`;
+const SHELL_LEAD = new RegExp(String.raw`^\s*${SHELL_WORD}\s+\S`);
+/**
+ * The word after a shell or interpreter when it is that program's argument, not prose: an option, a path, a file name
+ * with an extension, a quoted, substituted or assigned word, or another shell word (`env sh`). So `env vars here`, `sed
+ * and awk tips` and `exec bit fixed` are words, not commands (commands-remote-x8-3).
+ */
+const SHELL_ARG = String.raw`(?:[-./~$'"\\{(]\S*|\S*[/=$'"\\{(]\S*|\S*\.[A-Za-z]\w*|${SHELL_WORD})(?=\s|$)`;
+/**
+ * A value that STARTS a shell command: a shell or interpreter with an argument (SHELL_ARG) at the start or right after a
+ * `|`, `;` or `&&`, or a substitution. An ordinary value that merely holds a `|` or `;` (a connection string, a colour
+ * spec, a filter) is not a command, so `TEST_FILTER='unit|integration' npm test` runs (commands-remote-c8-1).
+ */
+const SHELL_START = new RegExp(String.raw`(?:^|[|;]|&&)\s*${SHELL_WORD}\s+${SHELL_ARG}`);
+/** go's options that name a program it runs over a build or its tests, with one dash or two (go reads `--toolexec` too). */
+const GO_PROGRAM_OPT = String.raw`--?(?:toolexec|exec|vettool)`;
+/** A go argument that is one of them, its value attached or not (`-toolexec=/tmp/t`, `--exec`). */
+const GO_PROGRAM_ARG = new RegExp(String.raw`^${GO_PROGRAM_OPT}(?:=([\s\S]*))?$`);
+/**
+ * Whether an options variable's value names a program its tool runs, by that tool's own sub-option (never a shared
+ * list): go's, as the go row reads them; tar's, through the tar row's own option table and check, so an abbreviation
+ * (`--to-com=`), `-I`, `--use-compress-program` and a checkpoint's exec count as on its command line; pytest's `-p`,
+ * attached or not, unless `no:` (commands-remote-x8-4).
+ */
+function optNamesProgram(name: string, value: string): boolean {
+  if (/^(GOFLAGS|GOTESTFLAGS|CGO_[A-Z]*FLAGS)$/.test(name)) return new RegExp(String.raw`(^|[\s,'"=])${GO_PROGRAM_OPT}(=|\s|$)`).test(value);
+  if (name === "TAR_OPTIONS") {
+    return /(^|[\s,'"=])--?to-command(=|\s)/.test(value) || tarRunsCommand(parseOpts(value.split(/\s+/).filter(Boolean).map(w => lit(w)), tarSpec(false)), false);
+  }
+  // `-C linker=…` (`-Clinker=`, `--codegen linker=`) names the program rustc links with, judged as go's `-toolexec` value
+  // is: a plain linker name (`clang`, `lld`, `mold`) runs, as `CC=clang` does; a path, a command or a value Ember can't
+  // see asks (commands-remote-x8-3).
+  if (/RUSTFLAGS$/.test(name)) {
+    for (const m of value.matchAll(/(?:^|[\s,'"=])(?:-C\s*|--codegen(?:\s+|=))linker=(\S*)/g)) if (programUnvouched(/[$`]/.test(m[1]) ? null : m[1])) return true;
+    return false;
+  }
+  if (name === "PYTEST_ADDOPTS") return /(^|[\s,'"=])-p(=|\s+)?(?!no:)\S/.test(value);
+  return false;
+}
+/** Whether a program an option names (go's `-toolexec`, rustc's linker) is one Ember can't vouch for: unseen, a path or a command. */
+function programUnvouched(prog: string | null): boolean {
+  return prog === null || namesProgram("CC", prog) || /[\\/]/.test(prog);
+}
+/**
+ * Whether a variable set in front of a command names a program or command the command runs (commands-remote-c8-1), so
+ * its value must be judged. A value Ember can't see counts only for a listed program variable, never for an ordinary
+ * name (a URL or a path there wouldn't, so `DATABASE_URL=… npm test` runs). An options variable's written text is
+ * judged even where part of it is out of sight, so a sub-option whose value is a variable (`GOFLAGS="-toolexec=$T"`,
+ * `TAR_OPTIONS="--to-command=$T"`) asks as the written-out value does (`raw`, the word as written: commands-remote-x8-4).
+ */
+function namesProgram(name: string, value: string | null, raw?: string): boolean {
+  if (value === null) return PROGRAM_CMD_VARS.has(name) || (raw !== undefined && PROGRAM_OPT_VARS.test(name) && optNamesProgram(name, raw.replace(/["']/g, "")));
+  if (PROGRAM_OPT_VARS.test(name)) return optNamesProgram(name, value);
+  // A listed compiler or pager variable holds a command, so any shell operator counts; any other name only when the
+  // value plainly starts a command (a leading shell, or one after a pipe or `;`), or holds a substitution.
+  if (PROGRAM_CMD_VARS.has(name)) return SHELL_SHAPE.test(value) || SHELL_LEAD.test(value);
+  return SHELL_START.test(value) || /\$\(|`/.test(value);
+}
+
+/**
+ * A build tool's own sources, on top of the shared PROJECT_FILE list: `go run .` and `cargo run` build a folder, so a
+ * downloaded `.go`/`go.mod` or `.rs` there runs (commands-remote-r8-2). Kept per tool, never widened into PROJECT_FILE.
+ */
+const TOOL_PROJECT_FILES: Readonly<Record<string, RegExp>> = {
+  go: /\.go$|^go\.(mod|sum)$/i,
+  cargo: /\.rs$/i,
+};
 
 /** git verbs that change files in the work tree (a script there may not be what is on disk now). */
 const GIT_TREE_WRITERS = new Set(["apply", "am", "checkout", "switch", "restore", "pull", "merge", "rebase", "cherry-pick", "revert", "stash", "reset", "clone", "worktree", "submodule", "read-tree", "checkout-index", "mv"]);
@@ -1834,6 +1948,12 @@ function child(sc: Scope, o: Partial<Scope> = {}, m?: ScopeMore): Scope {
 class Engine extends Classifier {
   /** The folder a `cd` just set (undefined: the command wasn't a cd). */
   cdTarget: string | null | undefined = undefined;
+  /**
+   * How many of `downloads` stood when the last command run inside another one (a runner's or a wrapper's payload,
+   * `poetry run git clone …`) ended: those marks are the inner command's, so the outer one's runner check still reads
+   * them, as on main (commands-remote-x8-2). Only the marks a command's own row made are for later commands.
+   */
+  private innerMarks = 0;
 
   /**
    * asksApart for a whole command judged a second way: the commands it registers, and where it leaves the pipeline, the
@@ -2284,6 +2404,12 @@ class Engine extends Classifier {
       if (RISKY_ASSIGNMENTS.has(a.name) || RISKY_ASSIGNMENT_PREFIX.test(a.name)) {
         this.unclear("unclear.assignment", "It changes how commands are found or run.");
       }
+      // A variable set in front of a command whose value names a program or command the command runs is judged, so
+      // `CC='sh -c "curl|sh"' make` asks where `make CC='…'` does (commands-remote-c8-1). A compiler or pager variable
+      // (PROGRAM_CMD_VARS) and any other name hold a command when the value looks like one; an option variable
+      // (PROGRAM_OPT_VARS) when a sub-option names a program (`-toolexec=`, `--to-command=`). An ordinary value
+      // (`CC=clang`, `GOFLAGS=-mod=vendor`) runs. Ember's own refusal from the value comes through its row.
+      else if (beforeCommand && namesProgram(a.name, a.value.v, a.value.raw)) this.unclear("unclear.assignment", "It changes how commands are found or run.");
       if (a.value.v !== null && commandLineSecret(`${a.name}=${a.value.v}`)) this.add("secret", "secret.token-arg", SAYS.tokenArg);
       this.setVar(a.name, [a.value], sc, false, beforeCommand);
     }
@@ -2600,6 +2726,7 @@ class Engine extends Classifier {
     this.redirects(s.redirs, sc);
     if (s.background) this.add("escape", "escape.background", SAYS.keepsRunning);
     const inner = this.commands.length;
+    const dlBefore = this.downloads.length;
     this.dispatch({ e: this, sc, s, key, prog, nameArg, args, pn });
     // A wrapper's own words (`sudo -D "$d" ls`, `xargs -a "$d/x" echo`; commands-remote-v5-2): the command it runs
     // (`do echo "$f"`, `sudo rm "$d"`) noted its words itself.
@@ -2617,7 +2744,7 @@ class Engine extends Classifier {
     if ((key === "done" || key === "fi" || key === "esac") && out !== "shown") this.compoundOnward = true;
     this.unnamedWrites(key, args, sc);
     this.afterArgs(args);
-    this.afterRun(key, args, s, sc);
+    this.afterRun(key, args, s, sc, sc, dlBefore);
     this.hiddenNames(key, args, sc);
     this.pipe.program = key;
     if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
@@ -2676,8 +2803,9 @@ class Engine extends Classifier {
     if (windowsSide && (key === "bash" || (!NATIVE[key] && DISTRO_LAUNCHER.test(key)))) { distroLauncher(h); return; }
     const n = NATIVE[key];
     if (n) n(h);
-    else generic(h);
-    optionPaths(h, !n);
+    else generic(h, true);
+    // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5).
+    optionPaths(h, !n || NEW_DELETERS.has(key));
   }
 
   /** Every argument read as a possible path (an unknown program's operands): secrets and Ember's paths judged. */
@@ -2731,6 +2859,7 @@ class Engine extends Classifier {
     const savedPipe = this.pipe;
     this.pipe = { fetch: o.fetchBefore ?? false, program: "" };
     this.simple({ words, redirs: [], stdin: o.stdin ?? null, fetchBefore: o.fetchBefore ?? false, background: false }, child(sc, { wrappers: [...sc.wrappers, wrapper], depth: sc.depth + 1 }));
+    this.innerMarks = this.downloads.length;
     this.pipe = savedPipe;
     this.at = savedAt;
     this.program = savedProg;
@@ -2828,14 +2957,16 @@ class Engine extends Classifier {
       scriptName(inner, nameArg.v);
     }
     const n = NATIVE[key];
+    const dlBefore = this.downloads.length;
     if (n) n(inner);
-    else generic(inner);
-    optionPaths(inner, !n);
+    else generic(inner, true);
+    optionPaths(inner, !n || NEW_DELETERS.has(key));
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
     // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
     // there is a download, and a pipe after it carries what it fetched (commands-remote-c1-1).
-    this.afterRun(key, inner.args, h.s, sc, h.shellSc ?? h.sc);
+    this.afterRun(key, inner.args, h.s, sc, h.shellSc ?? h.sc, dlBefore);
+    this.innerMarks = this.downloads.length;
     if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
     // `command printf -v …` and `time unset …` run the same built-ins.
     this.hiddenNames(key, inner.args, sc);
@@ -2887,7 +3018,7 @@ class Engine extends Classifier {
    * (`curl URL > x.sh`, `curl URL | tee x.sh`), and a build tool, test runner or package manager working in a folder
    * this task downloaded runs that folder's code (a cloned repository's Makefile or package scripts).
    */
-  afterRun(key: string, args: Arg[], s: Simple, sc: Scope, shellSc: Scope = sc): void {
+  afterRun(key: string, args: Arg[], s: Simple, sc: Scope, shellSc: Scope = sc, dlBefore = this.downloads.length): void {
     // What reads a download writes it out again (`cat x.py > y.py`, `sed … x.py > y.py`, `cat x.py | tee y.py`): the
     // new file is the download too (commands-remote-c2-2). Its redirections are the shell's, opened in its folder
     // whatever folder a wrapper moves the program into (`env -C src curl … > x.py`: commands-z6-3).
@@ -2900,16 +3031,41 @@ class Engine extends Classifier {
     const prints = s.fetched === true && PRINTS_TEXT.has(key);
     if (prints) this.pipe.fetch = true;
     if (prints || carried || FETCHERS.has(key)) this.gaveFetched = true;
+    const ownStart = this.downloads.length;
     if (s.fetchBefore || FETCHERS.has(key) || carried || s.fetched === true) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
-      if (/^(tee|tee-object|out-file|set-content|add-content)$/.test(key)) {
+      if (/^(tee|tee-object|out-file|set-content|add-content|sponge)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
       }
       if (key === "dd") for (const a of args) { const m = a.v === null ? null : /^of=(.+)$/.exec(a.v); if (m && !NULL_SINKS.has(m[1].toLowerCase())) this.download(m[1], sc); }
     }
+    const ownEnd = this.downloads.length;
+    // A compiler builds a program from a downloaded source: the file it writes is the download too, so running it later
+    // asks (commands-remote-r8-2). Carried to `-o`/`-oX` (gcc, rustc), else the default output: `a.out` for a cc-family
+    // link, `<stem>.o` per source with `-c`, `<stem>` for rustc. The source operand itself already asks on its own row.
+    if (known && COMPILERS.has(key)) this.carryCompiled(key, args, sc);
+    // A runner Ember has no download check for (a VM or interpreter whose file operand isn't a shell script) runs a
+    // download with no question: java, mono, wine, pwsh on a POSIX shell, jupyter nbconvert --execute
+    // (commands-remote-r8-2).
+    if (known && this.runsDownloadedExec(key, args, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     const runner = PROJECT_RUNNERS.has(key) || ((key === "docker" || key === "podman") && /^(compose|build|buildx)$/.test(args[0]?.v ?? ""));
-    if (!runner || !known) return;
+    // Whether anything is downloaded is read after the row's own redirections are marked, as on 4d64d3a, so a runner
+    // given fetched text whose output file is its own argument asks with nothing downloaded before it too
+    // (`curl … | make x > x`: commands-remote-y8-2).
+    if (!runner || (!known && ownEnd === ownStart)) return;
+    const extra = TOOL_PROJECT_FILES[key];
     const folderOf = (v: string): string | null => (sc.cwd ? resolveTargetPath(v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd }) : null);
+    // Downloads this very command saved (`pip download -d build …`, which is both a fetch and a PROJECT_RUNNER, or a
+    // compiler's output) are for later commands, not a download this command runs: they don't trip its own check. So the
+    // runner check reads only the downloads that stood before this command (commands-remote-r8-2), and those a command
+    // it ran made (`poetry run git clone URL sub`, which asked on main: commands-remote-x8-2). The files its own
+    // redirections wrote from fetched or carried text are read too, as on 4d64d3a and 848a566, so `curl … | make x > x`
+    // and `curl … | make > Makefile` ask (commands-remote-y8-1, y8-3).
+    const saved = this.downloads;
+    const cut = Math.max(dlBefore, this.innerMarks);
+    if (this.downloads.length > cut) this.downloads = this.downloads.slice(0, cut);
+    const anyBefore = this.ctx.downloaded.size > 0 || this.downloads.length > 0;
+    this.downloads = [...this.downloads, ...saved.slice(Math.max(cut, ownStart), ownEnd)];
     // Every check is made, not only up to the first that holds: one of them may find a download saved by name, which
     // the card then says as a fact (`namedHit`: commands-remote-x7-4).
     const hits = [this.isDownloaded(lit("."), sc), ...args.map(a => {
@@ -2919,10 +3075,101 @@ class Engine extends Classifier {
       // A file it is given, or a folder it works in (`make -C sub`) holding a project file this task downloaded.
       const f = folderOf(v);
       const file = this.isDownloaded({ ...a, v }, sc, false);
-      const project = f !== null && this.downloadedProjectFile(f, sc);
+      const project = f !== null && this.downloadedProjectFile(f, sc, extra);
       return file || project;
-    }), sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc)];
+    }), sc.cwd !== null && this.downloadedProjectFile(sc.cwd, sc, extra),
+    // In a folder Ember can't name (after `cd x;`, `cd x || exit`, `pushd x` or a cd on its own line, any of which may
+    // have failed), the folder may be the download's: a clone entered that way is built there (commands-remote-r8-1).
+    sc.cwd === null && anyBefore];
+    this.downloads = saved;
     if (hits.some(Boolean)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  }
+
+  /**
+   * A compiler's output is a download when it builds a downloaded source (commands-remote-r8-2): carried to `-o`/`-oX`,
+   * else the default output. Only operands Ember sees as downloaded count as sources.
+   */
+  private carryCompiled(key: string, args: Arg[], sc: Scope): void {
+    const isRust = key === "rustc";
+    const out: string[] = [];
+    let compileOnly = false;
+    const sources: string[] = [];
+    for (let k = 0; k < args.length; k++) {
+      const a = args[k];
+      if (a.v === null) continue;
+      if (a.v === "-c" || a.v === "--compile") { compileOnly = true; continue; }
+      if (a.v === "-o" || a.v === "--output") { if (args[k + 1]?.v) out.push(args[k + 1].v as string); k++; continue; }
+      const attached = /^-o(.+)$/.exec(a.v) ?? /^--output=(.+)$/.exec(a.v);
+      if (attached) { out.push(attached[1]); continue; }
+      if (!a.v.startsWith("-") && this.isDownloaded(a, sc)) sources.push(a.v);
+    }
+    if (sources.length === 0) return;
+    for (const o of out) this.carryDownload(o, sc);
+    if (out.length > 0) return;
+    if (isRust) { for (const s of sources) { const stem = baseName(s, sc.path.flavour).replace(/\.[^.]+$/, ""); if (stem) this.carryDownload(stem, sc); } return; }
+    if (compileOnly) { for (const s of sources) this.carryDownload(s.replace(/\.[^./\\]+$/, ".o"), sc); return; }
+    this.carryDownload("a.out", sc);
+  }
+
+  /**
+   * Whether a runner Ember knows runs a file this task downloaded (commands-remote-r8-2): java's `-jar`, class-path
+   * entries and main class or source, mono's and wine's executable, PowerShell's `.ps1` on a POSIX shell, and jupyter's
+   * notebook. Each operand is checked against the downloads only (never `holdsDownload`, so `java -cp . Main` doesn't ask
+   * for an unrelated download). A bare name a runner resolves is tried with the extensions it adds.
+   */
+  private runsDownloadedExec(key: string, args: Arg[], sc: Scope): boolean {
+    const win = sc.path.flavour === "win32";
+    const hit = (name: string, exts: readonly string[] = []): boolean =>
+      this.isDownloaded(lit(name), sc) || exts.some(e => this.isDownloaded(lit(name + e), sc));
+    if (key === "java") {
+      let main: string | null = null;
+      const cp: string[] = [];
+      for (let k = 0; k < args.length; k++) {
+        const v = args[k].v;
+        if (v === null) continue;
+        if (v === "-jar") { const j = args[k + 1]?.v; if (j && hit(j)) return true; k++; continue; }
+        if (/^-(cp|classpath|p)$/.test(v) || v === "--class-path" || v === "--module-path") { if (args[k + 1]?.v) cp.push(args[k + 1].v as string); k++; continue; }
+        const m = /^--(?:class-path|module-path)=(.+)$/.exec(v) ?? /^-(?:cp|classpath|p)(.+)$/.exec(v);
+        if (m) { cp.push(m[1]); continue; }
+        const agent = /^-(?:javaagent|agentpath):([^=]+)/.exec(v);
+        if (agent) { if (hit(agent[1])) return true; continue; }
+        if (v === "--source" || v === "--release") { k++; continue; }
+        if (v.startsWith("-")) continue;
+        // A source or jar given anywhere (`java --source 21 X.java`) runs, so every file operand is checked, and the
+        // first bare word is also tried as a main class (commands-remote-r8-2).
+        if (/\.(jar|java|class)$/i.test(v)) { if (hit(v)) return true; continue; }
+        if (main === null) main = v;
+      }
+      for (const entry of cp.flatMap(c => c.split(win ? ";" : ":"))) if (entry && entry !== "." && hit(entry)) return true;
+      if (main !== null) return hit(`${main.replace(/\./g, "/")}.class`) || hit(`${main.replace(/\./g, "/")}.java`);
+      return false;
+    }
+    if (key === "mono" || key === "wine" || key === "wine64") {
+      const op = args.find(a => a.v !== null && !a.v.startsWith("-"));
+      return op?.v != null && hit(op.v);
+    }
+    if ((key === "pwsh" || key === "powershell" || key === "pwsh-preview") && !win) {
+      // On a POSIX shell these run a .ps1; on Windows the PowerShell row records the script itself.
+      for (let k = 0; k < args.length; k++) {
+        const v = args[k].v;
+        if (v !== null && /^-(f|fi|fil|file)$/i.test(v)) { const f = args[k + 1]?.v; return f != null && hit(f); }
+        if (v !== null && !v.startsWith("-") && /\.ps1$/i.test(v)) return hit(v);
+      }
+      return false;
+    }
+    if (key === "jupyter") {
+      if (args[0]?.v === "nbconvert" && args.some(a => a.v === "--execute")) {
+        return args.slice(1).some(a => a.v !== null && !a.v.startsWith("-") && hit(a.v));
+      }
+      if (args[0]?.v === "run" && args[1]?.v) return hit(args[1].v);
+      return false;
+    }
+    return false;
+  }
+
+  /** Whether this task holds any download, named or not: an earlier command's, or one earlier on this line. */
+  holdsAnyDownload(): boolean {
+    return this.ctx.downloaded.size > 0 || this.downloads.length > 0;
   }
 
   /** Classifies a nested shell text (sh -c, cmd /c, powershell -Command) in a child scope. */
@@ -3254,7 +3501,7 @@ const KNOWN_ORDINARY = new Set([
 const NOT_RUNNERS = new Set([
   "trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk", "sponge", "unrar", "dpkg-deb",
   "desktop-file-install", "desktop-file-edit", "update-desktop-database", "busybox", "caddy", "miniserve", "cloudflared", "ngrok", "tailscale",
-  "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav",
+  "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav", "del", "scrub",
 ]);
 /** Program keys that, as an unknown program's operand, suggest it runs them (a wrapper Ember doesn't know). */
 let RUNNERS: ReadonlySet<string> | null = null;
@@ -3267,8 +3514,11 @@ function runners(): ReadonlySet<string> {
   return RUNNERS;
 }
 
-/** An unknown program: its operands read as paths; an operand naming a program may mean it runs it. */
-function generic(h: H): void {
+/**
+ * An unknown program: its operands read as paths; an operand naming a program may mean it runs it. With `noRow` (a
+ * program with no row at all, not a row's own fallback such as busybox's or sponge's), a broad folder asks too.
+ */
+function generic(h: H, noRow = false): void {
   const k = h.key;
   if (INPUT_SYNTH.has(k)) { h.e.refuseWith("ember.input", "input"); return; }
   if (GUI_PROGRAMS.has(k)) h.e.unclear("unclear.gui", SAYS.openApp);
@@ -3280,6 +3530,7 @@ function generic(h: H): void {
   if (DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) h.e.add("destroy", "disk.erase", "Erases or repartitions a disk.");
   h.e.readArgs(h.args, h.sc, { unresolvedUnclear: !TEXT.has(k) });
   if (KNOWN_ORDINARY.has(k) || GUI_PROGRAMS.has(k) || INTERACTIVE.has(k) || SECRET_PROGRAMS.has(k)) return;
+  if (noRow) broadOperand(h);
   const at = h.args.findIndex(a => {
     const base = (a.v ?? "").split(/[\\/]/).pop() ?? "";
     return a.v !== null && /^[A-Za-z]/.test(base) && runners().has(base.toLowerCase().replace(/\.(exe|com)$/, ""));
@@ -3287,6 +3538,40 @@ function generic(h: H): void {
   if (at >= 0) {
     h.e.unclear("unclear.hidden-command", `Ember can't tell how ${h.prog} runs ${h.args[at].v}.`);
     h.e.payload(h.args.slice(at), h.sc, h.prog);
+  }
+}
+
+/** Programs Ember has no row for that only list or measure what a folder holds (`eza -la ~`, `fd foo ~`, `dust ~`). */
+const LISTS_ONLY = new Set(["eza", "exa", "lsd", "fd", "fdfind", "dust", "duf", "gdu", "erdtree", "erd"]);
+
+/** A long option naming an install prefix, whose value may be written apart (`./configure --prefix ~/.local`). */
+const PREFIX_OPTION = /^--([a-z]+-)*prefix$/i;
+
+/**
+ * An operand of a program Ember has no row for that is the home folder or holds it, or one that holds Ember's own files
+ * (`rimraf ~` before it had a row, `rmlint ~`, `stow -t ~ dotfiles`, `mytool ..` from a folder in the home folder):
+ * Ember can't tell what the program does to all that is there, so it asks (commands-remote-c8-2). Other folders run as
+ * before, and so do install prefixes, attached or apart (`./configure --prefix ~/.local`). A folder above the command's
+ * folder no longer asks for that alone: after `cd build` it is the project itself (`qmake ..`: commands-remote-x8-7),
+ * and Ember can't tell where a project starts.
+ */
+function broadOperand(h: H): void {
+  if (LISTS_ONLY.has(h.key)) return;
+  const sc = h.sc;
+  const env = sc.path;
+  for (let k = 0; k < h.args.length; k++) {
+    const a = h.args[k];
+    if (a.param !== undefined || a.v === null || a.v === "" || a.glob || isOption(a) || URL_LIKE.test(a.v)) continue;
+    if (k > 0 && PREFIX_OPTION.test(h.args[k - 1].v ?? "")) continue;
+    if (a.v.startsWith("~") ? !sc.home : !isAbsolute(a.v, env.flavour) && !sc.cwd) continue;
+    const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
+    const root = env.flavour === "posix" ? abs === "/" : /^[A-Za-z]:\\?$/.test(abs);
+    const what = sc.home && isUnder(abs, sc.home, env) && isUnder(sc.home, abs, env) ? "your home folder"
+      : root || (sc.home && isUnder(sc.home, abs, env)) ? "a folder that holds your home folder"
+      : holdsEmberPath(abs, env) ? "a folder that holds Ember's own files" : null;
+    if (what === null) continue;
+    h.e.unclear("unclear.broad-folder", `Ember can't tell what ${h.prog} does with ${what}.`);
+    return;
   }
 }
 
@@ -3788,6 +4073,9 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     const files = inlineSql(h, ["f"], ["file"]);
     if (files.some(f => f !== null && STDIN_NAME.test(f)) || (!inlineSql(h, ["c"], ["command"]).length && !files.length)) sqlFromStdin(h, "psql");
     if (files.some(f => f !== null && !STDIN_NAME.test(f) && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+    // A SQL script this task downloaded, run with -f, is download-and-run (its `\!`, `COPY … FROM PROGRAM` run code):
+    // commands-remote-r8-2.
+    if (files.some(f => f !== null && !STDIN_NAME.test(f) && !STREAM_NAME.test(f) && h.e.isDownloaded(lit(f), h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   }
   else if (k === "sqlcmd") databaseText(h, inlineSql(h, ["Q", "q"], []));
   else if (k === "cqlsh") databaseText(h, inlineSql(h, ["e"], ["execute"]));
@@ -3855,24 +4143,123 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   for (const f of [...inlineSql(h, ["f"], ["file"]), ...inlineSql(h, ["i"], ["input-file"])]) if (f) { h.e.usePath(lit(f), "read", h.sc); nameCheck(h, f); }
 });
 
-// a: rm and friends (§3.5.1).
-reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir"], h => {
-  const shred = h.key === "shred";
-  // shred's -u (remove) takes no value, and --remove only one after = (commands-remote-r4-2).
-  const p = opts(h, { shortValue: shred ? "ns" : "", longValue: shred ? ["iterations", "size", "random-source"] : [], longOptional: ["remove"] });
-  const rec = (h.key === "rm" || h.key === "srm" || h.key === "wipe") && has(p, "r", "R", "recursive");
+/**
+ * Deleters that had no row before commands-remote-c8-2 and so ran as unknown programs, whatever they were given: what
+ * generic() judged of them (an operand Ember can't see, one that names a program, a broad folder) is still judged first,
+ * and the deletion is added on top, so none decides less safely than it did.
+ */
+const NEW_DELETERS = new Set([
+  "grm", "grmdir", "gunlink", "gshred", "scrub", "rimraf", "del", "del-cli", "gvfs-rm", "gvfs-trash", "rmtrash", "trash-rm", "fdupes", "jdupes",
+  "bfg", "git-filter-repo",
+]);
+const asBefore = (h: H): void => {
+  if (!NEW_DELETERS.has(h.key)) return;
+  // A PowerShell word shaped like a cmdlet's name (`del-cli`, `gvfs-rm`) was an unknown cmdlet's, which asked.
+  if (h.sc.family === "powershell" && /^[a-z]+-[a-z0-9]+$/.test(h.key)) unknownCmdlet(h);
+  else generic(h, true);
+};
+
+// a: rm and friends (§3.5.1); GNU coreutils' own as Homebrew names them on a Mac (grm, gshred…), and scrub, which
+// overwrites a file (its -r removes it too: commands-remote-c8-2).
+reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir", "grm", "grmdir", "gunlink", "gshred", "scrub"], h => {
+  asBefore(h);
+  const key = h.key.replace(/^g(?=(rm|rmdir|unlink|shred)$)/, "");
+  const shred = key === "shred";
+  // shred's -u (remove) takes no value, and --remove only one after = (commands-remote-r4-2); scrub's -p, -b, -s and -D
+  // take one.
+  const p = opts(h, { shortValue: shred ? "ns" : key === "scrub" ? "pbsD" : "", longValue: shred ? ["iterations", "size", "random-source"] : key === "scrub" ? ["pattern", "blocksize", "device-size", "dirent"] : [], longOptional: ["remove"] });
+  const rec = (key === "rm" || key === "srm" || key === "wipe") && has(p, "r", "R", "recursive");
   const objs = objsOf(h, p.operands, rec ? "deleteTree" : "delete");
   const widening: string[] = [];
   if (rec) widening.push("recursive");
   if (has(p, "no-preserve-root")) widening.push("--no-preserve-root");
-  if (h.key === "rmdir" && has(p, "p", "parents")) widening.push("--parents");
+  if (key === "rmdir" && has(p, "p", "parents")) widening.push("--parents");
   const list = listOf(objs);
-  h.e.add("destroy", `posix.${h.key}`, starDeletes(h, objs, rec) ?? (rec ? `Deletes ${list} and everything in ${objs.length > 1 ? "them" : "it"}.` : `Deletes ${list}.`), { objects: objs, widening });
+  h.e.add("destroy", `posix.${key}`, starDeletes(h, objs, rec) ?? (rec ? `Deletes ${list} and everything in ${objs.length > 1 ? "them" : "it"}.` : `Deletes ${list}.`), { objects: objs, widening });
   if (objs.some(o => o.abs !== null && /\/\.local\/share\/Trash(\/|$)/.test(o.abs))) h.e.add("destroy", "trash.empty", "Empties the trash.");
 });
 
+/**
+ * The words a pattern's brace groups and extglob groups stand for, with the braces read as a shell reads them
+ * (braceGroup: `{a,b}`, `{1..3}`; `+(a|b)`, `@(…)`; `?(…)` and `*(…)` may be empty; `!(…)` is anything, `*`), or null
+ * past MAX_SIMPLE of them (commands-remote-x8-8). What is left may still hold `*`, `?` or `[…]`. A `{` with a comma
+ * after it that never closes is null too: the matcher reads it as a letter and expands a group after it
+ * (`'{,/../{..,x}'` is `{,/../..`), which braceGroup doesn't find. rimraf's matcher (minimatch) reads some braces
+ * otherwise, a stray `}` before a later comma (`'{a},..,b}'` is `a}`, `..`, `b`) or a `\` in a group (`'{.\.,x}'` is
+ * `..`), and del-cli's isn't checked: those patterns only ask, as before (commands-remote-y8-1).
+ */
+function patternWords(s: string): string[] | null {
+  const out: string[] = [];
+  const go = (w: string): boolean => {
+    const g = braceGroup(w);
+    if (g === "partial") return false;
+    if (g !== null) return g.alts.every(alt => go(w.slice(0, g.from) + alt + w.slice(g.to + 1)));
+    const m = /([?*+@!])\(([^()]*)\)/.exec(w);
+    if (m) {
+      const alts = m[1] === "!" ? ["*"] : [...m[2].split("|"), ...(m[1] === "?" || m[1] === "*" ? [""] : [])];
+      return alts.every(alt => go(w.slice(0, m.index) + alt + w.slice(m.index + m[0].length)));
+    }
+    out.push(w);
+    return out.length <= MAX_SIMPLE;
+  };
+  return go(s) ? out : null;
+}
+
+/**
+ * rimraf and del-cli (`del`), which a JavaScript project's scripts reach for: they delete each folder and all that is in
+ * it, and expand a pattern themselves, quoted or not (rimraf unless `-G`/`--no-glob`; del-cli always), so a word that
+ * holds one is judged as a pattern and the step is never announced (commands-remote-c8-2).
+ */
+reg(NATIVE, ["rimraf", "del", "del-cli"], h => {
+  asBefore(h);
+  const p = opts(h, { longValue: ["impl"] });
+  if (p.operands.length === 0) return;
+  const globs = h.key !== "rimraf" || !has(p, "G", "no-glob");
+  const widening = ["recursive"];
+  const objs = p.operands.filter(a => !(h.key !== "rimraf" && a.v?.startsWith("!"))).map(a => {
+    if (!globs || a.v === null || a.glob || !/[*?[\]{}()!]/.test(a.v)) return h.e.usePath(a, "deleteTree", h.sc);
+    if (!widening.includes("pattern")) widening.push("pattern");
+    // Braces and extglob's `+(…)`, `@(…)`, `!(…)`, which the pattern matcher doesn't read, may match anything in the
+    // folder before them: one that holds Ember's files, or is one, is refused as `rm -rf ~/.c*` is.
+    if (/[{}()]/.test(a.v) && h.sc.cwd !== null) {
+      const segs = a.v.split("/");
+      const k = segs.findIndex(x => /[*?[\]{}()!+@]/.test(x));
+      const fixed = resolveTargetPath(k <= 0 ? (a.v.startsWith("/") ? "/" : ".") : segs.slice(0, k).join("/") || "/", { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd });
+      if (isEmberPath(fixed, h.sc.path) || holdsEmberPath(fixed, h.sc.path)) h.e.refuseWith("ember.path", "safety");
+      // Each word the groups stand for is judged as an operand of its own (`'{..,x}'` is `..`, `'{/home/ana,x}'` the
+      // home folder: commands-remote-x8-8); past MAX_SIMPLE of them Ember can't tell what the pattern reaches.
+      const alts = patternWords(a.v);
+      if (alts === null) h.e.refuseWith("ember.path", "safety");
+      else for (const x of alts) if (x !== a.v) h.e.usePath(/[*?[]/.test(x) ? { ...a, v: x, glob: true, pattern: x } : { ...a, v: x, glob: false, pattern: undefined }, "deleteTree", h.sc);
+    }
+    return h.e.usePath({ ...a, glob: true, pattern: a.v }, "deleteTree", h.sc);
+  });
+  if (has(p, "no-preserve-root")) widening.push("--no-preserve-root");
+  h.e.add("destroy", "posix.rm", starDeletes(h, objs, true) ?? `Deletes ${listOf(objs)} and everything in ${objs.length > 1 ? "them" : "it"}.`, { objects: objs, widening });
+});
+
+/** fdupes and jdupes delete every copy of a duplicate but one with `-d`, and jdupes replaces copies with links (-L, -B). */
+reg(NATIVE, ["fdupes", "jdupes"], h => {
+  asBefore(h);
+  const p = opts(h, { shortValue: h.key === "fdupes" ? "oGxl" : "oXyCPU", longValue: ["order", "minsize", "maxsize", "log", "exclude", "chunk-size", "ext-filter", "ext-option", "print"] });
+  const replaces = h.key === "jdupes" && has(p, "L", "B", "l", "link-hard", "link-soft", "dedupe");
+  if (!has(p, "d", "delete") && !replaces) return;
+  const objs = objsOf(h, p.operands, "delete");
+  h.e.add("destroy", `posix.${h.key}`, replaces ? `Replaces duplicate files in ${listOf(objs)}.` : `Deletes duplicate files in ${listOf(objs)}.`, { objects: objs });
+});
+
+/** BFG and git-filter-repo rewrite a repository's history (as `git filter-repo` does), unless only asked to report. */
+reg(NATIVE, ["bfg", "git-filter-repo"], h => {
+  asBefore(h);
+  if (h.args.length === 0 || h.args.every(a => /^(-h|--help|--version|--analyze|--dry-run)$/.test(a.v ?? ""))) return;
+  h.e.add("destroy", "git.history", "Deletes history git keeps for recovery.", { program: h.key });
+});
+
 reg(NATIVE, ["trash-empty"], h => { h.e.add("destroy", "trash.empty", "Empties the trash."); });
-reg(NATIVE, ["trash", "trash-put", "gio"], h => {
+// trash-rm deletes what matches its pattern from the trash for good (commands-remote-c8-2).
+reg(NATIVE, ["trash-rm"], h => { asBefore(h); h.e.add("destroy", "trash.empty", "Deletes files in the trash for good."); });
+reg(NATIVE, ["trash", "trash-put", "gio", "gvfs-trash", "gvfs-rm", "rmtrash"], h => {
+  asBefore(h);
   if (h.key === "gio") {
     const sub = lower(h.args[0]);
     const rest = h.args.slice(1);
@@ -4311,21 +4698,34 @@ reg(NATIVE, ["chmod", "chown", "chgrp", "setfacl", "chattr", "chflags"], h => {
 const TAR_VALUE = "fCbKNTXgLVFHI";
 /** A Mac's own tar (bsdtar): -H and -L follow links, -I names a file list as -T does, and -s takes a pattern. */
 const BSDTAR_VALUE = "fCbTXIs";
+/** tar's option table, for its row and for TAR_OPTIONS, which GNU tar reads as options too (commands-remote-x8-4). */
+function tarSpec(bsd: boolean): OptSpec {
+  return {
+    shortValue: bsd ? BSDTAR_VALUE : TAR_VALUE,
+    longValue: ["file", "directory", "files-from", "exclude-from", "exclude", "use-compress-program", "transform", "xform", "to-command", "info-script", "new-volume-script", "newer", "after-date", "owner", "group", "mode", "mtime", "format", "label", "volno-file", "checkpoint-action", "index-file", "warning", "record-size", "blocking-factor", "tape-length", "sort", "strip-components", "exclude-tag", "exclude-tag-all", "exclude-tag-under", "suffix", "owner-map", "group-map", "level", "hole-detection", "pax-option", "quoting-style", "quote-chars", "no-quote-chars", "rmt-command", "rsh-command", "listed-incremental", "starting-file", "options"],
+    longOptional: ["backup", "checkpoint", "occurrence", "one-top-level", "totals", "atime-preserve"],
+  };
+}
+/**
+ * Whether tar's options name a command it runs: a filter, a compressor, a volume script, a checkpoint's action, a shell.
+ * GNU's `-F` is `--info-script` (commands-remote-y8-4).
+ */
+function tarRunsCommand(p: Parsed, bsd: boolean): boolean {
+  return has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I", "F")) || values(p, "checkpoint-action").length > 0;
+}
 reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const a = [...h.args];
   // Old-style bundled first argument (`tar xzf x.tgz`).
   if (a[0]?.v && !a[0].v.startsWith("-")) a[0] = { ...a[0], v: `-${a[0].v}` };
   const bsd = h.key === "bsdtar" || (h.key === "tar" && h.sc.os === "darwin");
-  const p = parseOpts(a, {
-    shortValue: bsd ? BSDTAR_VALUE : TAR_VALUE,
-    longValue: ["file", "directory", "files-from", "exclude-from", "exclude", "use-compress-program", "transform", "xform", "to-command", "info-script", "new-volume-script", "newer", "after-date", "owner", "group", "mode", "mtime", "format", "label", "volno-file", "checkpoint-action", "index-file", "warning", "record-size", "blocking-factor", "tape-length", "sort", "strip-components", "exclude-tag", "exclude-tag-all", "exclude-tag-under", "suffix", "owner-map", "group-map", "level", "hole-detection", "pax-option", "quoting-style", "quote-chars", "no-quote-chars", "rmt-command", "rsh-command", "listed-incremental", "starting-file", "options"],
-    longOptional: ["backup", "checkpoint", "occurrence", "one-top-level", "totals", "atime-preserve"],
-  });
+  const p = parseOpts(a, tarSpec(bsd));
   const extract = has(p, "x", "extract", "get");
   const create = has(p, "c", "create", "r", "append", "u", "update", "A", "catenate", "concatenate");
   const archive = values(p, "f", "file")[0];
   const dir = values(p, "C", "directory")[0];
-  if (has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I")) || values(p, "checkpoint-action").length) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
+  // A word Ember can't see all of is read by its written text too, quotes dropped, so an option whose value is a variable
+  // or a substitution (`--to-command="$T"`, `-I"$T"`) asks as the value written out does (commands-remote-y8-4).
+  if (tarRunsCommand(p, bsd) || a.some(w => w.v === null && tarRunsCommand(parseOpts([lit(w.raw.replace(/["']/g, ""))], tarSpec(bsd)), bsd))) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
   // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
   for (const f of values(p, "T", "files-from", "X", "exclude-from", ...(bsd ? ["I"] : []))) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // An incremental backup's snapshot file, which tar rewrites, and the owner and group maps it reads (commands-remote-v5-3).
@@ -4470,6 +4870,18 @@ reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma
   const packed = [...p.operands, ...stray];
   const ins = objsOf(h, packed, "write");
   if (removes && packed.length && !keeps) h.e.add("destroy", "archive.in-place", `Replaces ${listOf(ins)} with a packed or unpacked copy.`, { objects: ins });
+  // Decompressing a download writes the uncompressed file beside it (`gunzip y.gz` writes y): that file is the download
+  // too, so running it later asks (commands-remote-r8-2). The output's name is the input with its suffix stripped (or a
+  // custom `-S .suf`), to stdout with -c, where only the pipe carries it.
+  const decompresses = /^(gunzip|bunzip2|unxz|unlzma|uncompress|unzstd|unpigz)$/.test(h.key) || has(p, "d", "decompress", "uncompress");
+  if (decompresses && !has(p, "c", "stdout", "to-stdout", "t", "test", "l", "list")) {
+    const suffix = values(p, "S", "suffix")[0] ?? null;
+    for (const o of p.operands) {
+      if (o.v === null || o.glob || !h.e.isDownloaded(o, h.sc)) continue;
+      const base = suffix && o.v.endsWith(suffix) ? o.v.slice(0, -suffix.length) : o.v.replace(/\.(gz|z|bz2|bz|xz|lzma|lz|Z|zst|zstd|lz4|br|tgz|tbz2?|txz|tzst)$/i, m => (/^\.t(gz|bz2?|xz|zst)$/i.test(m) ? ".tar" : ""));
+      if (base !== o.v) h.e.carryDownload(base, h.sc);
+    }
+  }
   // zstd's and brotli's -o names the file they write (with -f, over one that is there), and zstd's -D a dictionary it
   // reads: judged as that file is (commands-remote-v5-1). Unpacked from a download, it is one too.
   if (!["zstd", "unzstd", "brotli"].includes(h.key)) return;
@@ -4524,6 +4936,8 @@ reg(NATIVE, ["sed", "gsed"], h => {
   let files = p.operands;
   const scriptFiles = values(p, "f", "file");
   for (const f of scriptFiles) if (f) h.e.usePath(lit(f), "read", h.sc);
+  // A sed program file this task downloaded runs code (its `e`, `w`/`r` commands): download-and-run (commands-remote-r8-2).
+  if (scriptFiles.some(f => f !== null && h.e.isDownloaded(lit(f), h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   if (scripts.length === 0 && scriptFiles.length === 0) { scripts = [files[0]?.v ?? null]; files = files.slice(1); }
   for (const s of scripts) if (s === null || !sedScriptOk(s)) h.e.unclear("unclear.sed-script", "Its sed script can run commands or write files Ember can't see.");
   if (scripts.some(s => s === null || !sedScriptOk(s)) && typeof h.s.stdinText === "string") h.e.judgeInput(h.s.stdinText, h.sc);
@@ -4596,6 +5010,9 @@ reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   // `-i inplace` writes what it prints back into each file it reads, as sed -i.
   const inPlace = values(p, "i", "include").some(v => v !== null && /^inplace(\.awk)?$/.test(v));
   for (const f of progFiles) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // An awk program file this task downloaded runs code (its `system()`, `print > file`): download-and-run
+  // (commands-remote-r8-2).
+  if (progFiles.some(f => f !== null && !STDIN_NAME.test(f) && h.e.isDownloaded(lit(f), h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   // `awk -f -` / `-f /dev/stdin` reads its program from stdin: judge the seen text, else ask (review #166).
   if (progFiles.some(f => f === null || STDIN_NAME.test(f))) fromStdin(h, t => { if (!awkProgramOk(t)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files."); });
   else if (progFiles.some(f => f !== null && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
@@ -4695,12 +5112,22 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   // A folder given as the program (`node .`, `python3 tool`) runs its entry file (commands-remote-c7-3).
   const folder = script.v.replace(/\/+$/, "") || "/";
   const entry = /(^|\/)\.{1,2}$|\/$/.test(script.v) || !/\.[^./]+$/.test(folder) ? ENTRY_FILES.some(n => h.e.isDownloaded(lit(`${folder}/${n}`), h.sc)) : false;
-  if (h.e.isDownloaded(script, h.sc) || entry) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  // A bare name node or python resolves to a downloaded file by adding an extension (`node x` runs x.js), or a glob that
+  // matches a downloaded one (`python3 a.p*`): the download runs (commands-remote-r8-2).
+  const exts = SCRIPT_EXTS[h.key] ?? [];
+  const bareHit = exts.length > 0 && !/\.[^./\\]+$/.test(folder) && !script.glob && exts.some(e => h.e.isDownloaded(lit(script.v + e), h.sc));
+  const globHit = script.glob && h.e.globMatchesDownload(script, h.sc);
+  if (h.e.isDownloaded(script, h.sc) || entry || bareHit || globHit) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
   else if (readAs !== undefined) h.e.recordScript(script, readAs, h.sc);
   nameCheck(h, script.v, script.v);
 }
 /** The files node or python runs when given a folder (package.json names node's). */
 const ENTRY_FILES = ["index.js", "index.mjs", "index.cjs", "index.json", "index.node", "package.json", "__main__.py"];
+/** Extensions an interpreter adds to a bare program name it is given (`node x` runs x.js), to match a download by name. */
+const SCRIPT_EXTS: Readonly<Record<string, readonly string[]>> = {
+  node: [".js", ".mjs", ".cjs", ".json", ".node"], nodejs: [".js", ".mjs", ".cjs", ".json", ".node"],
+  python: [".py"], python2: [".py"], python3: [".py"], py: [".py"], pypy: [".py"], pypy3: [".py"],
+};
 
 /** Inline code: unclear, and refused when it names Ember's own paths (§3.5.8). */
 function emberText(h: H, code: string): void {
@@ -4782,8 +5209,11 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     // finds (conftest.py, test_x.py): it runs the download (commands-remote-c2-2).
     if (mod && /^[A-Za-z_][\w.]*$/.test(mod)) {
       const file = mod.replace(/\./g, "/");
+      // In a folder Ember can't name, Python finds the module there first, so it may be the download's, and so may the
+      // tests a runner finds (commands-remote-r8-1).
       const runsDownload = [`${file}.py`, `${file}/__main__.py`, `${file}/__init__.py`].some(f => h.e.isDownloaded(lit(f), h.sc))
-        || (/^(pytest|unittest|nose2?|doctest)$/.test(mod) && h.sc.cwd !== null && h.e.downloadedProjectFile(h.sc.cwd, h.sc));
+        || (/^(pytest|unittest|nose2?|doctest)$/.test(mod) && h.sc.cwd !== null && h.e.downloadedProjectFile(h.sc.cwd, h.sc))
+        || (h.sc.cwd === null && h.e.holdsAnyDownload());
       if (runsDownload) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     }
     h.e.readArgs(p.operands, h.sc);
@@ -4947,6 +5377,8 @@ reg(NATIVE, ["env"], h => {
   if (assigns.length || has(p, "u", "unset", "i") || h.args.some(a => a.v === "-")) h.e.envChanged = true;
   for (const a of assigns) {
     if (RISKY_ASSIGNMENTS.has(a.name) || RISKY_ASSIGNMENT_PREFIX.test(a.name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+    // A variable env sets whose value names a command the program runs, as in front of a command (commands-remote-c8-1).
+    else if (namesProgram(a.name, a.value.v)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
   }
   // A Mac's -P looks for the program in those folders, as a PATH assignment does; each is judged as the folder it runs a
   // program from (commands-remote-v5-3).
@@ -5283,10 +5715,25 @@ const gitFetch = (fetches: boolean): GitFn => h => {
   // git merge FETCH_HEAD`) can change any file of the work tree, as a clone's are its (commands-remote-c5-4).
   // Only the repository word is an scp-style address: a refspec after it (`main:main`) looks like one.
   const ops = h.args.filter(a => !isOption(a));
-  if (fetches && (ops.some(a => URL_LIKE.test(a.v ?? "")) || SCP_LIKE.test(ops[0]?.v ?? ""))) h.e.markUnnamed(".", h.sc);
+  // A remote this line added with an address (`git remote add e <url> && git pull e main`) is that address too
+  // (commands-remote-r8-1). A pull or fetch with no remote named, or `--all`, draws on it as well.
+  const named = ops[0] !== undefined && h.e.addedRemotes.size > 0 && (ops[0].v === null || h.e.addedRemotes.has(ops[0].v) || h.e.addedRemotes.has(UNSEEN));
+  const fromAdded = h.e.addedRemotes.size > 0 && (named || ops.length === 0 || h.args.some(a => a.v === "--all"));
+  if (fetches && (ops.some(a => URL_LIKE.test(a.v ?? "")) || SCP_LIKE.test(ops[0]?.v ?? "") || fromAdded)) h.e.markUnnamed(".", h.sc);
 };
 git(["fetch", "pull"], gitFetch(true));
 git(["ls-remote"], gitFetch(false));
+// `git remote add NAME <url>` and `set-url`: read as before (GIT_READ), and NAME remembered for a fetch or pull from it
+// later on this line, `-f` fetching from it at once (commands-remote-r8-1).
+git(["remote"], h => {
+  h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
+  const p = opts(h, { shortValue: "tm" });
+  const [verb, name, url] = p.operands;
+  if (!(verb?.v === "add" || verb?.v === "set-url") || !name || !url) return;
+  if (url.v !== null && !URL_LIKE.test(url.v) && !SCP_LIKE.test(url.v)) return;
+  h.e.addedRemotes.add(name.v ?? UNSEEN);
+  if (verb.v === "add" && has(p, "f", "fetch")) h.e.markUnnamed(".", h.sc);
+});
 // apply and am change the work tree's files with a patch: one this task downloaded marks them (commands-remote-c5-4).
 git(["apply", "am"], h => {
   const files = h.args.filter(a => !isOption(a));
@@ -5498,6 +5945,14 @@ git(["config"], h => {
   } else if (key !== null && /^credential\./i.test(key)) h.e.add("secret", "secret.git-credential", SAYS.secrets, { program: "git config" });
 });
 git(["submodule"], h => {
+  if (h.args[0]?.v === "add") {
+    // A submodule added from an address is a clone into its folder (named, else the address's last part): building in
+    // it later runs the download (commands-remote-r8-1).
+    const [url, dir] = parseOpts(h.args.slice(1), { shortValue: "b", longValue: ["branch", "name", "reference", "depth"] }).operands;
+    const from = dir ?? url;
+    if (from?.v === null) h.e.markUnnamed(dir ? null : ".", h.sc);
+    else if (from?.v) h.e.download(dir ? from.v : from.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop()?.replace(/\.git$/, "") || null, h.sc);
+  }
   if (h.args[0]?.v !== "foreach") { h.e.readArgs(h.args.slice(1).filter(a => !isOption(a)), h.sc); return; }
   const rest = h.args.slice(1).filter(a => !/^--(recursive|quiet)$/.test(a.v ?? "") && a.v !== "-q");
   if (rest.some(a => a.v === null)) { h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see."); return; }
@@ -5558,7 +6013,11 @@ git(["clone"], h => {
 git(["archive"], h => {
   const p = opts(h, { shortValue: "o", longValue: ["output", "format", "prefix", "remote", "exec", "add-file", "add-virtual-file"] });
   if (values(p, "exec").length) h.e.unclear("unclear.git-receive-pack", "It runs a program on the other computer Ember can't see.");
-  for (const o of values(p, "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
+  // `git archive --remote=…` fetches a tree from another repository: what it writes to a file, or pipes on to an
+  // unpacker (`git archive --remote=… | tar x`), is a download, like what `ssh host …` prints (commands-remote-r8-2).
+  const remote = values(p, "remote").length > 0;
+  if (remote) h.e.pipe.fetch = true;
+  for (const o of values(p, "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) { h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); if (remote) h.e.download(o, h.sc); } }
 });
 git(["lfs"], h => {
   const sub = h.args[0]?.v;
@@ -5639,7 +6098,19 @@ reg(NATIVE, ["gh"], h => {
     for (const d of values(dp, "D", "dir", "O", "output")) { if (d) h.e.download(d, h.sc); else h.e.markUnnamed(null, h.sc); }
     return;
   }
-  if (group === "repo" && sub === "clone") { const [r, d] = rest.filter(a => !isOption(a)).slice(1); h.e.download(d?.v ?? r?.v?.split("/").pop() ?? null, h.sc); return; }
+  if ((group === "repo" || group === "gist") && sub === "clone") {
+    const [r, d] = rest.filter(a => !isOption(a)).slice(1);
+    if (group === "repo") h.e.download(d?.v ?? r?.v?.split("/").pop() ?? null, h.sc);
+    // The folder is named before `--`, which starts git's own options (`gh repo clone a/b -- --depth 1`), else it is the
+    // repository's or gist's name; one Ember can't see marks a folder of no name it knows. Added to the mark above, as
+    // a later round's marks are (commands-remote-r8-1).
+    const dd = rest.findIndex(a => a.v === "--");
+    const [r2, d2] = (dd < 0 ? rest : rest.slice(0, dd)).filter(a => !isOption(a)).slice(1);
+    const named = d2 ?? r2;
+    if (named?.v === null) h.e.markUnnamed(d2 ? null : ".", h.sc);
+    else if (named?.v) h.e.download(d2 ? named.v : named.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop()?.replace(/\.git$/, "") || null, h.sc);
+    return;
+  }
   if (group === "repo" && sub === "deploy-key" && rest.some(a => a.v === "delete")) { h.e.add("remote-delete", "gh.repo.deploy-key", "Deletes a deploy key on GitHub."); return; }
   if ((GH_DELETE[group] ?? []).includes(sub)) {
     h.e.add("remote-delete", `gh.${group}.delete`, `Deletes ${what} on GitHub.`, { program: `gh ${group} ${sub}`, objects, widening });
@@ -5713,6 +6184,17 @@ reg(NATIVE, ["svn"], h => {
   const rest = h.args.slice(g.verbAt + 1);
   const ops = rest.filter(a => !isOption(a));
   const urlOp = ops.some(a => URL_LIKE.test(a.v ?? ""));
+  // A checkout or export from a URL brings a working copy or files in: a clone, so building or running there asks
+  // (commands-remote-r8-2). An explicit destination folder is marked, and the URL's own last name always too, so an
+  // option before the path (`svn checkout -r 123 URL`) can't be mistaken for the folder.
+  if (/^(checkout|co|export)$/.test(verb) && urlOp) {
+    const p = parseOpts(rest, { shortValue: "rxlN", longValue: ["revision", "depth", "set-depth", "targets", "changelist", "encoding", "extensions", "config-dir", "config-option", "username", "password", "with-revprop", "native-eol", "cl"] });
+    const purls = p.operands.filter(a => URL_LIKE.test(a.v ?? ""));
+    const dest = p.operands.filter(a => !URL_LIKE.test(a.v ?? "")).pop();
+    for (const u of purls) if (u.v) h.e.download(u.v.replace(/[\\/]+$/, "").split("/").pop() || null, h.sc);
+    if (dest?.v) h.e.markUnnamed(dest.v, h.sc);
+    else if (dest && dest.v === null) h.e.markUnnamed(null, h.sc);
+  }
   if (/^(commit|ci|import|lock|unlock)$/.test(verb)) h.e.add("publish", "svn.commit", "Sends changes to Subversion.");
   else if (/^(copy|cp|move|mv|rename|ren|mkdir|propset|pset|ps|propdel|pdel|pd|propedit|pedit|pe)$/.test(verb) && urlOp) h.e.add("publish", "svn.commit", "Sends changes to Subversion.");
   else if (/^(delete|del|remove|rm)$/.test(verb)) {
@@ -5729,6 +6211,16 @@ reg(NATIVE, ["hg"], h => {
   for (const o of g.opts) if (o.name === "--config" && o.value && /^(hooks|alias|ui\.(editor|merge|ssh)|extensions)/i.test(o.value)) h.e.unclear("unclear.hg-config", "Runs code from a setting.");
   const verb = h.args[g.verbAt]?.v ?? "";
   const rest = h.args.slice(g.verbAt + 1);
+  // `hg clone [options] SOURCE [DEST]` brings a working copy in, a clone, so building there asks (commands-remote-r8-2).
+  // Options before the path (`hg clone -u tip URL`) take their value, so the source and dest are read past them.
+  if (verb === "clone") {
+    const p = parseOpts(rest, { shortValue: "urbe", longValue: ["rev", "updaterev", "branch", "ssh", "remotecmd", "config"] });
+    const [src, dest] = p.operands;
+    if (dest?.v) h.e.markUnnamed(dest.v, h.sc);
+    else if (dest && dest.v === null) h.e.markUnnamed(null, h.sc);
+    else if (src?.v) h.e.download(src.v.replace(/[\\/]+$/, "").split(/[\\/:]/).pop() || null, h.sc);
+    else h.e.markUnnamed(".", h.sc);
+  }
   if (verb === "push" || verb === "outgoing" && false) h.e.add("publish", "hg.push", "Sends changes to another repository.");
   else if (/^(strip|purge|clean|rollback|revert|prune|obsolete)$/.test(verb)) h.e.add("destroy", "hg.discard", "Throws away local changes.");
   else if ((verb === "update" || verb === "up" || verb === "checkout" || verb === "co") && rest.some(a => a.v === "-C" || a.v === "--clean")) h.e.add("destroy", "hg.discard", "Throws away local changes.");
@@ -6174,6 +6666,11 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   const verbArg = h.args[g.verbAt];
   const verb = verbArg?.v ?? null;
   const rest = h.args.slice(g.verbAt + 1);
+  // `--script-shell <program>` changes the shell every package script runs in: a program Ember can't vouch for
+  // (commands-remote-c8-1). `npm config set script-shell …` (never `get`) makes that change last for every later run.
+  if (h.args.some(a => /^--script-shell(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
+  const configVerb = verb === "config" || verb === "c" ? h.args[g.verbAt + 1]?.v ?? null : verb;
+  if (configVerb === "set" && h.args.some(a => /^script-shell(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
   const global = g.opts.some(o => o.name === "-g" || o.name === "--global") || rest.some(a => a.v === "-g" || a.v === "--global" || a.v === "--location=global");
   const widening = global ? ["--global"] : [];
   if (verbArg && verb === null) { h.e.unclear("unclear.npm-verb", "Ember can't tell which command this runs."); return; }
@@ -6201,6 +6698,11 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       if (name === undefined) return;
       if (name === null) { h.e.unclear("unclear.script", "It runs a script Ember can't name."); return; }
       nameCheck(h, name);
+      // yarn, pnpm and bun run the project's own rimraf when no script has that name; npm runs only scripts
+      // (commands-remote-c8-2). With nothing after the name it is the project's script of that name, or a deleter
+      // given nothing to delete (`yarn scrub`: commands-remote-x8-13).
+      const given = rest.slice(rest.indexOf(specs[0]));
+      if (h.key !== "npm" && h.key !== "corepack" && NEW_DELETERS.has(name.toLowerCase()) && given.length > 1) h.e.payload(given, h.sc, `${h.key} run ${name}`);
       return;
     }
     case "exec": case "x": case "dlx": case "create": h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return;
@@ -6224,8 +6726,13 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   if (h.key === "npm" && !builtins.has(verb) && !/^(test|start|stop|restart)$/.test(verb)) { h.e.unclear("unclear.npm-verb", "Ember can't tell which npm command this runs."); return; }
   if (verb === "edit" || verb === "explore") { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (verb === "star" || verb === "unstar" || verb === "hook" || verb === "profile") { h.e.add("publish", "npm.registry", "Changes something on the registry."); return; }
-  if (h.key !== "npm" && !builtins.has(verb)) nameCheck(h, verb);
-  else if (/^(test|start|stop|restart)$/.test(verb)) nameCheck(h, verb);
+  if (h.key !== "npm" && !builtins.has(verb)) {
+    nameCheck(h, verb);
+    // `yarn rimraf src` runs the project's rimraf when no script has that name: judged as that program would be
+    // (commands-remote-c8-2). Only a deleter's name, so `yarn build` or `yarn format` stay a script's, and only with
+    // something after it (`yarn scrub` alone: commands-remote-x8-13).
+    if (NEW_DELETERS.has(verb.toLowerCase()) && h.key !== "corepack" && h.args.length > g.verbAt + 1) h.e.payload(h.args.slice(g.verbAt), h.sc, `${h.key} ${verb}`);
+  } else if (/^(test|start|stop|restart)$/.test(verb)) nameCheck(h, verb);
 });
 reg(NATIVE, ["npx", "pnpx", "bunx", "uvx", "yarnpkg-dlx"], h => { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); });
 
@@ -6250,9 +6757,13 @@ function pip(h: H): void {
   }
   if (verb === "config" && rest.some(a => a.v === "--global")) h.e.add("system", "pip.config.global", "Changes settings for every user.");
   if (verb === "download" || verb === "wheel") {
-    // The folder it saves into (review #169).
+    // The folder it saves into (review #169), and what it downloads there: a wheel it unpacks or a script it finds is
+    // the download, so running one later asks (commands-remote-r8-2).
     const p = parseOpts(rest, { shortValue: "rcdwi", longValue: ["requirement", "constraint", "dest", "wheel-dir", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "src"] });
-    for (const d of values(p, "d", "dest", "w", "wheel-dir")) if (d) writeInto(h, d);
+    const dests = values(p, "d", "dest", "w", "wheel-dir");
+    for (const d of dests) if (d) writeInto(h, d);
+    for (const d of dests) { if (d) h.e.markUnnamed(d, h.sc); else h.e.markUnnamed(null, h.sc); }
+    if (dests.length === 0) h.e.markUnnamed(".", h.sc);
     h.e.readArgs(rest.filter(a => !isOption(a) && !URL_LIKE.test(a.v ?? "")), h.sc);
   }
 }
@@ -6339,18 +6850,33 @@ reg(NATIVE, ["cargo"], h => {
 reg(NATIVE, ["go"], h => {
   const verb = firstOperand(h.args).v;
   const rest = h.args.slice(firstOperand(h.args).at + 1);
+  // `go test -exec`, `go build -toolexec` and `-vettool` name a program go runs over the build: a value that looks like
+  // a command asks, as `GOFLAGS=-toolexec=…` does (commands-remote-c8-1).
+  // Written with two dashes too, and with its value attached out of Ember's sight (`-toolexec="$T"`), which is a program
+  // Ember can't see, as the value written apart is (commands-remote-x8-4).
+  for (let k = 0; k < rest.length; k++) {
+    const word = rest[k].v ?? rest[k].raw.replace(/["']/g, "");
+    const m = GO_PROGRAM_ARG.exec(word);
+    if (!m) continue;
+    const prog = rest[k].v === null ? null : m[1] !== undefined ? m[1] : rest[k + 1]?.v ?? null;
+    if (programUnvouched(prog)) h.e.unclear("unclear.assignment", "It runs a program Ember can't vouch for.");
+  }
   if (verb === "install" || verb === "get") { languageInstall(h, rest.filter(a => !isOption(a))); return; }
   if (verb === "run" && rest.some(a => /@/.test(a.v ?? "") && !isOption(a))) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return; }
   if (verb === "run") { const s = rest.find(a => !isOption(a)); if (s) runScript(h, s); return; }
   if (verb === "clean" && rest.some(a => /^-(cache|modcache|testcache|fuzzcache)$/.test(a.v ?? ""))) h.e.add("destroy", "script.destroy", "Runs clean, whose name says it deletes things.");
   // build and test -c write the program where -o says, a file or a folder (review #169).
   if (verb === "build" || verb === "test") {
+    // Building a downloaded source writes the program it names (`-o app`) as a download too, so `./app` later asks
+    // (commands-remote-r8-2). A downloaded .go or go.mod in the build's folder, or a source given outright.
+    const fromDownload = (h.sc.cwd !== null && h.e.downloadedProjectFile(h.sc.cwd, h.sc, TOOL_PROJECT_FILES.go))
+      || rest.some(a => !isOption(a) && a.v !== null && /\.go$/i.test(a.v) && h.e.isDownloaded(a, h.sc));
     for (let k = 0; k < rest.length; k++) {
       const m = /^--?o(=([\s\S]*))?$/.exec(rest[k].v ?? "");
       if (!m) continue;
       const o = m[1] !== undefined ? m[2] : rest[k + 1]?.v;
       if (o === null || o === undefined) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
-      else if (!NULL_SINKS.has(o.toLowerCase())) h.e.usePath(lit(o), "write", h.sc);
+      else if (!NULL_SINKS.has(o.toLowerCase())) { h.e.usePath(lit(o), "write", h.sc); if (fromDownload) h.e.carryDownload(o, h.sc); }
     }
   }
 });
@@ -6520,6 +7046,15 @@ reg(NATIVE, ["cmake"], h => {
   if (e >= 0) { cmakeCommand(h, h.args[e + 1], h.args.slice(e + 2)); return; }
   // `-D NAME[:TYPE]=VALUE` written apart: VALUE is read as an argument is (`-DNAME=VALUE` already is).
   h.e.readArgs(h.args.flatMap((a, k) => (h.args[k - 1]?.v === "-D" && a.v?.includes("=") ? [lit(a.v.slice(a.v.indexOf("=") + 1))] : [])), h.sc);
+  // A `-DCMAKE_<lang>_COMPILER` or `_COMPILER_LAUNCHER` override names the program cmake builds with: a value that looks
+  // like a command (`sh -c "curl|sh"`) asks, as the same thing set as `CC=…` does (commands-remote-c8-1). An ordinary
+  // compiler name (`clang`) runs.
+  for (let k = 0; k < h.args.length; k++) {
+    const a = h.args[k];
+    const dash = a.v === "-D" ? (h.args[k + 1]?.v ?? "") : /^-D(.+)$/.exec(a.v ?? "")?.[1] ?? "";
+    const m = /^CMAKE_[A-Z0-9_]*(COMPILER|COMPILER_LAUNCHER|RC_COMPILER|LINKER)(:[A-Za-z]+)?=(.*)$/s.exec(dash);
+    if (m && namesProgram("CC", m[3])) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+  }
   const p = h.args.findIndex(a => a.v === "-P");
   if (p >= 0) {
     const script = h.args[p + 1];
@@ -6629,6 +7164,12 @@ reg(NATIVE, ["dpkg", "rpm"], h => {
   const write = h.key === "dpkg"
     ? flags.some(f => /^-([a-zA-Z]*[irPa]|-install|-remove|-purge|-unpack|-configure|-set-selections|-add-architecture|-remove-architecture)/.test(f) || /^--(install|remove|purge|unpack|configure|triggers-only|set-selections|clear-selections|add-architecture|remove-architecture|update-avail|merge-avail)$/.test(f))
     : flags.some(f => /^-[a-zA-Z]*[iUeF]/.test(f) && !/^-q/.test(f) || /^--(install|upgrade|erase|freshen|import|reinstall|setperms|setugids|restore|initdb|rebuilddb)$/.test(f));
+  // `dpkg -x pkg.deb dir` / `--extract` / `-X` unpacks a package into a folder: a download's contents land there, so
+  // running one of them later asks (commands-remote-r8-2).
+  if (h.key === "dpkg" && flags.some(f => /^-[a-zA-Z]*[xX]/.test(f) || /^--(extract|vextract|fsys-tarfile)$/.test(f))) {
+    const ops = h.args.filter(a => !isOption(a));
+    if (ops[0] && h.e.isDownloaded(ops[0], h.sc)) { if (ops[1]?.v) h.e.markUnnamed(ops[1].v, h.sc); else h.e.markUnnamed(null, h.sc); }
+  }
   if (write) languageOrSystem(h, h.args.filter(a => !isOption(a)));
   else h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
 });
@@ -6684,7 +7225,9 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
   const urls = [...p.operands.map(a => a.v ?? ""), ...values(p, "url").map(v => v ?? "")].filter(u => u !== "");
   const host = hostOf(urls[0] ?? "") || "another computer";
   for (const u of urls) if (/^file:/i.test(u)) h.e.usePath(lit(decodeURIComponent(u.replace(/^file:\/\/(localhost)?/i, ""))), "read", h.sc);
-  if (values(p, "K", "config").length) h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see.");
+  // What the file says it fetches, and where it saves it, Ember can't see: a download of no name it knows, anywhere
+  // (commands-remote-r8-3).
+  if (values(p, "K", "config").length) { h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see."); h.e.markUnnamed(null, h.sc); }
   if (has(p, "n", "netrc") || values(p, "netrc-file").length) h.e.add("secret", "secret.netrc", SAYS.secrets);
   for (const f of values(p, "netrc-file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   if (values(p, "u", "user", "proxy-user").some(u => u !== null && u.includes(":") && !u.endsWith(":")) || values(p, "oauth2-bearer").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
@@ -6748,9 +7291,9 @@ reg(NATIVE, ["wget", "wget2"], h => {
   const method = (values(p, "method")[0] ?? "").toUpperCase();
   for (const f of values(p, "post-file", "body-file", "i", "input-file", "load-cookies", "certificate", "private-key")) if (f && f !== "-") h.e.usePath(lit(f), "read", h.sc);
   if (values(p, "post-data", "post-file", "body-data", "body-file").length || /^(POST|PUT|PATCH|DELETE)$/.test(method)) h.e.add("publish", "send.http", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }], program: "wget" });
-  if (values(p, "e", "execute").length) h.e.unclear("unclear.wget-execute", "It runs settings Ember can't see.");
+  if (values(p, "e", "execute").length) { h.e.unclear("unclear.wget-execute", "It runs settings Ember can't see."); h.e.markUnnamed(null, h.sc); }
   if (h.args.some(a => /^--use-askpass/.test(a.v ?? ""))) h.e.unclear("unclear.wget-askpass", "It runs a program Ember can't see.");
-  if (values(p, "config").length) h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see.");
+  if (values(p, "config").length) { h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see."); h.e.markUnnamed(null, h.sc); }
   const dir = values(p, "P", "directory-prefix")[0];
   const out = values(p, "O", "output-document")[0];
   if (out !== undefined) {
@@ -6934,7 +7477,28 @@ reg(NATIVE, ["sftp", "ftp", "lftp", "tftp", "ncftp", "ncftpput", "smbclient", "t
   if (!batch) h.e.unclear("unclear.interactive", SAYS.interactive);
   if (h.args.some(a => /^-U$/.test(a.v ?? "")) && h.args.some(a => /%/.test(a.v ?? ""))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   for (const a of h.args) if (/^-[A]$/.test(a.v ?? "")) h.e.usePath(h.args[h.args.indexOf(a) + 1] ?? lit("?"), "read", h.sc);
+  if (clientMayFetch(h)) h.e.markUnnamed(null, h.sc);
 });
+/** Commands a file-transfer client may be given that only send, list or move about, never fetch (clientMayFetch). */
+const SENDS_ONLY = /^(put|mput|reput|cd|lcd|ls|dir|pwd|lpwd|mkdir|lmkdir|rmdir|rm|mrm|del|chmod|rename|mv|open|user|bye|quit|exit|close|set|prompt|recurse|mask|binary|ascii|passive|hash|verbose)$/i;
+/**
+ * Whether a file-transfer client may fetch files, of names and into folders Ember can't tell (commands-remote-r8-3):
+ * a session, a batch file, its input or an address may (every sftp: `host:file` fetches, and it takes no commands on
+ * its line); commands it is given on its line (lftp's, smbclient's and tftp's `-c`) only when one of them isn't on
+ * SENDS_ONLY (`get`, `mget`, `mirror`…; smbclient's `prompt`, `recurse` and `mask` only set how it sends). ncftpput
+ * only sends and telnet moves no files. `smbclient -L` marks as a session does: a value written onto another option
+ * can end in `L` too (`-WGLOBAL`, `-UPAUL`), so Ember can't tell a listing from a session (commands-remote-y8-2).
+ */
+function clientMayFetch(h: H): boolean {
+  if (h.key === "ncftpput" || h.key === "telnet") return false;
+  if (h.s.stdin !== null) return true;
+  const k = h.args.findIndex(a => (h.key === "lftp" || h.key === "smbclient" || h.key === "tftp") && /^-c/.test(a.v ?? ""));
+  if (k < 0) return true;
+  const rest = h.args.slice(k + 1);
+  const text = h.key === "tftp" ? (rest.some(a => a.v === null) ? null : rest.map(a => a.v).join(" ")) : h.args[k].v === "-c" ? h.args[k + 1]?.v : h.args[k].v?.slice(2);
+  if (text === null || text === undefined || /[`$]/.test(text)) return true;
+  return text.split(/[;\n]|&&|\|\|/).some(c => { const w = c.trim().split(/\s+/)[0] ?? ""; return w !== "" && !SENDS_ONLY.test(w); });
+}
 reg(NATIVE, ["rsync"], h => {
   const p = opts(h, {
     // --mkpath and every other switch take no value (commands-remote-r4-1).
@@ -7021,16 +7585,42 @@ reg(NATIVE, ["rsync"], h => {
 });
 reg(NATIVE, ["rclone"], h => {
   const verb = firstOperand(h.args).v ?? "";
-  const ops = h.args.filter(a => !isOption(a)).slice(1).map(a => a.v ?? "");
+  // rclone's value options (--transfers 4, --config …) sit among the operands, so SOURCE and DEST are read past them,
+  // or `--transfers`'s `4` is mistaken for the destination (commands-remote-r8-2).
+  const rcloneP = parseOpts(h.args.slice(firstOperand(h.args).at + 1), {
+    longValue: ["transfers", "checkers", "config", "bwlimit", "include", "exclude", "filter", "filter-from", "include-from", "exclude-from", "files-from", "max-age", "min-age", "max-size", "min-size", "contimeout", "timeout", "retries", "low-level-retries", "multi-thread-streams", "multi-thread-cutoff", "log-file", "log-level", "stats", "buffer-size", "order-by", "backup-dir", "suffix", "compare-dest", "copy-dest", "track-renames-strategy", "max-depth", "cache-dir", "temp-dir", "user-agent"],
+  });
+  const ops = rcloneP.operands.map(a => a.v ?? "");
   const remote = (s: string): boolean => /^[A-Za-z0-9_.-]+:/.test(s) && !/^[A-Za-z]:[\\/]/.test(s);
+  // What asks is also read as main read it, every word that isn't an option in a row, so a remote in a value option
+  // (`--backup-dir remote:b`, `--compare-dest remote:r`) asks as it did there; the parsed operands only place the marks.
+  // A remote attached to an option (`--backup-dir=remote:b`) is data sent there as well (commands-remote-x8-1).
+  const mainOps = h.args.filter(a => !isOption(a)).slice(1).map(a => a.v ?? "");
+  const optRemote = rcloneP.opts.map(o => o.value ?? "").find(remote);
+  const remoteAt = ops.some(remote) || mainOps.some(remote);
   if (/^(config|password|obscure|authorize)$/.test(verb)) { h.e.add("secret", "secret.program", SAYS.secrets); return; }
-  if (/^(delete|purge|deletefile|rmdir|rmdirs|cleanup|dedupe)$/.test(verb)) { h.e.add(ops.some(remote) ? "remote-delete" : "destroy", ops.some(remote) ? "cloud.delete" : "posix.rm", "Deletes files."); return; }
+  if (/^(delete|purge|deletefile|rmdir|rmdirs|cleanup|dedupe)$/.test(verb)) { h.e.add(remoteAt ? "remote-delete" : "destroy", remoteAt ? "cloud.delete" : "posix.rm", "Deletes files."); return; }
   if (/^(copy|copyto|sync|move|moveto|copyurl|bisync|rcat|mkdir|touch|settier|link)$/.test(verb)) {
-    if (remote(ops[ops.length - 1] ?? "")) {
-      h.e.add("publish", "upload.rclone", `Sends data to ${ops[ops.length - 1].split(":")[0]}.`);
+    // More operands than the verb takes: an option this table doesn't know took a value (`--max-transfer 10G`), so which
+    // word is the destination is a guess, and it asks (commands-remote-y8-5).
+    if (/^(copy|copyto|sync|move|moveto|copyurl|bisync)$/.test(verb) && ops.length > 2) h.e.unclear("unclear.rclone-operands", "Ember can't tell where it copies files to.");
+    const dest = ops[ops.length - 1] ?? "";
+    const sentTo = [dest, mainOps[mainOps.length - 1] ?? "", optRemote ?? ""].find(remote);
+    if (sentTo !== undefined) {
+      h.e.add("publish", "upload.rclone", `Sends data to ${sentTo.split(":")[0]}.`);
       if (verb === "sync" || verb === "bisync") h.e.add("remote-delete", "rsync.delete-remote", "Deletes files on the other side that aren't here.");
-    } else if (verb === "sync") h.e.add("destroy", "posix.rsync", "Deletes files here that aren't on the other side.");
-    if ((verb === "move" || verb === "moveto") && ops.slice(0, -1).some(remote)) h.e.add("remote-delete", "cloud.delete", "Deletes the files it moves from the other side.");
+    }
+    if (!remote(dest)) {
+      if (verb === "sync") h.e.add("destroy", "posix.rsync", "Deletes files here that aren't on the other side.");
+      // Files copied here from a remote (`rclone copy remote:x .`, `copyurl URL file`) are downloads: running one later
+      // asks (commands-remote-r8-2). Into a folder (copy, sync, bisync), of unknown name; copyto/moveto name the file.
+      if (/^(copy|copyto|sync|move|moveto|copyurl|bisync|rcat)$/.test(verb) && (verb === "copyurl" || ops.slice(0, -1).some(remote))) {
+        if (/^(copyto|moveto|rcat)$/.test(verb) && dest) h.e.download(dest, h.sc);
+        else if (verb === "copyurl") { const f = ops[ops.length - 1]; if (f && !remote(f)) h.e.download(f, h.sc); else h.e.markUnnamed(".", h.sc); }
+        else h.e.markUnnamed(dest || ".", h.sc);
+      }
+    }
+    if ((verb === "move" || verb === "moveto") && (ops.slice(0, -1).some(remote) || mainOps.slice(0, -1).some(remote))) h.e.add("remote-delete", "cloud.delete", "Deletes the files it moves from the other side.");
     return;
   }
   if (/^(mount|serve|rcd|nfsmount)$/.test(verb)) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }

@@ -30,6 +30,30 @@ export interface LoggerOptions {
   /** Rotated files to keep (ember.log.1 … ember.log.N). */
   keep?: number;
   now?: () => Date;
+  /** Where printed lines go: process.stdout and process.stderr unless a unit test passes its own. */
+  streams?: { stdout?: LogStream; stderr?: LogStream };
+}
+
+/** A stream log lines are printed to: process.stdout or process.stderr. */
+export interface LogStream {
+  write(line: string, cb: (err?: Error | null) => void): boolean;
+  on(event: "error", listener: (err: Error) => void): unknown;
+}
+
+/** Print streams that failed a write (their reader went away: `| head` exited, a terminal closed): never written again. */
+const goneStreams = new WeakSet<LogStream>();
+/** Print streams already listened on for errors: one listener each, however many loggers print there. */
+const heardStreams = new WeakSet<LogStream>();
+/** The errors those failed writes raised, for isLogStreamFailure. */
+const streamErrors = new WeakSet<object>();
+
+/**
+ * True for an error one of Ember's print streams raised when a write failed (that very error, not one that looks like
+ * it): logging it would print to that stream again. Unheard, each failed write raised another, and Ember held a core,
+ * wiped its own log and couldn't be quit (reliability-r8-1).
+ */
+export function isLogStreamFailure(err: unknown): boolean {
+  return typeof err === "object" && err !== null && streamErrors.has(err);
 }
 
 export type Fields = Record<string, unknown>;
@@ -123,15 +147,51 @@ export function createLogger(opts: LoggerOptions): Logger {
       const entry: Fields = { ...(fields ?? {}), t: now().toISOString(), level: lvl, msg };
       if (scope) entry.scope = scope;
       const line = safeLine(entry) + "\n";
-      if (toStderr) process.stderr.write(line);
+      if (toStderr) print("stderr", line);
       else {
         try {
           rotateIfNeeded();
           fs.appendFileSync(file, line, { mode: 0o600 });
         } catch { /* disk full, read-only… */ }
       }
-      if (opts.stdout) process.stdout.write(line);
+      if (opts.stdout) print("stdout", line);
     } catch { /* an unprintable value */ }
+  };
+
+  /** The first failed write switches a print stream off for good, said once in the log (reliability-r8-1). */
+  const lose = (stream: LogStream, name: "stdout" | "stderr", err: unknown) => {
+    if (typeof err === "object" && err !== null) streamErrors.add(err);
+    if (goneStreams.has(stream)) return;
+    goneStreams.add(stream);
+    const code = (err as { code?: unknown } | null)?.code;
+    write("warn", undefined, "log.stream_off", { stream: name, ...(typeof code === "string" ? { code: code.slice(0, 40) } : {}) });
+  };
+
+  // Looked up only once a line goes there: a packaged Ember that prints nothing never touches its stdout.
+  const streamOf = (name: "stdout" | "stderr"): LogStream =>
+    name === "stdout" ? opts.streams?.stdout ?? process.stdout : opts.streams?.stderr ?? process.stderr;
+
+  const hear = (name: "stdout" | "stderr") => {
+    const stream = streamOf(name);
+    if (heardStreams.has(stream)) return;
+    heardStreams.add(stream);
+    // Node reports a failed write after write() returns, to its callback and then as an `error` event. Unheard, that
+    // event is an uncaught exception, whose log line printed here failed the same way, without end.
+    stream.on("error", (err: unknown) => lose(stream, name, err));
+  };
+
+  const print = (name: "stdout" | "stderr", line: string) => {
+    const stream = streamOf(name);
+    if (goneStreams.has(stream)) return;
+    try {
+      hear(name);
+      // Printing to stdout hears stderr too: the two mostly share a reader (a terminal, `2>&1 | head`), and Node copies
+      // a child's stderr to Ember's own (execFileSync), where a failure was logged as uncaught at every setup check.
+      if (name === "stdout") hear("stderr");
+      stream.write(line, err => { if (err) lose(stream, name, err); });
+    } catch (err) {
+      lose(stream, name, err); // a write that throws instead of reporting its error (a full disk reports, as EPIPE does)
+    }
   };
 
   const make = (scope?: string): Logger => ({

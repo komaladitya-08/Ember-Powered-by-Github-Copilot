@@ -279,12 +279,17 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     picks out lasting facts as JSON (zod-checked, dropped whole if invalid): at most one call per three turns or a
     minute, 12 an hour, 60 a day. A fact is yours only when you were heard to say it and every word of it is yours,
     the same way round; a task's are `task`; nothing that reads like an instruction is ever learned (the remember
-    tool keeps one only in your own words). Learned facts are recalled by meaning too, once Better recall's model is
-    in. After 5 idle minutes (no turn, no task,
+    tool keeps one only in your own words). What you ask Ember to remember is kept once: that turn's reading doesn't
+    add it again in other words or about other names, and learns another thing you said in it unless it reads as the
+    same fact (docs/MEMORY.md says how that is told). Learned facts are recalled by meaning too, once Better recall's
+    model is in. After 5 idle minutes (no turn, no task,
     the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
     idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
     fact shows in the conversation as "Ember learned: …" with **Undo**; once forgotten the line says "Ember forgot: …"
-    with an Undo that puts it back, and focus stays on it. The kill switch stops all of it (`memory`).
+    with an Undo that puts it back, and focus stays on it. What you forget or correct is never learned back from what
+    was said before: Forget, a correction and Forget everything drop the turns and task results not yet read (and the
+    turn under way, a task asked before them whenever it finishes, and any task result that comes in within two
+    minutes), so their other facts are learned only when said again. The kill switch stops all of it (`memory`).
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
@@ -388,7 +393,15 @@ by accident. A hidden Ember shows itself to ask, and with **Speak replies, quest
 out loud; **Never** keeps it quiet even for a screen reader, and chosen while Ember talks it stops at once (as does a
 screen reader turned off, at the answer's next sentence). Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
-for them. After **Not now** (or a question nobody answered, a refusal, or a step that failed), a step Ember had lined
+for them. So are buttons, links and menu items that go past a security warning or turn a protection off (“Enable
+Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Remote Content”), and any answer to a message box or
+to a dialog's question but one that backs off (“Leave page”, “Resend” and “Close tabs” ask; Cancel, Close, “Stay on page”,
+“Remind me later” and No don't, but for No where the dialog asks to save, since it throws the changes away); the
+question quotes the dialog. A question in what was written in a working dialog, a mail's
+body or a card's description, doesn't make its buttons ask once Ember has read the whole dialog and seen the field it was
+written in; where its read was cut short, the dialog's words still count, so a page's “Are you sure you want to leave?” asks at “Leave”. Any button, link or tab of a page (or of an app built on one) whose window's title
+mentions a checkout, a payment or billing asks every time too, saying so (“The window's title mentions billing, so this
+may pay for something.”): a title that only mentions one, a mail's subject or a file's name, asks as well. After **Not now** (or a question nobody answered, a refusal, or a step that failed), a step Ember had lined
 up to follow it in the same breath isn't taken either: it looks again and decides afresh. A progress note or card view that
 wasn't accepted holds nothing back; a command that ended with an error does, however it ended. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
 "Waiting for you" while it asks, "Starts when another task ends" while two others are at work), how long it has worked and which step of its plan it is on, and shows what it did
@@ -419,7 +432,12 @@ working: then Ember says so and points to the setup check),
 it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
 it's going ahead without asking), until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
 windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
-still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
+still asks first, the question says you didn't ask for it, and from then on that task asks before every step. A
+link, tab or menu item asked about only because its name starts with a word that grants or commits (a headline
+“Reserve Bank raises rates”, a tab “Email”, “Allow Editing”) asks every time too, but isn't called something you didn't
+ask for and doesn't put the task back to asking, since such words lead headlines, tabs and settings as well; a button so
+named is, and so is a name that grants rights, changes who can see something or turns a protection off (“Make admin”,
+“Change visibility”, “Turn off antivirus”, “Continue as Ana”) or grants access (“Allow”, “Allow notifications”).
 **Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop”, “stop typing” or “abort” in
 the Ask box while a task is at work) stops every task, question, borrowed mouse,
 desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for
@@ -1082,7 +1100,7 @@ Environment variables for development:
 |---|---|
 | `EMBER_USER_DATA=/tmp/x` | Use another settings and log folder |
 | `EMBER_LOG_LEVEL=debug` | More detail in the log: `debug`, `info`, `warn` or `error`, in any case; anything else means `info` (and is logged) |
-| `EMBER_LOG_STDOUT=1` | Also print log lines to the terminal (on by default in development) |
+| `EMBER_LOG_STDOUT=1` | Also print log lines to the terminal (on by default in development). When whatever reads them goes away (`\| head`, `less` then q, a closed terminal), Ember stops printing there at the first failed write and says so once in `ember.log` (`log.stream_off`, with the stream and the error code); the file keeps every line. Stderr is treated the same, whether log lines go there (when the logs folder can't be made) or not |
 | `EMBER_PYTHON=/usr/bin/python3.12` | Python for the accessibility sidecar (Linux; default: `/usr/libexec/platform-python`, then `python3`) |
 | `EMBER_AX_PROVIDER=fake` | Windows and macOS, development only: the accessibility host reads a pretend desktop instead of the real one (a small bench, or the windows in the JSON file `EMBER_AX_FAKE_DESKTOP` names) |
 | `EMBER_TEST_EXTENSIONS=demo` | Development only: settings' **Extensions** section runs on a pretend runtime held in memory (`app/main/extensions-demo.ts`), which reaches no network, runs nothing and opens no browser: `demo` has marketplaces, plugins (one with a changed tool) and connectors (one needing a sign-in again), `empty` has nothing added, and `managed` is turned off by the organisation. For the render checks |
@@ -1115,7 +1133,15 @@ offered as suggestions in both model fields, set as option values only. It is di
 until the card below is agreed for the endpoint's host: nothing at all goes to a host the user hasn't agreed to, with
 or without a key. A line under it says why it waits (its `aria-describedby`), and when the card comes up for an
 address just entered, the status line says "Read the note above: Ember sends nothing to <host> until you agree."
-(focus has moved on to the next field by then), and once agreed "Agreed. Ember now sends your requests to <host>.". It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
+(focus has moved on to the next field by then), and once agreed "Agreed. Ember now sends your requests to <host>.".
+That yes is followed at once by the same one GET, to that host only, as first run's step and a held edit are, and
+the line then says what it found after the agreement: "Agreed. Ember now sends your requests to <host>, which lists 1
+model: llama3.2:3b.", or main's sentence for an address that answers without a model list (Ollama's without `/v1`),
+wants a key or can't be reached, in red (`providerAgreedChecked`, integrations-r8-2). It only says it: the yes stands,
+and an answer that comes after the switch, the address, the type or the key changed says nothing. Nor does it
+take the place of a line said meanwhile: a refused edit's reason (a model name with a space, an address Ember can't
+use, an Azure version written otherwise, an empty key) and Test connection's own answer stay the last word
+(integrations-x8-1). It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
 headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever address the service named.
 First run's provider step, opened for a provider already in use, checks edited details before any of them replaces the
 details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the
@@ -1162,7 +1188,14 @@ the address in force and its saved key are kept and come back with the switch (i
   minute, and at once on the next request), each try only that GET, and a background try leaves the status as it is
   while nothing answers, so no "Connecting…" comes and goes every minute (integrations-c1-2). A remote host isn't asked at a start: Electron's
   fetch follows the system's proxy settings, which can differ from the runtime's, so its test may not veto a connect.
-  So a server on this computer that answered reads "Connected to <host>.", and a remote host only "Using <host>.",
+  So a server on this computer that answered with a model list reads "Connected to <host>."; one that answered
+  without one (Ollama's address entered without `/v1`, a web page, a chat-only gateway taken with "Use it as typed")
+  reads "Using <host>. It answered, but without a model list: Test connection under Model provider says more.", and
+  one that answered otherwise (a key refused, an error) only "Using <host>." (`localProviderLine`, integrations-r8-1).
+  The status carries what that check found (`service.listed`), so first run says the same: its sign-in step and the
+  provider step in use say "Connected to your own provider (<host>)." only for a model list, and otherwise "Using your
+  own provider (<host>)." (`ownConnected`, integrations-x8-2).
+  A remote host reads only "Using <host>.",
   or "Using <host>, with no API key saved. If it needs one, save it under Model provider." when no key is saved for
   it (a keyless gateway still works); the setup check's model row then warns rather than says OK (integrations-r3).
   An answer that refuses the key or has no model list never counts as down: the request says that itself.
@@ -1205,6 +1238,9 @@ the address in force and its saved key are kept and come back with the switch (i
   moment Ember starts connecting to it, so Home's Models & connections leads with **Check my provider's details**
   (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
   title names the provider ("No model set for your provider", "I'm still connecting to your model provider").
+  With no model named, the status line there names the field rather than the pane it is on: "Enter the model your
+  provider should use in “Conversation model”, below." (`PROVIDER_NO_MODEL_HERE`; the bubble keeps main's "… in Ember's
+  settings, under Models & connections.", integrations-r8-3), and the button moves the focus into that field.
   Ember's Copilot runtime, which still carries the requests, is "Ember's model connection" then ("My model connection
   stopped unexpectedly. I'm reconnecting…", "Ember's model connection keeps stopping…", and the file watchers running
   out: `runtimeWords`, `lostWords`), never Copilot; a task cut off by it ends, in the bubble and the conversation, with

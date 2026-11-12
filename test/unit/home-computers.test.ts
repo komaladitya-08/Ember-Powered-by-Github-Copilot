@@ -102,6 +102,43 @@ describe("each “Ask me before every command” switch names its computer (revi
   });
 });
 
+describe("“Ask me before every command” where commands run as root or an administrator", () => {
+  const on = { on: true, askEvery: false, consent: { version: 1, at: null } };
+  const view = (privileged: readonly string[], admin: cc.TargetsAdmin = noPolicy) => cc.commandsView({
+    summaries: [summary({}), wsl({}), ssh({})].map(s => (privileged.includes(s.id) ? { ...s, privileged: true as const } : s)), admin,
+    settings: settings({ commands: { local: on, "wsl:Ubuntu": on, "ssh:build-01": on } }),
+  });
+
+  it("shows on and can't be turned off, saying why, as every command asks there (accessibility-c8-3)", () => {
+    const v = view(["local", "ssh:build-01"]);
+    expect(v.rows.map(r => [r.id, r.askEvery.checked, r.askEvery.disabled, r.managed])).toEqual([
+      ["local", true, true, "Commands here run as the administrator, so Ember asks before every one."],
+      ["wsl:Ubuntu", false, false, null],
+      ["ssh:build-01", true, true, "Commands here run as the administrator, so Ember asks before every one."],
+    ]);
+    // Where the organisation asks too, both say why.
+    expect(view(["local"], { source: "p", features: {}, commands: { local: "ask", wsl: "on", ssh: "on" } }).rows[0].managed)
+      .toBe("Commands here run as the administrator, so Ember asks before every one. Your organisation asks you to approve every command here.");
+  });
+
+  it("leaves the user's own switch as it was where commands don't run that way (accessibility-c8-3)", () => {
+    expect(view([]).rows.map(r => [r.askEvery.checked, r.askEvery.disabled, r.managed])).toEqual([[false, false, null], [false, false, null], [false, false, null]]);
+  });
+
+  it("says nothing of asking where the organisation turned commands off, as none can run there (accessibility-x8-4)", () => {
+    const v = view(["local"], { source: "p", features: {}, commands: { local: "off", wsl: "on", ssh: "on" } });
+    expect(v.rows[0].run).toMatchObject({ checked: false, disabled: true });
+    expect(v.rows[0].managed).toBeNull();
+    expect(v.managed).toEqual(["Your organisation has turned off commands on this computer."]);
+    // Turned off by the user, the note stays under their switch, as the organisation's ask line does.
+    const own = cc.commandsView({
+      summaries: [{ ...summary({}), privileged: true }], admin: noPolicy,
+      settings: settings({ commands: { local: { ...on, on: false } } }),
+    });
+    expect(own.rows[0].managed).toBe("Commands here run as the administrator, so Ember asks before every one.");
+  });
+});
+
 describe("the status lines keep a command or a host name in one piece (commands-remote-8)", () => {
   it("never breaks a line inside a hyphenated word such as openssh-clients or build-01", () => {
     expect(cc.unbrokenRuns("Install OpenSSH with sudo dnf install openssh-clients, then try again.")).toEqual([

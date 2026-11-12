@@ -2369,3 +2369,182 @@ against the binaries; a real browser for unnamed buttons and payment pages; the 
 3.6; a live Ember for Restart Ember, Sign in under a lockdown, "Read it out" and the second Hear Ember; a really full
 disk; the resting cost with the runtime on the RHEL 8 target; and Windows, macOS, WSL and SSH, where none of this round
 ran.
+
+### Product audit fixes, eighth round (2026-11-11 to 2026-11-12)
+
+After round seven each area was rated again at 23b22a5 (merged as 848a566). Scores (re-rater, then challenger):
+commands, WSL and SSH 7.8 and 7.0; safety and privacy 8.4 and 8.2; memory 8.7 and 8.3; models, providers, extensions and
+projects 9.1 and 8.7; accessibility and copy 9.1 and 8.8; reliability and platform 8.8 and 8.8; listening 9.0 and 9.0;
+speaking 9.0 and 9.0; Home 9.1 and 9.0; tasks and approvals 9.2 and 9.0; first run and setup 9.2 and 9.1; the companion
+and Ask 9.2 and 9.1; install, docs and developer experience 9.3 and 9.2. Counting each re-rater's new finding (-r8-N)
+and each challenger's miss (-c8-N) once, at its finder's severity, they found 63 new items: 5 P1, 6 P2 and 52 P3. The
+challengers raised integrations-r8-1 to P2 and refuted first-run-r8-2 (by design); the re-raters listed
+safety-privacy-x7-1, -x7-4 and commands-remote-y7-6 at P2, and memory's challenger put memory-x7-1 back at P2. The P1s
+were all commands': a clone entered with `cd x;`, runners and fetch tools Ember didn't know (`java -jar`, svn), a
+variable naming a build tool's program and deleters with no row (`rimraf ~`) let downloaded code or a deletion run
+unasked, and `docker run` ran any image with the project mounted (commands-remote-r8-1, -r8-2, -c8-1, -c8-2, -c8-3). The
+P2s were safety-privacy-r8-1 and -c8-1, memory-r8-1 and -c8-1, accessibility-c8-1 and reliability-r8-1 (below).
+
+Six areas scored under 9 from either rater. Four lanes, one package after another in its own worktree, two agents at a
+time: P (commands: download and run, then deletion), R (safety and privacy), Q (memory) and T (reliability,
+accessibility, then integrations). Each package: a fix with a test seen failing first, an adversarial reviewer (-x8-N),
+a repair, a second reviewer (-y8-N; reliability, whose reviewer found nothing, had neither), and, where that review had
+a P1 or P2 (both commands packages and safety), a last step told to fix or revert what the round's commits caused and
+design nothing new. Both commands packages have a -y8-1 to -y8-5, so the package is named with them. The fix agents
+reported 30 items: 15 fixed, 7 partly, 6 skipped and 2 owner decisions. The round is 66 commits: 24 fixes, 31 repairs, 6
+from the last step, 4 merges and 1 after them.
+
+**What the packages did.** Commands, download and run (lane P, M12): once the task holds any download, a build tool,
+test runner or `python3 -m` in a folder Ember can't name asks "May run a file downloaded in this task", so `cd x;` no
+longer hides a clone (346df5e; commands-remote-r8-1); java, mono, wine, `node x` and `awk -f` given a download, and `go
+run .` over downloaded sources, ask, a compiler or a decompressor passes the mark on, and svn, hg, rclone and `pip
+download -d` mark where they land (262eede, 5c74613; -r8-2, partly); and a compiler or pager variable holding a command,
+`GOFLAGS=-toolexec=`, `TAR_OPTIONS=--to-command=` and npm's script shell ask, while `CC=clang`, a connection string,
+prose and `RUSTFLAGS='-C linker=clang'` run (79a3ba8, c883249, aaa39c6, 12493dd; -c8-1, partly). Commands, deletion:
+rimraf, del-cli, grm, scrub, gvfs-rm, trash-rm, fdupes `-d` and git-filter-repo take rm's row (`rimraf ~` is refused),
+their patterns are judged as patterns, and a brace group that, read as a shell reads it, stands for Ember's or the home
+folder is refused; a program with no row given the home folder, one holding it or Ember's files asks (`mytool ~`), while
+`cd build && qmake ..` runs (d2289b7, 789e9de, 8a05cd0, fdc69b0; -c8-2); an announced deletion asks when the words
+describe another folder ("the production build folder"), give a deadline, a day or a recurrence or ask for a copy first,
+while "before npm install" still announces (85bf5b5, 36dcda6, 4d0cfe8; -y7-6, partly); and curl's `-K`, wget's
+`--config` and ftp-type clients' sessions count as a download of no name unless they only send (c52ab47, 9c4ab46; -r8-3,
+partly). Safety (lane R): a control that goes past a warning or turns a protection off ("Enable Macros", "Keep anyway")
+asks every time, never with "Always" or announced, saying so (db44f4c; safety-privacy-r8-1), though "Go to page 2" and
+"Disable spell check" don't (4467c9b); in a dialog asking a question in at most 300 characters, or a message box read as
+an alert (Linux's: Windows' #32770 boxes and a Mac's dialogs count only by their words), a button that doesn't back off
+asks every time, quoting the dialog ("Leave page", "Resend" on every OS, "No" to saving changes), while Cancel, Stay and
+"Remind Me Later" don't (db44f4c, 0a4cbb9, de87af0; -c8-1); a click in a window whose title mentions a payment says why
+(80c52d0; -x7-4, partly: which titles count is unchanged); a link, tab or menu item asked about only for a word round
+seven added (a headline "Reserve Bank…", a tab "Email") still asks every time but without "You didn't ask for this" or
+putting the task back to asking, while "Make admin" and "Allow notifications" keep both (6a89c65, 246315e, c84bed8;
+-x7-1, partly); and under Work without asking, Enter in a search box that also types a message or picks people, or in a
+window for sending money or sharing, asks (54c4e93, cab92d5; -r8-3). Memory (lane Q): a Forget, a correction or Forget
+everything drops everything said before it and not yet read, by a mark taken as each request is asked rather than only
+by likeness of words (round seven's rule stays as a second layer), and any unmarked turn or task result within two
+minutes: 0 of 14 reworded tests and 0 of 12 of the re-rater's probes bring the fact back, where 14 and 7 did (f483169,
+dd5fa32; memory-r8-1, -r8-3), and a task the conversation started carries its request's mark (df76607; -x8-4, partly);
+what the remember tool keeps is kept once (0 of 11 doubled, where 11 were), the turn's other facts, and the next turn's
+after one cut short, still learned (7eccb5b, 1c7814d, 753ee2c, cd856ab; -c8-1, -x8-1, -x8-2); and round seven's list
+pattern lets `--no-password`, `none` and click's `"--api-key", "api_key"` through (cae3a73; -x7-1, partly). Reliability
+(lane T): Ember stops printing to a stream at its first failed write; piped to `head -1` it used 0.1 % of a core, not
+98.3 %, and SIGTERM ended it within 1 s (9ab442b; reliability-r8-1). Accessibility: the corner card says each new
+question, one in the last one's words too, and what is put back after “Listening…” once (f7535b7, 52529d1, a43cd3b;
+accessibility-c8-1, -x8-1); it says a task's end in a region of its own with Home closed, held while the microphone or
+Listen once is open (f0c2ec3, b630dc6, b09c405; -c8-2, -x8-2, -x8-3); and where commands run as root or an
+administrator, “Ask me before every command” shows on and locked, with a note saying why (ec843db, 4db8c24; -c8-3,
+-x8-4). Integrations: a model server here that answered without a model list reads "Using <host>. It answered, but
+without a model list: …", and “Using your own provider” in first run (a6c2332, 8581e20; integrations-r8-1, -x8-2); a
+first "I agree" in Home makes Test connection's one GET and says what it found, unless a refused edit's reason holds the
+line (162f58d, cc01414; -r8-2, -x8-1); and with no model named, the status line points to “Conversation model” below
+(93eb236, f842a65; -r8-3, -x8-3).
+
+**Reviews, repairs and reverts.** The first reviewers found 31 problems (4 P1, 10 P2, 17 P3); reliability's found none.
+The P1s were commands' and all were repaired: an rclone upload with its remote in a value option (commands-remote-x8-1;
+618287e), a project runner running a download (-x8-2; fa0854b) and `fdupes -o ~/.bashrc .` (-x8-5; be9e0c3) ran, and
+"before you build, delete the build folder" announced `rm -rf build`, already at 848a566, where 4d64d3a asked (-x8-6;
+36dcda6). The P2s were repaired, two only partly (commands-remote-x8-4, safety-privacy-x8-1); by the round's end two
+more were only partly fixed: commands-remote-x8-8, which the second review found incomplete, and safety-privacy-x8-2,
+which the last step reverted in part (below). The second reviewers found 25 (2 P1, 6 P2, 17 P3). In the download
+package, 262eede's slice of the marks the runner check reads hid those a runner's own redirection makes, so `curl -s URL
+| make x > x` ran after a download (its -y8-1, P1), as did 134 lines that asked on 848a566, 88 of which ran on 4d64d3a
+(-y8-3); with nothing downloaded first they already ran on 848a566 (-y8-2, P1); and tar's own options ran a program held
+in a variable (-y8-4) and an rclone upload ran with an option rclone's table lacks after the destination (-y8-5), both
+as on 4d64d3a. In the deletion package, a rimraf pattern its matcher reads unlike the shell only asked (its -y8-1) and
+`-WGLOBAL` passed for smbclient's `-L` (-y8-2). In safety, a page's dialog read in part was judged by its title alone,
+so "Leave" under "Are you sure you want to leave?" went unasked (safety-privacy-y8-1).
+
+The last step departed from its instruction. 2603fc7 narrowed 262eede's slice instead of reverting it, since `pip
+download -d build x` would ask without it (reasoned, not measured): a runner's own redirection marks count again, and
+the "anything downloaded?" gate reads them, in 4d64d3a's order (the download package's -y8-1 to -y8-3; 134 lines looser
+than 848a566 to 0). 78cc62c (a tar word Ember can't see whole read by its text, GNU's `-F` as `--info-script`; -y8-4)
+and 58397c7 (an rclone copy with more words than it takes asks; -y8-5) tighten holes older than the round, which it
+wasn't asked to do. a7ceed3 kept 8a05cd0 and fdc69b0, since reverting them would turn the refusals of `rimraf '{..,x}'`,
+`'+(..)'` and `"{$HOME,x}"` back into questions, and corrected the docs' claim instead: braces are read as a shell reads
+them, and a pattern rimraf reads otherwise asks (its -y8-1 and commands-remote-x8-8, partly); a96755f reverted only
+9c4ab46's `smbclient -L` line (-y8-2). 54de771 reverted 1003b91's `: !!r.dialog.page` fallback, so a dialog read in part
+is judged by its words again (safety-privacy-y8-1), reopening safety-privacy-x8-2 there and carrying -x8-5 and -x8-7 to
+page dialogs ("Resubmit", "No" to VS Code's save). No last-step commit was reviewed again.
+
+**Commands held to main.** On the merged tree, against 4d64d3a: 101,165 cases (main's 3,784-case corpus, 27,899
+generated and 69,482 gathered from round seven's and round eight's reviews and raters), then 7,976 more probes from
+round eight's reviews and last step, each through the classifier and the run_command flow: 0 commands decide less safely
+outside the allowed kinds (main's corpus: 0); allowed lines: plain `if` 1,067, `[[ … ]]` test 2,750, job count 622;
+15,092 commands are stricter (main's corpus 4). Against 848a566 (main after round seven, the harness's new CMP_BASE
+switch): 101,228 cases and 7,962 extra probes: 0 commands decide less safely at all, allowed kinds included; 10,426 and
+305 are stricter, 1 of them in main's corpus: `pip download -d build x && sh build/run.sh` now asks
+(escape.run-downloaded), on purpose. The stricter set is almost all reviewers' probes; by rule: unclear.broad-folder
+2,303 (`tokei "$HOME"`, `restic backup ../..`), escape.run-downloaded 1,747, posix.rm 1,625 (rimraf and its like),
+unclear.assignment 1,474, a deletion whose words describe its folder going from announced to asking 606 ("delete the
+useless build folder": commands-remote-x8-10, P3, left) and git.history 370. Of 40 ordinary development commands run
+through both trees by hand, one changed: `rimraf dist` after "delete the dist folder" is announced where it ran. Round
+seven's 0 held only for the cases it ran: the forms 848a566 already decided less safely than 4d64d3a, which its corpus
+lacked (commands-remote-x8-6 and the download package's -y8-2), ask again.
+
+**Safety and memory held to main.** Lane R's proof ran 838,392 steps per tree: nothing weaker than at 6b750a2 or 848a566
+at the fix (6b750a2, 848a566, 54c4e93), than 848a566 after the repairs (848a566, 54c4e93, c84bed8) or than c84bed8 in
+the last step. At the fix, 162,748 steps (1,344 labels, links, tabs and menu items only) lost the off-task flag with
+unchanged verdicts, steps 6b750a2 neither flagged nor asked about for a risk; no button lost one; the repairs gave
+81,544 back and left 81,204 dropped (links, tabs and menu items that only start with a committing word), and the last
+step changed no flag. Run again on the merged tree (7c19075) against 6b750a2 and 848a566, the proof holds: no step is
+weaker than at either, round seven's y7-1 steps (22,680) and y7-2 payment-title steps (266,944) all ask every time, the
+same 81,204 steps lose the flag, and 5,918 steps that 848a566 announced under Work without asking ask now. Lane Q's
+proof ran 20,888 files, 19,608 whole files and 3,342,271 lines through memoryRefusal and redactSecrets at 6b750a2,
+848a566 and the lane: 0 of 9,124 held units lost their hold, and every memory-q6-1 and -y7-2 shape is still refused and
+hidden; it ran before a last tightening in cae3a73, which only hides more.
+
+**Merges.** Lanes P, R, Q and T merged in that order (13ae4fb, 3ffdbe7, 8c57779, 7f4e0b7) with no conflict: the only
+files two lanes both touched were docs/COMMANDS-WSL-SSH.md, .claude/rules/agent-and-policy.md, docs/DEVELOPING.md,
+app/main/agent/host.ts and app/main/main.ts, in different hunks. 7c19075 then corrected a comment and a test title that
+called the logger's throw path a full disk's: reliability's reviewer found a full disk reports ENOSPC and never throws.
+
+**Consent and departures.** No consent text or version changed: consent.ts is untouched since 848a566 (`CONSENT_VERSION`
+7), welcome-copy.ts changed only the sign-in step's “Connected to” or “Using” (8581e20), and nothing more is read, sent
+or kept (the GET after a first agree in Home goes only to the host just agreed). No departure from §2, though §2's
+"Approvals" list of risky steps doesn't yet name the two classes db44f4c added to CLAUDE.md's (a follow-up). Recorded
+because they change what a rule says: CLAUDE.md's risky actions now include going past a security warning and answering
+a dialog's question (on Linux, any message box) other than by backing off; a dialog is judged by its title alone only where a whole
+read shows a field in it (54de771); links, tabs and menu items that only start with a committing word ask without the
+off-task flag; the search box's window test is an English phrase list (`PICKS_WHO`); once a task holds any download,
+build tools in a folder Ember can't name ask, so `cd src; npm test` asks after an unrelated download;
+commands-remote-c8-2's arm for a folder above the task's was dropped, since Ember has no fixed project root (789e9de); a
+rimraf pattern of more than 64 words, or with an unclosed `{` and a comma, is refused (`rimraf 'weird{,name'` too); and
+a Forget drops by mark, so Ember learns less: the other facts of a dropped turn come back only when said again.
+
+**Left.** Round eight makes round seven's record untrue in places: the headline, tab "Email" and "Allow Editing" of its
+revert paragraph no longer say "You didn't ask for this" or put the task back to asking, and a payment-titled page's
+question gives its reason, so safety-privacy-x7-1 and -x7-4, reopened whole in its Left, are partly fixed, as are
+memory-x7-1 and commands-remote-y7-6; and its memory-c7-1 fix held only where the extraction worded the fact as the
+forgotten one was (memory-r8-1; its tests used only the remember tool's words, -r8-3). Reopened by the last step:
+safety-privacy-x8-2 for dialogs read in part (a compose window whose body asks something asks at every button);
+`smbclient -L` marks a download again (commands-remote-x8-11's half). Found still open by the second review: rimraf
+patterns its matcher reads otherwise ask instead of being refused (-x8-8, partly; a7ceed3 corrected the docs' claim).
+Second-review P3s not fixed: the download package's -y8-6 to -y8-10 (`export GOFLAGS=…` and `FOO='exec rm -rf ~' make`
+run, as on main; an rclone option's date is taken for a remote; `poetry run python -m pip wheel . -w dist`, `go run .
+--exec ./scripts/x.sh` and `TAR_OPTIONS='--checkpoint=100'` ask); the deletion package's -y8-3 to -y8-5 (`mytool
+--no-prefix ~` runs; "before make install" holds a deletion back; `yarn scrub --` asks); safety-privacy-y8-2 to -y8-5
+(Enter in search announced on "Pay bills", "Not now (not recommended)" past the warning check, "No" asking in "Close
+without saving?", some headlines flagged again); memory-y8-1 to -y8-3 (part of a kept fact learned again); and
+integrations-y8-1 and -y8-2 (a model name refused during the first agree's check drops its findings). First-review items
+left: a whole option set in a variable (`GOFLAGS=$X go build`), `cargo rustc -- -C linker=…` and
+`CARGO_TARGET_<triple>_LINKER=…` run, as on main (commands-remote-x8-4, partly); describing words outside the list and
+day-like names (`delete monday.txt` asks; -x8-10); `lftp -e 'put …'` still marks (-x8-11); WGETRC and smbget mark
+nothing, as on main (-x8-12); a fact the remember tool paraphrased is kept twice (memory-x8-3), and a task with no mark
+(Try again) has only the two-minute rule (-x8-4); "Unblock", a lone "Skip" and "Reject all" ask every time
+(safety-privacy-x8-1, -x8-6). Partly fixed or skipped: `npm pack` then tar and a downloaded `.npmrc`
+(commands-remote-r8-2); `export CC=… && make` and PYTEST_PLUGINS, as on main (-c8-1); "on my laptop" and a relative
+clause announce (-y7-6); inline code that fetches marks nothing (-r8-3); `echo status | xargs git` still asks (-r8-4,
+skipped as a loosening); which titles count as a payment page (safety-privacy-x7-4), x7-1's extra question, which more
+one-click words ("Join", "Follow", "Claim") ask (-r8-2, skipped for the owner to choose) and the address bar told from a
+page field only by `inPage` (-r8-4, skipped); memory-r8-2 and -c8-2; and reliability-r8-2 (a full disk at start said as
+no connection). The seven areas with no package keep their 33 new P3s (first-run-r8-1, -c8-1, -c8-2; home-r8-1 to -r8-4,
+-c8-1 to -c8-3; companion-r8-1, -r8-2, -c8-1, -c8-2; voice-listening-r8-1, -c8-1, -c8-2; voice-speaking-r8-1 to -r8-4,
+-c8-1 to -c8-3; tasks-approvals-r8-1, -c8-1 to -c8-3; install-docs-r8-1, -r8-2, -c8-1 to -c8-3), and accessibility-r8-1,
+reliability-c8-1, integrations-c8-1, safety-privacy-x7-8 and round seven's Left stand (install-docs-c8-2's limit is
+already pinned by release.test.ts; only an early check in the tag's run is left). Owner decisions: whether pulling and
+running an image nobody named is download-and-run, and whether a container's command is judged against the folder
+mounted in it (commands-remote-c8-3); whether a page's unnamed link is judged as its unnamed button is
+(safety-privacy-r8-5; pinned unasked); whether to revert 8a05cd0 and fdc69b0 together after all; and earlier rounds',
+which stand. Still to check natively: real browser and office dialogs and warning pages; rclone, smbclient and del-cli's
+matcher (the second review ran GNU tar and rimraf's matcher); a real screen reader on the corner card, and Listen once's
+hold with a microphone; the eval's memory-injected-screen-text (no GTK 3 here); the logger fix on Windows and macOS; and
+Windows, macOS, WSL and SSH for the rest.

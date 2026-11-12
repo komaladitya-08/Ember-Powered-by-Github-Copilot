@@ -6,8 +6,8 @@
  * valid; that is always the answer of the real check.
  */
 
-import { onThisComputer, type ProviderType } from "../../shared/provider";
-import { providerTestText } from "./copy";
+import { ownConnected, type ProviderType } from "../../shared/provider";
+import { PROVIDER_NO_MODEL_HERE, providerTestText } from "./copy";
 
 /** The ways on from a failed connection ("provider": the user's own provider's details, when it is the one failing). */
 export type FailureAction = "retry" | "switch-account" | "own-provider" | "sign-in" | "provider";
@@ -117,8 +117,14 @@ export function homeConnectionView(o: { phase: string; reason?: string; detail?:
   const v = failureView({ reason: o.phase === "signed-out" ? "sign-in" : o.reason, detail: o.detail, ownOffered: o.ownOffered && !o.own?.on, service: o.phase === "error" ? o.service : undefined });
   const show = { ...none, retry: true };
   for (const a of [v.primary, ...v.others]) if (a !== "continue") show[a] = true;
-  return { help: v.help, show, primary: v.primary === "continue" ? null : v.primary };
+  // Main's sentence for no model named sends the person to Models & connections, where this line is: here it names
+  // the field below instead (integrations-r8-3).
+  const noModel = o.phase === "error" && o.service === "user" && o.reason === "models" && NO_MODEL_NAMED.test(o.detail ?? "");
+  return { help: v.help, show, primary: v.primary === "continue" ? null : v.primary, ...(noModel ? { line: PROVIDER_NO_MODEL_HERE } : {}) };
 }
+
+/** Main's USER_PROVIDER_NO_MODEL ("Enter the model your provider should use in Ember's settings, …"). */
+const NO_MODEL_NAMED = /^Enter the model your provider should use in Ember's settings\b/;
 
 /** The own-provider step's words. */
 export const PROVIDER_STEP = {
@@ -220,12 +226,13 @@ export function signInWays(o: { line: string; checkAgain: boolean; primary: Fail
 
 /**
  * That step's status line, from the connection's (`phase`, and main's `detail` when it failed, said as mine:
- * first-run-r4-2). Ready, a server on this computer was asked at the start and is "Connected"; a host elsewhere wasn't,
- * so it is only "Using", as Home's status says (integrations-r3, integrations-r2-6). Failed, it names the way to the
- * sign-in step's Try again for main's "press Check again", a button this step doesn't have (first-run-w5-2).
+ * first-run-r4-2). Ready, a server on this computer was asked at the start and is "Connected" when it answered with a
+ * model list (`listed`, the agent's `service.listed`), else only "Using", as is a host elsewhere, which wasn't asked:
+ * as Home's status says (integrations-r3, integrations-r2-6, -x8-2). Failed, it names the way to the sign-in step's
+ * Try again for main's "press Check again", a button this step doesn't have (first-run-w5-2).
  */
-export function providerInUseLine(o: { host: string; phase: string | null; detail?: string }): { line: string; tone: "" | "ok" | "error" } {
-  if (o.phase === "ready") return { line: `${onThisComputer(o.host) ? "Connected to" : "Using"} your own provider (${o.host}).`, tone: "ok" };
+export function providerInUseLine(o: { host: string; phase: string | null; detail?: string; listed?: boolean }): { line: string; tone: "" | "ok" | "error" } {
+  if (o.phase === "ready") return { line: `${ownConnected(o) ? "Connected to" : "Using"} your own provider (${o.host}).`, tone: "ok" };
   if (o.phase === "error") return { line: pressOnStep(inMyVoice(o.detail ?? ""), "go-back"), tone: "error" };
   return { line: `Connecting to your own provider (${o.host})…`, tone: "" };
 }
