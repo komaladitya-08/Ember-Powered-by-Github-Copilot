@@ -708,8 +708,14 @@ Ember drops its voice at once (`duck`, 0.15 of its level: without it the echo ca
 words), and stops it when what the recognizer made of it isn't Ember's own words (`spokenByEmber`) or a “yeah”
 (`BACKCHANNEL`). What is said then replaces the reply on its way (`AgentHost.ask` `replaces`); tasks go on. It never
 approves anything (`overEmber`). With other sound playing, only what is said by name counts: Windows reads the output's
-level while a conversation is open (app/renderer/mic/output-watch.ts: Chromium gives system audio only with a screen's
-video, which is stopped at once), Linux uses the speakers' stream, macOS can't tell yet. The first time something said
+level while a conversation is open, a question is up or a task is at work (app/renderer/mic/output-watch.ts: Chromium
+gives system audio only with a screen's video, which is stopped at once; main's `syncOutputWatch`), Linux uses the
+speakers' stream, macOS can't tell yet. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
+has looked past Ember's own voice, or after it stopped or was refused: `soundKnown` in engine.ts), a yes to a question
+said without the name, in the answer window, a follow-up or a conversation, is taken as said over other sound: with
+Voice Match off it isn't taken, and the question says once to say the name first (`sound-unknown`); a no and anything
+said by name are taken as ever (owner's report of 2026-11-12: a video's “Okay.” outside a conversation allowed a
+question; settled by the integrator on the owner's direction, and the owner can overrule it). The first time something said
 then without the name isn't heard, the status line says “Music or a video is playing: say “Ember” first.” for 5 s
 (engine.ts `dropped`), once a conversation. With the switch off, after Ember
 answers you have 8 seconds (12 when it asked you something) for

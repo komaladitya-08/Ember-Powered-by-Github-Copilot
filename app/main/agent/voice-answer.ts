@@ -196,7 +196,7 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
 }
 
 /** Every reason a spoken answer can be turned away: voiceAnswer's, the Confirmer's, and an answer said over Ember's voice. */
-export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound";
+export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound" | "sound-unknown";
 
 /**
  * What the bubble says under the question when a spoken answer wasn't taken (the question stays up): what happened,
@@ -216,6 +216,9 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
   "heard-over": "I heard you over my own voice, so I didn't take it. Say it again now that I've stopped.",
   // A nameless answer over a song or a video, which the voice gate drops without a voiceprint (match.ts "dropped").
   "over-sound": "Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.",
+  // A nameless yes where nothing can tell whether other sound plays (macOS, Linux without parec, Windows before its
+  // output watch has looked: engine.ts soundKnown), which the gate drops without a voiceprint as over other sound.
+  "sound-unknown": "I can't tell here whether something else is playing, so I didn't take that as a yes: say my name first, then your answer.",
 };
 
 /** The lines that point to a click or the keys: said aloud, they name the keys Ember holds too (tasks-approvals-6). */

@@ -85,6 +85,13 @@ describe("VoiceGate", () => {
     expect(sent).toEqual([{ type: "dropped", reason: "over-sound", window: "answer" }, { type: "dropped", reason: "over-sound", window: "answer" }]);
   });
 
+  it("says when the yes it dropped was dropped because nothing could tell whether other sound played, so the question says that (owner's report of 2026-11-12)", () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.event({ type: "utterance", text: "Okay.", ms: 100, window: "answer", overSound: true, soundUnknown: true }, Float32Array.from([0, 1]));
+    expect(sent).toEqual([{ type: "dropped", reason: "sound-unknown", window: "answer" }]);
+  });
+
   it("over a song with no name, hears the owner and drops any other voice without a word against it (only that it was dropped; voice-listening-10)", async () => {
     const sent: VoiceEvent[] = [];
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
@@ -101,7 +108,7 @@ describe("VoiceGate", () => {
   it("says once a conversation, on the status line, that what was said over the music wasn't heard, and the hint says to use the name (voice-listening-10)", () => {
     const main = fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
     expect(main).toContain('const OVER_SOUND_STATUS = "Music or a video is playing: say “Ember” first.";');
-    expect(main).toMatch(/case "dropped":(?:\s*\/\/[^\n]*)*\s*if \(e\.window === "answer"[^\n]*\n\s*if \(!conversing \|\| overSoundSaid \|\| statusBy\.listen !== CONVERSATION_STATUS\) break;\s*overSoundSaid = true;\s*setStatus\("listen", OVER_SOUND_STATUS\);/);
+    expect(main).toMatch(/case "dropped":(?:\s*\/\/[^\n]*)*\s*if \(e\.window === "answer"[^\n]*\n\s*if \(e\.reason !== "over-sound" \|\| !conversing \|\| overSoundSaid \|\| statusBy\.listen !== CONVERSATION_STATUS\) break;\s*overSoundSaid = true;\s*setStatus\("listen", OVER_SOUND_STATUS\);/);
     expect(main).toContain("if (on !== conversing) overSoundSaid = false;");
     expect(PERSONAL_TEXT.conversationHint).toContain("no name needed after the first time (while music or a video plays, start with “Ember”)");
   });

@@ -11,7 +11,9 @@ import type { TargetId } from "./targets";
  * across restarts; "Before Ember starts" says so.
  * 8 (2026-11-12): while a question is up, anyone near the computer can answer it by voice, with Voice Match off (its
  * default), and for a few seconds after Ember asks it listens for that answer without its name (the answer window);
- * with Voice Match on, only the owner's voice can say yes (owner decision of 2026-11-12, PLAN.md §2 "Approvals").
+ * with Voice Match on, only the owner's voice can say yes (owner decision of 2026-11-12, PLAN.md §2 "Approvals"). On
+ * Windows the output's level is read while a question is up or a task is at work as well as in a conversation, which
+ * the “Hey Ember” card says (owner's report of 2026-11-12).
  */
 export const CONSENT_VERSION = 8;
 

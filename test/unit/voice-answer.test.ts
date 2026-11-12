@@ -327,7 +327,20 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
   it("says once a question when an answer said over other sound wasn't taken, and how to be heard, rather than nothing (owner's report of 2026-11-12)", () => {
     expect(VOICE_ANSWER_REFUSED["over-sound"]).toBe("Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.");
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
-    expect(main).toMatch(/if \(e\.window === "answer" && confirmer\?\.waiting && overSoundFor !== confirmer\.currentNumber\) \{ overSoundFor = confirmer\.currentNumber; refuseVoiceAnswer\("over-sound", "allow"\); \}/);
+    expect(main).toMatch(/if \(e\.window === "answer" && confirmer\?\.waiting && overSoundFor !== confirmer\.currentNumber\) \{ overSoundFor = confirmer\.currentNumber; refuseVoiceAnswer\(e\.reason, "allow"\); \}/);
+  });
+
+  it("says why a yes without the name wasn't taken where nothing can tell whether other sound plays, and how to be heard (owner's report of 2026-11-12)", () => {
+    expect(VOICE_ANSWER_REFUSED["sound-unknown"]).toBe("I can't tell here whether something else is playing, so I didn't take that as a yes: say my name first, then your answer.");
+    expect(voiceAnswerSaid("sound-unknown", ["Control Alt Y to allow"])).toBe("I can't tell here whether something else is playing, so I didn't take that as a yes: say my name first, then your answer.");
+  });
+
+  it("watches whether other sound plays (Windows) while a conversation is open, a question is up or a task is at work, not only in a conversation (owner's report of 2026-11-12)", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toMatch(/const syncOutputWatch = \(\) => \{\s*const on = conversing \|\| questionIsUp \|\| !\(agent\?\.idle \?\? true\);\s*if \(on === outputWatched\) return;\s*outputWatched = on;\s*voice\?\.watchOutput\(on\);\s*\};\s*setInterval\(syncOutputWatch, 1000\)\.unref\?\.\(\);/);
+    expect(main).toMatch(/voice\?\.questionUp\(q !== null\);\s*questionIsUp = q !== null;\s*syncOutputWatch\(\);/);
+    expect(main).toMatch(/conversing = on;\s*syncOutputWatch\(\);/);
+    expect(main).not.toContain("voice?.watchOutput(on);\n    if (on !== conversing)");
   });
 
   it("is wired in main from Voice Match's switch, not from whether it is ready, and every refusal goes through refusalNote (source pins)", () => {

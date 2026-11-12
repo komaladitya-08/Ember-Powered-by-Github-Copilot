@@ -2532,6 +2532,32 @@ describe("the answer window after one of Ember's questions (owner's report of 20
     expect(overs(past)).toEqual([]);
   });
 
+  it("takes a video's or a call's “Okay.” for no one's yes where nothing can tell whether other sound plays (macOS, Linux without parec, Windows before its output watch has looked; owner's report of 2026-11-12)", () => {
+    // In production nothing is known until the platform says (process.ts: otherSound null).
+    const unknown = { ...asking, otherSound: null };
+    const marked = { overSound: true, soundUnknown: true };
+    const answer = run(saying({ 5: "Okay." }), (e, c) => { e.questionUp(true); e.answerWindow(8000); say(e, c, 5); }, unknown);
+    expect(utterances(answer)).toEqual([{ type: "utterance", text: "Okay.", ms: 0, window: "answer", ...marked }]);
+    const followUp = run(saying({ 5: "Okay." }), (e, c) => { e.questionUp(true); e.followUp(8000); say(e, c, 5); }, unknown);
+    expect(utterances(followUp)).toEqual([{ type: "utterance", text: "Okay.", ms: 0, window: "follow-up", ...marked }]);
+    // A no is anyone's; a yes said with the name is the user's.
+    const no = run(saying({ 5: "Not now." }), (e, c) => { e.questionUp(true); e.answerWindow(8000); say(e, c, 5); }, unknown);
+    expect(utterances(no)).toEqual([{ type: "utterance", text: "Not now.", ms: 0, window: "answer" }]);
+    const named = run(saying({ 5: "Ember, allow." }), (e, c) => { e.questionUp(true); e.answerWindow(8000); say(e, c, 5); }, unknown);
+    expect(utterances(named)).toEqual([{ type: "utterance", text: "Allow.", ms: 0, window: "answer" }]);
+    // Once Windows' output watch has said nothing else plays, a yes goes as before; once it stops, nothing is known again.
+    const watched = run(saying({ 5: "Okay.", 6: "Sure." }), (e, c) => {
+      e.questionUp(true);
+      e.otherSound(false);
+      e.answerWindow(8000);
+      say(e, c, 5);
+      e.otherSound(null);
+      e.answerWindow(8000);
+      say(e, c, 6);
+    }, unknown);
+    expect(utterances(watched)).toEqual([{ type: "utterance", text: "Okay.", ms: 0, window: "answer" }, { type: "utterance", text: "Sure.", ms: 0, window: "answer", ...marked }]);
+  });
+
   it("marks what it hears over other sound, which the voice gate drops without a voiceprint, unless said by name", () => {
     const over = run(saying({ 5: "Allow." }), (e, c) => { e.questionUp(true); e.otherSound(true); e.answerWindow(8000); say(e, c, 5); }, asking);
     expect(utterances(over)).toEqual([{ type: "utterance", text: "Allow.", ms: 0, window: "answer", overSound: true }]);

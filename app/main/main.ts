@@ -1047,6 +1047,8 @@ function start(): void {
   ];
   /** The question keys are held now (a question is up). */
   let questionKeysUp = false;
+  /** One of Ember's questions is up (questionChanged). */
+  let questionIsUp = false;
   const holdQuestionKeys = () => {
     if (questionKeysUp && heldKeys().length) return;
     const { taken } = holdShortcuts(QUESTION_KEYS.map(k => k.id), sc, fb, {
@@ -1074,6 +1076,8 @@ function start(): void {
     commandCardUp = q?.question.panel?.kind === "command";
     // The voice process hears a short "no" in a follow-up window as an answer while a question is up (engine.ts).
     voice?.questionUp(q !== null);
+    questionIsUp = q !== null;
+    syncOutputWatch();
     // "Answer Ember's question first." comes and goes with it (Listen once takes no press while it holds: companion-3).
     syncListenOnce();
     // So do the Ask box's suggestions: "Yes, please" there would only seem to answer it (companion-r2-1).
@@ -1927,11 +1931,25 @@ function start(): void {
   let overSoundSaid = false;
   /** A conversation is open (engine.ts CONVERSATION_IDLE_MS), and what keeps it told whether anything is at work. */
   let conversing = false;
+  /**
+   * The mic page watches whether other sound plays (Windows' output level, VoiceService.watchOutput) while a conversation
+   * is open, a question is up or a task is at work: a yes said without the name must be told from a video's or a call's
+   * "Okay.", and the watch judges nothing over Ember's voice, so it must have looked before Ember reads a question out
+   * (owner's report of 2026-11-12: it ran only in a conversation, and a video's "Okay." outside one allowed a question).
+   */
+  let outputWatched = false;
+  const syncOutputWatch = () => {
+    const on = conversing || questionIsUp || !(agent?.idle ?? true);
+    if (on === outputWatched) return;
+    outputWatched = on;
+    voice?.watchOutput(on);
+  };
+  setInterval(syncOutputWatch, 1000).unref?.();
   let conversingTimer: NodeJS.Timeout | null = null;
   const conversationOpen = (on: boolean) => {
-    if (on !== conversing) voice?.watchOutput(on);
     if (on !== conversing) overSoundSaid = false;
     conversing = on;
+    syncOutputWatch();
     if (conversingTimer) clearInterval(conversingTimer);
     conversingTimer = null;
     if (!on) return;
@@ -2004,8 +2022,9 @@ function start(): void {
       case "dropped":
         // From a question's answer window it was an answer (nothing else leaves that window): the question says so, once,
         // and how to be heard, rather than nothing at all (owner's report of 2026-11-12).
-        if (e.window === "answer" && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer("over-sound", "allow"); }
-        if (!conversing || overSoundSaid || statusBy.listen !== CONVERSATION_STATUS) break;
+        // ("sound-unknown": nothing could tell whether other sound played, macOS say, so a yes needed the name.)
+        if (e.window === "answer" && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer(e.reason, "allow"); }
+        if (e.reason !== "over-sound" || !conversing || overSoundSaid || statusBy.listen !== CONVERSATION_STATUS) break;
         overSoundSaid = true;
         setStatus("listen", OVER_SOUND_STATUS);
         setTimeout(() => { if (statusBy.listen === OVER_SOUND_STATUS) setStatus("listen", conversing ? CONVERSATION_STATUS : null); }, 5000).unref?.();

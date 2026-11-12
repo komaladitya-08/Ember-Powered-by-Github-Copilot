@@ -424,7 +424,8 @@ export class VoiceService {
       if (Object.keys(l).length) this.o.onLevel?.(l);
     });
     ipcMain.on(VOICE.outputBusy, (e, on: unknown) => {
-      if (!(this.mic && e.sender === this.mic.webContents) || typeof on !== "boolean") return;
+      // (null: the watch knows nothing of the output, which the voice process never takes for quiet.)
+      if (!(this.mic && e.sender === this.mic.webContents) || (typeof on !== "boolean" && on !== null)) return;
       this.o.log.info("voice.other_sound", { on });
       this.proc?.postMessage({ type: "other-sound", on });
     });
@@ -909,10 +910,15 @@ export class VoiceService {
     if (win && !win.isDestroyed()) win.webContents.send(VOICE.duck, on);
   }
 
-  /** A conversation opened or closed: while it is open, the mic page watches whether other sound plays. */
+  /**
+   * Whether the mic page watches if other sound plays (main: while a conversation is open, a question is up or a task is
+   * at work). Kept, so a new mic page (listening started again) watches as the last one did.
+   */
   watchOutput(on: boolean): void {
+    this.outputWatched = on;
     if (this.o.outputLevel && this.mic && !this.mic.isDestroyed()) this.mic.webContents.send(VOICE.outputWatch, on);
   }
+  private outputWatched = false;
 
   /** The page asking for the output's level is the mic page, in a build where it can. */
   allowsOutputLevel(wc: Electron.WebContents | null | undefined): boolean {
@@ -1650,6 +1656,7 @@ export class VoiceService {
       this.o.log.warn("voice.mic_page_failed", { err });
     });
     if (mic.isDestroyed() || this.mic !== mic) return;
+    if (this.outputWatched) this.watchOutput(true);
     const connectMic = () => mic.webContents.postMessage(VOICE.port, null, [port2]);
     if (temporary && !this.readyAt) connectTemporaryMic = connectMic;
     else connectMic();

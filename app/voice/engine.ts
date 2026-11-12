@@ -110,15 +110,17 @@ export type VoiceEvent =
    * `short`: it matched as a whole, but what follows the wake phrase was too short, or too unlike the owner on its own,
    * for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts); `restScore`: that part's own score against the
    * enrolled voiceprint, unrounded, when it had one (absent: too little voice to score, which is never trusted).
+   * `soundUnknown` (with `overSound`): a yes to a question said without the name where nothing could tell whether other
+   * sound played (soundKnown), so it is taken as said over it.
    */
-  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; verified?: true; short?: true; restScore?: number }
+  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; verified?: true; short?: true; restScore?: number }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came); it is heard all the same (match.ts). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number }
   /**
    * What was said in a conversation over other sound, without the name, wasn't heard: it can't be told from the song's
    * words (match.ts, owner decision of 2026-11-05). Main says so, once a conversation (voice-listening-10).
    */
-  | { type: "dropped"; reason: "over-sound"; window?: "answer" }
+  | { type: "dropped"; reason: "over-sound" | "sound-unknown"; window?: "answer" }
   /**
    * In a conversation, while one of Ember's questions is up, an answer ("Allow.", "Not now.") was said over Ember's voice
    * in words Ember was saying itself (its read-out names them): never taken, as it may be Ember's own, but no longer
@@ -153,6 +155,11 @@ export interface EngineOptions {
   transcribeAhead?: boolean;
   /** After a wake's request, keep listening as a conversation (openConversation). Default off; settings' voice.conversation. */
   conversation?: boolean;
+  /**
+   * Whether other sound plays, as known at the start (otherSound): null, nothing is known till the platform says, which
+   * the voice process passes (soundKnown). Default false, nothing plays (the scripted tests).
+   */
+  otherSound?: boolean | null;
   now?: () => number;
 }
 
@@ -805,8 +812,10 @@ export class VoiceEngine {
   private followUps = 0;
   /** A wake's request opens a conversation (settings' voice.conversation). */
   private conversing = false;
-  /** The computer's output is playing something other than Ember (main says so: otherSound). */
-  private outputPlaying = false;
+  /** The computer's output is playing something other than Ember (main says so: otherSound); null: nothing is known of it. */
+  private output: boolean | null = false;
+  /** The utterance under way is a yes said without the name where nothing could tell whether other sound played. */
+  private soundUnknown = false;
   /** A reply is on its way or a task is at work: the conversation stays open (main says so). */
   private busy = false;
   /** Ember's latest words, to tell its own voice from the user's (spokenByEmber). */
@@ -833,6 +842,7 @@ export class VoiceEngine {
     this.ring = new Ring(o.preRoll ?? 1.6);
     this.now = o.now ?? Date.now;
     this.conversing = !!o.conversation;
+    this.output = o.otherSound === undefined ? false : o.otherSound;
   }
 
   /** Conversations turned on or off (settings' voice.conversation); off ends one under way. */
@@ -848,9 +858,18 @@ export class VoiceEngine {
     if (!on && this.mode.kind === "listening" && this.mode.reason === "conversation") this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
   }
 
-  /** The computer is playing other sound (Windows: the output's level), or no longer: see soundPlaying. */
-  otherSound(on: boolean): void {
-    this.outputPlaying = on;
+  /** The computer is playing other sound (Windows: the output's level), or no longer: see soundPlaying. Null: not known. */
+  otherSound(on: boolean | null): void {
+    this.output = on;
+  }
+
+  /**
+   * Can anything tell now whether other sound plays: Windows' output watch has looked (and not stopped), or the speakers'
+   * own stream arrives (Linux with parec)? Not on macOS, nor on Linux without parec: there a video's or a call's "Okay."
+   * can't be told from the user's (owner's report of 2026-11-12).
+   */
+  private soundKnown(now: number): boolean {
+    return this.output !== null || this.hearsSpeakers(now);
   }
 
   /**
@@ -859,7 +878,7 @@ export class VoiceEngine {
    * The speakers' own stream says so too where there is one (Linux with parec), once Ember's voice has left it.
    */
   private soundPlaying(now: number): boolean {
-    return this.outputPlaying || (this.hearsSpeakers(now) && now >= this.selfSpeakingUntil + OTHER_SOUND_MS && now - this.monitorSoundAt < OTHER_SOUND_MS);
+    return this.output === true || (this.hearsSpeakers(now) && now >= this.selfSpeakingUntil + OTHER_SOUND_MS && now - this.monitorSoundAt < OTHER_SOUND_MS);
   }
 
   /** Words Ember is about to say (spokenByEmber tells them from the user's). */
@@ -1774,6 +1793,7 @@ export class VoiceEngine {
     this.afterHush = 0;
     this.overEmber = false;
     this.overSound = false;
+    this.soundUnknown = false;
     this.clipped = false;
     this.cutIn = false;
     this.cutInCheckedAt = 0;
@@ -2064,6 +2084,11 @@ export class VoiceEngine {
       this.mode.until = Math.max(this.mode.until, this.held.until);
       return;
     }
+    // Where nothing can tell whether other sound plays (soundKnown), a yes to a question said without the name may be a
+    // video's or a call's "Okay.": it is taken as said over other sound, which the voice gate drops without a voiceprint
+    // (owner's report of 2026-11-12). A no is anyone's, and what is said by name is the user's, as ever.
+    const nameless = conversation || this.mode.reason === "answer" || this.mode.reason === "follow-up";
+    if (nameless && !this.overSound && this.questionWaiting && spokenAnswer(text) === "allow" && !calledByName(heard) && !this.soundKnown(t0)) { this.overSound = true; this.soundUnknown = true; }
     this.sendRequest(text, audio, withWake, cut, t0);
   }
 
@@ -2086,7 +2111,7 @@ export class VoiceEngine {
     this.followUps = window === "follow-up" ? this.followUps + 1 : window === "answer" ? this.followUps : 0;
     this.requestAudio = audio;
     this.requestWithWake = withWake;
-    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}) });
+    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}), ...(this.soundUnknown ? { soundUnknown: true as const } : {}) });
     this.echo *= ECHO_DECAY;
     if (conversation && this.mode.kind === "listening") {
       // The microphone stays with the user: the next thing they say is heard as this one was, whatever Ember does meanwhile.

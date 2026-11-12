@@ -181,8 +181,9 @@ export class VoiceGate {
     const generation = this.revision;
     const owner = this.owner;
     // Over a song with no name said: only a voice that can be told apart from it is heard.
-    // (`window`: from a question's answer window, so main can say on the question that its answer wasn't taken.)
-    const dropped: VoiceEvent = { type: "dropped", reason: "over-sound", ...(e.type === "utterance" && e.window === "answer" ? { window: "answer" as const } : {}) };
+    // (`window`: from a question's answer window, so main can say on the question that its answer wasn't taken; `reason`
+    // "sound-unknown": a yes where nothing could tell whether other sound played, which the question says instead.)
+    const dropped: VoiceEvent = { type: "dropped", reason: e.type === "utterance" && e.soundUnknown ? "sound-unknown" : "over-sound", ...(e.type === "utterance" && e.window === "answer" ? { window: "answer" as const } : {}) };
     if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) { this.send(dropped); return; }
     if (e.type !== "utterance" || e.overEmber || !owner || !audio?.length) { this.send(e); return; }
     // Capture one immutable configuration for the whole request, including its post-wake check.

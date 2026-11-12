@@ -28,7 +28,7 @@ function fake(transcripts: string[]) {
 
 const frame = (level: number, tag = 0) => { const f = new Float32Array(512).fill(level); f[0] = tag; return f; };
 
-function setup(transcripts: string[], o: { conversation?: boolean } = { conversation: true }) {
+function setup(transcripts: string[], o: { conversation?: boolean; otherSound?: boolean | null } = { conversation: true }) {
   const events: VoiceEvent[] = [];
   const clock = { t: 1000 };
   const e = new VoiceEngine(fake(transcripts), ev => events.push(ev), { now: () => clock.t, verifyWake: false, rejectWindowMs: 0, ...o });
@@ -307,6 +307,23 @@ describe("talking over Ember in a conversation", () => {
     c.say(20); c.quiet(2);
     expect(heard.length).toBeGreaterThan(0);
     expect(c.utterances()[1].overEmber).toBeUndefined();
+  });
+});
+
+describe("a conversation where nothing can tell whether other sound plays (macOS, Linux without parec)", () => {
+  it("takes a yes to a question said without the name as said over other sound, and a no or a request as ever (owner's report of 2026-11-12)", () => {
+    const c = setup(["Open the calculator.", "Okay.", "Not now.", "Open my mail."], { conversation: true, otherSound: null });
+    c.wake();
+    c.say(20); c.quiet(2);
+    c.e.questionUp(true);
+    c.say(20); c.quiet(2);
+    c.say(20); c.quiet(2);
+    c.e.questionUp(false);
+    c.say(20); c.quiet(2);
+    const u = c.utterances();
+    expect(u.map(v => v.text)).toEqual(["Open the calculator.", "Okay.", "Not now.", "Open my mail."]);
+    expect(u[1]).toMatchObject({ overSound: true, soundUnknown: true });
+    expect([u[0], u[2], u[3]].map(v => v.overSound)).toEqual([undefined, undefined, undefined]);
   });
 });
 
