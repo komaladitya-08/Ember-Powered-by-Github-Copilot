@@ -1082,7 +1082,7 @@ Environment variables for development:
 |---|---|
 | `EMBER_USER_DATA=/tmp/x` | Use another settings and log folder |
 | `EMBER_LOG_LEVEL=debug` | More detail in the log: `debug`, `info`, `warn` or `error`, in any case; anything else means `info` (and is logged) |
-| `EMBER_LOG_STDOUT=1` | Also print log lines to the terminal (on by default in development) |
+| `EMBER_LOG_STDOUT=1` | Also print log lines to the terminal (on by default in development). When whatever reads them goes away (`\| head`, `less` then q, a closed terminal), Ember stops printing there at the first failed write and says so once in `ember.log` (`log.stream_off`, with the stream and the error code); the file keeps every line. Stderr is treated the same, whether log lines go there (when the logs folder can't be made) or not |
 | `EMBER_PYTHON=/usr/bin/python3.12` | Python for the accessibility sidecar (Linux; default: `/usr/libexec/platform-python`, then `python3`) |
 | `EMBER_AX_PROVIDER=fake` | Windows and macOS, development only: the accessibility host reads a pretend desktop instead of the real one (a small bench, or the windows in the JSON file `EMBER_AX_FAKE_DESKTOP` names) |
 | `EMBER_TEST_EXTENSIONS=demo` | Development only: settings' **Extensions** section runs on a pretend runtime held in memory (`app/main/extensions-demo.ts`), which reaches no network, runs nothing and opens no browser: `demo` has marketplaces, plugins (one with a changed tool) and connectors (one needing a sign-in again), `empty` has nothing added, and `managed` is turned off by the organisation. For the render checks |
