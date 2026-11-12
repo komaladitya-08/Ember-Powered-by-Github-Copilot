@@ -675,6 +675,72 @@ describe("a Forget drops the turns said before it, however the extraction words 
   });
 });
 
+describe("what the user asks Ember to remember is kept once, however its turn's reading words it (memory-c8-1)", () => {
+  const USER = { name: "User", kind: "person" as const };
+  type About = { name: string; kind?: string }[];
+  /** What the remember tool kept, about what, and the user's words; what the same turn's extraction gives, about what, on what words. */
+  const TWICE: [string, About, string, string, About, string][] = [
+    ["Is vegetarian", [USER], "Remember that I'm a vegetarian", "The user is a vegetarian", [USER], "I'm a vegetarian"],
+    ["Is vegetarian", [USER], "Remember that I'm vegetarian", "Follows a vegetarian diet", [USER], "I'm vegetarian"],
+    ["Is vegetarian", [USER], "Remember that I'm vegetarian", "Does not eat meat", [USER], "I'm vegetarian"],
+    ["Lives in Leeds", [USER], "Remember that I live in Leeds, England", "User lives in Leeds, England", [USER], "I live in Leeds, England"],
+    ["My manager is Priya Shah", [USER], "Remember that my manager is Priya Shah", "Priya Shah is the user's manager", [{ name: "Priya Shah", kind: "person" }], "my manager is Priya Shah"],
+    ["Works on the Atlas project", [{ name: "Atlas", kind: "project" }], "Remember that I work on the Atlas project", "Works on Atlas", [USER], "I work on the Atlas project"],
+    ["Prefers tea to coffee", [USER], "Remember that I prefer tea to coffee", "Likes tea more than coffee", [USER], "I prefer tea to coffee"],
+    ["Has a daughter called Maya", [USER], "Remember that I have a daughter called Maya", "Maya is the user's daughter", [USER], "I have a daughter called Maya"],
+    ["Prefers short answers", [USER], "Remember that I prefer short answers", "Wants brief replies", [USER], "I prefer short answers"],
+    ["Works at Globex", [USER, { name: "Globex", kind: "organisation" }], "Remember that I work at Globex", "Employed by Globex", [{ name: "Globex", kind: "organisation" }], "I work at Globex"],
+    // The same words, about other names: the graph's own check needs the same names, so it never folded these.
+    ["Lives in Leeds", [USER], "Remember that I live in Leeds", "Lives in Leeds", [USER, { name: "Leeds", kind: "place" }], "I live in Leeds"],
+    ["Lives in Leeds", [USER, { name: "Leeds", kind: "place" }], "Remember that I live in Leeds", "Lives in Leeds", [USER], "I live in Leeds"],
+    ["Works on Atlas", [{ name: "Atlas", kind: "project" }], "Remember that I work on Atlas", "Works on Atlas", [USER, { name: "Atlas", kind: "project" }], "I work on Atlas"],
+    ["Manager is Priya Shah", [USER, { name: "Priya Shah", kind: "person" }], "Remember that my manager is Priya Shah", "Manager is Priya Shah", [{ name: "Priya Shah", kind: "person" }], "my manager is Priya Shah"],
+  ];
+
+  it.each(TWICE)("keeps “%s” once when the turn that asked for it is read (memory-c8-1)", async (kept, about, said, reworded, rewordedAbout, evidence) => {
+    const { l, s, learned, advance } = learning({ model: async () => answer([{ from: 1, fact: reworded, about: rewordedAbout, confidence: 0.9, evidence }]) });
+    const tools = l.conductorMemory();
+    expect(tools.remember(kept, about, said)).toContain("Remembered");
+    tools.heard(said, "Got it.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list().map(i => i.text)).toEqual([kept]);
+    // One "Ember learned" line, so one Forget forgets it.
+    expect(learned).toEqual([`user: ${kept}`]);
+  });
+
+  it("keeps it once when Ember already remembered it and the turn's reading words it another way (memory-c8-1)", async () => {
+    const { l, s, advance } = learning({ model: async () => answer([{ from: 1, fact: "The user is a vegetarian", about: [USER], confidence: 0.9, evidence: "I'm vegetarian" }]) });
+    s.learn({ text: "Is vegetarian", about: [USER], source: "user" });
+    const tools = l.conductorMemory();
+    const before = s.list().map(i => i.text);
+    expect(tools.remember("Vegetarian", [USER], "Remember that I'm vegetarian")).toContain("Already remembered");
+    tools.heard("Remember that I'm vegetarian", "Got it.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list().map(i => i.text)).toEqual(before);
+  });
+
+  it("still learns the other facts of that turn, and compares a fact only with what was kept in its own turn (memory-c8-1)", async () => {
+    const SAID = "Remember that I'm vegetarian, and I live in Leeds";
+    const { l, s, advance } = learning({ model: async () => answer([
+      { from: 1, fact: "The user is a vegetarian", about: [USER], confidence: 0.9, evidence: "I'm vegetarian" },
+      { from: 1, fact: "Lives in Leeds", about: [USER], confidence: 0.9, evidence: "I'm vegetarian, and I live in Leeds" },
+      { from: 3, fact: "Prefers Firefox", about: [USER], confidence: 0.9, evidence: "I prefer Firefox" },
+    ]) });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [USER], SAID);
+    tools.heard(SAID, "Got it.", true, tools.asked());
+    tools.remember("Prefers short answers", [USER], "Remember that I prefer short answers");
+    tools.heard("Remember that I prefer short answers", "Noted.", true, tools.asked());
+    // A turn of its own: what turn 2 kept is no reason to drop it, though the two share a word.
+    tools.heard("I prefer Firefox", "Noted.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(2);
+    expect(s.list().map(i => i.text).sort()).toEqual(["Is vegetarian", "Lives in Leeds", "Prefers Firefox", "Prefers short answers"]);
+  });
+});
+
 describe("“forget that”, the instruction check and the conversation's line", () => {
   it("forgets what was kept just now, and says so when nothing was, rather than leaving it to a model that can't (memory-v1)", () => {
     const { l, s, advance } = learning();

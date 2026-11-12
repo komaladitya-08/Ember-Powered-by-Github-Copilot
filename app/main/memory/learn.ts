@@ -74,9 +74,12 @@ export const EXTRACT_SYSTEM = [
   "At most 5 facts. If there is nothing worth keeping, answer {\"facts\":[]}.",
 ].join("\n");
 
-/** One thing to learn from. */
+/**
+ * One thing to learn from. A turn's `kept`: the words of the facts the remember tool kept (or found already kept) in
+ * that turn, which its reading never keeps again (`keptInTurn`: memory-c8-1).
+ */
 export type LearnItem =
-  | { kind: "turn"; said: string; reply: string; own: boolean }
+  | { kind: "turn"; said: string; reply: string; own: boolean; kept?: readonly string[] }
   | { kind: "task"; title: string; result: string };
 
 const esc = (s: string, n = ITEM_CHARS) => s.slice(0, n).replace(/</g, "‹");
@@ -116,6 +119,33 @@ export function jsonOf(raw: string | null | undefined): unknown {
  * preferring, working or using is here: "I quit Globex" must never give "Works at Globex" (review of PR #142).
  */
 const GLUE = new Set(["user", "name", "named", "called", "doesn", "don", "didn", "isn", "aren", "wasn", "weren", "won", "can", "cannot", "not", "no", "never"]);
+
+/** How much of `a`'s content words (`terms`, without GLUE) `b` has, 0 to 1; 0 when `a` has none. */
+function share(a: string, b: string): number {
+  const want = new Set(terms(a).filter(t => !GLUE.has(t)));
+  if (!want.size) return 0;
+  const has = new Set(terms(b));
+  let n = 0;
+  for (const t of want) if (has.has(t)) n++;
+  return n / want.size;
+}
+
+/** At least this much of the smaller side's words in common makes a candidate the fact its turn already kept. */
+export const SAME_IN_TURN = 0.5;
+
+/**
+ * Whether a candidate from a turn is a fact the remember tool kept in that same turn, in other words or about other
+ * names (memory-c8-1): half or more of the smaller one's content words in common ("Is vegetarian", "The user is a
+ * vegetarian"); or its evidence holds half or more of what was kept while the candidate's own words mostly aren't in
+ * it, so the extraction said those words its own way ("I'm vegetarian" read as "Does not eat meat"). On words alone,
+ * never on whom either names: the two models choose `about` apart. A different fact said in that turn with other
+ * words ("…and I live in Leeds") is still learned; one sharing half its words with what was kept is not (it learns
+ * less, rather than keeping a second copy that a Forget of the first leaves behind).
+ */
+export function keptInTurn(c: Pick<Candidate, "fact" | "evidence">, kept: readonly string[]): boolean {
+  return kept.some(k => Math.max(share(k, c.fact), share(c.fact, k)) >= SAME_IN_TURN
+    || (share(k, c.evidence) >= SAME_IN_TURN && share(c.fact, c.evidence) < SAME_IN_TURN));
+}
 
 /** Every content word of the fact is in the evidence (its own word, as `terms` folds it). */
 function covered(fact: string, evidence: string): boolean {
@@ -205,6 +235,8 @@ export function learnedFacts(x: Extraction, items: LearnItem[]): NewFact[] {
   for (const c of x.facts.slice(0, 5)) {
     const item = items[c.from - 1];
     if (!item) continue;
+    // Kept already by the remember tool in this turn: never a second copy (memory-c8-1).
+    if (item.kind === "turn" && item.kept && keptInTurn(c, item.kept)) continue;
     const source: Source = item.kind === "task" ? "task" : turnSource(c, item.said, item.own);
     // An instruction is never learned, whoever said it: a one-off order ("…without asking me") isn't a lasting
     // preference. Only the remember tool, asked by the user, and the introduction keep such words.
@@ -307,11 +339,12 @@ export class Learner {
 
   /**
    * A conversation turn ended: the user's own words and Ember's reply. `own`: heard from the user (false for speech
-   * Ember can't tell from its own speakers: a video, a call, its own echo), whose facts are never theirs.
+   * Ember can't tell from its own speakers: a video, a call, its own echo), whose facts are never theirs. `kept`: the
+   * words of what the remember tool kept in it (memory-c8-1).
    */
-  heard(said: string, reply: string, own = true): void {
+  heard(said: string, reply: string, own = true, kept: readonly string[] = []): void {
     if (!said.trim() || !this.d.inForce()) return;
-    this.add({ kind: "turn", said, reply, own });
+    this.add({ kind: "turn", said, reply, own, ...(kept.length ? { kept } : {}) });
   }
 
   /** A task finished with this result. */

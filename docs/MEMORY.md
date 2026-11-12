@@ -371,6 +371,12 @@ download, so English-only MiniLM is the trade-off for now.
      folding look-alike letters with `viewNorm`) is ever kept, whoever said it: a
      one-off order is not a preference. The conductor's `remember` keeps one only in the user's own words. Every fact
      goes through `MemoryGraph.add()` and the guard.
+   - What the remember tool kept (or found already kept) in a turn goes with that turn to its reading (`kept`: one
+     turn runs at a time, so the facts kept since the last turn ended), and no candidate from that turn that is the
+     same fact is kept again (`keptInTurn`, memory-c8-1): half or more of the smaller one's content words in common,
+     or evidence that holds half of what was kept in words the candidate mostly doesn't use. On words alone, never on
+     whom either names, since the two models choose `about` apart and the graph's own check needs the same names. It
+     learns less: a fact of that turn sharing half its words with what was kept is not learned from it either.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten
      minutes forgets the newest without a model turn. Forgetting an open fact Ember kept in those ten minutes (the
      line's **Undo**, "forget that", a Forget soon after) undoes it: the one it had replaced is open again

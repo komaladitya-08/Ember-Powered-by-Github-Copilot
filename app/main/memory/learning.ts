@@ -39,6 +39,8 @@ export const IDLE_CHECK_MS = 60_000;
 export const FORGOTTEN_TURN_MS = 2 * 60_000;
 /** The most forgotten facts held for that at once. */
 const FORGOTTEN_MAX = 50;
+/** The most words of facts the remember tool kept that one turn hands to its reading (memory-c8-1). */
+const TURN_KEPT_MAX = 20;
 /** Refinement passes a day, at most (and one per idle stretch). */
 export const REFINE_PER_DAY = 6;
 /** The interview lets go after this long without an answer (ms). */
@@ -139,6 +141,11 @@ export class MemoryLearning {
    */
   private drops = 0;
   private droppedAt: number | null = null;
+  /**
+   * The words of what the remember tool kept (or found already kept) since the last turn ended: one turn runs at a
+   * time, so they go with the next turn `heard` hands over, whose reading never keeps them again (memory-c8-1).
+   */
+  private turnKept: string[] = [];
 
   constructor(private d: LearningDeps) {
     this.lastActive = this.now();
@@ -172,6 +179,8 @@ export class MemoryLearning {
     ++this.recallRevision;
     this.d.memory.cancelUpkeep();
     this.learner.stop();
+    // The turn under way is stopped, so no turn of its own takes what it kept.
+    this.turnKept = [];
     this.refining?.abort();
     this.refining = null;
     this.interview = null;
@@ -204,6 +213,9 @@ export class MemoryLearning {
         const before = new Set(m.list().map(i => i.id));
         const answer = m.remember(fact, about, said, replaces);
         this.noteNew(m.list().filter(i => !before.has(i.id)));
+        // Kept, or already kept: this turn's reading must not keep it again in its own words (memory-c8-1).
+        const id = /^(?:Already remembered|Remembered) \[([^\]]+)\]/.exec(answer)?.[1];
+        if (id) this.turnKept = [...this.turnKept, fact, m.factText(id) ?? fact].slice(-TURN_KEPT_MAX);
         return answer;
       },
       // The recall tool: its query is the model's, so it never counts gaps (the screen could choose the question).
@@ -236,9 +248,11 @@ export class MemoryLearning {
       asked: () => this.drops,
       heard: (said, reply, own, asked) => {
         this.active();
+        const kept = this.turnKept;
+        this.turnKept = [];
         // Said before a Forget, a correction or Forget everything: never read for facts (memory-r8-1).
         if (this.saidBeforeDrop(asked)) { this.d.log.info("memory.learn_skipped", { why: "said_before_forget" }); return; }
-        this.learner.heard(said, reply, own);
+        this.learner.heard(said, reply, own, kept);
       },
     };
   }
@@ -262,6 +276,7 @@ export class MemoryLearning {
     this.learner.stop();
     this.drops++;
     this.droppedAt = this.now();
+    this.turnKept = [];
   }
 
   /**
