@@ -160,7 +160,9 @@ function holding(said: string, want: ReadonlySet<string>): number[] {
  * - A person that one of them names in its own words and the other's words don't name makes them two facts ("Is
  *   vegetarian", "Partner Sam is vegetarian"): `about` only ever tells them apart, never makes them one.
  * - The same fact when every content word of the candidate is in what was kept, said the same way round ("Is
- *   vegetarian", "The user is a vegetarian"; "Works on the Atlas project", "Works on Atlas").
+ *   vegetarian", "The user is a vegetarian"; "Works on the Atlas project", "Works on Atlas"), unless its evidence is
+ *   plainly in another clause than the one that holds the most of what was kept ("…Partner Sam is vegetarian. I'm
+ *   vegetarian too.").
  * - Otherwise only when its evidence is in the one clause of the turn that holds the most of what was kept, and
  *   neither leaves out a word of that evidence the other says ("allergic to peanuts and shellfish" holds two): half
  *   or more of the smaller one's content words in common, the same way round ("Works at Globex", "Employed by
@@ -177,9 +179,11 @@ export function keptInTurn(c: Pick<Candidate, "fact" | "evidence" | "about">, ke
     if (!K.size || !C.size) return false;
     if (people(c.fact, c.about).some(t => !K.has(t)) || people(k.text, k.about).some(t => !C.has(t))) return false;
     const sameWay = negated(c.fact) === negated(k.text);
-    if (sameWay && [...C].every(t => K.has(t))) return true;
     const where = holding(said, K);
-    if (where.length !== 1 || at.length !== 1 || at[0] !== where[0]) return false;
+    const here = where.length === 1 && at.length === 1 && at[0] === where[0];
+    const apart = where.length === 1 && at.length === 1 && at[0] !== where[0];
+    if (sameWay && !apart && [...C].every(t => K.has(t))) return true;
+    if (!here) return false;
     const two = [...C].some(t => !K.has(t) && E.has(t)) && [...K].some(t => !C.has(t) && E.has(t));
     if (two) return false;
     return (sameWay && Math.max(share(K, C), share(C, K)) >= SAME_IN_TURN) || (share(K, E) >= SAME_IN_TURN && share(C, E) < SAME_IN_TURN);

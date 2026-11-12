@@ -811,6 +811,10 @@ describe("what the user asks Ember to remember is kept once, however its turn's 
     ["Remember that I live in Leeds with my partner Sam", "Lives in Leeds", [USER], "Lives in Leeds with partner Sam", [USER, { name: "Sam", kind: "person" }], "I live in Leeds with my partner Sam"],
     ["Remember that I'm allergic to peanuts and shellfish", "Is allergic to peanuts", [USER], "Is allergic to shellfish", [USER], "I'm allergic to peanuts and shellfish"],
     ["Remember that I work at Globex from home on Fridays", "Works at Globex", [USER], "Works from home on Fridays", [USER], "I work at Globex from home on Fridays"],
+    // The other way round: what was kept is about someone else, and the user says the same of themselves.
+    ["Remember that my partner Sam is vegetarian. I'm vegetarian too.", "Partner Sam is vegetarian", [USER], "Is vegetarian", [USER], "I'm vegetarian too"],
+    ["Remember that my partner Sam is vegetarian. I'm vegetarian too.", "Partner Sam is vegetarian", [{ name: "Sam" }], "Is vegetarian", [USER], "I'm vegetarian too"],
+    ["Remember that my sister Jo lives in York. I live in York too.", "Sister Jo lives in York", [USER], "Lives in York", [USER], "I live in York too"],
   ];
 
   it.each(OTHER)("still learns a different fact of “%s”, though it shares a word or a name with what was kept (memory-x8-1)", async (said, kept, about, other, otherAbout, evidence) => {
