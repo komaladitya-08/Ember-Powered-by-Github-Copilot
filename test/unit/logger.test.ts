@@ -142,7 +142,7 @@ describe("logger print streams whose reader has gone", () => {
     expect(stderr.writes).toBe(1);
   });
 
-  it("stops printing to a stream whose write throws, such as stdout redirected to a full disk (reliability-r8-1)", () => {
+  it("stops printing to a stream whose write throws instead of reporting its error (reliability-r8-1)", () => {
     let writes = 0;
     const stdout = { write: () => { writes++; throw Object.assign(new Error("EIO: i/o error, write"), { code: "EIO" }); }, on: () => stdout };
     const log = createLogger({ dir: tmp(), stdout: true, streams: { stdout, stderr: new GoneReader() } });

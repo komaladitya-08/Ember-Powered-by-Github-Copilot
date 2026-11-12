@@ -190,7 +190,7 @@ export function createLogger(opts: LoggerOptions): Logger {
       if (name === "stdout") hear("stderr");
       stream.write(line, err => { if (err) lose(stream, name, err); });
     } catch (err) {
-      lose(stream, name, err); // a write that throws (stdout redirected to a file on a full disk)
+      lose(stream, name, err); // a write that throws instead of reporting its error (a full disk reports, as EPIPE does)
     }
   };
 
