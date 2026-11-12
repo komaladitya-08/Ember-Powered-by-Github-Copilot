@@ -229,6 +229,19 @@ describe("the sign-in step", () => {
     expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host: "localhost:11434" } }).line).toBe("Connected to your own provider (localhost:11434).");
   });
 
+  it("never says it is connected to a server on this computer whose start check answered without a model list, as Models & connections doesn't (integrations-x8-2)", () => {
+    const host = "127.0.0.1:18593";
+    // Ollama's address without /v1 (a 404), a web page, or a key refused: main's status says "Using", and so does first run.
+    const unlisted = signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host, listed: false } });
+    expect(unlisted).toMatchObject({ line: "Using your own provider (127.0.0.1:18593).", tone: "ok", primary: "continue" });
+    expect(signInText({ managed: false, own: host, ownListed: false, ownPhase: "ready" }).lead).toBe("I'm using the model provider you set up (127.0.0.1:18593), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.");
+    // With a model list: connected, as before.
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host, listed: true } }).line).toBe("Connected to your own provider (127.0.0.1:18593).");
+    expect(signInText({ managed: false, own: host, ownListed: true, ownPhase: "ready" }).lead).toBe("I'm connected to the model provider you set up (127.0.0.1:18593), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.");
+    // A host elsewhere stays "Using" whatever it says.
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host: "api.example.com", listed: true } }).line).toBe("Using your own provider (api.example.com).");
+  });
+
   it("never offers sign-in with the organisation's own service, under lockdown, or when the policy refused (review of #124)", () => {
     expect(signInText({ managed: true }).title).toBe("Connecting to your organisation's service");
     expect(signInText({ managed: false })).toBe(STEP_TEXT["sign-in"]);

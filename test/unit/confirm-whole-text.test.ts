@@ -245,7 +245,7 @@ describe("the pages' word that a whole text was read", () => {
     }
     // And a screen reader hears only the news once all of it has been shown, not the question again: in the bubble (the
     // overlay's), and on the corner card.
-    for (const page of ["packages/bubble/src/bubble.ts", "app/renderer/handle/main.ts"]) expect(fs.readFileSync(page, "utf8"), page).toContain("wholeReadNews(");
+    for (const page of ["packages/bubble/src/bubble.ts", "app/renderer/handle/live.ts"]) expect(fs.readFileSync(page, "utf8"), page).toContain("wholeReadNews(");
   });
 
   it("names what the approve key does while the whole text waits, under the question and aloud (main's wiring)", async () => {

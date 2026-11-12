@@ -3,7 +3,7 @@ import { costWords, failureView, homeConnectionView, inMyVoice, keyPlaceholder, 
 import { retryMessage, tagline } from "../../app/renderer/home/copy";
 import { statusWord } from "../../app/renderer/home/status-copy";
 import { KEY_NO_KEYRING, KEY_WRITE_FAILED, PROVIDER_MANAGED, PROVIDER_NO_CONSENT, providerDown, providerNotAgreed, testConnection } from "../../app/main/provider";
-import { explainSignInError, explainStartError, runtimeWords, START_TIMEOUT_DETAIL } from "../../app/main/agent/host";
+import { explainSignInError, explainStartError, runtimeWords, START_TIMEOUT_DETAIL, startErrorReason, USER_PROVIDER_NO_MODEL } from "../../app/main/agent/host";
 import { PROVIDER_BAD_REQUEST } from "../../app/main/provider-ipc";
 import { cliTimedOutMessage } from "../../app/main/agent/github-app";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
@@ -59,6 +59,23 @@ describe("a failing own provider is explained as the provider's, never Copilot's
     expect(home).toEqual({ help: "", primary: "provider", show: { provider: true, retry: true, "sign-in": false, "switch-account": false, "own-provider": false } });
     // The organisation's service: only trying again.
     expect(failureView({ reason: "models", ownOffered: false, service: "admin" })).toEqual({ help: "", primary: "retry", others: [] });
+  });
+  it("names on Models & connections the field below for a missing model, never the pane the person is on (integrations-r8-3)", () => {
+    const base = { phase: "error", reason: "models", ownOffered: true, signingIn: false, waiting: false, service: "user" };
+    const noModel = homeConnectionView({ ...base, detail: "Enter the model your provider should use in Ember's settings, under Models & connections." });
+    expect(noModel.line).toBe("Enter the model your provider should use in “Conversation model”, below.");
+    // Its button still leads, to that field (main.ts focuses byok-conductor for this reason).
+    expect(noModel.primary).toBe("provider");
+    // Main's other reasons are said in its own words.
+    expect(homeConnectionView({ ...base, detail: "None of the models you entered for your provider are allowed by your administrator." }).line).toBeUndefined();
+    expect(homeConnectionView({ ...base, service: "admin", detail: "Enter the model your provider should use in Ember's settings, under Models & connections." }).line).toBeUndefined();
+  });
+  it("names that field for main's own no-model sentence as main's start says it, so a change to main's words can't bring the pane's name back unseen (integrations-x8-3)", () => {
+    // The status a start that names no model gives: its reason and detail, made by main from its own constant.
+    const err = new Error(USER_PROVIDER_NO_MODEL);
+    const v = homeConnectionView({ phase: "error", reason: startErrorReason(err), detail: explainStartError(err), ownOffered: true, signingIn: false, waiting: false, service: "user" });
+    expect(v.line).toBe("Enter the model your provider should use in “Conversation model”, below.");
+    expect(v.primary).toBe("provider");
   });
   it("says in Home's tagline and status that the provider can't connect, never to connect Copilot", () => {
     const t = { failing: 0, onboarded: true, hidden: false, overlay: true, service: "user" };
@@ -271,6 +288,10 @@ describe("first run: the provider in use, as Home says it", () => {
     expect(providerInUseLine({ host: "localhost:1234", phase: "ready" })).toEqual({ line: "Connected to your own provider (localhost:1234).", tone: "ok" });
     expect(providerInUseLine({ host: "api.example.com", phase: "ready" })).toEqual({ line: "Using your own provider (api.example.com).", tone: "ok" });
     expect(providerInUseLine({ host: "api.example.com", phase: "starting" })).toEqual({ line: "Connecting to your own provider (api.example.com)…", tone: "" });
+  });
+  it("says a server on this computer whose start check answered without a model list is only in use, as main's status says (integrations-x8-2)", () => {
+    expect(providerInUseLine({ host: "127.0.0.1:18593", phase: "ready", listed: false })).toEqual({ line: "Using your own provider (127.0.0.1:18593).", tone: "ok" });
+    expect(providerInUseLine({ host: "127.0.0.1:18593", phase: "ready", listed: true })).toEqual({ line: "Connected to your own provider (127.0.0.1:18593).", tone: "ok" });
   });
 });
 

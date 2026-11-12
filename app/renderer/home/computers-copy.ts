@@ -129,7 +129,7 @@ export interface CommandsRow {
   run: Switch;
   /** "Ask me before every command" under it (shown while commands are on here). */
   askEvery: Switch & { shown: boolean };
-  /** "Your organisation asks you to approve every command here." */
+  /** Why every command asks here, under it: ASK_EVERY_PRIVILEGED, ASK_EVERY_MANAGED, or both. */
   managed: string | null;
 }
 export interface CommandsView { rows: CommandsRow[]; managed: string[] }
@@ -140,6 +140,8 @@ const OFF_LINES: Readonly<Record<TargetKind, string>> = {
   ssh: "Your organisation has turned off commands on computers reached over SSH.",
 };
 export const ASK_EVERY_MANAGED = "Your organisation asks you to approve every command here.";
+/** Under “Ask me before every command” where commands run as root or an administrator (the commands card's own words). */
+export const ASK_EVERY_PRIVILEGED = "Commands here run as the administrator, so Ember asks before every one.";
 export const WSL_MANAGED = "Your organisation doesn't allow Ember to work in WSL.";
 export const SSH_MANAGED = "Your organisation doesn't allow Ember on other computers.";
 export const SSH_LIMITED = "Your organisation lets Ember connect only to some computers.";
@@ -265,7 +267,12 @@ export function computersView(i: {
   };
 }
 
-/** The Commands section: a switch per target (this computer, each distro, each host), and what the organisation set. */
+/**
+ * The Commands section: a switch per target (this computer, each distro, each host), and what the organisation set.
+ * Where commands run as root or an administrator (TargetSummary.privileged) every one asks, so “Ask me before every
+ * command” shows on and can't be turned off, with why under it (accessibility-c8-3: it showed off and could be flipped,
+ * to no effect). Only how it shows: the user's own setting is left as it was.
+ */
 export function commandsView(i: { summaries: readonly TargetSummary[]; settings: Settings; admin: TargetsAdmin }): CommandsView {
   const ids: { id: TargetId; kind: TargetKind; label: string }[] = [{ id: "local", kind: "local", label: "This computer" }];
   for (const t of i.summaries) {
@@ -285,12 +292,16 @@ export function commandsView(i: { summaries: readonly TargetSummary[]; settings:
     const own = i.settings.commands?.[id];
     if (mode === "off") managed.add(OFF_LINES[kind]);
     const on = own?.on === true && mode !== "off";
+    // (Not where the organisation turned commands off: none can run there, and its line above says so: accessibility-x8-4.)
+    const privileged = mode !== "off" && i.summaries.some(t => t.id === id && t.privileged === true);
+    const asks = mode === "ask" || privileged;
+    const why = [privileged ? ASK_EVERY_PRIVILEGED : null, mode === "ask" ? ASK_EVERY_MANAGED : null].filter((s): s is string => s !== null);
     return {
       id, kind,
       run: { label: runLabel(kind, label), checked: on, disabled: mode === "off" },
       // Each one names its computer for a screen reader: several read "Ask me before every command" (review #158).
-      askEvery: { label: ASK_EVERY_SWITCH, ariaLabel: `${ASK_EVERY_SWITCH} ${placeWords(kind, label)}`, checked: mode === "ask" || own?.askEvery === true, disabled: mode === "ask" || !on, shown: on },
-      managed: mode === "ask" ? ASK_EVERY_MANAGED : null,
+      askEvery: { label: ASK_EVERY_SWITCH, ariaLabel: `${ASK_EVERY_SWITCH} ${placeWords(kind, label)}`, checked: asks || own?.askEvery === true, disabled: asks || !on, shown: on },
+      managed: why.length ? why.join(" ") : null,
     };
   });
   return { rows, managed: [...managed] };

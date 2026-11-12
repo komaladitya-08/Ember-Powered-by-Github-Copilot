@@ -202,6 +202,11 @@ export interface EmberState {
   mic?: MicState;
   /** Voice Match is being taught: the microphone hears its phrases and "Ember, stop", not requests (shared/mic.ts). */
   micLearning?: boolean;
+  /**
+   * Listen once opens the microphone or has it open for one request (its starting and listening phases): with the wake
+   * word on, `mic` stays "waiting" until its window opens, after Ember's hush (the corner card's micOpen).
+   */
+  listeningOnce?: boolean;
   /** Places the bubble keeps off (global DIP), e.g. the settings window while the user works in it. */
   avoid?: Rect[];
   /**

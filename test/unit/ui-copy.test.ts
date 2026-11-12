@@ -26,7 +26,7 @@ import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
 import { friendlyError, lostWords } from "../../app/main/agent/presenter";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedText, providerAgreedUnlisted, providerHeldUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_NO_MODEL_HERE, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerHeldUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -986,6 +986,25 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(providerTestWaits({ host: "models.example.com", agreed: false, managed: false })).toBe("Test connection works once you agree to the note above for models.example.com.");
     expect(providerTestWaits({ host: "models.example.com", agreed: true, managed: false })).toBeNull();
     expect(providerTestWaits({ host: "models.example.com", agreed: false, managed: true })).toBeNull();
+  });
+
+  it("says after a first “I agree” in Home what the one check of that host found, so a wrong address shows before any request (integrations-r8-2)", () => {
+    expect(providerAgreedChecked("localhost:11434", { ok: true, host: "localhost:11434", models: 1, ids: ["llama3.2:3b"] }))
+      .toBe("Agreed. Ember now sends your requests to localhost:11434, which lists 1 model: llama3.2:3b.");
+    expect(providerAgreedChecked("models.example.com", { ok: true, host: "models.example.com", models: 12, ids: ["gpt-4.1", "gpt-4o", "o3"] }))
+      .toBe("Agreed. Ember now sends your requests to models.example.com, which lists 12 models, such as gpt-4.1 and gpt-4o.");
+    expect(providerAgreedChecked("models.example.com", { ok: true, host: "models.example.com", models: 3 })).toBe("Agreed. Ember now sends your requests to models.example.com, which lists 3 models.");
+    expect(providerAgreedChecked("localhost:1234", { ok: true, host: "localhost:1234", models: null })).toBe("Agreed. Ember now sends your requests to localhost:1234, which answered.");
+    // Ollama's address without /v1, a web page, a key still to save: main's own sentence, after what was agreed.
+    expect(providerAgreedChecked("127.0.0.1:11434", { ok: false, why: "127.0.0.1:11434 answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" }))
+      .toBe("Agreed. Ember now sends your requests to 127.0.0.1:11434. 127.0.0.1:11434 answered, but has no model list at that address. Check the endpoint and the provider.");
+    expect(providerAgreedChecked("api.example.com", { ok: false, why: "api.example.com needs an API key." })).toBe("Agreed. Ember now sends your requests to api.example.com. api.example.com needs an API key.");
+    // Test connection's words are as they were.
+    expect(providerTestText({ ok: true, host: "localhost:11434", models: 1, ids: ["llama3.2:3b"] })).toBe("Connected to localhost:11434. It lists 1 model: llama3.2:3b.");
+  });
+
+  it("names the field for a missing model on the pane that holds it (integrations-r8-3)", () => {
+    expect(PROVIDER_NO_MODEL_HERE).toBe("Enter the model your provider should use in “Conversation model”, below.");
   });
 
   it("reports a connection test in one sentence, and says why a key can't be kept", () => {

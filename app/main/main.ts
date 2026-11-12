@@ -13,7 +13,7 @@ import { HistoryStore } from "./agent/conversation-store";
 import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeTheme, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
-import { createLogger, logLevel } from "./logger";
+import { createLogger, isLogStreamFailure, logLevel } from "./logger";
 import { dataFolderProblem, startupDialogText, startupProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
@@ -206,7 +206,9 @@ const log = createLogger({
 });
 if (wantedLevel.unknown !== undefined) log.warn("log.level_unknown", { value: wantedLevel.unknown.slice(0, 40), using: "info", levels: ["debug", "info", "warn", "error"] });
 
-process.on("uncaughtException", err => log.error("uncaught exception", { err }));
+// A failed write to the log's own stdout or stderr isn't logged: that line would print there again and fail again
+// (reliability-r8-1). The logger has switched that stream off and said so once.
+process.on("uncaughtException", err => { if (!isLogStreamFailure(err)) log.error("uncaught exception", { err }); });
 process.on("unhandledRejection", reason => log.error("unhandled rejection", { reason }));
 // GPU, utility and page crashes reach the log too (review #91).
 watchCrashes(app, log);
@@ -1592,6 +1594,10 @@ function start(): void {
   const syncListenOnce = () => {
     const phase = voice?.listenOnceStatus.phase;
     if (manualCall && (phase === undefined || phase === "ready" || phase === "blocked")) clearManualCall();
+    // The corner card holds a task's end while Listen once opens the microphone: with the wake word on, the voice says
+    // "waiting" until its window opens, and a line said then was heard in the request (accessibility-x8-3).
+    const listeningOnce = phase === "starting" || phase === "listening";
+    if (listeningOnce !== (lastState.listeningOnce === true)) setState({ listeningOnce });
     const ask = listenOnceStatus("ask");
     // (The microphone's name too: Settings' voice line names it, and a headset plugged in changes it.)
     const key = JSON.stringify([ask, listenOnceStatus("home"), voice?.micLabel ?? null]);

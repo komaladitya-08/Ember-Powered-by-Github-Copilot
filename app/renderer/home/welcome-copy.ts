@@ -8,7 +8,7 @@
 
 import { CONSENT_VERSION } from "../../shared/consent";
 import { needsUser, holdsBack, type SetupRow } from "../../shared/setup-attention";
-import { onThisComputer } from "../../shared/provider";
+import { ownConnected } from "../../shared/provider";
 
 /** The essential first-run route; character and memory personalisation remain optional detours. */
 export const WELCOME_STEPS = ["hello", "consent", "sign-in", "checks", "try", "done"] as const;
@@ -176,9 +176,10 @@ export const CONSENT_CHANGE_SOURCES: Readonly<Record<number, readonly string[]>>
  * still connecting or failing (`ownPhase`; ready when absent), so no GitHub, Copilot or sign-in words are said then.
  * Under the organisation's lockdown (`locked`; `held` until a restart reads a changed policy) nothing connects at all,
  * so the step says that, never that a service runs (first-run-v1). The lead offers the user's own provider only where
- * it is offered (`ownOffered`, first-run-7).
+ * it is offered (`ownOffered`, first-run-7). `ownListed`: what the start's check of it found (the agent's
+ * `service.listed`), so it is "connected" only where main's status says so (integrations-x8-2).
  */
-export function signInText(o: { managed: boolean; locked?: boolean; held?: boolean; own?: string | null; ownPhase?: "ready" | "starting" | "error"; ownOffered?: boolean }): { title: string; lead: string } {
+export function signInText(o: { managed: boolean; locked?: boolean; held?: boolean; own?: string | null; ownPhase?: "ready" | "starting" | "error"; ownOffered?: boolean; ownListed?: boolean }): { title: string; lead: string } {
   if (o.locked) {
     return o.held
       ? { title: "Restart me to use your organisation's new policy", lead: "Your organisation changed my policy while I was running, so I can't connect to a model service until you restart me." }
@@ -188,8 +189,9 @@ export function signInText(o: { managed: boolean; locked?: boolean; held?: boole
   if (o.own) {
     const lead = o.ownPhase === "starting" ? `I'm connecting to the model provider you set up (${o.own}). You can change it later in Settings › Models & connections.`
       : o.ownPhase === "error" ? `I can't connect to the model provider you set up (${o.own}) yet: the line below says why. You can check its details here, or later in Settings › Models & connections.`
-        // A host elsewhere wasn't contacted at the start: "using", as the line under it says (first-run-r3-2).
-        : `I'm ${onThisComputer(o.own) ? "connected to" : "using"} the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.`;
+        // A host elsewhere wasn't contacted at the start, and one here may have answered without a model list: "using", as
+        // the line under it says (first-run-r3-2, integrations-x8-2).
+        : `I'm ${ownConnected({ host: o.own, listed: o.ownListed }) ? "connected to" : "using"} the model provider you set up (${o.own}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.`;
     return { title: "Your own model provider", lead };
   }
   if (o.ownOffered === false) return { ...STEP_TEXT["sign-in"], lead: STEP_TEXT["sign-in"].lead.replace(OWN_OFFER, "") };
@@ -221,14 +223,16 @@ export interface SignInView {
  * the model service the connection uses when it isn't Copilot (the agent's status), so the user's own provider is
  * never called Copilot (first-run-1). `switching`: the user's own provider was switched off while Ember was busy, and
  * Ember moves to Copilot once that is done (the agent's `switchPending`): nothing connects yet, and the way on is open
- * (first-run-v4-1).
+ * (first-run-v4-1). Its `listed` says what the start's check of a server on this computer found: "Connected" only to one
+ * that answered with a model list, as main's status says (integrations-x8-2).
  */
-export function signInView(o: { phase: string | null; reason?: string; login?: string; signingIn: boolean; managedProvider: boolean; locked?: boolean; service?: { kind: string; host: string }; switching?: boolean }): SignInView {
+export function signInView(o: { phase: string | null; reason?: string; login?: string; signingIn: boolean; managedProvider: boolean; locked?: boolean; service?: { kind: string; host: string; listed?: boolean }; switching?: boolean }): SignInView {
   const none = { cancel: false, skip: false, retry: false };
   const own = o.service?.kind === "user" ? `your own provider (${o.service.host})` : o.service?.kind === "test" ? o.service.host : null;
   if (o.phase === "ready") {
-    // The user's own provider elsewhere wasn't contacted at the start: "Using", as Home says (integrations-r2-6).
-    const near = o.service?.kind !== "user" || onThisComputer(o.service.host);
+    // The user's own provider elsewhere wasn't contacted at the start, and one here may have answered without a model
+    // list: "Using", as Home says (integrations-r2-6, -x8-2).
+    const near = o.service?.kind !== "user" || ownConnected(o.service);
     const who = o.managedProvider ? "Connected to your organisation's model service." : own ? `${near ? "Connected to" : "Using"} ${own}.` : o.login ? `Signed in as ${o.login}.` : "Connected to Copilot.";
     return { ...none, line: who, tone: "ok", primary: "continue", why: "" };
   }

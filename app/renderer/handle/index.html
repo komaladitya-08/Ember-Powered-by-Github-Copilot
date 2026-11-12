@@ -25,6 +25,8 @@
   </div>
   <!-- Without a compositor the card is Ember's only surface: screen readers hear its answers and questions here. -->
   <div id="live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
+  <!-- And a task's end ("Print two lines: Done"), held while the microphone is open for a request (main.ts). -->
+  <div id="task-live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
   <div id="actions" class="actions" hidden></div>
   <div id="task" class="task" hidden>
     <span class="task-text"><span id="task-state" class="sr"></span><b id="task-title"></b><span id="task-detail"></span></span>

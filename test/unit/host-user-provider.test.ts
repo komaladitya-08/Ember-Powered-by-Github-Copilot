@@ -45,6 +45,8 @@ import { GAVE_UP, LOST_GAVE_UP, LOST_RECONNECTED, LOST_RECONNECTING, lostWords, 
 import type { BubbleState, EmberState } from "../../app/shared/overlay";
 import { SettingsStore } from "../../app/main/settings";
 import { providerDown, type ActiveProvider, type TestResult } from "../../app/main/provider";
+import { signInText, signInView } from "../../app/renderer/home/welcome-copy";
+import { providerInUseLine } from "../../app/renderer/home/first-run-copy";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const TOKEN = "gho_" + "t".repeat(36); // not a real token
@@ -204,6 +206,59 @@ describe("AgentHost with the user's own model provider", () => {
     expect(await until(() => host.getStatus().phase === "ready")).toBe(true);
     expect(host.getStatus().detail).toBe("Connected to 127.0.0.1:18109.");
     await host.stop();
+  });
+
+  it("never says Connected to a server on this computer whose start check answered without a model list, and points to Test connection; one that answered otherwise is only in use (integrations-r8-1)", async () => {
+    // Ollama's address entered without /v1 answers 404 to GET /models; a web page answers 200 with HTML: both "no-list".
+    for (const why of ["127.0.0.1:18109 answered, but has no model list at that address. Check the endpoint and the provider.", "127.0.0.1:18109 answered, but not as a model service does. Check the endpoint."]) {
+      sim.clients = []; sim.sessions = [];
+      const { host } = makeHost(() => LOCAL, async () => ({ ok: false, why, cause: "no-list" }));
+      // Something answers there, so it connects (a chat-only gateway the person chose "Use it as typed" for works).
+      expect(await host.start(null)).toBe("ready");
+      expect(host.getStatus()).toMatchObject({ phase: "ready", service: { kind: "user", host: "127.0.0.1:18109" } });
+      expect(host.getStatus().detail).toBe("Using 127.0.0.1:18109. It answered, but without a model list: Test connection under Model provider says more.");
+      await host.stop();
+    }
+    // A key refused or another error: something is there, but nothing says it is connected.
+    sim.clients = []; sim.sessions = [];
+    const refused = makeHost(() => LOCAL, async () => ({ ok: false, why: "127.0.0.1:18109 needs an API key." }));
+    expect(await refused.host.start(null)).toBe("ready");
+    expect(refused.host.getStatus().detail).toBe("Using 127.0.0.1:18109.");
+    await refused.host.stop();
+    // A model list: connected, as before.
+    sim.clients = []; sim.sessions = [];
+    const listed = makeHost(() => LOCAL, async () => ({ ok: true, host: "127.0.0.1:18109", models: 1 }));
+    expect(await listed.host.start(null)).toBe("ready");
+    expect(listed.host.getStatus().detail).toBe("Connected to 127.0.0.1:18109.");
+    await listed.host.stop();
+  });
+
+  it("tells first run what its start check found, so first run says Connected only where Models & connections does (integrations-x8-2)", async () => {
+    const outcomes: { probe: TestResult; listed: boolean; word: "Connected to" | "Using" }[] = [
+      { probe: { ok: false, why: "127.0.0.1:18109 answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" }, listed: false, word: "Using" },
+      { probe: { ok: false, why: "127.0.0.1:18109 needs an API key." }, listed: false, word: "Using" },
+      { probe: { ok: true, host: "127.0.0.1:18109", models: 1 }, listed: true, word: "Connected to" },
+    ];
+    for (const o of outcomes) {
+      sim.clients = []; sim.sessions = [];
+      const { host } = makeHost(() => LOCAL, async () => o.probe);
+      expect(await host.start(null)).toBe("ready");
+      const s = host.getStatus();
+      expect(s.service).toEqual({ kind: "user", host: "127.0.0.1:18109", listed: o.listed });
+      // Main's line and first run's three say the same word: the sign-in step's line and lead, and the provider step's.
+      expect(s.detail.startsWith(`${o.word} 127.0.0.1:18109`), s.detail).toBe(true);
+      const service = s.service!;
+      expect(signInView({ phase: s.phase, signingIn: false, managedProvider: false, service }).line).toBe(`${o.word} your own provider (127.0.0.1:18109).`);
+      expect(signInText({ managed: false, own: service.host, ownListed: service.listed, ownPhase: "ready" }).lead).toMatch(new RegExp(`^I'm ${o.word === "Using" ? "using" : "connected to"} the model provider you set up`));
+      expect(providerInUseLine({ host: service.host, phase: s.phase, listed: service.listed }).line).toBe(`${o.word} your own provider (127.0.0.1:18109).`);
+      await host.stop();
+    }
+    // A host elsewhere isn't asked at a start: nothing is said of a list.
+    sim.clients = []; sim.sessions = [];
+    const away = makeHost(() => OWN, async () => ({ ok: true, host: "models.example.com", models: 1 }));
+    expect(await away.host.start(null)).toBe("ready");
+    expect(away.host.getStatus().service).toEqual({ kind: "user", host: "models.example.com" });
+    await away.host.stop();
   });
 
   it("keeps its status still while a model server on this computer stays off, rather than saying Connecting… at every retry (integrations-c1-2)", async () => {

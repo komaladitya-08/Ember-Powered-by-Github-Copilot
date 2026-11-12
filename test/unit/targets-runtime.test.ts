@@ -408,6 +408,16 @@ describe("commands on this computer (§2.5, §3.8.1)", () => {
     expect(svc(rig({ settings: commandsOn("local"), elevated: () => { throw new Error("token"); } })).capability().askEvery).toBe("root");
   });
 
+  it("tell the settings window which computer runs them as root or an administrator, so its switch shows they all ask (accessibility-c8-3)", () => {
+    // Whatever the switches say, and when it can't be told (every command asks then too).
+    expect(rig({ settings: commandsOn("local"), elevated: () => true }).t.summaries()[0]).toMatchObject({ id: "local", privileged: true });
+    expect(rig({ elevated: () => true }).t.summaries()[0].privileged).toBe(true);
+    expect(rig({ settings: commandsOn("local"), elevated: () => { throw new Error("token"); } }).t.summaries()[0].privileged).toBe(true);
+    // Not elevated: no word of it, whatever the user's or the organisation's own ask.
+    expect(rig({ settings: commandsOn("local", 1, true) }).t.summaries()[0]).not.toHaveProperty("privileged");
+    expect(rig({ admin: policy({ commands: { local: "ask" } }), settings: commandsOn("local") }).t.summaries()[0]).not.toHaveProperty("privileged");
+  });
+
   it("wait only for the card when the user turned them on and a newer card must be accepted", () => {
     const r = rig({ settings: commandsOn("local", 0) });
     const got = r.t.agent.handsFor("local");

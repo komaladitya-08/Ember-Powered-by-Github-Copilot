@@ -16,7 +16,7 @@ import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, lostWords, noAnswer, plainText, SIGN_IN_REFUSED, type LostWords, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
-import { providerDown, type ActiveProvider, type TestResult } from "../provider";
+import { localProviderLine, providerDown, type ActiveProvider, type TestResult } from "../provider";
 import { keyNeeded } from "../../shared/provider";
 import { chooseModels, costOf, mayUseRuntimeDefault, reasoningEffortsOf, type ModelLike, type ReasoningEffort } from "./models";
 import { modelsManaged, type AdminPolicy } from "../admin";
@@ -150,9 +150,12 @@ export interface AgentStatus {
   switchPending?: boolean;
   /**
    * The model service this connection uses when it isn't GitHub Copilot: the organisation's ("admin"), the user's own
-   * ("user") or a development test server ("test"), by its host only (never the key).
+   * ("user") or a development test server ("test"), by its host only (never the key). `listed`, ready with the user's
+   * own provider on this computer: whether the start's check of it answered with a model list (only then does the
+   * detail say "Connected to"), so first run says what Models & connections says (integrations-r8-1, -x8-2). Absent
+   * for a host elsewhere, which isn't asked at a start.
    */
-  service?: { kind: ActiveProvider["kind"]; host: string };
+  service?: { kind: ActiveProvider["kind"]; host: string; listed?: boolean };
 }
 
 /** One line of the conversation, kept in memory for this session only (the settings window shows them). */
@@ -1883,12 +1886,15 @@ export class AgentHost {
       service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl) } : undefined,
     });
     let unreachable = false;
+    // What that check answered, for the ready status: "Connected" only with a model list (integrations-r8-1).
+    let checked: TestResult | null = null;
     try {
       // A model server on this computer (Ollama, LM Studio) is asked first whether it listens: nothing else would ask it
       // before the first request, which then waits about 24 s to fail (integrations-1). Only there: a remote host's
       // test goes through Electron's proxy settings, which may differ from the runtime's, so it can't veto a connect.
       if (provider?.kind === "user" && this.o.probeProvider && !keyNeeded(provider.config.baseUrl)) {
-        const down = providerDown(await this.o.probeProvider(), serviceHost(provider.config.baseUrl), true);
+        checked = await this.o.probeProvider();
+        const down = providerDown(checked, serviceHost(provider.config.baseUrl), true);
         if (gen !== this.gen) return;
         if (down) throw new ProviderDown(down);
       }
@@ -2358,10 +2364,11 @@ export class AgentHost {
       })(system, prompt, signal);
       this.projectService = kindOf(provider);
       const where = provider?.kind === "user" ? serviceHost(provider.config.baseUrl) : null;
-      // A model server on this computer answered the start's probe: connected. A host elsewhere isn't asked until a
-      // request reaches it, so it is only in use, and one with no key saved may refuse requests (integrations-r3).
+      // A model server on this computer answered the start's probe with a model list: connected; answered without one,
+      // in use, with Test connection to say more (integrations-r8-1). A host elsewhere isn't asked until a request
+      // reaches it, so it is only in use, and one with no key saved may refuse requests (integrations-r3).
       const remote = provider?.kind === "user" && keyNeeded(provider.config.baseUrl);
-      const using = remote ? `Using ${where}${provider.config.apiKey ? "." : ", with no API key saved. If it needs one, save it under Model provider."}` : `Connected to ${where}.`;
+      const using = remote ? `Using ${where}${provider.config.apiKey ? "." : ", with no API key saved. If it needs one, save it under Model provider."}` : where ? localProviderLine(checked, where) : "";
       const signedIn = login ? `Signed in as ${login}.` : where ? using : "Connected.";
       this.setStatus({
         phase: "ready",
@@ -2379,7 +2386,8 @@ export class AgentHost {
         }),
         conductorModel: choice.conductor,
         workerModel: choice.worker,
-        service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl) } : undefined,
+        // What the start's check found goes with it, for first run's words (integrations-x8-2).
+        service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl), ...(checked ? { listed: checked.ok } : {}) } : undefined,
       });
       this.o.log.info("agent.ready", { login, conductorModel: choice.conductor, workerModel: choice.worker, models: models.length, runtimeDefault });
       // Connected: the wait before the next offline try starts short again. (Crashes count for ten minutes:

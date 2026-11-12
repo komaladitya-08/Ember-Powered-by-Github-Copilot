@@ -62,6 +62,12 @@ export interface TargetSummary {
   problem?: string;
   /** WSL: the distro "in WSL" and "in Linux" mean (the default one, §2.3); absent for every other target. */
   wslDefault?: boolean;
+  /**
+   * Commands here run as root or an administrator (an elevated Ember, a root distro or login, or one that can't be told),
+   * so every one asks (the command service's askEvery "root"): the settings window's “Ask me before every command”
+   * shows on. Absent otherwise.
+   */
+  privileged?: true;
 }
 
 /**
