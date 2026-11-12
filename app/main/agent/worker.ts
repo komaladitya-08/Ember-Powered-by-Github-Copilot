@@ -321,6 +321,23 @@ const PROMPT_REFUSAL = { open: AUTH_PROMPT_OPEN, unchecked: PROMPT_UNCHECKED, he
  * clause.
  */
 const causeOf = (why: string): string => why.split(", so ")[0]!.trim() || why;
+/**
+ * What the model is told when a change made while the user decided undid their yes (`what` changed; `undone`: what
+ * wasn't done): a yes, so neither a no nor a new request, and Ember asks again saying why. It was told to "ask again if
+ * it is still needed", as if it were a new request (owner's report of 2026-11-12).
+ */
+const spentYes = (what: string, undone = "nothing was done") => `The user allowed this, but ${what} changed while they decided, so ${undone} and that yes no longer counts. It wasn't a no, nor a new request: call perceive_window and, if the step is still needed, try it again. If it needs their yes, Ember asks them once more and tells them why.`;
+/**
+ * What the next question about the same step starts with, once a change spent the user's yes (in Ember's words, never a
+ * control's or a window's name): the page or the window changed, or their click on Allow closed the menu the item was
+ * in. A spoken answer leaves a menu open, and on Windows and macOS so do Ember's keys; on Linux a menu holds the
+ * keyboard, so Ember's keys don't reach it (an X11 grab).
+ */
+export const ASKING_AGAIN = {
+  page: "The page changed while you decided, so I'm asking again.",
+  window: "The window changed while you decided, so I'm asking again.",
+  menu: (os: OS): string => `Clicking Allow closed the menu, so I'm asking again. Answer by voice${os === "linux" ? "" : " or with the keys"} to leave it open.`,
+} as const;
 /** promptOpen's answer as PROMPT_REASON's and PROMPT_REFUSAL's key (true is a prompt that is open). */
 const promptKey = (open: true | "unchecked" | "helper"): keyof typeof PROMPT_REASON => (open === true ? "open" : open);
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
@@ -1251,6 +1268,10 @@ export class Worker {
   private saidNoThisTask = false;
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
+  /** The step the user last said yes to (stepKey), until the next decision. */
+  private yesFor: string | null = null;
+  /** A change spent that yes (spend): the next question about the same step says why it is asked again. */
+  private reask: { key: string; words: string } | null = null;
   /** The working window's frame from the latest perceive_window (an element outside it is scrolled away). */
   private frame: Bounds | null = null;
   /** Its scale (HiDPI): at 1, positions the app reports at a point compare with those read. */
@@ -2719,6 +2740,8 @@ export class Worker {
    */
   private async refreshActionContext(id: number): Promise<ToolResultObject | null> {
     this.pageTarget = null;
+    // A question belongs to the step it was asked for: a look before this step's own is never "while the user decided".
+    this.asked = false;
     const held = this.known.get(id);
     if (!held) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window and use its ids.`);
     const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
@@ -2808,12 +2831,14 @@ export class Worker {
     const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
     if (this.isOver) return STOPPED();
     const w = seen?.window;
-    const changed = !seen || !w || seen.blocked || seen.busy || seen.ember
+    const unread = !seen || !w || seen.blocked || seen.busy || seen.ember;
+    const changed = unread
       || w.app !== this.window.app || w.name !== this.window.name || w.role !== this.window.role
       || (this.target.pid !== undefined && w.pid !== this.target.pid)
       || (this.target.path !== undefined && w.path !== this.target.path)
       || (!seen.truncated !== this.actionWhole) || this.actionContext(seen.nodes, clickedTextAt) !== context
       || JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal }))) !== this.actionOthers;
+    if (changed && !unread && this.spend(this.pageOf(node))) return fail(spentYes(this.pageOf(node) ? "the page" : "the window"));
     if (changed) return fail("The window or its contents changed while preparing this action, so nothing was done. Call perceive_window and ask again if it is still needed.");
     // A quick tree read can finish before the original accessible object changes: check that object too.
     const live = await this.sidecar.readElement(id).catch(() => null);
@@ -2885,9 +2910,31 @@ export class Worker {
   /** A changed or closed menu is a new attempt, never a transferable approval. */
   private changedWhileDeciding(id: number, element: Focus, live: ElementInfo | null): ToolResultObject {
     if (this.asked && /menu item$/.test(element.role) && (!live || live.offscreen || (live.role === element.role && this.nameOf(id, live) === element.name))) {
-      return fail(`The menu holding ${q(element.name || "the item", 60)} closed when you answered (the click landed outside it), so nothing was clicked. Call perceive_window before reopening its menu; the next attempt needs a new policy check and, where required, a new approval.`);
+      this.spend(false, true);
+      return fail(`The user allowed this, but the menu holding ${q(element.name || "the item", 60)} closed when they answered (their click landed outside it), so nothing was clicked and that yes no longer counts. It wasn't a no: call perceive_window, reopen its menu and try the item again. It gets a new policy check, and if it needs their yes, Ember asks them once more and tells them why.`);
     }
+    if (this.spend(this.pageOf(this.known.get(id)))) return fail(spentYes(`element ${id}`));
     return fail(`Element ${id} changed while the user was deciding, so nothing was done. Call perceive_window and ask again if it's still needed.`);
+  }
+
+  /** Is `node` a web page's (where "the page" changed, not "the window")? */
+  private pageOf(node: AxNode | undefined): boolean {
+    return !!node && (node.role === "document web" || inWebPage(node, i => this.known.get(i)));
+  }
+
+  /**
+   * A change made while the user decided spent their yes to this step (`asked`, then a yes): the next question about the
+   * same step says why it is asked again (ASKING_AGAIN). Whether it was a yes that was spent.
+   */
+  private spend(inPage: boolean, menu = false): boolean {
+    if (!this.asked || this.yesFor === null) return false;
+    this.reask = { key: this.yesFor, words: menu ? ASKING_AGAIN.menu(this.kc.os) : inPage ? ASKING_AGAIN.page : ASKING_AGAIN.window };
+    return true;
+  }
+
+  /** Which step a question is about, to tell a question asked again for it (spend): its window and its element. */
+  private stepKey(element: Focus | undefined): string {
+    return `${this.windowKey}\n${element?.role ?? ""}\n${element?.name ?? ""}`;
   }
 
   /** choose_option: the option is found first (its full name, never a part of one), and the policy judges the one that will be chosen. */
@@ -3195,6 +3242,7 @@ export class Worker {
     if (!live?.bounds || live.role !== node.role || this.nameOf(id, live) !== element.name || (live.offscreen && /menu item$/.test(element.role))) {
       const closedMenu = this.asked && /menu item$/.test(element.role) && (!live || live.offscreen || (live.role === node.role && this.nameOf(id, live) === element.name));
       if (closedMenu) return this.changedWhileDeciding(id, element, live);
+      if (this.spend(this.pageOf(node))) return fail(spentYes(`element ${id}`));
       return fail(`Element ${id} moved or changed while the user was deciding, so nothing was done. Call perceive_window and try again.`);
     }
     // A switch the user flipped while deciding may already be where it should be: a click would undo it.
@@ -3600,6 +3648,8 @@ export class Worker {
   private async authorizeCells(jobs: CellJob[]): Promise<ToolResultObject | null | "each"> {
     this.asked = false;
     this.ahead = null;
+    this.reask = null;
+    this.yesFor = null;
     if (this.isOver) return STOPPED();
     this.keyed = { window: "", selected: null };
     this.moving = null;
@@ -4107,6 +4157,7 @@ export class Worker {
         // In a living page (a video playing), with no question asked, what has the keyboard is checked just above, and the
         // shell holds what it contains.
         if (context === null || (this.focusContext !== context && !(this.focusInPage && !said && this.focusShell === shell))) {
+          if (context !== null && this.focusContext !== null && this.spend(this.focusInPage)) throw new Error(spentYes(this.focusInPage ? "the page" : "the window", "nothing was pressed"));
           throw new Error("The window or its contents changed while preparing these keys, so nothing was pressed. Call perceive_window and ask again if it is still needed.");
         }
         if (closing) this.anchorHome("keys", listing);
@@ -4550,6 +4601,10 @@ export class Worker {
     this.asked = false;
     this.lastAuth = null;
     this.ahead = null;
+    // A yes a change spent is said once, in the question about the same step that comes next, if one does.
+    const reask = this.reask;
+    this.reask = null;
+    this.yesFor = null;
     if (this.isOver) return STOPPED();
     const inWindow = request.kind !== "open_app" && request.kind !== "setting";
     // What the keys selected ends where text goes in, or the mouse clicks or types into a text field (that moves the
@@ -4639,7 +4694,9 @@ export class Worker {
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
     // Once text on screen tried to steer Ember, every step it asks about looks risky too (it is asked every time).
     const risky = !!decision.risky || this.steered;
-    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
+    const step = this.stepKey(req.element);
+    const again = reask?.key === step ? `${reask.words} ` : "";
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: `${again}${decision.prompt}`, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
@@ -4650,6 +4707,7 @@ export class Worker {
     }
     if (answer === "once" || answer === "always") {
       this.lastAuth = { at: decidedAt, verdict: "confirm", approvedAt: performance.now() };
+      this.yesFor = step;
       // Keys that only move don't let Ember type or save later without asking (a yes to Ctrl+End is only that).
       if (decision.needsGrant && req.app && !(req.kind === "keys" && onlyMoves(req.value ?? "", req.element, this.kc))) {
         this.allowedApps.add(req.app.toLowerCase());

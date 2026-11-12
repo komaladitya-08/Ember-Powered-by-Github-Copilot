@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { LINUX_WORKER_SYSTEM, WINDOW_CLOSED_BY_TASK, Worker, afterKeys, closesWindow, dialogClosedNote, otherWindowClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
+import { ASKING_AGAIN, LINUX_WORKER_SYSTEM, WINDOW_CLOSED_BY_TASK, Worker, afterKeys, closesWindow, dialogClosedNote, otherWindowClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
 import { KEYS } from "../../app/shared/shortcuts";
 import type { ActionResult, AxNode } from "../../app/main/perception/sidecar";
 import { TaskManager } from "../../app/main/agent/tasks";
@@ -1046,7 +1046,7 @@ describe("approval stays with the action the user saw (safety review)", () => {
     });
     await call("perceive_window", {});
     const first = await call("click", { id: 1 });
-    expect(first.textResultForLlm).toMatch(/closed when you answered/);
+    expect(first.textResultForLlm).toMatch(/^The user allowed this, but the menu holding "Delete" closed when they answered/);
     expect(asked).toHaveLength(1);
     closed = false;
     await call("switch_window", { title });
@@ -1054,6 +1054,80 @@ describe("approval stays with the action the user saw (safety review)", () => {
     expect(asked).toHaveLength(2);
     expect(audit.filter(e => e.event === "decision" && e.kind === "cursor_click")).toHaveLength(2);
     expect(audit).not.toContainEqual(expect.objectContaining({ reason: expect.stringMatching(/already allowed this menu item/) }));
+    // Asked again in the same window, the question says why, and how to answer it with the menu open; in another, it doesn't.
+    expect(asked[1].startsWith(ASKING_AGAIN.menu("linux"))).toBe(title === "Disposable.txt");
+  });
+
+  // An Allow spent by a change made while the user decided was told to the model as a new attempt ("ask again"), and
+  // the user was asked the same thing again with no word of why (investigation of the owner's report of 2026-11-12,
+  // causes 3 and 13).
+  describe("an Allow a change spent while the user decided", () => {
+    const video = "Thummak Thummak, 3 minutes";
+    const clock = (t: number): AxNode => ({ id: 3, parent: 0, depth: 1, role: "label", name: `0:0${t}`, states: [], bounds: null });
+
+    // (A link that takes the user's mouse: a borrowed step asks every time, so the next try asks again.)
+    const borrowed = { canDo: () => ({ tier1: false, why: "it takes no click by accessibility" }) };
+
+    it("asks again saying the page changed while the user decided, and tells the model it was a yes, not a new request (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const clicks: string[] = [];
+      const { call, asked } = makeWorker({ role: "link", name: video, parentRole: "document web", ...borrowed, more: [clock(0)], onInput: k => { clicks.push(k); },
+        onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      const first = await call("click", { id: 1 });
+      expect(first.resultType).toBe("failure");
+      expect(first.textResultForLlm).toMatch(/^The user allowed this, but the page changed while they decided, so nothing was done/);
+      expect(first.textResultForLlm).toMatch(/It wasn't a no, nor a new request/);
+      expect(first.textResultForLlm).not.toMatch(/ask again if/);
+      expect(clicks).toEqual([]);
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(2);
+      expect(asked[1].startsWith(`${ASKING_AGAIN.page} `)).toBe(true);
+      expect(asked[0].startsWith(ASKING_AGAIN.page)).toBe(false);
+    });
+
+    it("says the window changed in an app's own window, and that nothing was pressed for keys (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const status: AxNode = { id: 3, parent: null, depth: 1, role: "label", name: "Ln 1, Col 1", states: [], bounds: null };
+      const app = makeWorker({ ...borrowed, more: [status], onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `Ln 1, Col ${t}` } : n) });
+      await app.call("perceive_window", {});
+      expect((await app.call("click", { id: 1 })).textResultForLlm).toMatch(/^The user allowed this, but the window changed while they decided/);
+      await app.call("perceive_window", {});
+      await app.call("click", { id: 1 });
+      expect(app.asked[1].startsWith(`${ASKING_AGAIN.window} `)).toBe(true);
+      // Keys in a page's field.
+      let k = 0;
+      const keys = makeWorker({ role: "entry", name: "Search", parentRole: "document web", grants: {}, states: () => ["enabled", "sensitive", "editable", "focused"], more: [clock(0)],
+        onAsk: () => { if (k === 0) k = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${k}` } : n) });
+      await keys.call("perceive_window", {});
+      const r = await keys.call("press_keys", { keys: "ctrl+b" });
+      expect(r.resultType).toBe("failure");
+      expect(r.textResultForLlm).toMatch(/^The user allowed this, but the page changed while they decided, so nothing was pressed/);
+      expect((await keys.call("press_keys", { keys: "ctrl+b" })).resultType).toBe("success");
+      expect(keys.asked[1].startsWith(`${ASKING_AGAIN.page} `)).toBe(true);
+    });
+
+    it("says nothing of it in a question about another step, or after a no (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const other: AxNode = { id: 4, parent: 0, depth: 1, role: "link", name: "Next page", states: ["enabled", "sensitive"], bounds: { x: 10, y: 40, width: 40, height: 20 } };
+      // (Another link that takes the user's mouse, so it is asked about though the browser was allowed for the task.)
+      const made = makeWorker({ role: "link", name: video, parentRole: "document web", grants: {}, more: [clock(0), other],
+        canDo: id => (id === 4 ? { tier1: false, why: "it takes no click by accessibility" } : { tier1: true }),
+        onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await made.call("perceive_window", {});
+      await made.call("click", { id: 1 });
+      await made.call("perceive_window", {});
+      await made.call("click", { id: 4 });
+      expect(made.asked).toHaveLength(2);
+      expect(made.asked[1].startsWith(ASKING_AGAIN.page)).toBe(false);
+      // A "Not now" spends nothing: the model is told the user said no.
+      let n = 0;
+      const no = makeWorker({ role: "link", name: video, parentRole: "document web", grants: {}, answer: "deny", more: [clock(0)],
+        onAsk: () => { if (n === 0) n = 5; }, treeNodes: nodes => nodes.map(x => x.id === 3 ? { ...x, name: `0:0${n}` } : x) });
+      await no.call("perceive_window", {});
+      expect((await no.call("click", { id: 1 })).textResultForLlm).toMatch(/^The user said no/);
+    });
   });
 
   it.each(["approval", "lease"])("does not overwrite text added during the %s wait", async wait => {
