@@ -24,6 +24,8 @@
  * Right after a wake, only a voice about as loud as the wake phrase is a request.
  */
 
+import { spokenAnswer } from "../shared/spoken-answer";
+
 export const SAMPLE_RATE = 16_000;
 /**
  * Less audio than this (0.1 s) holds no word, and the recognizer can't take it: Moonshine throws a bare number out of
@@ -333,9 +335,18 @@ export function isCloser(text: string, afterQuestion = false): boolean {
   return !afterQuestion || /^((okay|ok|alright|all\s+right|oh|so|um|uh|well)[\s,.!]+)*(no|nope|nah|not\s+now|nothing|that'?s\s+(all|it|everything)|that\s+is\s+all|i'?m\s+(good|done|fine|all\s+set)|all\s+set|bye|goodbye)\b/i.test(text);
 }
 
-/** "No.", "Not now.", "Nope.", "Don't.": a short answer to a question of Ember's (voice-answer.ts has the full list). */
+/** "No.", "Not now.", "Nope.", "Don't.": a short no to a question of Ember's (app/shared/spoken-answer.ts has the list). */
 export function isAnswerWord(text: string): boolean {
-  return /^((okay|ok|oh|so|um|uh|well|ember)[\s,.!]+)*(no|nope|not\s+now|no\s+thanks?|no\s+thank\s+you|don'?t|do\s+not)([\s,.!]+(thanks|ember))*[\s.!,]*$/i.test(text.trim());
+  return spokenAnswer(text) === "deny";
+}
+
+/**
+ * Does `text`, said while one of Ember's permission questions is up, answer it, yes or no (spoken-answer.ts, the list
+ * main's voice-answer.ts reads)? Such an utterance goes to main, never dropped as a closer ("Okay.", "That's fine."), a
+ * "yeah" said over Ember, or a request that trails off; main alone decides whether it may be taken.
+ */
+export function answersQuestion(text: string): boolean {
+  return spokenAnswer(text) !== null;
 }
 
 /**
@@ -853,7 +864,8 @@ export class VoiceEngine {
     const speech = so.call(this.backend);
     if (!speech) return;
     const heard = this.backend.transcribe(speech.subarray(Math.max(0, speech.length - CUT_IN_SECONDS * SAMPLE_RATE)));
-    if (!saysSomething(stripWake(heard, true)) || BACKCHANNEL.test(heard)) return;
+    // (A "yes" or "okay" while a question waits is an answer, not a "yeah": it stops Ember, and main says it was over its voice.)
+    if (!saysSomething(stripWake(heard, true)) || (BACKCHANNEL.test(heard) && !this.answering(heard))) return;
     if (spokenByEmber(heard, this.said)) { this.echo = Math.max(this.echo, this.peak); return; }
     this.cutInNow(now);
   }
@@ -891,10 +903,18 @@ export class VoiceEngine {
     this.ring.clear();
   }
 
-  /** One of Ember's questions is up (main says so): a short "no" in a follow-up window is an answer, not a closer. */
+  /**
+   * One of Ember's questions is up (main says so): what answers it ("No.", "Okay.", "That's fine.") is sent to main, not
+   * taken for a closer or a "yeah" (answering).
+   */
   private questionWaiting = false;
   questionUp(on: boolean): void {
     this.questionWaiting = on;
+  }
+
+  /** `text` answers the question up now, yes or no (answersQuestion): false while none is. */
+  private answering(text: string): boolean {
+    return this.questionWaiting && answersQuestion(text);
   }
 
   /**
@@ -1813,7 +1833,7 @@ export class VoiceEngine {
     }
     if (conversation && this.overEmber && !this.cutIn) {
       // All of what was said over Ember, its end heard: Ember's own voice, a "yeah", or the user cutting in.
-      if (this.peak < this.echo * ECHO_MARGIN || BACKCHANNEL.test(heard)) { this.peak = 0; return; }
+      if (this.peak < this.echo * ECHO_MARGIN || (BACKCHANNEL.test(heard) && !this.answering(heard))) { this.peak = 0; return; }
       if (spokenByEmber(heard, this.said)) { this.echo = Math.max(this.echo, this.peak); this.peak = 0; return; }
       if (saysSomething(stripWake(heard, true))) this.cutInNow(this.now());
     }
@@ -1902,14 +1922,14 @@ export class VoiceEngine {
       this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
       return;
     }
-    // While one of Ember's questions is up, "No." or "Not now." in a follow-up window answers it (main's voice-answer.ts),
-    // so it is sent rather than taken for "that's all".
-    if (this.mode.reason === "follow-up" && !(this.questionWaiting && isAnswerWord(text)) && isCloser(text, this.mode.afterQuestion)) {
+    // While one of Ember's questions is up, "No.", "Not now.", "Okay." or "That's fine." answers it (main's
+    // voice-answer.ts), so it is sent rather than taken for "that's all" (owner's report of 2026-11-12).
+    if (this.mode.reason === "follow-up" && !this.answering(text) && isCloser(text, this.mode.afterQuestion)) {
       // "Thanks.": nothing more to do (like a window that heard nothing).
       this.endListening("timeout");
       return;
     }
-    if (conversation && !(this.questionWaiting && isAnswerWord(text))) {
+    if (conversation && !this.answering(text)) {
       // "That's all.": the conversation is over. "Thanks.": there is nothing to answer, and the user may have more to say.
       if (endsConversation(text)) { this.endListening("timeout"); return; }
       if (!this.cutIn && isCloser(text, this.mode.afterQuestion)) { this.peak = 0; this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms); return; }
@@ -1922,7 +1942,7 @@ export class VoiceEngine {
       this.mode.until = Math.max(this.mode.until, this.now() + 4000);
       return;
     }
-    if (!held && !cut && !bargeIn && !this.overEmber && !this.overSound && trailsOff(text) && !(this.questionWaiting && isAnswerWord(text))) {
+    if (!held && !cut && !bargeIn && !this.overEmber && !this.overSound && trailsOff(text) && !this.answering(text)) {
       // "And make the text a.": the speaker paused to think. Held for the rest of it (the window stays open meanwhile).
       this.held = { text, audio, withWake, until: this.now() + TRAIL_HOLD_MS, t0, level: this.soundLevel(audio) };
       this.mode.until = Math.max(this.mode.until, this.held.until);

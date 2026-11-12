@@ -135,6 +135,16 @@ describe("a conversation", () => {
     expect(c.e.listening).toBe(true);
   });
 
+  it("sends an “Okay.” or “That's fine.” while one of Ember's questions is up, so it answers it (owner's report of 2026-11-12)", () => {
+    const c = setup(["Open the calculator.", "Okay.", "That's fine.", "Thanks."]);
+    c.wake();
+    c.say(20); c.quiet(2);
+    c.e.questionUp(true);
+    for (let i = 0; i < 3; i++) { c.say(20); c.quiet(2); }
+    expect(c.utterances().map(u => u.text)).toEqual(["Open the calculator.", "Okay.", "That's fine."]);
+    expect(c.e.listening).toBe(true);
+  });
+
   it("keeps a short command said after the name (review of #180)", () => {
     const c = setup(["Open the calculator.", "Ember, close it.", "Ember, allow."]);
     c.wake();
@@ -218,6 +228,22 @@ describe("talking over Ember in a conversation", () => {
     c.say(5); c.quiet(2);
     expect(c.events.some(v => v.type === "cut-in")).toBe(false);
     expect(c.utterances()).toHaveLength(1);
+  });
+
+  it("stops for a “Yes.” or an “Okay.” said over it while one of its questions is up, and sends it as said over its voice, which never answers (owner's report of 2026-11-12)", () => {
+    for (const said of ["Yes.", "Okay.", "Sure.", "Yeah."]) {
+      const c = talking([said]);
+      c.e.questionUp(true);
+      c.say(5); c.quiet(2);
+      expect(c.events.filter(v => v.type === "cut-in"), said).toHaveLength(1);
+      expect(c.utterances()[1], said).toMatchObject({ text: said, window: "conversation", overEmber: true });
+    }
+    // “Mm-hmm.” is no answer: Ember goes on speaking over it, question or not.
+    const mm = talking(["Mm-hmm."]);
+    mm.e.questionUp(true);
+    mm.say(5); mm.quiet(2);
+    expect(mm.events.some(v => v.type === "cut-in")).toBe(false);
+    expect(mm.utterances()).toHaveLength(1);
   });
 
   it("drops Ember's voice the moment anything is heard over it, and brings it back when that was nothing", () => {

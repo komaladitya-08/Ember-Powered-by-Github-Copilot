@@ -487,15 +487,18 @@ back to asking.
 Say “Ember, work without asking” (Voice Match must recognise you, and the card must already be agreed to: otherwise
 Ember opens the switch or its card here) or “Ember, ask me first again” (anyone) to switch it by voice.
 
-**Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “go ahead”) answers it, and “Ember, not now”
-(or “no”, “don't”) declines it. A yes counts only when **Answer questions with my voice (Voice Match)** is on and recognises you
+**Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “yes please”, “yeah”, “sure”, “okay”,
+“okay, go with it”, “go ahead”, “go on”, “accept”, “I accept”, “continue”, “confirm”, “do it”, “sounds good”, “that's
+fine”, “fine”, “alright”) answers it, and “Ember, not now” (or “no”, “no thanks”, “deny”, “don't”) declines it: the one
+list in `app/shared/spoken-answer.ts`, which the voice process also reads, so that in a follow-up window or a
+conversation such an answer reaches the question and isn't taken for “that's all” or for a “yeah” said over Ember. A yes counts only when **Answer questions with my voice (Voice Match)** is on and recognises you
 in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is enough). A shorter
 yes (“Ember, allow”) counts too for a question asked by a task you asked for in a voice Voice Match recognised, within
 10 minutes of asking, unless that short yes is too quiet or clipped to tell (it is then too short, never trusted) or sounds clearly unlike
 you, Voice Match has turned another voice away since, you forgot or taught your voice again,
 or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
 another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
-question (“Proceed?”) or a bare “okay” isn't one. Otherwise the bubble says how, and the question stays. Measured on
+question (“Proceed?”), or padded with more than one filler word, isn't one. Otherwise the bubble says how, and the question stays. Measured on
 LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time. With the task trust,
 someone else saying “Hey Ember, allow” is taken about 2.5 % of the time, and someone who plays your recorded “Hey
 Ember” then says “allow” 35–40 %, once: any voice turned away ends the trust; a yes too

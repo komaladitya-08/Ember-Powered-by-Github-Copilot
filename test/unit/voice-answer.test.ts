@@ -292,6 +292,17 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
     ]) expect(spokenAnswer(yes), yes).toBe("allow");
   });
 
+  it("hears “okay, go with it”, “I accept”, “continue” and the other ways people say yes or no (owner's report of 2026-11-12)", () => {
+    for (const yes of [
+      "Allow.", "Yes.", "Yes please.", "Yeah.", "Yep.", "Sure.", "Okay.", "OK.", "Okay, go with it.", "Go with it.", "Go ahead.", "Go on.",
+      "Accept.", "I accept.", "Continue.", "Confirm.", "Do it.", "Sounds good.", "That's fine.", "Fine.", "Alright.",
+      "Hey Ember, I accept.", "Yes, continue.", "Okay, sounds good.", "Yes, go with it.",
+    ]) expect(spokenAnswer(yes), yes).toBe("allow");
+    for (const no of ["No.", "Deny.", "Don't.", "No thanks.", "Not now."]) expect(spokenAnswer(no), no).toBe("deny");
+    // Still not answers: requests of their own (review of #127), or more than an answer.
+    for (const other of ["Cancel.", "Never mind.", "Continue with the next file.", "I accept the terms and delete the rest.", "Confirm my order and pay."]) expect(spokenAnswer(other), other).toBeNull();
+  });
+
   it("hears the noes people naturally say", () => {
     for (const no of ["Nah.", "No, not yet.", "Not right now.", "Don't allow it.", "No, no.", "Deny it.", "Ember, not now, thanks.", "Okay, no."]) expect(spokenAnswer(no), no).toBe("deny");
   });
@@ -345,13 +356,18 @@ describe("spoken answers can't be padded or asked (review of #143)", () => {
     for (const yes of ["Hey Ember, allowed.", "Ember, yes, you can go ahead.", "Proceed."]) expect(spokenAnswer(yes), yes).toBe("allow");
   });
 
-  it("takes one filler word before an answer, never a run of them, and no bare acknowledgement", () => {
-    for (const padded of ["Oh, okay. Well, alright.", "Okay, okay, okay, okay, okay.", "Um, um, um, yes.", "So okay.", "Um okay.", "Okay.", "OK.", "Alright.", "Go on.", "You can.", "Hey hey Ember, allow.", "Allow, please, please, please."]) {
+  it("takes one filler word before an answer, never a run of them", () => {
+    for (const padded of ["Oh, okay. Well, alright.", "Okay, okay, okay, okay, okay.", "Um, um, um, yes.", "So, um, okay.", "You can.", "Hey hey Ember, allow.", "Allow, please, please, please."]) {
       expect(spokenAnswer(padded), padded).toBeNull();
     }
     for (const yes of ["Okay, go ahead.", "Yes, you can.", "Um, yes.", "Okay, Ember, allow.", "Hey Ember, um, go ahead.", "Please do.", "Allow it, please, Ember.", "Yes, thank you."]) {
       expect(spokenAnswer(yes), yes).toBe("allow");
     }
+  });
+
+  it("takes a bare “okay” or “go on” as a yes, with one filler at most (owner's report of 2026-11-12)", () => {
+    // Settled point (9) of 2026-11-12: these were bare acknowledgements (review of #143), and are yeses now.
+    for (const yes of ["Okay.", "OK.", "Alright.", "All right.", "Go on.", "So okay.", "Um okay.", "Ember, okay."]) expect(spokenAnswer(yes), yes).toBe("allow");
   });
 
   it("counts “please” once in all, wherever it stands (review of #143)", () => {

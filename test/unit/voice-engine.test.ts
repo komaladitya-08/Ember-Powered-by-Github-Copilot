@@ -1855,6 +1855,15 @@ describe("follow-up windows", () => {
     expect(thanks.filter(e => e.type === "utterance")).toEqual([]);
   });
 
+  it("sends “Okay.”, “That's fine.” or “Sounds good.” while one of Ember's questions is up, so it answers it, and ends on them otherwise (owner's report of 2026-11-12)", () => {
+    for (const said of ["Okay.", "OK.", "That's fine.", "Sounds good.", "Fine.", "Alright.", "Okay, that's fine."]) {
+      const up = run(fake([said]), (e, c) => { e.questionUp(true); e.followUp(8000); c.t += 32; e.feed(frame(0, true)); c.t += 32; e.feed(frame(0)); });
+      expect(up.filter(e => e.type === "utterance"), said).toEqual([{ type: "utterance", text: said, ms: 0, window: "follow-up" }]);
+      const none = run(fake([said]), (e, c) => { e.followUp(8000); c.t += 32; e.feed(frame(0, true)); c.t += 32; e.feed(frame(0)); });
+      expect(none.filter(e => e.type === "utterance"), said).toEqual([]);
+    }
+  });
+
   it("end on 'Thanks.' without sending it, and keep listening after 'Um.'", () => {
     const thanks = run(fake(["Thanks."]), (e, c) => { e.followUp(8000); c.t += 32; e.feed(frame(0, true)); c.t += 32; e.feed(frame(0)); });
     expect(thanks).toEqual([
