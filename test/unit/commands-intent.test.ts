@@ -1161,3 +1161,31 @@ describe("matchIntent: a folder's name said first as another word (commands-remo
     expect(announce(cmd, words)).toBe(said);
   });
 });
+
+describe("matchIntent: \"before\" that only puts the user's steps in order (commands-remote-x8-9)", () => {
+  it.each([
+    ["rm -rf node_modules", "delete the node_modules folder before npm install", "Deleting node_modules, as you asked."],
+    ["rm -rf node_modules", "delete the node_modules folder before running npm install", "Deleting node_modules, as you asked."],
+    ["rm -rf build", "delete the build folder before I run make", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder before we start", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder before that", "Deleting build, as you asked."],
+    ["rm -rf build", "delete the build folder as we did before", "Deleting build, as you asked."],
+    ["rm -rf dist", "delete the dist folder like we did before", "Deleting dist, as you asked."],
+  ])("announces `%s` after %j (commands-remote-x8-9)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it.each([
+    "delete the build folder before Friday",
+    "delete the build folder before the release",
+    "delete the build folder before we ship on Friday",
+    "delete the build folder before we start the release",
+    // A tool's name followed by an event, not one of its commands.
+    "delete the build folder before npm publishes it",
+    "delete the build folder before python 3.13 comes out",
+    "delete the build folder before npm 11 ships",
+    "delete the build folder before cargo 2.0",
+  ])("still asks for `rm -rf build` after %j, a deadline (commands-remote-x8-9)", words => {
+    expect(announce("rm -rf build", words)).toBeNull();
+  });
+});

@@ -20553,6 +20553,240 @@
    "rules": [
     "send.ftp"
    ]
+  },
+  {
+   "cmd": "rm -rf node_modules",
+   "words": "delete the node_modules folder before npm install",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf node_modules",
+   "words": "delete the node_modules folder before running npm install",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf node_modules",
+   "words": "delete node_modules/ before you run npm ci",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before I run make",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before we start",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before we begin",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before that",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder as we did before",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder like we did before",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf dist",
+   "words": "delete the dist folder like we did before",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before cargo build",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before running make",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before we ship on Friday",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before we start the release",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before the deadline",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before it is too late",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before that meeting",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before the demo, like we did before",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "before npm install, delete the build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "git clean -fdx",
+   "words": "clean everything before npm install",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "git reset --hard",
+   "words": "reset hard before we start",
+   "verdict": "announce"
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before npm publishes it",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before python 3.13 comes out",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before npm 11 ships",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before cargo 2.0",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf node_modules",
+   "words": "delete the node_modules folder before npm install finishes",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before running make install",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before you run go test",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before go",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before you go",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }

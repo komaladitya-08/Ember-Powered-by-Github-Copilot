@@ -442,8 +442,9 @@ something else ("fix the script that deletes build/") don't, so the command asks
 back, since the announcement runs it now: a condition ("delete src/ only if I say so", "if the build fails, delete
 src/", "once the tests pass", "when I tell you", "in case the tests fail", "each time the tests pass"), a later time
 ("tomorrow", "next week", "in 5 minutes", "in 1h", "at 5pm", "at 5.30pm", "at the end of the task", "first thing
-Monday", "Monday"), a deadline ("before Friday", "before the release", "ahead of the demo"; "before you run the tests"
-and "before rebuilding" only put your steps in order), a step that keeps a copy of what a deletion or discard throws
+Monday", "Monday"), a deadline ("before Friday", "before the release", "ahead of the demo"; "before you run the tests",
+"before rebuilding", "before npm install", "before I run make", "before we start" and "before that" only put your steps
+in order, and "as we did before" says how), a step that keeps a copy of what a deletion or discard throws
 away asked for first ("back up then delete the build folder", "commit my changes and delete build/", "make a backup
 and then delete …"; Ember can't tell it was done), asking to be asked first ("ask me first", "check
 with me", "wait for my ok", "show me the command first", "let me see the command", "run it by me", "on my go", "hold

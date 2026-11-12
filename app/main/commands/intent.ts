@@ -1094,16 +1094,48 @@ function ingBase(w: string): string[] {
   return [stem, `${stem}e`, ...(/(.)\1$/.test(stem) ? [stem.slice(0, -1)] : [])];
 }
 
+/** Build tools whose own command after "before" is another step of the user's ("before npm install", "before cargo build"). */
+const STEP_TOOLS = new Set([
+  "npm", "yarn", "pnpm", "bun", "npx", "cmake", "ninja", "meson", "cargo", "pip", "pip3", "python", "python3", "pytest", "tox", "gradle",
+  "gradlew", "mvn", "dotnet", "tsc", "deno", "composer", "rake", "bazel", "uv", "poetry",
+]);
+/** And after "run" or "running", the tools whose names are also everyday words ("before I run make", "before running go test"). */
+const RUN_TOOLS = new Set([...STEP_TOOLS, "make", "go", "node", "bundle", "mix", "swift"]);
+/** What may follow such a tool's name for it to be a command: nothing, or one of these ("npm install", "cargo build"). */
+const TOOL_VERBS = new Set([
+  "install", "i", "ci", "add", "test", "t", "build", "run", "start", "check", "sync", "restore", "compile", "lint", "fmt", "format", "clean",
+  "package", "verify", "bench", "exec", "dev", "serve", "update", "upgrade",
+]);
+
+/**
+ * Whether the words after "before" are a build tool's command (STEP_TOOLS, RUN_TOOLS): another step (commands-remote-x8-9).
+ * Only the tool alone or with one of TOOL_VERBS: "before npm 11 ships" and "before python 3.13 comes out" are deadlines.
+ */
+function toolStep(words: readonly string[]): boolean {
+  let k = 0;
+  if (["i", "we", "you", "u"].includes(words[k] ?? "")) {
+    k++;
+    while (k < words.length && STEP_MODALS.has(words[k])) k++;
+  }
+  const run = ["run", "running", "rerun", "rerunning"].includes(words[k] ?? "");
+  if (run) k++;
+  if (!(run ? RUN_TOOLS : STEP_TOOLS).has(words[k] ?? "")) return false;
+  return k + 1 >= words.length || TOOL_VERBS.has(words[k + 1]);
+}
+
 /** Whether a deadline in the words holds the step back: one followed by anything but another step of the user's. */
 function deadline(text: string): boolean {
   for (const m of text.matchAll(DEADLINE)) {
     const at = m.index + m[1].length;
-    if (/(^|[^\p{L}\p{N}])(as|like|than)\s+$/iu.test(text.slice(0, at))) continue;
+    // "as before", "like before", "as we did before": how, not when (commands-remote-x8-9).
+    if (/(^|[^\p{L}\p{N}])(as|like|than)(\s+(i|we|you|u|they)\s+(did|do|had|have))?\s+$/iu.test(text.slice(0, at))) continue;
     const after = userWordList(text.slice(at + m[2].length).split(/[,;:.!?]/)[0]);
-    // "before anything else", "before you do anything else": first, now.
+    // "before anything else", "before you do anything else", "before we start": first, now; "before that": before
+    // another step the words name (commands-remote-x8-9).
     if (/^((i|we|you|u) )?((do|doing|start|starting|try|trying) )?(anything|everything)( else)?$/.test(after.join(" "))) continue;
+    if (/^(that|((i|we|you|u) )?(start|begin|get started|starting|beginning|getting started))$/.test(after.join(" "))) continue;
     const forms = [after, ...ingBase(after[0] ?? "").filter(b => b !== after[0]).map(b => [b, ...after.slice(1)])];
-    if (forms.some(f => otherStep(f))) continue;
+    if (forms.some(f => otherStep(f)) || toolStep(after)) continue;
     return true;
   }
   return false;
