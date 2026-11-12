@@ -313,6 +313,17 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
     expect(main).toMatch(/if \(spokenReply\.kind === "none" && e\.window === "answer"\) break;/);
   });
 
+  it("stops Ember and says once a question that it was still speaking, for any answer said over its voice, and listens for it again (owner's report of 2026-11-12)", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    // One place decides it, for every way such an answer arrives: an utterance said over Ember (own-voice), the engine's
+    // answer-over (said in Ember's own words), and a wake Ember turned away as its own (heard-over).
+    expect(main).toMatch(/const answerOverEmber = \(why: "own-voice" \| "heard-over", answer: "allow" \| "deny"\) => \{\s*if \(!confirmer\?\.waiting\) return;\s*log\.info\("voice\.answer_heard_over", \{ why, answer \}\);\s*voice\?\.hush\(\);\s*if \(heardOverFor !== confirmer\.currentNumber\) \{ heardOverFor = confirmer\.currentNumber; refuseVoiceAnswer\(why, answer\); \} else voice\?\.answerWindow\(\);\s*\};/);
+    expect(main).toMatch(/if \(o\.kind === "refused" && o\.why === "own-voice"\) \{ answerOverEmber\("own-voice", o\.answer\); return; \}/);
+    expect(main).toMatch(/case "answer-over":\s*answerOverEmber\("own-voice", e\.answer\);/);
+    expect(main).toMatch(/if \(over\) answerOverEmber\("heard-over", over\);/);
+    expect(VOICE_ANSWER_REFUSED["own-voice"]).toBe("I was still speaking, so I didn't take that as an answer. Say it again now.");
+  });
+
   it("says once a question when an answer said over other sound wasn't taken, and how to be heard, rather than nothing (owner's report of 2026-11-12)", () => {
     expect(VOICE_ANSWER_REFUSED["over-sound"]).toBe("Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.");
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");

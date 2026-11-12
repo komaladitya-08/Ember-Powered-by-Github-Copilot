@@ -1858,6 +1858,8 @@ function start(): void {
    */
   const answerByVoice = (o: Exclude<VoiceAnswerOutcome, { kind: "none" }>) => {
     if (!confirmer) return;
+    // Said over Ember's own voice: never taken, and said so once a question (answerOverEmber).
+    if (o.kind === "refused" && o.why === "own-voice") { answerOverEmber("own-voice", o.answer); return; }
     const trustTask = o.kind === "answer" && o.trust === "task-voice" ? confirmer.currentTask : undefined;
     // `anyone`: Voice Match is off, so the yes of whoever was heard is taken as the approve key would be (2026-11-12).
     const result = o.kind === "answer"
@@ -1869,6 +1871,19 @@ function start(): void {
     if (result === "answered" || result === "no-question") return;
     // A short yes on a task's trust that couldn't be taken (another task's question, or a panel's): as one too short.
     refuseVoiceAnswer(result === "untrusted" ? "too-short" : result, o.answer);
+  };
+  /**
+   * An answer said over Ember's own voice (`why`: an utterance said while it spoke, or in its own words, "own-voice"; a
+   * wake it turned away as its own, "heard-over"): never taken, as it may be Ember's (the echo guard). Ember stops
+   * speaking, says once a question that it was still speaking and to say it again, and listens for the answer again
+   * (the hush dropped the window it was waiting to open). Before, the read-out went on and nothing showed (owner's
+   * report of 2026-11-12).
+   */
+  const answerOverEmber = (why: "own-voice" | "heard-over", answer: "allow" | "deny") => {
+    if (!confirmer?.waiting) return;
+    log.info("voice.answer_heard_over", { why, answer });
+    voice?.hush();
+    if (heardOverFor !== confirmer.currentNumber) { heardOverFor = confirmer.currentNumber; refuseVoiceAnswer(why, answer); } else voice?.answerWindow();
   };
   /** Voice Match is on, has the owner's voiceprint, and its model is in (what a spoken yes is checked against then). */
   const matchNow = () => !!ownerPrint() && (voice?.matchReady ?? false);
@@ -2065,6 +2080,9 @@ function start(): void {
       case "duck":
         voice?.duck(e.on);
         break;
+      case "answer-over":
+        answerOverEmber("own-voice", e.answer);
+        break;
       case "cut-in":
         // The user is talking over Ember: it stops at once. What they say comes next, as an utterance.
         log.info("voice.cut_in");
@@ -2091,11 +2109,7 @@ function start(): void {
         // Said once a question: again for the same one, Ember only stops speaking (review of #143).
         {
           const over = e.reason === "self" && confirmer?.waiting && e.heard ? heardAnswer(e.heard) : null;
-          if (over && confirmer) {
-            log.info("voice.answer_heard_over");
-            voice?.hush();
-            if (heardOverFor !== confirmer.currentNumber) { heardOverFor = confirmer.currentNumber; refuseVoiceAnswer("heard-over", over); }
-          }
+          if (over) answerOverEmber("heard-over", over);
         }
         break;
     }

@@ -118,7 +118,14 @@ export type VoiceEvent =
    * What was said in a conversation over other sound, without the name, wasn't heard: it can't be told from the song's
    * words (match.ts, owner decision of 2026-11-05). Main says so, once a conversation (voice-listening-10).
    */
-  | { type: "dropped"; reason: "over-sound"; window?: "answer" };
+  | { type: "dropped"; reason: "over-sound"; window?: "answer" }
+  /**
+   * In a conversation, while one of Ember's questions is up, an answer ("Allow.", "Not now.") was said over Ember's voice
+   * in words Ember was saying itself (its read-out names them): never taken, as it may be Ember's own, but no longer
+   * dropped without a word. Main stops Ember speaking and says once a question to say it again (owner's report of
+   * 2026-11-12). Only which answer it read as, never the words.
+   */
+  | { type: "answer-over"; answer: "allow" | "deny" };
 
 export interface EngineOptions {
   /** Audio kept before a wake so a one-breath command isn't cut (seconds). */
@@ -1880,7 +1887,15 @@ export class VoiceEngine {
     if (conversation && this.overEmber && !this.cutIn) {
       // All of what was said over Ember, its end heard: Ember's own voice, a "yeah", or the user cutting in.
       if (this.peak < this.echo * ECHO_MARGIN || (BACKCHANNEL.test(heard) && !this.answering(heard))) { this.peak = 0; return; }
-      if (spokenByEmber(heard, this.said)) { this.echo = Math.max(this.echo, this.peak); this.peak = 0; return; }
+      if (spokenByEmber(heard, this.said)) {
+        // A whole answer to the question up, louder than the echo found so far: maybe the user's, maybe Ember's own (its
+        // read-out says "allow" and "not now"). Never taken; main stops Ember and asks for it again.
+        const answer = this.questionWaiting ? spokenAnswer(heard) : null;
+        if (answer) { this.peak = 0; this.emit({ type: "answer-over", answer }); return; }
+        this.echo = Math.max(this.echo, this.peak);
+        this.peak = 0;
+        return;
+      }
       if (saysSomething(stripWake(heard, true))) this.cutInNow(this.now());
     }
     const bargeIn = !!this.mode.bargeIn, stopped = (t: string) => isStop(t) || (bargeIn && heardStopWord(t));

@@ -246,6 +246,43 @@ describe("talking over Ember in a conversation", () => {
     expect(mm.utterances()).toHaveLength(1);
   });
 
+  describe("an answer said over Ember reading one of its questions out (owner's report of 2026-11-12: it vanished)", () => {
+    const readOut = "Ember asks: Click Search in Firefox? To allow, press Control Alt Y; for not now, press Control Alt N.";
+    const asking = (transcripts: string[]) => { const c = talking(transcripts, readOut); c.e.questionUp(true); return c; };
+    const over = (c: ReturnType<typeof talking>) => c.events.filter(v => v.type === "answer-over");
+
+    it("takes none of Ember's own read-out for an answer: it isn't stopped, and nothing is said of it", () => {
+      for (const echo of [readOut, "To allow, press Control Alt Y", "For not now, press Control Alt N."]) {
+        const c = asking([echo]);
+        c.say(20); c.quiet(2);
+        expect(c.events.some(v => v.type === "cut-in"), echo).toBe(false);
+        expect(over(c), echo).toEqual([]);
+        expect(c.utterances(), echo).toHaveLength(1);
+      }
+    });
+
+    it("says that an “Allow.” or “Not now.” in Ember's own words was heard over it, never as an answer, so main stops it and asks again", () => {
+      for (const [said, answer] of [["Allow.", "allow"], ["Not now.", "deny"]] as const) {
+        const c = asking([said]);
+        c.say(5); c.quiet(2);
+        expect(over(c), said).toEqual([{ type: "answer-over", answer }]);
+        // Never an utterance: nothing said over Ember's voice answers anything.
+        expect(c.utterances(), said).toHaveLength(1);
+      }
+      // Without a question up, as before: Ember's own words, dropped without a word.
+      const none = talking(["Allow."], readOut);
+      none.say(5); none.quiet(2);
+      expect(over(none)).toEqual([]);
+    });
+
+    it("says nothing of what is softer than Ember's own echo there", () => {
+      const c = asking([readOut, "Allow."]);
+      c.say(14, 0.2); c.quiet(2);
+      c.say(5, 0.2); c.quiet(2);
+      expect(over(c)).toEqual([]);
+    });
+  });
+
   it("drops Ember's voice the moment anything is heard over it, and brings it back when that was nothing", () => {
     const c = talking(["Mm-hmm."]);
     c.say(5);
