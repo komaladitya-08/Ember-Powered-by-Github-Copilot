@@ -20476,21 +20476,24 @@
    "cmd": "smbclient -L //h -N && npm test",
    "verdict": "ask",
    "rules": [
-    "send.ftp"
+    "send.ftp",
+    "escape.run-downloaded"
    ]
   },
   {
    "cmd": "smbclient -N -L //h && make",
    "verdict": "ask",
    "rules": [
-    "send.ftp"
+    "send.ftp",
+    "escape.run-downloaded"
    ]
   },
   {
    "cmd": "smbclient --list=//h -N && python3 x.py",
    "verdict": "ask",
    "rules": [
-    "send.ftp"
+    "send.ftp",
+    "escape.run-downloaded"
    ]
   },
   {
@@ -20842,6 +20845,46 @@
    "verdict": "ask",
    "rules": [
     "posix.rm"
+   ]
+  },
+  {
+   "cmd": "smbclient //h/share -WGLOBAL -Uana && python3 x.py",
+   "verdict": "ask",
+   "rules": [
+    "send.ftp",
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "smbclient //h/share -Uana -WGLOBAL && make",
+   "verdict": "ask",
+   "rules": [
+    "send.ftp",
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "smbclient //h/share -UPAUL && npm test",
+   "verdict": "ask",
+   "rules": [
+    "send.ftp",
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "smbclient //h/share -WLOCAL && make",
+   "verdict": "ask",
+   "rules": [
+    "send.ftp",
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "smbclient //h/share -UpauL && python3 x.py",
+   "verdict": "ask",
+   "rules": [
+    "send.ftp",
+    "escape.run-downloaded"
    ]
   }
  ]

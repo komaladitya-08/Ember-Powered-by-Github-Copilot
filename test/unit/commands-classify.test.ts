@@ -384,13 +384,19 @@ describe("downloads by a config file or a file-transfer client (commands-remote-
     expect(steps("ncftpput h /up x.py", "python3 x.py")[1]).toBe("run");
   });
 
-  it("marks nothing for smbclient listing a computer's shares or sending with recurse or a mask (commands-remote-x8-11)", () => {
-    for (const put of ["smbclient -L //h -N", "smbclient -N -L //h", "smbclient --list=//h -N", "smbclient //h/s -c 'prompt; recurse; mput *'",
-      "smbclient //h/s -c 'mask *.js; recurse on; mput *'"]) {
+  it("marks nothing for smbclient sending with recurse or a mask (commands-remote-x8-11)", () => {
+    for (const put of ["smbclient //h/s -c 'prompt; recurse; mput *'", "smbclient //h/s -c 'mask *.js; recurse on; mput *'"]) {
       for (const then of ["npm test", "make", "python3 x.py"]) expect(steps(put, then)[1], `${put} / ${then}`).toBe("run");
     }
     for (const get of ["smbclient //h/s -c 'recurse; mget *'", "smbclient -L //h -c 'get x.py'", "smbclient -L //h < cmds.txt", "smbclient -L //h -T x.tar"]) {
       expect(steps(get, "npm test")[1], get).toBe("ask");
+    }
+  });
+
+  it("asks before a build after any smbclient session, a share listing or a session given -WGLOBAL or -UPAUL alike (commands-remote-y8-2)", () => {
+    for (const get of ["smbclient -L //h -N", "smbclient -N -L //h", "smbclient --list=//h -N", "smbclient //h/share -WGLOBAL -Uana", "smbclient //h/share -Uana -WGLOBAL",
+      "smbclient //h/share -UPAUL", "smbclient //h/share -WLOCAL", "smbclient //h/share -UpauL", "smbclient //h/share -Uana", "smbclient //h/share -W GLOBAL -U ana"]) {
+      for (const then of ["python3 x.py", "make", "npm test"]) expect(steps(get, then)[1], `${get} / ${then}`).toBe("ask");
     }
   });
 });

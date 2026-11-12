@@ -7484,13 +7484,12 @@ const SENDS_ONLY = /^(put|mput|reput|cd|lcd|ls|dir|pwd|lpwd|mkdir|lmkdir|rmdir|r
  * a session, a batch file, its input or an address may (every sftp: `host:file` fetches, and it takes no commands on
  * its line); commands it is given on its line (lftp's, smbclient's and tftp's `-c`) only when one of them isn't on
  * SENDS_ONLY (`get`, `mget`, `mirror`…; smbclient's `prompt`, `recurse` and `mask` only set how it sends). ncftpput
- * only sends, telnet moves no files, and `smbclient -L` only lists a computer's shares unless it is also given commands
- * or a tar (commands-remote-x8-11).
+ * only sends and telnet moves no files. `smbclient -L` marks as a session does: a value written onto another option
+ * can end in `L` too (`-WGLOBAL`, `-UPAUL`), so Ember can't tell a listing from a session (commands-remote-y8-2).
  */
 function clientMayFetch(h: H): boolean {
   if (h.key === "ncftpput" || h.key === "telnet") return false;
   if (h.s.stdin !== null) return true;
-  if (h.key === "smbclient" && h.args.some(a => /^(-[A-Za-z]*L|--list(=|$))/.test(a.v ?? "")) && !h.args.some(a => a.v === null || /^(-[A-Za-z]*[cT]|--command|--tar)/.test(a.v))) return false;
   const k = h.args.findIndex(a => (h.key === "lftp" || h.key === "smbclient" || h.key === "tftp") && /^-c/.test(a.v ?? ""));
   if (k < 0) return true;
   const rest = h.args.slice(k + 1);
