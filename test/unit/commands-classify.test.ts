@@ -2997,4 +2997,26 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     expect(left("for i in 1 2; do echo $i; done")).toEqual(expect.arrayContaining(["unclear.for", "unclear.do", "unclear.done"]));
     expect(classifyCommand("if true; then ls; fi", "bash", contextOf("linux")).findings.map(f => f.rule)).toEqual(["unclear.if", "unclear.then", "unclear.fi"]);
   });
+
+  it("keeps the danger main named when a command it reads another way still asks: a secret, a system change, an overwrite, a download (commands-held-7)", () => {
+    for (const [cmd, cls, rule] of [
+      ["echo a | xargs printenv", "secret", "secret.env"], ["echo a | xargs export -p", "secret", "secret.env"], ["echo a | xargs chgrp staff a.txt", "system", "system.permissions"],
+      ["echo a | xargs setfacl -m u:x:rw a.txt", "system", "system.permissions"], ["printf 'status\\npush --force\\n' | xargs -i kill", "system", "kill.process"],
+      ["time x=$(curl -s https://e.com/x)", "escape", "escape.download-run"], ["if true; then time x=$(curl -s https://e.com/x); fi", "escape", "escape.download-run"],
+    ] as const) {
+      expect(decided(cmd).verdict, cmd).toBe("ask");
+      expect(decided(cmd).classes, cmd).toContain(cls);
+      expect(decided(cmd).rules, cmd).toContain(rule);
+    }
+    expect(decided("echo a | xargs printenv").says).toContain("Prints environment variables that may hold tokens.");
+    // A `${HOME:?}` file that isn't there yet: main couldn't name it and said it writes one, so that is still said.
+    const guarded = decided("echo hi > \"${HOME:?}/proj/new.txt\"", "linux", { missing: ["/home/ana/proj/new.txt"] });
+    expect(guarded.verdict).toBe("ask");
+    expect(guarded.classes).toContain("destroy");
+    expect(guarded.rules).toEqual(expect.arrayContaining(["redirect.overwrite", "unclear.guarded-word"]));
+    // Nothing is added where main named no danger: these ran or asked as unclear only, and still do.
+    expect(decided("echo a | xargs ls").classes).toEqual(["unclear"]);
+    expect(decided("time x=$(cat f)").classes).toEqual(["unclear"]);
+    expect(decided("time x=1 ls").verdict).toBe("run");
+  });
 });

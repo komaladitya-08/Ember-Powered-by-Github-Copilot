@@ -2358,7 +2358,8 @@ class Engine extends Classifier {
     // judged that way too, apart, and where that asks this one asks (commands-remote-r7-2).
     const guards = (w: PWord): boolean => w.segs.some(seg => seg.t === "unres" && seg.of !== undefined && seg.exact === true && (seg.of === "HOME" ? sc.home : seg.of === "PWD" ? sc.cwd : null) != null);
     const guarded = [...c.words, ...c.redirs.flatMap(r => (r.target ? [r.target] : []))].some(guards);
-    const asked = guarded && this.asksApartWhole(() => {
+    // The danger that reading named (a write to a file Ember couldn't name) stays on the card (heldTo, commands-held-7).
+    const unseenAsked = !guarded ? [] : this.foundApartWhole(() => {
       this.asWritten = true;
       let unseen: ReturnType<typeof read>;
       try { unseen = read(); } finally { this.asWritten = false; }
@@ -2370,13 +2371,13 @@ class Engine extends Classifier {
       this.newCommand("", [], sc, redirs, o.background, o.pipedFrom);
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, null, false);
       this.redirects(redirs, sc);
-      if (asked) this.asksAtLeast(before, "unclear.guarded-word", SAYS.guardedWord);
+      this.heldTo(unseenAsked, before, "unclear.guarded-word", SAYS.guardedWord);
       return null;
     }
     this.simple(s, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
-    if (asked) this.asksAtLeast(before, "unclear.guarded-word", SAYS.guardedWord);
+    this.heldTo(unseenAsked, before, "unclear.guarded-word", SAYS.guardedWord);
     return carried ? printedBy(words) : null;
   }
 
@@ -3014,6 +3015,9 @@ class Engine extends Classifier {
     // One whose value Ember can't see (`time x=$(…)`) stood as a program it couldn't name before these were read as
     // assignments, and asked: it still asks (commands-remote-r7-2).
     if (all.slice(0, lead).some(a => a.v === null)) this.unclear("unclear.assignment-unseen", "It sets a variable to text Ember can't see, where a command could stand.");
+    // And one whose text a fetch gave (`time x=$(curl …)`) was a program downloaded and run there: that danger stays on
+    // the card, for a mode that asks by class (commands-held-7).
+    if (all.slice(0, lead).some(a => a.v === null && a.fetch)) this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
     const sc = child(h.sc, { ...o, wrappers: [...h.sc.wrappers, wrapper] }, more(h.sc));
     pc.wrappers = [...sc.wrappers];
     if (words.length === 0) {
@@ -4554,7 +4558,7 @@ reg(NATIVE, ["xargs"], h => {
   // The command as main read it (its options, and input it never saw), judged apart: where that asks, this asks, so no
   // way of writing an option decides less safely than it did (`xargs -l chmod +x`, `xargs -i npm`: commands-remote-x7-5);
   // a job count is the one thing read as now.
-  const askedOnMain = h.e.asksApart(() => {
+  const onMain = h.e.foundApart(() => {
     const m = parseOpts(h.args, {
       shortValue: "adEILlnPs", longValue: ["arg-file", "delimiter", "eof", "replace", "max-lines", "max-args", "max-procs", "max-chars", "process-slot-var"], stopAtOperand: true,
       jobCounts: ["P", "max-procs"],
@@ -4574,19 +4578,21 @@ reg(NATIVE, ["xargs"], h => {
     if (built === null) { h.e.payload(unseen, h.sc, "xargs", { stdin: null }); return; }
     // Never decided less safely than with input Ember can't see, which is how these forms were judged before Ember read
     // what is printed: where that asks, what Ember read asks too, in its own words (commands-remote-r7-2).
-    const asked = h.e.asksApart(() => h.e.payload(unseen, h.sc, "xargs", { stdin: null }));
+    // The danger that reading named (a secret printed, a system change) stays on the card (heldTo, commands-held-7).
+    const unread = h.e.foundApart(() => h.e.payload(unseen, h.sc, "xargs", { stdin: null }));
     const before = h.e.findings.length;
     for (const b of built) h.e.payload(b, h.sc, "xargs", { stdin: null });
     // More lines for a placeholder than Ember judges one by one: the rest are unread, so it asks (commands-remote-y7-3).
     const cut = repl !== undefined && seen !== null && seen.split("\n").filter(l => l.trim() !== "").length > MAX_FORMS;
-    if (asked || cut) h.e.asksAtLeast(before, "unclear.xargs-input", "xargs builds this command from its input.");
+    if (unread.length) h.e.heldTo(unread, before, "unclear.xargs-input", "xargs builds this command from its input.");
+    else if (cut) h.e.asksAtLeast(before, "unclear.xargs-input", "xargs builds this command from its input.");
   };
   judge(repl);
   // GNU's xargs takes the last of -I (or -i) and -L, -l or -n and ignores the others, so with both written the input
   // may be added in batches after all (`xargs -I{} -L1 git` runs git with each line's words): judged that way too
   // (commands-remote-x7-3).
   if (repl !== undefined && has(p, "n", "max-args", "L", "l", "max-lines")) judge(undefined);
-  if (askedOnMain) h.e.asksAtLeast(from, "unclear.xargs-input", "xargs builds this command from its input.");
+  h.e.heldTo(onMain, from, "unclear.xargs-input", "xargs builds this command from its input.");
 });
 
 /**
