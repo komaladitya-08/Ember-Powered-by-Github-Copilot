@@ -202,6 +202,38 @@ describe("what still asks in a browser, whatever is on", () => {
       }
     });
 
+  // A command can take a title's shape: led by a word that acts as well as names ("Share", "Grant", "Merge"), or after a
+  // question or a colon. Read as titles, they went unasked when clicked, and with Enter (review W-1 of the change above).
+  const commands = ["Disable Antivirus - Defender", "Turn Off Firewall - Settings", "Allow Notifications - Site", "Allow Access - Drive", "Grant Permission - App",
+    "Grant Access - Drive", "Revoke Token - Settings", "Run Installer - Setup", "Overwrite File - Drive", "Factory Reset - Device", "Reboot Device - Admin", "Share Post - Sam",
+    "Share Document - Drive", "Post Reply - Forum", "Publish Release - GitHub", "Merge Pull Request - GitHub", "Merge Branch - main", "Sell Stock - Robinhood",
+    "Block User - Profile", "Execute Script - Console", "Kill Process - Tasks", "Leave Group - Chat", "Leave Meeting - Teams", "Report Spam - Mail",
+    "What are you waiting for? Delete your account", "What's next: Send payment", "How to: delete all files now", "Why wait? Buy it now", "Why not share your location"];
+
+  it.each(commands)("still asks every time about a page's link that says what it does in a title's shape, “%s”, and off the task calls it unasked (owner's report of 2026-11-12)", name => {
+    for (const kind of ["click", "cursor_click"] as const) {
+      const d = engine(true).decide(edge({ kind, onPage: true, element: { role: "link", name } }));
+      expect(d).toMatchObject({ verdict: "confirm", risky: true });
+      expect(d.autonomy).toBeUndefined();
+      // (An engine of its own: one shared by this many steps would reach the limit on actions a minute.)
+      const own = new PolicyEngine({ neverLook: () => [], grants: () => ({ msedge: "act" }), os: "win32", keys: KEYS.win32 });
+      const off = own.decide(edge({ kind, onPage: true, goal: "find me a video", element: { role: "link", name } }));
+      expect(off.verdict).toBe("confirm");
+      // ("Sell" only commits: asked every time, never called unasked, as before (safety-privacy-x7-1).)
+      expect(off.aligned).toBe(name.startsWith("Sell ") ? undefined : false);
+    }
+    // Enter on it as a page's focused link (`inPage`) asks too.
+    expect(engine(true).decide(edge({ kind: "click", inPage: true, element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", risky: true });
+  });
+
+  it("takes a title led by a word that also acts for a title only with a release's tag, and never one that grants access (owner's report of 2026-11-12)", () => {
+    const go = (name: string) => engine(true).decide(edge({ kind: "click", onPage: true, goal: "play a song on youtube", element: { role: "link", name } })).verdict;
+    expect(go("Post Malone - Circles (Official Video)")).toBe("allow");
+    expect(go("Post Malone - Circles [Lyrics]")).toBe("allow");
+    expect(go("Post Malone - Circles")).toBe("confirm");
+    expect(go("Allow Notifications - Site (Official Video)")).toBe("confirm");
+  });
+
   it("still asks about a page's link on a payment page, a native app's link, and a page's button or menu item named so (owner's report of 2026-11-12)", () => {
     const name = "How to install Node.js on Windows 11";
     expect(engine(true).decide(edge({ kind: "click", onPage: true, window: "Checkout - Shop", element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", risky: true });

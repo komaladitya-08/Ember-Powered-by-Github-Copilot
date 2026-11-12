@@ -2053,17 +2053,30 @@ const LEAD_IN = /^([^\p{L}\p{N}]*(yes|ok|okay|sure|please|go ahead|and|click|tap
 const LINK_ACTS_FOR_GOOD = /^(delete|remove|erase|wipe|destroy|empty|reset|clear|discard|cancel|close|deactivate|unsubscribe|uninstall|install|pay|buy|purchase|order|checkout|transfer|send|submit|confirm|approve|accept|authori[sz]e|sign|log|subscribe|upgrade|activate|donate)$/i;
 /** What a command acts on, as a second word: "Post All - Blog" is a command, whatever its shape. */
 const LINK_OBJECT = /^(my|your|our|this|that|these|those|the|all|everything|account|now|money|payment|data|it)$/i;
+/**
+ * Words that say what a link does as often as they lead a name ("Post Malone", "Run DMC", "Kill Bill"): a link starting
+ * with one is a title in parts only where it carries a release's tag (RELEASE_TAG). Read by their shape alone, "Share
+ * Document - Drive", "Grant Access - Drive" and "Merge Pull Request - GitHub" went unasked, clicked or with Enter (review
+ * W-1 of the change for the owner's report of 2026-11-12).
+ */
+const LINK_ACTS = /^(allow|permit|grant|revoke|disable|enable|turn|switch|block|ban|report|kill|execute|run|leave|merge|publish|post|share|sell|reboot|restart|factory|overwrite)$/i;
+/** A song's or a video's tag in its title: "(Official Video)", "[Lyrics]", "(Live)", "ft. Swae Lee". */
+const RELEASE_TAG = /[([]\s*(official|lyrics?|lyric video|music video|audio|live|remix|visuali[sz]er)\b[^)\]]*[)\]]|\s(ft|feat)\.\s/i;
 
 /**
  * A link that plainly names what it leads to, an allow-list that fails closed (review of #180): an article's title ("How to
  * install Node"), or a title in parts with a name after its first word ("Post Malone - Circles (Official Video)"), first
- * word not one that acts for good. Punctuation alone says nothing: "Delete my account (permanently)" and "Delete: my
- * account" are commands.
+ * word not one that acts for good, nor one that acts as often as it names (LINK_ACTS) without a release's tag.
+ * Punctuation alone says nothing: "Delete my account (permanently)" and "Delete: my account" are commands, and so is one
+ * after a question or a colon ("Why wait? Buy it now", "How to: delete all files now"), a suggestion ("Why not share your
+ * location") and a grant of access (GRANTS_ACCESS: "Allow Notifications - Site"), whatever its shape (review W-1).
  */
-function linkIsTitle(name: string): boolean {
-  if (/^\s*(how (to|do)|what|why|guide to|review of)\b/i.test(name)) return true;
+function linkIsTitle(name: string, os: OS): boolean {
+  if (name.split(/[?!:;]/).slice(1).some(clause => linkCommands(clause, true, os))) return false;
+  if (GRANTS_ACCESS.test(normalizeLabel(name))) return false;
+  if (/^\s*(how (to|do)|what|why(?! not\b)|guide to|review of)\b/i.test(name)) return true;
   const parts = /^\s*([\p{L}\p{N}']+)\s+([\p{L}\p{N}']+)[^-–—|]*\s[-–—|]\s/u.exec(name);
-  return !!parts && !LINK_ACTS_FOR_GOOD.test(parts[1]) && /^\p{Lu}/u.test(parts[2]) && !LINK_OBJECT.test(parts[2]);
+  return !!parts && !LINK_ACTS_FOR_GOOD.test(parts[1]) && (!LINK_ACTS.test(parts[1]) || RELEASE_TAG.test(name)) && /^\p{Lu}/u.test(parts[2]) && !LINK_OBJECT.test(parts[2]);
 }
 
 /**
@@ -2071,7 +2084,7 @@ function linkIsTitle(name: string): boolean {
  * One such title used to end "Work without asking" for the whole task.
  */
 function linkCommands(name: string, acts: boolean, os: OS): boolean {
-  return riskyContent(name, acts, os) && !linkIsTitle(name);
+  return riskyContent(name, acts, os) && !linkIsTitle(name, os);
 }
 
 /**
