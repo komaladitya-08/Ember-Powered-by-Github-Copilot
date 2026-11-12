@@ -2122,8 +2122,8 @@ const ENTER_IN_FIELD: Risk = { reason: "Enter in a text field can send or submit
  * - the bar (`addressBar`): a browser's (BROWSER, BAR_BROWSER) own field, outside any page, named as a search, address,
  *   URL or location;
  * - a search box (`searchBox`), a page's or an app's own: named as a search and nothing risky ("Search people to share
- *   with") nor anything that sends or picks people (PICKS_OR_SENDS), and not in a window titled as taking payment or for
- *   something risky.
+ *   with") nor anything that sends or picks people (PICKS_OR_SENDS), and not in a window titled as taking payment, sending
+ *   money or sharing (PICKS_WHO).
  * (Narrowing the bar to Edge, Chrome, Firefox and Safari made GNOME Web, Falkon and Arc ask again, and a mail app's own
  * search box with them: regression review of round seven, safety-privacy-x7-3.)
  * A page's own "Email address", "Delivery address", "Webhook URL" or "Location" is a form's field, where Enter submits
@@ -2136,15 +2136,24 @@ const oneLineField = (r: ActionRequest, role: string): boolean => /^(entry|combo
 const actsAnywhere = (name: string): boolean => name.trim().split(/\s+/).some((_, i, words) => isRiskyActLabel(words.slice(i).join(" ")));
 /**
  * Words that say a box also sends or picks people, whatever else it searches ("Search or type a message", "Search people
- * to add", "Search for a recipient"): never only a search (audit of 2026-11-11, safety-privacy-r8-3).
+ * to add", "Search for a recipient"): never only a search (audit of 2026-11-11, safety-privacy-r8-3). Not a box that
+ * only searches messages, chats or add-ons ("Search messages", "Search chats", "Search add-ons"; regression review of
+ * round eight, safety-privacy-x8-3).
  */
-const PICKS_OR_SENDS = /(^|[^\p{L}\p{N}])(messages?|chats?|recipients?|add)(?![\p{L}\p{N}])/iu;
+const PICKS_OR_SENDS = /(^|[^\p{L}\p{N}])((type|write|send|start|compose|new|enter)\b[^.]{0,20}\b(messages?|chats?|repl(y|ies)|conversations?)|recipients?|to add|add (and |or )?(people|persons?|members?|users?|contacts?|participants?|someone|guests?|collaborators?))(?![\p{L}\p{N}])/iu;
+/**
+ * A window titled for sending money or sharing with people ("Send money - PayPal", "Share with people"), where a search
+ * box picks who: never only a search. Not any risky word in the title, which is a page's content (a video's "Send Me On
+ * My Way", a folder's "Trash", an issue's "Delete old branches"): the owner's search on YouTube asked again
+ * (safety-privacy-x8-3).
+ */
+const PICKS_WHO = /(^|[^\p{L}\p{N}])((send|request|transfer|move) (money|funds|payments?|a payment)|new (transfer|payment)|pay (someone|people|a friend|friends)|share with|share [“"'‘][^”"'’]*[”"'’]|invite (people|members|others|someone|guests|collaborators)|add (people|members|collaborators))(?![\p{L}\p{N}])/iu;
 const addressBar = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
   oneLineField(r, role) && !r.inPage && (BROWSER.test(r.app) || BAR_BROWSER.test(r.app)) && tabbed(r.app, os) && GOES_SOMEWHERE.test(name);
 const searchBox = (r: ActionRequest, role: string, name: string, os: OS): boolean =>
   oneLineField(r, role) && SEARCHES.test(name) && !isRiskyLabel(name, os) && !actsAnywhere(name) && !saysWord(PICKS_OR_SENDS, name)
-  // Nor in a window titled for something risky ("Send money - PayPal", "Share with people"), or for a payment.
-  && !PAYMENT_PAGE.test(normalizeLabel(r.window)) && !isRiskyLabel(r.window, os);
+  // Nor in a window titled for sending money or sharing ("Send money - PayPal", "Share with people"), or for a payment.
+  && !PAYMENT_PAGE.test(normalizeLabel(r.window)) && !saysWord(PICKS_WHO, r.window);
 const goesSomewhere = (r: ActionRequest, role: string, name: string, os: OS): boolean => addressBar(r, role, name, os) || searchBox(r, role, name, os);
 /**
  * Keys that only move a browser between its pages and tabs, or reload one (an allow-list, for browsers alone: an app that

@@ -126,6 +126,26 @@ describe("what still asks in a browser, whatever is on", () => {
     unasked(edge({ value: "Return", inPage: true, window: "Inbox - Example", element: { role: "entry", name } }));
   });
 
+  // A page's title is what it shows: a video's, a folder's, an issue's. Only one about sending money or sharing asks.
+  it.each(["Post Malone - Circles (Official Video)", "Send Me On My Way - Rusted Root", "How to Remove Malware from Windows 11", "Delete Your Facebook Account in 2026",
+    "How to Install Python on Windows", "Unboxing the new Pixel - should you buy it?"])(
+    "Enter in YouTube's “Search” on a video titled “%s” goes unasked, as the owner asked (safety-privacy-x8-3)", title => {
+      unasked(edge({ value: "Return", inPage: true, window: `${title} - YouTube - Profile 1 - Microsoft Edge`, element: { role: "combo box", name: "Search" } }));
+    });
+
+  it.each([["Search mail", "Trash - ana@example.com - Gmail - Profile 1 - Microsoft Edge"], ["Search or jump to…", "Delete old branches · Issue #12 · acme/app - Profile 1 - Microsoft Edge"],
+    ["Search messages", "Inbox | Proton Mail - Profile 1 - Microsoft Edge"], ["Search chats", "Telegram Web - Profile 1 - Microsoft Edge"],
+    ["Search add-ons", "Add-ons - Profile 1 - Microsoft Edge"], ["Search people", "People - Example - Profile 1 - Microsoft Edge"]])(
+    "Enter in “%s” on “%s” searches and goes unasked (safety-privacy-x8-3)", (name, window) => {
+      unasked(edge({ value: "Return", inPage: true, window, element: { role: "entry", name } }));
+    });
+
+  it.each([["Search or start a new chat", "Chats - Example"], ["Search and add people", "Members - Example"], ["Search", "Request money - PayPal"],
+    ["Search", "Share “Budget” - Example"], ["Search", "Invite people - Example"]])(
+    "Enter in “%s” on “%s” asks: it may send or pick someone, or its window is about sending money or sharing (safety-privacy-x8-3)", (name, window) => {
+      asks(edge({ value: "Return", inPage: true, window, element: { role: "entry", name } }));
+    });
+
   it("Enter in an “address” field of an app that isn't a browser, in a page or not (safety-privacy-c7-1)", () => {
     const mail = new PolicyEngine({ neverLook: () => [], grants: () => ({ thunderbird: "act", slack: "act" }), autonomy: () => ({ ...ALL_SCOPES }), os: "win32", keys: KEYS.win32 });
     expect(mail.decide(edge({ app: "thunderbird", window: "Write: hello", value: "Return", inPage: false, element: { role: "entry", name: "To address" } })).verdict).toBe("confirm");
