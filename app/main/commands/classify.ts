@@ -7358,14 +7358,22 @@ reg(NATIVE, ["rclone"], h => {
   });
   const ops = rcloneP.operands.map(a => a.v ?? "");
   const remote = (s: string): boolean => /^[A-Za-z0-9_.-]+:/.test(s) && !/^[A-Za-z]:[\\/]/.test(s);
+  // What asks is also read as main read it, every word that isn't an option in a row, so a remote in a value option
+  // (`--backup-dir remote:b`, `--compare-dest remote:r`) asks as it did there; the parsed operands only place the marks.
+  // A remote attached to an option (`--backup-dir=remote:b`) is data sent there as well (commands-remote-x8-1).
+  const mainOps = h.args.filter(a => !isOption(a)).slice(1).map(a => a.v ?? "");
+  const optRemote = rcloneP.opts.map(o => o.value ?? "").find(remote);
+  const remoteAt = ops.some(remote) || mainOps.some(remote);
   if (/^(config|password|obscure|authorize)$/.test(verb)) { h.e.add("secret", "secret.program", SAYS.secrets); return; }
-  if (/^(delete|purge|deletefile|rmdir|rmdirs|cleanup|dedupe)$/.test(verb)) { h.e.add(ops.some(remote) ? "remote-delete" : "destroy", ops.some(remote) ? "cloud.delete" : "posix.rm", "Deletes files."); return; }
+  if (/^(delete|purge|deletefile|rmdir|rmdirs|cleanup|dedupe)$/.test(verb)) { h.e.add(remoteAt ? "remote-delete" : "destroy", remoteAt ? "cloud.delete" : "posix.rm", "Deletes files."); return; }
   if (/^(copy|copyto|sync|move|moveto|copyurl|bisync|rcat|mkdir|touch|settier|link)$/.test(verb)) {
     const dest = ops[ops.length - 1] ?? "";
-    if (remote(dest)) {
-      h.e.add("publish", "upload.rclone", `Sends data to ${dest.split(":")[0]}.`);
+    const sentTo = [dest, mainOps[mainOps.length - 1] ?? "", optRemote ?? ""].find(remote);
+    if (sentTo !== undefined) {
+      h.e.add("publish", "upload.rclone", `Sends data to ${sentTo.split(":")[0]}.`);
       if (verb === "sync" || verb === "bisync") h.e.add("remote-delete", "rsync.delete-remote", "Deletes files on the other side that aren't here.");
-    } else {
+    }
+    if (!remote(dest)) {
       if (verb === "sync") h.e.add("destroy", "posix.rsync", "Deletes files here that aren't on the other side.");
       // Files copied here from a remote (`rclone copy remote:x .`, `copyurl URL file`) are downloads: running one later
       // asks (commands-remote-r8-2). Into a folder (copy, sync, bisync), of unknown name; copyto/moveto name the file.
@@ -7375,7 +7383,7 @@ reg(NATIVE, ["rclone"], h => {
         else h.e.markUnnamed(dest || ".", h.sc);
       }
     }
-    if ((verb === "move" || verb === "moveto") && ops.slice(0, -1).some(remote)) h.e.add("remote-delete", "cloud.delete", "Deletes the files it moves from the other side.");
+    if ((verb === "move" || verb === "moveto") && (ops.slice(0, -1).some(remote) || mainOps.slice(0, -1).some(remote))) h.e.add("remote-delete", "cloud.delete", "Deletes the files it moves from the other side.");
     return;
   }
   if (/^(mount|serve|rcd|nfsmount)$/.test(verb)) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }

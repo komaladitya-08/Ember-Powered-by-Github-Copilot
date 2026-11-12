@@ -151,6 +151,7 @@ Ember stops and asks before a command that:
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,
+  `rclone copy` or `sync` with a cloud remote as the destination or in an option such as `--backup-dir remote:old`,
   `curl -T`, `curl -d`, `ssh host <command>`, a file fed to `openssl s_client`), adding your key to another computer
   (`ssh-copy-id`), using a share on another computer (`dir \\server\share`, `net use`, `New-PSDrive` on Windows,
   `mount_smbfs` on a Mac), which signs in there with your account, starting a server other computers can reach or

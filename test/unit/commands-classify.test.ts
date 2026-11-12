@@ -243,6 +243,30 @@ describe("a variable or option that names the program a build tool runs (command
   });
 });
 
+describe("the download-and-run fixes, decided no less safely than main (round eight's review)", () => {
+  const run = (cmd: string, o: { downloaded?: string[] } = {}) => runCase({ cmd, verdict: "run", ...o }, { shell: "bash", context: "linux" });
+
+  it("asks before rclone sends data to a cloud remote named in a value option (commands-remote-x8-1)", () => {
+    for (const cmd of [
+      "rclone copy src dst --backup-dir remote:backups", "rclone copy a b --compare-dest remote:ref", "rclone copy a b --copy-dest remote:ref",
+      "rclone copy a b --cache-dir remote:c", "rclone copy a b --temp-dir remote:c", "rclone copy a b --log-file remote:c",
+      "rclone copy a b --config remote:c", "rclone copy a b --files-from remote:c", "rclone move src dst --backup-dir remote:b",
+      "rclone sync a b --backup-dir remote:b", "env -C sub rclone copy a b --backup-dir remote:c", "rclone copy a b --backup-dir=remote:c",
+    ]) {
+      const r = run(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(r.decision.rules, cmd).toContain("upload.rclone");
+    }
+    // The destination is still read past a value option, so a fetch from a remote marks the folder, not `4`.
+    expect(run("rclone copy remote:b . --transfers 4").decision.verdict).toBe("run");
+    expect(run("rclone copy remote:bucket local").decision.verdict).toBe("run");
+    // A remote main read among the words before the last, for a move or a delete, still asks too.
+    for (const cmd of ["rclone move --backup-dir remote:x a b", "rclone move a --backup-dir remote:x b", "rclone moveto --backup-dir remote:x a b", "rclone copy remote:x . --backup-dir remote:b"]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("ask");
+    }
+  });
+});
+
 describe("the second pass (§3.6, §3.8.3): the target's real paths", () => {
   const withReal = (real: Record<string, string>) => ({ ...contextOf("linux"), real: new Map(Object.entries(real)) });
   const win = (real: Record<string, string>) => ({ ...contextOf("win32"), real: new Map(Object.entries(real)) });

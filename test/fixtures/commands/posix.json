@@ -17235,6 +17235,60 @@
   {
    "cmd": "make CC=clang",
    "verdict": "run"
+  },
+  {
+   "cmd": "rclone copy src dst --backup-dir remote:backups",
+   "verdict": "ask",
+   "rules": [
+    "upload.rclone"
+   ]
+  },
+  {
+   "cmd": "rclone copy a b --compare-dest remote:ref",
+   "verdict": "ask",
+   "rules": [
+    "upload.rclone"
+   ]
+  },
+  {
+   "cmd": "rclone copy a b --log-file remote:c",
+   "verdict": "ask",
+   "rules": [
+    "upload.rclone"
+   ]
+  },
+  {
+   "cmd": "rclone move src dst --backup-dir remote:b",
+   "verdict": "ask",
+   "rules": [
+    "upload.rclone"
+   ]
+  },
+  {
+   "cmd": "env -C sub rclone copy a b --backup-dir remote:c",
+   "verdict": "ask",
+   "rules": [
+    "upload.rclone"
+   ]
+  },
+  {
+   "cmd": "rclone move --backup-dir remote:x a b",
+   "verdict": "ask",
+   "rules": [
+    "upload.rclone",
+    "cloud.delete"
+   ]
+  },
+  {
+   "cmd": "rclone delete a --backup-dir remote:x",
+   "verdict": "ask",
+   "rules": [
+    "cloud.delete"
+   ]
+  },
+  {
+   "cmd": "rclone copy remote:b . --transfers 4",
+   "verdict": "run"
   }
  ]
 }
