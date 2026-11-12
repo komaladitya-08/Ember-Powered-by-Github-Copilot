@@ -1174,6 +1174,9 @@ the address in force and its saved key are kept and come back with the switch (i
   without one (Ollama's address entered without `/v1`, a web page, a chat-only gateway taken with "Use it as typed")
   reads "Using <host>. It answered, but without a model list: Test connection under Model provider says more.", and
   one that answered otherwise (a key refused, an error) only "Using <host>." (`localProviderLine`, integrations-r8-1).
+  The status carries what that check found (`service.listed`), so first run says the same: its sign-in step and the
+  provider step in use say "Connected to your own provider (<host>)." only for a model list, and otherwise "Using your
+  own provider (<host>)." (`ownConnected`, integrations-x8-2).
   A remote host reads only "Using <host>.",
   or "Using <host>, with no API key saved. If it needs one, save it under Model provider." when no key is saved for
   it (a keyless gateway still works); the setup check's model row then warns rather than says OK (integrations-r3).

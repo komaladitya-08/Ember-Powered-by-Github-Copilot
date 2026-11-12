@@ -895,6 +895,35 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(ar) reopened with my own provider on this computer, whose start check answered without a model list, first run says it is using it, never connected, on both its steps, as Models & connections does (integrations-x8-2)", async () => {
+    const host = "127.0.0.1:18593";
+    const provider = { on: true, baseUrl: `http://${host}`, conductor: "llama3.2:3b", consent: { version: 1, at: "2026-11-08T12:00:00Z", host } };
+    const inForce = { inForce: true, host, agreed: true, keySaved: false };
+    const detail = `Using ${host}. It answered, but without a model list: Test connection under Model provider says more.`;
+    const p = await open({ provider, providerState: inForce, agent: readyAgent({ login: undefined, models: [], conductorModel: "llama3.2:3b", workerModel: null, detail, service: { kind: "user", host, listed: false } }) });
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe(`Using your own provider (${host}).`);
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider");
+    expect(await p.locator("#w-lead").innerText()).toBe(`I'm using the model provider you set up (${host}), so there's no GitHub sign-in to do. You can change it later in Settings › Models & connections.`);
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "first-run-own-unlisted.png"), fullPage: true });
+    }
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    expect(await p.locator("#w-title").innerText()).toBe("Your own model provider's details");
+    expect(await p.locator("#w-p-result").innerText()).toBe(`Using your own provider (${host}).`);
+    // The same server reconnected with a model list: connected, on both.
+    const listed = readyAgent({ login: undefined, models: [], conductorModel: "llama3.2:3b", workerModel: null, detail: `Connected to ${host}.`, service: { kind: "user", host, listed: true } });
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, listed);
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe(`Connected to your own provider (${host}).`);
+    await p.locator("#w-back").click();
+    await expect.poll(() => p.locator("#w-signin-line").innerText()).toBe(`Connected to your own provider (${host}).`);
+    expect(await p.locator("#w-lead").innerText()).toMatch(/^I'm connected to the model provider you set up/);
+    for (const id of ["#w-title", "#w-lead", "#w-signin-line"]) expect(await p.locator(id).innerText(), id).not.toContain("Copilot");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(aa) a provider already in use is shown as in use on its step, and only “Use GitHub Copilot instead” switches it off (first-run-c1-2)", async () => {
     const service = { kind: "user", host: "api.example.com" };
     const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };

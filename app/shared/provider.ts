@@ -62,6 +62,16 @@ export function onThisComputer(host: string): boolean {
   return LOCAL_HOSTS.has(host.replace(/:\d+$/, "").toLowerCase());
 }
 
+/**
+ * Whether Ember may say it is connected to the user's own provider, as the agent's status names it (`host`, and
+ * `listed`: what the start's check of a server on this computer found). Only a server on this computer is asked at a
+ * start, and only one whose answer held a model list is "connected", as main's ready status says (localProviderLine,
+ * integrations-r8-1); first run says the same (integrations-x8-2). A host elsewhere is only in use (integrations-r3).
+ */
+export function ownConnected(s: { host: string; listed?: boolean }): boolean {
+  return onThisComputer(s.host) && s.listed !== false;
+}
+
 /** How long "I agree" ignores activation after the card is drawn for a new host: confirm.ts's own arm delay. */
 export const AGREE_ARM_MS = 500;
 

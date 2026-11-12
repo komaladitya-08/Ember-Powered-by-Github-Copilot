@@ -289,6 +289,10 @@ describe("first run: the provider in use, as Home says it", () => {
     expect(providerInUseLine({ host: "api.example.com", phase: "ready" })).toEqual({ line: "Using your own provider (api.example.com).", tone: "ok" });
     expect(providerInUseLine({ host: "api.example.com", phase: "starting" })).toEqual({ line: "Connecting to your own provider (api.example.com)…", tone: "" });
   });
+  it("says a server on this computer whose start check answered without a model list is only in use, as main's status says (integrations-x8-2)", () => {
+    expect(providerInUseLine({ host: "127.0.0.1:18593", phase: "ready", listed: false })).toEqual({ line: "Using your own provider (127.0.0.1:18593).", tone: "ok" });
+    expect(providerInUseLine({ host: "127.0.0.1:18593", phase: "ready", listed: true })).toEqual({ line: "Connected to your own provider (127.0.0.1:18593).", tone: "ok" });
+  });
 });
 
 describe("first run: a failed check of new details for a provider in use (first-run-r2-1)", () => {

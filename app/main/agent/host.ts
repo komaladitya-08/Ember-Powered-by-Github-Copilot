@@ -150,9 +150,12 @@ export interface AgentStatus {
   switchPending?: boolean;
   /**
    * The model service this connection uses when it isn't GitHub Copilot: the organisation's ("admin"), the user's own
-   * ("user") or a development test server ("test"), by its host only (never the key).
+   * ("user") or a development test server ("test"), by its host only (never the key). `listed`, ready with the user's
+   * own provider on this computer: whether the start's check of it answered with a model list (only then does the
+   * detail say "Connected to"), so first run says what Models & connections says (integrations-r8-1, -x8-2). Absent
+   * for a host elsewhere, which isn't asked at a start.
    */
-  service?: { kind: ActiveProvider["kind"]; host: string };
+  service?: { kind: ActiveProvider["kind"]; host: string; listed?: boolean };
 }
 
 /** One line of the conversation, kept in memory for this session only (the settings window shows them). */
@@ -2369,7 +2372,8 @@ export class AgentHost {
         }),
         conductorModel: choice.conductor,
         workerModel: choice.worker,
-        service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl) } : undefined,
+        // What the start's check found goes with it, for first run's words (integrations-x8-2).
+        service: provider ? { kind: provider.kind, host: serviceHost(provider.config.baseUrl), ...(checked ? { listed: checked.ok } : {}) } : undefined,
       });
       this.o.log.info("agent.ready", { login, conductorModel: choice.conductor, workerModel: choice.worker, models: models.length, runtimeDefault });
       // Connected: the wait before the next offline try starts short again. (Crashes count for ten minutes:
