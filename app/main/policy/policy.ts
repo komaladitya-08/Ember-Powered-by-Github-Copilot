@@ -2308,6 +2308,11 @@ const ASKS_IF_SURE = /\b(are you sure|(do|did) you (really )?(want|mean) to|woul
 /** Buttons and links that answer a dialog: what they do there is its question's answer. */
 const ANSWER_ROLES = /^(push button|push button menu|button|split button|toggle button|link)$/;
 /**
+ * Controls one types or writes into (a field, a mail's body, an editable page section): a dialog that holds one is a
+ * working dialog, and its words may be what was written there ("Hi Ana, are you free on Friday?", the text being found).
+ */
+const TYPED_IN = /^(entry|text|password text|terminal|spin button|editbar|section|paragraph|document( text| web| frame)?)$/;
+/**
  * Dialogs whose OK only shapes the open document (DSK9-3), by their titles in LibreOffice and the mail composers: its
  * formatting and styles, sizes, sorting and filtering, what is inserted (a table, a break, a caption, a link), where to
  * go, a font or a colour. A style's dialog says which after a colon ("Page Style: Default Page Style"). The commonest
@@ -2656,7 +2661,12 @@ export class PolicyEngine {
     // checked against the request (its words are the app's; audit of 2026-11-11, safety-privacy-c8-1). Not a dialog that
     // only names something risky: Find & Replace, Share, a file chooser with a Trash place. After `answer`, so an OK that
     // only acknowledges a message box (acknowledgesOnly) stays Ember's doubt.
-    const asksInFew = told.length <= 300 && (/[?？¿]/.test(told) || ASKS_IF_SURE.test(plainText(told)));
+    // Its words count only where they can't be what was written in it: a page's own dialog (a mail's compose window, a
+    // card) is judged by its title, unless a whole read shows nothing in it to type into; any other dialog by its words,
+    // unless a whole read shows such a field (Find & Replace's: regression review of round eight, safety-privacy-x8-2).
+    const typedIn = !!r.dialog && (r.dialog.controls ? r.dialog.controls.some(c => TYPED_IN.test(c.role)) : !!r.dialog.page);
+    const asked = r.dialog ? (typedIn ? r.dialog.name : told) : "";
+    const asksInFew = asked.length <= 300 && (/[?？¿]/.test(asked) || ASKS_IF_SURE.test(plainText(asked)));
     const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !declines(name) && !plainDialog;
     const answersQuestion: Risk = { reason: "this answers a dialog's question or warning, and Ember can't be sure what that answer does", note };
     // Any control of a page (or an Electron app's window) whose title mentions a payment: it may buy something whatever its

@@ -345,6 +345,33 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
       expect(engine().decide(click(name, { inPage: undefined, onPage: true, window: "Inbox - Mail", goal: "write to Ana", dialog: compose })).verdict).toBe("allow");
     }
   });
+
+  // What was written or typed in a working dialog isn't its question: a mail's body, a card's description, the text being found.
+  const fields = [{ role: "entry", name: "To" }, { role: "entry", name: "Subject" }, { role: "section", name: "Message Body" }, { role: "push button", name: "Attach files" },
+    { role: "push button", name: "Formatting options" }, { role: "push button", name: "Bold" }, { role: "push button", name: "Send" }];
+  const written: [string, string, ActionRequest["dialog"], Partial<ActionRequest>][] = [
+    ...["Attach files", "Formatting options", "Bold"].flatMap((name): [string, string, ActionRequest["dialog"], Partial<ActionRequest>][] => [
+      [name, "a mail's body asks", { name: "New Message", text: "To Subject Lunch Hi Ana, are you free on Friday?", alert: true, page: true }, {}],
+      [name, "a mail's body says “do you want to”", { name: "New Message", text: "To Subject Lunch Hi Ana, do you want to meet on Friday", alert: true, page: true, controls: fields }, {}]]),
+    ...["Checklist", "Members"].map((name): [string, string, ActionRequest["dialog"], Partial<ActionRequest>] =>
+      [name, "a card's description asks", { name: "Plan the trip", text: "in list To do Description Where should we go this year? Activity", alert: true, page: true }, { window: "Plan the trip | Trello — Mozilla Firefox" }]),
+    ["Find Next", "the text being found has a question mark", { name: "Find and Replace", text: "Find why?", controls: [{ role: "text", name: "" }, { role: "push button", name: "Find Next" },
+      { role: "push button", name: "Close" }] }, { app: "soffice", window: "letter.odt - LibreOffice Writer", onPage: undefined }],
+  ];
+
+  it.each(written)("“%s” in a working dialog where %s goes without a question under “Always”, and is announced with Work without asking (safety-privacy-x8-2)", (name, _what, dialog, r) => {
+    const step = click(name, { inPage: undefined, onPage: true, window: "Inbox - Mail — Mozilla Firefox", goal: "write to Ana and attach the agenda", dialog, ...r });
+    expect(engine().decide(step).verdict).toBe("allow");
+    expect(unGranted(true).decide(step)).toMatchObject({ verdict: "allow", autonomy: true });
+  });
+
+  it("a page's own dialog still asks when a whole read shows nothing to type in, or its title asks (safety-privacy-x8-2)", () => {
+    const leaving = { name: "Unsaved changes", text: "Are you sure you want to leave? Your edits will be lost.", alert: true, page: true,
+      controls: [{ role: "push button", name: "Leave" }, { role: "push button", name: "Stay" }] };
+    asksEveryTime(click("Leave", { inPage: undefined, onPage: true, window: "Edit post - Blog — Mozilla Firefox", goal: "close the tab", dialog: leaving }));
+    asksEveryTime(click("Leave", { inPage: undefined, onPage: true, window: "Edit post - Blog — Mozilla Firefox", goal: "close the tab",
+      dialog: { name: "Leave without saving?", text: "Title Body", alert: true, page: true } }));
+  });
 });
 
 /** A row is named by what it holds: an unnamed button in it isn't a button named by a mail's subject. */
