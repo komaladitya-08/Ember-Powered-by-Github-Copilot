@@ -374,8 +374,9 @@ download, so English-only MiniLM is the trade-off for now.
      one-off order is not a preference. The conductor's `remember` keeps one only in the user's own words. Every fact
      goes through `MemoryGraph.add()` and the guard.
    - What the remember tool kept (or found already kept) in a turn goes with that turn to its reading (`kept`: one
-     turn runs at a time, so the facts kept since the last turn ended), and no candidate from that turn that is the
-     same fact is kept again (`keptInTurn`, memory-c8-1): every content word of it in what was kept, the same way
+     turn runs at a time), and with no other: as each turn begins (`began`), what a turn that ended unread kept
+     (stopped, cut short by a wake or a cut-in, silent) is let go of (memory-x8-2). No candidate from that turn that
+     is the same fact is kept again (`keptInTurn`, memory-c8-1): every content word of it in what was kept, the same way
      round; or, only when its evidence is in the one clause of the turn that holds the most of what was kept and
      neither leaves out a word of that evidence the other says, half or more of the smaller one's content words in
      common, or evidence that holds half of what was kept in words the candidate mostly doesn't use. A person one of

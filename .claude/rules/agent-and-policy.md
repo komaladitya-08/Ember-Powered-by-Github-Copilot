@@ -275,7 +275,8 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     Forget everything drop every turn and result said before them (`dropSaid`: waiting, being read or still under
     way; with no mark, any within `FORGOTTEN_TURN_MS`, as `taskDone`'s results are), never a similarity of words
     (memory-r8-1); a new path into `Learner` carries such a mark or fails closed the same way;
-  - what the remember tool kept in a turn goes with that turn (`Learner.heard`'s `kept`), and its reading keeps no
+  - what the remember tool kept in a turn goes with that turn (`Learner.heard`'s `kept`) and no other (the conductor's
+    `began` at every turn's start lets go of what an unread turn kept: memory-x8-2), and its reading keeps no
     candidate `keptInTurn` calls the same fact, compared on words and on the clause of the turn they were said in;
     `about` only ever tells two apart (a person only one names), and where it can't tell, it learns (memory-c8-1,
     memory-x8-1);

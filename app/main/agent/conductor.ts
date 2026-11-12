@@ -162,6 +162,11 @@ export interface ConductorMemory {
    * speakers). `asked`: its request's mark from `asked`, if any. Absent: nothing is learned but what remember saves.
    */
   heard?(said: string, reply: string, own: boolean, asked?: number): void;
+  /**
+   * A turn began: what the remember tool kept before now belongs to a turn that has ended, read or not (a stopped, cut
+   * short or silent one isn't), never to this one (memory-x8-2).
+   */
+  began?(): void;
 }
 
 export interface ConductorTasks {
@@ -793,6 +798,8 @@ export class Conductor {
     this.routinesRan.clear();
     this.answered = "";
     if (i >= 0) this.unstarted.splice(i, 1);
+    // Every turn begins here, whether or not the one before it was read: what remember kept then goes with no turn now.
+    try { this.deps.memory?.began?.(); } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
     // A new turn: a tool the user refused last turn may be asked about again (never retried within the turn). At the
     // turn's start, not at ask(), so a request sent during a turn can't clear that turn's refusals.
     this.deps.extensions?.newTurn?.();

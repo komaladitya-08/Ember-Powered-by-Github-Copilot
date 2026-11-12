@@ -109,6 +109,8 @@ export interface LearningConductorMemory {
   /** A request is being asked: the mark its turn's `heard` gives back (memory-r8-1). */
   asked(): number;
   heard(said: string, reply: string, own: boolean, asked?: number): void;
+  /** A turn began: what remember kept before it goes with no later turn (memory-x8-2). */
+  began(): void;
 }
 
 export class MemoryLearning {
@@ -142,9 +144,9 @@ export class MemoryLearning {
   private drops = 0;
   private droppedAt: number | null = null;
   /**
-   * What the remember tool kept (or found already kept) since the last turn ended, with what it was said to be about:
-   * one turn runs at a time, so it goes with the next turn `heard` hands over, whose reading never keeps it again
-   * (memory-c8-1).
+   * What the remember tool kept (or found already kept) in the turn under way, with what it was said to be about: one
+   * turn runs at a time, so it goes with that turn when `heard` hands it over, whose reading never keeps it again
+   * (memory-c8-1), and is let go of as the next turn begins (`began`) when that turn was never read (memory-x8-2).
    */
   private turnKept: KeptFact[] = [];
 
@@ -255,6 +257,9 @@ export class MemoryLearning {
         if (this.saidBeforeDrop(asked)) { this.d.log.info("memory.learn_skipped", { why: "said_before_forget" }); return; }
         this.learner.heard(said, reply, own, kept);
       },
+      // A turn that ended unread (stopped, cut short, silent) never handed over what remember kept in it: no later turn
+      // takes it, so none of that turn's facts is compared with it (memory-x8-2).
+      began: () => { this.turnKept = []; },
     };
   }
 
