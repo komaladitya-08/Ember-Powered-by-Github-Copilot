@@ -406,9 +406,14 @@ over SSH it asks as before, and dangerous ones always ask. Until Interactive's c
 A notification (and
 Ember's speech) only says "Ember wants to run a command on build-01." with how to get to the command window from the
 keyboard ("press Alt+Tab to go there" on Linux and Windows); screen readers hear that too, and a question's key hint
-("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). A question nobody answers counts as "no" after 2 minutes (20 with **More
-time to read and answer** in Settings › Comfort & access). Your yes covers exactly that command, on that computer, in
-that folder, for that task: any change asks again. After a "no", Ember doesn't try again or work around it.
+("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). A question nobody answers ends after 2 minutes (20 with **More
+time to read and answer** in Settings › Comfort & access): nothing is approved and the command doesn't run, but it
+isn't a no. Your yes covers exactly that command, on that computer, in
+that folder, for that task: any change asks again. After a "no" (**Not now**, or **Stop** during a countdown), Ember
+doesn't try again or work around it: for the rest of that task the same command sent again, or one that does the same
+to the same thing (`find build -delete` after `rm -rf build`), is refused without another card, a review or an
+announcement. A card nobody answered isn't put up again until you next say something to that task. Ask again, in a new
+request, to have it run after all.
 
 ### 2.5 When you asked for exactly that
 

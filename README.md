@@ -397,7 +397,7 @@ and the password and consent cards), **Glass** (Clear, Regular or Solid: how muc
 bubble, cards, handle and ask box; solid in Calm mode and when your system asks for less transparency or more contrast),
 **Calm mode** (no hops, bounces or fidgets; also on when your system asks for less motion; Ember's bubble and cards still fade in and out) and **More
 time to read and answer** (messages stay ten times as long, also ones that waited behind another or were covered for a
-while, and Ember's own notices; a question waits 20 minutes instead of 2 before it counts as **Not now**, and one with a
+while, and Ember's own notices; a question waits 20 minutes instead of 2 before it ends unanswered, and one with a
 long text to read 10 minutes more instead of 1 for every 1000 characters of it). At Large and
 Larger, an answer that needs more than six lines at that size offers **Read all**. Windows' contrast themes keep
 switches, edges, focus and state visible, and the handle's microphone and computer badges change shape as well as

@@ -26,6 +26,7 @@ import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import { askedWords, type ActivityEvent } from "./activity";
+import { Refusals, stepNames, type Standing } from "../policy/refusals";
 import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
@@ -247,6 +248,18 @@ const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, re
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 /** To a step whose question ran out of time: nobody said yes and nobody said no, so it wasn't taken and isn't tried another way. */
 const UNANSWERED = "Your question went unanswered: time ran out before the user answered, which is neither a yes nor a no. Nothing was approved, so the step wasn't taken. Don't retry it or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
+/**
+ * To a step the user already said no to in this task, sent again: refused without a question, a check or an
+ * announcement, in every mode (Refusals; tasks-approvals-r9-1).
+ */
+const REFUSED_BEFORE = "The user already said no to this step in this task, so Ember refused it without asking them again. Don't retry it or work around it; finish the task and say what wasn't done.";
+/** To a step whose question went unanswered, sent again before the user said anything more to the task: not asked twice. */
+const STILL_UNANSWERED = "Ember already asked the user about this step and the question went unanswered; they haven't said anything to this task since, so Ember didn't ask again and the step wasn't taken. Don't retry it or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
+/** The audit's reasons for those two refusals (Ember's own words: "What Ember did" shows them). */
+const STANDING_REASON: Readonly<Record<Standing, string>> = {
+  refused: "the user said no to this step earlier in this task",
+  waiting: "the question about this step went unanswered, and the user hasn't said anything to this task since",
+};
 /**
  * To a call the model sent in the same reply as one that then wasn't done: it was planned on that step going ahead, so
  * it does nothing (tasks-approvals-c7-1). `no`: behind a "Not now", an unanswered question or a refusal; `failed`:
@@ -1277,6 +1290,11 @@ export class Worker {
    * missed put every later step of the task back to asking).
    */
   private saidNoThisTask = false;
+  /**
+   * The steps and commands the user said no to in this task, or left unanswered: a repeat is refused without a question
+   * (policy/refusals.ts). The command flow reads and writes the same one (commandContext).
+   */
+  private refusals = new Refusals();
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
   /** The step the user last said yes to (stepKey), and whether by a click on Allow (bubble or prompt window), until the next decision. */
@@ -2029,6 +2047,7 @@ export class Worker {
       state: this.commandState, size: () => this.d.commandSize?.() ?? COMMAND_SIZE, emberPids: () => this.d.emberPids?.() ?? [],
       // A card nobody answered is not the user's no (cause 10); "Not now" and a Stop during the countdown are.
       onDeclined: (expired?: boolean) => { if (expired) this.expired = true; else { this.declined = true; this.saidNoThisTask = true; } },
+      refusals: this.refusals,
       // "Work without asking" holds for commands only while this task hasn't been steered or told no (as for app steps).
       autonomy: () => (this.tainted || this.saidNoThisTask ? null : this.d.autonomy?.() ?? null),
       ...(this.d.reviewCommands?.() ? { review: copilotReviewer({ client: this.d.client, model: this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }) } : {}),
@@ -2208,6 +2227,8 @@ export class Worker {
    */
   async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string): Promise<boolean> {
     if (!this.session || this.halted || this.result) return false;
+    // The user is there again: a question nobody answered may be asked once more (what they said no to stays refused).
+    this.refusals.userSpoke();
     if (agreed?.length) this.agreed = [...this.agreed, ...agreed];
     if (screen) {
       const had = this.read.get("described")?.text;
@@ -3693,6 +3714,11 @@ export class Worker {
     // "What Ember did" shows the batch's decisions as one line (on the last cell's): refused (a cell isn't allowed),
     // asked (the one question), or none where no question is asked of the batch (all allowed, or each cell on its own).
     const no = judged.find(j => j.d.verdict === "deny");
+    // A batch with a cell the user already said no to filling in this task (or left unanswered): refused whole, with
+    // no question, as one step is (authorize).
+    const names = judged.flatMap(j => this.namesOf(j.req));
+    const stood = no ? null : this.refusals.step(names);
+    if (stood) return this.refusedBefore({ ...base, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") } }, { tier: "confirm" }, stood);
     const asks = judged.find(j => j.d.verdict !== "allow");
     const alone = judged.some(j => j.d.aligned === false) || jobs.some(j => reachesOut(j.text));
     const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
@@ -3756,7 +3782,7 @@ export class Worker {
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
     if (answer === "once") return null;
-    return this.refused(answer);
+    return this.refused(answer, names);
   }
 
   /** A cell's address as given ("b5", "$B$5"), as "B5" and its place; or why there is no such cell. */
@@ -4642,6 +4668,11 @@ export class Worker {
       decision = this.d.policy.decide(req);
     }
     if (decision.aligned === false) this.tainted = true;
+    // A step the user already said no to in this task, or whose question nobody answered and they haven't spoken since:
+    // never asked about again, checked or announced, whatever the mode would do with it now (Refusals).
+    const names = this.namesOf(req);
+    const stood = decision.verdict === "deny" ? null : this.refusals.step(names);
+    if (stood) return this.refusedBefore(req, decision, stood);
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
     // as it would have. A task that was steered or went off-task is held to asking just below, as before.
     if (decision.autonomy && this.saidNoThisTask && !this.tainted) {
@@ -4742,7 +4773,26 @@ export class Worker {
       }
       return null;
     }
-    return this.refused(answer);
+    return this.refused(answer, names);
+  }
+
+  /** The names `req`'s step goes by in this task's refusals (stepNames): its window and element, and how it is taken. */
+  private namesOf(req: Pick<ActionRequest, "kind" | "element" | "value">): string[] {
+    const says = req.kind === "keys" || req.kind === "open_app" || req.kind === "setting";
+    return stepNames({ kind: req.kind, key: this.stepKey(req.element), named: !!req.element?.role, ...(says ? { value: req.value ?? "" } : {}),
+      ...(req.kind === "keys" ? { activates: isActivatingKey(req.value ?? "", this.kc) } : {}) });
+  }
+
+  /**
+   * A repeat of a step the user said no to, or left unanswered: refused without a question, recorded as refused with
+   * why, and told to the model as such. A yes spent on that step earlier has nothing left to say (reask).
+   */
+  private refusedBefore(req: Pick<ActionRequest, "kind" | "app" | "window" | "element" | "onDesk">, decision: Pick<Decision, "tier">, stood: Standing): ToolResultObject {
+    const reason = STANDING_REASON[stood];
+    this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, tier: decision.tier, verdict: "deny", reason, ...(req.onDesk ? { onDesk: true } : {}) });
+    this.activity({ type: "refused", reason });
+    if (this.reask?.key === this.stepKey(req.element)) this.reask = null;
+    return denied(stood === "refused" ? REFUSED_BEFORE : STILL_UNANSWERED);
   }
 
   /**
@@ -4835,7 +4885,10 @@ export class Worker {
    * is a question that ran out of time, which approved nothing either (the step isn't taken) but is nobody's no: the
    * model is told so, to stop and say it rather than work around it, and nothing a refusal locks is locked (cause 10).
    */
-  private refused(answer: string | null) {
+  private refused(answer: string | null, names: readonly string[]) {
+    // The step is kept: sent again, it is refused without a question (a no for the rest of the task; no answer until the
+    // user next says something to it).
+    this.refusals.noteStep(names, answer === null ? "waiting" : "refused");
     if (answer === null) {
       this.expired = true;
       return denied(UNANSWERED);

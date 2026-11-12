@@ -20,6 +20,7 @@ import type { Confirmer, Question } from "../agent/confirm";
 import type { Presenter } from "../agent/presenter";
 import type { AuditEntry } from "../policy/audit";
 import type { Agreement, ReadSource } from "../policy/policy";
+import { commandActs, type CommandAsked, type Refusals } from "../policy/refusals";
 import { placeMentions, placesNamed } from "../targets/resolve";
 import type { TargetBinding } from "../targets/types";
 import type { ConsentPanel } from "../../shared/consent";
@@ -108,6 +109,12 @@ export interface CommandFlowContext {
   review?: CommandReviewer;
   /** Home project commands always need the exact command card, with the chosen folder still present at launch. */
   projectFolderCurrent?: () => boolean;
+  /**
+   * What the user said no to in this task, or left unanswered (the worker's, policy/refusals.ts): a command they turned
+   * down, sent again or reworded, is refused without a card, a review or an announcement, and a card nobody answered
+   * isn't shown again until they next say something to the task (commands-remote-r9-8). Absent: nothing is kept.
+   */
+  refusals?: Refusals;
 }
 
 export type { SecretTracker, ShapeOptions };
@@ -313,6 +320,10 @@ const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 const SAID_NO = "The user said no. Don't run it again or work around it; finish the task saying what wasn't done.";
 /** To a command whose card ran out of time: nobody said yes and nobody said no (the worker's UNANSWERED says the same of a step). */
 const TIMED_OUT = "Your question went unanswered: time ran out before the user answered, which is neither a yes nor a no. Nothing was approved, so the command didn't run. Don't run it again or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
+/** To a command the user already said no to in this task, sent again or reworded: refused without a card (Refusals). */
+const REFUSED_BEFORE = "The user already said no to this command in this task, or to one that does the same to the same thing, so Ember refused it without asking them again. Don't run it another way; finish the task saying what wasn't done.";
+/** To a command whose card went unanswered, sent again before the user said anything more to the task: not asked twice. */
+const STILL_UNANSWERED = "Ember already asked the user about this command, or one that does the same to the same thing, and the question went unanswered; they haven't said anything to this task since, so Ember didn't ask again and it didn't run. Don't run it another way; finish the task now, saying that the question went unanswered and what wasn't done.";
 const STOPPED_BEFORE = "The user stopped it before it ran. Don't run it again; finish the task saying so.";
 const UNSHOWN_BEFORE = "Ember's command window couldn't show the countdown to the end, so the command didn't run (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
 const UNSEEN = "Ember couldn't show the command in its command window, so it stopped it at once (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
@@ -698,6 +709,15 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // Step 2: the target's commands now; the first-use card when they wait for it.
   let cap = svc.capability();
   if (cap.state === "needs-consent") {
+    // The card the user already said no to in this task (or left unanswered) isn't put up again for every command.
+    const stood = ctx.refusals?.commandsConsent ?? null;
+    if (stood) {
+      audit({ phase: "decided", commandChars: a.command.length, verdict: "refuse", classes: [], rules: [stood === "refused" ? "refused-before" : "unanswered-before"],
+        reason: stood === "refused" ? "The user said no to turning on commands here earlier in this task." : "The question about turning on commands here went unanswered, and the user hasn't said anything to this task since." });
+      return denied(stood === "refused"
+        ? `The user already said no to turning on commands on ${place} in this task, so Ember didn't ask again. Finish the task saying so.`
+        : `Ember already asked the user to turn on commands on ${place} and the question went unanswered; they haven't said anything to this task since, so Ember didn't ask again. Finish the task now, saying that the question went unanswered.`);
+    }
     const consent = (svc as CommandService & Partial<CommandConsentSource>).consentPanel?.() ?? null;
     if (!consent) return denied(`Commands aren't turned on for ${place} yet: the user can turn them on in Ember's settings, under Commands. Finish the task saying so.`);
     const q: PanelQuestion = {
@@ -710,6 +730,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     if (ctx.isOver()) return STOPPED();
     if (answer !== "once") {
       ctx.onDeclined?.(answer === null);
+      ctx.refusals?.noteConsent(answer === null ? "waiting" : "refused");
       return denied(`The user didn't turn on commands on ${place}. Finish the task saying so.`);
     }
     svc.consented();
@@ -818,6 +839,23 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     const lines = [...(places.length ? [unknownPlaceLine(places, here)] : []), ...(others.length ? [wrongTargetLine(others, here)] : [])];
     d = { ...d, says: [...lines, ...d.says.filter(l => !lines.includes(l))] };
   }
+  // A command the user already said no to in this task, sent again or reworded (the same danger to the same thing), or
+  // one whose card nobody answered and they haven't spoken since: never asked about again, reviewed or announced,
+  // whatever the mode would do with it now (CLAUDE.md "After a deny or “Not now”…"; commands-remote-r9-8). Ember's own
+  // refusal (tampering, the organisation's "off") is said as itself.
+  const sha256 = commandSha256(target, shell, cwd, a.command);
+  const about: CommandAsked = { sha256, cwd, command: a.command, acts: commandActs(standingFindings(cls.findings, paths), facts.os) };
+  const stood = d.verdict === "refuse" ? null : ctx.refusals?.command(about) ?? null;
+  if (stood) {
+    endPending();
+    audit({
+      phase: "decided", shell, cwd, commandChars: a.command.length, verdict: "refuse", classes: d.classes, rules: [...d.rules, stood === "refused" ? "refused-before" : "unanswered-before"],
+      reason: stood === "refused" ? "The user said no to this command, or to one that does the same, earlier in this task."
+        : "The question about this command, or one that does the same, went unanswered, and the user hasn't said anything to this task since.",
+    });
+    ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, stood });
+    return denied(stood === "refused" ? REFUSED_BEFORE : STILL_UNANSWERED);
+  }
   // "Work without asking": an ordinary command that asks only for the text it carries announces instead (its Stop
   // countdown and the card still show where the text came from).
   const autonomous = autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0, kind: binding.kind });
@@ -853,7 +891,6 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   if (refused) return denied(`Not allowed: ${d.reason} Don't try another way; tell the user in finish_task.`);
 
   let runId = newRunId();
-  const sha256 = commandSha256(target, shell, cwd, a.command);
   const why = `Why: ${shownQuote(a.why, 200)}`;
   const card = (cardMode: CommandCard["mode"], says: string[]): CommandCard => ({
     runId, target, targetLabel: binding.label, ...(binding.login ? { login: binding.login } : {}), shell, cwd, command: a.command, sha256, taskId: task,
@@ -879,6 +916,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     if (ctx.isOver()) return "stopped";
     if (answer === "once") return "once";
     ctx.onDeclined?.(answer === null);
+    // Kept for the task: the same command, or one that does the same, isn't asked about again (Refusals).
+    ctx.refusals?.noteCommand(about, answer === null ? "waiting" : "refused");
     return answer === null ? "expired" : "no";
   };
 
@@ -917,7 +956,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         const unshown = announceGone(svc.window, runId);
         audit({ phase: "answered", answer: unshown ? "unseen" : "deny", q: "announce" });
         // The user stopped it: a no, which holds the task to asking from now on (Work without asking too; review of #127).
-        if (!unshown) ctx.onDeclined?.();
+        if (!unshown) { ctx.onDeclined?.(); ctx.refusals?.noteCommand(about, "refused"); }
         return denied(unshown ? UNSHOWN_BEFORE : STOPPED_BEFORE);
       }
     }

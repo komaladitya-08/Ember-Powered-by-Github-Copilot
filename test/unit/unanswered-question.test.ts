@@ -57,9 +57,11 @@ function worker(answers: (string | null)[], o: { scopes?: () => AutonomyScopes |
   const inner = w as unknown as {
     authorizeCells(jobs: unknown[]): Promise<{ textResultForLlm: string; resultType: string } | null | "each">;
     commandContext(): CommandFlowContext;
-    saidNoThisTask: boolean; expired: boolean; declined: boolean;
+    saidNoThisTask: boolean; expired: boolean; declined: boolean; session: unknown;
   };
-  return { audit, asked, activity, call, clicks, inner };
+  // The user says something more to the task (a steer needs a session to tell: a stand-in that takes the words).
+  const says = async (text: string) => { inner.session = { send: async () => undefined }; expect(await w.steer(text, text)).toBe(true); };
+  return { audit, asked, activity, call, clicks, inner, says };
 }
 
 describe("a question that ran out of time unanswered (cause 10)", () => {
@@ -89,10 +91,14 @@ describe("a question that ran out of time unanswered (cause 10)", () => {
     expect(h.inner.saidNoThisTask).toBe(false);
   });
 
-  it("still asks about the risky step itself every time: an unanswered question approved nothing", async () => {
+  it("approved nothing: the risky step is asked about again once the user says something more, and never taken unasked", async () => {
     const h = worker([null, null]);
     await h.call("perceive_window", {});
     await h.call("click", { id: 3 });
+    // Sent again at once, it isn't asked about a second time (refused-steps.test.ts): the user isn't there.
+    expect((await h.call("click", { id: 3 })).resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    await h.says("are you done?");
     expect((await h.call("click", { id: 3 })).resultType).toBe("denied");
     expect(h.asked).toHaveLength(2);
     expect(h.audit.some(e => e.event === "action")).toBe(false);
@@ -123,6 +129,7 @@ describe("a question that ran out of time unanswered (cause 10)", () => {
     const h = worker([null, "deny"]);
     await h.call("perceive_window", {});
     await h.call("click", { id: 3 });
+    await h.says("go on");
     await h.call("click", { id: 3 });
     await h.call("click", { id: 1 });
     expect(h.asked).toHaveLength(3);
