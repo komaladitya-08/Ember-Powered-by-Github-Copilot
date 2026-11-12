@@ -1919,6 +1919,12 @@ function child(sc: Scope, o: Partial<Scope> = {}, m?: ScopeMore): Scope {
 class Engine extends Classifier {
   /** The folder a `cd` just set (undefined: the command wasn't a cd). */
   cdTarget: string | null | undefined = undefined;
+  /**
+   * How many of `downloads` stood when the last command run inside another one (a runner's or a wrapper's payload,
+   * `poetry run git clone …`) ended: those marks are the inner command's, so the outer one's runner check still reads
+   * them, as on main (commands-remote-x8-2). Only the marks a command's own row made are for later commands.
+   */
+  private innerMarks = 0;
 
   /**
    * asksApart for a whole command judged a second way: the commands it registers, and where it leaves the pipeline, the
@@ -2823,6 +2829,7 @@ class Engine extends Classifier {
     const savedPipe = this.pipe;
     this.pipe = { fetch: o.fetchBefore ?? false, program: "" };
     this.simple({ words, redirs: [], stdin: o.stdin ?? null, fetchBefore: o.fetchBefore ?? false, background: false }, child(sc, { wrappers: [...sc.wrappers, wrapper], depth: sc.depth + 1 }));
+    this.innerMarks = this.downloads.length;
     this.pipe = savedPipe;
     this.at = savedAt;
     this.program = savedProg;
@@ -2929,6 +2936,7 @@ class Engine extends Classifier {
     // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
     // there is a download, and a pipe after it carries what it fetched (commands-remote-c1-1).
     this.afterRun(key, inner.args, h.s, sc, h.shellSc ?? h.sc, dlBefore);
+    this.innerMarks = this.downloads.length;
     if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
     // `command printf -v …` and `time unset …` run the same built-ins.
     this.hiddenNames(key, inner.args, sc);
@@ -3014,9 +3022,11 @@ class Engine extends Classifier {
     const folderOf = (v: string): string | null => (sc.cwd ? resolveTargetPath(v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd }) : null);
     // Downloads this very command saved (`pip download -d build …`, which is both a fetch and a PROJECT_RUNNER, or a
     // compiler's output) are for later commands, not a download this command runs: they don't trip its own check. So the
-    // runner check reads only the downloads that stood before this command (commands-remote-r8-2).
+    // runner check reads only the downloads that stood before this command (commands-remote-r8-2), and those a command
+    // it ran made (`poetry run git clone URL sub`, which asked on main: commands-remote-x8-2).
     const saved = this.downloads;
-    if (this.downloads.length > dlBefore) this.downloads = this.downloads.slice(0, dlBefore);
+    const cut = Math.max(dlBefore, this.innerMarks);
+    if (this.downloads.length > cut) this.downloads = this.downloads.slice(0, cut);
     // Every check is made, not only up to the first that holds: one of them may find a download saved by name, which
     // the card then says as a fact (`namedHit`: commands-remote-x7-4).
     const anyBefore = this.ctx.downloaded.size > 0 || this.downloads.length > 0;

@@ -17289,6 +17289,69 @@
   {
    "cmd": "rclone copy remote:b . --transfers 4",
    "verdict": "run"
+  },
+  {
+   "cmd": "poetry run git clone https://h.example/b sub",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "uv run git clone https://h.example/b sub",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "bundle exec git clone https://h.example/b sub",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "uv run gh release download v1",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "poetry run git pull https://h.example/r main",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "time poetry run git clone https://h.example/b sub",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ]
+  },
+  {
+   "cmd": "poetry run sh -c 'tar xf x.tar'",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-downloaded"
+   ],
+   "downloaded": [
+    "/home/ana/proj/x.tar"
+   ]
+  },
+  {
+   "cmd": "pip download foo -d . && ls",
+   "verdict": "run"
+  },
+  {
+   "cmd": "poetry run pytest",
+   "verdict": "run",
+   "downloaded": [
+    "/home/ana/Downloads/report.pdf"
+   ]
   }
  ]
 }

@@ -265,6 +265,25 @@ describe("the download-and-run fixes, decided no less safely than main (round ei
       expect(run(cmd).decision.verdict, cmd).toBe("ask");
     }
   });
+
+  it("asks when a project runner runs a command that downloads on the same line (commands-remote-x8-2)", () => {
+    for (const cmd of [
+      "poetry run git clone https://h.example/b sub", "uv run git clone https://h.example/b sub", "pipenv run git clone https://h.example/b sub",
+      "bundle exec git clone https://h.example/b sub", "uv run gh release download v1", "poetry run git pull https://h.example/r main",
+    ]) {
+      const r = run(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(r.decision.rules, cmd).toContain("escape.run-downloaded");
+    }
+    // Through a wrapper in front of the runner too.
+    for (const cmd of ["time poetry run git clone https://h.example/b sub", "nice uv run gh release download v1", "timeout 60 pdm run git clone https://h.example/b sub"]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    expect(run("poetry run sh -c 'tar xf x.tar'", { downloaded: ["/home/ana/proj/x.tar"] }).decision.verdict).toBe("ask");
+    // A download the command makes itself is still for later commands, not one it runs.
+    expect(run("pip download foo -d . && ls").decision.verdict).toBe("run");
+    expect(run("go build -o app .", { downloaded: ["/home/ana/proj/data.csv"] }).decision.verdict).toBe("run");
+  });
 });
 
 describe("the second pass (§3.6, §3.8.3): the target's real paths", () => {
