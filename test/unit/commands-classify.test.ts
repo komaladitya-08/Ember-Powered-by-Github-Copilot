@@ -343,6 +343,16 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
     }
   });
 
+  it("never runs or announces a rimraf or del-cli pattern whose braces the matcher reads another way than a shell (commands-remote-y8-1)", () => {
+    // minimatch reads `'{a},..,b}'` as `a}`, `..` and `b`, and `'{.\.,x}'` as `..` and `x`; Ember reads them as a shell
+    // does, so these are asked about as any deletion is, never let through.
+    for (const cmd of ["rimraf '{a},..,b}'", "rimraf '{a},/home/ana/.config/ember,b}'", "rimraf '{a},~/.config/ember,b}'", "rimraf 'src/{a},../..,b}'",
+      "rimraf '{.\\.,x}'", "rimraf '{\\..,x}'", "rimraf '{x},..,y}/*'", "cd build && rimraf '{a},../..,b}'", "rimraf --glob '{a},..,b}'", "yarn rimraf '{a},..,b}'",
+      "del-cli '{a},..,b}'", "del-cli '{.\\.,x}'"]) {
+      expect(["ask", "refuse"], cmd).toContain(run(cmd).decision.verdict);
+    }
+  });
+
   it("runs a package script named like a deleter when nothing follows its name, and judges the deleter when something does (commands-remote-x8-13)", () => {
     for (const cmd of ["yarn scrub", "pnpm scrub", "bun scrub", "yarn run scrub", "pnpm run grm", "yarn grm", "yarn trash-rm", "yarn gvfs-trash", "yarn rimraf"]) {
       expect(run(cmd).decision.verdict, cmd).toBe("run");

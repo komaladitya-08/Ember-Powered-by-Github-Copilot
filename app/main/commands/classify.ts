@@ -4180,11 +4180,13 @@ reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir", "grm", "grmdir", "
 });
 
 /**
- * The words a pattern's brace groups and extglob groups stand for, as rimraf's and del-cli's matchers expand them
- * (`{a,b}`, `{1..3}`, `+(a|b)`, `@(…)`; `?(…)` and `*(…)` may be empty; `!(…)` is anything, `*`), or null past
- * MAX_SIMPLE of them (commands-remote-x8-8). What is left may still hold `*`, `?` or `[…]`. A `{` with a comma after it
- * that never closes is null too: the matcher reads it as a letter and expands a group after it (`'{,/../{..,x}'` is
- * `{,/../..`), which braceGroup doesn't find.
+ * The words a pattern's brace groups and extglob groups stand for, with the braces read as a shell reads them
+ * (braceGroup: `{a,b}`, `{1..3}`; `+(a|b)`, `@(…)`; `?(…)` and `*(…)` may be empty; `!(…)` is anything, `*`), or null
+ * past MAX_SIMPLE of them (commands-remote-x8-8). What is left may still hold `*`, `?` or `[…]`. A `{` with a comma
+ * after it that never closes is null too: the matcher reads it as a letter and expands a group after it
+ * (`'{,/../{..,x}'` is `{,/../..`), which braceGroup doesn't find. rimraf's matcher (minimatch) reads some braces
+ * otherwise, a stray `}` before a later comma (`'{a},..,b}'` is `a}`, `..`, `b`) or a `\` in a group (`'{.\.,x}'` is
+ * `..`), and del-cli's isn't checked: those patterns only ask, as before (commands-remote-y8-1).
  */
 function patternWords(s: string): string[] | null {
   const out: string[] = [];
