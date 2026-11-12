@@ -550,7 +550,24 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#retry").click();
     await settle(p, "retry", { found: false, source: null, provider: { host: "127.0.0.1:18408", ready: false, reason: "models" } });
     await expect.poll(() => p.locator("#sign-in-msg").innerText()).toBe("Checked again: Ember still can't use 127.0.0.1:18408. The line above says why.");
-    expect(await p.locator("#agent-text").innerText()).toBe(noModel.detail);
+    expect(await p.locator("#agent-text").innerText()).toBe("Enter the model your provider should use in “Conversation model”, below.");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(ap) Models & connections names the field below for my provider's missing model, never the pane I'm on, and its button takes me there (integrations-r8-3)", async () => {
+    const service = { kind: "user", host: "127.0.0.1:18392" };
+    const p = await open({ home: true, provider: { on: true, baseUrl: "http://127.0.0.1:18392/v1", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: "127.0.0.1:18392" } }, agent: { ...SIGNED_OUT, phase: "error", reason: "models", detail: "Enter the model your provider should use in Ember's settings, under Models & connections.", service } });
+    await expect.poll(() => p.locator("#agent-text").innerText()).toBe("Enter the model your provider should use in “Conversation model”, below.");
+    expect(await p.locator("#agent-text").innerText()).not.toContain("Models & connections");
+    // The field it names is there, below, under that label, and the leading button moves the focus into it.
+    expect(await p.locator("label[for='byok-conductor']").innerText()).toBe("Conversation model");
+    expect(await p.locator("#byok-conductor").isVisible()).toBe(true);
+    await p.locator("#provider-details").click();
+    expect(await focusedId(p)).toBe("byok-conductor");
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "byok-no-model.png"), fullPage: true });
+    }
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 

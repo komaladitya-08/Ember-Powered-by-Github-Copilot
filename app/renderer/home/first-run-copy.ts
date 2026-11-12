@@ -7,7 +7,7 @@
  */
 
 import { onThisComputer, type ProviderType } from "../../shared/provider";
-import { providerTestText } from "./copy";
+import { PROVIDER_NO_MODEL_HERE, providerTestText } from "./copy";
 
 /** The ways on from a failed connection ("provider": the user's own provider's details, when it is the one failing). */
 export type FailureAction = "retry" | "switch-account" | "own-provider" | "sign-in" | "provider";
@@ -117,8 +117,14 @@ export function homeConnectionView(o: { phase: string; reason?: string; detail?:
   const v = failureView({ reason: o.phase === "signed-out" ? "sign-in" : o.reason, detail: o.detail, ownOffered: o.ownOffered && !o.own?.on, service: o.phase === "error" ? o.service : undefined });
   const show = { ...none, retry: true };
   for (const a of [v.primary, ...v.others]) if (a !== "continue") show[a] = true;
-  return { help: v.help, show, primary: v.primary === "continue" ? null : v.primary };
+  // Main's sentence for no model named sends the person to Models & connections, where this line is: here it names
+  // the field below instead (integrations-r8-3).
+  const noModel = o.phase === "error" && o.service === "user" && o.reason === "models" && NO_MODEL_NAMED.test(o.detail ?? "");
+  return { help: v.help, show, primary: v.primary === "continue" ? null : v.primary, ...(noModel ? { line: PROVIDER_NO_MODEL_HERE } : {}) };
 }
+
+/** Main's USER_PROVIDER_NO_MODEL ("Enter the model your provider should use in Ember's settings, …"). */
+const NO_MODEL_NAMED = /^Enter the model your provider should use in Ember's settings\b/;
 
 /** The own-provider step's words. */
 export const PROVIDER_STEP = {

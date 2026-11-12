@@ -60,6 +60,16 @@ describe("a failing own provider is explained as the provider's, never Copilot's
     // The organisation's service: only trying again.
     expect(failureView({ reason: "models", ownOffered: false, service: "admin" })).toEqual({ help: "", primary: "retry", others: [] });
   });
+  it("names on Models & connections the field below for a missing model, never the pane the person is on (integrations-r8-3)", () => {
+    const base = { phase: "error", reason: "models", ownOffered: true, signingIn: false, waiting: false, service: "user" };
+    const noModel = homeConnectionView({ ...base, detail: "Enter the model your provider should use in Ember's settings, under Models & connections." });
+    expect(noModel.line).toBe("Enter the model your provider should use in “Conversation model”, below.");
+    // Its button still leads, to that field (main.ts focuses byok-conductor for this reason).
+    expect(noModel.primary).toBe("provider");
+    // Main's other reasons are said in its own words.
+    expect(homeConnectionView({ ...base, detail: "None of the models you entered for your provider are allowed by your administrator." }).line).toBeUndefined();
+    expect(homeConnectionView({ ...base, service: "admin", detail: "Enter the model your provider should use in Ember's settings, under Models & connections." }).line).toBeUndefined();
+  });
   it("says in Home's tagline and status that the provider can't connect, never to connect Copilot", () => {
     const t = { failing: 0, onboarded: true, hidden: false, overlay: true, service: "user" };
     expect(tagline({ ...t, phase: "error" })).toBe("Beside your cursor. Can't connect to your model provider yet: Models & connections says why.");

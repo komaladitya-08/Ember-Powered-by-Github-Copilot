@@ -1214,6 +1214,9 @@ the address in force and its saved key are kept and come back with the switch (i
   moment Ember starts connecting to it, so Home's Models & connections leads with **Check my provider's details**
   (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
   title names the provider ("No model set for your provider", "I'm still connecting to your model provider").
+  With no model named, the status line there names the field rather than the pane it is on: "Enter the model your
+  provider should use in “Conversation model”, below." (`PROVIDER_NO_MODEL_HERE`; the bubble keeps main's "… in Ember's
+  settings, under Models & connections.", integrations-r8-3), and the button moves the focus into that field.
   Ember's Copilot runtime, which still carries the requests, is "Ember's model connection" then ("My model connection
   stopped unexpectedly. I'm reconnecting…", "Ember's model connection keeps stopping…", and the file watchers running
   out: `runtimeWords`, `lostWords`), never Copilot; a task cut off by it ends, in the bubble and the conversation, with

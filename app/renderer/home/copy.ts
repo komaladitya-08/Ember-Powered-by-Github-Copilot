@@ -690,6 +690,13 @@ export function providerTestWaits(o: { host: string | null; agreed: boolean; man
   return `Test connection works once you agree to the note above for ${o.host}.`;
 }
 
+/**
+ * Models & connections' status line for the user's own provider with no model named, in place of main's sentence
+ * (USER_PROVIDER_NO_MODEL), which sends the person to this very pane from the bubble: here it names the field below,
+ * where its "Check my provider's details" moves the focus (integrations-r8-3).
+ */
+export const PROVIDER_NO_MODEL_HERE = "Enter the model your provider should use in “Conversation model”, below.";
+
 /** A connection test's answer as main gives it (ProviderTest): the models it lists, or why not in one sentence. */
 type TestAnswer = { ok: true; host: string; models: number | null; ids?: string[] } | { ok: false; why: string; cause?: string };
 

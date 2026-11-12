@@ -26,7 +26,7 @@ import type { PromptCard } from "../../app/shared/remote-ui";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
 import { friendlyError, lostWords } from "../../app/main/agent/presenter";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerHeldUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_NO_MODEL_HERE, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerHeldUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -1001,6 +1001,10 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(providerAgreedChecked("api.example.com", { ok: false, why: "api.example.com needs an API key." })).toBe("Agreed. Ember now sends your requests to api.example.com. api.example.com needs an API key.");
     // Test connection's words are as they were.
     expect(providerTestText({ ok: true, host: "localhost:11434", models: 1, ids: ["llama3.2:3b"] })).toBe("Connected to localhost:11434. It lists 1 model: llama3.2:3b.");
+  });
+
+  it("names the field for a missing model on the pane that holds it (integrations-r8-3)", () => {
+    expect(PROVIDER_NO_MODEL_HERE).toBe("Enter the model your provider should use in “Conversation model”, below.");
   });
 
   it("reports a connection test in one sentence, and says why a key can't be kept", () => {
