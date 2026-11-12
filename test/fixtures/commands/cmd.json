@@ -2793,6 +2793,13 @@
    "rules": [
     "posix.rm"
    ]
+  },
+  {
+   "cmd": "fdupes -o %USERPROFILE%\\.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
   }
  ]
 }

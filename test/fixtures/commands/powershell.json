@@ -5941,6 +5941,20 @@
     "unclear.cmdlet",
     "posix.rm"
    ]
+  },
+  {
+   "cmd": "fdupes -o $HOME\\.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "& jdupes.exe -o $HOME\\.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
   }
  ]
 }

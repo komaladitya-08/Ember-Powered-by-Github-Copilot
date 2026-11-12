@@ -293,6 +293,18 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
     // A pattern rimraf expands itself is never announced.
     expect(runCase({ cmd: "rimraf 'build/*'", verdict: "run", words: "delete build/*" }, { shell: "bash", context: "linux" }).decision.verdict).toBe("ask");
   });
+
+  it("still asks when a new deleter's -o names a start-up file, as it did before the tool had a row (commands-remote-x8-5)", () => {
+    for (const name of ["fdupes", "jdupes", "rimraf", "del-cli", "scrub", "grm", "bfg", "git-filter-repo", "gvfs-trash", "trash-rm"]) {
+      for (const cmd of [`${name} -o ~/.bashrc .`, `env ${name} -o ~/.profile -r .`, `cd src && ${name} -o /etc/profile .`, `node_modules/.bin/${name} -o ~/.bashrc . && npm test`]) {
+        const r = run(cmd);
+        expect(r.decision.verdict, cmd).not.toBe("run");
+        expect(r.decision.rules, cmd).toContain("path.startup");
+      }
+    }
+    for (const cmd of ["fdupes -o $HOME\\.bashrc .", "& jdupes.exe -o $HOME\\.bashrc ."]) expect(run(cmd, "win32", "powershell").decision.rules, cmd).toContain("path.startup");
+    expect(run("fdupes -o ~/.bashrc .", "wsl").decision.rules).toContain("path.startup");
+  });
 });
 
 describe("downloads by a config file or a file-transfer client (commands-remote-r8-3)", () => {

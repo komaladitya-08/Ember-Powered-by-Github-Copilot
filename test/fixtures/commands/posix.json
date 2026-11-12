@@ -19899,6 +19899,83 @@
    "rules": [
     "escape.run-downloaded"
    ]
+  },
+  {
+   "cmd": "fdupes -o ~/.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "jdupes -o ~/.bashrc -r .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "fdupes -o ~/.profile -r .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "env fdupes -o ~/.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "nice -n 5 jdupes -o /etc/profile .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "cd src && fdupes -o ~/.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "node_modules/.bin/rimraf -o ~/.bashrc . && npm test",
+   "verdict": "ask",
+   "rules": [
+    "path.startup",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "sh -c 'jdupes -o ~/.bashrc .'",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "timeout 5 scrub -o ~/.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup",
+    "posix.scrub"
+   ]
+  },
+  {
+   "cmd": "bfg -o ~/.config/autostart/x.desktop .",
+   "verdict": "ask",
+   "rules": [
+    "git.history",
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "fdupes -o name -r .",
+   "verdict": "run"
   }
  ]
 }

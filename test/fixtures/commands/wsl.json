@@ -2366,6 +2366,20 @@
   {
    "cmd": "mytool src",
    "verdict": "run"
+  },
+  {
+   "cmd": "fdupes -o ~/.bashrc .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "env jdupes -o ~/.profile .",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
   }
  ]
 }

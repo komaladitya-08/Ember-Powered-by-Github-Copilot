@@ -2804,7 +2804,8 @@ class Engine extends Classifier {
     const n = NATIVE[key];
     if (n) n(h);
     else generic(h);
-    optionPaths(h, !n);
+    // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5).
+    optionPaths(h, !n || NEW_DELETERS.has(key));
   }
 
   /** Every argument read as a possible path (an unknown program's operands): secrets and Ember's paths judged. */
@@ -2959,7 +2960,7 @@ class Engine extends Classifier {
     const dlBefore = this.downloads.length;
     if (n) n(inner);
     else generic(inner);
-    optionPaths(inner, !n);
+    optionPaths(inner, !n || NEW_DELETERS.has(key));
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
     // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
