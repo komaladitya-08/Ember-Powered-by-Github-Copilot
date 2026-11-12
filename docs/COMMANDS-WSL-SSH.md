@@ -197,7 +197,8 @@ Ember stops and asks before a command that:
   checkout`, `svn export`, `hg clone`, `rclone copy`, `pip download` or `git archive --remote`; anything at all once
   the task has used a settings file curl or wget reads, a `wget -e` setting or a file-transfer client that can fetch
   (`curl -K cfg.txt`, `wget --config=w.rc`, `sftp`, `ftp`, `lftp`, `tftp`, `smbclient`), since Ember can't tell what
-  they saved or where (a client whose commands on the line only send, `lftp -c 'put dist.tgz' host`, doesn't count);
+  they saved or where (a client whose commands on the line only send, `lftp -c 'put dist.tgz' host`, and
+  `smbclient -L`, which only lists a computer's shares, don't count);
   also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
   `rsync`, `dd`, `cat x.py > y.py`, `tee`, `dos2unix -n`, `sort -o`, `split` and `cat` of its pieces, or a `tar` or
   `zip` of it unpacked again, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`

@@ -7475,16 +7475,19 @@ reg(NATIVE, ["sftp", "ftp", "lftp", "tftp", "ncftp", "ncftpput", "smbclient", "t
   if (clientMayFetch(h)) h.e.markUnnamed(null, h.sc);
 });
 /** Commands a file-transfer client may be given that only send, list or move about, never fetch (clientMayFetch). */
-const SENDS_ONLY = /^(put|mput|reput|cd|lcd|ls|dir|pwd|lpwd|mkdir|lmkdir|rmdir|rm|mrm|del|chmod|rename|mv|open|user|bye|quit|exit|close|set|prompt|binary|ascii|passive|hash|verbose)$/i;
+const SENDS_ONLY = /^(put|mput|reput|cd|lcd|ls|dir|pwd|lpwd|mkdir|lmkdir|rmdir|rm|mrm|del|chmod|rename|mv|open|user|bye|quit|exit|close|set|prompt|recurse|mask|binary|ascii|passive|hash|verbose)$/i;
 /**
  * Whether a file-transfer client may fetch files, of names and into folders Ember can't tell (commands-remote-r8-3):
  * a session, a batch file, its input or an address may (every sftp: `host:file` fetches, and it takes no commands on
  * its line); commands it is given on its line (lftp's, smbclient's and tftp's `-c`) only when one of them isn't on
- * SENDS_ONLY (`get`, `mget`, `mirror`…). ncftpput only sends and telnet moves no files.
+ * SENDS_ONLY (`get`, `mget`, `mirror`…; smbclient's `prompt`, `recurse` and `mask` only set how it sends). ncftpput
+ * only sends, telnet moves no files, and `smbclient -L` only lists a computer's shares unless it is also given commands
+ * or a tar (commands-remote-x8-11).
  */
 function clientMayFetch(h: H): boolean {
   if (h.key === "ncftpput" || h.key === "telnet") return false;
   if (h.s.stdin !== null) return true;
+  if (h.key === "smbclient" && h.args.some(a => /^(-[A-Za-z]*L|--list(=|$))/.test(a.v ?? "")) && !h.args.some(a => a.v === null || /^(-[A-Za-z]*[cT]|--command|--tar)/.test(a.v))) return false;
   const k = h.args.findIndex(a => (h.key === "lftp" || h.key === "smbclient" || h.key === "tftp") && /^-c/.test(a.v ?? ""));
   if (k < 0) return true;
   const rest = h.args.slice(k + 1);
