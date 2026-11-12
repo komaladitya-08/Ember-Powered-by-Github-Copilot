@@ -284,7 +284,9 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
     idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
     fact shows in the conversation as "Ember learned: …" with **Undo**; once forgotten the line says "Ember forgot: …"
-    with an Undo that puts it back, and focus stays on it. The kill switch stops all of it (`memory`).
+    with an Undo that puts it back, and focus stays on it. What you forget or correct is never learned back from what
+    was said before: Forget, a correction and Forget everything drop the turns and task results not yet read (and the
+    turn under way), so their other facts are learned only when said again. The kill switch stops all of it (`memory`).
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you

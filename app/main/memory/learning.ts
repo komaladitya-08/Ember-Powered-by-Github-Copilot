@@ -33,7 +33,8 @@ export const IDLE_MS = 5 * 60_000;
 export const IDLE_CHECK_MS = 60_000;
 /**
  * How long after a Forget a turn that began before it may still end and be queued (ms): a fact forgotten in that time,
- * or while a batch from before then waits, is never learned back from it (memory-c7-1).
+ * or while a batch from before then waits, is never learned back from it (memory-c7-1); and a turn handed over with no
+ * mark of when it was asked is not learned from at all (memory-r8-1).
  */
 export const FORGOTTEN_TURN_MS = 2 * 60_000;
 /** The most forgotten facts held for that at once. */
@@ -95,7 +96,7 @@ export interface LearningDeps {
   budget?: Partial<LearnBudget>;
 }
 
-/** What the conductor gets: MemoryService's tools, plus `heard` at each turn's end. */
+/** What the conductor gets: MemoryService's tools, plus `asked` as each request is asked and `heard` at its turn's end. */
 export interface LearningConductorMemory {
   remember(fact: string, about: AboutRef[], said: string, replaces?: string): string;
   context(query: string, history?: boolean): Promise<string>;
@@ -103,7 +104,9 @@ export interface LearningConductorMemory {
   forget(id: string): boolean;
   factText(id: string): string | null;
   forgetAll(): void;
-  heard(said: string, reply: string, own: boolean): void;
+  /** A request is being asked: the mark its turn's `heard` gives back (memory-r8-1). */
+  asked(): number;
+  heard(said: string, reply: string, own: boolean, asked?: number): void;
 }
 
 export class MemoryLearning {
@@ -125,10 +128,17 @@ export class MemoryLearning {
   /** The facts kept lately, newest last, for "forget that". */
   private recent: { id: string; text: string; at: number }[] = [];
   /**
-   * What was forgotten while turns said before it may still be read (memory-c7-1): its words, when, and its Undo's
-   * token. In RAM only, and dropped as soon as no such turn is left (`forgottenStill`).
+   * What was forgotten lately (memory-c7-1): its words, when, and its Undo's token, so that for FORGOTTEN_TURN_MS
+   * nothing much like it is learned (`keepLearned`). In RAM only, and dropped as soon as that is over (`forgottenStill`).
    */
   private forgotten: { text: string; at: number; undo: string }[] = [];
+  /**
+   * How many times what had been said became something never to learn from (a Forget, a correction, Forget everything:
+   * `dropSaid`), and when it last did. A request's mark (`asked`) is this count when it was asked: a turn whose mark is
+   * older is never read for facts, whatever words extraction would give the fact (memory-r8-1). In RAM only.
+   */
+  private drops = 0;
+  private droppedAt: number | null = null;
 
   constructor(private d: LearningDeps) {
     this.lastActive = this.now();
@@ -223,8 +233,35 @@ export class MemoryLearning {
       },
       factText: id => (this.d.inForce() ? m.factText(id) : null),
       forgetAll: () => this.forgetAll(),
-      heard: (said, reply, own) => { this.active(); this.learner.heard(said, reply, own); },
+      asked: () => this.drops,
+      heard: (said, reply, own, asked) => {
+        this.active();
+        // Said before a Forget, a correction or Forget everything: never read for facts (memory-r8-1).
+        if (this.saidBeforeDrop(asked)) { this.d.log.info("memory.learn_skipped", { why: "said_before_forget" }); return; }
+        this.learner.heard(said, reply, own);
+      },
     };
+  }
+
+  /**
+   * Whether a turn's words were said before the last Forget, correction or Forget everything: its mark (`asked`) is
+   * older; or, with no mark (when it was asked can't be told), one of them was less than FORGOTTEN_TURN_MS ago.
+   */
+  private saidBeforeDrop(asked: number | undefined): boolean {
+    if (asked !== undefined) return asked !== this.drops;
+    return this.droppedAt !== null && this.now() - this.droppedAt < FORGOTTEN_TURN_MS;
+  }
+
+  /**
+   * What was said until now is never learned from: the turns and results waiting are dropped, the reading under way is
+   * abandoned, and a turn still under way (its request asked before now) is never queued. However extraction would word
+   * a forgotten or corrected fact, it can't come back from them (memory-r8-1). It learns less: the other facts of those
+   * turns too, until they are said again.
+   */
+  private dropSaid(): void {
+    this.learner.stop();
+    this.drops++;
+    this.droppedAt = this.now();
   }
 
   /**
@@ -249,7 +286,9 @@ export class MemoryLearning {
     const gone = this.d.memory.forgetCounted(id, !!kept && this.now() - kept.at <= FORGET_THAT_MS);
     this.recent = this.recent.filter(r => r.id !== id);
     if (gone) {
-      // Nor may the turn that said it, still waiting to be read (or still under way), put it back (memory-c7-1).
+      // Nor may the turn that said it, still waiting to be read (or still under way), put it back, in any words
+      // (memory-r8-1); and within FORGOTTEN_TURN_MS nothing much like it is learned from what comes in (memory-c7-1).
+      this.dropSaid();
       this.forgotten = [...this.forgottenStill(), { text: gone.text, at: this.now(), undo: gone.undo }].slice(-FORGOTTEN_MAX);
       try { this.d.onForgot?.(id, gone); } catch { this.d.log.warn("memory.delete_notice_failed"); }
     }
@@ -280,9 +319,10 @@ export class MemoryLearning {
   }
 
   /**
-   * Keeps a fact extraction found, unless the user forgot the same thing after the batch it was read from began: a
-   * Forget that Ember confirmed is never undone by the turn that said the fact (memory-c7-1). A later turn that says
-   * it again is learned from as usual.
+   * Keeps a fact extraction found, unless the user forgot the same thing after the batch it was read from began
+   * (memory-c7-1). Behind `dropSaid`, which keeps every turn said before the Forget from being read at all, this still
+   * holds back much the same words from what came in since (a task's result) for FORGOTTEN_TURN_MS. A later turn that
+   * says it again is learned from as usual after that.
    */
   private keepLearned(f: NewFact, since: number): AddResult {
     this.forgotten = this.forgottenStill();
@@ -300,8 +340,9 @@ export class MemoryLearning {
     this.refining?.abort();
     ++this.recallRevision;
     const corrected = this.d.memory.correct(expected, text);
-    // An extraction of the earlier conversation must not put the old sentence back after this explicit correction.
-    this.learner.stop();
+    // An extraction of the earlier conversation must not put the old sentence back after this explicit correction,
+    // nor one of the turn still under way (memory-r8-1).
+    this.dropSaid();
     this.recent = this.recent.filter(row => row.id !== expected.id);
     try { this.d.onForgot?.(expected.id); } catch { this.d.log.warn("memory.correction_notice_failed"); }
     return corrected;
@@ -310,6 +351,8 @@ export class MemoryLearning {
   /** Everything is forgotten (sign-out, Forget everything): what waits to be learned goes too. */
   forgetAll(): void {
     this.stopNow();
+    // Nor is the turn still under way learned from (memory-r8-1).
+    this.dropSaid();
     this.d.memory.forgetAll();
     this.gaps.clear();
     this.recent = [];

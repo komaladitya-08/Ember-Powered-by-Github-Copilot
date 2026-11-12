@@ -218,6 +218,25 @@ describe("the user's words a turn's tools check against", () => {
     await c.stop();
   });
 
+  it("hands memory each turn with the mark of when its request was asked, also for a request that waited behind another (memory-r8-1)", async () => {
+    let drops = 0;
+    const heard: [string, number | undefined][] = [];
+    const store = { ...memoryProbe().store, asked: () => drops, heard: (said: string, _reply: string, _own: boolean, asked?: number) => { heard.push([said, asked]); } };
+    const { c, emit } = await conductorWith({ memory: store });
+    await c.ask("Remember that I'm vegetarian");
+    emit({ type: "user.message", data: { content: "Remember that I'm vegetarian" } });
+    // The user forgets the fact while that turn's answer is still coming, then asks something else.
+    drops++;
+    await c.ask("I live in Leeds");
+    emit({ type: "assistant.message", data: { content: "Got it." } });
+    emit({ type: "session.idle", data: {} });
+    emit({ type: "user.message", data: { content: "I live in Leeds" } });
+    emit({ type: "assistant.message", data: { content: "Noted." } });
+    emit({ type: "session.idle", data: {} });
+    expect(heard).toEqual([["Remember that I'm vegetarian", 0], ["I live in Leeds", 1]]);
+    await c.stop();
+  });
+
   it("answers the model's recall query without the request's path, so screen text can't become a gap Ember asks about (review of PR #142, B1)", async () => {
     const m = memoryProbe();
     const { c, config } = await conductorWith({ memory: m.store });
