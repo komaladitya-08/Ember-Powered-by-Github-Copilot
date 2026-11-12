@@ -2322,7 +2322,10 @@ renderer logic through exported pure modules (state reducers, option objects), n
 add one with every fix. An option table lists only the options that take the next word (a switch listed there hides the
 command or file after it), and a value that names a file is judged as that file (`optionFiles()` in classify.ts);
 commands-classify.test.ts's option-table test runs each switch in front of a dangerous operand and each such value as a
-dangerous path, so add a row when you change a table.
+dangerous path, so add a row when you change a table. A corrected table keeps the one it replaces beside it
+(`heldOpts(h, now, was)`, a wrapper's in `WrapperRule.main`): where the two read a line differently the row is judged
+both ways and the stricter answer stands, so no correction decides more loosely than main did at 4d64d3a
+(`Engine.runRow`; "commands held to main" in commands-classify.test.ts).
 
 **Integration suites** that need a real `script`, sshd, WSL or desktop are in `test/integration/`, skip without their
 variable, and fail when it is 1 and what they need is missing. `.github/workflows/remote.yml` runs them; `ci.yml` is
