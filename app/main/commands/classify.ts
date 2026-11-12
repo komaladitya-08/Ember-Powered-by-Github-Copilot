@@ -1527,21 +1527,34 @@ const SHELL_LEAD = new RegExp(String.raw`^\s*${SHELL_WORD}\s+\S`);
  * filter) is not a command, so `TEST_FILTER='unit|integration' npm test` runs (commands-remote-c8-1).
  */
 const SHELL_START = new RegExp(String.raw`(?:^|[|;]|&&)\s*${SHELL_WORD}\s+\S`);
-/** Whether an options variable's value names a program its tool runs, by that tool's own sub-option (never a shared list). */
+/** go's options that name a program it runs over a build or its tests, with one dash or two (go reads `--toolexec` too). */
+const GO_PROGRAM_OPT = String.raw`--?(?:toolexec|exec|vettool)`;
+/** A go argument that is one of them, its value attached or not (`-toolexec=/tmp/t`, `--exec`). */
+const GO_PROGRAM_ARG = new RegExp(String.raw`^${GO_PROGRAM_OPT}(?:=([\s\S]*))?$`);
+/**
+ * Whether an options variable's value names a program its tool runs, by that tool's own sub-option (never a shared
+ * list): go's, as the go row reads them; tar's, through the tar row's own option table and check, so an abbreviation
+ * (`--to-com=`), `-I`, `--use-compress-program` and a checkpoint's exec count as on its command line; pytest's `-p`,
+ * attached or not, unless `no:` (commands-remote-x8-4).
+ */
 function optNamesProgram(name: string, value: string): boolean {
-  if (/^(GOFLAGS|GOTESTFLAGS|CGO_[A-Z]*FLAGS)$/.test(name)) return /(^|[\s,'"=])-(toolexec|exec|vettool)(=|\s)/.test(value);
-  if (name === "TAR_OPTIONS") return /(^|[\s,'"=])--?to-command(=|\s)/.test(value);
+  if (/^(GOFLAGS|GOTESTFLAGS|CGO_[A-Z]*FLAGS)$/.test(name)) return new RegExp(String.raw`(^|[\s,'"=])${GO_PROGRAM_OPT}(=|\s|$)`).test(value);
+  if (name === "TAR_OPTIONS") {
+    return /(^|[\s,'"=])--?to-command(=|\s)/.test(value) || tarRunsCommand(parseOpts(value.split(/\s+/).filter(Boolean).map(w => lit(w)), tarSpec(false)), false);
+  }
   if (/RUSTFLAGS$/.test(name)) return /(^|[\s,'"=])-C\s*linker=/.test(value);
-  if (name === "PYTEST_ADDOPTS") return /(^|[\s,'"=])-p(=|\s+)(?!no:)/.test(value);
+  if (name === "PYTEST_ADDOPTS") return /(^|[\s,'"=])-p(=|\s+)?(?!no:)\S/.test(value);
   return false;
 }
 /**
  * Whether a variable set in front of a command names a program or command the command runs (commands-remote-c8-1), so
  * its value must be judged. A value Ember can't see counts only for a listed program variable, never for an ordinary
- * name (a URL or a path there wouldn't, so `DATABASE_URL=… npm test` runs).
+ * name (a URL or a path there wouldn't, so `DATABASE_URL=… npm test` runs). An options variable's written text is
+ * judged even where part of it is out of sight, so a sub-option whose value is a variable (`GOFLAGS="-toolexec=$T"`,
+ * `TAR_OPTIONS="--to-command=$T"`) asks as the written-out value does (`raw`, the word as written: commands-remote-x8-4).
  */
-function namesProgram(name: string, value: string | null): boolean {
-  if (value === null) return PROGRAM_CMD_VARS.has(name);
+function namesProgram(name: string, value: string | null, raw?: string): boolean {
+  if (value === null) return PROGRAM_CMD_VARS.has(name) || (raw !== undefined && PROGRAM_OPT_VARS.test(name) && optNamesProgram(name, raw.replace(/["']/g, "")));
   if (PROGRAM_OPT_VARS.test(name)) return optNamesProgram(name, value);
   // A listed compiler or pager variable holds a command, so any shell operator counts; any other name only when the
   // value plainly starts a command (a leading shell, or one after a pipe or `;`), or holds a substitution.
@@ -2380,7 +2393,7 @@ class Engine extends Classifier {
       // (PROGRAM_CMD_VARS) and any other name hold a command when the value looks like one; an option variable
       // (PROGRAM_OPT_VARS) when a sub-option names a program (`-toolexec=`, `--to-command=`). An ordinary value
       // (`CC=clang`, `GOFLAGS=-mod=vendor`) runs. Ember's own refusal from the value comes through its row.
-      else if (beforeCommand && namesProgram(a.name, a.value.v)) this.unclear("unclear.assignment", "It changes how commands are found or run.");
+      else if (beforeCommand && namesProgram(a.name, a.value.v, a.value.raw)) this.unclear("unclear.assignment", "It changes how commands are found or run.");
       if (a.value.v !== null && commandLineSecret(`${a.name}=${a.value.v}`)) this.add("secret", "secret.token-arg", SAYS.tokenArg);
       this.setVar(a.name, [a.value], sc, false, beforeCommand);
     }
@@ -4523,21 +4536,29 @@ reg(NATIVE, ["chmod", "chown", "chgrp", "setfacl", "chattr", "chflags"], h => {
 const TAR_VALUE = "fCbKNTXgLVFHI";
 /** A Mac's own tar (bsdtar): -H and -L follow links, -I names a file list as -T does, and -s takes a pattern. */
 const BSDTAR_VALUE = "fCbTXIs";
+/** tar's option table, for its row and for TAR_OPTIONS, which GNU tar reads as options too (commands-remote-x8-4). */
+function tarSpec(bsd: boolean): OptSpec {
+  return {
+    shortValue: bsd ? BSDTAR_VALUE : TAR_VALUE,
+    longValue: ["file", "directory", "files-from", "exclude-from", "exclude", "use-compress-program", "transform", "xform", "to-command", "info-script", "new-volume-script", "newer", "after-date", "owner", "group", "mode", "mtime", "format", "label", "volno-file", "checkpoint-action", "index-file", "warning", "record-size", "blocking-factor", "tape-length", "sort", "strip-components", "exclude-tag", "exclude-tag-all", "exclude-tag-under", "suffix", "owner-map", "group-map", "level", "hole-detection", "pax-option", "quoting-style", "quote-chars", "no-quote-chars", "rmt-command", "rsh-command", "listed-incremental", "starting-file", "options"],
+    longOptional: ["backup", "checkpoint", "occurrence", "one-top-level", "totals", "atime-preserve"],
+  };
+}
+/** Whether tar's options name a command it runs: a filter, a compressor, a volume script, a checkpoint's action, a shell. */
+function tarRunsCommand(p: Parsed, bsd: boolean): boolean {
+  return has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I")) || values(p, "checkpoint-action").length > 0;
+}
 reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const a = [...h.args];
   // Old-style bundled first argument (`tar xzf x.tgz`).
   if (a[0]?.v && !a[0].v.startsWith("-")) a[0] = { ...a[0], v: `-${a[0].v}` };
   const bsd = h.key === "bsdtar" || (h.key === "tar" && h.sc.os === "darwin");
-  const p = parseOpts(a, {
-    shortValue: bsd ? BSDTAR_VALUE : TAR_VALUE,
-    longValue: ["file", "directory", "files-from", "exclude-from", "exclude", "use-compress-program", "transform", "xform", "to-command", "info-script", "new-volume-script", "newer", "after-date", "owner", "group", "mode", "mtime", "format", "label", "volno-file", "checkpoint-action", "index-file", "warning", "record-size", "blocking-factor", "tape-length", "sort", "strip-components", "exclude-tag", "exclude-tag-all", "exclude-tag-under", "suffix", "owner-map", "group-map", "level", "hole-detection", "pax-option", "quoting-style", "quote-chars", "no-quote-chars", "rmt-command", "rsh-command", "listed-incremental", "starting-file", "options"],
-    longOptional: ["backup", "checkpoint", "occurrence", "one-top-level", "totals", "atime-preserve"],
-  });
+  const p = parseOpts(a, tarSpec(bsd));
   const extract = has(p, "x", "extract", "get");
   const create = has(p, "c", "create", "r", "append", "u", "update", "A", "catenate", "concatenate");
   const archive = values(p, "f", "file")[0];
   const dir = values(p, "C", "directory")[0];
-  if (has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I")) || values(p, "checkpoint-action").length) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
+  if (tarRunsCommand(p, bsd)) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
   // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
   for (const f of values(p, "T", "files-from", "X", "exclude-from", ...(bsd ? ["I"] : []))) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // An incremental backup's snapshot file, which tar rewrites, and the owner and group maps it reads (commands-remote-v5-3).
@@ -6654,10 +6675,13 @@ reg(NATIVE, ["go"], h => {
   const rest = h.args.slice(firstOperand(h.args).at + 1);
   // `go test -exec`, `go build -toolexec` and `-vettool` name a program go runs over the build: a value that looks like
   // a command asks, as `GOFLAGS=-toolexec=…` does (commands-remote-c8-1).
+  // Written with two dashes too, and with its value attached out of Ember's sight (`-toolexec="$T"`), which is a program
+  // Ember can't see, as the value written apart is (commands-remote-x8-4).
   for (let k = 0; k < rest.length; k++) {
-    const m = /^-(exec|toolexec|vettool)(=(.*))?$/.exec(rest[k].v ?? "");
+    const word = rest[k].v ?? rest[k].raw.replace(/["']/g, "");
+    const m = GO_PROGRAM_ARG.exec(word);
     if (!m) continue;
-    const prog = m[2] !== undefined ? m[3] : rest[k + 1]?.v ?? null;
+    const prog = rest[k].v === null ? null : m[1] !== undefined ? m[1] : rest[k + 1]?.v ?? null;
     if (prog === null || namesProgram("CC", prog) || /[\\/]/.test(prog)) h.e.unclear("unclear.assignment", "It runs a program Ember can't vouch for.");
   }
   if (verb === "install" || verb === "get") { languageInstall(h, rest.filter(a => !isOption(a))); return; }

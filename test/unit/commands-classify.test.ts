@@ -284,6 +284,27 @@ describe("the download-and-run fixes, decided no less safely than main (round ei
     expect(run("pip download foo -d . && ls").decision.verdict).toBe("run");
     expect(run("go build -o app .", { downloaded: ["/home/ana/proj/data.csv"] }).decision.verdict).toBe("run");
   });
+
+  it("asks for a program option written another way or carried in a variable (commands-remote-x8-4)", () => {
+    for (const cmd of [
+      "T='sh -c \"echo hi\"'; go build -toolexec=\"$T\" ./...", "T='sh -c \"echo hi\"'; go test -exec=\"$T\" ./...", "go build --toolexec=/tmp/t ./...",
+      "go build --toolexec /tmp/t ./...", "T=/tmp/t; GOFLAGS=\"-toolexec=$T\" go build ./...", "GOFLAGS=-toolexec=$T go build ./...",
+      "GOFLAGS=--toolexec=/tmp/t go build ./...", "TAR_OPTIONS=\"--to-command=$T\" tar xf a.tar", "RUSTFLAGS=\"-C linker=$L\" cargo build",
+      "TAR_OPTIONS=--to-com=./t tar xf a.tar", "TAR_OPTIONS='-I ./t' tar xf a.tar", "TAR_OPTIONS=--use-compress-program=./t tar xf a.tar",
+      "TAR_OPTIONS='--checkpoint=1 --checkpoint-action=exec=./t' tar xf a.tar", "PYTEST_ADDOPTS=\"-p $P\" pytest", "PYTEST_ADDOPTS='-pplug' pytest",
+    ]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    // Ordinary options, and a variable that only extends the options already set, run.
+    for (const cmd of [
+      "GOFLAGS=-mod=vendor go build ./...", "GOFLAGS=\"$GOFLAGS -mod=vendor\" go build ./...", "RUSTFLAGS=\"$RUSTFLAGS -C target-cpu=native\" cargo build",
+      "TAR_OPTIONS=--no-same-owner tar xf a.tar", "TAR_OPTIONS=-p tar xf a.tar", "PYTEST_ADDOPTS='-p no:cacheprovider' pytest", "go build -toolexec=t ./...",
+      "GOFLAGS='-ldflags=-X=main.version=1.2' go build ./...", "GOFLAGS=\"-mod=vendor $EXTRA\" go build ./...",
+      "CGO_CFLAGS=\"$(pkg-config --cflags x)\" go build", "PYTEST_ADDOPTS=\"$PYTEST_ADDOPTS -v\" pytest", "PYTEST_ADDOPTS='-pno:cacheprovider' pytest",
+    ]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("run");
+    }
+  });
 });
 
 describe("the second pass (§3.6, §3.8.3): the target's real paths", () => {

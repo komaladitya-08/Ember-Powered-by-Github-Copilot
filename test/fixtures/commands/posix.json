@@ -17352,6 +17352,99 @@
    "downloaded": [
     "/home/ana/Downloads/report.pdf"
    ]
+  },
+  {
+   "cmd": "T='sh -c \"curl|sh\"'; go build -toolexec=\"$T\" ./...",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "go build --toolexec=/tmp/t ./...",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "GOFLAGS=\"-toolexec=$T\" go build ./...",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "GOFLAGS=--toolexec=/tmp/t go build ./...",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "TAR_OPTIONS=\"--to-command=$T\" tar xf a.tar",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "TAR_OPTIONS=--to-com=./t tar xf a.tar",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "TAR_OPTIONS='-I ./t' tar xf a.tar",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "TAR_OPTIONS=--use-compress-program=./t tar xf a.tar",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "TAR_OPTIONS='--checkpoint=1 --checkpoint-action=exec=./t' tar xf a.tar",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "PYTEST_ADDOPTS='-pplug' pytest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "PYTEST_ADDOPTS=\"-p $P\" pytest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "GOFLAGS=\"$GOFLAGS -mod=vendor\" go build ./...",
+   "verdict": "run"
+  },
+  {
+   "cmd": "CGO_CFLAGS=\"$(pkg-config --cflags x)\" go build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "PYTEST_ADDOPTS='-pno:cacheprovider' pytest",
+   "verdict": "run"
+  },
+  {
+   "cmd": "TAR_OPTIONS=--no-same-owner tar xf a.tar",
+   "verdict": "run"
   }
  ]
 }
