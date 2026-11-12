@@ -347,6 +347,17 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
     expect(VOICE_ANSWER_REFUSED["own-voice"]).toBe("I was still speaking, so I didn't take that as an answer. Say it again now.");
   });
 
+  it("dates what is said in a follow-up window from its own start, as in a conversation and the answer window: a question read out after the window opened doesn't make the first answer one said over Ember (V2-S9; source pins)", () => {
+    // The follow-up window opened after "On it."; the question came 1.5 s later and was read out; "Not now." 2 s after
+    // that was refused as "I was still speaking…", and took a second try: the echo guard dated it from the window's opening.
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toMatch(/case "wake":\s*answerListening = false;\s*followUpListening = false;/);
+    expect(main).toMatch(/answerListening = e\.window === "answer" && e\.on;\s*followUpListening = e\.window === "follow-up" && e\.on;/);
+    expect(main).toMatch(/if \(e\.on && followUpListening\) \{ heardFrom = Date\.now\(\); speechStarts\(\); \}\s*else if \(e\.on && saidFrom < heardFrom \+ 1\) speechStarts\(\);/);
+    // The guard itself is as it was: Ember speaking now, or since that start, is its own voice.
+    expect(main).toMatch(/selfSpoke: e\.overEmber === true \|\| \(voice\?\.selfSpokeSince\(heardFrom\) \?\? true\),\s*\}\);/);
+  });
+
   it("says once a question when an answer said over other sound wasn't taken, and how to be heard, rather than nothing (owner's report of 2026-11-12)", () => {
     expect(VOICE_ANSWER_REFUSED["over-sound"]).toBe("Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.");
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
