@@ -2617,3 +2617,14 @@ the user's own words, never one that would read or print secrets or outlive the 
 organisation's policy or the user's own "ask every command" requires. (8) **Routines:** a routine's saved steps are
 not the user's words for Assisted's check; the request that started the routine is. (9) **"Okay" and "go on":** while
 a question is up, a bare "okay" or "go on" allows it, as "okay, go with it" and "sure" do.
+
+**A page's link clicked** (loosened 2026-11-12, `.claude/rules/agent-and-policy.md`, not CLAUDE.md; found by the
+investigation of the owner's report). Policy read a page's link by what it leads to (`linkCommands`) only with
+`inPage`, which the worker sends for keys and typing; a click carries `onPage`, so a result titled "How to install
+Node.js" was judged as a button, asked "You didn't ask for this" and put the rest of the task back to asking, and with
+its thumbnail's twin was refused before any question. `riskOf` and the worker's `livingPage()` now read it by either.
+Proof: round eight's corpus (838,392 steps) decides exactly as before, and its checks pass; on a corpus of 40 titles
+and commands in five shapes (3,200 steps) only page links clicked change, 80 steps of five titles: on an ordinary page
+each loses its name's question and flag, and on a payment page it still asks, flagged. A native app's link, a page's
+button or menu item, a payment page's control and a link that says what it does ask as before, and `judge()` still
+calls an off-task one something the user didn't ask for.

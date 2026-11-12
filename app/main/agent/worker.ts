@@ -32,7 +32,7 @@ import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import { helperCantRun } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
-import { isRiskyLabel } from "../policy/policy";
+import { riskyOnPage } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
@@ -2789,7 +2789,7 @@ export class Worker {
    * (checkPageTarget); a question still binds its answer to the whole tree, and a risky word still asks.
    */
   private livingPage(node: AxNode): boolean {
-    return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld && !isRiskyLabel(node.name, this.kc.os);
+    return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld && !riskyOnPage(node.role, node.name, this.kc.os);
   }
 
   /**

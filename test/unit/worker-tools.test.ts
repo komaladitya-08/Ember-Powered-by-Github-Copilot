@@ -1377,6 +1377,40 @@ describe("approval stays with the action the user saw (safety review)", () => {
       expect(events).toEqual([]);
     });
 
+    // A result's title is what it leads to: "install" in it isn't a request to install (investigation V2 and P2b).
+    it("opens a result titled with a risky word whose thumbnail repeats its name, and asks nothing more of the task for it (owner's report of 2026-11-12)", async () => {
+      const title = "How to install Node.js on Windows 11";
+      const next: AxNode = { id: 4, parent: 0, depth: 1, role: "link", name: "Next page", states: ["enabled", "sensitive"], bounds: null };
+      const { call, asked, events } = makeWorker({ role: "link", name: title, parentRole: "document web", grants: {}, more: [{ ...twin, name: title }, next],
+        goal: "find me a video about node", userWords: "find me a video about node" });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).not.toMatch(/didn't ask for this/);
+      // Allowed in the browser for this task, the next ordinary step asks nothing: the task wasn't put back to asking.
+      expect((await call("click", { id: 4 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(events.filter(e => e === "start")).toHaveLength(2);
+    });
+
+    it("still refuses a page's button whose risky name repeats, before asking (owner's report of 2026-11-12)", async () => {
+      const { call, asked, events } = makeWorker({ role: "push button", name: "Install", parentRole: "document web",
+        more: [{ ...twin, role: "push button", name: "Install" }] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(asked).toEqual([]);
+      expect(events).toEqual([]);
+    });
+
+    it("still refuses a page's link that says what it does when its name repeats, before asking (owner's report of 2026-11-12)", async () => {
+      const { call, asked, events } = makeWorker({ role: "link", name: "Delete my account", parentRole: "document web",
+        more: [{ ...twin, name: "Delete my account" }] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(asked).toEqual([]);
+      expect(events).toEqual([]);
+    });
+
     it("still refuses repeated names in a dialog on the page", async () => {
       const { call, events } = makeWorker({ role: "link", name: "Open", parentRole: "dialog",
         more: [{ id: 9, parent: null, depth: 0, role: "document web", name: "", states: [], bounds: null }, { ...twin, name: "Open" }] });

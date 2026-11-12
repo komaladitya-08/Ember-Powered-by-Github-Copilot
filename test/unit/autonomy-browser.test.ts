@@ -178,6 +178,39 @@ describe("what still asks in a browser, whatever is on", () => {
     asks(edge({ kind: "click", inPage: true, element: { role: "link", name } }));
   });
 
+  // The worker says a click lands in a page with `onPage` (from the tree), never `inPage`: a result titled with a risky
+  // word was judged as a button, asked "You didn't ask for this" and put the rest of the task back to asking.
+  const titles = ["Post Malone - Circles (Official Video)", "How to install Node.js on Windows 11", "How to Remove Malware from Windows 11", "Why people share passwords"];
+  const plain = new PolicyEngine({ neverLook: () => [], grants: () => ({ msedge: "act" }), os: "win32", keys: KEYS.win32 });
+
+  it.each(titles.flatMap(name => (["click", "cursor_click"] as const).map(kind => [name, kind] as const)))(
+    "follows a page's link titled “%s” as the worker sends a %s, and never calls it unasked (owner's report of 2026-11-12)", (name, kind) => {
+      expect(engine(true).decide(edge({ kind, onPage: true, goal: "play a song on youtube", element: { role: "link", name } })).verdict).toBe("allow");
+      const d = plain.decide(edge({ kind, onPage: true, goal: "play a song on youtube", element: { role: "link", name } }));
+      expect(d.aligned).toBeUndefined();
+      expect(d.prompt).not.toMatch(/didn't ask for this/);
+    });
+
+  it.each(["Delete my account", "Delete Repository - GitHub", "Buy now | Shop", "Post All - Blog", "Send Money - PayPal"])(
+    "still asks every time about a page's link that says what it does, “%s”, as the worker sends a click (owner's report of 2026-11-12)", name => {
+      for (const kind of ["click", "cursor_click"] as const) {
+        const d = engine(true).decide(edge({ kind, onPage: true, element: { role: "link", name } }));
+        expect(d).toMatchObject({ verdict: "confirm", risky: true });
+        expect(d.autonomy).toBeUndefined();
+        // Off the user's task, it is still called something they didn't ask for (and the task goes back to asking).
+        expect(plain.decide(edge({ kind, onPage: true, goal: "play a song on youtube", element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", aligned: false });
+      }
+    });
+
+  it("still asks about a page's link on a payment page, a native app's link, and a page's button or menu item named so (owner's report of 2026-11-12)", () => {
+    const name = "How to install Node.js on Windows 11";
+    expect(engine(true).decide(edge({ kind: "click", onPage: true, window: "Checkout - Shop", element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", risky: true });
+    for (const r of [{ element: { role: "link", name } }, { onPage: true, element: { role: "push button", name } }, { onPage: true, element: { role: "menu item", name } }]) {
+      const d = plain.decide(edge({ kind: "click", goal: "play a song on youtube", ...r }));
+      expect(d).toMatchObject({ verdict: "confirm", aligned: false });
+    }
+  });
+
   it.each(["Post Malone - Circles (Official Video)", "How to install Node", "Why people share passwords"])("not a link that only names what it leads to: “%s”", name => {
     expect(engine(true).decide(edge({ kind: "click", inPage: true, goal: "play a song", element: { role: "link", name } })).verdict).toBe("allow");
   });
