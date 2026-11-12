@@ -43,7 +43,7 @@ const electron = vi.hoisted(() => {
 vi.mock("electron", () => electron);
 
 import { VoiceGate } from "../../app/voice/match";
-import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_ANNOUNCED, LISTEN_ONCE_HUSH, LISTEN_ONCE_STOPS_ANSWER, VoiceService, cutByQuestion, heldByQuestion, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
+import { ANSWER_WINDOW_MS, LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_ANNOUNCED, LISTEN_ONCE_HUSH, LISTEN_ONCE_STOPS_ANSWER, VoiceService, cutByQuestion, heldByQuestion, listenOnceInSettings, questionHoldsListen, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import { micBadge } from "../../app/shared/mic";
 import crypto from "node:crypto";
@@ -67,7 +67,7 @@ const LISTENING: ModelId[] = ["kws", "vad", "asr"];
 const markers = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".ok")).sort();
 const markerOf = (id: ModelId) => `.${VOICE_MODELS.find(m => m.id === id)!.target}.ok`;
 
-function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "naturalModel" | "naturalSupported" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav" | "onEvent" | "screenReaderOn">> & { onEnrol?: (e: unknown) => void } = {}) {
+function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "naturalModel" | "naturalSupported" | "native" | "downloader" | "voiceprint" | "log" | "onNatural" | "onSample" | "testMicWav" | "onEvent" | "screenReaderOn" | "outputLevel">> & { onEnrol?: (e: unknown) => void } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
@@ -842,6 +842,54 @@ describe("VoiceService", () => {
     expect(posted(proc, "follow-up")).toEqual([]);
     speaking(mic, false);
     expect(posted(proc, "follow-up")).toEqual([{ type: "follow-up", ms: 8000 }]);
+  });
+
+  it("opens a question's answer window only once Ember has finished saying the question, and drops it when Ember is hushed (owner's report of 2026-11-12)", async () => {
+    vi.useFakeTimers();
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+    v.speak("Ember asks: Click Save in gedit?");
+    v.answerWindow();
+    expect(posted(proc, "answer-window")).toEqual([]);
+    speaking(mic, true);
+    expect(posted(proc, "answer-window")).toEqual([]);
+    speaking(mic, false);
+    expect(posted(proc, "answer-window")).toEqual([{ type: "answer-window", ms: ANSWER_WINDOW_MS }]);
+    // Hushed while it waits (a wake, Stop, Listen once): it never opens after the speech it waited for.
+    v.speak("Ember asks: Click Close?");
+    speaking(mic, true);
+    v.answerWindow();
+    v.hush();
+    speaking(mic, false);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(posted(proc, "answer-window")).toHaveLength(1);
+    // With nothing to say first (speaking off), at once; and a follow-up asked for with it still opens.
+    v.followUp(8000);
+    v.answerWindow();
+    expect(posted(proc, "follow-up")).toEqual([{ type: "follow-up", ms: 8000 }]);
+    expect(posted(proc, "answer-window")).toHaveLength(2);
+  });
+
+  it("tells the voice process when the output watch knows nothing, and has a new microphone page watch as the last one did (owner's report of 2026-11-12)", async () => {
+    const { v } = service(true, { outputLevel: true });
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+    const watches = (w: typeof mic) => w.webContents.send.mock.calls.filter(c => c[0] === VOICE.outputWatch).map(c => c[1]);
+    v.watchOutput(true);
+    expect(watches(mic)).toEqual([true]);
+    electron.ipcMain.emit(VOICE.outputBusy, { sender: mic.webContents }, true);
+    electron.ipcMain.emit(VOICE.outputBusy, { sender: mic.webContents }, null);
+    electron.ipcMain.emit(VOICE.outputBusy, { sender: mic.webContents }, "yes");
+    expect(posted(proc, "other-sound")).toEqual([{ type: "other-sound", on: true }, { type: "other-sound", on: null }]);
+    // Listening starts again (a new voice process and page): the watch goes on there, so what plays is known again.
+    await v.setWanted(false);
+    await v.setWanted(true);
+    const again = electron.windows.findLast(w => w.title === "Ember microphone")!;
+    expect(again).not.toBe(mic);
+    expect(watches(again)).toEqual([true]);
   });
 
   it("tells the follow-up window that the answer asked something", async () => {

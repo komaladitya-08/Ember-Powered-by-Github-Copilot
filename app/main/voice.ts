@@ -111,6 +111,11 @@ const LISTEN_ONCE_DOUBT_SETTINGS = "There was talking, but it wasn't clear it wa
  */
 export const LISTEN_ONCE_HUSH = "Stops speaking first, then listens for one request.";
 /**
+ * How long a question's answer window listens for a bare "allow" or "not now" once Ember has said the question (ms):
+ * as long as a follow-up window. Short, as the room's talk could otherwise answer: what is said later needs the name.
+ */
+export const ANSWER_WINDOW_MS = 8000;
+/**
  * Listen once's line while an answer is on its way: a press stops it first, as a wake does (main's requestListenOnce).
  * No name at all, not even "Ember's", which `calledByName` leaves out: the recogniser joins the word before it to the
  * name, and "Stops Ember's answer, …", said after each Listen once until the answer came, was heard as "Stop Timbers'
@@ -280,6 +285,8 @@ export class VoiceService {
   private followUpMs = 0;
   private followUpAsked = false;
   private followUpTimer: NodeJS.Timeout | null = null;
+  /** A question's answer window (ms) waiting, with the follow-up's timer, for Ember to finish speaking (answerWindow). */
+  private answerMs = 0;
   private listeningGeneration = 0;
   private capturing = false;
   private captureGeneration = 0;
@@ -417,7 +424,8 @@ export class VoiceService {
       if (Object.keys(l).length) this.o.onLevel?.(l);
     });
     ipcMain.on(VOICE.outputBusy, (e, on: unknown) => {
-      if (!(this.mic && e.sender === this.mic.webContents) || typeof on !== "boolean") return;
+      // (null: the watch knows nothing of the output, which the voice process never takes for quiet.)
+      if (!(this.mic && e.sender === this.mic.webContents) || (typeof on !== "boolean" && on !== null)) return;
       this.o.log.info("voice.other_sound", { on });
       this.proc?.postMessage({ type: "other-sound", on });
     });
@@ -801,19 +809,38 @@ export class VoiceService {
     this.openFollowUp();
   }
 
+  /**
+   * One of Ember's questions is up: listen for its answer without the name (engine.ts answerWindow), once Ember has
+   * finished saying it (or a note about it), or at once where it says nothing. Never while it speaks, or it would hear
+   * itself; a hush, a wake, Listen once or Stop drops it, as a follow-up is dropped (owner's report of 2026-11-12).
+   */
+  answerWindow(ms = ANSWER_WINDOW_MS): void {
+    if (this.manual || !this.wanted) return;
+    this.answerMs = ms;
+    this.openFollowUp();
+  }
+
   private openFollowUp(): void {
     if (this.followUpTimer) clearTimeout(this.followUpTimer);
     this.followUpTimer = null;
-    if (!this.followUpMs || this.ttsPending.size) return;
+    if ((!this.followUpMs && !this.answerMs) || this.ttsPending.size) return;
     const wait = this.speakingUntil - Date.now();
     if (wait > 0) { this.followUpTimer = setTimeout(() => this.openFollowUp(), wait); return; }
-    if (this.proc) this.o.log.info("voice.follow_up", { ms: this.followUpMs, afterQuestion: this.followUpAsked });
-    this.proc?.postMessage({ type: "follow-up", ms: this.followUpMs, ...(this.followUpAsked ? { afterQuestion: true } : {}) });
-    this.followUpMs = 0;
+    if (this.followUpMs) {
+      if (this.proc) this.o.log.info("voice.follow_up", { ms: this.followUpMs, afterQuestion: this.followUpAsked });
+      this.proc?.postMessage({ type: "follow-up", ms: this.followUpMs, ...(this.followUpAsked ? { afterQuestion: true } : {}) });
+      this.followUpMs = 0;
+    }
+    if (this.answerMs) {
+      if (this.proc) this.o.log.info("voice.answer_window", { ms: this.answerMs });
+      this.proc?.postMessage({ type: "answer-window", ms: this.answerMs });
+      this.answerMs = 0;
+    }
   }
 
   private dropFollowUp(): void {
     this.followUpMs = 0;
+    this.answerMs = 0;
     this.openFollowUp();
   }
 
@@ -883,10 +910,15 @@ export class VoiceService {
     if (win && !win.isDestroyed()) win.webContents.send(VOICE.duck, on);
   }
 
-  /** A conversation opened or closed: while it is open, the mic page watches whether other sound plays. */
+  /**
+   * Whether the mic page watches if other sound plays (main: while a conversation is open, a question is up or a task is
+   * at work). Kept, so a new mic page (listening started again) watches as the last one did.
+   */
   watchOutput(on: boolean): void {
+    this.outputWatched = on;
     if (this.o.outputLevel && this.mic && !this.mic.isDestroyed()) this.mic.webContents.send(VOICE.outputWatch, on);
   }
+  private outputWatched = false;
 
   /** The page asking for the output's level is the mic page, in a build where it can. */
   allowsOutputLevel(wc: Electron.WebContents | null | undefined): boolean {
@@ -1624,6 +1656,7 @@ export class VoiceService {
       this.o.log.warn("voice.mic_page_failed", { err });
     });
     if (mic.isDestroyed() || this.mic !== mic) return;
+    if (this.outputWatched) this.watchOutput(true);
     const connectMic = () => mic.webContents.postMessage(VOICE.port, null, [port2]);
     if (temporary && !this.readyAt) connectTemporaryMic = connectMic;
     else connectMic();

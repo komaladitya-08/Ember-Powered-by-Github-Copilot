@@ -1624,15 +1624,17 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-count").innerText()).toBe("Step 2 of 6");
     expect(await p.locator("#w-changes").isVisible()).toBe(true);
     const changed = await p.locator("#w-changes-list li").allInnerTexts();
-    expect(changed).toHaveLength(1);
+    expect(changed).toHaveLength(2);
     expect(changed[0]).toContain("“Keep my recent conversation”");
+    // Version 8 (owner decision of 2026-11-12): anyone near the computer can answer Ember's questions by voice.
+    expect(changed[1]).toContain("anyone near the computer can answer it by voice");
     // The usual points and the full text are still there; nothing goes on until Agree is saved.
     expect(await p.locator("#w-points li").count()).toBe(5);
     expect(await next(p).innerText()).toBe("Agree and continue");
     // Agree takes a press once it has been on screen a moment (first-run-c1-1).
     await p.waitForTimeout(AGREE_ARM_MS + 100);
     await next(p).click();
-    await expect.poll(async () => (await calls(p)).some(c => c.startsWith('save:{"consent":{"version":7'))).toBe(true);
+    await expect.poll(async () => (await calls(p)).some(c => c.startsWith('save:{"consent":{"version":8'))).toBe(true);
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
     // Back: agreed now, so the step is the usual one and lists no changes.
     await p.locator("#w-back").click();

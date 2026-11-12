@@ -64,7 +64,8 @@ export interface MicApi {
   onSpeak(fn: (r: SpeakRequest) => void): void;
   onDuck(fn: (on: boolean) => void): void;
   onOutputWatch(fn: (on: boolean) => void): void;
-  outputBusy(on: boolean): void;
+  /** Other sound plays, or not; null: nothing is known of it (the watch hasn't looked, or stopped). */
+  outputBusy(on: boolean | null): void;
   onHush(fn: (generation: number) => void): void;
   onAudio(fn: (a: SpeechAudio) => void): void;
   onAudioDone(fn: (id: number) => void): void;

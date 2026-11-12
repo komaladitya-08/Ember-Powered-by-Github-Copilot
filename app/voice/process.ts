@@ -43,14 +43,16 @@ type FromMain =
   | { type: "self-words"; text: string }
   /** Conversations turned on or off (settings' voice.conversation). */
   | { type: "conversation"; on: boolean }
-  /** The computer is playing other sound (a song's words aren't requests), or no longer. */
-  | { type: "other-sound"; on: boolean }
+  /** The computer is playing other sound (a song's words aren't requests), or no longer; null: nothing is known of it. */
+  | { type: "other-sound"; on: boolean | null }
   /** A reply or a task is under way (a conversation stays open), or none any more. */
   | { type: "conversation-busy"; on: boolean }
   /** One of Ember's questions is up (or no longer): a "no" in a follow-up window then answers it. */
   | { type: "question"; up: boolean }
   /** `afterQuestion`: Ember's answer asked something ("Okay." is then a reply, not a closer). */
   | { type: "follow-up"; ms: number; afterQuestion?: boolean }
+  /** One of Ember's questions is up and Ember has finished saying it: listen for its answer without the name (engine.ts answerWindow). */
+  | { type: "answer-window"; ms: number }
   /** `announced`: what Ember's windows say as it opens, while a screen reader runs (engine.ts withoutAnnounced). */
   | { type: "listen-once"; generation: number; from: number; ms: number; announced?: string[] }
   | { type: "cancel"; generation: number };
@@ -246,7 +248,9 @@ parent.on("message", e => {
           manualWindow = null;
         }
         gate.event(e, e.type === "utterance" ? made.requestAudio : null, e.type === "utterance" && made.requestWithWake);
-      }, { conversation: !!m.conversation });
+      }, { conversation: !!m.conversation, otherSound: null });
+      // (otherSound null: nothing is known of other sound until the platform says, Windows' output watch or Linux's
+      // speakers' stream, and a yes said without the name to a question is no one's till then: engine.ts soundKnown.)
       engine = made;
       if (m.monitor) speakers.start();
       send({ type: "ready", loadMs: Date.now() - t0, backend: recognizers.info });
@@ -303,6 +307,8 @@ parent.on("message", e => {
     engine?.questionUp(m.up);
   } else if (m.type === "follow-up") {
     engine?.followUp(m.ms, { afterQuestion: m.afterQuestion });
+  } else if (m.type === "answer-window") {
+    if (typeof m.ms === "number" && Number.isFinite(m.ms) && m.ms > 0) engine?.answerWindow(Math.min(m.ms, 30_000));
   } else if (m.type === "listen-once") {
     if (enrolment || broken || !engine) return;
     gate.cancel();

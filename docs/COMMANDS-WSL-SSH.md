@@ -397,9 +397,10 @@ view ("Read the whole command to allow it."). The approve chord (Ctrl+Alt+Y, Win
 works only while that card shows the whole command (not while the window is blank after its page crashed, until the
 page loads again and shows it); **Not now** and the deny chord always work. While the card is up,
 Ember and its bubble keep clear of the command window (as they do of settings), and the same goes for Ember's sign-in
-and consent cards. There is never an "Always" for commands. A spoken “Ember, allow” approves one only when Voice Match
-recognises your voice, and only while the card shows the whole command, as the approve chord does; “Ember, not now”
-works for anyone. With **Work without asking** on (Settings › Apps & privacy), an ordinary command on this computer that would ask
+and consent cards. There is never an "Always" for commands. A spoken “Ember, allow” approves one from anyone heard while
+**Only my voice can say yes (Voice Match)** is off, its default, and only when Voice Match recognises your voice while
+it is on; either way only while the card shows the whole command, as the approve chord does. “Ember, not now” works for
+anyone. With **Work without asking** on (Settings › Apps & privacy), an ordinary command on this computer that would ask
 only because it carries text Ember read in another window runs after its Stop countdown instead; in WSL and over SSH it
 asks as before, and dangerous ones always ask.
 A notification (and

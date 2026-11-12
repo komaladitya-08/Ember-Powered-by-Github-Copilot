@@ -962,13 +962,13 @@ describe("Read all: by the lines an answer takes, not its characters (review #12
 describe("a question said aloud and in a notification names where it comes from (review #13)", () => {
   it("says the computer when it isn't this one, with the keys that answer it", () => {
     const words = questionAloud({ prompt: "Click **Save** in gedit?", where: "on build-01" }, { keys: ["Control Alt Y to allow"], spoken: s => s.replace(/\*/g, "") });
-    expect(words).toEqual({ say: "Ember asks, on build-01: Click Save in gedit? Press Control Alt Y to allow.", notify: "On build-01: Click **Save** in gedit?" });
+    expect(words).toEqual({ say: "Ember asks, on build-01: Click Save in gedit? To allow, press Control Alt Y.", notify: "On build-01: Click **Save** in gedit?" });
     expect(questionAloud({ prompt: "Click Save?" })).toEqual({ say: "Ember asks: Click Save?", notify: "Click Save?" });
   });
 
   it("says Allow waits for all of a long typed text to have been shown, and what the approve key does till then (review #116)", () => {
     const words = questionAloud({ prompt: "Type “Dear…Bye” (191 characters) into the “Message” text field?", detail: "Dear team, … Bye" }, { keys: ["Control Alt Y to show the next part", "Control Alt N for not now"] });
-    expect(words.say).toBe("Ember asks: Type “Dear…Bye” (191 characters) into the “Message” text field? You can allow it once all of it has been shown. Press Control Alt Y to show the next part, or Control Alt N for not now.");
+    expect(words.say).toBe("Ember asks: Type “Dear…Bye” (191 characters) into the “Message” text field? You can allow it once all of it has been shown. To show the next part, press Control Alt Y; for not now, press Control Alt N.");
     // The notification is the question as before.
     expect(words.notify).toBe("Type “Dear…Bye” (191 characters) into the “Message” text field?");
   });

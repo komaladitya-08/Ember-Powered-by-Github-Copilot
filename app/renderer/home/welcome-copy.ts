@@ -127,7 +127,7 @@ export function consentPoints(o: { service: string; kept: string; locked: boolea
       : { icon: "send", text: `When you ask something, your request and what I read go to ${o.service}. Nothing is sent before you ask.` },
     { icon: "hand", text: "I ask before acting in an app, and always before anything hard to undo. I never type passwords." },
     { icon: "lock", text: `On this computer I keep your settings, logs and a record of what you asked and what I did (${o.kept}). If you save a workspace, I encrypt its paths and last request and answer. I send no usage statistics.` },
-    { icon: "plug", text: "The microphone, other computers and commands stay off until you turn them on. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct (never audio)." },
+    { icon: "plug", text: "The microphone, other computers and commands stay off until you turn them on. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct (never audio)." },
   ];
 }
 
@@ -157,7 +157,7 @@ export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly str
   send: ["When you ask something</b>, your request and what Ember read from the screen go to", "Nothing is sent before you ask."],
   hand: ["It asks before acting</b> in an app, and always before anything hard to undo.", "It never types passwords."],
   lock: ["On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for", "Ember encrypts its selected paths and last completed request and answer", "It sends no usage statistics."],
-  plug: ["The microphone stays off</b> unless you turn on", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
+  plug: ["The microphone stays off</b> unless you turn on", "anyone near the computer can answer it by voice", "for a few seconds after it asks, it listens for that answer without its name", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
 };
 
 /** Each CONSENT_CHANGES line beside the full text's words it shortens (home-welcome.test.ts checks every pair against the page). */
@@ -168,6 +168,7 @@ export const CONSENT_CHANGE_SOURCES: Readonly<Record<number, readonly string[]>>
   5: ["If you save a project workspace, Ember encrypts its selected paths and last completed request and answer on this computer"],
   6: ["Once you call Ember it keeps listening through the conversation, and what it hears there goes to", "as text, without its name"],
   7: ["unless you turn on “Keep my recent conversation” under Conversation: then its latest messages stay on this computer"],
+  8: ["While one of Ember's questions is up, anyone near the computer can answer it by voice", "for a few seconds after it asks, it listens for that answer without its name", "with Voice Match on, only your voice can say yes"],
 };
 
 /**
