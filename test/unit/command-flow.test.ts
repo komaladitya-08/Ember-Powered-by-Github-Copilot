@@ -485,6 +485,31 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     }
   });
 
+  it("asks before a program that is only named like an if word, on a bash or sh command line and in a script (commands-held-6)", async () => {
+    const judged = async (command: string, shell?: "bash" | "sh") => {
+      setCommandJudge(null);
+      const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: true, real: p }), run: () => ({ output: ["1\n"] }), ...(shell === "sh" ? { facts: { shells: ["sh", "bash"], shellPaths: { sh: "/bin/sh", bash: "/bin/bash" } } } : {}) });
+      const r = await call(h, { target: "this computer", command, ...(shell ? { shell } : {}) });
+      const card = (h.asked[0]?.panel as { card: CommandCard } | undefined)?.card;
+      return { result: r.resultType, rules: h0rules(h), says: card?.says ?? [], started: h.starts.length };
+    };
+    for (const command of ["./if", "/usr/local/bin/then", "bin/else arg", "~/bin/fi", "'if'", "\\if", "\\fi", "ls; ./fi", "/somewhere/else", "if true; then ./fi; fi"]) {
+      for (const shell of ["bash", "sh"] as const) {
+        const got = await judged(command, shell);
+        expect(got, `${command} (${shell})`).toMatchObject({ result: "denied", started: 0 });
+        expect(got.rules, `${command} (${shell})`).toContain("unclear.named-keyword");
+        expect(got.says, `${command} (${shell})`).toContain("It runs a program named like one of the shell's own words.");
+      }
+    }
+    // The shell's own if, written bare, still runs with nothing to ask.
+    expect(await judged("if true; then ls; fi")).toMatchObject({ result: "success", rules: [], started: 1 });
+    // In a script too: the name is no flow word there either.
+    const script = scriptHarness("#!/bin/bash\n./if build\n", "");
+    const r = await call(script, { target: "this computer", command: "./build.sh" });
+    expect(r.resultType).toBe("denied");
+    expect(h0rules(script)).toContain("unclear.named-keyword");
+  });
+
   it("asks before a loop or an if runs a command with a library preloaded or PATH changed, as it does without one (commands-remote-c1-1)", async () => {
     const judged = async (command: string) => {
       setCommandJudge(null);

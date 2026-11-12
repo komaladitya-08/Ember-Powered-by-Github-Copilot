@@ -207,6 +207,7 @@ export const SAYS = {
   downloadsUnnamed: "Downloads to a file Ember can't name.",
   guardedWord: "It uses a ${…:?} word, which Ember reads as the folder it names but can't be sure of.",
   optionValue: "Ember can't tell whether one of its options takes the word after it.",
+  namedKeyword: "It runs a program named like one of the shell's own words.",
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
   unclear: "Ember can't tell exactly what this does.",
@@ -363,6 +364,9 @@ const accessOf = (use: PathUse): "read" | "safety" => (READ_USES.has(use) ? "rea
  * earlier element read a file this task downloaded (`cat x.py | tee y.py` writes the download out again).
  */
 interface PipeState { fetch: boolean; program: string; carried?: boolean }
+
+/** The POSIX shells' reserved words among the names the keyword row is registered for: a word is one only written bare. */
+const RESERVED_WORDS: ReadonlySet<string> = new Set(["if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac", "select", "function", "coproc", "in", "[[", "]]", "{", "}"]);
 
 /**
  * The findings of sh's and bash's flow words alone (`if`, `then`, `do`…): a command line or script reads through them
@@ -5416,7 +5420,11 @@ reg(NATIVE, ["eval"], h => {
 });
 reg(NATIVE, ["trap", "alias", "unalias", "enable", "builtin", "shopt", "fc", "bind", "coproc", "select", "function", "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac", "[[", "]]", "{", "}", "in", "complete"], h => {
   const words: Record<string, string> = { alias: "It defines an alias Ember can't follow.", unalias: "It changes aliases Ember can't see.", shopt: "It changes how the shell reads commands.", fc: SAYS.interactive };
-  h.e.unclear(`unclear.${h.key.replace(/[^a-z]/g, "") || "keyword"}`, words[h.key] ?? SAYS.unclear);
+  // A POSIX shell's own word only when it is written bare: by a path, quoted or escaped (`./if`, `'then'`, `\fi`), or in
+  // other letters on a Mac (`IF`), it names a program. That asks under a rule of its own, which a command line or a
+  // script never reads through as it does an `if` (scripts.ts's SCRIPT_FLOW; commands-held-6).
+  if (h.sc.family === "posix" && RESERVED_WORDS.has(h.key) && h.nameArg.raw !== h.key) h.e.unclear("unclear.named-keyword", SAYS.namedKeyword);
+  else h.e.unclear(`unclear.${h.key.replace(/[^a-z]/g, "") || "keyword"}`, words[h.key] ?? SAYS.unclear);
   // A loop's variable is set as an assignment is (`for PATH in /tmp/x; do ls; done` changes where ls is found).
   if (h.key === "for" || h.key === "select") {
     h.e.envChanged = true;

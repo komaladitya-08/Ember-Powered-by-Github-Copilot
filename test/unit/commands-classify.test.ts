@@ -2975,4 +2975,26 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
       expect(decided(cmd).verdict, cmd).toBe("run");
     }
   });
+
+  it("asks before a program that is only named like one of the shell's if words, which is no `if` to read through (commands-held-6)", () => {
+    const left = (cmd: string, shell: ShellId = "bash"): string[] => withoutReadFlow(classifyCommand(cmd, shell, contextOf("linux")), shell).findings.map(f => f.rule);
+    for (const cmd of [
+      "./if", "/usr/local/bin/then", "bin/else arg", "~/bin/fi", "./elif x", "'if'", "\"then\"", "\\if", "\\fi", "i\"\"f", "ls; ./fi", "ls && 'else'", "/somewhere/else",
+      "if true; then ./fi; fi", "if ./if; then ls; fi", "true; \\then ls",
+    ]) {
+      for (const shell of ["bash", "sh"] as const) {
+        expect(left(cmd, shell), `${cmd} (${shell})`).toContain("unclear.named-keyword");
+        expect(left(cmd, shell).filter(r => /^unclear\.(if|then|elif|else|fi)$/.test(r) && !/^if /.test(cmd)), `${cmd} (${shell})`).toEqual([]);
+      }
+    }
+    expect(decided("./if").says).toContain("It runs a program named like one of the shell's own words.");
+    // What stands after such a name is still judged as a command, as the word itself always was.
+    expect(decided("./then rm -rf ~").verdict).toBe("refuse");
+    expect(decided("'if' rm -rf build").rules).toContain("posix.rm");
+    // The shell's own words, written bare, are read through as before, and a loop's keep asking.
+    expect(left("if true; then ls; fi")).toEqual([]);
+    expect(left("if [ -f package.json ]; then npm test; else echo no; fi")).toEqual([]);
+    expect(left("for i in 1 2; do echo $i; done")).toEqual(expect.arrayContaining(["unclear.for", "unclear.do", "unclear.done"]));
+    expect(classifyCommand("if true; then ls; fi", "bash", contextOf("linux")).findings.map(f => f.rule)).toEqual(["unclear.if", "unclear.then", "unclear.fi"]);
+  });
 });
