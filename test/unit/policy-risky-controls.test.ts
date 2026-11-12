@@ -316,6 +316,28 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     asksEveryTime(click(name, { ...r, kind: "keys", value: "Return" }));
   });
 
+  // Windows and macOS report Firefox's prompt as a plain dialog, never an alert: its words say it sends again.
+  it.each([["linux", "Firefox", "push button"], ["win32", "firefox", "push button"], ["win32", "firefox", "button"], ["darwin", "Firefox", "push button"],
+    ["darwin", "Firefox", "button"]] as const)("Firefox's “Resend” on %s (%s, a %s) asks every time though the dialog isn't an alert (safety-privacy-x8-5)", (os, app, role) => {
+    const resend = { name: "", text: "To display this page, Firefox must send information that will repeat any action (such as a search or order confirmation) that was performed earlier." };
+    for (const [grant, autonomy] of [[true, false], [true, true], [false, true]]) {
+      const e = new PolicyEngine({ neverLook: () => [], grants: () => (grant ? { [app.toLowerCase()]: "act" } : {}), autonomy: () => (autonomy ? { ...ALL_SCOPES } : null),
+        isTerminalApp: () => false, os, keys: KEYS[os] });
+      for (const step of [click("Resend", { app, window: "Mozilla Firefox", inPage: undefined, goal: "reload the page", dialog: resend, element: { role, name: "Resend" } }),
+        click("Resend", { app, window: "Mozilla Firefox", inPage: undefined, goal: "reload the page", kind: "keys", value: "Return", dialog: resend, element: { role, name: "Resend" } })]) {
+        expect(e.decide(step), `grant=${grant} autonomy=${autonomy} ${step.kind}`).toMatchObject({ verdict: "confirm", risky: true });
+        expect(e.decide(step).autonomy).toBeUndefined();
+        expect(e.decide(step).remember).toBe(false);
+      }
+    }
+  });
+
+  it("a page's own dialog that warns it sends a form again asks when a whole read shows nothing to type in, or its title asks (safety-privacy-x8-5)", () => {
+    const r = { app: "Firefox", inPage: undefined, onPage: true, window: "Orders - Shop — Mozilla Firefox", goal: "reload the page", element: { role: "button", name: "Resubmit" } };
+    asksEveryTime(click("Resubmit", { ...r, dialog: { name: "", text: "Going on will resubmit your order.", alert: true, page: true, controls: [{ role: "button", name: "Resubmit" }, { role: "button", name: "Cancel" }] } }));
+    asksEveryTime(click("Resubmit", { ...r, dialog: { name: "Resubmit the form?", text: "", alert: true, page: true } }));
+  });
+
   it("quotes the dialog, and doesn't call an answer to it something the user didn't ask for (safety-privacy-c8-1)", () => {
     const d = engine().decide(click("Leave page", { inPage: undefined, window: "Edit post", goal: "close the tab", dialog: leave }));
     expect(d.prompt).toMatch(/^Click the “Leave page” button in Firefox\? It says: “This page is asking you to confirm that you want to leave/);

@@ -2305,6 +2305,13 @@ const DECLINES = new RegExp(`^\\s*(${foldLabel([...DECLINE_WORDS, ...DECLINE_WHO
 const declines = (name: string) => DECLINES.test(foldLabel(name)) || DECLINES.test(plainText(name));
 /** A question in a dialog's words where it may have no question mark ("This page is asking you to confirm that you want to leave"). */
 const ASKS_IF_SURE = /\b(are you sure|(do|did) you (really )?(want|mean) to|would you like to|confirm that you want)\b/;
+/**
+ * A warning that going on sends what was sent before once more, which asks without a question mark: Firefox's "…must
+ * send information that will repeat any action (such as a search or order confirmation)…", Chrome's "Confirm Form
+ * Resubmission". Linux reports Firefox's prompt as an alert; Windows and macOS as a plain dialog (regression review of
+ * round eight, safety-privacy-x8-5).
+ */
+const SENDS_AGAIN = /\b(repeat (any|the|an|this|that|your) (actions?|orders?|purchases?|payments?|transactions?|submissions?)|actions? (you took )?(to|will) be repeated|resubmi(t|ts|tting|ssion)|re-?send (the |this |that |your )?(information|data|form)|(send|submit|post) (a |the |this |that |your )?(form|information|data) again)\b/;
 /** Buttons and links that answer a dialog: what they do there is its question's answer. */
 const ANSWER_ROLES = /^(push button|push button menu|button|split button|toggle button|link)$/;
 /**
@@ -2656,7 +2663,8 @@ export class PolicyEngine {
     const warned: Risk = { reason: PAST_WARNING_REASON, about: name, note: `It goes past a warning or turns off a protection.${r.dialog && note ? ` ${note}` : ""}` };
     // Any other answer to a message box (a native one: a page's own dialog is one only by what it asks), or to a dialog
     // that asks a question in a few words (a question mark, or ASKS_IF_SURE: a browser's "Leave site?", "Reload site?",
-    // "Close 12 tabs?", Firefox's "…confirm that you want to leave"; Linux reports Firefox's "Resend" as a message box),
+    // "Close 12 tabs?", Firefox's "…confirm that you want to leave"; or SENDS_AGAIN: Firefox's "Resend", a message box on
+    // Linux only),
     // that doesn't back off (DECLINES: Cancel, Stay on page, No, Close): asked every time, quoting the dialog, and not
     // checked against the request (its words are the app's; audit of 2026-11-11, safety-privacy-c8-1). Not a dialog that
     // only names something risky: Find & Replace, Share, a file chooser with a Trash place. After `answer`, so an OK that
@@ -2666,7 +2674,7 @@ export class PolicyEngine {
     // unless a whole read shows such a field (Find & Replace's: regression review of round eight, safety-privacy-x8-2).
     const typedIn = !!r.dialog && (r.dialog.controls ? r.dialog.controls.some(c => TYPED_IN.test(c.role)) : !!r.dialog.page);
     const asked = r.dialog ? (typedIn ? r.dialog.name : told) : "";
-    const asksInFew = asked.length <= 300 && (/[?？¿]/.test(asked) || ASKS_IF_SURE.test(plainText(asked)));
+    const asksInFew = asked.length <= 300 && (/[?？¿]/.test(asked) || ASKS_IF_SURE.test(plainText(asked)) || SENDS_AGAIN.test(plainText(asked)));
     const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !declines(name) && !plainDialog;
     const answersQuestion: Risk = { reason: "this answers a dialog's question or warning, and Ember can't be sure what that answer does", note };
     // Any control of a page (or an Electron app's window) whose title mentions a payment: it may buy something whatever its
