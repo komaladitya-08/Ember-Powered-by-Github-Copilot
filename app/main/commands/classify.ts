@@ -6694,8 +6694,10 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       if (name === null) { h.e.unclear("unclear.script", "It runs a script Ember can't name."); return; }
       nameCheck(h, name);
       // yarn, pnpm and bun run the project's own rimraf when no script has that name; npm runs only scripts
-      // (commands-remote-c8-2).
-      if (h.key !== "npm" && h.key !== "corepack" && NEW_DELETERS.has(name.toLowerCase())) h.e.payload(rest.slice(rest.indexOf(specs[0])), h.sc, `${h.key} run ${name}`);
+      // (commands-remote-c8-2). With nothing after the name it is the project's script of that name, or a deleter
+      // given nothing to delete (`yarn scrub`: commands-remote-x8-13).
+      const given = rest.slice(rest.indexOf(specs[0]));
+      if (h.key !== "npm" && h.key !== "corepack" && NEW_DELETERS.has(name.toLowerCase()) && given.length > 1) h.e.payload(given, h.sc, `${h.key} run ${name}`);
       return;
     }
     case "exec": case "x": case "dlx": case "create": h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return;
@@ -6722,8 +6724,9 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   if (h.key !== "npm" && !builtins.has(verb)) {
     nameCheck(h, verb);
     // `yarn rimraf src` runs the project's rimraf when no script has that name: judged as that program would be
-    // (commands-remote-c8-2). Only a deleter's name, so `yarn build` or `yarn format` stay a script's.
-    if (NEW_DELETERS.has(verb.toLowerCase()) && h.key !== "corepack") h.e.payload(h.args.slice(g.verbAt), h.sc, `${h.key} ${verb}`);
+    // (commands-remote-c8-2). Only a deleter's name, so `yarn build` or `yarn format` stay a script's, and only with
+    // something after it (`yarn scrub` alone: commands-remote-x8-13).
+    if (NEW_DELETERS.has(verb.toLowerCase()) && h.key !== "corepack" && h.args.length > g.verbAt + 1) h.e.payload(h.args.slice(g.verbAt), h.sc, `${h.key} ${verb}`);
   } else if (/^(test|start|stop|restart)$/.test(verb)) nameCheck(h, verb);
 });
 reg(NATIVE, ["npx", "pnpx", "bunx", "uvx", "yarnpkg-dlx"], h => { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); });

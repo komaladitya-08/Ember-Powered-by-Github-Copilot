@@ -339,6 +339,14 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
       expect(run(cmd).decision.verdict, cmd).toBe("ask");
     }
   });
+
+  it("runs a package script named like a deleter when nothing follows its name, and judges the deleter when something does (commands-remote-x8-13)", () => {
+    for (const cmd of ["yarn scrub", "pnpm scrub", "bun scrub", "yarn run scrub", "pnpm run grm", "yarn grm", "yarn trash-rm", "yarn gvfs-trash", "yarn rimraf"]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("run");
+    }
+    for (const cmd of ["yarn scrub notes.txt", "yarn run scrub -r x", "pnpm grm -rf src", "yarn trash-rm '*.log'", "yarn rimraf src"]) expect(run(cmd).decision.verdict, cmd).toBe("ask");
+    expect(run("yarn run rimraf ~").decision.verdict).toBe("refuse");
+  });
 });
 
 describe("downloads by a config file or a file-transfer client (commands-remote-r8-3)", () => {

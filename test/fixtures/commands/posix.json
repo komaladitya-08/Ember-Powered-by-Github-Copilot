@@ -20392,6 +20392,85 @@
    "rules": [
     "posix.rm"
    ]
+  },
+  {
+   "cmd": "yarn scrub",
+   "verdict": "run"
+  },
+  {
+   "cmd": "pnpm scrub",
+   "verdict": "run"
+  },
+  {
+   "cmd": "bun scrub",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn run scrub",
+   "verdict": "run"
+  },
+  {
+   "cmd": "pnpm run grm",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn grm",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn trash-rm",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn gvfs-trash",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn rimraf",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn scrub notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "posix.scrub"
+   ]
+  },
+  {
+   "cmd": "yarn run scrub -r x",
+   "verdict": "ask",
+   "rules": [
+    "posix.scrub"
+   ]
+  },
+  {
+   "cmd": "pnpm grm -rf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "yarn trash-rm '*.log'",
+   "verdict": "ask",
+   "rules": [
+    "trash.empty"
+   ]
+  },
+  {
+   "cmd": "yarn --silent scrub",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn --silent scrub x",
+   "verdict": "ask",
+   "rules": [
+    "posix.scrub"
+   ]
+  },
+  {
+   "cmd": "yarn scrub && npm test",
+   "verdict": "run"
   }
  ]
 }
