@@ -433,8 +433,12 @@ build/", "Ember, delete build/", "can you delete build/?" and "I want to delete 
 my branch?"), something already done ("I pushed my branch"), a maybe ("I might delete build/ later") and words about
 something else ("fix the script that deletes build/") don't, so the command asks. Nor do words that hold the step
 back, since the announcement runs it now: a condition ("delete src/ only if I say so", "if the build fails, delete
-src/", "once the tests pass", "when I tell you", "in case the tests fail"), a later time ("tomorrow", "next week", "in 5
-minutes", "in 1h", "at 5pm", "at 5.30pm", "at the end of the task"), asking to be asked first ("ask me first", "check
+src/", "once the tests pass", "when I tell you", "in case the tests fail", "each time the tests pass"), a later time
+("tomorrow", "next week", "in 5 minutes", "in 1h", "at 5pm", "at 5.30pm", "at the end of the task", "first thing
+Monday", "Monday"), a deadline ("before Friday", "before the release", "ahead of the demo"; "before you run the tests"
+and "before rebuilding" only put your steps in order), a step that keeps a copy of what a deletion or discard throws
+away asked for first ("back up then delete the build folder", "commit my changes and delete build/", "make a backup
+and then delete …"; Ember can't tell it was done), asking to be asked first ("ask me first", "check
 with me", "wait for my ok", "show me the command first", "let me see the command", "run it by me", "on my go", "hold
 off", "I'll say when") or asking how ("explain how to delete build/ and delete src/"); "tell me if it worked", "say if it
 worked", "let me know when it's done", "let me see the output", "if you can", "as soon as possible", "if it exists" and a time or
@@ -478,7 +482,11 @@ the Desktop folder). Ember reads places loosely, so a folder named for something
 tests in frontend and delete the build folder") asks too. A name written without a folder is the one in the folder
 the task works in, so a command that changes folder first asks unless your words named a folder the file is in: after
 "delete the build folder", `cd .. && rm -rf build` and `cd frontend && rm -rf build` ask; after "delete the build
-folder in frontend", `cd frontend && rm -rf build` is announced. Anything broader than what you named asks: a force flag, a
+folder in frontend", `cd frontend && rm -rf build` is announced. A word before a deleted path's name, or between it
+and "folder", that names nothing in the path describes another one, so it asks: "delete the production build folder"
+(or the staging, frontend, other, remote, shared, release or debug one, or "the build output folder") never covers `rm
+-rf build`, nor `rm -rf staging/build`, which "delete the staging build folder" covers; a word that only says what it
+is like ("the old, stale, whole, entire, generated, empty or huge build folder") doesn't. Anything broader than what you named asks: a force flag, a
 wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
 as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
 build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).

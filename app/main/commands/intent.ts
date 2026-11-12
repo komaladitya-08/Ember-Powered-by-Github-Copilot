@@ -977,8 +977,11 @@ const KEEPS = /(^|[^\p{L}\p{N}])((everything|anything|all)\s+but|other\s+than|ap
 /** Words that turn a request around ("don't delete build", "never push to main"): nothing announces then. */
 const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
 
-/** A condition the step waits on ("if the build fails", "only after I confirm", "once the tests pass", "when I tell you"). */
-const CONDITION = /(^|[^\p{L}\p{N}])(if|when|whenever|once|after|until|till|as\s+soon\s+as|as\s+long\s+as|so\s+long\s+as|provided|providing|assuming|depending\s+on|in\s+case|supposing|suppose|on\s+condition|in\s+the\s+event)(?=$|[^\p{L}\p{N}])/giu;
+/**
+ * A condition the step waits on ("if the build fails", "only after I confirm", "once the tests pass", "when I tell you"),
+ * and each time something happens ("each time the tests pass", "any time it fails": commands-remote-y7-6).
+ */
+const CONDITION = /(^|[^\p{L}\p{N}])(if|when|whenever|once|after|until|till|as\s+soon\s+as|as\s+long\s+as|so\s+long\s+as|provided|providing|assuming|depending\s+on|in\s+case|supposing|suppose|on\s+condition|in\s+the\s+event|(?:each|every|any)(?:\s+and\s+every)?\s+time|anytime|by\s+the\s+time)(?=$|[^\p{L}\p{N}])/giu;
 /**
  * Words before a condition that make it what to report, not when to act ("tell me if it worked", "let me know when",
  * "say if it worked", "say when it's done"); never the user's own "I'll say when", which HELD_FIRST holds back
@@ -1074,6 +1077,74 @@ const LATER = /(^|[^\p{L}\p{N}])(tomorrow|tonight|later|soon|eventually|someday|
  * "at some point", "in due course".
  */
 const LATER_TOO = /(^|[^\p{L}\p{N}])((at|by|towards?|near|until|till)\s+the\s+(very\s+)?end|in\s+\d+\s*(h|hr|hrs|m|min|mins|s|sec|secs|d)|in\s+half\s+an\s+hour|(at|by|around|until|till)\s+(\d{1,2}([.:]\d{2})?\s*(am|pm|a\.m\.|p\.m\.)|\d{1,2}[.:]\d{2}|\d{1,2}(?=\s*([,;!?]|\.(\s|$)|$))|(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?=$|[^\p{L}\p{N}]))|at\s+some\s+(point|stage)|some\s+other\s+time|in\s+due\s+course|in\s+a\s+(little|short)\s+(while|bit)|(on|by|until|till)\s+(the\s+)?\d{1,2}(st|nd|rd|th)|\d{4}-\d{2}-\d{2}|(on|by|in|until|till)\s+(the\s+\d{1,2}(st|nd|rd|th)?\s+(of\s+)?)?(january|february|april|june|july|august|september|october|november|december))(?=$|[^\p{L}\p{N}])/iu;
+/** A day or a time of day said on its own ("first thing Monday", "Monday", "this Friday", "at lunch": commands-remote-y7-6). */
+const LATER_DAY = /(^|[^\p{L}\p{N}])(first\s+thing|(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?|weekends?|lunch(time)?|eod|eow)(?=$|[^\p{L}\p{N}])/iu;
+/**
+ * A deadline ("before Friday", "before the release", "ahead of the demo", "prior to the merge"): the words say the step
+ * must be done by then, not that it is to be done now, so an announcement that runs it now isn't what they asked
+ * (commands-remote-y7-6). Followed by another step of the user's ("before you run the tests", "before rebuilding") it
+ * only puts the steps in order, and "as before" or "like before" says how.
+ */
+const DEADLINE = /(^|[^\p{L}\p{N}])(before|ahead\s+of|prior\s+to)(?=$|[^\p{L}\p{N}])/giu;
+
+/** A verb's -ing form as the verbs OTHER_STEP lists ("running" → "run", "rebuilding" → "rebuild", "making" → "make"). */
+function ingBase(w: string): string[] {
+  if (!w.endsWith("ing") || w.length < 5) return [w];
+  const stem = w.slice(0, -3);
+  return [stem, `${stem}e`, ...(/(.)\1$/.test(stem) ? [stem.slice(0, -1)] : [])];
+}
+
+/** Whether a deadline in the words holds the step back: one followed by anything but another step of the user's. */
+function deadline(text: string): boolean {
+  for (const m of text.matchAll(DEADLINE)) {
+    const at = m.index + m[1].length;
+    if (/(^|[^\p{L}\p{N}])(as|like|than)\s+$/iu.test(text.slice(0, at))) continue;
+    const after = userWordList(text.slice(at + m[2].length).split(/[,;:.!?]/)[0]);
+    // "before anything else", "before you do anything else": first, now.
+    if (/^((i|we|you|u) )?((do|doing|start|starting|try|trying) )?(anything|everything)( else)?$/.test(after.join(" "))) continue;
+    const forms = [after, ...ingBase(after[0] ?? "").filter(b => b !== after[0]).map(b => [b, ...after.slice(1)])];
+    if (forms.some(f => otherStep(f))) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Verbs of a step that keeps a copy of what a deletion takes away ("back up", "copy", "archive", "commit", "stash"…), and
+ * the things "make a backup", "take a snapshot" make. Asked for before the deletion ("back up then delete the build
+ * folder", "commit my changes and delete build/"), the deletion waits on it, and Ember can't tell it was done, so it
+ * asks (commands-remote-y7-6). Only a deleting row reads these; a step after the deletion's ("delete build/ and back up
+ * src/") and a folder named backup ("delete the backup folder") are as before.
+ */
+const KEEPS_COPY = new Set([
+  "backup", "copy", "cp", "archive", "save", "zip", "tar", "compress", "stash", "commit", "snapshot", "export", "duplicate", "mirror", "move",
+  "mv", "push", "upload", "sync", "rsync", "clone",
+]);
+const COPY_THING = new Set(["backup", "backups", "copy", "copies", "snapshot", "snapshots", "archive", "archives", "commit", "tarball", "zip"]);
+
+/** Whether a clause before the one that asks for the row's verb asks for a step that keeps a copy first (KEEPS_COPY). */
+function keepsCopyFirst(text: string, verbs: readonly string[]): boolean {
+  for (const s of sentencesOf(text)) {
+    const question = /\?["'”’)\]]*\s*$/.test(s);
+    const polite: SentenceState = { first: false };
+    let n = 0;
+    for (const part of s.split(/[,:;]\s+|\s+[-–—]\s+|(?<![\p{L}\p{N}])(?:and|then|but|or|so|plus)(?![\p{L}\p{N}])/iu)) {
+      const words = userWordList(part);
+      if (words.length === 0) continue;
+      const starts = clauseStarts(words, n++, question, polite);
+      if (verbs.some(v => { const parts = v.split(" "); return starts.some(c => parts.every((p, j) => c[j] === p)); })) return false;
+      for (const c of starts) {
+        let k = 0;
+        if (["i", "we", "you", "u"].includes(c[0] ?? "")) { k = 1; while (k < c.length && STEP_MODALS.has(c[k])) k++; }
+        const v = c[k] ?? "";
+        if (KEEPS_COPY.has(v) || (v === "back" && c[k + 1] === "up")) return true;
+        if (["make", "take", "create", "do", "keep"].includes(v) && c.slice(k + 1, k + 4).some(x => COPY_THING.has(x))) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * More ways of holding the step back until the user says so (commands-remote-v5-3): "but first show me what's in it",
  * "show me the command first", "run it by me", "on my go", "upon confirmation", "hold off", "hang on", "I'll say when",
@@ -1094,13 +1165,15 @@ const ASK_FIRST = /(^|[^\p{L}\p{N}])(ask\s+(me|us|first|before)|(check|confirm|c
  * anywhere in them. An announcement runs the step now, as asked, so these always ask; "tell me if it worked", "let me
  * know when it's done", "if you can", "at once" and "after that," hold nothing back.
  */
-function holdsBack(userWords: string, verbs: readonly string[]): boolean {
+function holdsBack(userWords: string, verbs: readonly string[], destroys = false): boolean {
   // "as soon as possible" asks for it now, and a leading "wait," only interrupts ("wait, delete build/ instead":
   // commands-remote-v5-5), unless what follows says what comes after the wait ("wait, then delete build/": w5-2).
   const said = userWords.normalize("NFKC").replace(SOON_AS_ASKED, "$1now").replace(WAIT_ONLY, "");
   if (ASK_FIRST.test(said) || HELD_FIRST.test(said)) return true;
+  // A step that throws something away waits on one that keeps a copy of it asked for first (commands-remote-y7-6).
+  if (destroys && keepsCopyFirst(said, verbs)) return true;
   const text = ownSteps(said, verbs);
-  if (LATER.test(text) || LATER_TOO.test(text)) return true;
+  if (LATER.test(text) || LATER_TOO.test(text) || LATER_DAY.test(text) || deadline(text)) return true;
   for (const m of text.matchAll(CONDITION)) {
     const at = m.index + m[1].length;
     const word = m[2].toLowerCase().replace(/\s+/g, " ");
@@ -1131,6 +1204,42 @@ const HOW_TO = /(^|\s)(how\s+(to|do|does|did|would|could|can|should|might|i|you|
  * and one about a command built from printed input ("fed": a form that asked before Ember read what is printed).
  */
 const ALWAYS_BROADER = new Set(["real-path", "env", "global-option", "in-script", "fed"]);
+
+/** The rows whose step throws something away for good: a step that keeps a copy, asked for first, holds them back. */
+const THROWS_AWAY = new Set(["delete.paths", "git.clean", "git.reset.hard", "git.discard", "git.stash.drop", "git.branch.delete", "p4.revert"]);
+
+/**
+ * Words before a path's name, or between it and "folder", that only say what it is like ("the old build folder", "the
+ * whole dist folder"), never which one: any other word there ("the production build folder", "the build output folder")
+ * describes a folder or file the path may not be, so the deletion asks (commands-remote-y7-6).
+ */
+const ONLY_SAYS_HOW = new Set(["old", "stale", "whole", "entire", "generated", "temporary", "temp", "empty", "huge", "big", "large", "giant", "massive", "bloated"]);
+/** Words that may stand with a name and say nothing of it ("the folder named build", "the file notes.txt"). */
+const NAME_WORDS = new Set([...FOLDER_WORDS, "file", "files", "named", "called", "titled", "labelled", "labeled"]);
+/** Where the words before a name stop describing it: a determiner, a quantifier, a joiner or a preposition. */
+const DESCRIBING_ENDS = new Set([...OWN_DETERMINER, "their", "his", "her", "both", "each", "every", "any", "some", "of", "rid", ...JOINERS, ...PREPOSITION]);
+/** delete.paths' verbs in every form ("delete", "deleting", "removes", "wipe"…): the words before them aren't the object's. */
+const DELETE_FORMS = new Set(["delete", "remove", "rm", "erase", "clean", "up", "get", "trash", "wipe"].flatMap(verbForms));
+
+/** Whether the words around the path's name at `idx` describe it with a word that names nothing in its path (ONLY_SAYS_HOW). */
+function describesAnother(o: CommandObject, idx: number, w: Words, ctx: Ctx, names: (t: string) => boolean): boolean {
+  const resolved = o.resolved ?? "";
+  const rel = ctx.cwd && isUnder(resolved, ctx.cwd, envOf(ctx)) ? resolved.slice(ctx.cwd.length) : o.text;
+  const segments = new Set([...rel.split(/[\\/]+/), ...o.text.split(/[\\/]+/), lastSegment(ctx.cwd)].map(s => s.toLowerCase()).filter(s => s !== ""));
+  const says = (t: string): boolean => ONLY_SAYS_HOW.has(t) || segments.has(t) || FILLERS.has(t);
+  for (let k = idx - 1; k >= 0; k--) {
+    const t = w.tokens[k];
+    if (DESCRIBING_ENDS.has(t) || DELETE_FORMS.has(t) || names(t) || /['’]s$/u.test(t)) break;
+    if (!NAME_WORDS.has(t) && !says(t)) return true;
+  }
+  // "the build output folder": a word between the name and the folder word after it.
+  for (let k = idx + 1; k < Math.min(w.tokens.length, idx + 4); k++) {
+    const t = w.tokens[k];
+    if (NAME_WORDS.has(t)) return w.tokens.slice(idx + 1, k).some(x => !says(x));
+    if (DESCRIBING_ENDS.has(t) || names(t) || !/^[\p{L}\p{N}-]+$/u.test(t)) break;
+  }
+  return false;
+}
 
 /** Recursion words near the operand the user named (§3.7 delete.paths). */
 const RECURSION = ["folder", "folders", "directory", "directories", "dir", "dirs", "tree", "recursively", "everything", "all"];
@@ -1275,6 +1384,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
         if (isBroadPath(o.resolved, env)) return null;
         const idx = o.kind === "glob" ? w.tokens.indexOf(o.text.toLowerCase()) : pathToken(o, w, ctx);
         if (idx < 0 || !whereNamed(o.resolved, idx, w, ctx)) return null;
+        if (describesAnother(o, idx, w, ctx, t => fs.some(g => g.objects.some(x => namesObject(x, t))))) return null;
         const inside = isUnder(o.resolved, ctx.cwd, env) || (ctx.home !== "" && isUnder(o.resolved, ctx.home, env));
         if (!inside && !w.tokens.some(t => normPath(t) === normPath(o.resolved!) || (isAbsoluteText(o.text, ctx.os) && normPath(t) === normPath(o.text)))) return null;
         if (recursive && !recursionNear(idx, w)) return null;
@@ -1495,7 +1605,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     const verbs = row.startsWith("git.push") ? ["push", "force push"] : ROW_VERBS[row] ?? [];
     // Words that hold the step back: an announcement would run it now (commands-remote-c4-4); a time or a condition of
     // another step said after this one's is that step's (v5-5).
-    if (holdsBack(userWords, verbs)) return null;
+    if (holdsBack(userWords, verbs, THROWS_AWAY.has(row))) return null;
     if (placedElsewhere(fs, w, ctx)) return null;
     let m: IntentMatch | null = null;
     const acted = actedOn(w.raw, verbs, names, ROW_SHAPE[row]);

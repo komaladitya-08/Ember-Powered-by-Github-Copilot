@@ -18950,6 +18950,881 @@
    "rules": [
     "posix.rm"
    ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder used by production",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder that production uses",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder for production",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder, the production one",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "remove the staging and production build folders",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete production/build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete build before lunch",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before you go home",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before I commit",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "before committing, delete the build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "Back up src. Then delete build/.",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "I've backed up everything, delete build/",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "I'll back up later; delete build/ now",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete build/ as before",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder like before",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "take a snapshot, then delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "push my branch and delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the cache and build folders",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build and cache folders",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build/ folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the folder build/",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder in proj",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the proj build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before it fills the disk",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "git reset --hard",
+   "words": "reset hard",
+   "verdict": "announce"
+  },
+  {
+   "cmd": "git push origin feature-x",
+   "words": "push feature-x to origin before the demo",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "kill 1234",
+   "words": "kill 1234 before lunch",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "git branch -D old-ui",
+   "words": "merge it then delete the branch old-ui",
+   "verdict": "announce"
+  },
+  {
+   "cmd": "git branch -D old-ui",
+   "words": "push it then delete the branch old-ui",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "git branch -D old-ui",
+   "words": "delete the old branch old-ui",
+   "verdict": "announce"
+  },
+  {
+   "cmd": "git stash drop",
+   "words": "drop the stash",
+   "verdict": "announce"
+  },
+  {
+   "cmd": "rm -rf node_modules",
+   "words": "delete node_modules",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf node_modules",
+   "words": "delete the node_modules folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf .cache",
+   "words": "delete the .cache folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf dist build",
+   "words": "delete dist and the old build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf target",
+   "words": "clear out the target folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf target",
+   "words": "delete the cargo target folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf __pycache__",
+   "words": "delete the python __pycache__ folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the production build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the staging build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the frontend build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the other build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the remote build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the shared build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder on my laptop",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before Friday",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before the release",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before the weekend",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before 5pm",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder first thing Monday",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder each time the tests pass",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "back up then delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "back up the build folder then delete it",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the old build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the stale build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the whole build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the entire build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the generated build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder now",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "please delete the build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "rm -rf build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build directory",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "can you delete the build folder?",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete my build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder by Friday",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder after lunch",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder if the tests pass",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf staging/build",
+   "words": "delete the production build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf staging/build",
+   "words": "delete the staging build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder every Monday",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder at 5pm",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder in the morning",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder tomorrow",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder later",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder once the tests pass",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder as soon as the tests pass",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder whenever the tests pass",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder unless it's needed",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "copy the build folder then delete it",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder and then rebuild",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder and rebuild",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "clean up the build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder, then run the tests",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf dist",
+   "words": "delete the dist folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf node_modules",
+   "words": "delete node_modules and reinstall",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm notes.txt",
+   "words": "delete notes.txt",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm notes.txt",
+   "words": "delete the old notes.txt",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder after the tests pass",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder when you're done",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder on Monday",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder ahead of the release",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder prior to the release",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder in an hour",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder in 5 minutes",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder at midnight",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder tonight",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder after the backup",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "make a backup and then delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "archive the build folder and delete it",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder of the frontend",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the Android build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the release build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the debug build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the empty build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder here",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder in this project",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the local build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before you do anything else",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the current build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the existing build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }
