@@ -13,7 +13,10 @@ import {
   ALL_SCOPES, OFFERED_MODES, approvalInputs, approvalsState, autonomyInForce, chooseMode, holdAutonomyOff, modeAgreed, modeInForce, modeWithoutHold,
   releaseAutonomyHold, type ApprovalsSetting,
 } from "../../app/main/policy/autonomy";
-import { AdminPolicySchema, applyAdminPolicy, autonomyAllowed, managedKeys, parseAdminPolicy } from "../../app/main/admin";
+import { AdminPolicySchema, applyAdminPolicy, autonomyAllowed, loadAdminPolicy, managedKeys, parseAdminPolicy } from "../../app/main/admin";
+import { darwinAdminPolicy } from "../../app/main/platform/darwin/system/admin-policy";
+import { POLICY_KEY, win32AdminPolicy } from "../../app/main/platform/win32/system/admin-policy";
+import { FakeRegistry, fakeApi, HKLM } from "./win32-system-fakes";
 import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore, migrateApprovals } from "../../app/main/settings";
 import { settingsFromHome } from "../../app/main/windows";
 import { APPROVAL_MODES, modeCardVersion, modeRank, type ApprovalMode, type ModeInForce } from "../../app/shared/approvals";
@@ -36,7 +39,7 @@ const setting = (mode: ApprovalMode, ...agreed: ApprovalMode[]): ApprovalsSettin
   },
 });
 const admin = (o: Record<string, unknown> = {}) => AdminPolicySchema.parse(o);
-/** A policy with the mode capped at `cap`, as the mode in force reads one. */
+/** A policy with the mode capped at `cap`, as the mode in force reads it (the policy's own key is tested with the cap). */
 const capped = (o: Record<string, unknown>, cap: ApprovalMode | undefined) => ({ ...admin(o), ...(cap ? { approvals: { maxMode: cap } } : {}) });
 
 describe("the approval mode setting (modes-A1)", () => {
@@ -221,6 +224,75 @@ describe("the mode in force (modes-A3)", () => {
     // The user's own file is never what the policy made of it.
     expect(user.approvals).toEqual(setting("assisted", "interactive", "assisted"));
     expect(managedKeys(admin({ features: { autonomy: true } }))).toEqual([]);
+  });
+});
+
+describe("the administrator's cap on the mode (approvals.maxMode, modes-A11)", () => {
+  it("takes the cap only as one of the three modes, in a policy that is otherwise strict", () => {
+    expect(AdminPolicySchema.safeParse({ approvals: { maxMode: "assisted" } }).success).toBe(true);
+    expect(AdminPolicySchema.safeParse({ approvals: {} }).success).toBe(true);
+    for (const bad of [{ approvals: { maxMode: "asking" } }, { approvals: { maxMode: "everything" } }, { approvals: { maxMode: 2 } }, { approvals: { mode: "interactive" } }, { approvals: "interactive" }]) {
+      expect(AdminPolicySchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+      // A policy Ember can't read locks it down: below Interactive.
+      const locked = parseAdminPolicy(JSON.stringify(bad), "/etc/ember/policy.json");
+      expect(locked.error).toBeDefined();
+      expect(modeInForce(setting("interactive", "interactive"), locked.policy)).toBe("asking");
+    }
+  });
+
+  it("can only lower the mode: a higher choice is in force as the cap at most, and the cap chooses nothing", () => {
+    const all = setting("assisted", "interactive", "assisted");
+    expect(modeInForce(all, admin({ approvals: { maxMode: "interactive" } }))).toBe("interactive");
+    expect(modeInForce(all, admin({ approvals: { maxMode: "assisted" } }))).toBe("assisted");
+    expect(modeInForce(all, admin({ approvals: { maxMode: "autopilot" } }))).toBe("assisted");
+    expect(modeInForce(setting("interactive", "interactive", "assisted"), admin({ approvals: { maxMode: "assisted" } }))).toBe("interactive");
+    // Nothing agreed to: a cap puts no mode in force.
+    expect(modeInForce(setting("interactive"), admin({ approvals: { maxMode: "autopilot" } }))).toBe("asking");
+    // With the organisation's other switches it only tightens further.
+    expect(modeInForce(all, admin({ approvals: { maxMode: "assisted" }, features: { autonomy: false } }))).toBe("asking");
+    expect(modeInForce(all, admin({ approvals: { maxMode: "assisted" }, features: { aiReview: false } }))).toBe("interactive");
+  });
+
+  it("shows in the settings in force and as managed, and never reaches the user's own file", () => {
+    const user = { ...DEFAULT_SETTINGS, approvals: setting("assisted", "interactive", "assisted") };
+    expect(applyAdminPolicy(user, admin({ approvals: { maxMode: "interactive" } })).approvals).toEqual({ ...user.approvals, mode: "interactive" });
+    expect(applyAdminPolicy(user, admin({ approvals: { maxMode: "autopilot" } })).approvals).toEqual(user.approvals);
+    // The cap never raises a choice.
+    expect(applyAdminPolicy({ ...user, approvals: setting("interactive", "interactive", "assisted") }, admin({ approvals: { maxMode: "assisted" } })).approvals.mode).toBe("interactive");
+    expect(user.approvals.mode).toBe("assisted");
+    expect(managedKeys(admin({ approvals: { maxMode: "interactive" } }))).toContain("approvals");
+    expect(managedKeys(admin({ approvals: { maxMode: "assisted" } }))).toContain("approvals");
+    expect(managedKeys(admin({ approvals: { maxMode: "autopilot" } }))).not.toContain("approvals");
+    expect(managedKeys(admin({ approvals: {} }))).not.toContain("approvals");
+  });
+
+  it("is told to Home with the state, and refuses a choice above it", () => {
+    expect(approvalsState(setting("assisted", "interactive", "assisted"), admin({ approvals: { maxMode: "interactive" } }))).toMatchObject({ chosen: "assisted", inForce: "interactive", why: "cap", cap: "interactive" });
+    expect(approvalsState(setting("interactive", "interactive"), admin({ approvals: { maxMode: "interactive" } }))).toMatchObject({ inForce: "interactive", why: null, cap: "interactive" });
+    expect(chooseMode(DEFAULT_SETTINGS.approvals, "interactive", modeCardVersion("interactive"), admin({ approvals: { maxMode: "interactive" } }), AT).ok).toBe(true);
+  });
+
+  it("reads the same from every policy source: the Linux and macOS file and the Windows registry value", () => {
+    const raw = JSON.stringify({ approvals: { maxMode: "interactive" }, commands: { local: "on" } });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-modes-"));
+    try {
+      const file = path.join(dir, "policy.json");
+      fs.writeFileSync(file, raw);
+      // The POSIX file (Linux's /etc/ember/policy.json, and macOS's through darwinAdminPolicy, which loads it the same way).
+      expect(loadAdminPolicy(file, { requireRootOwned: false })).toMatchObject({ source: file, policy: { approvals: { maxMode: "interactive" } } });
+      const mac = darwinAdminPolicy({ load: () => loadAdminPolicy(file, { requireRootOwned: false }), lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, isDirectory: () => true, uid: 0, mode: 0o644 }) }).load();
+      expect(mac.error).toBeUndefined();
+      expect(mac.policy.approvals).toEqual({ maxMode: "interactive" });
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    // The registry's PolicyJson value (platform/win32/system/admin-policy.ts), as a string and as an ADMX multi-string.
+    const win = (registry: FakeRegistry) => win32AdminPolicy({ api: () => fakeApi(registry), env: {} }).load();
+    for (const loaded of [win(new FakeRegistry().sz(HKLM, POLICY_KEY, "PolicyJson", raw)), win(new FakeRegistry().multiSz(HKLM, POLICY_KEY, "PolicyJson", ["{", "  \"approvals\": { \"maxMode\": \"interactive\" }", "}"]))]) {
+      expect(loaded.error).toBeUndefined();
+      expect(loaded.policy.approvals).toEqual({ maxMode: "interactive" });
+      expect(modeInForce(setting("assisted", "interactive", "assisted"), loaded.policy)).toBe("interactive");
+    }
+    // A mode the registry misspells locks Ember down there too.
+    expect(win(new FakeRegistry().sz(HKLM, POLICY_KEY, "PolicyJson", "{\"approvals\": {\"maxMode\": \"auto\"}}")).error).toMatch(/approvals\.maxMode/);
   });
 });
 

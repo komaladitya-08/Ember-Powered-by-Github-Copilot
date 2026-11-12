@@ -490,7 +490,7 @@ hand gets no more than Home gives: a mode Ember doesn't offer yet works as Inter
 own card's record runs the command reviewer of [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md) §2.5a, as the old switch did,
 and is otherwise Interactive). Where the organisation keeps Ember below Interactive (`features.autonomy: false`,
 `allowGrants: false`, `confirmEveryAction`, `features.actions: false`, a lockdown) the modes are locked and the note
-under them says so in one sentence.
+under them says so in one sentence; where it caps the mode (`approvals.maxMode`) a higher choice works as the cap.
 
 In Interactive, Ember doesn't ask before its first step in an app (in an app you asked for help in, the one you were
 in or one your request names, that step isn't announced either),
@@ -1406,6 +1406,7 @@ reads the new policy whole. Every key is optional:
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user (the Assisted mode's check is off, so a chosen Assisted works as Interactive) |
 | `features.autonomy` | `false`: no approval mode is in force (How Ember asks shows managed); Ember asks before a first step in an app, a borrow and moving text between apps, as it did before the modes. `allowGrants: false`, `confirmEveryAction: true`, `features.actions: false` and LOCKDOWN do the same. `true` turns nothing on. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
+| `approvals.maxMode` | The highest approval mode users may choose: `"interactive"`, `"assisted"` or `"autopilot"`. It can only lower the mode: a user's higher choice works as this one at most (How Ember asks says "Your organisation allows Interactive at most…"), a mode above it can't be chosen, and it puts no mode in force by itself. To keep Ember below Interactive, use `features.autonomy: false`. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`). It always wins over a user's own provider, which Home then shows as managed |
 | `features.userProvider` | `false`: users can't point Ember at a model service of their own ("Use my own model provider" in Home › Models & connections is off and managed; a key already saved stays unused until signing out or Remove deletes it). Allowed when absent; the organisation's own `provider` and LOCKDOWN turn it off too, and `models.allowed` and pinned models still hold for the user's model ids. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
@@ -1821,8 +1822,8 @@ is fixed: a value it can't read, of another type, over 256 KiB, not JSON, or not
 `provider.apiKeyFile` isn't supported on Windows and locks Ember down too: put the key in a `ProviderApiKey` string
 value beside `PolicyJson`, or in the `EMBER_PROVIDER_API_KEY` environment variable. Ember reads the value again every
 10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5). Every key
-in §5's table works here too, `features.autonomy` (the approval modes) and `features.userProvider` (a user's own
-model provider) among them.
+in §5's table works here too, `features.autonomy` and `approvals.maxMode` (the approval modes) and
+`features.userProvider` (a user's own model provider) among them.
 
 From an elevated Windows PowerShell:
 
@@ -2147,8 +2148,8 @@ The folder must be a real folder, not a link, that belongs to root and only root
 not a link, that belongs to root and that group and others can't write. No folder or no file means no policy; anything
 else Ember can't trust locks it down until it is fixed. `provider.apiKeyFile` works as on Linux. Ember reads the file
 again every 10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5).
-Every key in §5's table works here too, `features.autonomy` (the approval modes) and `features.userProvider` (a
-user's own model provider) among them. Ember reads this file
+Every key in §5's table works here too, `features.autonomy` and `approvals.maxMode` (the approval modes) and
+`features.userProvider` (a user's own model provider) among them. Ember reads this file
 only, not managed preferences, so deploy it as a file (a package or a script from your management tool):
 
 ```bash

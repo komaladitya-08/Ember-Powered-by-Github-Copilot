@@ -15,6 +15,7 @@ import type { Status } from "../shared/ipc";
 import type { TargetKind } from "../shared/targets";
 import type { CommandMode } from "./commands/types";
 import { readTextFile, stripBom } from "./text-file";
+import { APPROVAL_MODES, modeRank } from "../shared/approvals";
 
 export const ADMIN_POLICY_FILE = "/etc/ember/policy.json";
 
@@ -97,6 +98,11 @@ export const AdminPolicySchema = z.object({
   }).strict().optional(),
   /** Days the audit log is kept (default 30). */
   auditRetentionDays: z.number().int().min(1).max(3650).optional(),
+  /**
+   * The approval modes' cap: `maxMode` is the highest mode users may choose (interactive, assisted or autopilot). It can
+   * only lower the mode: a user's higher choice is in force as the cap at most, and it turns nothing on.
+   */
+  approvals: z.object({ maxMode: z.enum(APPROVAL_MODES).optional() }).strict().optional(),
   /** Commands per kind of target (R5: absent in a policy that exists → "off"; D4.7). */
   commands: z.object({
     local: CommandModeSchema.optional(),
@@ -270,9 +276,11 @@ export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   if (admin.features.extensions === false) s.extensions = { ...s.extensions, on: false };
   // Below Interactive wherever the organisation keeps users from acting without asking, in any of its ways: no card
   // counts as agreed to in the settings in force, so they say so on their own (modeInForce holds to the policy too).
-  // The user's own choice and cards stay in their file.
+  // Otherwise the mode is the organisation's cap at most. The user's own choice and cards stay in their file.
   const none = { version: 0, at: null };
+  const cap = admin.approvals?.maxMode;
   if (!autonomyAllowed(admin)) s.approvals = { ...s.approvals, consent: { interactive: none, assisted: none, autopilot: none } };
+  else if (cap && modeRank(s.approvals.mode) > modeRank(cap)) s.approvals = { ...s.approvals, mode: cap };
   const allowed = admin.models.allowed;
   const pick = (pinned: string | undefined, chosen: string | null) => pinned ?? (chosen && allowed && !allowed.includes(chosen) ? null : chosen);
   s.models = { conductor: pick(admin.models.conductor, s.models.conductor), worker: pick(admin.models.worker, s.models.worker) };
@@ -296,6 +304,8 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.features.updates === false) keys.push("updates");
   if (admin.features.extensions === false) keys.push("extensions");
   if (!autonomyAllowed(admin)) keys.push("autonomy");
+  // A cap that lowers something (Autopilot is the highest there is).
+  if (admin.approvals?.maxMode && admin.approvals.maxMode !== "autopilot") keys.push("approvals");
   if (admin.provider) keys.push("provider");
   if (!userProviderAllowed(admin)) keys.push("userProvider");
   return keys;
