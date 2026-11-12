@@ -652,6 +652,22 @@ describe("a Forget drops the turns said before it, however the extraction words 
     expect(s.list().map(i => i.text)).toEqual(["Likes green tea"]);
   });
 
+  it("drops a task's result that comes in within two minutes of a Forget, however it words the fact, and learns from one after (memory-r8-1)", async () => {
+    const MEAT = answer([{ from: 1, fact: "Eats no meat", about: [USER], confidence: 0.9, evidence: "the user eats no meat" }]);
+    const { l, s, advance } = learning({ model: async () => MEAT });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [USER], "Remember that I'm vegetarian");
+    l.forgetCounted(s.list()[0].id);
+    advance(60_000);
+    // A task started before the Forget finishes: what it read may say the forgotten fact in other words.
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.");
+    expect(await l.flush()).toBe(0);
+    advance(61_000);
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.");
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text)).toEqual(["Eats no meat"]);
+  });
+
   it("drops the turn under way at a correction or at Forget everything too, and learns from requests asked after them (memory-r8-1)", async () => {
     const VEGAN = answer([{ from: 1, fact: "The user is vegan", about: [USER], confidence: 0.9, evidence: "I'm vegan" }]);
     const { l, s, advance } = learning({ model: async () => VEGAN });

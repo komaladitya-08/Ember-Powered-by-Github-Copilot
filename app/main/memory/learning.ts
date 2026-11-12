@@ -376,9 +376,13 @@ export class MemoryLearning {
     try { this.d.onForgotAll?.(); } catch { this.d.log.warn("memory.delete_notice_failed"); }
   }
 
-  /** A task finished: learn from its result (source `task`). */
+  /**
+   * A task finished: learn from its result (source `task`). It carries no mark of when it was asked, so within
+   * FORGOTTEN_TURN_MS of a Forget, a correction or Forget everything it is dropped, as a turn with none is (memory-r8-1).
+   */
   taskDone(title: string, result: string): void {
     this.active();
+    if (this.saidBeforeDrop(undefined)) { this.d.log.info("memory.learn_skipped", { why: "said_before_forget" }); return; }
     this.learner.taskDone(title, result);
   }
 
