@@ -5883,6 +5883,64 @@
    "missing": [
     "t.py"
    ]
+  },
+  {
+   "cmd": "mytool $HOME",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool C:\\Users\\ana",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ..",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool .",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool src",
+   "verdict": "run"
+  },
+  {
+   "cmd": "rimraf C:\\Users\\ana",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "del-cli build",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet",
+    "posix.rm"
+   ]
   }
  ]
 }

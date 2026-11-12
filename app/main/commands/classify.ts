@@ -3500,7 +3500,7 @@ const KNOWN_ORDINARY = new Set([
 const NOT_RUNNERS = new Set([
   "trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk", "sponge", "unrar", "dpkg-deb",
   "desktop-file-install", "desktop-file-edit", "update-desktop-database", "busybox", "caddy", "miniserve", "cloudflared", "ngrok", "tailscale",
-  "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav",
+  "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav", "del", "scrub",
 ]);
 /** Program keys that, as an unknown program's operand, suggest it runs them (a wrapper Ember doesn't know). */
 let RUNNERS: ReadonlySet<string> | null = null;
@@ -3526,6 +3526,7 @@ function generic(h: H): void {
   if (DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) h.e.add("destroy", "disk.erase", "Erases or repartitions a disk.");
   h.e.readArgs(h.args, h.sc, { unresolvedUnclear: !TEXT.has(k) });
   if (KNOWN_ORDINARY.has(k) || GUI_PROGRAMS.has(k) || INTERACTIVE.has(k) || SECRET_PROGRAMS.has(k)) return;
+  broadOperand(h);
   const at = h.args.findIndex(a => {
     const base = (a.v ?? "").split(/[\\/]/).pop() ?? "";
     return a.v !== null && /^[A-Za-z]/.test(base) && runners().has(base.toLowerCase().replace(/\.(exe|com)$/, ""));
@@ -3533,6 +3534,36 @@ function generic(h: H): void {
   if (at >= 0) {
     h.e.unclear("unclear.hidden-command", `Ember can't tell how ${h.prog} runs ${h.args[at].v}.`);
     h.e.payload(h.args.slice(at), h.sc, h.prog);
+  }
+}
+
+/** Programs Ember has no row for that only list or measure what a folder holds (`eza -la ~`, `fd foo ~`, `dust ~`). */
+const LISTS_ONLY = new Set(["eza", "exa", "lsd", "fd", "fdfind", "dust", "duf", "gdu", "erdtree", "erd"]);
+
+/**
+ * An operand of a program Ember has no row for that is the home folder or holds it, a folder above the task's, or one
+ * that holds Ember's own files (`rimraf ~` before it had a row, `rmlint ~`, `stow -t ~ dotfiles`, `mytool ..`): Ember
+ * can't tell what the program does to all that is there, so it asks (commands-remote-c8-2). The task's own folder and
+ * folders in it, beside it or elsewhere in the home folder run as before, and so do option values (`./configure
+ * --prefix=$HOME/.local`). "Above" is the task's folder, so `cd build && qmake ..` runs.
+ */
+function broadOperand(h: H): void {
+  if (LISTS_ONLY.has(h.key)) return;
+  const sc = h.sc;
+  const env = sc.path;
+  const top = h.e.ctx.cwd || null;
+  for (const a of h.args) {
+    if (a.param !== undefined || a.v === null || a.v === "" || a.glob || isOption(a) || URL_LIKE.test(a.v)) continue;
+    if (a.v.startsWith("~") ? !sc.home : !isAbsolute(a.v, env.flavour) && !sc.cwd) continue;
+    const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
+    const root = env.flavour === "posix" ? abs === "/" : /^[A-Za-z]:\\?$/.test(abs);
+    const what = sc.home && isUnder(abs, sc.home, env) && isUnder(sc.home, abs, env) ? "your home folder"
+      : root || (sc.home && isUnder(sc.home, abs, env)) ? "a folder that holds your home folder"
+      : top !== null && isUnder(top, abs, env) && !isUnder(abs, top, env) ? "a folder your project is in"
+      : holdsEmberPath(abs, env) ? "a folder that holds Ember's own files" : null;
+    if (what === null) continue;
+    h.e.unclear("unclear.broad-folder", `Ember can't tell what ${h.prog} does with ${what}.`);
+    return;
   }
 }
 
@@ -4104,24 +4135,92 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   for (const f of [...inlineSql(h, ["f"], ["file"]), ...inlineSql(h, ["i"], ["input-file"])]) if (f) { h.e.usePath(lit(f), "read", h.sc); nameCheck(h, f); }
 });
 
-// a: rm and friends (§3.5.1).
-reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir"], h => {
-  const shred = h.key === "shred";
-  // shred's -u (remove) takes no value, and --remove only one after = (commands-remote-r4-2).
-  const p = opts(h, { shortValue: shred ? "ns" : "", longValue: shred ? ["iterations", "size", "random-source"] : [], longOptional: ["remove"] });
-  const rec = (h.key === "rm" || h.key === "srm" || h.key === "wipe") && has(p, "r", "R", "recursive");
+/**
+ * Deleters that had no row before commands-remote-c8-2 and so ran as unknown programs, whatever they were given: what
+ * generic() judged of them (an operand Ember can't see, one that names a program, a broad folder) is still judged first,
+ * and the deletion is added on top, so none decides less safely than it did.
+ */
+const NEW_DELETERS = new Set([
+  "grm", "grmdir", "gunlink", "gshred", "scrub", "rimraf", "del", "del-cli", "gvfs-rm", "gvfs-trash", "rmtrash", "trash-rm", "fdupes", "jdupes",
+  "bfg", "git-filter-repo",
+]);
+const asBefore = (h: H): void => {
+  if (!NEW_DELETERS.has(h.key)) return;
+  // A PowerShell word shaped like a cmdlet's name (`del-cli`, `gvfs-rm`) was an unknown cmdlet's, which asked.
+  if (h.sc.family === "powershell" && /^[a-z]+-[a-z0-9]+$/.test(h.key)) unknownCmdlet(h);
+  else generic(h);
+};
+
+// a: rm and friends (§3.5.1); GNU coreutils' own as Homebrew names them on a Mac (grm, gshred…), and scrub, which
+// overwrites a file (its -r removes it too: commands-remote-c8-2).
+reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir", "grm", "grmdir", "gunlink", "gshred", "scrub"], h => {
+  asBefore(h);
+  const key = h.key.replace(/^g(?=(rm|rmdir|unlink|shred)$)/, "");
+  const shred = key === "shred";
+  // shred's -u (remove) takes no value, and --remove only one after = (commands-remote-r4-2); scrub's -p, -b, -s and -D
+  // take one.
+  const p = opts(h, { shortValue: shred ? "ns" : key === "scrub" ? "pbsD" : "", longValue: shred ? ["iterations", "size", "random-source"] : key === "scrub" ? ["pattern", "blocksize", "device-size", "dirent"] : [], longOptional: ["remove"] });
+  const rec = (key === "rm" || key === "srm" || key === "wipe") && has(p, "r", "R", "recursive");
   const objs = objsOf(h, p.operands, rec ? "deleteTree" : "delete");
   const widening: string[] = [];
   if (rec) widening.push("recursive");
   if (has(p, "no-preserve-root")) widening.push("--no-preserve-root");
-  if (h.key === "rmdir" && has(p, "p", "parents")) widening.push("--parents");
+  if (key === "rmdir" && has(p, "p", "parents")) widening.push("--parents");
   const list = listOf(objs);
-  h.e.add("destroy", `posix.${h.key}`, starDeletes(h, objs, rec) ?? (rec ? `Deletes ${list} and everything in ${objs.length > 1 ? "them" : "it"}.` : `Deletes ${list}.`), { objects: objs, widening });
+  h.e.add("destroy", `posix.${key}`, starDeletes(h, objs, rec) ?? (rec ? `Deletes ${list} and everything in ${objs.length > 1 ? "them" : "it"}.` : `Deletes ${list}.`), { objects: objs, widening });
   if (objs.some(o => o.abs !== null && /\/\.local\/share\/Trash(\/|$)/.test(o.abs))) h.e.add("destroy", "trash.empty", "Empties the trash.");
 });
 
+/**
+ * rimraf and del-cli (`del`), which a JavaScript project's scripts reach for: they delete each folder and all that is in
+ * it, and expand a pattern themselves, quoted or not (rimraf unless `-G`/`--no-glob`; del-cli always), so a word that
+ * holds one is judged as a pattern and the step is never announced (commands-remote-c8-2).
+ */
+reg(NATIVE, ["rimraf", "del", "del-cli"], h => {
+  asBefore(h);
+  const p = opts(h, { longValue: ["impl"] });
+  if (p.operands.length === 0) return;
+  const globs = h.key !== "rimraf" || !has(p, "G", "no-glob");
+  const widening = ["recursive"];
+  const objs = p.operands.filter(a => !(h.key !== "rimraf" && a.v?.startsWith("!"))).map(a => {
+    if (!globs || a.v === null || a.glob || !/[*?[\]{}()!]/.test(a.v)) return h.e.usePath(a, "deleteTree", h.sc);
+    if (!widening.includes("pattern")) widening.push("pattern");
+    // Braces and extglob's `+(…)`, `@(…)`, `!(…)`, which the pattern matcher doesn't read, may match anything in the
+    // folder before them: one that holds Ember's files, or is one, is refused as `rm -rf ~/.c*` is.
+    if (/[{}()]/.test(a.v) && h.sc.cwd !== null) {
+      const segs = a.v.split("/");
+      const k = segs.findIndex(x => /[*?[\]{}()!+@]/.test(x));
+      const fixed = resolveTargetPath(k <= 0 ? (a.v.startsWith("/") ? "/" : ".") : segs.slice(0, k).join("/") || "/", { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd });
+      if (isEmberPath(fixed, h.sc.path) || holdsEmberPath(fixed, h.sc.path)) h.e.refuseWith("ember.path", "safety");
+    }
+    return h.e.usePath({ ...a, glob: true, pattern: a.v }, "deleteTree", h.sc);
+  });
+  if (has(p, "no-preserve-root")) widening.push("--no-preserve-root");
+  h.e.add("destroy", "posix.rm", starDeletes(h, objs, true) ?? `Deletes ${listOf(objs)} and everything in ${objs.length > 1 ? "them" : "it"}.`, { objects: objs, widening });
+});
+
+/** fdupes and jdupes delete every copy of a duplicate but one with `-d`, and jdupes replaces copies with links (-L, -B). */
+reg(NATIVE, ["fdupes", "jdupes"], h => {
+  asBefore(h);
+  const p = opts(h, { shortValue: h.key === "fdupes" ? "oGxl" : "oXyCPU", longValue: ["order", "minsize", "maxsize", "log", "exclude", "chunk-size", "ext-filter", "ext-option", "print"] });
+  const replaces = h.key === "jdupes" && has(p, "L", "B", "l", "link-hard", "link-soft", "dedupe");
+  if (!has(p, "d", "delete") && !replaces) return;
+  const objs = objsOf(h, p.operands, "delete");
+  h.e.add("destroy", `posix.${h.key}`, replaces ? `Replaces duplicate files in ${listOf(objs)}.` : `Deletes duplicate files in ${listOf(objs)}.`, { objects: objs });
+});
+
+/** BFG and git-filter-repo rewrite a repository's history (as `git filter-repo` does), unless only asked to report. */
+reg(NATIVE, ["bfg", "git-filter-repo"], h => {
+  asBefore(h);
+  if (h.args.length === 0 || h.args.every(a => /^(-h|--help|--version|--analyze|--dry-run)$/.test(a.v ?? ""))) return;
+  h.e.add("destroy", "git.history", "Deletes history git keeps for recovery.", { program: h.key });
+});
+
 reg(NATIVE, ["trash-empty"], h => { h.e.add("destroy", "trash.empty", "Empties the trash."); });
-reg(NATIVE, ["trash", "trash-put", "gio"], h => {
+// trash-rm deletes what matches its pattern from the trash for good (commands-remote-c8-2).
+reg(NATIVE, ["trash-rm"], h => { asBefore(h); h.e.add("destroy", "trash.empty", "Deletes files in the trash for good."); });
+reg(NATIVE, ["trash", "trash-put", "gio", "gvfs-trash", "gvfs-rm", "rmtrash"], h => {
+  asBefore(h);
   if (h.key === "gio") {
     const sub = lower(h.args[0]);
     const rest = h.args.slice(1);
@@ -6560,6 +6659,9 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       if (name === undefined) return;
       if (name === null) { h.e.unclear("unclear.script", "It runs a script Ember can't name."); return; }
       nameCheck(h, name);
+      // yarn, pnpm and bun run the project's own rimraf when no script has that name; npm runs only scripts
+      // (commands-remote-c8-2).
+      if (h.key !== "npm" && h.key !== "corepack" && NEW_DELETERS.has(name.toLowerCase())) h.e.payload(rest.slice(rest.indexOf(specs[0])), h.sc, `${h.key} run ${name}`);
       return;
     }
     case "exec": case "x": case "dlx": case "create": h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return;
@@ -6583,8 +6685,12 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   if (h.key === "npm" && !builtins.has(verb) && !/^(test|start|stop|restart)$/.test(verb)) { h.e.unclear("unclear.npm-verb", "Ember can't tell which npm command this runs."); return; }
   if (verb === "edit" || verb === "explore") { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (verb === "star" || verb === "unstar" || verb === "hook" || verb === "profile") { h.e.add("publish", "npm.registry", "Changes something on the registry."); return; }
-  if (h.key !== "npm" && !builtins.has(verb)) nameCheck(h, verb);
-  else if (/^(test|start|stop|restart)$/.test(verb)) nameCheck(h, verb);
+  if (h.key !== "npm" && !builtins.has(verb)) {
+    nameCheck(h, verb);
+    // `yarn rimraf src` runs the project's rimraf when no script has that name: judged as that program would be
+    // (commands-remote-c8-2). Only a deleter's name, so `yarn build` or `yarn format` stay a script's.
+    if (NEW_DELETERS.has(verb.toLowerCase()) && h.key !== "corepack") h.e.payload(h.args.slice(g.verbAt), h.sc, `${h.key} ${verb}`);
+  } else if (/^(test|start|stop|restart)$/.test(verb)) nameCheck(h, verb);
 });
 reg(NATIVE, ["npx", "pnpx", "bunx", "uvx", "yarnpkg-dlx"], h => { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); });
 

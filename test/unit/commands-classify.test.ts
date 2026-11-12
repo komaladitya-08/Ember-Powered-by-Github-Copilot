@@ -243,6 +243,58 @@ describe("a variable or option that names the program a build tool runs (command
   });
 });
 
+describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () => {
+  const run = (cmd: string, context: ContextName = "linux", shell: ShellId = "bash") => runCase({ cmd, verdict: "run" }, { shell, context });
+
+  it("asks before rimraf, del-cli, scrub, fdupes -d or a coreutils g-name deletes, as rm does (commands-remote-c8-2)", () => {
+    for (const cmd of [
+      "rimraf src", "rimraf .", "rimraf build", "node_modules/.bin/rimraf src", "./node_modules/.bin/rimraf .", "yarn rimraf src", "pnpm rimraf src",
+      "bun rimraf src", "yarn run del-cli dist", "bun run rimraf src", "pnpm run rimraf src", "del-cli src", "del src", "del 'dist/*' '!dist/keep.js'", "gvfs-rm build", "gvfs-trash build", "rmtrash build",
+      "grm -rf src", "grm notes.txt", "grmdir build", "gunlink notes.txt", "gshred -u notes.txt", "scrub notes.txt", "scrub -r notes.txt",
+      "fdupes -rdN ~/Pictures", "fdupes --delete --noprompt -r ~/Pictures", "jdupes -rdN ~/Pictures", "trash-rm '*.log'",
+      "bfg --delete-files x.txt", "bfg --strip-blobs-bigger-than 100M", "git-filter-repo --force --invert-paths --path src",
+    ]) {
+      const r = run(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(r.decision.classes, cmd).toContain("destroy");
+    }
+  });
+
+  it("refuses rimraf of the home folder or of Ember's files, a pattern the tool expands itself included (commands-remote-c8-2)", () => {
+    for (const cmd of ["rimraf ~", "node_modules/.bin/rimraf ~", "yarn rimraf ~", "grm -rf ~", "rimraf ~/.config/ember", "rimraf \"$HOME/.config/emb*\"",
+      "del-cli \"$HOME/.config/emb*\"", "rimraf '/home/ana/.config/*'", "yarn run rimraf ~", "rimraf \"$HOME/.config/{ember,x}\"",
+      "del-cli \"$HOME/.config/+(ember)\"", "rimraf '/home/ana/{.config,x}'", "del-cli '/home/ana/.config/!(x)'"]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("refuse");
+    }
+    // A brace pattern in the project's folder asks, as any other pattern does.
+    expect(run("rimraf '{build,dist}'").decision.verdict).toBe("ask");
+  });
+
+  it("asks when a program Ember has no row for is given the home folder, a folder above the task's or one that holds Ember's files (commands-remote-c8-2)", () => {
+    for (const cmd of ["mytool ~", "mytool ~/", "mytool \"$HOME\"", "mytool ..", "mytool ../", "mytool ../..", "mytool /", "mytool /home", "mytool ~/.config",
+      "mytool ~/.local/share", "rmlint ~", "stow -t ~ dotfiles", "cd src && mytool ../..", "fdupes -r ~"]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("ask");
+    }
+    expect(run("mytool ..", "win32", "powershell").decision.verdict).toBe("ask");
+    expect(run("mytool C:\\Users\\ana", "win32", "powershell").decision.verdict).toBe("ask");
+    expect(run("mytool C:\\Users\\ana", "win32", "cmd").decision.verdict).toBe("ask");
+  });
+
+  it("keeps running a known tool given those folders, and an unknown one given the project or a folder in it (commands-remote-c8-2)", () => {
+    for (const cmd of ["ls ~", "du -sh ~", "tree ~", "fd foo ~", "eza -la ~", "mytool .", "mytool src", "mytool ~/Documents", "mytool ../other",
+      "cd build && qmake ..", "cd build && cmake ..", "./configure --prefix=$HOME/.local", "fdupes -r ~/Pictures", "jdupes -r .", "git-filter-repo --analyze",
+      "yarn build", "yarn format", "yarn eslint .", "pnpm build", "eslint .", "npm test", "make", "rimraf --help"]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("run");
+    }
+  });
+
+  it("announces rimraf of a folder the user's own words named, as rm's row does (commands-remote-c8-2)", () => {
+    expect(runCase({ cmd: "rimraf build", verdict: "run", words: "delete the build folder" }, { shell: "bash", context: "linux" }).decision.verdict).toBe("announce");
+    // A pattern rimraf expands itself is never announced.
+    expect(runCase({ cmd: "rimraf 'build/*'", verdict: "run", words: "delete build/*" }, { shell: "bash", context: "linux" }).decision.verdict).toBe("ask");
+  });
+});
+
 describe("the download-and-run fixes, decided no less safely than main (round eight's review)", () => {
   const run = (cmd: string, o: { downloaded?: string[]; missing?: string[] } = {}) => runCase({ cmd, verdict: "run", ...o }, { shell: "bash", context: "linux" });
 

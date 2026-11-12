@@ -122,7 +122,14 @@ recorded in the audit log, and their output goes back to Copilot as described in
 
 Ember stops and asks before a command that:
 
-- **deletes or destroys data**: `rm`, `rmdir`, `del`, `Remove-Item`, `find -delete`, `git clean`,
+- **deletes or destroys data**: `rm`, `rmdir`, `del`, `Remove-Item`, `find -delete`, the deleters a project's
+  scripts reach for (`rimraf` and `del-cli`, also from `node_modules/.bin` or as `yarn rimraf` or `yarn run rimraf`,
+  which expand a pattern themselves, so a quoted one is read as a pattern too, and one with braces that could reach
+  Ember's files is refused), `trash`, `gio trash`, `trash-rm`, `shred`, `scrub`,
+  a Mac's GNU `grm`, duplicate finders told to delete (`fdupes -d`, `jdupes -d`), rewriting a repository's history
+  (`bfg`, `git filter-repo`), a program Ember doesn't know given your home folder, a folder your project is in or one
+  that holds Ember's own files (`mytool ~`, `mytool ..`, `stow -t ~ dotfiles`; your project's folder and the folders
+  in it don't ask), `git clean`,
   `git reset --hard`, discarding changes (`git checkout -- <file>`, `git restore`), `git branch -D`,
   `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`; a `cp`
   or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it

@@ -18089,6 +18089,867 @@
   {
    "cmd": "rclone copy ./a ./b --max-transfer=10G",
    "verdict": "run"
+  },
+  {
+   "cmd": "rimraf ~",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf .",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "node_modules/.bin/rimraf ~/Documents",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "./node_modules/.bin/rimraf .",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "yarn rimraf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "pnpm rimraf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "npx rimraf src",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "fdupes -rdN ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder",
+    "posix.fdupes"
+   ]
+  },
+  {
+   "cmd": "git-filter-repo --force --invert-paths --path src",
+   "verdict": "ask",
+   "rules": [
+    "git.history"
+   ]
+  },
+  {
+   "cmd": "del-cli src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "del src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "trash build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "trash ~",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "trash-put build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "gio trash build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "shred -u notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "posix.shred"
+   ]
+  },
+  {
+   "cmd": "shred ~/notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "posix.shred"
+   ]
+  },
+  {
+   "cmd": "srm -r src",
+   "verdict": "ask",
+   "rules": [
+    "posix.srm"
+   ]
+  },
+  {
+   "cmd": "wipe -rf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.wipe"
+   ]
+  },
+  {
+   "cmd": "scrub notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "posix.scrub"
+   ]
+  },
+  {
+   "cmd": "shx rm -rf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "gvfs-rm build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rmlint ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "jdupes -rdN ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder",
+    "posix.jdupes"
+   ]
+  },
+  {
+   "cmd": "bfg --delete-files x.txt",
+   "verdict": "ask",
+   "rules": [
+    "git.history"
+   ]
+  },
+  {
+   "cmd": "rimraf ~/.config/ember",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rm -rf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "unlink notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "posix.unlink"
+   ]
+  },
+  {
+   "cmd": "rmdir build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rmdir"
+   ]
+  },
+  {
+   "cmd": "foo ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "foo ..",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "foo ~/.config",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "foo ~/.config/ember",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "mytool $HOME",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "ls ~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "du -sh ~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cd ~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "code ~",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "rimraf",
+   "verdict": "run"
+  },
+  {
+   "cmd": "rm ~",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm ~/.config",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "trash ~/.config",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -r ~/.config",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "grm -rf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "busybox rm -rf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "toybox rm -rf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "gshred x",
+   "verdict": "ask",
+   "rules": [
+    "posix.shred"
+   ]
+  },
+  {
+   "cmd": "mytool \"$HOME\"",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ${HOME}",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool /",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool /home",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ../..",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ../other",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool --dir=~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool --dir ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "cd src && mytool ..",
+   "verdict": "run"
+  },
+  {
+   "cmd": "wipefs -a /dev/sda",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "stow -t ~ dotfiles",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "rmtrash x",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf -G build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf --glob 'build/*'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf 'build/*'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf \"$HOME/.config/emb*\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "del-cli \"$HOME/.config/emb*\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "del 'dist/*' '!dist/keep.js'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "del-cli 'dist/**'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf \"$d\"",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "del-cli \"$d\"",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "fdupes -r \"$d\"",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "fdupes -r .",
+   "verdict": "run"
+  },
+  {
+   "cmd": "fdupes -r ~/Pictures",
+   "verdict": "run"
+  },
+  {
+   "cmd": "fdupes -rd ~/Pictures",
+   "verdict": "ask",
+   "rules": [
+    "posix.fdupes"
+   ]
+  },
+  {
+   "cmd": "fdupes --delete --noprompt -r ~/Pictures",
+   "verdict": "ask",
+   "rules": [
+    "posix.fdupes"
+   ]
+  },
+  {
+   "cmd": "jdupes -r ~/Pictures",
+   "verdict": "run"
+  },
+  {
+   "cmd": "jdupes -rdN ~/Pictures",
+   "verdict": "ask",
+   "rules": [
+    "posix.jdupes"
+   ]
+  },
+  {
+   "cmd": "jdupes -L -r ~/Pictures",
+   "verdict": "ask",
+   "rules": [
+    "posix.jdupes"
+   ]
+  },
+  {
+   "cmd": "fdupes git",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "scrub \"$d\"",
+   "verdict": "ask",
+   "rules": [
+    "posix.scrub"
+   ]
+  },
+  {
+   "cmd": "scrub -r notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "posix.scrub"
+   ]
+  },
+  {
+   "cmd": "bfg \"$d\"",
+   "verdict": "ask",
+   "rules": [
+    "git.history"
+   ]
+  },
+  {
+   "cmd": "bfg --strip-blobs-bigger-than 100M",
+   "verdict": "ask",
+   "rules": [
+    "git.history"
+   ]
+  },
+  {
+   "cmd": "git-filter-repo --path src --invert-paths",
+   "verdict": "ask",
+   "rules": [
+    "git.history"
+   ]
+  },
+  {
+   "cmd": "git-filter-repo --analyze",
+   "verdict": "run"
+  },
+  {
+   "cmd": "gvfs-rm \"$d\"",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "gvfs-trash build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "trash-rm '*.log'",
+   "verdict": "ask",
+   "rules": [
+    "trash.empty"
+   ]
+  },
+  {
+   "cmd": "rmtrash build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "grm -rf ~",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "grm notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "grmdir build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rmdir"
+   ]
+  },
+  {
+   "cmd": "gunlink notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "posix.unlink"
+   ]
+  },
+  {
+   "cmd": "gshred -u notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "posix.shred"
+   ]
+  },
+  {
+   "cmd": "yarn rimraf ~",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "pnpm rimraf ~",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "bun rimraf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "yarn format",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn eslint .",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cd src && make",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cd build && cmake ..",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cd build && qmake ..",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cd build && mytool ..",
+   "verdict": "run"
+  },
+  {
+   "cmd": "./configure --prefix=$HOME/.local",
+   "verdict": "run"
+  },
+  {
+   "cmd": "./configure --prefix=/usr/local",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool ~/",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool \"$HOME/\"",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ../",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool $PWD/..",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ~/*",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "mytool ~/.local",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ~/.local/share",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ~/Documents",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool .",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool src",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool ~/proj",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool /home/ana/proj",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool /home/ana",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool /tmp",
+   "verdict": "run"
+  },
+  {
+   "cmd": "eza -la ~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "exa ~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "lsd ~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "fd foo ~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "fd foo ..",
+   "verdict": "run"
+  },
+  {
+   "cmd": "dust ~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ncdu ~",
+   "verdict": "ask"
+  },
+  {
+   "cmd": "rimraf build",
+   "words": "delete the build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf build",
+   "words": "list the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf 'build/*'",
+   "words": "delete build/*",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "yarn run rimraf ~",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "yarn run del-cli dist",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "bun run rimraf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "pnpm run rimraf src",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "npm run rimraf",
+   "verdict": "run"
+  },
+  {
+   "cmd": "rimraf \"$HOME/.config/{ember,x}\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "del-cli \"$HOME/.config/+(ember)\"",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '/home/ana/{.config,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "del-cli '/home/ana/.config/!(x)'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{build,dist}'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }

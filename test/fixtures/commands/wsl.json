@@ -2341,6 +2341,31 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "mytool ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ..",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "rimraf ~",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "mytool src",
+   "verdict": "run"
   }
  ]
 }

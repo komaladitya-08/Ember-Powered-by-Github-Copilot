@@ -2761,6 +2761,38 @@
   {
    "cmd": "net view",
    "verdict": "run"
+  },
+  {
+   "cmd": "mytool %USERPROFILE%",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool ..",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool C:\\Users\\ana",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool src",
+   "verdict": "run"
+  },
+  {
+   "cmd": "rimraf build",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }
