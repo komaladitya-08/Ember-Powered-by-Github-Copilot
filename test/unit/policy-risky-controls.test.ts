@@ -346,10 +346,49 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
 
   it.each(["Cancel", "Stay on page", "Stay", "Don't leave", "No", "Close", "Close dialog", "Help", "Abbrechen", "Annuler", "Schließen", "Nein", "キャンセル(C)", "取消"])(
     "“%s” backs off such a dialog and still goes without a question under “Always” (safety-privacy-c8-1)", name => {
-      for (const dialog of [leave, save, tabs]) {
+      // (Not "No" where the dialog asks to save: there it throws the changes away, safety-privacy-x8-7.)
+      for (const dialog of /^(no|nein)$/i.test(name) ? [leave, tabs] : [leave, save, tabs]) {
         expect(engine().decide(click(name, { inPage: undefined, window: "Edit post", goal: "close the tab", dialog })).verdict).toBe("allow");
       }
     });
+
+  const update = { name: "Software Update", text: "A new version of Example is available. Would you like to download it now?", alert: true };
+  const notify = { name: "", text: "“Example” would like to send you notifications. Allow?", alert: true };
+  it.each([["Not right now", update], ["Not yet", update], ["Later", update], ["Maybe later", update], ["Remind Me Later", update], ["Ask me later", update],
+    ["Skip for now", update], ["No, thank you", update], ["No thank you", update], ["Später", update], ["Plus tard", update], ["後で", update], ["Don't Allow", notify],
+    ["Don't allow", update], ["Nicht erlauben", notify]] as const)(
+    "“%s” puts off or refuses a dialog's question and goes without a question under “Always”, and is announced with Work without asking (safety-privacy-x8-6)", (name, dialog) => {
+      const step = click(name, { app: "soffice", window: "Software Update", inPage: undefined, goal: "tidy up the letter", dialog });
+      expect(engine().decide(step).verdict).toBe("allow");
+      expect(unGranted(true).decide(step)).toMatchObject({ verdict: "allow", autonomy: true });
+    });
+
+  it.each(["Ignore", "Skip", "Skip This Version", "Start New Session"])("“%s” in a dialog's question still asks every time: it may not back off (safety-privacy-x8-6)", name => {
+    asksEveryTime(click(name, { app: "soffice", window: "Software Update", inPage: undefined, goal: "tidy up the letter", dialog: update }));
+  });
+
+  // In a dialog that asks to save, "No" throws the changes away.
+  it.each([["gedit", "push button", "No", save, "linux"], ["gedit", "push button", "Nein", { name: "", text: "Änderungen am Dokument „notes.txt“ vor dem Schließen speichern?", alert: true }, "linux"],
+    ["soffice", "push button", "No", { name: "", text: "Save changes to document “Untitled 1” before closing? Your changes will be lost if you don't save them.", alert: true }, "linux"],
+    ["wordpad", "button", "No", { name: "WordPad", text: "Do you want to save changes to Document?", messageBox: true }, "win32"],
+    ["TextEdit", "push button", "No", { name: "", text: "Do you want to keep this new document “Untitled”?" }, "darwin"]] as const)(
+    "%s's %s “%s” in a dialog that asks to save asks every time, by a click and by Enter (safety-privacy-x8-7)", (app, role, name, dialog, os) => {
+      for (const [grant, autonomy] of [[true, false], [true, true], [false, true]]) {
+        const e = new PolicyEngine({ neverLook: () => [], grants: () => (grant ? { [app.toLowerCase()]: "act" } : {}), autonomy: () => (autonomy ? { ...ALL_SCOPES } : null),
+          isTerminalApp: () => false, os, keys: KEYS[os] });
+        for (const kind of ["click", "keys"] as const) {
+          const d = e.decide(click(name, { app, window: "notes.txt", inPage: undefined, goal: "close the editor", dialog, element: { role, name }, kind, ...(kind === "keys" ? { value: "Return" } : {}) }));
+          expect(d, `grant=${grant} autonomy=${autonomy} ${kind}`).toMatchObject({ verdict: "confirm", risky: true, remember: false });
+          expect(d.autonomy).toBeUndefined();
+        }
+      }
+    });
+
+  it("“No” in a dialog that asks to discard or delete still backs off (safety-privacy-x8-7)", () => {
+    for (const text of ["Discard changes to “notes.txt”?", "Are you sure you want to delete 3 files? Your changes may not be saved."]) {
+      expect(engine().decide(click("No", { app: "gedit", window: "notes.txt", inPage: undefined, goal: "close the editor", dialog: { name: "", text, alert: true } })).verdict).toBe("allow");
+    }
+  });
 
   it("leaves a dialog that asks nothing as it was: a settings dialog's buttons, and a page's own dialog that only holds a form (safety-privacy-c8-1)", () => {
     const paths = { name: "Options - LibreOffice - Paths", text: "Paths used by LibreOffice Type Path AutoCorrect Templates Backups" };

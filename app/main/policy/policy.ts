@@ -2285,24 +2285,37 @@ function goesPastWarning(role: string, name: string, context: string): boolean {
 const DECLINE_WORDS = ["cancel", "close", "close (this )?(dialog|message|window|notification|prompt|pop-?up)", "dismiss", "no", "no,? thanks?", "(no,? )?thanks,? anyway", "not now",
   "never mind", "stay", "stay (here|on (this )?(page|site))", "(don't|do not) leave", "keep editing", "keep working", "go back", "back", "help", "learn more",
   "more info(rmation)?", "(show |hide )?details",
-  "abbrechen", "schließen", "nein", "nicht jetzt", "auf (der|dieser) seite bleiben", "bleiben", "zurück", "hilfe",
-  "annuler", "fermer", "non", "pas maintenant", "rester sur (la|cette) page", "rester", "retour", "aide",
-  "cancelar", "cerrar", "no", "ahora no", "permanecer en (la|esta) página", "quedarse", "volver", "atrás", "ayuda",
-  "annulla", "chiudi", "non ora", "rimani (sulla|in questa) pagina", "resta", "indietro", "aiuto",
-  "fechar", "não", "agora não", "permanecer na página", "ficar", "voltar", "ajuda",
-  "annuleren", "sluiten", "nee", "niet nu", "op (de|deze) pagina blijven", "blijven", "terug", "hulp",
-  "anuluj", "zamknij", "nie", "nie teraz", "pozostań na stronie", "zostań", "wstecz", "pomoc",
-  "отмена", "отменить", "закрыть", "нет", "не сейчас", "остаться на странице", "остаться", "назад", "справка",
-  "avbryt", "stäng", "nej", "inte nu", "stanna kvar på sidan", "stanna", "tillbaka", "hjälp",
-  "annuller", "luk", "ikke nu", "bliv på siden", "bliv", "tilbage", "hjælp",
-  "lukk", "nei", "ikke nå", "bli på siden", "bli", "tilbake", "hjelp",
-  "peruuta", "peru", "sulje", "ei", "ei nyt", "pysy sivulla", "takaisin", "ohje",
-  "zrušit", "zavřít", "ne", "teď ne", "zůstat na stránce", "zůstat", "zpět", "nápověda",
-  "iptal", "vazgeç", "kapat", "hayır", "şimdi değil", "sayfada kal", "geri", "yardım"];
+  // Putting it off or refusing it: "Remind Me Later", "Skip for now", "Don't Allow" (regression review of round eight,
+  // safety-privacy-x8-6). Never a lone "Skip" or "Ignore", which may go on past what the dialog warns of.
+  "no,? thank you", "not (right now|yet)", "(maybe |remind me |ask (me )?)?later", "skip for now", "(don't|do not) allow",
+  "abbrechen", "schließen", "nein", "nicht jetzt", "auf (der|dieser) seite bleiben", "bleiben", "zurück", "hilfe", "später", "nicht (erlauben|zulassen)",
+  "annuler", "fermer", "non", "pas maintenant", "rester sur (la|cette) page", "rester", "retour", "aide", "plus tard", "ne pas autoriser",
+  "cancelar", "cerrar", "no", "ahora no", "permanecer en (la|esta) página", "quedarse", "volver", "atrás", "ayuda", "más tarde", "no permitir",
+  "annulla", "chiudi", "non ora", "rimani (sulla|in questa) pagina", "resta", "indietro", "aiuto", "più tardi", "non consentire",
+  "fechar", "não", "agora não", "permanecer na página", "ficar", "voltar", "ajuda", "mais tarde", "não permitir",
+  "annuleren", "sluiten", "nee", "niet nu", "op (de|deze) pagina blijven", "blijven", "terug", "hulp", "niet toestaan",
+  "anuluj", "zamknij", "nie", "nie teraz", "pozostań na stronie", "zostań", "wstecz", "pomoc", "później", "nie zezwalaj",
+  "отмена", "отменить", "закрыть", "нет", "не сейчас", "остаться на странице", "остаться", "назад", "справка", "позже", "не разрешать",
+  "avbryt", "stäng", "nej", "inte nu", "stanna kvar på sidan", "stanna", "tillbaka", "hjälp", "senare", "tillåt inte",
+  "annuller", "luk", "ikke nu", "bliv på siden", "bliv", "tilbage", "hjælp", "senere", "tillad ikke",
+  "lukk", "nei", "ikke nå", "bli på siden", "bli", "tilbake", "hjelp", "ikke tillat",
+  "peruuta", "peru", "sulje", "ei", "ei nyt", "pysy sivulla", "takaisin", "ohje", "myöhemmin", "älä salli",
+  "zrušit", "zavřít", "ne", "teď ne", "zůstat na stránce", "zůstat", "zpět", "nápověda", "později", "nepovolit",
+  "iptal", "vazgeç", "kapat", "hayır", "şimdi değil", "sayfada kal", "geri", "yardım", "daha sonra", "izin verme"];
 const DECLINE_WHOLE = ["キャンセル", "閉じる", "いいえ", "このページに留まる", "戻る", "ヘルプ", "取消", "关闭", "關閉", "否", "留在此页", "留在此頁", "返回", "帮助", "說明",
-  "취소", "닫기", "아니요", "아니오", "이 페이지에 머무르기", "뒤로", "도움말"];
+  "취소", "닫기", "아니요", "아니오", "이 페이지에 머무르기", "뒤로", "도움말", "後で", "許可しない", "稍后", "稍後", "不允许", "不允許", "나중에", "허용 안 ?함"];
 const DECLINES = new RegExp(`^\\s*(${foldLabel([...DECLINE_WORDS, ...DECLINE_WHOLE].join("|"))})\\s*([(（][^)）]*[)）])?\\s*(\\.\\.\\.|…)?\\s*$`, "u");
 const declines = (name: string) => DECLINES.test(foldLabel(name)) || DECLINES.test(plainText(name));
+/** A bare "No", in the languages of DECLINE_WORDS: in a dialog that asks to save (SAVES), it throws the changes away. */
+const SAYS_NO = new RegExp(`^\\s*(${foldLabel(["no", "nein", "non", "não", "nee", "nie", "нет", "nej", "nei", "ei", "ne", "hayır", "いいえ", "否", "아니요", "아니오"].join("|"))})\\s*([(（][^)）]*[)）])?\\s*$`, "u");
+/**
+ * A dialog that asks to save or keep the work ("Save changes to document “notes.txt” before closing?", "Do you want to
+ * keep this new document?"), in the languages of RISKY_WORDS: its "No" doesn't back off (safety-privacy-x8-7).
+ */
+const SAVES = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(["save", "saving", "keep", "speichern", "enregistrer", "guardar", "salvare", "salva", "salvar", "opslaan",
+  "zapisać", "zapisz", "сохранить", "spara", "gem", "lagre", "tallenna", "tallentaa", "uložit", "kaydet", "kaydedilsin"].join("|"))})(?=$|[^\\p{L}\\p{N}])|保存|儲存|저장`, "u");
+/** Does this answer back off the dialog it answers (DECLINES), but for a "No" to saving the work? */
+const backsOffDialog = (name: string, told: string) => declines(name) && !((SAYS_NO.test(foldLabel(name)) || SAYS_NO.test(plainText(name))) && SAVES.test(foldLabel(told)));
 /** A question in a dialog's words where it may have no question mark ("This page is asking you to confirm that you want to leave"). */
 const ASKS_IF_SURE = /\b(are you sure|(do|did) you (really )?(want|mean) to|would you like to|confirm that you want)\b/;
 /**
@@ -2675,7 +2688,7 @@ export class PolicyEngine {
     const typedIn = !!r.dialog && (r.dialog.controls ? r.dialog.controls.some(c => TYPED_IN.test(c.role)) : !!r.dialog.page);
     const asked = r.dialog ? (typedIn ? r.dialog.name : told) : "";
     const asksInFew = asked.length <= 300 && (/[?？¿]/.test(asked) || ASKS_IF_SURE.test(plainText(asked)) || SENDS_AGAIN.test(plainText(asked)));
-    const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !declines(name) && !plainDialog;
+    const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !backsOffDialog(name, told) && !plainDialog;
     const answersQuestion: Risk = { reason: "this answers a dialog's question or warning, and Ember can't be sure what that answer does", note };
     // Any control of a page (or an Electron app's window) whose title mentions a payment: it may buy something whatever its
     // label says. The question says why, in words true of a title that only mentions one (a mail's subject, a file's name).
