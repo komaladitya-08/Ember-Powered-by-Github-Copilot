@@ -668,8 +668,11 @@ class Parser {
   }
 }
 
-/** The first brace group in an unquoted literal, its alternatives and bounds; "partial" when it doesn't close there. */
-function braceGroup(s: string): { from: number; to: number; alts: string[] } | null | "partial" {
+/**
+ * The first brace group in an unquoted literal, its alternatives and bounds; "partial" when it doesn't close there.
+ * Also how classify.ts reads the braces rimraf and del-cli expand themselves (commands-remote-x8-8).
+ */
+export function braceGroup(s: string): { from: number; to: number; alts: string[] } | null | "partial" {
   for (let a = s.indexOf("{"); a >= 0; a = s.indexOf("{", a + 1)) {
     if (a > 0 && s[a - 1] === "$") continue;
     let depth = 0;
