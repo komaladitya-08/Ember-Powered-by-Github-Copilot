@@ -1189,7 +1189,7 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
       const h = harness({ answers: [answer] });
       const r = await call(h);
       expect(r).toMatchObject({ resultType: "denied", textResultForLlm: answer === null
-        ? "The question timed out with no answer, so nothing was approved and it didn't run. Don't run it again or work around it; finish the task saying what wasn't done."
+        ? "Your question went unanswered: time ran out before the user answered, which is neither a yes nor a no. Nothing was approved, so the command didn't run. Don't run it again or work around it; finish the task now, saying that the question went unanswered and what wasn't done."
         : "The user said no. Don't run it again or work around it; finish the task saying what wasn't done." });
       expect(h.starts).toEqual([]);
       expect(h.declined()).toBe(1);
@@ -2377,7 +2377,7 @@ describe("a remote's own check (§3.8.3 step 13, §3.16)", () => {
     const h = harness({ run: () => needsConfirm(), answers: [null] });
     const ends = reaskEnds(h);
     const r = await call(h);
-    expect(r.textResultForLlm).toMatch(/^The question timed out with no answer/);
+    expect(r.textResultForLlm).toMatch(/^Your question went unanswered: .*neither a yes nor a no/);
     expect(h.starts).toHaveLength(1);
     expect(ends).toEqual([[h.starts[0].runId, "expired"]]);
   });

@@ -229,7 +229,7 @@ export interface WorkerResult {
   summary: string;
   /** The user stopped it (took the mouse back, or said "Not now"): not a failure. */
   stopped?: boolean;
-  /** Stopped because the user said no to a question (or let it go unanswered), and nothing was done after that. */
+  /** Stopped because the user said no to a question, and nothing was done after that. */
   declined?: boolean;
   /** Stopped because a question ran out of time unanswered and nothing was done after that: not a "Not now". */
   expired?: boolean;
@@ -245,6 +245,8 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/** To a step whose question ran out of time: nobody said yes and nobody said no, so it wasn't taken and isn't tried another way. */
+const UNANSWERED = "Your question went unanswered: time ran out before the user answered, which is neither a yes nor a no. Nothing was approved, so the step wasn't taken. Don't retry it or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
 /**
  * To a call the model sent in the same reply as one that then wasn't done: it was planned on that step going ahead, so
  * it does nothing (tasks-approvals-c7-1). `no`: behind a "Not now", an unanswered question or a refusal; `failed`:
@@ -1258,14 +1260,17 @@ export class Worker {
   private ahead: { entries: AuditEntry[]; words: string | null } | null = null;
   /** Ember's questions the user answered with a yes or a choice, with those added since (TaskSpec.agreed). */
   private agreed: Agreement[];
-  /** The user said no to a question (or let it go unanswered), and nothing was done after that. */
+  /** The user said no to a question, and nothing was done after that. */
   private declined = false;
   /** A question ran out of time unanswered, and nothing was done after that (a timeout is not a refusal). */
   private expired = false;
   /**
-   * The user said no to a question in this task (or let one expire), at any time: never cleared, unlike `declined`
-   * (which a later step resets for the task's outcome). "Work without asking" stays suspended for the rest of the task
-   * once this is set (security review of #127: a failed step after a "Not now" must not bring it back).
+   * The user said no to a question in this task, at any time ("Not now", a deny, a Stop during a command's countdown):
+   * never cleared, unlike `declined` (which a later step resets for the task's outcome). "Work without asking" stays
+   * suspended for the rest of the task once this is set (security review of #127: a failed step after a "Not now" must
+   * not bring it back). A question that ran out of time unanswered never sets it: it approved nothing and its step
+   * wasn't taken, but nobody said no (cause 10 of the investigation of the owner's report of 2026-11-12: one question
+   * missed put every later step of the task back to asking).
    */
   private saidNoThisTask = false;
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
@@ -1438,8 +1443,9 @@ export class Worker {
       answer = await (this.clock ? this.clock.waiting(ask) : ask());
       return answer;
     } finally {
-      // Any question of this task answered no (or let go unanswered) holds it to asking for good (saidNoThisTask).
-      if (answer === null || answer === "deny") this.saidNoThisTask = true;
+      // Any question of this task answered no holds it to asking for good (saidNoThisTask). One nobody answered (null:
+      // it ran out of time, or the task was stopped) is not the user's no, so it holds nothing (cause 10).
+      if (answer === "deny") this.saidNoThisTask = true;
       this.activity({ type: "answer", answer: this.isOver ? "stopped" : answer === null ? "expired" : answer === "deny" ? "declined"
         : answer === "once" || answer === "always" ? "allowed" : "answered" });
     }
@@ -2017,7 +2023,8 @@ export class Worker {
       service: this.d.commands!, confirmer: { ask: (q, signal) => this.ask(q, signal), howAnswered: q => this.d.confirmer.howAnswered?.(q) }, presenter: this.d.presenter,
       audit: e => this.audit(e), log: this.d.log, signal: this.overSignal, isOver: () => this.isOver,
       state: this.commandState, size: () => this.d.commandSize?.() ?? COMMAND_SIZE, emberPids: () => this.d.emberPids?.() ?? [],
-      onDeclined: (expired?: boolean) => { if (expired) this.expired = true; else this.declined = true; this.saidNoThisTask = true; },
+      // A card nobody answered is not the user's no (cause 10); "Not now" and a Stop during the countdown are.
+      onDeclined: (expired?: boolean) => { if (expired) this.expired = true; else { this.declined = true; this.saidNoThisTask = true; } },
       // "Work without asking" holds for commands only while this task hasn't been steered or told no (as for app steps).
       autonomy: () => (this.tainted || this.saidNoThisTask ? null : this.d.autonomy?.() ?? null),
       ...(this.d.reviewCommands?.() ? { review: copilotReviewer({ client: this.d.client, model: this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }) } : {}),
@@ -4800,13 +4807,17 @@ export class Worker {
     return !this.isOver;
   }
 
-  /** A question without a yes: "Not now" is the user's no; no answer (null) is a timeout, which approved nothing either. */
+  /**
+   * A question without a yes: "Not now" is the user's no, which holds the task to asking from here on; no answer (null)
+   * is a question that ran out of time, which approved nothing either (the step isn't taken) but is nobody's no: the
+   * model is told so, to stop and say it rather than work around it, and nothing a refusal locks is locked (cause 10).
+   */
   private refused(answer: string | null) {
-    this.saidNoThisTask = true;
     if (answer === null) {
       this.expired = true;
-      return denied("The question timed out with no answer, so nothing was approved. Don't retry or work around it; finish the task and say what wasn't done.");
+      return denied(UNANSWERED);
     }
+    this.saidNoThisTask = true;
     this.declined = true;
     return denied("The user said no. Don't retry or work around it; finish the task and say what wasn't done.");
   }

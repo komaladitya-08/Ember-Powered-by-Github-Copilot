@@ -96,7 +96,10 @@ export interface CommandFlowContext {
   size: () => { cols: number; rows: number };
   /** Ember's own pids now (D4.5; main's live list, §3.6.2). */
   emberPids: () => number[];
-  /** The user said no to a question of this flow (or let it go unanswered): the worker's `declined` (extension, AG). */
+  /**
+   * The user said no to a question of this flow, or (`expired`) let it go unanswered: the worker's `declined` or
+   * `expired` (extension, AG). Only a no holds the task to asking afterwards.
+   */
   onDeclined?: (expired?: boolean) => void;
   /**
    * AI review (review.ts), while the approval mode in force reviews commands (Assisted): a command that would ask, and
@@ -308,7 +311,8 @@ const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 const SAID_NO = "The user said no. Don't run it again or work around it; finish the task saying what wasn't done.";
-const TIMED_OUT = "The question timed out with no answer, so nothing was approved and it didn't run. Don't run it again or work around it; finish the task saying what wasn't done.";
+/** To a command whose card ran out of time: nobody said yes and nobody said no (the worker's UNANSWERED says the same of a step). */
+const TIMED_OUT = "Your question went unanswered: time ran out before the user answered, which is neither a yes nor a no. Nothing was approved, so the command didn't run. Don't run it again or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
 const STOPPED_BEFORE = "The user stopped it before it ran. Don't run it again; finish the task saying so.";
 const UNSHOWN_BEFORE = "Ember's command window couldn't show the countdown to the end, so the command didn't run (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
 const UNSEEN = "Ember couldn't show the command in its command window, so it stopped it at once (commands only run where the user can watch them). Don't run it again; finish the task saying so.";

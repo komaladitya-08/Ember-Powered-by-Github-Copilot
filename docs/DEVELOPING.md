@@ -367,7 +367,7 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   lighter tint, and Calm mode, Reduce Transparency and Increase Contrast make it solid.
   **More time to read and answer** keeps every bubble ten times as long
   (Ember's own notices, and a bubble that waited behind another or was covered for a while, included), a question waits
-  20 minutes instead of 2 before it counts as **Not now**, and an offer to bring Ember to a computer 250 seconds instead
+  20 minutes instead of 2 before it ends unanswered, and an offer to bring Ember to a computer 250 seconds instead
   of 25.
 - Without a compositor (xrdp, VNC), transparent windows can't work, so Ember lives in an opaque
   card in the corner instead; it grows to show a whole question (up to 360 px, or 640 px within the work area for a
@@ -513,7 +513,9 @@ by voice, asked in words, your organisation's policy changed, or as Ember starte
 log is undone, and where it can't be undone on disk either Ember stays below Interactive until the mode is chosen again
 (the note says "Ember couldn't save or record your choice…"). Risky steps ask every time as before, with no "Always", and so do dangerous
 commands; a task that text on screen tried to steer, that went off-task or where you said no (at any point in it) goes
-back to asking.
+back to asking. A question nobody answered in time is not a no: it approves nothing and its step isn't taken (Ember is
+told the question went unanswered, so it stops there and says so instead of trying another way), but the task isn't put
+back to asking for it, and what a **Not now** ends stays as it was.
 Say or type “Ember, ask me first again” (anyone) to have Ember ask before ordinary steps again: it withdraws the
 agreement to the cards, so the way back is Interactive's card in Settings. “Ember, work without asking” opens that card
 (with it agreed to, Ember says it already works without asking); neither is a tool of the model's.
