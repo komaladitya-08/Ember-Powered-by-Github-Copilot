@@ -305,14 +305,15 @@ a quoted word, never a plain word, so `MSG='env vars here'` is text — at the s
 substitution), so a value that merely holds a `|` or `;` — a connection string, a filter, a colour spec such as
 `LS_COLORS='di=01;34'` — runs. An options variable asks when a sub-option names a program (`GOFLAGS=-toolexec=…`
 or `--toolexec=…`, any `TAR_OPTIONS` option that runs a command on tar's own command line — `--to-command`, `-I`,
-`--use-compress-program`, `--checkpoint-action=exec=…`, abbreviated or not — `RUSTFLAGS='-C linker=…'` naming the linker
+`-F` (`--info-script`), `--use-compress-program`, `--checkpoint-action=exec=…`, abbreviated or not — `RUSTFLAGS='-C linker=…'` naming the linker
 by a path or a command, and `PYTEST_ADDOPTS='-p …'` or `-pname`, but not `GOFLAGS=-p=4`, `RUSTFLAGS='-C linker=clang'`
 or `PYTEST_ADDOPTS='-p no:…'`), also when that sub-option's value is a variable
 (`GOFLAGS="-toolexec=$T"`); a variable that only extends the options already set (`GOFLAGS="$GOFLAGS -mod=vendor"`)
 runs. A wrapper variable always asks (`RUSTC_WRAPPER`, `CARGO_BUILD_RUSTC_WRAPPER`,
 `JDK_JAVA_OPTIONS`, `DOTNET_STARTUP_HOOKS`). The same goes for a `cmake -DCMAKE_<lang>_COMPILER=…` override that holds a
 command, `go test -exec`, `go build -toolexec`/`-vettool` (with one dash or two, and with a value Ember can't see:
-`-toolexec="$T"`, `-vettool=$(which shadow)`), and `npm`'s `--script-shell` or `npm config set script-shell`.
+`-toolexec="$T"`, `-vettool=$(which shadow)`), tar's own options that run a command with a value Ember can't see
+(`tar xf a.tar --to-command="$T"`, `-I"$T"`), and `npm`'s `--script-shell` or `npm config set script-shell`.
 
 **Shell scripts are read first.** When a command runs a shell script (`sh deploy.sh`, `bash t.sh`, `source env.sh`,
 `./t.sh`, `powershell -File t.ps1`, `& .\t.ps1`, `cmd /c t.bat`, and the same behind `env`, `nice`, `timeout` and the

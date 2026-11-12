@@ -4568,9 +4568,12 @@ function tarSpec(bsd: boolean): OptSpec {
     longOptional: ["backup", "checkpoint", "occurrence", "one-top-level", "totals", "atime-preserve"],
   };
 }
-/** Whether tar's options name a command it runs: a filter, a compressor, a volume script, a checkpoint's action, a shell. */
+/**
+ * Whether tar's options name a command it runs: a filter, a compressor, a volume script, a checkpoint's action, a shell.
+ * GNU's `-F` is `--info-script` (commands-remote-y8-4).
+ */
 function tarRunsCommand(p: Parsed, bsd: boolean): boolean {
-  return has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I")) || values(p, "checkpoint-action").length > 0;
+  return has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I", "F")) || values(p, "checkpoint-action").length > 0;
 }
 reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const a = [...h.args];
@@ -4582,7 +4585,9 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const create = has(p, "c", "create", "r", "append", "u", "update", "A", "catenate", "concatenate");
   const archive = values(p, "f", "file")[0];
   const dir = values(p, "C", "directory")[0];
-  if (tarRunsCommand(p, bsd)) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
+  // A word Ember can't see all of is read by its written text too, quotes dropped, so an option whose value is a variable
+  // or a substitution (`--to-command="$T"`, `-I"$T"`) asks as the value written out does (commands-remote-y8-4).
+  if (tarRunsCommand(p, bsd) || a.some(w => w.v === null && tarRunsCommand(parseOpts([lit(w.raw.replace(/["']/g, ""))], tarSpec(bsd)), bsd))) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
   // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
   for (const f of values(p, "T", "files-from", "X", "exclude-from", ...(bsd ? ["I"] : []))) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // An incremental backup's snapshot file, which tar rewrites, and the owner and group maps it reads (commands-remote-v5-3).

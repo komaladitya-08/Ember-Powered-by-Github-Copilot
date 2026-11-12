@@ -17909,6 +17909,130 @@
    "downloaded": [
     "/home/ana/proj/d.txt"
    ]
+  },
+  {
+   "cmd": "T=./evil.sh; tar xf a.tar --to-command=\"$T\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.tar-command"
+   ]
+  },
+  {
+   "cmd": "tar xf a.tar --to-command=$(cat cmdfile)",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.tar-command"
+   ]
+  },
+  {
+   "cmd": "tar xf a.tar --to-command=`cat cmdfile`",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.tar-command"
+   ]
+  },
+  {
+   "cmd": "tar --use-compress-program=\"$T\" -xf a.tar",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.tar-command"
+   ]
+  },
+  {
+   "cmd": "tar -I\"$T\" -xf a.tar",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.tar-command"
+   ]
+  },
+  {
+   "cmd": "tar xf a.tar \"--to-command=$T\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.tar-command"
+   ]
+  },
+  {
+   "cmd": "tar -x -M -F ./evil -f a.tar",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.tar-command"
+   ]
+  },
+  {
+   "cmd": "tar -xMF ./evil -f a.tar",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.tar-command"
+   ]
+  },
+  {
+   "cmd": "tar --info-script=\"$S\" -xMf a.tar",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.tar-command"
+   ]
+  },
+  {
+   "cmd": "TAR_OPTIONS='-F ./evil' tar -xMf a.tar",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "tar xzf \"$archive\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "tar -xzf \"$f\" -C \"$dir\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "tar -xf\"$f\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "tar xf a.tar --exclude=\"$pat\"",
+   "verdict": "run"
+  },
+  {
+   "cmd": "tar --strip-components=\"$n\" -xf a.tar",
+   "verdict": "run"
+  },
+  {
+   "cmd": "tar -xf a.tar --transform=\"s,^x,$p,\"",
+   "verdict": "run"
   }
  ]
 }
