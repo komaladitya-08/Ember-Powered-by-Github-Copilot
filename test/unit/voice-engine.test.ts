@@ -2383,3 +2383,98 @@ describe("a conversation without the speakers' stream (Windows, macOS: Ember's o
     expect(events.filter(ev => ev.type === "utterance").map(ev => ev.type === "utterance" && ev.window)).toEqual(["wake", "follow-up"]);
   });
 });
+
+describe("the answer window after one of Ember's questions (owner's report of 2026-11-12: a bare “allow” was never heard)", () => {
+  /** The scripted backend, whose transcript is the words tagged in a segment's first frame (tags 5–7; 1 and 2 are keywords). */
+  const saying = (words: Record<number, string>) => { const b = fake([]); b.transcribe = s => words[s[0]] ?? ""; return b; };
+  const say = (e: VoiceEngine, c: { t: number }, tag: number, frames = 1) => { for (let i = 0; i < frames; i++) { c.t += 32; e.feed(frame(tag, true)); } c.t += 32; e.feed(frame(0)); };
+  const asking = { rejectWindowMs: 300, conversation: true };
+  const utterances = (events: VoiceEvent[]) => events.filter(v => v.type === "utterance");
+
+  it("hears a bare “allow” or “not now” said once the question is asked, without the name, and opens no conversation after it", () => {
+    for (const words of ["Allow.", "Not now.", "Okay, go with it."]) {
+      const events = run(saying({ 5: words }), (e, c) => { e.questionUp(true); e.answerWindow(8000); say(e, c, 5); }, asking);
+      expect(events, words).toEqual([
+        { type: "listening", on: true, reason: "answer", window: "answer" },
+        { type: "speech", on: true }, { type: "speech", on: false },
+        { type: "utterance", text: words, ms: 0, window: "answer" },
+        { type: "listening", on: false, reason: "done", window: "answer" },
+      ]);
+    }
+  });
+
+  it("sends nothing else heard in it, never the room's talk without the name, and hears an answer after it until the window's time is up", () => {
+    const events = run(saying({ 5: "I'll be there in five minutes.", 6: "Yes." }), (e, c) => {
+      e.questionUp(true);
+      e.answerWindow(8000);
+      say(e, c, 5);
+      expect(e.listening).toBe(true);
+      say(e, c, 6);
+    }, asking);
+    expect(utterances(events)).toEqual([{ type: "utterance", text: "Yes.", ms: 0, window: "answer" }]);
+    const idle = run(saying({ 5: "Thanks." }), (e, c) => { e.questionUp(true); e.answerWindow(8000); say(e, c, 5); c.t += 9000; e.feed(frame(0)); }, asking);
+    expect(utterances(idle)).toEqual([]);
+    expect(idle.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "answer" });
+  });
+
+  it("takes a request said by name in it as a wake's, so “Ember, …” still works while it is open", () => {
+    const events = run(saying({ 5: "Ember, open my mail." }), (e, c) => { e.questionUp(true); e.answerWindow(8000); say(e, c, 5); }, asking);
+    expect(events).toContainEqual({ type: "wake", keyword: "ember" });
+    expect(utterances(events)).toEqual([{ type: "utterance", text: "Open my mail.", ms: 0, window: "wake" }]);
+  });
+
+  it("hears “Hey Ember, …” said in it as a wake from idle, checked as one, never as a follow-up", () => {
+    const words = "Hey Ember, open my mail.";
+    const events = run(saying({ 1: words, 5: words }), (e, c) => {
+      e.questionUp(true);
+      e.answerWindow(8000);
+      c.t += 32; e.feed(frame(1, true));
+      for (let i = 0; i < 12; i++) { c.t += 32; e.feed(frame(5, true)); }
+      c.t += 32; e.feed(frame(0));
+    }, asking);
+    const ended = events.findIndex(v => v.type === "listening" && !v.on && v.window === "answer");
+    expect(ended).toBeGreaterThan(0);
+    expect(events.slice(ended + 1)).toContainEqual({ type: "wake", keyword: "hey_ember" });
+    expect(utterances(events)).toEqual([{ type: "utterance", text: "Open my mail.", ms: 0, window: "wake" }]);
+  });
+
+  it("goes with the question, opens only while one is up, and never over a window already listening", () => {
+    const gone = run(saying({}), e => { e.questionUp(true); e.answerWindow(8000); e.questionUp(false); }, asking);
+    expect(gone).toEqual([
+      { type: "listening", on: true, reason: "answer", window: "answer" },
+      { type: "listening", on: false, reason: "timeout", window: "answer" },
+    ]);
+    expect(run(saying({}), e => e.answerWindow(8000), asking)).toEqual([]);
+    const followUp = run(saying({}), e => { e.questionUp(true); e.followUp(8000); e.answerWindow(8000); }, asking);
+    expect(followUp).toEqual([{ type: "listening", on: true, reason: "follow-up", window: "follow-up" }]);
+  });
+
+  it("is widened to a follow-up window when Ember's answer opens one, and is no follow-up itself (MAX_FOLLOW_UPS)", () => {
+    const events = run(saying({ 5: "Open my mail." }), (e, c) => { e.questionUp(true); e.answerWindow(8000); e.followUp(8000); say(e, c, 5); }, asking);
+    expect(utterances(events)).toEqual([{ type: "utterance", text: "Open my mail.", ms: 0, window: "follow-up" }]);
+  });
+
+  it("never hears Ember's own last words: what the microphone heard in the tail of its voice is never replayed into it", () => {
+    // The follow-up window replays a reply said right at the end of Ember's voice; an answer window must not, or the end
+    // of its own read-out ("…for not now") would answer its question.
+    const events = run(saying({ 7: "Not now.", 5: "Allow." }), (e, c) => {
+      e.questionUp(true);
+      e.selfSpeaking(true);
+      for (let i = 0; i < 20; i++) { c.t += 32; e.feed(frame(0)); }
+      e.selfSpeaking(false);
+      e.answerWindow(8000);
+      for (let i = 0; i < 2; i++) { c.t += 32; e.feed(frame(0)); }
+      for (let i = 0; i < 10; i++) { c.t += 32; e.feed(frame(7, true)); }
+      for (let i = 0; i < 10; i++) { c.t += 32; e.feed(frame(5, true)); }
+      c.t += 32; e.feed(frame(0));
+    }, asking);
+    expect(utterances(events)).toEqual([{ type: "utterance", text: "Allow.", ms: 0, window: "answer" }]);
+  });
+
+  it("marks what it hears over other sound, which the voice gate drops without a voiceprint, unless said by name", () => {
+    const over = run(saying({ 5: "Allow." }), (e, c) => { e.questionUp(true); e.otherSound(true); e.answerWindow(8000); say(e, c, 5); }, asking);
+    expect(utterances(over)).toEqual([{ type: "utterance", text: "Allow.", ms: 0, window: "answer", overSound: true }]);
+    const named = run(saying({ 5: "Ember, allow." }), (e, c) => { e.questionUp(true); e.otherSound(true); e.answerWindow(8000); say(e, c, 5); }, asking);
+    expect(utterances(named)).toEqual([{ type: "utterance", text: "Allow.", ms: 0, window: "answer" }]);
+  });
+});

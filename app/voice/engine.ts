@@ -79,7 +79,11 @@ export interface VoiceBackend {
   before?(segment: Float32Array): Float32Array | null;
 }
 
-type ListeningWindow = "wake" | "follow-up" | "manual" | "conversation";
+/**
+ * Which window heard what: a wake's, a follow-up's (no name needed after Ember's answer), Listen once's, a conversation's,
+ * or a question's answer window (answerWindow: only a spoken answer leaves it, owner's report of 2026-11-12).
+ */
+type ListeningWindow = "wake" | "follow-up" | "manual" | "conversation" | "answer";
 
 export type VoiceEvent =
   | { type: "wake"; keyword: string }
@@ -114,7 +118,7 @@ export type VoiceEvent =
    * What was said in a conversation over other sound, without the name, wasn't heard: it can't be told from the song's
    * words (match.ts, owner decision of 2026-11-05). Main says so, once a conversation (voice-listening-10).
    */
-  | { type: "dropped"; reason: "over-sound" };
+  | { type: "dropped"; reason: "over-sound"; window?: "answer" };
 
 export interface EngineOptions {
   /** Audio kept before a wake so a one-breath command isn't cut (seconds). */
@@ -910,6 +914,34 @@ export class VoiceEngine {
   private questionWaiting = false;
   questionUp(on: boolean): void {
     this.questionWaiting = on;
+    // An answer window goes with its question: nothing said after it may answer the next one, or be a request.
+    if (!on && this.mode.kind === "listening" && this.mode.reason === "answer") this.endListening("timeout");
+  }
+
+  /**
+   * A short window, while one of Ember's questions is up, for its answer said without the name (owner's report of
+   * 2026-11-12: a bare "allow" after the question was never heard outside a conversation). Main opens it once Ember has
+   * finished saying the question, or a note about it, and as a question comes up where Ember doesn't speak. Only what
+   * answersQuestion reads as an answer leaves it, as an utterance of window "answer" for main's voiceAnswer to judge
+   * (with the echo guard, Voice Match and the Confirmer's own checks); a request said by name in it is a wake's; the
+   * room's talk without the name goes nowhere. It opens no conversation, isn't a follow-up (MAX_FOLLOW_UPS), ends with the
+   * question, and never replays what the microphone heard in the tail of Ember's voice (the follow-up window does, for a
+   * reply said right at its end: here that could be Ember's own "…for not now"). A window already listening hears answers
+   * already; an answer window open now starts its time again, with nothing held from before.
+   */
+  answerWindow(ms = 8000): void {
+    if (this.onlyStops || !this.questionWaiting) return;
+    if (this.mode.kind === "listening") {
+      if (this.mode.reason !== "answer") return;
+      this.tail = [];
+      this.mode.until = Math.max(this.mode.until, this.now() + ms);
+      return;
+    }
+    this.resetListening();
+    this.peak = 0;
+    this.tail = [];
+    this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: false, reason: "answer", checkAt: null, keyword: "" };
+    this.emit({ type: "listening", on: true, reason: "answer", window: "answer" });
   }
 
   /** `text` answers the question up now, yes or no (answersQuestion): false while none is. */
@@ -964,6 +996,13 @@ export class VoiceEngine {
     if (this.mode.kind === "listening" && this.mode.reason === "conversation") {
       this.mode.afterQuestion = !!o.afterQuestion;
       this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
+      return;
+    }
+    // An answer window becomes the follow-up Ember's answer opened (wider: any request), as it was.
+    if (this.mode.kind === "listening" && this.mode.reason === "answer") {
+      if (this.followUps >= MAX_FOLLOW_UPS) return;
+      this.mode = { ...this.mode, until: Math.max(this.mode.until, this.now() + ms), ms, reason: "follow-up", afterQuestion: !!o.afterQuestion };
+      this.emit({ type: "listening", on: true, reason: "follow-up", window: "follow-up" });
       return;
     }
     if (this.followUps >= MAX_FOLLOW_UPS) return;
@@ -1172,6 +1211,10 @@ export class VoiceEngine {
         else if (!this.pendingStop) { this.pendingStop = { keyword, at: now, checkAt: now + SELF_STOP_MAX_MS }; this.watchSpeakers(); }
         continue;
       }
+      // "Hey Ember" in a question's answer window (answerWindow): the window goes, and the wake is heard and checked as one
+      // from idle, so "Hey Amber, dinner's ready" is taken back as ever, never sent as a follow-up would be. (The bare name
+      // isn't a wake there: what is said with it is heard in the window.)
+      if (this.mode.kind === "listening" && this.mode.reason === "answer" && keyword !== BARE_NAME && !this.pendingWake) this.endListening("timeout");
       if (this.mode.kind === "idle" && !this.pendingWake) { this.pendingWake = { keyword, at: now, paused }; this.watchSpeakers(); }
       // "Hey Ember" in a follow-up window is a wake (wakeOverFollowUp). The bare name isn't: a follow-up needs no name,
       // and the name is spotted inside "remember".
@@ -1261,7 +1304,8 @@ export class VoiceEngine {
       if (this.tail.length > TAIL_KEEP_FRAMES) this.tail.shift();
       return;
     }
-    if (this.tailFrom && this.mode.reason !== "conversation" && !this.afterTail(frame, energy, now)) return;
+    // (An answer window never replays the tail: what it held may be Ember's own last words, see answerWindow.)
+    if (this.tailFrom && this.mode.reason !== "conversation" && this.mode.reason !== "answer" && !this.afterTail(frame, energy, now)) return;
     this.listen(frame, energy);
     // A conversation lasts while the user speaks and while Ember has something at work.
     if (this.mode.kind === "listening" && this.mode.reason === "conversation" && (this.busy || this.backend.speaking())) this.mode.until = Math.max(this.mode.until, now + this.mode.ms);
@@ -1831,6 +1875,8 @@ export class VoiceEngine {
       if (this.overEmber) { this.peak = 0; return; }
       this.overSound = true;
     }
+    // So in a question's answer window: a video's "yes" is no one's answer (owner's report of 2026-11-12).
+    if (this.mode.reason === "answer" && this.soundPlaying(t0) && !calledByName(heard)) this.overSound = true;
     if (conversation && this.overEmber && !this.cutIn) {
       // All of what was said over Ember, its end heard: Ember's own voice, a "yeah", or the user cutting in.
       if (this.peak < this.echo * ECHO_MARGIN || (BACKCHANNEL.test(heard) && !this.answering(heard))) { this.peak = 0; return; }
@@ -1915,6 +1961,17 @@ export class VoiceEngine {
       this.endListening("stop");
       return;
     }
+    if (this.mode.reason === "answer" && !this.answering(text)) {
+      // Not an answer, in a question's answer window: the room's talk goes nowhere (nothing without the name leaves this
+      // computer here). Said by name, it is a request, as at a wake (the bare name isn't spotted as one in this window).
+      if (!calledByName(heard)) { this.peak = 0; return; }
+      this.mode.reason = "wake";
+      this.emit({ type: "wake", keyword: BARE_NAME });
+      this.emit({ type: "listening", on: true, reason: "wake", window: "wake" });
+      text = stripWake(heard, true);
+      withWake = holdsWake(heard, text, true);
+      if (!saysSomething(text)) { this.mode.until = Math.max(this.mode.until, this.now() + 4000); return; }
+    }
     // "Ember?" said again in a conversation, however the recognizer wrote it ("Number.", "Andber."): Ember is listening already.
     // Judged on all that was heard, so "Ember, close it" keeps its "Close it", and only on what reads as the name.
     if (conversation && this.now() - this.spottedAt < NAME_HEARD_MS && wordsOf(heard).length <= 2 && NAME_WRITTEN.test(heard)) {
@@ -1966,7 +2023,8 @@ export class VoiceEngine {
     const window = this.mode.reason;
     // (Not softer than the wake phrase: else each follow-up could take softer room talk.)
     if (window === "wake") this.voice = Math.max(this.wakePeak, this.peak);
-    this.followUps = window === "follow-up" ? this.followUps + 1 : 0;
+    // (An answer is no follow-up, nor a request that starts the count again.)
+    this.followUps = window === "follow-up" ? this.followUps + 1 : window === "answer" ? this.followUps : 0;
     this.requestAudio = audio;
     this.requestWithWake = withWake;
     this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}) });
@@ -1978,7 +2036,8 @@ export class VoiceEngine {
       this.peak = 0;
       return;
     }
-    const opens = this.conversing && window !== "manual";
+    // (An answer opens no conversation: what is said after it needs the name again, as before the question.)
+    const opens = this.conversing && window !== "manual" && window !== "answer";
     this.endListening("done", opens ? { next: "conversation" } : {});
     if (opens) this.openConversation();
   }

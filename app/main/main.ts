@@ -1104,6 +1104,9 @@ function start(): void {
     voice?.cancelListenOnce();
     pauseAnswerSpeech();
     if (maySpeak()) voice?.speak(words ?? aloud.say);
+    // Then a moment for its answer without the name (owner's report of 2026-11-12): once Ember has said it, or at once
+    // where it says nothing; only an answer leaves that window, through voiceAnswer's rules and the echo guard.
+    voice?.answerWindow();
     if (userAway()) notify("Ember needs your OK", words ?? aloud.notify);
   };
   /** The user isn't looking at Ember right now (idle, or Ember hidden). */
@@ -1843,6 +1846,10 @@ function start(): void {
   let questionWhenSaid: number | null = null;
   /** The question Ember last said it heard an answer over its own voice for (said once a question). */
   let heardOverFor: number | null = null;
+  /** A question's answer window is open (engine.ts answerWindow): its speech dates each answer, and shows nothing. */
+  let answerListening = false;
+  /** The question Ember last said an answer over other sound wasn't taken for (said once a question). */
+  let overSoundFor: number | null = null;
   const speechStarts = () => { saidFrom = Date.now(); questionWhenSaid = confirmer?.currentNumber ?? null; };
   /**
    * A spoken answer to the question up (voice-answer.ts judged the words): taken through the Confirmer, which holds a yes
@@ -1877,6 +1884,8 @@ function start(): void {
     if (!confirmer.note(VOICE_ANSWER_REFUSED[note])) return;
     // (The keys stay under the note in the bubble; said aloud, they are named after it: tasks-approvals-6.)
     if (maySpeak()) voice?.speak(voiceAnswerSaid(note, heldKeys().map(k => k.say)));
+    // "Say it again now": heard without the name once Ember has said why (the answer window, as after the question).
+    voice?.answerWindow();
   };
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** How the last teaching ended (settings says so; forgotten when it closes or teaching starts again). */
@@ -1918,6 +1927,7 @@ function start(): void {
   const onVoice = (e: VoiceEvent, heard?: { utterance: number }) => {
     switch (e.type) {
       case "wake":
+        answerListening = false;
         heardFrom = Date.now();
         speechStarts();
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
@@ -1930,6 +1940,10 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
+        // A question's answer window (engine.ts answerWindow): nothing shows for it, as the question is up meanwhile, and
+        // nothing of the bubble is taken or let go; each answer is dated from its own start (the "speech" case).
+        answerListening = e.window === "answer" && e.on;
+        if (e.window === "answer") break;
         if (e.window === "conversation") {
           // The microphone stays open through replies and tasks: nothing here may take the bubble from them.
           conversationOpen(e.on);
@@ -1973,6 +1987,9 @@ function start(): void {
         }
         break;
       case "dropped":
+        // From a question's answer window it was an answer (nothing else leaves that window): the question says so, once,
+        // and how to be heard, rather than nothing at all (owner's report of 2026-11-12).
+        if (e.window === "answer" && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer("over-sound", "allow"); }
         if (!conversing || overSoundSaid || statusBy.listen !== CONVERSATION_STATUS) break;
         overSoundSaid = true;
         setStatus("listen", OVER_SOUND_STATUS);
@@ -1984,6 +2001,8 @@ function start(): void {
         // In a conversation each thing said dates from its own start, for the spoken-answer checks (a window that opened
         // minutes ago says nothing of it), and the bubble stays with the reply or task it shows.
         if (conversing) { if (e.on) { heardFrom = Date.now(); speechStarts(); } break; }
+        // So in a question's answer window, which shows nothing of its own while the question is up.
+        if (answerListening) { if (e.on) { heardFrom = Date.now(); speechStarts(); } break; }
         // In a follow-up window the speech itself starts later than the window: the answer is tied to then.
         if (e.on && saidFrom < heardFrom + 1) speechStarts();
         if (e.on) agent?.claimBubble();
@@ -2001,7 +2020,7 @@ function start(): void {
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
         lastHeard = { utterance: heard?.utterance ?? -1, verified: e.verified === true, cut: !!e.cut, selfSpoke: e.overEmber === true || (voice?.selfSpokeSince(heardFrom) ?? true) };
         // The request ran past the longest Ember listens: what was heard goes, and the user is told the rest didn't.
-        if (e.cut) {
+        if (e.cut && e.window !== "answer") {
           const note = CUT_NOTES[e.window];
           setStatus("listen", note);
           setTimeout(() => { if (statusBy.listen === note) setStatus("listen", null); }, 10_000).unref?.();
@@ -2024,6 +2043,9 @@ function start(): void {
           });
           // A spoken answer to a question is never learnt from (Voice Match learns from requests only).
           if (spokenReply.kind !== "none") { lastHeard = null; answerByVoice(spokenReply); break; }
+          // An answer window's words with no question up any more (it went meanwhile): said without the name, they are no
+          // one's request, and never go to Copilot.
+          if (spokenReply.kind === "none" && e.window === "answer") break;
           // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
           // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
           // `verified`: Voice Match matched the owner's voice (what may turn "Work without asking" on).

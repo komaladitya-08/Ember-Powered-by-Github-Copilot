@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, refusalNote, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
+import { questionAloud } from "../../app/main/agent/presenter";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "../../app/main/agent/autonomy-intent";
 import fs from "node:fs";
 import os from "node:os";
@@ -70,7 +71,7 @@ describe("voiceAnswer (who may answer by voice)", () => {
 
   it("asks for a little more when the owner's yes was too short for Voice Match to vouch for (security review of #127)", () => {
     expect(voiceAnswer({ ...base, verified: false, short: true })).toEqual({ kind: "refused", answer: "allow", why: "too-short" });
-    expect(VOICE_ANSWER_REFUSED["too-short"]).toBe("I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like “Yes, please go ahead.”");
+    expect(VOICE_ANSWER_REFUSED["too-short"]).toBe("I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like “Yes, please go ahead”, so I can tell.");
     // The longer yes it suggests is one Ember takes.
     expect(spokenAnswer("Yes, please go ahead.")).toBe("allow");
   });
@@ -288,6 +289,36 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
     expect(VOICE_ANSWER_REFUSED.locked).not.toMatch(/again/i);
   });
 
+  it("ends nothing Ember says while a question is up on an answer, so the end of its own voice never answers it (owner's report of 2026-11-12)", () => {
+    // An answer window opens once Ember stops speaking: whatever the microphone still catches of its last words must be
+    // no answer, yes or no, from any of its trailing words.
+    const keys = [["Control Alt Y to allow", "Control Alt N for not now"], ["Windows key, Alt, Y to allow", "Windows key, Alt, N for not now"], ["Control Shift Command Y to allow"], ["Control Alt N for not now"]];
+    const said: string[] = [];
+    for (const k of keys) {
+      said.push(questionAloud({ prompt: "Click Save in gedit?" }, { keys: k }).say);
+      said.push(questionAloud({ prompt: "Type “Dear…Bye” into the “Message” field?", detail: "Dear team, … Bye", where: "on build-01" }, { keys: ["Control Alt Y to show the next part", ...k.slice(1)] }).say);
+      for (const why of Object.keys(VOICE_ANSWER_REFUSED) as (keyof typeof VOICE_ANSWER_REFUSED)[]) said.push(voiceAnswerSaid(why, k), VOICE_ANSWER_REFUSED[why]);
+    }
+    for (const line of said) {
+      const words = line.split(/\s+/);
+      for (let i = 0; i < words.length; i++) expect(spokenAnswer(words.slice(i).join(" ")), `${line} → ${words.slice(i).join(" ")}`).toBeNull();
+    }
+    expect(questionAloud({ prompt: "Click Save?" }, { keys: ["Control Alt Y to allow", "Control Alt N for not now"] }).say).toBe("Ember asks: Click Save? To allow, press Control Alt Y; for not now, press Control Alt N.");
+  });
+
+  it("listens for a bare answer once each question and each note about it is said, and never sends what it hears there to Copilot (source pins)", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toMatch(/if \(maySpeak\(\)\) voice\?\.speak\(words \?\? aloud\.say\);\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*voice\?\.answerWindow\(\);/);
+    expect(main).toMatch(/if \(maySpeak\(\)\) voice\?\.speak\(voiceAnswerSaid\(note, heldKeys\(\)\.map\(k => k\.say\)\)\);\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*voice\?\.answerWindow\(\);/);
+    expect(main).toMatch(/if \(spokenReply\.kind === "none" && e\.window === "answer"\) break;/);
+  });
+
+  it("says once a question when an answer said over other sound wasn't taken, and how to be heard, rather than nothing (owner's report of 2026-11-12)", () => {
+    expect(VOICE_ANSWER_REFUSED["over-sound"]).toBe("Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.");
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toMatch(/if \(e\.window === "answer" && confirmer\?\.waiting && overSoundFor !== confirmer\.currentNumber\) \{ overSoundFor = confirmer\.currentNumber; refuseVoiceAnswer\("over-sound", "allow"\); \}/);
+  });
+
   it("is wired in main from Voice Match's switch, not from whether it is ready, and every refusal goes through refusalNote (source pins)", () => {
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
     expect(main).toMatch(/const matchOff = !settings\.get\(\)\.voice\.match;/);
@@ -424,7 +455,7 @@ describe("refusals of a spoken yes say exactly what to do, and are said aloud to
 
   it("says them in words fit for speech: the menu path as words, no quote marks", () => {
     expect(voiceAnswerSaid("voice-match-unready")).toBe("Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings, then Voice, or turn it off. Until then, click Allow or use the keys.");
-    expect(voiceAnswerSaid("too-short")).toBe("I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like Yes, please go ahead.");
+    expect(voiceAnswerSaid("too-short")).toBe("I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like Yes, please go ahead, so I can tell.");
     for (const why of Object.keys(VOICE_ANSWER_REFUSED) as (keyof typeof VOICE_ANSWER_REFUSED)[]) expect(voiceAnswerSaid(why), why).not.toMatch(/[›“”"]/);
   });
 
@@ -681,8 +712,8 @@ describe("a refused spoken yes keeps the keys that answer the question (tasks-ap
 
   it("says the keys Ember holds aloud where the line points to a click or the keys, and none it doesn't hold", () => {
     const keys = ["Control Alt Y to allow", "Control Alt N for not now"];
-    expect(voiceAnswerSaid("voice-match-unready", keys)).toBe("Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings, then Voice, or turn it off. Until then, click Allow or use the keys. Or press Control Alt Y to allow, or Control Alt N for not now.");
-    expect(voiceAnswerSaid("locked", keys)).toBe("I heard a voice that isn't yours, so for this question I'll take a click or the keys only. Press Control Alt Y to allow, or Control Alt N for not now.");
+    expect(voiceAnswerSaid("voice-match-unready", keys)).toBe("Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings, then Voice, or turn it off. Until then, click Allow or use the keys. Or, to allow, press Control Alt Y; for not now, press Control Alt N.");
+    expect(voiceAnswerSaid("locked", keys)).toBe("I heard a voice that isn't yours, so for this question I'll take a click or the keys only. To allow, press Control Alt Y; for not now, press Control Alt N.");
     // The keys can't allow a click-only card, and other lines say what to say instead.
     expect(voiceAnswerSaid("click-only", keys)).toBe(voiceAnswerSaid("click-only"));
     expect(voiceAnswerSaid("too-short", keys)).toBe(voiceAnswerSaid("too-short"));

@@ -492,6 +492,15 @@ Ember opens the switch or its card here) or “Ember, ask me first again” (any
 fine”, “fine”, “alright”) answers it, and “Ember, not now” (or “no”, “no thanks”, “deny”, “don't”) declines it: the one
 list in `app/shared/spoken-answer.ts`, which the voice process also reads, so that in a follow-up window or a
 conversation such an answer reaches the question and isn't taken for “that's all” or for a “yeah” said over Ember.
+Once Ember has said the question (or at once, where it doesn't speak), and again after each note it says about an
+answer it didn't take, it listens for 8 s (`ANSWER_WINDOW_MS`, app/main/voice.ts) for the answer without its name: a
+bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). Only what the list
+reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
+wake, “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere. It opens no conversation, is
+no follow-up, ends with the question, never replays what the microphone caught at the end of Ember's voice, and takes
+nothing said over other sound unless it is said with the name (the question then says so, once). Nothing Ember says
+while a question is up ends on words that read as an answer: it says the keys as “To allow, press Control Alt Y; for
+not now, press Control Alt N.” (`keysSaid`, app/main/agent/voice-answer.ts).
 With **Only my voice can say yes (Voice Match)** off, its default, a yes or a no from anyone heard answers it (owner
 decision of 2026-11-12: “it doesn't really need my voice to be matched for it”), and “Before Ember starts” and the
 “Hey Ember” card say so: anyone near the computer can answer Ember by voice. The audit records `via: "voice"`,

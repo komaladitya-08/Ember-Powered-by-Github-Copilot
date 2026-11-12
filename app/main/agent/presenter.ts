@@ -13,6 +13,7 @@ import { WHOLE_KEY_HINT, WHOLE_KEY_SAY, WHOLE_UNREAD_SAID, plainMarkdown } from 
 import { ANNOUNCE_MS } from "../commands/flow";
 import { ANSWER_MS } from "./confirm";
 import { announcement, firstPerson, keyboardRoute } from "../../renderer/overlay/target-copy";
+import { keysSaid } from "./voice-answer";
 
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
 
@@ -161,15 +162,16 @@ export function readKeyWords(keys: readonly { which: "primary" | "deny"; hint: s
 
 /**
  * A question as Ember says it aloud and puts it in a notification, naming where it comes from when that isn't this
- * computer (§2.4): "Ember asks, on build-01: Click Save in gedit? Press …". `spoken` makes the prompt fit for speech;
- * `keys` are the held keys that answer it, as they are said. A question with a whole text to read (`detail`, review #116)
- * says that Allow waits for all of it to have been shown (its keys then say the approve key shows the next part).
+ * computer (§2.4): "Ember asks, on build-01: Click Save in gedit? To allow, press …". `spoken` makes the prompt fit for
+ * speech; `keys` are the held keys that answer it, as they are said, in a sentence that ends on a key, never on an
+ * answer (keysSaid: an answer window opens as Ember stops speaking). A question with a whole text to read (`detail`,
+ * review #116) says that Allow waits for all of it to have been shown (its keys then say the approve key shows the next part).
  */
 export function questionAloud(q: { prompt: string; where?: string; detail?: string }, o: { keys?: readonly string[]; spoken?: (s: string) => string } = {}): { say: string; notify: string } {
   const where = q.where?.replace(/\s+/g, " ").trim();
   const keys = o.keys ?? [];
   return {
-    say: `Ember asks${where ? `, ${where}` : ""}: ${(o.spoken ?? (s => s))(q.prompt)}${q.detail ? ` ${WHOLE_UNREAD_SAID}` : ""}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`,
+    say: `Ember asks${where ? `, ${where}` : ""}: ${(o.spoken ?? (s => s))(q.prompt)}${q.detail ? ` ${WHOLE_UNREAD_SAID}` : ""}${keys.length ? ` ${keysSaid(keys)}` : ""}`,
     notify: where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}: ${q.prompt}` : q.prompt,
   };
 }

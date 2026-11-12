@@ -205,7 +205,7 @@ describe("“Work without asking”'s card (FEATURE_CONSENT_VERSION.autonomy)", 
     // Sentence case, curly quotes, no raw keys (CLAUDE.md "Writing UI copy").
     expect(AUTONOMY_CONSENT_TEXT).not.toMatch(/"|Ctrl\+/);
     // Anyone heard may answer while Voice Match is off, its default (owner's report of 2026-11-12): no "(with Voice Match on)".
-    expect(autonomyHint(false)).toMatch(/You can answer a question by voice too: “Ember, allow” or “Ember, not now”\.$/);
+    expect(autonomyHint(false)).toMatch(/You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later\.$/);
     expect(autonomyHint(false)).not.toMatch(/with Voice Match on/);
     expect(autonomyHint(true)).toMatch(/^Managed by your organisation/);
   });

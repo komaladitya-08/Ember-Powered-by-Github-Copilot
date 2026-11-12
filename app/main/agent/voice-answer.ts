@@ -196,22 +196,26 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
 }
 
 /** Every reason a spoken answer can be turned away: voiceAnswer's, the Confirmer's, and an answer said over Ember's voice. */
-export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over";
+export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound";
 
 /**
  * What the bubble says under the question when a spoken answer wasn't taken (the question stays up): what happened,
- * and exactly what to do instead. Ember says it too (voiceAnswerSaid), where it speaks.
+ * and exactly what to do instead. Ember says it too (voiceAnswerSaid), where it speaks, and then listens for the answer
+ * without its name (the answer window): so none ends on words that read as an answer, which the microphone might
+ * still catch of Ember's own voice as that window opens (owner's report of 2026-11-12).
  */
 export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
   "voice-match-unready": "Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow or use the keys.",
-  unverified: "That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow.",
+  unverified: "That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow or use the keys.",
   "own-voice": "I was still speaking, so I didn't take that as an answer. Say it again now.",
   "click-only": "This one needs a click: I can't take a yes by voice here.",
   "not-yet": "Read it through first, then say yes again.",
-  "too-short": "I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like “Yes, please go ahead.”",
+  "too-short": "I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like “Yes, please go ahead”, so I can tell.",
   stale: "That was said before this question came up, so I didn't take it. Say it again.",
   locked: "I heard a voice that isn't yours, so for this question I'll take a click or the keys only.",
   "heard-over": "I heard you over my own voice, so I didn't take it. Say it again now that I've stopped.",
+  // A nameless answer over a song or a video, which the voice gate drops without a voiceprint (match.ts "dropped").
+  "over-sound": "Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.",
 };
 
 /** The lines that point to a click or the keys: said aloud, they name the keys Ember holds too (tasks-approvals-6). */
@@ -238,5 +242,22 @@ export function refusalNote(why: VoiceAnswerNote, o: { answer: "allow" | "deny";
 export function voiceAnswerSaid(why: VoiceAnswerNote, keys: readonly string[] = []): string {
   const line = VOICE_ANSWER_REFUSED[why].replace(/\s*›\s*/g, ", then ").replace(/[“”]/g, "");
   if (!keys.length || !POINTS_TO_KEYS.has(why)) return line;
-  return `${line} ${why === "locked" ? "Press" : "Or press"} ${keys.join(", or ")}.`;
+  const said = keysSaid(keys);
+  return `${line} ${why === "locked" ? said : `Or, ${said.charAt(0).toLowerCase()}${said.slice(1)}`}`;
+}
+
+/**
+ * The question keys Ember holds, as said ("Control Alt Y to allow", "Control Alt N for not now"), in one sentence that
+ * ends on a key and never on an answer: "To allow, press Control Alt Y; for not now, press Control Alt N." The end of
+ * Ember's own voice is what the microphone may still catch as a question's answer window opens, and "…or Control Alt N
+ * for not now" ended on a no (owner's report of 2026-11-12). "" for none.
+ */
+export function keysSaid(keys: readonly string[]): string {
+  const parts = keys.map(k => {
+    const m = /^(.+?) ((?:to|for) .+)$/.exec(k);
+    return m ? `${m[2]}, press ${m[1]}` : `press ${k}`;
+  });
+  if (!parts.length) return "";
+  const s = parts.join("; ");
+  return `${s.charAt(0).toUpperCase()}${s.slice(1)}.`;
 }

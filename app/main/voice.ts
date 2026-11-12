@@ -111,6 +111,11 @@ const LISTEN_ONCE_DOUBT_SETTINGS = "There was talking, but it wasn't clear it wa
  */
 export const LISTEN_ONCE_HUSH = "Stops speaking first, then listens for one request.";
 /**
+ * How long a question's answer window listens for a bare "allow" or "not now" once Ember has said the question (ms):
+ * as long as a follow-up window. Short, as the room's talk could otherwise answer: what is said later needs the name.
+ */
+export const ANSWER_WINDOW_MS = 8000;
+/**
  * Listen once's line while an answer is on its way: a press stops it first, as a wake does (main's requestListenOnce).
  * No name at all, not even "Ember's", which `calledByName` leaves out: the recogniser joins the word before it to the
  * name, and "Stops Ember's answer, …", said after each Listen once until the answer came, was heard as "Stop Timbers'
@@ -280,6 +285,8 @@ export class VoiceService {
   private followUpMs = 0;
   private followUpAsked = false;
   private followUpTimer: NodeJS.Timeout | null = null;
+  /** A question's answer window (ms) waiting, with the follow-up's timer, for Ember to finish speaking (answerWindow). */
+  private answerMs = 0;
   private listeningGeneration = 0;
   private capturing = false;
   private captureGeneration = 0;
@@ -801,19 +808,38 @@ export class VoiceService {
     this.openFollowUp();
   }
 
+  /**
+   * One of Ember's questions is up: listen for its answer without the name (engine.ts answerWindow), once Ember has
+   * finished saying it (or a note about it), or at once where it says nothing. Never while it speaks, or it would hear
+   * itself; a hush, a wake, Listen once or Stop drops it, as a follow-up is dropped (owner's report of 2026-11-12).
+   */
+  answerWindow(ms = ANSWER_WINDOW_MS): void {
+    if (this.manual || !this.wanted) return;
+    this.answerMs = ms;
+    this.openFollowUp();
+  }
+
   private openFollowUp(): void {
     if (this.followUpTimer) clearTimeout(this.followUpTimer);
     this.followUpTimer = null;
-    if (!this.followUpMs || this.ttsPending.size) return;
+    if ((!this.followUpMs && !this.answerMs) || this.ttsPending.size) return;
     const wait = this.speakingUntil - Date.now();
     if (wait > 0) { this.followUpTimer = setTimeout(() => this.openFollowUp(), wait); return; }
-    if (this.proc) this.o.log.info("voice.follow_up", { ms: this.followUpMs, afterQuestion: this.followUpAsked });
-    this.proc?.postMessage({ type: "follow-up", ms: this.followUpMs, ...(this.followUpAsked ? { afterQuestion: true } : {}) });
-    this.followUpMs = 0;
+    if (this.followUpMs) {
+      if (this.proc) this.o.log.info("voice.follow_up", { ms: this.followUpMs, afterQuestion: this.followUpAsked });
+      this.proc?.postMessage({ type: "follow-up", ms: this.followUpMs, ...(this.followUpAsked ? { afterQuestion: true } : {}) });
+      this.followUpMs = 0;
+    }
+    if (this.answerMs) {
+      if (this.proc) this.o.log.info("voice.answer_window", { ms: this.answerMs });
+      this.proc?.postMessage({ type: "answer-window", ms: this.answerMs });
+      this.answerMs = 0;
+    }
   }
 
   private dropFollowUp(): void {
     this.followUpMs = 0;
+    this.answerMs = 0;
     this.openFollowUp();
   }
 

@@ -20,6 +20,7 @@ import { nativePackage, sherpaRuntime, type RuntimeOptions } from "../../app/voi
 import { kittenSpec } from "../../app/voice/tts-spec";
 import { matchView } from "../../app/renderer/home/match-copy";
 import { COMPOSER_THINKING } from "../../app/renderer/home/copy";
+import { spokenAnswer } from "../../app/shared/spoken-answer";
 import type { VoiceMatchStatus } from "../../app/shared/ipc";
 import { Enrolment, VoiceGate, type EnrolState, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, printFeatures, similarity, unit } from "../../app/voice/voiceprint";
@@ -769,6 +770,42 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     }
     expect(woke).toEqual([]);
   }, 600_000);
+
+  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("hears a bare answer said once one of Ember's questions is asked, without the name, and nothing of the room's talk then (owner's report of 2026-11-12)", () => {
+    const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(readerVoice, "en_US-ryan-low.onnx"), tokens: path.join(readerVoice, "tokens.txt"), dataDir: path.join(readerVoice, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
+    expect(tts.sampleRate).toBe(16000);
+    const rms = (x: Float32Array) => Math.sqrt(x.reduce((n, v) => n + v * v, 0) / x.length);
+    /** `text` said by another voice than the clips', 0.1 RMS, after half a second of the room and with 2 s after it. */
+    const said = (text: string) => {
+      const raw: Float32Array = tts.generate({ text, sid: 0, speed: 1 }).samples;
+      let a = 0, b = raw.length;
+      while (a < b && Math.abs(raw[a]) < 0.01) a++;
+      while (b > a && Math.abs(raw[b - 1]) < 0.01) b--;
+      const level = 0.1 / rms(raw.subarray(a, b));
+      return inRoom(cat(silence(0.5), raw.slice(a, b).map(x => x * level), silence(2)));
+    };
+    const asked = (audio: Float32Array) => {
+      const s = session();
+      s.engine.questionUp(true);
+      s.engine.answerWindow(8000);
+      s.hear(audio);
+      s.end();
+      return s.events;
+    };
+    // (In this test-only voice Moonshine writes a lone "Allow." as "Hello", which is no answer, and "Go ahead." and a lone
+    // "Yes." as other words: the window's part is tested on what it writes as said. "Not now." comes out "No, no.".)
+    const answers = [["Allow it.", "allow"], ["Allow, please.", "allow"], ["Okay, go with it.", "allow"], ["Yes, please.", "allow"], ["I accept.", "allow"], ["Sounds good.", "allow"], ["No, thanks.", "deny"], ["Not now.", "deny"], ["No.", "deny"]] as const;
+    for (const [text, answer] of answers) {
+      const events = asked(said(text));
+      const u = sent(events);
+      expect(u.map(e => e.window), text).toEqual(["answer"]);
+      expect(spokenAnswer(u[0].text), `${text} heard as “${u[0].text}”`).toBe(answer);
+      // No conversation opens after it: what is said next needs the name again.
+      expect(events.some(e => e.type === "listening" && e.window === "conversation"), text).toBe(false);
+    }
+    // The room's talk said then, in the clips' voice and in another: nothing leaves the window.
+    for (const room of [inRoom(cat(silence(0.5), trimmed("chat"), silence(2))), said("Let's meet at the station after lunch.")]) expect(sent(asked(room))).toEqual([]);
+  }, 120_000);
 
   it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
     // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for
