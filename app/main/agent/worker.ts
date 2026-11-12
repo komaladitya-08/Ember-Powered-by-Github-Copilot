@@ -329,14 +329,16 @@ const causeOf = (why: string): string => why.split(", so ")[0]!.trim() || why;
 const spentYes = (what: string, undone = "nothing was done") => `The user allowed this, but ${what} changed while they decided, so ${undone} and that yes no longer counts. It wasn't a no, nor a new request: call perceive_window and, if the step is still needed, try it again. If it needs their yes, Ember asks them once more and tells them why.`;
 /**
  * What the next question about the same step starts with, once a change spent the user's yes (in Ember's words, never a
- * control's or a window's name): the page or the window changed, or their click on Allow closed the menu the item was
- * in. A spoken answer leaves a menu open, and on Windows and macOS so do Ember's keys; on Linux a menu holds the
- * keyboard, so Ember's keys don't reach it (an X11 grab).
+ * control's or a window's name): the page or the window changed, or the menu the item was in closed. That a click on
+ * Allow closed it is said only when the yes came by a click (Confirmer.howAnswered). No other way to answer is named:
+ * whether Ember's keys leave another app's menu open is untested on every OS (on Windows the chord's Alt may reach the
+ * app's menu), they may not be Ember's, and voice may be off (review W-5).
  */
 export const ASKING_AGAIN = {
   page: "The page changed while you decided, so I'm asking again.",
   window: "The window changed while you decided, so I'm asking again.",
-  menu: (os: OS): string => `Clicking Allow closed the menu, so I'm asking again. Answer by voice${os === "linux" ? "" : " or with the keys"} to leave it open.`,
+  menuClicked: "Clicking Allow closed the menu, so I'm asking again.",
+  menu: "The menu closed while you decided, so I'm asking again.",
 } as const;
 /** promptOpen's answer as PROMPT_REASON's and PROMPT_REFUSAL's key (true is a prompt that is open). */
 const promptKey = (open: true | "unchecked" | "helper"): keyof typeof PROMPT_REASON => (open === true ? "open" : open);
@@ -1268,8 +1270,8 @@ export class Worker {
   private saidNoThisTask = false;
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
-  /** The step the user last said yes to (stepKey), until the next decision. */
-  private yesFor: string | null = null;
+  /** The step the user last said yes to (stepKey), and whether by a click on Allow (bubble or prompt window), until the next decision. */
+  private yesFor: { key: string; clicked: boolean } | null = null;
   /**
    * A change spent that yes (spend): the next question, if it is about the same step, says why it is asked again. Kept
    * across steps that ask nothing, until a question is shown or that step goes ahead or is refused without one.
@@ -2913,8 +2915,9 @@ export class Worker {
   /** A changed or closed menu is a new attempt, never a transferable approval. */
   private changedWhileDeciding(id: number, element: Focus, live: ElementInfo | null): ToolResultObject {
     if (this.asked && /menu item$/.test(element.role) && (!live || live.offscreen || (live.role === element.role && this.nameOf(id, live) === element.name))) {
+      const clicked = this.yesFor?.clicked === true;
       this.spend(false, true);
-      return fail(`The user allowed this, but the menu holding ${q(element.name || "the item", 60)} closed when they answered (their click landed outside it), so nothing was clicked and that yes no longer counts. It wasn't a no: call perceive_window, reopen its menu and try the item again. It gets a new policy check, and if it needs their yes, Ember asks them once more and tells them why.`);
+      return fail(`The user allowed this, but the menu holding ${q(element.name || "the item", 60)} closed ${clicked ? "when they clicked Allow (the click landed outside it)" : "while they decided"}, so nothing was clicked and that yes no longer counts. It wasn't a no: call perceive_window, reopen its menu and try the item again. It gets a new policy check, and if it needs their yes, Ember asks them once more and tells them why.`);
     }
     if (this.spend(this.pageOf(this.known.get(id)))) return fail(spentYes(`element ${id}`));
     return fail(`Element ${id} changed while the user was deciding, so nothing was done. Call perceive_window and ask again if it's still needed.`);
@@ -2931,7 +2934,7 @@ export class Worker {
    */
   private spend(inPage: boolean, menu = false): boolean {
     if (!this.asked || this.yesFor === null) return false;
-    this.reask = { key: this.yesFor, words: menu ? ASKING_AGAIN.menu(this.kc.os) : inPage ? ASKING_AGAIN.page : ASKING_AGAIN.window };
+    this.reask = { key: this.yesFor.key, words: menu ? (this.yesFor.clicked ? ASKING_AGAIN.menuClicked : ASKING_AGAIN.menu) : inPage ? ASKING_AGAIN.page : ASKING_AGAIN.window };
     return true;
   }
 
@@ -4713,7 +4716,8 @@ export class Worker {
     }
     if (answer === "once" || answer === "always") {
       this.lastAuth = { at: decidedAt, verdict: "confirm", approvedAt: performance.now() };
-      this.yesFor = step;
+      const via = this.d.confirmer.howAnswered?.(question)?.via;
+      this.yesFor = { key: step, clicked: via === "bubble" || via === "panel" };
       // Keys that only move don't let Ember type or save later without asking (a yes to Ctrl+End is only that).
       if (decision.needsGrant && req.app && !(req.kind === "keys" && onlyMoves(req.value ?? "", req.element, this.kc))) {
         this.allowedApps.add(req.app.toLowerCase());

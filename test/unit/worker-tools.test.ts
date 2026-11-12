@@ -79,6 +79,8 @@ function makeWorker(o: {
   rateLimit?: number;
   /** The task's goal (the conductor's words, default "make it bold") and the user's own words for it (TaskSpec.userWords). */
   goal?: string; userWords?: string;
+  /** How the user answered the questions (Confirmer.howAnswered; default: not known). */
+  answeredBy?: "bubble" | "key" | "panel" | "voice";
   /** A password prompt the desktop's shell draws (GNOME Shell's polkit dialog) is open now (Perception.promptOpen). */
   promptOpen?: () => boolean | "unchecked" | "helper";
   /** Is a system dialog open, as the borrow asks before it takes the keyboard (default: none). */
@@ -184,7 +186,8 @@ function makeWorker(o: {
       ...(o.canDo ? { canDo: async (id: number, kind: string, caret: boolean) => o.canDo!(id, kind, caret) } : {}),
     } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" }, ...(o.rateLimit ? { rateLimit: o.rateLimit } : {}) }),
-    confirmer: { ask: async (q: { prompt: string; risky?: boolean }) => { asked.push(q.prompt); questions.push(q); o.onAsk?.(); return o.answer ?? "once"; } } as never,
+    confirmer: { ask: async (q: { prompt: string; risky?: boolean }) => { asked.push(q.prompt); questions.push(q); o.onAsk?.(); return o.answer ?? "once"; },
+      howAnswered: () => (o.answeredBy ? { via: o.answeredBy } : undefined) } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {}, ...(o.screenImages ? { screenImages: o.screenImages() } : {}) }), update: () => undefined } as never,
     presenter,
@@ -1046,7 +1049,7 @@ describe("approval stays with the action the user saw (safety review)", () => {
     });
     await call("perceive_window", {});
     const first = await call("click", { id: 1 });
-    expect(first.textResultForLlm).toMatch(/^The user allowed this, but the menu holding "Delete" closed when they answered/);
+    expect(first.textResultForLlm).toMatch(/^The user allowed this, but the menu holding "Delete" closed while they decided/);
     expect(asked).toHaveLength(1);
     closed = false;
     await call("switch_window", { title });
@@ -1054,9 +1057,30 @@ describe("approval stays with the action the user saw (safety review)", () => {
     expect(asked).toHaveLength(2);
     expect(audit.filter(e => e.event === "decision" && e.kind === "cursor_click")).toHaveLength(2);
     expect(audit).not.toContainEqual(expect.objectContaining({ reason: expect.stringMatching(/already allowed this menu item/) }));
-    // Asked again in the same window, the question says why, and how to answer it with the menu open; in another, it doesn't.
-    expect(asked[1].startsWith(ASKING_AGAIN.menu("linux"))).toBe(title === "Disposable.txt");
+    // Asked again in the same window, the question says why; in another, it doesn't.
+    expect(asked[1].startsWith(ASKING_AGAIN.menu)).toBe(title === "Disposable.txt");
   });
+
+  // The note said a click on Allow closed the menu however the question was answered, and told everyone to answer by
+  // voice or with keys that may not leave another app's menu open, or may not be Ember's at all (review W-5).
+  it.each([["a click", "bubble"], ["a click in its prompt window", "panel"], ["Ember's keys", "key"], ["voice", "voice"], ["a way not known", undefined]] as const)(
+    "says a click on Allow closed the menu only when the yes came by a click (answered by %s), and names no other way to answer (owner's report of 2026-11-12)", async (_how, via) => {
+      const clicked = via === "bubble" || via === "panel";
+      let closed = false;
+      const { call, asked } = makeWorker({
+        role: "menu item", name: "Delete", parentRole: "menu", answeredBy: via,
+        canDo: () => ({ tier1: false, why: "the menu item needs the mouse" }),
+        onAsk: () => { closed = true; }, live: () => closed ? null : undefined,
+      });
+      await call("perceive_window", {});
+      const first = await call("click", { id: 1 });
+      expect(first.textResultForLlm).toMatch(clicked ? /closed when they clicked Allow \(the click landed outside it\)/ : /closed while they decided/);
+      closed = false;
+      await call("perceive_window", {});
+      await call("click", { id: 1 });
+      expect(asked[1].startsWith(`${clicked ? "Clicking Allow closed the menu, so I'm asking again." : "The menu closed while you decided, so I'm asking again."} `)).toBe(true);
+      expect(asked[1]).not.toMatch(/voice|keys/);
+    });
 
   // The model reopens the menu with a click, which asks nothing: that step cleared the reason, so the retry was asked
   // the same as the first time, with no word of why (review W-2).
@@ -1076,7 +1100,7 @@ describe("approval stays with the action the user saw (safety review)", () => {
     expect(asked).toHaveLength(1);
     await call("click", { id: 1 });
     expect(asked).toHaveLength(2);
-    expect(asked[1].startsWith(`${ASKING_AGAIN.menu("linux")} `)).toBe(true);
+    expect(asked[1].startsWith(`${ASKING_AGAIN.menu} `)).toBe(true);
   });
 
   // An Allow spent by a change made while the user decided was told to the model as a new attempt ("ask again"), and
