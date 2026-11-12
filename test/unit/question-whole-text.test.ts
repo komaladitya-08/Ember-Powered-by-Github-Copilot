@@ -23,7 +23,8 @@ function makeWorker() {
   const seen = { window, x11Window: null, nodes: [node], blocked: false, ms: 0 };
   const deps = {
     client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
-    perception: { perceive: async () => ({ ...seen, text: "[1] entry \"Message\"", capture: null }), read: async () => seen, windows: async () => [window] } as never,
+    // The window system's check, made before a question about a borrow too (owner's report of 2026-11-12): nothing is up.
+    perception: { perceive: async () => ({ ...seen, text: "[1] entry \"Message\"", capture: null }), read: async () => seen, windows: async () => [window], systemDialogOpen: async () => false } as never,
     sidecar: { readElement: async () => ({ role: node.role, name: node.name, states: node.states, bounds: node.bounds }) } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => ({}), confirmEveryAction: () => true, allowGrants: () => false }),
     confirmer: { ask: async (q: Question) => { asked.push(q); return "once"; } } as never,

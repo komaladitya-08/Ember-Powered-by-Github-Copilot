@@ -32,7 +32,7 @@ import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import { helperCantRun } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
-import { isRiskyLabel } from "../policy/policy";
+import { riskyOnPage } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
@@ -321,6 +321,25 @@ const PROMPT_REFUSAL = { open: AUTH_PROMPT_OPEN, unchecked: PROMPT_UNCHECKED, he
  * clause.
  */
 const causeOf = (why: string): string => why.split(", so ")[0]!.trim() || why;
+/**
+ * What the model is told when a change made while the user decided undid their yes (`what` changed; `undone`: what
+ * wasn't done): a yes, so neither a no nor a new request, and Ember asks again saying why. It was told to "ask again if
+ * it is still needed", as if it were a new request (owner's report of 2026-11-12).
+ */
+const spentYes = (what: string, undone = "nothing was done") => `The user allowed this, but ${what} changed while they decided, so ${undone} and that yes no longer counts. It wasn't a no, nor a new request: call perceive_window and, if the step is still needed, try it again. If it needs their yes, Ember asks them once more and tells them why.`;
+/**
+ * What the next question about the same step starts with, once a change spent the user's yes (in Ember's words, never a
+ * control's or a window's name): the page or the window changed, or the menu the item was in closed. That a click on
+ * Allow closed it is said only when the yes came by a click (Confirmer.howAnswered). No other way to answer is named:
+ * whether Ember's keys leave another app's menu open is untested on every OS (on Windows the chord's Alt may reach the
+ * app's menu), they may not be Ember's, and voice may be off (review W-5).
+ */
+export const ASKING_AGAIN = {
+  page: "The page changed while you decided, so I'm asking again.",
+  window: "The window changed while you decided, so I'm asking again.",
+  menuClicked: "Clicking Allow closed the menu, so I'm asking again.",
+  menu: "The menu closed while you decided, so I'm asking again.",
+} as const;
 /** promptOpen's answer as PROMPT_REASON's and PROMPT_REFUSAL's key (true is a prompt that is open). */
 const promptKey = (open: true | "unchecked" | "helper"): keyof typeof PROMPT_REASON => (open === true ? "open" : open);
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
@@ -1188,10 +1207,16 @@ export class Worker {
   private labels = new Map<number, string>();
   /** The latest perceive_window read the whole window (not cut short, not busy): see dialogAround. */
   private knownWhole = false;
-  /** Other windows owned by this app can change what a control will act on. */
-  private knownOthers = "[]";
   /** The current quick-tree baseline, separate from readElement's longer, differently represented target text. */
   private actionTree: AxNode[] = [];
+  /**
+   * That read's own `truncated`, the app's other windows then (they can change what a control will act on), and where
+   * the step's target is in it (cursorAct's clickedTextAt). A living page's read keeps its own ids
+   * (refreshActionContext), so `known` and `knownWhole` stay perceive_window's, and these are what an answer binds to.
+   */
+  private actionWhole = false;
+  private actionOthers = "[]";
+  private actionAt: number | undefined;
   private window: { app: string; name: string; role?: string } = { app: "", name: "" };
   private target: WindowTarget;
   /** Apps the user allowed for this task only ("Allow once"). */
@@ -1245,6 +1270,13 @@ export class Worker {
   private saidNoThisTask = false;
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
+  /** The step the user last said yes to (stepKey), and whether by a click on Allow (bubble or prompt window), until the next decision. */
+  private yesFor: { key: string; clicked: boolean } | null = null;
+  /**
+   * A change spent that yes (spend): the next question, if it is about the same step, says why it is asked again. Kept
+   * across steps that ask nothing, until a question is shown or that step goes ahead or is refused without one.
+   */
+  private reask: { key: string; words: string } | null = null;
   /** The working window's frame from the latest perceive_window (an element outside it is scrolled away). */
   private frame: Bounds | null = null;
   /** Its scale (HiDPI): at 1, positions the app reports at a point compare with those read. */
@@ -1443,6 +1475,50 @@ export class Worker {
     // Its card's row says why, in Ember's words (tasks-approvals-r3-4).
     this.activity({ type: "refused", reason: "an authentication prompt has the keyboard" });
     return denied(AUTH_PROMPT_OPEN);
+  }
+
+  /**
+   * The window system's check, as the borrow makes it right before input (Perception.systemDialogOpen: GNOME Shell's
+   * prompts and a prompt's own window, Windows' secure desktop and credential prompts, macOS's SecurityAgent and secure
+   * keyboard entry, a Wayland session). "unchecked" when it couldn't be made (fail closed, safety-privacy-r1).
+   */
+  private systemDialogNow(): Promise<boolean | "unchecked"> {
+    return Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => "unchecked" as const);
+  }
+
+  /** The borrow refused for the window system's check (`dialog`, systemDialogNow), audited, with its card's reason. */
+  private async systemDialogRefusal(kind: ActionKind, element: Focus | undefined, dialog: true | "unchecked"): Promise<ToolResultObject> {
+    // Not always a dialog: macOS's secure keyboard entry (Terminal's, a focused password field) is named as itself.
+    const why = dialog === "unchecked" ? null : await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
+    // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2), and a helper that
+    // can't work here as the helper (reliability-performance-r2-1).
+    const unchecked = dialog === "unchecked" ? "unchecked" : !why && await this.promptUnchecked();
+    const reason = why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open");
+    this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason });
+    // The card's row keeps a line of a reason: the window system's says its cause there, whole, and the audit and the
+    // model get all of it (tasks-approvals-v5-3).
+    this.activity({ type: "refused", reason: why ? causeOf(why) : reason });
+    return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
+      : unchecked ? PROMPT_REFUSAL[unchecked]
+        : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+  }
+
+  /**
+   * Before a question about a step with the user's mouse or keyboard: what the borrow would refuse it for once the user
+   * said yes, so nobody is asked about it (safety-privacy-3, safety-privacy-v4-3). The window system's check is made
+   * first, as the borrow makes it: a Wayland session, macOS's secure keyboard entry and Windows' secure desktop were
+   * asked about and only then refused (owner's report of 2026-11-12). It looks through the shell as promptOpen does, so
+   * one look does for both while nothing is up; the shell's prompt is looked for again only to say it in its words.
+   * On Ember's desk, which has no such prompt, only the shell's own prompt is looked for, as before.
+   */
+  private async beforeBorrowQuestion(kind: ActionKind, element?: Focus): Promise<ToolResultObject | null> {
+    const taken = this.keyboardTaken(kind, element);
+    if (taken) return taken;
+    if (this.place) return this.promptRefusal(kind, element);
+    const dialog = await this.systemDialogNow();
+    if (this.isOver) return STOPPED();
+    if (!dialog) return null;
+    return await this.promptRefusal(kind, element) ?? await this.systemDialogRefusal(kind, element, dialog);
   }
 
   /**
@@ -2485,7 +2561,6 @@ export class Worker {
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     // Only a whole read says every control a dialog holds (dialogAround's `whole`).
     this.knownWhole = !p.truncated && !p.busy;
-    this.knownOthers = JSON.stringify((p.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
     this.labels = inferLabels(p.nodes);
     // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
     // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped. Each
@@ -2670,6 +2745,8 @@ export class Worker {
    */
   private async refreshActionContext(id: number): Promise<ToolResultObject | null> {
     this.pageTarget = null;
+    // A question belongs to the step it was asked for: a look before this step's own is never "while the user decided".
+    this.asked = false;
     const held = this.known.get(id);
     if (!held) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window and use its ids.`);
     const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
@@ -2699,7 +2776,14 @@ export class Worker {
         this.pageSelection = seen.nodes.find(n => n.role === live.role && n.name === live.name)?.selection;
         if (shifted || twins) {
           // The page moved on, so its ids can't be mapped again: the ids it was read with stay, and what it says now is
-          // still looked through.
+          // still looked through. This read, by its own ids, is what a question's answer binds to (an empty or stale
+          // one failed every Allow there: owner's report of 2026-11-12). The target is found in it by its role and name
+          // alone, never by position, and not at all beside a twin (no field: PAGE_TWIN), which then binds all of it.
+          const mine = twins ? -1 : seen.nodes.findIndex(n => n.role === live.role && n.name === live.name);
+          this.actionTree = seen.nodes;
+          this.actionWhole = !seen.truncated;
+          this.actionOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
+          this.actionAt = mine >= 0 ? mine : undefined;
           const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
           this.remember(w, words);
           this.flagInjection(words, "window", w.app);
@@ -2719,8 +2803,9 @@ export class Worker {
     }
     this.actionTree = seen.nodes.map((n, i) => ({ ...n, id: old[i].id, parent: old[i].parent }));
     this.known = new Map(this.actionTree.map(n => [n.id, n]));
-    this.knownWhole = !seen.truncated;
-    this.knownOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
+    this.knownWhole = this.actionWhole = !seen.truncated;
+    this.actionOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
+    this.actionAt = at;
     this.labels = inferLabels(this.actionTree);
     const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
     this.remember(w, words);
@@ -2751,12 +2836,14 @@ export class Worker {
     const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
     if (this.isOver) return STOPPED();
     const w = seen?.window;
-    const changed = !seen || !w || seen.blocked || seen.busy || seen.ember
+    const unread = !seen || !w || seen.blocked || seen.busy || seen.ember;
+    const changed = unread
       || w.app !== this.window.app || w.name !== this.window.name || w.role !== this.window.role
       || (this.target.pid !== undefined && w.pid !== this.target.pid)
       || (this.target.path !== undefined && w.path !== this.target.path)
-      || (!seen.truncated !== this.knownWhole) || this.actionContext(seen.nodes, clickedTextAt) !== context
-      || JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal }))) !== this.knownOthers;
+      || (!seen.truncated !== this.actionWhole) || this.actionContext(seen.nodes, clickedTextAt) !== context
+      || JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal }))) !== this.actionOthers;
+    if (changed && !unread && this.spend(this.pageOf(node))) return fail(spentYes(this.pageOf(node) ? "the page" : "the window"));
     if (changed) return fail("The window or its contents changed while preparing this action, so nothing was done. Call perceive_window and ask again if it is still needed.");
     // A quick tree read can finish before the original accessible object changes: check that object too.
     const live = await this.sidecar.readElement(id).catch(() => null);
@@ -2776,7 +2863,7 @@ export class Worker {
    * (checkPageTarget); a question still binds its answer to the whole tree, and a risky word still asks.
    */
   private livingPage(node: AxNode): boolean {
-    return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld && !isRiskyLabel(node.name, this.kc.os);
+    return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld && !riskyOnPage(node.role, node.name, this.kc.os);
   }
 
   /**
@@ -2828,9 +2915,32 @@ export class Worker {
   /** A changed or closed menu is a new attempt, never a transferable approval. */
   private changedWhileDeciding(id: number, element: Focus, live: ElementInfo | null): ToolResultObject {
     if (this.asked && /menu item$/.test(element.role) && (!live || live.offscreen || (live.role === element.role && this.nameOf(id, live) === element.name))) {
-      return fail(`The menu holding ${q(element.name || "the item", 60)} closed when you answered (the click landed outside it), so nothing was clicked. Call perceive_window before reopening its menu; the next attempt needs a new policy check and, where required, a new approval.`);
+      const clicked = this.yesFor?.clicked === true;
+      this.spend(false, true);
+      return fail(`The user allowed this, but the menu holding ${q(element.name || "the item", 60)} closed ${clicked ? "when they clicked Allow (the click landed outside it)" : "while they decided"}, so nothing was clicked and that yes no longer counts. It wasn't a no: call perceive_window, reopen its menu and try the item again. It gets a new policy check, and if it needs their yes, Ember asks them once more and tells them why.`);
     }
+    if (this.spend(this.pageOf(this.known.get(id)))) return fail(spentYes(`element ${id}`));
     return fail(`Element ${id} changed while the user was deciding, so nothing was done. Call perceive_window and ask again if it's still needed.`);
+  }
+
+  /** Is `node` a web page's (where "the page" changed, not "the window")? */
+  private pageOf(node: AxNode | undefined): boolean {
+    return !!node && (node.role === "document web" || inWebPage(node, i => this.known.get(i)));
+  }
+
+  /**
+   * A change made while the user decided spent their yes to this step (`asked`, then a yes): the next question about the
+   * same step says why it is asked again (ASKING_AGAIN). Whether it was a yes that was spent.
+   */
+  private spend(inPage: boolean, menu = false): boolean {
+    if (!this.asked || this.yesFor === null) return false;
+    this.reask = { key: this.yesFor.key, words: menu ? (this.yesFor.clicked ? ASKING_AGAIN.menuClicked : ASKING_AGAIN.menu) : inPage ? ASKING_AGAIN.page : ASKING_AGAIN.window };
+    return true;
+  }
+
+  /** Which step a question is about, to tell a question asked again for it (spend): its window and its element. */
+  private stepKey(element: Focus | undefined): string {
+    return `${this.windowKey}\n${element?.role ?? ""}\n${element?.name ?? ""}`;
   }
 
   /** choose_option: the option is found first (its full name, never a part of one), and the policy judges the one that will be chosen. */
@@ -3125,7 +3235,8 @@ export class Worker {
     const context = this.actionContext();
     // Append/replace explicitly choose where text goes after this click. Only the target's selection may collapse
     // under our own focus click; insert-at-caret never clicks and keeps its full selection binding.
-    const clickedTextAt = kind === "cursor_text" && clicks ? [...this.known.keys()].indexOf(id) : undefined;
+    // Where the field is in the read the answer binds to (refreshActionContext): unknown, nothing is excused.
+    const clickedTextAt = kind === "cursor_text" && clicks ? this.actionAt : undefined;
     const afterClickContext = clickedTextAt !== undefined ? this.actionContext(undefined, clickedTextAt) : context;
     const before = this.pageTarget === id ? null : await this.checkActionContext(id, node, context);
     if (before) return before;
@@ -3137,6 +3248,7 @@ export class Worker {
     if (!live?.bounds || live.role !== node.role || this.nameOf(id, live) !== element.name || (live.offscreen && /menu item$/.test(element.role))) {
       const closedMenu = this.asked && /menu item$/.test(element.role) && (!live || live.offscreen || (live.role === node.role && this.nameOf(id, live) === element.name));
       if (closedMenu) return this.changedWhileDeciding(id, element, live);
+      if (this.spend(this.pageOf(node))) return fail(spentYes(`element ${id}`));
       return fail(`Element ${id} moved or changed while the user was deciding, so nothing was done. Call perceive_window and try again.`);
     }
     // A switch the user flipped while deciding may already be where it should be: a click would undo it.
@@ -3542,6 +3654,7 @@ export class Worker {
   private async authorizeCells(jobs: CellJob[]): Promise<ToolResultObject | null | "each"> {
     this.asked = false;
     this.ahead = null;
+    this.yesFor = null;
     if (this.isOver) return STOPPED();
     this.keyed = { window: "", selected: null };
     this.moving = null;
@@ -3575,7 +3688,7 @@ export class Worker {
     // safety-privacy-3, safety-privacy-v4-3). A batch going ahead without asking is looked at by the borrow alone.
     if (!no && !alone && asks) {
       const cells: Focus = { role: "table cell", name: jobs.map(j => j.cell).join(", ") };
-      const prompt = this.keyboardTaken("cursor_text", cells) ?? await this.promptRefusal("cursor_text", cells);
+      const prompt = await this.beforeBorrowQuestion("cursor_text", cells);
       if (prompt) return prompt;
     }
     const entries: AuditEntry[] = judged.map(({ req, d }, i) => {
@@ -3621,6 +3734,8 @@ export class Worker {
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
     const taskLine = this.tainted ? this.ownWordsLine() : undefined;
     this.asked = true;
+    // A question about other steps: a reason to ask one again (reask) is never said after it.
+    this.reask = null;
     // On another computer the question says where (§2.4), as every other question of a task does.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
@@ -4049,6 +4164,7 @@ export class Worker {
         // In a living page (a video playing), with no question asked, what has the keyboard is checked just above, and the
         // shell holds what it contains.
         if (context === null || (this.focusContext !== context && !(this.focusInPage && !said && this.focusShell === shell))) {
+          if (context !== null && this.focusContext !== null && this.spend(this.focusInPage)) throw new Error(spentYes(this.focusInPage ? "the page" : "the window", "nothing was pressed"));
           throw new Error("The window or its contents changed while preparing these keys, so nothing was pressed. Call perceive_window and ask again if it is still needed.");
         }
         if (closing) this.anchorHome("keys", listing);
@@ -4252,22 +4368,8 @@ export class Worker {
     if (taken) return taken;
     // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too. A check that fails refuses
     // (fail closed, safety-privacy-r1).
-    const dialog = await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => "unchecked" as const);
-    if (dialog) {
-      // Not always a dialog: macOS's secure keyboard entry (Terminal's, a focused password field) is named as itself.
-      const why = dialog === "unchecked" ? null : await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
-      // Nor always known to be one: a shell that couldn't be asked is said as that (safety-privacy-c1-2), and a helper that
-      // can't work here as the helper (reliability-performance-r2-1).
-      const unchecked = dialog === "unchecked" ? "unchecked" : !why && await this.promptUnchecked();
-      const reason = why ?? (unchecked ? PROMPT_REASON[unchecked] : "a system dialog is open");
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason });
-      // The card's row keeps a line of a reason: the window system's says its cause there, whole, and the audit and the
-      // model get all of it (tasks-approvals-v5-3).
-      this.activity({ type: "refused", reason: why ? causeOf(why) : reason });
-      return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
-        : unchecked ? PROMPT_REFUSAL[unchecked]
-          : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
-    }
+    const dialog = await this.systemDialogNow();
+    if (dialog) return this.systemDialogRefusal(kind, element, dialog);
     // Only now is a borrow Work without asking let through recorded and said (safety-privacy-v4-2, safety-privacy-v4-3).
     this.goAhead();
     const check = () => {
@@ -4506,6 +4608,7 @@ export class Worker {
     this.asked = false;
     this.lastAuth = null;
     this.ahead = null;
+    this.yesFor = null;
     if (this.isOver) return STOPPED();
     const inWindow = request.kind !== "open_app" && request.kind !== "setting";
     // What the keys selected ends where text goes in, or the mouse clicks or types into a text field (that moves the
@@ -4562,7 +4665,7 @@ export class Worker {
     // safety-privacy-v4-3). Looked at here only for a step that asks, since a walk of the shell costs up to a second on
     // the target; the look right before acting (act, system, withCursor) still keeps the rule for every step.
     if (decision.verdict === "confirm" && !sessionAllowed) {
-      const prompt = (BORROWED.has(req.kind) ? this.keyboardTaken(req.kind, req.element) : null) ?? await this.promptRefusal(req.kind, req.element);
+      const prompt = BORROWED.has(req.kind) ? await this.beforeBorrowQuestion(req.kind, req.element) : await this.promptRefusal(req.kind, req.element);
       if (prompt) return prompt;
     }
     const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}) };
@@ -4570,6 +4673,11 @@ export class Worker {
     // step that look refuses is recorded only as refused (safety-privacy-v4-2).
     if (decision.verdict === "allow" && decision.autonomy) this.ahead = { entries: [entry], words: decision.announce ?? null };
     else this.audit(entry);
+    // A yes a change spent (reask) is said once, in the next question if it is about the same step. A step that asks
+    // nothing keeps it for later (the model reopens the menu, or scrolls, before it tries again: review W-2), unless it
+    // is that step itself, which then needs no question or is refused.
+    const step = this.stepKey(req.element);
+    if (this.reask?.key === step && (decision.verdict === "deny" || decision.verdict === "allow" || sessionAllowed)) this.reask = null;
     if (decision.verdict === "deny") {
       this.activity({ type: "refused", reason: decision.reason });
       return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
@@ -4595,7 +4703,9 @@ export class Worker {
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
     // Once text on screen tried to steer Ember, every step it asks about looks risky too (it is asked every time).
     const risky = !!decision.risky || this.steered;
-    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
+    const again = this.reask?.key === step ? `${this.reask.words} ` : "";
+    this.reask = null;
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: `${again}${decision.prompt}`, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
@@ -4606,6 +4716,8 @@ export class Worker {
     }
     if (answer === "once" || answer === "always") {
       this.lastAuth = { at: decidedAt, verdict: "confirm", approvedAt: performance.now() };
+      const via = this.d.confirmer.howAnswered?.(question)?.via;
+      this.yesFor = { key: step, clicked: via === "bubble" || via === "panel" };
       // Keys that only move don't let Ember type or save later without asking (a yes to Ctrl+End is only that).
       if (decision.needsGrant && req.app && !(req.kind === "keys" && onlyMoves(req.value ?? "", req.element, this.kc))) {
         this.allowedApps.add(req.app.toLowerCase());

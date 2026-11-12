@@ -106,13 +106,23 @@ the automated tests don't stand in for them.
   can't be sure of (Alt+letter, unknown shortcuts) and dangerous commands. Its card says so, and asks you to agree
   again. While Ember runs as an administrator (or as root) every command asks, and the switch's hint now says so.
   Filling cells after you said no in a task now asks again, as every other step does.
-- **Answer questions by voice**: while Ember asks, “Ember, allow” (with Voice Match on and recognising you) or “Ember,
-  not now” (anyone) answers it. Never “Always”, never Ember's own voice, and a command card or a long text only once
-  all of it has been shown. The audit log says the answer was spoken. Half a second of your voice after “Ember” is
-  enough to recognise you, and a shorter yes counts for the questions of a task you asked for in your recognised voice,
-  within 10 minutes (never a command card, a consent card or another task's question; the audit says
-  `trust: "task-voice"`; not a yes too quiet or clipped to tell, either). A yes asked as a question, or a bare
-  “okay”, isn't one.
+- **Answer questions by voice**: while Ember asks, “allow”, “yes”, “okay”, “go ahead”, “sure” or “I accept” allows,
+  and “no”, “not now” or “don't” refuses. With Voice Match off, its default, anyone Ember hears can answer, as first run
+  says; with it on, only your recognised voice can allow, and anyone can refuse. For a few seconds after Ember asks you
+  needn't say “Ember” first; while a video or other sound plays, or where Ember can't tell whether it does, say “Ember,
+  allow”. Never “Always”, never Ember's own voice, and a command card or a long text only once all of it has been shown.
+  An answer said over Ember's read-out stops it, and Ember asks you to say it again; one it didn't catch, or a key press
+  that didn't count, says why and how to answer. The audit log says the answer was spoken. With Voice Match on, half a
+  second of your voice after “Ember” is enough to recognise you, and a shorter yes counts for the questions of a task
+  you asked for in your recognised voice, within 10 minutes (never a command card, a consent card or another task's
+  question; the audit says `trust: "task-voice"`; not a yes too quiet or clipped to tell, either). A yes asked as a
+  question isn't one.
+- **Allow works on web pages**: an Allow for a step on a page that changes by itself (a video playing, a preview) goes
+  ahead when the page didn't change while you decided, where Ember used to compare it with an outdated copy and ask
+  again. A search result whose title merely holds a word like “install” or “share” opens without being called
+  something you didn't ask for; a link that says it does one still asks. When Ember asks again because the page changed
+  or a menu closed while you decided, it says why, and where it can't use your mouse and keyboard (a Wayland session, a
+  secure desktop) it says so instead of asking first.
 - For administrators: `features.autonomy: false` turns Work without asking off (managed); so do `allowGrants: false`,
   `confirmEveryAction` and a lockdown. `features.aiReview: false` sends no command to Copilot for review, so every
   command Ember's rules flag asks (**Ask only about dangerous commands** shows off, managed).

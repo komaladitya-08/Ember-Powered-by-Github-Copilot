@@ -13,6 +13,7 @@
 import type { VoiceEvent } from "./engine";
 import { ENROL_MIN_SECONDS, ENROL_PHRASES, VOICE_MATCH_THRESHOLD, averagePrint, consistentPrints, similarity } from "./voiceprint";
 import { gateMatches } from "./adapt";
+import { spokenAnswer } from "../shared/spoken-answer";
 
 /** Makes a voiceprint (unit length) of 16 kHz audio. */
 export interface Printer {
@@ -181,7 +182,12 @@ export class VoiceGate {
     const generation = this.revision;
     const owner = this.owner;
     // Over a song with no name said: only a voice that can be told apart from it is heard.
-    if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) { this.send({ type: "dropped", reason: "over-sound" }); return; }
+    // (`window`: from a question's answer window; `answer`: which answer it read as, in whatever window, never the words:
+    // main says so on a question up, once (owner's report of 2026-11-12: in a conversation over a video, the default, a
+    // nameless "allow" vanished). `reason` "sound-unknown": a yes where nothing could tell whether other sound played.)
+    const answer = e.type === "utterance" ? spokenAnswer(e.text) : null;
+    const dropped: VoiceEvent = { type: "dropped", reason: e.type === "utterance" && e.soundUnknown ? "sound-unknown" : "over-sound", ...(e.type === "utterance" && e.window === "answer" ? { window: "answer" as const } : {}), ...(answer ? { answer } : {}) };
+    if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) { this.send(dropped); return; }
     if (e.type !== "utterance" || e.overEmber || !owner || !audio?.length) { this.send(e); return; }
     // Capture one immutable configuration for the whole request, including its post-wake check.
     const anchor = this.anchor;
@@ -204,7 +210,7 @@ export class VoiceGate {
         if (!e.overSound) this.send(e);
         return;
       }
-      if (e.overSound && score < OVER_SOUND_MATCH) { if (generation === this.revision) this.send({ type: "dropped", reason: "over-sound" }); return; }
+      if (e.overSound && score < OVER_SOUND_MATCH) { if (generation === this.revision) this.send(dropped); return; }
       // Matched: said so, so a spoken yes to a question can be taken (main's voice-answer.ts). A request heard without a
       // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
       // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its

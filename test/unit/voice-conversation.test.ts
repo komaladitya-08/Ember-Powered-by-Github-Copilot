@@ -28,7 +28,7 @@ function fake(transcripts: string[]) {
 
 const frame = (level: number, tag = 0) => { const f = new Float32Array(512).fill(level); f[0] = tag; return f; };
 
-function setup(transcripts: string[], o: { conversation?: boolean } = { conversation: true }) {
+function setup(transcripts: string[], o: { conversation?: boolean; otherSound?: boolean | null } = { conversation: true }) {
   const events: VoiceEvent[] = [];
   const clock = { t: 1000 };
   const e = new VoiceEngine(fake(transcripts), ev => events.push(ev), { now: () => clock.t, verifyWake: false, rejectWindowMs: 0, ...o });
@@ -135,6 +135,16 @@ describe("a conversation", () => {
     expect(c.e.listening).toBe(true);
   });
 
+  it("sends an “Okay.” or “That's fine.” while one of Ember's questions is up, so it answers it (owner's report of 2026-11-12)", () => {
+    const c = setup(["Open the calculator.", "Okay.", "That's fine.", "Thanks."]);
+    c.wake();
+    c.say(20); c.quiet(2);
+    c.e.questionUp(true);
+    for (let i = 0; i < 3; i++) { c.say(20); c.quiet(2); }
+    expect(c.utterances().map(u => u.text)).toEqual(["Open the calculator.", "Okay.", "That's fine."]);
+    expect(c.e.listening).toBe(true);
+  });
+
   it("keeps a short command said after the name (review of #180)", () => {
     const c = setup(["Open the calculator.", "Ember, close it.", "Ember, allow."]);
     c.wake();
@@ -220,6 +230,59 @@ describe("talking over Ember in a conversation", () => {
     expect(c.utterances()).toHaveLength(1);
   });
 
+  it("stops for a “Yes.” or an “Okay.” said over it while one of its questions is up, and sends it as said over its voice, which never answers (owner's report of 2026-11-12)", () => {
+    for (const said of ["Yes.", "Okay.", "Sure.", "Yeah."]) {
+      const c = talking([said]);
+      c.e.questionUp(true);
+      c.say(5); c.quiet(2);
+      expect(c.events.filter(v => v.type === "cut-in"), said).toHaveLength(1);
+      expect(c.utterances()[1], said).toMatchObject({ text: said, window: "conversation", overEmber: true });
+    }
+    // “Mm-hmm.” is no answer: Ember goes on speaking over it, question or not.
+    const mm = talking(["Mm-hmm."]);
+    mm.e.questionUp(true);
+    mm.say(5); mm.quiet(2);
+    expect(mm.events.some(v => v.type === "cut-in")).toBe(false);
+    expect(mm.utterances()).toHaveLength(1);
+  });
+
+  describe("an answer said over Ember reading one of its questions out (owner's report of 2026-11-12: it vanished)", () => {
+    const readOut = "Ember asks: Click Search in Firefox? To allow, press Control Alt Y; for not now, press Control Alt N.";
+    const asking = (transcripts: string[]) => { const c = talking(transcripts, readOut); c.e.questionUp(true); return c; };
+    const over = (c: ReturnType<typeof talking>) => c.events.filter(v => v.type === "answer-over");
+
+    it("takes none of Ember's own read-out for an answer: it isn't stopped, and nothing is said of it", () => {
+      for (const echo of [readOut, "To allow, press Control Alt Y", "For not now, press Control Alt N."]) {
+        const c = asking([echo]);
+        c.say(20); c.quiet(2);
+        expect(c.events.some(v => v.type === "cut-in"), echo).toBe(false);
+        expect(over(c), echo).toEqual([]);
+        expect(c.utterances(), echo).toHaveLength(1);
+      }
+    });
+
+    it("says that an “Allow.” or “Not now.” in Ember's own words was heard over it, never as an answer, so main stops it and asks again", () => {
+      for (const [said, answer] of [["Allow.", "allow"], ["Not now.", "deny"]] as const) {
+        const c = asking([said]);
+        c.say(5); c.quiet(2);
+        expect(over(c), said).toEqual([{ type: "answer-over", answer }]);
+        // Never an utterance: nothing said over Ember's voice answers anything.
+        expect(c.utterances(), said).toHaveLength(1);
+      }
+      // Without a question up, as before: Ember's own words, dropped without a word.
+      const none = talking(["Allow."], readOut);
+      none.say(5); none.quiet(2);
+      expect(over(none)).toEqual([]);
+    });
+
+    it("says nothing of what is softer than Ember's own echo there", () => {
+      const c = asking([readOut, "Allow."]);
+      c.say(14, 0.2); c.quiet(2);
+      c.say(5, 0.2); c.quiet(2);
+      expect(over(c)).toEqual([]);
+    });
+  });
+
   it("drops Ember's voice the moment anything is heard over it, and brings it back when that was nothing", () => {
     const c = talking(["Mm-hmm."]);
     c.say(5);
@@ -244,6 +307,23 @@ describe("talking over Ember in a conversation", () => {
     c.say(20); c.quiet(2);
     expect(heard.length).toBeGreaterThan(0);
     expect(c.utterances()[1].overEmber).toBeUndefined();
+  });
+});
+
+describe("a conversation where nothing can tell whether other sound plays (macOS, Linux without parec)", () => {
+  it("takes a yes to a question said without the name as said over other sound, and a no or a request as ever (owner's report of 2026-11-12)", () => {
+    const c = setup(["Open the calculator.", "Okay.", "Not now.", "Open my mail."], { conversation: true, otherSound: null });
+    c.wake();
+    c.say(20); c.quiet(2);
+    c.e.questionUp(true);
+    c.say(20); c.quiet(2);
+    c.say(20); c.quiet(2);
+    c.e.questionUp(false);
+    c.say(20); c.quiet(2);
+    const u = c.utterances();
+    expect(u.map(v => v.text)).toEqual(["Open the calculator.", "Okay.", "Not now.", "Open my mail."]);
+    expect(u[1]).toMatchObject({ overSound: true, soundUnknown: true });
+    expect([u[0], u[2], u[3]].map(v => v.overSound)).toEqual([undefined, undefined, undefined]);
   });
 });
 

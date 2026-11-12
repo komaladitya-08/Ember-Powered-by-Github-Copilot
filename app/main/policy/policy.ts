@@ -116,9 +116,13 @@ export interface ActionRequest {
   /** For keys: the focused element is in a web page (Chromium's, Firefox's or an Electron app's), where Enter can send. */
   inPage?: boolean;
   /**
-   * For clicks and toggles: the element is in a web page, as the worker found it in the tree. Only ever a reason to ask
-   * (a button with no name there, BARE_BUTTON; any button of a page that takes payment, PAYMENT_PAGE); `inPage` stays
-   * the keys' and the typing's, and a page's link is judged as content only by it.
+   * For clicks and toggles: the element is in a web page, as the worker found it in the tree (never from the model). A
+   * reason to ask (a button with no name there, BARE_BUTTON; any control of a page that takes payment, PAYMENT_PAGE),
+   * and, as `inPage` for keys, what makes riskOf read a page's link as content: named by what it leads to, it asks for
+   * its name only where it says what it does (linkCommands). Before, only `inPage` did, which the worker sends for keys
+   * and typing alone, so a result titled "How to install Node.js" was judged as a button, asked "You didn't ask for
+   * this" and put the rest of the task back to asking (owner's report of 2026-11-12). judge() still checks a clicked
+   * link that asks for its name, its page or a warning against the request, as before.
    */
   onPage?: boolean;
   /**
@@ -2049,17 +2053,37 @@ const LEAD_IN = /^([^\p{L}\p{N}]*(yes|ok|okay|sure|please|go ahead|and|click|tap
 const LINK_ACTS_FOR_GOOD = /^(delete|remove|erase|wipe|destroy|empty|reset|clear|discard|cancel|close|deactivate|unsubscribe|uninstall|install|pay|buy|purchase|order|checkout|transfer|send|submit|confirm|approve|accept|authori[sz]e|sign|log|subscribe|upgrade|activate|donate)$/i;
 /** What a command acts on, as a second word: "Post All - Blog" is a command, whatever its shape. */
 const LINK_OBJECT = /^(my|your|our|this|that|these|those|the|all|everything|account|now|money|payment|data|it)$/i;
+/**
+ * A song's or a video's own tag in its title: "(Official Video)", "[Official Music Video]", "(Lyrics)", "(Audio)", "ft.
+ * Swae Lee". Never "(Live)" or "(Official Account)", which any name may carry.
+ */
+const RELEASE_TAG = /[([]\s*(official\s+((music|lyric)\s+)?(video|audio|visuali[sz]er|trailer|teaser)|lyrics?|lyric video|music video|audio)\s*[)\]]|\s(ft|feat)\.\s/i;
+/**
+ * Where a new clause may start after a how, what or why: any mark but a letter, a digit or a space, other than a dot, a
+ * hyphen or an apostrophe inside a word ("Node.js", "re-install", "What's"). A list of stops, commas and dashes missed
+ * "What next / Delete account", "Why wait (Delete your account now)" and "What's new → Buy now" (review R2-1).
+ */
+const CLAUSE_BREAK = /[^\p{L}\p{M}\p{N}\s.'’-]|(?<![\p{L}\p{M}\p{N}])[.'’-]|[.'’-](?![\p{L}\p{M}\p{N}])/u;
 
 /**
  * A link that plainly names what it leads to, an allow-list that fails closed (review of #180): an article's title ("How to
- * install Node"), or a title in parts with a name after its first word ("Post Malone - Circles (Official Video)"), first
- * word not one that acts for good. Punctuation alone says nothing: "Delete my account (permanently)" and "Delete: my
- * account" are commands.
+ * install Node"), or a song's or a video's title in parts ("Post Malone - Circles (Official Video)"), first word not one
+ * that acts for good. Punctuation alone says nothing: "Delete my account (permanently)" and "Delete: my account" are
+ * commands. So, read by its shape alone, was a command in parts, before or after the separator ("Share Document - Drive",
+ * "Acme Bank - Transfer Funds", "My Shop | Buy Now"): a title in parts is one only with a song's or a video's tag
+ * (RELEASE_TAG), and never where a part turns a protection off or talks of security. Never a command after a question
+ * or a colon, or, after a how, what or why, after any other punctuation or symbol (CLAUSE_BREAK: "Why wait? Buy it now",
+ * "How to: delete all files now", "Why wait, buy it now", "What next / Delete account"); a suggestion ("Why not share
+ * your location"); or a grant of access (GRANTS_ACCESS: "Allow Notifications - Site"), whatever its shape (reviews W-1
+ * and R2-1 of the change for the owner's report of 2026-11-12, which found those read as titles, clicked or with Enter).
  */
-function linkIsTitle(name: string): boolean {
-  if (/^\s*(how (to|do)|what|why|guide to|review of)\b/i.test(name)) return true;
+function linkIsTitle(name: string, os: OS): boolean {
+  if (name.split(/[?!:;]/).slice(1).some(clause => linkCommands(clause, true, os))) return false;
+  if (GRANTS_ACCESS.test(normalizeLabel(name))) return false;
+  if (/^\s*(how (to|do)|what|why(?! not\b)|guide to|review of)\b/i.test(name)) return !name.split(CLAUSE_BREAK).slice(1).some(clause => linkCommands(clause, true, os));
   const parts = /^\s*([\p{L}\p{N}']+)\s+([\p{L}\p{N}']+)[^-–—|]*\s[-–—|]\s/u.exec(name);
-  return !!parts && !LINK_ACTS_FOR_GOOD.test(parts[1]) && /^\p{Lu}/u.test(parts[2]) && !LINK_OBJECT.test(parts[2]);
+  if (!parts || LINK_ACTS_FOR_GOOD.test(parts[1]) || !/^\p{Lu}/u.test(parts[2]) || LINK_OBJECT.test(parts[2]) || !RELEASE_TAG.test(name)) return false;
+  return !name.split(/\s[-–—|]\s/).some(part => securityTalk(part) || saysWord(WEAKENS, part) || TURNS_OFF.test(normalizeLabel(part)) || COMMITS_PHRASE.test(normalizeLabel(part)));
 }
 
 /**
@@ -2067,8 +2091,16 @@ function linkIsTitle(name: string): boolean {
  * One such title used to end "Work without asking" for the whole task.
  */
 function linkCommands(name: string, acts: boolean, os: OS): boolean {
-  return riskyContent(name, acts, os) && !linkIsTitle(name);
+  return riskyContent(name, acts, os) && !linkIsTitle(name, os);
 }
+
+/**
+ * Does a web page's control say something risky by its name, as policy reads it there: any risky word (isRiskyLabel), but
+ * a link's never where linkIsTitle takes it for a title ("How to install Node.js"). The worker's livingPage: such a
+ * control is refused before any question where its name repeats. (Read as content, linkCommands, a command before a
+ * file's name, "Sign contract.pdf", was spared by the file's name and clicked with no question: review R2-1.)
+ */
+export const riskyOnPage = (role: string, name: string, os: OS = "linux"): boolean => isRiskyLabel(name, os) && (role !== "link" || !linkIsTitle(name, os));
 
 function riskyContent(name: string, acts: boolean, os: OS): boolean {
   const label = plainText(name).trim();
@@ -2549,6 +2581,9 @@ export class PolicyEngine {
     // of round seven, safety-privacy-x7-1). riskOf gives COMMITS_RISK only where no rule older than that audit asks (before it,
     // such a step wasn't asked about at all); a button is still flagged.
     const committing = COMMITS_FLAG_ROLES.test(role) && d.reason === COMMITS_RISK && d.about === r.element?.name;
+    // (A page's link clicked, `onPage`, is still checked against the request where riskOf asks for its name: it does so
+    // only where the link says what it does, or for its page or a warning, never for a title's words: owner's report of
+    // 2026-11-12. An off-task "Delete my account" is something the user didn't ask for, and the task goes back to asking.)
     const content = ((CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage)) && d.about === r.element?.name) || committing;
     const how = { setting: TOGGLE_ROLES.test(role), disk, says };
     if (d.about && !content && !alignedWithGoal(r.goal, d.about, how)) {
@@ -2653,11 +2688,16 @@ export class PolicyEngine {
     // icon or a mail list's row is named by its content ("report.pdf", "Your order has shipped"): see riskyContent,
     // gentle where a click only selects it, stricter where it does something of its own (a page's list item, option or
     // grid cell with a click handler; Enter or Space on one).
-    // (A page's link is named by what it leads to, as a row by what it holds: "Post Malone - Circles" isn't a request to post.)
-    const content = CONTENT_ROLES.test(role) || (role === "link" && !!r.inPage);
+    // (A page's link is named by what it leads to, as a row by what it holds: "Post Malone - Circles" isn't a request to post.
+    // Keys say it is a page's with `inPage`, a click with `onPage`: owner's report of 2026-11-12.)
+    const content = CONTENT_ROLES.test(role) || (role === "link" && (!!r.inPage || !!r.onPage));
     const selects = !!r.clickSelects && (r.kind === "click" || r.kind === "cursor_click");
     const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name);
-    const riskyNamed = (role === "link" && content ? linkCommands(name, !selects, os) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
+    // A page's link clicked (`onPage`, not keys) still asks as a link's name did before, unless linkIsTitle takes it for a
+    // title: read as content alone, a command before a file's name ("Sign contract.pdf") was spared by the file's name
+    // (review R2-1). Keys read it by linkCommands alone, as before.
+    const clickedLink = role === "link" && !!r.onPage && !r.inPage && (isRiskyControl(role, name, os) || clicked) && !linkIsTitle(name, os);
+    const riskyNamed = (role === "link" && content ? linkCommands(name, !selects, os) || clickedLink : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     // A bare "Disable" or "Turn off" on a page or dialog titled for a protection ("Two-factor authentication") turns it off.
     const unprotects = ACTIVATING_ROLES.test(role) && TURNS_OFF.test(normalizeLabel(name)) && PROTECTION_TITLE.test(normalizeLabel(`${r.window} ${r.dialog?.name ?? ""}`));

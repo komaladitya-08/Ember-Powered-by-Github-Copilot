@@ -387,7 +387,10 @@ The bubble beside your cursor stays for your conversation, for guides, and for a
 task in the background doesn't speak there, but its questions still do. It works through the app's accessibility interface, so
 your mouse and keyboard stay yours. Before its first action in an app it asks **Allow / Always in this app / Not now**;
 answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N** (not now), so you never need the mouse (the
-question shows the keys). **Always** is a click only: a global key could take an app's own shortcut and grant for good
+question shows the keys). A press the question can't take yet says why on it (`KEY_REFUSED`, app/main/agent/confirm.ts):
+pressed as it came up, Ember using the mouse, again too soon after a long text's end has shown, a command card whose
+window doesn't show all of the command yet, or a consent card, which takes a click; the key that pages a long text on
+says nothing, as that is what it does. **Always** is a click only: a global key could take an app's own shortcut and grant for good
 by accident. A hidden Ember shows itself to ask, and with **Speak replies, questions and results out loud** set to
 **Always** (the default), or a screen reader running and it set to **When a screen reader runs**, it says the question
 out loud; **Never** keeps it quiet even for a screen reader, and chosen while Ember talks it stops at once (as does a
@@ -430,7 +433,9 @@ prompt program (pinentry, ssh-askpass, a polkit agent or gcr's prompter) is open
 because the shell is too busy or didn't answer, the window list can't be read, or the accessibility helper isn't
 working: then Ember says so and points to the setup check),
 it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
-it's going ahead without asking), until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
+it's going ahead without asking), until the prompt is done. On a Wayland session, while macOS's secure keyboard entry
+is on or while Windows shows its secure desktop, Ember doesn't ask to borrow your mouse or keyboard either: it says why
+it can't, where before it asked first and refused only after your Allow. A request carries only the window you're in (its app, title, focused control and selected text); other
 windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
 still asks first, the question says you didn't ask for it, and from then on that task asks before every step. A
 link, tab or menu item asked about only because its name starts with a word that grants or commits (a headline
@@ -487,21 +492,52 @@ back to asking.
 Say “Ember, work without asking” (Voice Match must recognise you, and the card must already be agreed to: otherwise
 Ember opens the switch or its card here) or “Ember, ask me first again” (anyone) to switch it by voice.
 
-**Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “go ahead”) answers it, and “Ember, not now”
-(or “no”, “don't”) declines it. A yes counts only when **Answer questions with my voice (Voice Match)** is on and recognises you
-in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is enough). A shorter
+**Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “yes please”, “yeah”, “sure”, “okay”,
+“okay, go with it”, “go ahead”, “go on”, “accept”, “I accept”, “continue”, “confirm”, “do it”, “sounds good”, “that's
+fine”, “fine”, “alright”) answers it, and “Ember, not now” (or “no”, “no thanks”, “deny”, “don't”) declines it: the one
+list in `app/shared/spoken-answer.ts`, which the voice process also reads, so that in a follow-up window or a
+conversation such an answer reaches the question and isn't taken for “that's all” or for a “yeah” said over Ember.
+Once Ember has said the question (or at once, where it doesn't speak), and again after each note it says about an
+answer it didn't take, it listens for 8 s (`ANSWER_WINDOW_MS`, app/main/voice.ts) for the answer without its name: a
+bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). Only what the list
+reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
+wake, “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere; a word or two that read as
+no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
+to answer (`unclear`). It opens no conversation, is
+no follow-up, ends with the question, and takes nothing said over other sound unless it is said with the name (the
+question then says so, once). An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
+voice ended is heard whole from its start, also when it starts in the 400 ms after Ember says it stopped; one that
+runs on from Ember's voice with no such gap began under it, so only its end was heard (“Don't do it.” came out as “Do
+it.” and allowed: owner's report of 2026-11-12). That one is never taken, in the answer window or a follow-up: Ember
+says once a question that it was still speaking and to say it again (`answer-over`). Measured on the real models with
+Ember's read-out in the microphone until 0.1 s after it stopped: refusals begun from 0.6 s before to 0.6 s after taken
+as a yes went from 28 of 180 to none, and answers begun 0.3 s after are heard (none were within 0.4 s). Nothing Ember says
+while a question is up ends on words that read as an answer: it says the keys as “To allow, press Control Alt Y; for
+not now, press Control Alt N.” (`keysSaid`, app/main/agent/voice-answer.ts).
+With **Only my voice can say yes (Voice Match)** off, its default, a yes or a no from anyone heard answers it (owner
+decision of 2026-11-12: “it doesn't really need my voice to be matched for it”), and “Before Ember starts” and the
+“Hey Ember” card say so: anyone near the computer can answer Ember by voice. The audit records `via: "voice"`,
+`verified: false`, and the log's `voice.answer` line `anyone: true`. With it on, a yes counts only when Voice Match
+recognises you in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is
+enough); switched on but not ready (never taught, or its model not in), no spoken yes is taken, and the bubble says to
+finish setting it up in Settings › Voice or turn it off. A shorter
 yes (“Ember, allow”) counts too for a question asked by a task you asked for in a voice Voice Match recognised, within
 10 minutes of asking, unless that short yes is too quiet or clipped to tell (it is then too short, never trusted) or sounds clearly unlike
 you, Voice Match has turned another voice away since, you forgot or taught your voice again,
 or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
 another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
-question (“Proceed?”) or a bare “okay” isn't one. Otherwise the bubble says how, and the question stays. Measured on
+question (“Proceed?”), or padded with more than one filler word, isn't one. Otherwise the bubble says how, and the question stays (naming the keys only while Ember holds them: `refusalLine`). Measured on
 LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time. With the task trust,
 someone else saying “Hey Ember, allow” is taken about 2.5 % of the time, and someone who plays your recorded “Hey
 Ember” then says “allow” 35–40 %, once: any voice turned away ends the trust; a yes too
 quiet or clipped to score is refused (PLAN.md §2 “Approvals”). It counts only for the question that was up, and armed, when you started speaking, and
-once Voice Match turned another voice away during a question, that question takes a click or the keys only. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
-own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts), never says
+once Voice Match turned another voice away during a question, that question takes a click or the keys only, and every
+later spoken yes to it is told so, never to say it again. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
+own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts): an answer said
+over Ember (as it reads the question out, or says a note), in a conversation or with its name, stops Ember speaking,
+and the question says, once, that Ember was still speaking and to say it again, which the answer window then hears
+(`answerOverEmber` in app/main/main.ts; the engine's `answer-over` event for one in Ember's own words, such as “allow”,
+which its read-out names). It never says
 “Always” by voice, and never takes a spoken yes for a consent card. A command card or a long typed text is allowed by
 voice only as the approve key would: once all of it has been shown. The audit records `via: "voice"` and whether Voice
 Match verified it.
@@ -636,8 +672,8 @@ to 1.4) sets how fast it speaks, in its own voice and the system's, and **Hear E
 replies are said and, once it is heard, which voice said it ("Getting Ember's voice ready…" until then, and "Ember
 couldn't speak just now" when no voice spoke it within 12 s, or as soon as the speech page says it found no voice,
 on every press; not with **Never**, while the screen is locked or when the
-organisation has turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
-the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
+organisation has turned speaking off). Anyone near the computer can answer Ember's questions out loud; to let only your voice say yes, turn on **Only my
+voice can say yes (Voice Match)** under it and say the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
 “Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
 stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted,
 or the microphone goes or sends only silence), after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases
@@ -676,11 +712,20 @@ Ember drops its voice at once (`duck`, 0.15 of its level: without it the echo ca
 words), and stops it when what the recognizer made of it isn't Ember's own words (`spokenByEmber`) or a “yeah”
 (`BACKCHANNEL`). What is said then replaces the reply on its way (`AgentHost.ask` `replaces`); tasks go on. It never
 approves anything (`overEmber`). With other sound playing, only what is said by name counts: Windows reads the output's
-level while a conversation is open (app/renderer/mic/output-watch.ts: Chromium gives system audio only with a screen's
-video, which is stopped at once), Linux uses the speakers' stream, macOS can't tell yet. The first time something said
-then without the name isn't heard, the status line says “Music or a video is playing: say “Ember” first.” for 5 s
-(engine.ts `dropped`), once a conversation. With the switch off, after Ember
-answers you have 8 seconds (12 when it asked you something) for
+level while a conversation is open, a question is up or a task is at work (app/renderer/mic/output-watch.ts: Chromium
+gives system audio only with a screen's video, which is stopped at once; main's `syncOutputWatch`), Linux uses the
+speakers' stream, macOS can't tell yet. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
+has looked past Ember's own voice, or after it stopped or was refused: `soundKnown` in engine.ts), a yes to a question
+said without the name, in the answer window, a follow-up or a conversation, is taken as said over other sound: with
+Voice Match off it isn't taken, and the question says once to say the name first (`sound-unknown`); a no and anything
+said by name are taken as ever (owner's report of 2026-11-12: a video's “Okay.” outside a conversation allowed a
+question; settled by the integrator on the owner's direction, and the owner can overrule it). So is one said without the
+name in a follow-up window while other sound is known to play, as in the answer window (Codex review of #211). The first
+time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
+first.” for 5 s (engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer
+window, a follow-up or a conversation, makes the question say once why and to say the name first (`dropped` says which
+answer it read as, never the words: in a conversation over a playing video a nameless “allow” vanished, owner's report
+of 2026-11-12). With the switch off, after Ember answers you have 8 seconds (12 when it asked you something) for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). While Ember is talking, “Hey Ember” stops it and listens; on Windows, macOS and Linux without
 `parec`, where Ember can't hear its own speakers, “Ember” alone doesn't (Ember's own words have it), and what you said before it went quiet isn't
@@ -2539,9 +2584,9 @@ How three behaviours work inside, for whoever changes them: approvals (§5, "Ask
 
 ### Action approval freshness
 
-An approval applies to the window, control and contents shown when Ember asked. Before input, Ember checks them again after waiting for a lease or moving the pointer. If the dialog, text being replaced, controls or window change, or the check cannot read them, nothing is entered: use a fresh `perceive_window` and let policy decide again. Window movement and focus changes alone do not invalidate the check. Ember's own focus click may collapse the target text selection before append/replace; it still checks the text itself, and insert-at-caret keeps its original selection binding. If clicking Allow closes a menu, reopening it is a new policy attempt; risky menu actions require another approval. No consent is cached by app and menu label.
+An approval applies to the window, control and contents shown when Ember asked. Before input, Ember checks them again after waiting for a lease or moving the pointer. If the dialog, text being replaced, controls or window change, or the check cannot read them, nothing is entered: use a fresh `perceive_window` and let policy decide again. Window movement and focus changes alone do not invalidate the check. Ember's own focus click may collapse the target text selection before append/replace; it still checks the text itself, and insert-at-caret keeps its original selection binding. If clicking Allow closes a menu, reopening it is a new policy attempt; risky menu actions require another approval. No consent is cached by app and menu label. A yes spent so is told to the model as a yes that no longer counts, neither a no nor a new request (`spentYes`), and the next question, if it is about the same step, says why it asks again (steps that ask nothing in between, such as reopening the menu or a scroll, keep the reason; a question about another step drops it): "The page changed while you decided, so I'm asking again.", the window's, or, for a menu's item, "Clicking Allow closed the menu, so I'm asking again." when the yes came by a click and "The menu closed while you decided, so I'm asking again." otherwise (`ASKING_AGAIN`; owner's report of 2026-11-12). It names no other way to answer: whether Ember's keys leave another app's menu open hasn't been checked on any OS (on Windows the chord's Alt may reach the app's menu), and they and voice may not be Ember's to use.
 
-Action-context reads use separate baselines for the quick accessibility tree and the detailed target read. AT-SPI omits empty and object-placeholder text from the tree and limits its text more tightly; the detailed target text is compared exactly against its own pre-approval value, never by prefix. Each action refreshes policy context before approval, preserving original actionable ids only when the tree structure and target identity still match. Repeated role/name targets (such as two dialogs' OK buttons) are ambiguous and are refused before approval; positions are never used to choose between them. A web page lives on its own (a video playing, a hover preview), so a control of one, in no dialog and with no risky word in its name, is the exception (`livingPage()`, worker.ts; owner's report of 2026-11-05: every click on YouTube was refused): a step that asks nothing needs only its window, no modal over it and the object itself to hold (`checkPageTarget()`), and a link or button may share its name with a twin, since the click goes to the object by id (`PAGE_TWIN`). A question still binds its answer to the whole tree, and pressed keys likewise (`focusShell`). This lets a completed form step update its status and contents without carrying its approval into the next step.
+Action-context reads use separate baselines for the quick accessibility tree and the detailed target read. AT-SPI omits empty and object-placeholder text from the tree and limits its text more tightly; the detailed target text is compared exactly against its own pre-approval value, never by prefix. Each action refreshes policy context before approval, preserving original actionable ids only when the tree structure and target identity still match. Repeated role/name targets (such as two dialogs' OK buttons) are ambiguous and are refused before approval; positions are never used to choose between them. A web page lives on its own (a video playing, a hover preview), so a control of one, in no dialog and with no risky word in its name (a link's read as before, but a title's words don't count, `riskyOnPage`; a command in a title's shape, such as "Merge Pull Request - GitHub", "Why wait? Buy it now" or "What next / Delete account", is no title, nor is a command before a file's name, such as "Sign contract.pdf": `linkIsTitle`), is the exception (`livingPage()`, worker.ts; owner's report of 2026-11-05: every click on YouTube was refused): a step that asks nothing needs only its window, no modal over it and the object itself to hold (`checkPageTarget()`), and a link or button may share its name with a twin, since the click goes to the object by id (`PAGE_TWIN`). A question still binds its answer to the whole tree, and pressed keys likewise (`focusShell`): the tree the step was judged on, which for such a page whose ids moved on or whose names repeat is that read by its own ids, with the field Ember's click may collapse found in it by role and name, never by position (`actionTree`, `actionAt`; an empty or stale copy failed every Allow there: owner's report of 2026-11-12). This lets a completed form step update its status and contents without carrying its approval into the next step.
 
 AT-SPI 2.60 calls push buttons `button`. The sidecar uses the same role for older and newer servers so click actions and protection around password-reveal controls still apply. A GTK list checkbox with alternate cell actions still requires a pointer click rather than accessibility row selection.
 

@@ -1,7 +1,8 @@
 /**
- * Is the computer playing other sound (a song, a video, a call)? Only while a conversation is open, and only where the
- * platform can say (Windows' system audio loopback): with the microphone open and no name needed, a song's words would
- * otherwise be taken for requests. It reads how loud the output is, nothing else: no audio is kept, sent or recognized,
+ * Is the computer playing other sound (a song, a video, a call)? Only while a conversation is open, one of Ember's
+ * questions is up or a task is at work, and only where the platform can say (Windows' system audio loopback): with no
+ * name needed, a song's words would otherwise be taken for requests, and a video's "Okay." for a yes to a question
+ * (owner's report of 2026-11-12). It reads how loud the output is, nothing else: no audio is kept, sent or recognized,
  * and Chromium makes us ask for a screen's video to get it, which is stopped before anything of it is looked at.
  * The rule is pure (OutputBusy), so it is tested without a page.
  */
@@ -18,13 +19,17 @@ const LOOK_MS = 200;
  */
 const EMBER_TAIL_MS = 1000;
 
-/** Follows the output's level; says when the answer to "is other sound playing?" changes. */
+/**
+ * Follows the output's level; says when the answer to "is other sound playing?" changes. Null: not known (not looked
+ * yet, only Ember's own voice heard so far, or not watching), which the voice process never takes for quiet: before,
+ * a watch that hadn't looked said nothing plays.
+ */
 export class OutputBusy {
   private soundAt = Number.NEGATIVE_INFINITY;
   private emberAt = Number.NEGATIVE_INFINITY;
-  private busy = false;
+  private busy: boolean | null = null;
 
-  constructor(private tell: (on: boolean) => void) {}
+  constructor(private tell: (on: boolean | null) => void) {}
 
   /**
    * A look at the output: its RMS, and whether Ember's own voice is playing. Ember's voice isn't other sound, and over it
@@ -40,17 +45,17 @@ export class OutputBusy {
   /** The watch stopped: nothing is known of the output any more. */
   reset(): void {
     this.soundAt = Number.NEGATIVE_INFINITY;
-    this.set(false);
+    this.set(null);
   }
 
-  private set(on: boolean): void {
+  private set(on: boolean | null): void {
     if (on === this.busy) return;
     this.busy = on;
     this.tell(on);
   }
 }
 
-/** Starts watching the output; the result stops it. A computer that refuses just goes without (nothing is "playing"). */
+/** Starts watching the output; the result stops it. A computer that refuses goes without: nothing is known of it. */
 export async function watchOutput(busy: OutputBusy, emberSpeaking: () => boolean): Promise<() => void> {
   const stream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
   for (const t of stream.getVideoTracks()) t.stop();

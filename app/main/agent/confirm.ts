@@ -1,11 +1,13 @@
 /**
  * Questions Ember asks with buttons in its bubble ("Allow" / "Not now").
  * A click in Ember's own bubble answers them, or Ember's keys, or a short spoken
- * answer while the question is up (answerVoice: a yes only from the owner's
- * voice as Voice Match verified it, "Not now" from anyone; owner decision of
- * 2026-11-02, PLAN.md §2 "Approvals"). Never the model, never typed text, and
- * never "Always" by voice. One question shows at a time; the rest wait their
- * turn. Unanswered questions expire as "no", counted from when they appear on screen.
+ * answer while the question is up (answerVoice: a yes from anyone heard while
+ * Voice Match is off, its default, and only from the owner's voice as Voice
+ * Match verified it while it is on; "Not now" from anyone; owner decisions of
+ * 2026-11-02 and 2026-11-12, PLAN.md §2 "Approvals"). Never the model, never
+ * typed text, and never "Always" by voice. One question shows at a time; the
+ * rest wait their turn. Unanswered questions expire as "no", counted from when
+ * they appear on screen.
  *
  * A question can't be answered by accident: clicks in its first moments are
  * ignored (a double-click or a click already on its way lands on nothing),
@@ -44,10 +46,10 @@ export type AnswerVia = "bubble" | "key" | "panel" | "voice";
 export interface AnswerChannel { via: AnswerVia; verified?: boolean; trust?: "task-voice" }
 
 /**
- * What became of a spoken answer: taken ("answered"), or why not. A yes needs a verified voice ("unverified"), never
- * answers a question whose card only a click may allow ("click-only"), and waits as a key would for the question to be
- * armed, its whole text read, or its panel shown whole ("not-yet"). A short yes on a task's trust only for that task's
- * own question, never a panel's ("untrusted").
+ * What became of a spoken answer: taken ("answered"), or why not. A yes needs a verified voice, or Voice Match off
+ * ("unverified"), never answers a question whose card only a click may allow ("click-only"), and waits as a key would
+ * for the question to be armed, its whole text read, or its panel shown whole ("not-yet"). A short yes on a task's
+ * trust only for that task's own question, never a panel's ("untrusted").
  */
 export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "untrusted" | "click-only" | "not-yet" | "stale" | "locked";
 
@@ -150,6 +152,23 @@ export function answerSettler(d: { onScreen: () => BubbleState; reshow: () => bo
     if (patch) d.set(patch);
   };
 }
+
+/**
+ * Why Ember's allow or not-now key, pressed while a question is up, was refused, said on the question under its
+ * sentence and above its keys (owner's report of 2026-11-12: a refused press did nothing visible). Its gates stay as
+ * they were: `not-yet`, pressed in the question's first moments (its arm time); `busy`, while Ember borrows the mouse;
+ * `too-soon`, again too soon after a whole text's end had shown (the key must rest first); `click-only`, a consent card,
+ * which only a click allows; `panel`, a command card whose window doesn't show all of it yet. None reads as a spoken
+ * answer, nor names Ember: a screen reader may read it while Ember listens for an answer.
+ */
+export const KEY_REFUSED = {
+  "not-yet": "That key was pressed as the question came up, so it didn't count. Press it again.",
+  busy: "I'm using the mouse just now, so that key didn't count. Press it again once I've stopped.",
+  "too-soon": "All of it has been shown now. Press the key again to answer.",
+  "click-only": "This one needs a click in its window: the keys can't say yes to it.",
+  panel: "The command window isn't showing all of the command yet. Bring it up, then press the key again.",
+} as const;
+export type KeyRefusal = keyof typeof KEY_REFUSED;
 
 /** The hash a panel question's yes must carry back: the command card's, or the consent card's. */
 const panelSha256 = (panel: QuestionPanel): string => (panel.kind === "command" ? panel.card.sha256 : panel.consent.sha256);
@@ -320,14 +339,16 @@ export class Confirmer {
   /**
    * A short spoken answer to the question up now (main's onVoice, after voice-answer.ts judged the words): "allow" takes
    * the primary option ("Allow", never "Always"), "deny" Not now. A "Not now" is taken from anyone at once (the safer
-   * way). A yes only when `verified` (Voice Match matched the owner's voice), and as the approve key would be: not while
-   * Ember borrows the mouse, not on a click-only question (a consent card), not before the question is armed, its whole
-   * text has been in view or its panel window shows all of it. Or, unverified, a short yes on a task's voice trust
-   * (`trust`: the task main found holding it, voice-answer.ts TaskVoiceTrust): only for a question that task raised itself,
-   * never one shown in a panel window (the command card, a consent card) and never a click-only one, and otherwise as a
-   * verified yes (owner decision of 2026-11-03).
+   * way). A yes when `verified` (Voice Match matched the owner's voice), or with `anyone` (Voice Match switched off, its
+   * default: a yes from whoever was heard, owner decision of 2026-11-12; main passes it only then, and without it an
+   * unverified yes is refused), and either as the approve key would be: not while Ember borrows the mouse, not on a
+   * click-only question (a consent card), not before the question is armed, its whole text has been in view or its panel
+   * window (a command card) shows all of it. Or, unverified, a short yes on a task's voice trust (`trust`: the task main
+   * found holding it, voice-answer.ts TaskVoiceTrust): only for a question that task raised itself, never one shown in
+   * a panel window (the command card, a consent card) and never a click-only one, and otherwise as a verified yes
+   * (owner decision of 2026-11-03).
    */
-  answerVoice(which: "allow" | "deny", o: { verified: boolean; question?: number | null; startedAt?: number; trust?: { task: string } }): VoiceAnswerResult {
+  answerVoice(which: "allow" | "deny", o: { verified: boolean; anyone?: boolean; question?: number | null; startedAt?: number; trust?: { task: string } }): VoiceAnswerResult {
     const c = this.current;
     if (!c) return "no-question";
     if (this.lapsed(c)) return "stale";
@@ -341,16 +362,18 @@ export class Confirmer {
       return "answered";
     }
     const trusted = o.verified !== true && o.trust !== undefined;
-    if (o.verified !== true && !trusted) return "unverified";
+    const anyone = o.verified !== true && !trusted && o.anyone === true;
+    if (o.verified !== true && !trusted && !anyone) return "unverified";
     if (c.voiceLocked) return "locked";
-    if (c.q.clickOnly) return "click-only";
+    // A consent card only by a click: its clickOnly says so, and a consent panel counts as one without it (fail closed).
+    if (c.q.clickOnly || c.q.panel?.kind === "consent") return "click-only";
     if (trusted && (c.q.panel || !c.q.task || c.q.task !== o.trust!.task)) return "untrusted";
     const opt = c.q.options.find(x => x.primary) ?? c.q.options[0];
     if (!opt || opt.id === "always" || opt.id === "deny") return "not-yet";
     if (this.now() - c.shownAt < this.armOf(c.q) || this.blocked()) return "not-yet";
     // As the approve key: its whole text read and armed again since, and a panel only while its window shows all of it.
     if (!this.allowedFrom(c, opt.id, "key", undefined)) return "not-yet";
-    this.channels.set(c.q, trusted ? { via: "voice", verified: false, trust: "task-voice" } : { via: "voice", verified: true });
+    this.channels.set(c.q, trusted ? { via: "voice", verified: false, trust: "task-voice" } : { via: "voice", verified: o.verified === true });
     this.finish(c, opt.id);
     return "answered";
   }
@@ -469,17 +492,44 @@ export class Confirmer {
     if (which !== "deny" && c.whole) {
       const now = this.now();
       if (!c.whole.seen) {
+        // Paging on is what the key does until the end has shown: no refusal, and nothing to say about it.
         if (!this.blocked()) {
           c.whole.page += 1;
           c.whole.keyAt = now;
           this.show({ bubble: this.bubbleOf(c) });
-        }
+        } else this.keyRefused(c, "busy");
         return false;
       }
-      if (now - c.whole.keyAt < this.armOf(c.q)) { c.whole.keyAt = now; return false; }
+      if (now - c.whole.keyAt < this.armOf(c.q)) { c.whole.keyAt = now; this.keyRefused(c, "too-soon"); return false; }
     }
     const opt = which === "primary" ? c.q.options.find(o => o.primary) ?? c.q.options[0] : c.q.options.find(o => o.id === which);
-    return opt ? this.answer(`q${c.n}:${opt.id}`, "key") : false;
+    if (!opt) return false;
+    if (this.answer(`q${c.n}:${opt.id}`, "key")) return true;
+    const why = this.keyRefusal(c, opt.id);
+    if (why) this.keyRefused(c, why);
+    return false;
+  }
+
+  /**
+   * Why answer() just refused option `option` of question `p` by key, as the press would be told (KEY_REFUSED), or null
+   * (it is no longer the question up). Read from the same gates answer() and allowedFrom() check, which it changes
+   * nothing of.
+   */
+  private keyRefusal(p: Pending, option: string): KeyRefusal | null {
+    if (this.current !== p) return null;
+    if (this.now() - p.shownAt < this.armOf(p.q)) return "not-yet";
+    if (this.blocked()) return "busy";
+    if (option === "deny") return null;
+    if (p.whole && (!p.whole.seen || this.now() - p.whole.seenAt < this.armOf(p.q))) return "too-soon";
+    if (p.q.clickOnly) return "click-only";
+    return p.q.panel ? "panel" : null;
+  }
+
+  /** Says on question `p` why a key press was refused (its note, above the keys): the question stays as it is. */
+  private keyRefused(p: Pending, why: KeyRefusal): void {
+    if (this.current !== p) return;
+    p.note = KEY_REFUSED[why];
+    this.show({ bubble: this.bubbleOf(p) });
   }
 
   /**

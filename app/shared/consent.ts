@@ -9,8 +9,13 @@ import type { TargetId } from "./targets";
  * without its name; Voice Match no longer decides who is heard.
  * 7 (2026-11-06): Home's “Keep my recent conversation” (off by default) can keep the latest messages on this computer
  * across restarts; "Before Ember starts" says so.
+ * 8 (2026-11-12): while a question is up, anyone near the computer can answer it by voice, with Voice Match off (its
+ * default), and for a few seconds after Ember asks it listens for that answer without its name (the answer window);
+ * with Voice Match on, only the owner's voice can say yes (owner decision of 2026-11-12, PLAN.md §2 "Approvals"). On
+ * Windows the output's level is read while a question is up or a task is at work as well as in a conversation, which
+ * the “Hey Ember” card says (owner's report of 2026-11-12).
  */
-export const CONSENT_VERSION = 7;
+export const CONSENT_VERSION = 8;
 
 /**
  * What each bump of CONSENT_VERSION changed, in Ember's words, for someone who agreed to an earlier version: first run
@@ -24,6 +29,7 @@ export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
   5: "If you save a project workspace, I encrypt its selected paths and last completed request and answer on this computer.",
   6: "Once you call me, I keep listening through the conversation, and what I hear there is sent as text, without my name.",
   7: "If you turn on “Keep my recent conversation”, its latest messages stay on this computer after I restart.",
+  8: "While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.",
 };
 
 /** The changes since the version the user agreed to (`agreed`), oldest first: none for a first agreement (0) or a current one. */

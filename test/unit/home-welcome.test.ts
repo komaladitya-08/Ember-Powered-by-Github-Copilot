@@ -97,8 +97,11 @@ describe("the consent in short", () => {
       ["send", /your request and what I read go to GitHub Copilot\. Nothing is sent before you ask\./, "Nothing is sent before you ask."],
       ["hand", /I ask before acting in an app, and always before anything hard to undo\. I never type passwords\./, "It never types passwords."],
       ["lock", /On this computer I keep your settings, logs and a record of what you asked and what I did \(kept 30 days\)\. If you save a workspace, I encrypt its paths and last request and answer\. I send no usage statistics\./, "It sends no usage statistics."],
-      ["plug", /The microphone, other computers and commands stay off until you turn them on\. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct \(never audio\)\./, "The microphone stays off</b> unless you turn on"],
+      ["plug", /The microphone, other computers and commands stay off until you turn them on\. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask\. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct \(never audio\)\./, "The microphone stays off</b> unless you turn on"],
       ["plug", /If you teach me your voice, I keep a voiceprint I refine from your requests/, "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct"],
+      // Said plainly at setup (owner decision B of 2026-11-12).
+      ["plug", /While one of my questions is up, anyone near the computer can answer it by voice/, "anyone near the computer can answer it by voice"],
+      ["plug", /without my name right after I ask\./, "for a few seconds after it asks, it listens for that answer without its name"],
     ];
     for (const [icon, said, source] of pairs) {
       expect(points.find(p => p.icon === icon)!.text, icon).toMatch(said);
@@ -134,9 +137,11 @@ describe("the consent in short", () => {
       for (const source of CONSENT_CHANGE_SOURCES[v]) expect(full, `${v}: ${source}`).toContain(source);
     }
     expect(Object.keys(CONSENT_CHANGES).map(Number).every(v => v >= 2 && v <= CONSENT_VERSION)).toBe(true);
-    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7]]);
+    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7], CONSENT_CHANGES[8]]);
     expect(consentChangesSince(6)[0]).toContain("“Keep my recent conversation”");
-    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7]]);
+    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7], CONSENT_CHANGES[8]]);
+    // Setup says plainly that anyone near the computer can answer Ember by voice (owner decision B of 2026-11-12).
+    expect(consentChangesSince(7)).toEqual(["While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes."]);
     expect(consentChangesSince(0)).toEqual([]);
     expect(consentChangesSince(CONSENT_VERSION)).toEqual([]);
     for (const line of Object.values(CONSENT_CHANGES)) expect(line, line).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);

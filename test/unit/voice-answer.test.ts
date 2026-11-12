@@ -5,8 +5,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
+import { SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
+import { questionAloud } from "../../app/main/agent/presenter";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "../../app/main/agent/autonomy-intent";
 import fs from "node:fs";
 import os from "node:os";
@@ -43,14 +44,14 @@ describe("spokenAnswer", () => {
 });
 
 describe("voiceAnswer (who may answer by voice)", () => {
-  const base: VoiceAnswerInput = { text: "Ember, allow", questionUp: true, matchOn: true, verified: true, selfSpoke: false };
+  const base: VoiceAnswerInput = { text: "Ember, allow", questionUp: true, matchOn: true, matchOff: false, verified: true, selfSpoke: false };
 
-  it("takes a yes only from the owner's voice as Voice Match verified it", () => {
+  it("with Voice Match switched on, takes a yes only from the owner's voice as Voice Match verified it", () => {
     expect(voiceAnswer(base)).toEqual({ kind: "answer", answer: "allow", verified: true });
-    expect(voiceAnswer({ ...base, matchOn: false, verified: false })).toEqual({ kind: "refused", answer: "allow", why: "voice-match-off" });
     expect(voiceAnswer({ ...base, verified: false })).toEqual({ kind: "refused", answer: "allow", why: "unverified" });
-    // A request heard without a check (the model failed) can't be a verified yes while Voice Match is off.
-    expect(voiceAnswer({ ...base, matchOn: false, verified: true })).toEqual({ kind: "refused", answer: "allow", why: "voice-match-off" });
+    // Switched on but not in use (never taught, or its model not in): no yes at all, verified or not.
+    expect(voiceAnswer({ ...base, matchOn: false, verified: false })).toEqual({ kind: "refused", answer: "allow", why: "voice-match-unready" });
+    expect(voiceAnswer({ ...base, matchOn: false, verified: true })).toEqual({ kind: "refused", answer: "allow", why: "voice-match-unready" });
   });
 
   it("never takes Ember's own voice as an answer, either way", () => {
@@ -64,19 +65,19 @@ describe("voiceAnswer (who may answer by voice)", () => {
   });
 
   it("takes “Not now” from anyone, without Voice Match", () => {
-    expect(voiceAnswer({ ...base, text: "Not now", matchOn: false, verified: false })).toEqual({ kind: "answer", answer: "deny", verified: false });
+    expect(voiceAnswer({ ...base, text: "Not now", matchOn: false, matchOff: true, verified: false })).toEqual({ kind: "answer", answer: "deny", verified: false });
     expect(voiceAnswer({ ...base, text: "No", verified: false })).toEqual({ kind: "answer", answer: "deny", verified: false });
   });
 
   it("asks for a little more when the owner's yes was too short for Voice Match to vouch for (security review of #127)", () => {
     expect(voiceAnswer({ ...base, verified: false, short: true })).toEqual({ kind: "refused", answer: "allow", why: "too-short" });
-    expect(VOICE_ANSWER_REFUSED["too-short"]).toBe("I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like “Yes, please go ahead.”");
+    expect(VOICE_ANSWER_REFUSED["too-short"]).toBe("I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like “Yes, please go ahead”, so I can tell.");
     // The longer yes it suggests is one Ember takes.
     expect(spokenAnswer("Yes, please go ahead.")).toBe("allow");
   });
 
-  it("says how to set Voice Match up when a yes can't be taken", () => {
-    expect(VOICE_ANSWER_REFUSED["voice-match-off"]).toMatch(/Voice Match.*Settings › Voice/);
+  it("says how to finish setting Voice Match up, or turn it off, when it is on and a yes can't be taken", () => {
+    expect(VOICE_ANSWER_REFUSED["voice-match-unready"]).toMatch(/Voice Match.*Settings › Voice, or turn it off/);
     for (const words of Object.values(VOICE_ANSWER_REFUSED)) expect(words).not.toMatch(/"|Ctrl\+/);
   });
 });
@@ -199,6 +200,181 @@ describe("Confirmer.answerVoice", () => {
   });
 });
 
+describe("a spoken yes from anyone heard while Voice Match is off, its default (owner's report of 2026-11-12; owner decision B)", () => {
+  const off: VoiceAnswerInput = { text: "Allow.", questionUp: true, matchOn: false, matchOff: true, verified: false, selfSpoke: false };
+
+  it("allows the question when someone says “allow” or “okay, go with it”, and refuses it on “no”, with Voice Match off (owner's report of 2026-11-12)", () => {
+    for (const yes of ["Allow.", "Okay, go with it.", "Yes please.", "Ember, go ahead.", "I accept."]) {
+      expect(voiceAnswer({ ...off, text: yes }), yes).toEqual({ kind: "answer", answer: "allow", verified: false, anyone: true });
+    }
+    for (const no of ["No.", "Not now.", "Don't."]) expect(voiceAnswer({ ...off, text: no }), no).toEqual({ kind: "answer", answer: "deny", verified: false });
+  });
+
+  it("still never takes Ember's own voice, or what was said over it, either way", () => {
+    expect(voiceAnswer({ ...off, selfSpoke: true })).toEqual({ kind: "refused", answer: "allow", why: "own-voice" });
+    expect(voiceAnswer({ ...off, text: "No.", selfSpoke: true })).toEqual({ kind: "refused", answer: "deny", why: "own-voice" });
+  });
+
+  it("keeps Voice Match's rules while it is switched on, ready or not: a yes it can't take never asks to be said again", () => {
+    // On and ready: only the owner's verified voice, as before.
+    expect(voiceAnswer({ ...off, matchOff: false, matchOn: true })).toEqual({ kind: "refused", answer: "allow", why: "unverified" });
+    // A setting that says both (it can't, as main reads them): Voice Match's rules win.
+    expect(voiceAnswer({ ...off, matchOn: true })).toEqual({ kind: "refused", answer: "allow", why: "unverified" });
+    // On but not ready: refused as such before the echo guard, whose note would say to say it again.
+    expect(voiceAnswer({ ...off, matchOff: false, selfSpoke: true })).toEqual({ kind: "refused", answer: "allow", why: "voice-match-unready" });
+    expect(voiceAnswer({ ...off, matchOff: false, text: "Not now." })).toEqual({ kind: "answer", answer: "deny", verified: false });
+  });
+
+  it("is taken by the Confirmer only as the approve key would be, and audited as an unverified spoken answer", async () => {
+    const { c, later } = confirmer();
+    const question = q();
+    const answer = c.ask(question);
+    // Not before it is armed, and without the opt-in still unverified (fail closed).
+    expect(c.answerVoice("allow", { verified: false, anyone: true })).toBe("not-yet");
+    later(600);
+    expect(c.answerVoice("allow", { verified: false })).toBe("unverified");
+    expect(c.answerVoice("allow", { verified: false, anyone: true, question: 1, startedAt: 1100 })).toBe("stale");
+    expect(c.answerVoice("allow", { verified: false, anyone: true, question: 1, startedAt: 1600 })).toBe("answered");
+    expect(await answer).toBe("once");
+    expect(c.howAnswered(question)).toEqual({ via: "voice", verified: false });
+  });
+
+  it("allows a command card only while it shows whole and armed, and never a consent card, “Always” or a question locked to clicks", async () => {
+    const card = { kind: "command" as const, card: { sha256: "a".repeat(64) } as never };
+    let shown = false;
+    const wired = confirmer({ panelReady: () => shown });
+    const ran = wired.c.ask(q({ panel: card }));
+    wired.later(600);
+    expect(wired.c.answerVoice("allow", { verified: false, anyone: true })).toBe("not-yet");
+    shown = true;
+    expect(wired.c.answerVoice("allow", { verified: false, anyone: true })).toBe("answered");
+    expect(await ran).toBe("once");
+    const consent = { kind: "consent" as const, consent: { sha256: "b".repeat(64) } as never };
+    for (const asked of [q({ panel: consent, clickOnly: true }), q({ panel: consent }), q({ clickOnly: true })]) {
+      const k = confirmer({ panelReady: () => true });
+      void k.c.ask(asked);
+      k.later(600);
+      expect(k.c.answerVoice("allow", { verified: false, anyone: true })).toBe("click-only");
+    }
+    const always = confirmer();
+    void always.c.ask(q({ options: withAlways }));
+    always.later(600);
+    expect(always.c.answerVoice("allow", { verified: false, anyone: true })).toBe("not-yet");
+    const locked = confirmer();
+    void locked.c.ask(q());
+    locked.later(600);
+    locked.c.lockVoice();
+    expect(locked.c.answerVoice("allow", { verified: false, anyone: true })).toBe("locked");
+    let borrowing = true;
+    const borrowed = confirmer({ blocked: () => borrowing });
+    void borrowed.c.ask(q({ detail: "x".repeat(400) }));
+    borrowed.later(600);
+    expect(borrowed.c.answerVoice("allow", { verified: false, anyone: true })).toBe("not-yet");
+    // Its whole text not read yet: as the key, never.
+    borrowing = false;
+    expect(borrowed.c.answerVoice("allow", { verified: false, anyone: true })).toBe("not-yet");
+  });
+
+  it("says a question is locked to clicks and keys, never to say a yes again, once Voice Match turned a voice away during it (cause 9)", () => {
+    for (const why of ["own-voice", "stale", "heard-over", "unverified", "too-short", "not-yet"] as const) {
+      expect(refusalNote(why, { answer: "allow", locked: true, unready: false }), why).toBe("locked");
+      expect(refusalNote(why, { answer: "deny", locked: true, unready: false }), why).toBe(why);
+      expect(refusalNote(why, { answer: "allow", locked: false, unready: false }), why).toBe(why);
+    }
+    // Voice Match switched on but not ready: no yes can be taken, so none is asked for again.
+    expect(refusalNote("heard-over", { answer: "allow", locked: false, unready: true })).toBe("voice-match-unready");
+    expect(refusalNote("heard-over", { answer: "deny", locked: false, unready: true })).toBe("heard-over");
+    // A consent card says it needs a click, whatever else holds.
+    expect(refusalNote("click-only", { answer: "allow", locked: true, unready: true })).toBe("click-only");
+    expect(VOICE_ANSWER_REFUSED.locked).not.toMatch(/again/i);
+  });
+
+  it("says once a question, when a word or two after it was no answer, how to answer, rather than nothing (owner's report of 2026-11-12)", () => {
+    expect(VOICE_ANSWER_REFUSED.unclear).toBe("I didn't catch that as an answer. Say “allow” or “not now” once more, or click on the question.");
+    expect(voiceAnswerSaid("unclear")).toBe("I didn't catch that as an answer. Say allow or not now once more, or click on the question.");
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toMatch(/case "unclear":\s*(?:\/\/[^\n]*\n\s*)*if \(confirmer\?\.waiting && unclearFor !== confirmer\.currentNumber\) \{ unclearFor = confirmer\.currentNumber; refuseVoiceAnswer\("unclear", "deny"\); \}/);
+  });
+
+  it("names the keys in a note about a spoken answer only while Ember holds them, on the question and aloud (owner's report of 2026-11-12)", () => {
+    // Another app may have taken the question keys: the note then points to the click alone (CLAUDE.md "Shortcuts").
+    expect(refusalLine("unverified", false)).toBe("That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow on the question.");
+    expect(refusalLine("voice-match-unready", false)).toBe("Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow on the question.");
+    expect(refusalLine("locked", false)).toBe("I heard a voice that isn't yours, so for this question I'll take a click only.");
+    for (const why of Object.keys(VOICE_ANSWER_REFUSED) as (keyof typeof VOICE_ANSWER_REFUSED)[]) {
+      expect(refusalLine(why, true)).toBe(VOICE_ANSWER_REFUSED[why]);
+      expect(refusalLine(why, false), why).not.toMatch(/\bkeys?\b/);
+      expect(voiceAnswerSaid(why, []), why).not.toMatch(/\bkeys?\b/);
+    }
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toContain("if (!confirmer.note(refusalLine(note, heldKeys().length > 0))) return;");
+    expect(main).toContain('confirmer.note(refusalLine("locked", heldKeys().length > 0));');
+    expect(main).not.toMatch(/confirmer\.note\(VOICE_ANSWER_REFUSED/);
+  });
+
+  it("ends nothing Ember says while a question is up on an answer, so the end of its own voice never answers it (owner's report of 2026-11-12)", () => {
+    // An answer window opens once Ember stops speaking: whatever the microphone still catches of its last words must be
+    // no answer, yes or no, from any of its trailing words.
+    const keys = [["Control Alt Y to allow", "Control Alt N for not now"], ["Windows key, Alt, Y to allow", "Windows key, Alt, N for not now"], ["Control Shift Command Y to allow"], ["Control Alt N for not now"]];
+    const said: string[] = [];
+    for (const k of keys) {
+      said.push(questionAloud({ prompt: "Click Save in gedit?" }, { keys: k }).say);
+      said.push(questionAloud({ prompt: "Type “Dear…Bye” into the “Message” field?", detail: "Dear team, … Bye", where: "on build-01" }, { keys: ["Control Alt Y to show the next part", ...k.slice(1)] }).say);
+      for (const why of Object.keys(VOICE_ANSWER_REFUSED) as (keyof typeof VOICE_ANSWER_REFUSED)[]) said.push(voiceAnswerSaid(why, k), VOICE_ANSWER_REFUSED[why], voiceAnswerSaid(why, []), refusalLine(why, false));
+    }
+    for (const line of said) {
+      const words = line.split(/\s+/);
+      for (let i = 0; i < words.length; i++) expect(spokenAnswer(words.slice(i).join(" ")), `${line} → ${words.slice(i).join(" ")}`).toBeNull();
+    }
+    expect(questionAloud({ prompt: "Click Save?" }, { keys: ["Control Alt Y to allow", "Control Alt N for not now"] }).say).toBe("Ember asks: Click Save? To allow, press Control Alt Y; for not now, press Control Alt N.");
+  });
+
+  it("listens for a bare answer once each question and each note about it is said, and never sends what it hears there to Copilot (source pins)", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toMatch(/if \(maySpeak\(\)\) voice\?\.speak\(words \?\? aloud\.say\);\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*voice\?\.answerWindow\(\);/);
+    expect(main).toMatch(/if \(maySpeak\(\)\) voice\?\.speak\(voiceAnswerSaid\(note, heldKeys\(\)\.map\(k => k\.say\)\)\);\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*voice\?\.answerWindow\(\);/);
+    expect(main).toMatch(/if \(spokenReply\.kind === "none" && e\.window === "answer"\) break;/);
+  });
+
+  it("stops Ember and says once a question that it was still speaking, for any answer said over its voice, and listens for it again (owner's report of 2026-11-12)", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    // One place decides it, for every way such an answer arrives: an utterance said over Ember (own-voice), the engine's
+    // answer-over (said in Ember's own words), and a wake Ember turned away as its own (heard-over).
+    expect(main).toMatch(/const answerOverEmber = \(why: "own-voice" \| "heard-over", answer: "allow" \| "deny"\) => \{\s*if \(!confirmer\?\.waiting\) return;\s*log\.info\("voice\.answer_heard_over", \{ why, answer \}\);\s*voice\?\.hush\(\);\s*if \(heardOverFor !== confirmer\.currentNumber\) \{ heardOverFor = confirmer\.currentNumber; refuseVoiceAnswer\(why, answer\); \} else voice\?\.answerWindow\(\);\s*\};/);
+    expect(main).toMatch(/if \(o\.kind === "refused" && o\.why === "own-voice"\) \{ answerOverEmber\("own-voice", o\.answer\); return; \}/);
+    expect(main).toMatch(/case "answer-over":\s*answerOverEmber\("own-voice", e\.answer\);/);
+    expect(main).toMatch(/if \(over\) answerOverEmber\("heard-over", over\);/);
+    expect(VOICE_ANSWER_REFUSED["own-voice"]).toBe("I was still speaking, so I didn't take that as an answer. Say it again now.");
+  });
+
+  it("says once a question when an answer said over other sound wasn't taken, and how to be heard, rather than nothing (owner's report of 2026-11-12)", () => {
+    expect(VOICE_ANSWER_REFUSED["over-sound"]).toBe("Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.");
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    // Whichever window it was said in: a conversation over a playing video (the default) or a follow-up too.
+    expect(main).toMatch(/if \(e\.answer && confirmer\?\.waiting && overSoundFor !== confirmer\.currentNumber\) \{ overSoundFor = confirmer\.currentNumber; refuseVoiceAnswer\(e\.reason, e\.answer\); \}/);
+  });
+
+  it("says why a yes without the name wasn't taken where nothing can tell whether other sound plays, and how to be heard (owner's report of 2026-11-12)", () => {
+    expect(VOICE_ANSWER_REFUSED["sound-unknown"]).toBe("I can't tell here whether something else is playing, so I didn't take that as a yes: say my name first, then your answer.");
+    expect(voiceAnswerSaid("sound-unknown", ["Control Alt Y to allow"])).toBe("I can't tell here whether something else is playing, so I didn't take that as a yes: say my name first, then your answer.");
+  });
+
+  it("watches whether other sound plays (Windows) while a conversation is open, a question is up or a task is at work, not only in a conversation (owner's report of 2026-11-12)", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toMatch(/const syncOutputWatch = \(\) => \{\s*const on = conversing \|\| questionIsUp \|\| !\(agent\?\.idle \?\? true\);\s*if \(on === outputWatched\) return;\s*outputWatched = on;\s*voice\?\.watchOutput\(on\);\s*\};\s*setInterval\(syncOutputWatch, 1000\)\.unref\?\.\(\);/);
+    expect(main).toMatch(/voice\?\.questionUp\(q !== null\);\s*questionIsUp = q !== null;\s*syncOutputWatch\(\);/);
+    expect(main).toMatch(/conversing = on;\s*syncOutputWatch\(\);/);
+    expect(main).not.toContain("voice?.watchOutput(on);\n    if (on !== conversing)");
+  });
+
+  it("is wired in main from Voice Match's switch, not from whether it is ready, and every refusal goes through refusalNote (source pins)", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toMatch(/const matchOff = !settings\.get\(\)\.voice\.match;/);
+    expect(main).toMatch(/confirmer\.answerVoice\(o\.answer, \{ verified: o\.verified, \.\.\.\(o\.kind === "answer" && o\.anyone \? \{ anyone: true \} : \{\}\),/);
+    expect(main).toMatch(/const note = refusalNote\(why, \{ answer, locked: confirmer\.voiceLocked, unready: settings\.get\(\)\.voice\.match && !matchNow\(\) \}\);/);
+  });
+});
+
 describe("“Work without asking” by voice (autonomy-intent.ts)", () => {
   it("hears turning it on and off, whole requests only", () => {
     for (const on of ["Ember, work without asking", "Hey Ember, stop asking for permission", "Work without asking from now on.", "You don't need to ask me first", "Can you work without asking?"]) expect(autonomyIntent(on), on).toBe("on");
@@ -292,6 +468,17 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
     ]) expect(spokenAnswer(yes), yes).toBe("allow");
   });
 
+  it("hears “okay, go with it”, “I accept”, “continue” and the other ways people say yes or no (owner's report of 2026-11-12)", () => {
+    for (const yes of [
+      "Allow.", "Yes.", "Yes please.", "Yeah.", "Yep.", "Sure.", "Okay.", "OK.", "Okay, go with it.", "Go with it.", "Go ahead.", "Go on.",
+      "Accept.", "I accept.", "Continue.", "Confirm.", "Do it.", "Sounds good.", "That's fine.", "Fine.", "Alright.",
+      "Hey Ember, I accept.", "Yes, continue.", "Okay, sounds good.", "Yes, go with it.",
+    ]) expect(spokenAnswer(yes), yes).toBe("allow");
+    for (const no of ["No.", "Deny.", "Don't.", "No thanks.", "Not now."]) expect(spokenAnswer(no), no).toBe("deny");
+    // Still not answers: requests of their own (review of #127), or more than an answer.
+    for (const other of ["Cancel.", "Never mind.", "Continue with the next file.", "I accept the terms and delete the rest.", "Confirm my order and pay."]) expect(spokenAnswer(other), other).toBeNull();
+  });
+
   it("hears the noes people naturally say", () => {
     for (const no of ["Nah.", "No, not yet.", "Not right now.", "Don't allow it.", "No, no.", "Deny it.", "Ember, not now, thanks.", "Okay, no."]) expect(spokenAnswer(no), no).toBe("deny");
   });
@@ -305,20 +492,20 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
 });
 
 describe("refusals of a spoken yes say exactly what to do, and are said aloud too", () => {
-  const base: VoiceAnswerInput = { text: "Ember, allow", questionUp: true, matchOn: false, verified: false, selfSpoke: false };
+  const base: VoiceAnswerInput = { text: "Ember, allow", questionUp: true, matchOn: false, matchOff: false, verified: false, selfSpoke: false };
 
-  it("tells Voice Match off from Voice Match turned on but not ready (never taught, or its model not in)", () => {
-    expect(voiceAnswer(base)).toEqual({ kind: "refused", answer: "allow", why: "voice-match-off" });
-    expect(voiceAnswer({ ...base, matchUnready: true })).toEqual({ kind: "refused", answer: "allow", why: "voice-match-unready" });
-    expect(VOICE_ANSWER_REFUSED["voice-match-off"]).toBe("To answer yes by voice, set up Voice Match in Settings › Voice, so I know it's you. For now, click Allow.");
-    expect(VOICE_ANSWER_REFUSED["voice-match-unready"]).toBe("Voice Match isn't ready yet: finish setting it up in Settings › Voice, to answer yes by voice. For now, click Allow.");
+  it("tells Voice Match turned on but not ready (never taught, or its model not in) how to finish it or turn it off", () => {
+    expect(voiceAnswer(base)).toEqual({ kind: "refused", answer: "allow", why: "voice-match-unready" });
+    expect(VOICE_ANSWER_REFUSED["voice-match-unready"]).toBe("Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow or use the keys.");
     // "Not now" is still taken from anyone.
-    expect(voiceAnswer({ ...base, text: "Not now", matchUnready: true })).toEqual({ kind: "answer", answer: "deny", verified: false });
+    expect(voiceAnswer({ ...base, text: "Not now" })).toEqual({ kind: "answer", answer: "deny", verified: false });
   });
 
   it("says them in words fit for speech: the menu path as words, no quote marks", () => {
-    expect(voiceAnswerSaid("voice-match-off")).toBe("To answer yes by voice, set up Voice Match in Settings, then Voice, so I know it's you. For now, click Allow.");
-    expect(voiceAnswerSaid("too-short")).toBe("I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like Yes, please go ahead.");
+    expect(voiceAnswerSaid("voice-match-unready", ["Control Alt Y to allow"])).toBe("Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings, then Voice, or turn it off. Until then, click Allow or use the keys. Or, to allow, press Control Alt Y.");
+    // With no key held (another app took them), no key is pointed to (owner's report of 2026-11-12).
+    expect(voiceAnswerSaid("voice-match-unready")).toBe("Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings, then Voice, or turn it off. Until then, click Allow on the question.");
+    expect(voiceAnswerSaid("too-short")).toBe("I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like Yes, please go ahead, so I can tell.");
     for (const why of Object.keys(VOICE_ANSWER_REFUSED) as (keyof typeof VOICE_ANSWER_REFUSED)[]) expect(voiceAnswerSaid(why), why).not.toMatch(/[›“”"]/);
   });
 
@@ -345,13 +532,18 @@ describe("spoken answers can't be padded or asked (review of #143)", () => {
     for (const yes of ["Hey Ember, allowed.", "Ember, yes, you can go ahead.", "Proceed."]) expect(spokenAnswer(yes), yes).toBe("allow");
   });
 
-  it("takes one filler word before an answer, never a run of them, and no bare acknowledgement", () => {
-    for (const padded of ["Oh, okay. Well, alright.", "Okay, okay, okay, okay, okay.", "Um, um, um, yes.", "So okay.", "Um okay.", "Okay.", "OK.", "Alright.", "Go on.", "You can.", "Hey hey Ember, allow.", "Allow, please, please, please."]) {
+  it("takes one filler word before an answer, never a run of them", () => {
+    for (const padded of ["Oh, okay. Well, alright.", "Okay, okay, okay, okay, okay.", "Um, um, um, yes.", "So, um, okay.", "You can.", "Hey hey Ember, allow.", "Allow, please, please, please."]) {
       expect(spokenAnswer(padded), padded).toBeNull();
     }
     for (const yes of ["Okay, go ahead.", "Yes, you can.", "Um, yes.", "Okay, Ember, allow.", "Hey Ember, um, go ahead.", "Please do.", "Allow it, please, Ember.", "Yes, thank you."]) {
       expect(spokenAnswer(yes), yes).toBe("allow");
     }
+  });
+
+  it("takes a bare “okay” or “go on” as a yes, with one filler at most (owner's report of 2026-11-12)", () => {
+    // Settled point (9) of 2026-11-12: these were bare acknowledgements (review of #143), and are yeses now.
+    for (const yes of ["Okay.", "OK.", "Alright.", "All right.", "Go on.", "So okay.", "Um okay.", "Ember, okay."]) expect(spokenAnswer(yes), yes).toBe("allow");
   });
 
   it("counts “please” once in all, wherever it stands (review of #143)", () => {
@@ -373,7 +565,7 @@ describe("spoken answers can't be padded or asked (review of #143)", () => {
 });
 
 describe("a short yes on the task's voice trust (owner decision of 2026-11-03, “also trust the task's voice”)", () => {
-  const short: VoiceAnswerInput = { text: "Ember, allow", questionUp: true, matchOn: true, verified: false, short: true, restScore: 0.62, taskTrust: true, selfSpoke: false };
+  const short: VoiceAnswerInput = { text: "Ember, allow", questionUp: true, matchOn: true, matchOff: false, verified: false, short: true, restScore: 0.62, taskTrust: true, selfSpoke: false };
 
   it("takes the owner's short yes for a trusted task's question, unverified and marked as task-voice", () => {
     expect(voiceAnswer(short)).toEqual({ kind: "answer", answer: "allow", verified: false, trust: "task-voice" });
@@ -401,8 +593,9 @@ describe("a short yes on the task's voice trust (owner decision of 2026-11-03, �
     expect(voiceAnswer({ ...short, short: false })).toEqual({ kind: "refused", answer: "allow", why: "unverified" });
     // The echo guard, Voice Match off or unready: as ever.
     expect(voiceAnswer({ ...short, selfSpoke: true })).toEqual({ kind: "refused", answer: "allow", why: "own-voice" });
-    expect(voiceAnswer({ ...short, matchOn: false })).toEqual({ kind: "refused", answer: "allow", why: "voice-match-off" });
-    expect(voiceAnswer({ ...short, matchOn: false, matchUnready: true })).toEqual({ kind: "refused", answer: "allow", why: "voice-match-unready" });
+    expect(voiceAnswer({ ...short, matchOn: false })).toEqual({ kind: "refused", answer: "allow", why: "voice-match-unready" });
+    // Voice Match switched off: a yes from anyone, never on the task's trust (it has no part in it then).
+    expect(voiceAnswer({ ...short, matchOn: false, matchOff: true })).toEqual({ kind: "answer", answer: "allow", verified: false, anyone: true });
     // Never "Always", never a yes asked, never outside a question.
     expect(voiceAnswer({ ...short, text: "Always" })).toEqual({ kind: "none" });
     expect(voiceAnswer({ ...short, text: "Allow?" })).toEqual({ kind: "none" });
@@ -418,11 +611,11 @@ describe("a short yes on the task's voice trust (owner decision of 2026-11-03, �
     it("ends when a yes is turned away as not the owner's voice, and not for a no or a yes that was only too short, another task's or locked", () => {
       expect(refusalEndsTrust("unverified", "allow")).toBe(true);
       expect(refusalEndsTrust("unverified", "deny")).toBe(false);
-      for (const result of ["too-short", "untrusted", "locked", "stale", "not-yet", "click-only", "own-voice", "voice-match-off", "answered", "no-question"]) {
+      for (const result of ["too-short", "untrusted", "locked", "stale", "not-yet", "click-only", "own-voice", "voice-match-unready", "answered", "no-question"]) {
         expect(refusalEndsTrust(result, "allow"), result).toBe(false);
       }
       // And a stranger's clear mismatch is exactly what voiceAnswer calls "unverified".
-      const stranger = voiceAnswer({ text: "Ember, allow", questionUp: true, matchOn: true, verified: false, short: true, restScore: 0.2, taskTrust: true, selfSpoke: false });
+      const stranger = voiceAnswer({ text: "Ember, allow", questionUp: true, matchOn: true, matchOff: false, verified: false, short: true, restScore: 0.2, taskTrust: true, selfSpoke: false });
       expect(stranger).toEqual({ kind: "refused", answer: "allow", why: "unverified" });
       expect(refusalEndsTrust(stranger.kind === "refused" ? stranger.why : "", "allow")).toBe(true);
     });
@@ -558,9 +751,9 @@ describe("a refused spoken yes keeps the keys that answer the question (tasks-ap
     const c = new Confirmer(p => shown.push(p as never), { armMs: 0, gapMs: 0, keyHint: () => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" });
     const answer = c.ask({ title: "May I?", prompt: "Click “Send”?", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: "t1" });
     expect(shown.at(-1)?.bubble?.step).toBe("Ctrl+Alt+Y allow · Ctrl+Alt+N not now");
-    c.note(VOICE_ANSWER_REFUSED["voice-match-off"]);
+    c.note(VOICE_ANSWER_REFUSED["voice-match-unready"]);
     // On a line of their own under it: the bubble sets them as keycaps there (packages/bubble stepParts).
-    expect(shown.at(-1)?.bubble?.step).toBe(`${VOICE_ANSWER_REFUSED["voice-match-off"]}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now`);
+    expect(shown.at(-1)?.bubble?.step).toBe(`${VOICE_ANSWER_REFUSED["voice-match-unready"]}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now`);
     c.note(VOICE_ANSWER_REFUSED.locked);
     expect(shown.at(-1)?.bubble?.step).toBe(`${VOICE_ANSWER_REFUSED.locked}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now`);
     c.answerKey("deny");
@@ -569,11 +762,11 @@ describe("a refused spoken yes keeps the keys that answer the question (tasks-ap
 
   it("says the keys Ember holds aloud where the line points to a click or the keys, and none it doesn't hold", () => {
     const keys = ["Control Alt Y to allow", "Control Alt N for not now"];
-    expect(voiceAnswerSaid("voice-match-off", keys)).toBe("To answer yes by voice, set up Voice Match in Settings, then Voice, so I know it's you. For now, click Allow. Or press Control Alt Y to allow, or Control Alt N for not now.");
-    expect(voiceAnswerSaid("locked", keys)).toBe("I heard a voice that isn't yours, so for this question I'll take a click or the keys only. Press Control Alt Y to allow, or Control Alt N for not now.");
+    expect(voiceAnswerSaid("voice-match-unready", keys)).toBe("Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings, then Voice, or turn it off. Until then, click Allow or use the keys. Or, to allow, press Control Alt Y; for not now, press Control Alt N.");
+    expect(voiceAnswerSaid("locked", keys)).toBe("I heard a voice that isn't yours, so for this question I'll take a click or the keys only. To allow, press Control Alt Y; for not now, press Control Alt N.");
     // The keys can't allow a click-only card, and other lines say what to say instead.
     expect(voiceAnswerSaid("click-only", keys)).toBe(voiceAnswerSaid("click-only"));
     expect(voiceAnswerSaid("too-short", keys)).toBe(voiceAnswerSaid("too-short"));
-    expect(voiceAnswerSaid("voice-match-off", [])).toBe(voiceAnswerSaid("voice-match-off"));
+    expect(voiceAnswerSaid("voice-match-unready", [])).toBe(voiceAnswerSaid("voice-match-unready"));
   });
 });
