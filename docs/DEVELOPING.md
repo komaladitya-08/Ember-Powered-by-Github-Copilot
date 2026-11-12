@@ -491,8 +491,14 @@ Ember opens the switch or its card here) or “Ember, ask me first again” (any
 “okay, go with it”, “go ahead”, “go on”, “accept”, “I accept”, “continue”, “confirm”, “do it”, “sounds good”, “that's
 fine”, “fine”, “alright”) answers it, and “Ember, not now” (or “no”, “no thanks”, “deny”, “don't”) declines it: the one
 list in `app/shared/spoken-answer.ts`, which the voice process also reads, so that in a follow-up window or a
-conversation such an answer reaches the question and isn't taken for “that's all” or for a “yeah” said over Ember. A yes counts only when **Answer questions with my voice (Voice Match)** is on and recognises you
-in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is enough). A shorter
+conversation such an answer reaches the question and isn't taken for “that's all” or for a “yeah” said over Ember.
+With **Only my voice can say yes (Voice Match)** off, its default, a yes or a no from anyone heard answers it (owner
+decision of 2026-11-12: “it doesn't really need my voice to be matched for it”), and “Before Ember starts” and the
+“Hey Ember” card say so: anyone near the computer can answer Ember by voice. The audit records `via: "voice"`,
+`verified: false`, and the log's `voice.answer` line `anyone: true`. With it on, a yes counts only when Voice Match
+recognises you in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is
+enough); switched on but not ready (never taught, or its model not in), no spoken yes is taken, and the bubble says to
+finish setting it up in Settings › Voice or turn it off. A shorter
 yes (“Ember, allow”) counts too for a question asked by a task you asked for in a voice Voice Match recognised, within
 10 minutes of asking, unless that short yes is too quiet or clipped to tell (it is then too short, never trusted) or sounds clearly unlike
 you, Voice Match has turned another voice away since, you forgot or taught your voice again,
@@ -503,7 +509,8 @@ LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 %
 someone else saying “Hey Ember, allow” is taken about 2.5 % of the time, and someone who plays your recorded “Hey
 Ember” then says “allow” 35–40 %, once: any voice turned away ends the trust; a yes too
 quiet or clipped to score is refused (PLAN.md §2 “Approvals”). It counts only for the question that was up, and armed, when you started speaking, and
-once Voice Match turned another voice away during a question, that question takes a click or the keys only. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
+once Voice Match turned another voice away during a question, that question takes a click or the keys only, and every
+later spoken yes to it is told so, never to say it again. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
 own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts), never says
 “Always” by voice, and never takes a spoken yes for a consent card. A command card or a long typed text is allowed by
 voice only as the approve key would: once all of it has been shown. The audit records `via: "voice"` and whether Voice
@@ -639,8 +646,8 @@ to 1.4) sets how fast it speaks, in its own voice and the system's, and **Hear E
 replies are said and, once it is heard, which voice said it ("Getting Ember's voice ready…" until then, and "Ember
 couldn't speak just now" when no voice spoke it within 12 s, or as soon as the speech page says it found no voice,
 on every press; not with **Never**, while the screen is locked or when the
-organisation has turned speaking off). To answer Ember's questions out loud, turn on **Answer questions with my voice (Voice Match)** under it and say
-the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
+organisation has turned speaking off). Anyone near the computer can answer Ember's questions out loud; to let only your voice say yes, turn on **Only my
+voice can say yes (Voice Match)** under it and say the four phrases it shows. While it learns, Ember takes no requests (the phrases would be ones: the handle says
 “Learning your voice”) and hears only “Ember, stop” (or “Hey Ember, stop”), which stops the teaching with everything else. Teaching also
 stops on Stop everything, when settings closes or is minimised, when Ember stops listening (muted, locked, restarted,
 or the microphone goes or sends only silence), after 45 s with no phrase heard or 3 minutes in all, and after 12 phrases

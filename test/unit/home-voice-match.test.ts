@@ -25,7 +25,7 @@ describe("Voice Match's states", () => {
   it("not taught: the switch is off, Teach is offered, Forget and Cancel are not", () => {
     const v = matchView(none, shown);
     expect(v).toMatchObject({ hidden: false, busy: false, checked: false, disabled: false, text: MATCH_TEXT.none, prompt: "", progress: null, cancelHidden: true, forgetHidden: true });
-    expect(v.teach).toEqual({ hidden: false, label: "Teach my voice", said: "Requests from any voice are heard. Teach your voice, and you can answer questions out loud; other voices can't." });
+    expect(v.teach).toEqual({ hidden: false, label: "Teach my voice", said: "Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice, and only yours can agree to them." });
   });
 
   it("while learning: the switch shows on but can't be changed, the phrase and the count show, Cancel replaces Teach", () => {
@@ -121,11 +121,11 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
   });
 
   it("says how learning ended, and a forgotten voice, without Ember's name or a phrase it answers (voice-listening-r5-1)", () => {
-    expect(matchAnnouncement(enrolling(3), onNow)).toBe("Your voice is learnt. On: your voice can answer questions out loud, and other voices can't. Everyone is still heard. Your voiceprint stays on this computer.");
-    expect(matchAnnouncement(enrolling(1), none, true)).toBe("Stopped teaching your voice. Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.");
+    expect(matchAnnouncement(enrolling(3), onNow)).toBe("Your voice is learnt. On: only your voice can agree to questions out loud. Everyone is still heard. Your voiceprint stays on this computer.");
+    expect(matchAnnouncement(enrolling(1), none, true)).toBe("Stopped teaching your voice. Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice again, and only yours can agree to them.");
     expect(matchAnnouncement(enrolling(1), none)).toBe(MATCH_SAID.none);
     expect(matchAnnouncement(onNow, none)).toBe(`Your voiceprint and the words learnt from what you said are forgotten. ${MATCH_SAID.none}`);
-    expect(matchAnnouncement(enrolling(2), offNow)).toBe(`${MATCH_SAID.learnt} Off: answer questions by clicking. Your voiceprint is kept until you forget it.`);
+    expect(matchAnnouncement(enrolling(2), offNow)).toBe(`${MATCH_SAID.learnt} Off: any voice can answer questions out loud. Your voiceprint is kept until you forget it.`);
     // The line shown says the same with the name, and quotes “Ember, stop”, which said into the microphone stops Ember.
     expect(MATCH_TEXT.none).toContain("“Ember, stop”");
     expect(matchAnnouncement(onNow, offNow)).toBeNull();
@@ -135,7 +135,7 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
   it("says who is heard, and what is forgotten, without an “it” that could mean the person's own voice (voice-listening-x6-4)", () => {
     // Heard alone from a live region, "Your voice and the words learnt from it are forgotten. Anyone who talks to it is
     // heard. Teach it your voice…" read as talking to, and teaching, the person's own voice.
-    expect(matchAnnouncement(onNow, none)).toBe("Your voiceprint and the words learnt from what you said are forgotten. Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.");
+    expect(matchAnnouncement(onNow, none)).toBe("Your voiceprint and the words learnt from what you said are forgotten. Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice again, and only yours can agree to them.");
     for (const line of [MATCH_SAID.none, MATCH_SAID.forgot, MATCH_SAID.stopped, MATCH_SAID.learnt, ...Object.values(MATCH_SAID.ended)]) expect(line, line).not.toMatch(/\bit(?:s|['’]s)?\b/i);
     // "Off: … until you forget it.": the voiceprint, just named.
     expect(MATCH_SAID.off).toMatch(/Your voiceprint is kept until you forget it\.$/);
@@ -145,9 +145,18 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
     // Heard alone, right after Forget my voice, "Everyone who talks is heard." said whatever anyone says near the
     // computer is heard, where the line shown says Ember hears anyone who talks to it; and "Once your voice is taught"
     // lost the shown line's pointer to Teach.
-    expect(matchAnnouncement(onNow, none)).toBe("Your voiceprint and the words learnt from what you said are forgotten. Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.");
+    expect(matchAnnouncement(onNow, none)).toBe("Your voiceprint and the words learnt from what you said are forgotten. Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice again, and only yours can agree to them.");
     expect(MATCH_SAID.none).not.toMatch(/\b(?:every|any)(?:one|body) who talks\b/i);
-    expect(MATCH_TEXT.none).toMatch(/^Ember hears anyone who talks to it\. Teach it your voice, and /);
+    expect(MATCH_TEXT.none).toMatch(/^Ember hears anyone who talks to it, and anyone near the computer can answer its questions out loud\. Teach it your voice, and /);
+  });
+
+  it("says that with Voice Match off anyone near the computer can answer by voice, and with it on only the owner can say yes (owner's report of 2026-11-12)", () => {
+    expect(MATCH_TEXT.label).toBe("Only my voice can say yes (Voice Match)");
+    expect(MATCH_TEXT.none).toBe("Ember hears anyone who talks to it, and anyone near the computer can answer its questions out loud. Teach it your voice, and only yours can agree to them. “Ember, stop” works for anyone.");
+    expect(MATCH_TEXT.on).toBe("On: only your voice can agree to Ember's questions out loud; anyone can still say “not now”. Ember still hears everyone. Your voiceprint stays on this computer.");
+    expect(MATCH_TEXT.off).toBe("Off: anyone near the computer can answer Ember's questions out loud. Ember keeps your voiceprint until you forget it.");
+    // Nothing said to a screen reader here reads as an answer, or as a word of one, should Ember be listening for one.
+    for (const line of [MATCH_SAID.none, MATCH_SAID.teach, MATCH_SAID.on, MATCH_SAID.off]) expect(line, line).not.toMatch(/\b(?:yes|allow|okay|fine|approve|accept|go ahead|not now|no)\b/i);
   });
 
   it("says why teaching stopped when it gave up, timed out or Ember stopped listening, never that it knows the voice (voice-listening-2, voice-listening-5, voice-listening-v1)", () => {

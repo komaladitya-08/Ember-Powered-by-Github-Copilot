@@ -6,10 +6,12 @@ import type { VoiceMatchStatus } from "../../shared/ipc";
 
 /** Voice Match's words. */
 export const MATCH_TEXT = {
-  label: "Answer questions with my voice (Voice Match)",
-  none: "Ember hears anyone who talks to it. Teach it your voice, and you can answer its questions out loud (“Ember, allow”); other voices can't. “Ember, stop” works for anyone.",
-  on: "On: your voice can answer Ember's questions out loud, and other voices can't. Ember still hears everyone. Your voiceprint stays on this computer.",
-  off: "Off: answer Ember's questions by clicking. It keeps your voiceprint until you forget it.",
+  label: "Only my voice can say yes (Voice Match)",
+  // Off, its default, anyone heard can answer a question by voice; on, only the owner's voice can say yes, and anyone
+  // can still say no (owner decision of 2026-11-12, PLAN.md §2 "Approvals").
+  none: "Ember hears anyone who talks to it, and anyone near the computer can answer its questions out loud. Teach it your voice, and only yours can agree to them. “Ember, stop” works for anyone.",
+  on: "On: only your voice can agree to Ember's questions out loud; anyone can still say “not now”. Ember still hears everyone. Your voiceprint stays on this computer.",
+  off: "Off: anyone near the computer can answer Ember's questions out loud. Ember keeps your voiceprint until you forget it.",
   /**
    * enrolVoice() said no: Ember isn't listening just now (muted, starting, or the microphone not working, which the voice
    * line above says: voice-listening-r7-1), so it can't hear the phrases. Shown, and said as Teach is pressed, also while
@@ -56,10 +58,10 @@ export const MATCH_TEXT = {
  * 20 real-model placements, and the name alone in 14 (voice-listening-r6-2, voice-listening-q6-1); these in 0 of 20.
  */
 export const MATCH_SAID = {
-  none: "Requests from any voice are heard. Teach your voice again, and you can answer questions out loud; other voices can't.",
-  teach: "Requests from any voice are heard. Teach your voice, and you can answer questions out loud; other voices can't.",
-  on: "On: your voice can answer questions out loud, and other voices can't. Everyone is still heard. Your voiceprint stays on this computer.",
-  off: "Off: answer questions by clicking. Your voiceprint is kept until you forget it.",
+  none: "Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice again, and only yours can agree to them.",
+  teach: "Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice, and only yours can agree to them.",
+  on: "On: only your voice can agree to questions out loud. Everyone is still heard. Your voiceprint stays on this computer.",
+  off: "Off: any voice can answer questions out loud. Your voiceprint is kept until you forget it.",
   noModel: "Voice Match's model is missing or was damaged. Download it above to put that right.",
   learnt: "Your voice is learnt.",
   stopped: "Stopped teaching your voice.",

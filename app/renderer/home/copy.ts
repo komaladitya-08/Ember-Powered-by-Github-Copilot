@@ -918,14 +918,15 @@ export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you
 export const AUTONOMY_CONSENT_TEXT = "Ember will use your apps, borrow your mouse and keyboard, run ordinary commands, move text between apps and press OK on a simple message box (one whose only button is OK, with nothing to choose or tick) for what you ask, without asking you first each time. It says what it is doing as it goes, in its bubble and on the task's card, and keeps a record under What Ember did. It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question. It never types passwords and never acts in sign-in prompts, and if a page or file tries to give it instructions, that task goes back to asking. Saying “Ember, stop”, or Ember's stop shortcut, stops everything at once, and moving your mouse takes it back.";
 
 /**
- * Under the "Work without asking" switch: what changes, and that questions can be answered by voice (Voice Match).
+ * Under the "Work without asking" switch: what changes, and that questions can be answered by voice (by anyone heard
+ * while Voice Match is off, its default; only the owner's voice can say yes while it is on: 2026-11-12).
  * `elevated`: Ember runs as an administrator or as root (elevationOf), so every command asks whatever the switch says
  * (commands/decide.ts): said, so the user can tell why.
  */
 export function autonomyHint(managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null): string {
   const base = managed
     ? "Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps."
-    : "Off, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps. On, it tells you what it's doing instead, and still asks before anything risky. You can answer a question by voice too: “Ember, allow” (with Voice Match on) or “Ember, not now”.";
+    : "Off, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps. On, it tells you what it's doing instead, and still asks before anything risky. You can answer a question by voice too: “Ember, allow” or “Ember, not now”.";
   if (elevated === "administrator") return `${base} Ember is running as an administrator, so it asks before every command. Start it normally to change that.`;
   if (elevated === "maybe-administrator") return `${base} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
   if (elevated === "root") return `${base} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;

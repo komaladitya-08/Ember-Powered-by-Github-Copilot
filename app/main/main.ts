@@ -22,7 +22,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyHeld, autonomyInForce, holdAutonomyOff, releaseAutonomyHold, ALL_SCOPES } from "./policy/autonomy";
-import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, heardUnchecked, refusalEndsTrust, refusalNote, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -1852,25 +1852,31 @@ function start(): void {
   const answerByVoice = (o: Exclude<VoiceAnswerOutcome, { kind: "none" }>) => {
     if (!confirmer) return;
     const trustTask = o.kind === "answer" && o.trust === "task-voice" ? confirmer.currentTask : undefined;
+    // `anyone`: Voice Match is off, so the yes of whoever was heard is taken as the approve key would be (2026-11-12).
     const result = o.kind === "answer"
-      ? confirmer.answerVoice(o.answer, { verified: o.verified, question: questionWhenSaid, startedAt: saidFrom, ...(trustTask ? { trust: { task: trustTask } } : {}) })
+      ? confirmer.answerVoice(o.answer, { verified: o.verified, ...(o.kind === "answer" && o.anyone ? { anyone: true } : {}), question: questionWhenSaid, startedAt: saidFrom, ...(trustTask ? { trust: { task: trustTask } } : {}) })
       : o.why;
-    log.info("voice.answer", { answer: o.answer, result, verified: o.kind === "answer" && o.verified, ...(o.kind === "answer" && o.trust ? { trust: o.trust } : {}) });
+    log.info("voice.answer", { answer: o.answer, result, verified: o.kind === "answer" && o.verified, ...(o.kind === "answer" && o.trust ? { trust: o.trust } : {}), ...(o.kind === "answer" && o.anyone ? { anyone: true } : {}) });
     // A yes refused as another voice: no task's short yes is trusted from now on (Ember can't tell whose question it was after).
     if (refusalEndsTrust(result, o.answer)) voiceTrust.endAll("other-voice");
     if (result === "answered" || result === "no-question") return;
     // A short yes on a task's trust that couldn't be taken (another task's question, or a panel's): as one too short.
-    refuseVoiceAnswer(result === "untrusted" ? "too-short" : result);
+    refuseVoiceAnswer(result === "untrusted" ? "too-short" : result, o.answer);
   };
+  /** Voice Match is on, has the owner's voiceprint, and its model is in (what a spoken yes is checked against then). */
+  const matchNow = () => !!ownerPrint() && (voice?.matchReady ?? false);
   /**
-   * A spoken answer wasn't taken (`why`): the question stays up, its bubble says why and what to do instead, and so
-   * does Ember, aloud, where it speaks (a fixed sentence: never Ember's own voice taken as an answer after it, as the
-   * echo guard dates each request from its wake, and the voice process hears nothing while Ember speaks).
+   * A spoken answer (`answer`) wasn't taken (`why`): the question stays up, its bubble says why and what to do instead,
+   * and so does Ember, aloud, where it speaks (a fixed sentence: never Ember's own voice taken as an answer after it, as
+   * the echo guard dates each request from its wake, and the voice process hears nothing while Ember speaks). A yes to a
+   * question locked to clicks and keys is told so, never to say it again (refusalNote).
    */
-  const refuseVoiceAnswer = (why: VoiceAnswerNote) => {
-    if (!confirmer?.note(VOICE_ANSWER_REFUSED[why])) return;
+  const refuseVoiceAnswer = (why: VoiceAnswerNote, answer: "allow" | "deny") => {
+    if (!confirmer) return;
+    const note = refusalNote(why, { answer, locked: confirmer.voiceLocked, unready: settings.get().voice.match && !matchNow() });
+    if (!confirmer.note(VOICE_ANSWER_REFUSED[note])) return;
     // (The keys stay under the note in the bubble; said aloud, they are named after it: tasks-approvals-6.)
-    if (maySpeak()) voice?.speak(voiceAnswerSaid(why, heldKeys().map(k => k.say)));
+    if (maySpeak()) voice?.speak(voiceAnswerSaid(note, heldKeys().map(k => k.say)));
   };
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** How the last teaching ended (settings says so; forgotten when it closes or teaching starts again). */
@@ -2000,18 +2006,20 @@ function start(): void {
           setStatus("listen", note);
           setTimeout(() => { if (statusBy.listen === note) setStatus("listen", null); }, 10_000).unref?.();
         }
-        // While a question is up, "allow" or "not now" answers it (a yes only from the owner's verified voice, never from
-        // Ember's own; voice-answer.ts). Anything else is a request, as ever.
+        // While a question is up, "allow" or "not now" answers it (a yes from anyone heard while Voice Match is off, only
+        // from the owner's verified voice while it is on, never from Ember's own; voice-answer.ts). Anything else is a
+        // request, as ever.
         {
-          const matchOn = !!ownerPrint() && (voice?.matchReady ?? false);
-          // Turned on, but not in use: never taught, or its model isn't in (the refusal says to finish setting it up).
-          const matchUnready = settings.get().voice.match && !matchOn;
+          const matchOn = matchNow();
+          // Voice Match switched off, its default: anyone heard may say yes (owner decision of 2026-11-12). Read from the
+          // switch, so a Voice Match switched on but not in use (never taught, or its model not in) takes no yes at all.
+          const matchOff = !settings.get().voice.match;
           // A short yes may be taken on the asking task's trust: that task was asked for in the owner's verified voice,
           // within TASK_VOICE_MS, and no voice has been turned away since (owner decision of 2026-11-03).
           const taskTrust = voiceTrust.holds(confirmer?.currentTask);
           // (voiceAnswer reads the raw words, e.text, never personal.heard()'s corrected ones.)
           const spokenReply = voiceAnswer({
-            text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchUnready, verified: e.verified === true, short: e.short === true,
+            text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchOff, verified: e.verified === true, short: e.short === true,
             ...(e.restScore !== undefined ? { restScore: e.restScore } : {}), taskTrust, selfSpoke: e.overEmber === true || (voice?.selfSpokeSince(heardFrom) ?? true),
           });
           // A spoken answer to a question is never learnt from (Voice Match learns from requests only).
@@ -2059,10 +2067,13 @@ function start(): void {
         // macOS): the wake was turned away, silently until now. It is never taken (it may be Ember's own words): Ember
         // stops speaking, and the bubble and Ember say to say it again (owner report of 2026-11-03).
         // Said once a question: again for the same one, Ember only stops speaking (review of #143).
-        if (e.reason === "self" && confirmer?.waiting && e.heard && heardAnswer(e.heard)) {
-          log.info("voice.answer_heard_over");
-          voice?.hush();
-          if (heardOverFor !== confirmer.currentNumber) { heardOverFor = confirmer.currentNumber; refuseVoiceAnswer("heard-over"); }
+        {
+          const over = e.reason === "self" && confirmer?.waiting && e.heard ? heardAnswer(e.heard) : null;
+          if (over && confirmer) {
+            log.info("voice.answer_heard_over");
+            voice?.hush();
+            if (heardOverFor !== confirmer.currentNumber) { heardOverFor = confirmer.currentNumber; refuseVoiceAnswer("heard-over", over); }
+          }
         }
         break;
     }

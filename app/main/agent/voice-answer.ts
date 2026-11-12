@@ -1,16 +1,19 @@
 /**
- * Spoken answers to Ember's questions (owner decision of 2026-11-02, PLAN.md §2 "Approvals"): while a question is up,
- * "Hey Ember, allow" (or "yes", "go ahead") answers it as Allow, and "not now" (or "no", "don't") as Not now.
+ * Spoken answers to Ember's questions (owner decisions of 2026-11-02 and 2026-11-12, PLAN.md §2 "Approvals"): while a
+ * question is up, "allow" (or "yes", "okay, go with it", "go ahead"…) answers it as Allow, and "not now" (or "no",
+ * "don't") as Not now.
  *
  * The rules, judged here from what main knows of the utterance, so they are unit-tested without Electron:
  * - only while a question is up (anything else is an ordinary request for the conversation);
  * - only the whole utterance, and only these short phrases: never "Always", never words inside a longer request;
  * - never Ember's own voice: nothing heard while Ember spoke, or just after, counts (the echo guard, review #112);
- * - a yes only from the owner's voice: Voice Match on, enrolled, and this utterance verified as theirs (match.ts);
- *   otherwise the bubble says how to set Voice Match up and the question stays;
- * - or, a yes too short for Voice Match to vouch for, to a question of a task the owner asked for in a verified voice
- *   (owner decision of 2026-11-03, "also trust the task's voice": TaskVoiceTrust below), unless its own score says it
- *   is clearly another voice (SHORT_YES_FLOOR);
+ * - a yes from anyone heard while Voice Match is switched off, its default (owner decision of 2026-11-12: "it doesn't
+ *   really need my voice to be matched for it"), the Confirmer then holding it to what the approve key may do;
+ * - while Voice Match is switched on, a yes only from the owner's voice: enrolled, and this utterance verified as
+ *   theirs (match.ts); switched on but not ready, no yes at all, and the bubble says how to finish it or turn it off;
+ * - or, with Voice Match on, a yes too short for it to vouch for, to a question of a task the owner asked for in a
+ *   verified voice (owner decision of 2026-11-03, "also trust the task's voice": TaskVoiceTrust below), unless its own
+ *   score says it is clearly another voice (SHORT_YES_FLOOR);
  * - "Not now" from anyone (it is the safer way, as anyone may stop Ember).
  * Typed text and the model never come here: main calls it only from the voice process's utterances.
  */
@@ -129,13 +132,16 @@ export interface VoiceAnswerInput {
   text: string;
   /** A question is up now (Confirmer.waiting). */
   questionUp: boolean;
-  /** Voice Match is on and has the owner's voiceprint (settings.voice.match and voiceprint.json). */
+  /** Voice Match is on and has the owner's voiceprint (settings.voice.match and voiceprint.json), and its model is in. */
   matchOn: boolean;
   /**
-   * Voice Match is turned on, but isn't in use yet: no voiceprint kept (teaching it was never finished), or its model
-   * isn't in (downloading, or damaged). A yes is refused with words saying so, not "turn it on".
+   * Voice Match is switched off (settings.voice.match false, its default): a yes is taken from anyone heard (owner
+   * decision of 2026-11-12). False while it is switched on, in use or not: then only the owner's verified voice (or a
+   * short yes on its task's trust) can say yes, and while it isn't in use yet (never taught, or its model isn't in) no
+   * spoken yes at all, with words saying so. Read from the switch itself, never from whether it is ready, so a Voice
+   * Match that can't run never lets anyone in (fail closed).
    */
-  matchUnready?: boolean;
+  matchOff: boolean;
   /** The voice process verified this utterance as the owner's (VoiceEvent utterance `verified`). */
   verified: boolean;
   /** It matched the owner's voice but was too short to vouch for (VoiceEvent utterance `short`). */
@@ -149,13 +155,17 @@ export interface VoiceAnswerInput {
 }
 
 /** Why a spoken answer wasn't taken. */
-export type VoiceAnswerRefusal = "voice-match-off" | "voice-match-unready" | "unverified" | "own-voice" | "too-short";
+export type VoiceAnswerRefusal = "voice-match-unready" | "unverified" | "own-voice" | "too-short";
 
 export type VoiceAnswerOutcome =
   /** Not an answer: an ordinary request (no question up, or other words). */
   | { kind: "none" }
-  /** `trust`: a short yes taken on its task's voice trust (verified false), for the Confirmer to check and the audit to say. */
-  | { kind: "answer"; answer: "allow" | "deny"; verified: boolean; trust?: "task-voice" }
+  /**
+   * `trust`: a short yes taken on its task's voice trust (verified false), for the Confirmer to check and the audit to
+   * say. `anyone`: a yes from whoever was heard, Voice Match being off (verified false), which the Confirmer takes only
+   * when main passes it on.
+   */
+  | { kind: "answer"; answer: "allow" | "deny"; verified: boolean; trust?: "task-voice"; anyone?: true }
   | { kind: "refused"; answer: "allow" | "deny"; why: VoiceAnswerRefusal };
 
 /** Is this utterance an answer to the question up, and may it be taken? */
@@ -163,11 +173,16 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
   if (!i.questionUp) return { kind: "none" };
   const answer = spokenAnswer(i.text);
   if (!answer) return { kind: "none" };
+  // Voice Match switched on but not in use: no yes can be taken, so the refusal never asks for it again (cause 5 of the
+  // owner's report of 2026-11-12: "I was still speaking… Say it again" came first, and saying it again could only fail).
+  const anyone = i.matchOff && !i.matchOn;
+  if (answer === "allow" && !anyone && !i.matchOn) return { kind: "refused", answer, why: "voice-match-unready" };
   // Ember's own voice from the speakers (it reads the question out, keys and all) is never an answer, either way.
   if (i.selfSpoke) return { kind: "refused", answer, why: "own-voice" };
   const verified = i.matchOn && i.verified;
   if (answer === "deny") return { kind: "answer", answer, verified };
-  if (!i.matchOn) return { kind: "refused", answer, why: i.matchUnready ? "voice-match-unready" : "voice-match-off" };
+  // Voice Match off, its default: a yes from anyone heard (owner decision of 2026-11-12), as the approve key would be.
+  if (anyone) return { kind: "answer", answer, verified: false, anyone: true };
   if (i.verified) return { kind: "answer", answer, verified: true };
   // Too short to vouch for: its own score, where it has one, says whether it is clearly another voice.
   const otherVoice = i.restScore !== undefined && i.restScore < SHORT_YES_FLOOR;
@@ -188,8 +203,7 @@ export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "s
  * and exactly what to do instead. Ember says it too (voiceAnswerSaid), where it speaks.
  */
 export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
-  "voice-match-off": "To answer yes by voice, set up Voice Match in Settings › Voice, so I know it's you. For now, click Allow.",
-  "voice-match-unready": "Voice Match isn't ready yet: finish setting it up in Settings › Voice, to answer yes by voice. For now, click Allow.",
+  "voice-match-unready": "Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow or use the keys.",
   unverified: "That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow.",
   "own-voice": "I was still speaking, so I didn't take that as an answer. Say it again now.",
   "click-only": "This one needs a click: I can't take a yes by voice here.",
@@ -201,7 +215,19 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
 };
 
 /** The lines that point to a click or the keys: said aloud, they name the keys Ember holds too (tasks-approvals-6). */
-const POINTS_TO_KEYS: ReadonlySet<VoiceAnswerNote> = new Set(["voice-match-off", "voice-match-unready", "unverified", "locked"]);
+const POINTS_TO_KEYS: ReadonlySet<VoiceAnswerNote> = new Set(["voice-match-unready", "unverified", "locked"]);
+
+/**
+ * The note for a spoken answer that wasn't taken (`why`), as the question stands: a yes to a question locked to clicks
+ * and keys (Voice Match turned another voice away during it) says so, never to say it again, which could only fail
+ * (cause 9 of the owner's report of 2026-11-12); with Voice Match switched on but not ready, a yes says how to finish
+ * it or turn it off. A consent card's own note stands.
+ */
+export function refusalNote(why: VoiceAnswerNote, o: { answer: "allow" | "deny"; locked: boolean; unready: boolean }): VoiceAnswerNote {
+  if (o.answer !== "allow" || why === "click-only") return why;
+  if (o.unready) return "voice-match-unready";
+  return o.locked ? "locked" : why;
+}
 
 /**
  * The same, as Ember says it aloud: "Settings › Voice" as "Settings, then Voice", without the quotes. Every line Ember

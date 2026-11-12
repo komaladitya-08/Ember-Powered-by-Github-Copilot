@@ -1,11 +1,13 @@
 /**
  * Questions Ember asks with buttons in its bubble ("Allow" / "Not now").
  * A click in Ember's own bubble answers them, or Ember's keys, or a short spoken
- * answer while the question is up (answerVoice: a yes only from the owner's
- * voice as Voice Match verified it, "Not now" from anyone; owner decision of
- * 2026-11-02, PLAN.md §2 "Approvals"). Never the model, never typed text, and
- * never "Always" by voice. One question shows at a time; the rest wait their
- * turn. Unanswered questions expire as "no", counted from when they appear on screen.
+ * answer while the question is up (answerVoice: a yes from anyone heard while
+ * Voice Match is off, its default, and only from the owner's voice as Voice
+ * Match verified it while it is on; "Not now" from anyone; owner decisions of
+ * 2026-11-02 and 2026-11-12, PLAN.md §2 "Approvals"). Never the model, never
+ * typed text, and never "Always" by voice. One question shows at a time; the
+ * rest wait their turn. Unanswered questions expire as "no", counted from when
+ * they appear on screen.
  *
  * A question can't be answered by accident: clicks in its first moments are
  * ignored (a double-click or a click already on its way lands on nothing),
@@ -44,10 +46,10 @@ export type AnswerVia = "bubble" | "key" | "panel" | "voice";
 export interface AnswerChannel { via: AnswerVia; verified?: boolean; trust?: "task-voice" }
 
 /**
- * What became of a spoken answer: taken ("answered"), or why not. A yes needs a verified voice ("unverified"), never
- * answers a question whose card only a click may allow ("click-only"), and waits as a key would for the question to be
- * armed, its whole text read, or its panel shown whole ("not-yet"). A short yes on a task's trust only for that task's
- * own question, never a panel's ("untrusted").
+ * What became of a spoken answer: taken ("answered"), or why not. A yes needs a verified voice, or Voice Match off
+ * ("unverified"), never answers a question whose card only a click may allow ("click-only"), and waits as a key would
+ * for the question to be armed, its whole text read, or its panel shown whole ("not-yet"). A short yes on a task's
+ * trust only for that task's own question, never a panel's ("untrusted").
  */
 export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "untrusted" | "click-only" | "not-yet" | "stale" | "locked";
 
@@ -320,14 +322,16 @@ export class Confirmer {
   /**
    * A short spoken answer to the question up now (main's onVoice, after voice-answer.ts judged the words): "allow" takes
    * the primary option ("Allow", never "Always"), "deny" Not now. A "Not now" is taken from anyone at once (the safer
-   * way). A yes only when `verified` (Voice Match matched the owner's voice), and as the approve key would be: not while
-   * Ember borrows the mouse, not on a click-only question (a consent card), not before the question is armed, its whole
-   * text has been in view or its panel window shows all of it. Or, unverified, a short yes on a task's voice trust
-   * (`trust`: the task main found holding it, voice-answer.ts TaskVoiceTrust): only for a question that task raised itself,
-   * never one shown in a panel window (the command card, a consent card) and never a click-only one, and otherwise as a
-   * verified yes (owner decision of 2026-11-03).
+   * way). A yes when `verified` (Voice Match matched the owner's voice), or with `anyone` (Voice Match switched off, its
+   * default: a yes from whoever was heard, owner decision of 2026-11-12; main passes it only then, and without it an
+   * unverified yes is refused), and either as the approve key would be: not while Ember borrows the mouse, not on a
+   * click-only question (a consent card), not before the question is armed, its whole text has been in view or its panel
+   * window (a command card) shows all of it. Or, unverified, a short yes on a task's voice trust (`trust`: the task main
+   * found holding it, voice-answer.ts TaskVoiceTrust): only for a question that task raised itself, never one shown in
+   * a panel window (the command card, a consent card) and never a click-only one, and otherwise as a verified yes
+   * (owner decision of 2026-11-03).
    */
-  answerVoice(which: "allow" | "deny", o: { verified: boolean; question?: number | null; startedAt?: number; trust?: { task: string } }): VoiceAnswerResult {
+  answerVoice(which: "allow" | "deny", o: { verified: boolean; anyone?: boolean; question?: number | null; startedAt?: number; trust?: { task: string } }): VoiceAnswerResult {
     const c = this.current;
     if (!c) return "no-question";
     if (this.lapsed(c)) return "stale";
@@ -341,16 +345,18 @@ export class Confirmer {
       return "answered";
     }
     const trusted = o.verified !== true && o.trust !== undefined;
-    if (o.verified !== true && !trusted) return "unverified";
+    const anyone = o.verified !== true && !trusted && o.anyone === true;
+    if (o.verified !== true && !trusted && !anyone) return "unverified";
     if (c.voiceLocked) return "locked";
-    if (c.q.clickOnly) return "click-only";
+    // A consent card only by a click: its clickOnly says so, and a consent panel counts as one without it (fail closed).
+    if (c.q.clickOnly || c.q.panel?.kind === "consent") return "click-only";
     if (trusted && (c.q.panel || !c.q.task || c.q.task !== o.trust!.task)) return "untrusted";
     const opt = c.q.options.find(x => x.primary) ?? c.q.options[0];
     if (!opt || opt.id === "always" || opt.id === "deny") return "not-yet";
     if (this.now() - c.shownAt < this.armOf(c.q) || this.blocked()) return "not-yet";
     // As the approve key: its whole text read and armed again since, and a panel only while its window shows all of it.
     if (!this.allowedFrom(c, opt.id, "key", undefined)) return "not-yet";
-    this.channels.set(c.q, trusted ? { via: "voice", verified: false, trust: "task-voice" } : { via: "voice", verified: true });
+    this.channels.set(c.q, trusted ? { via: "voice", verified: false, trust: "task-voice" } : { via: "voice", verified: o.verified === true });
     this.finish(c, opt.id);
     return "answered";
   }
