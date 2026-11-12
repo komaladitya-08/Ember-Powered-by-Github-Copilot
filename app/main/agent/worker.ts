@@ -27,6 +27,7 @@ import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapsh
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import { askedWords, type ActivityEvent } from "./activity";
 import { Refusals, stepNames, type Standing } from "../policy/refusals";
+import { pageBinding, pageBindingOf } from "./page-binding";
 import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
@@ -1344,6 +1345,12 @@ export class Worker {
   private focusShell: string | null = null;
   /** The element refreshActionContext found to be a control of a living web page (livingPage), for this step. */
   private pageTarget: number | null = null;
+  /**
+   * The step's target is a web page's control, in no dialog, whose own surroundings could be read (page-binding.ts): its
+   * role and name as the object itself gave them. What the step is bound to before and after its question is then the
+   * page binding, not the whole tree (boundContext; cause 3b of the investigation of the owner's report of 2026-11-12).
+   */
+  private pageBound: { role: string; name: string } | null = null;
   /** What that element had selected when it was found (a field typed into must still have it: checkPageTarget). */
   private pageSelection: string | undefined;
   /** The latest look for the cell with the keyboard found none because the read was cut short (a busy app): see cellWithKeyboard. */
@@ -2777,6 +2784,7 @@ export class Worker {
    */
   private async refreshActionContext(id: number): Promise<ToolResultObject | null> {
     this.pageTarget = null;
+    this.pageBound = null;
     // A question belongs to the step it was asked for: a look before this step's own is never "while the user decided".
     this.asked = false;
     const held = this.known.get(id);
@@ -2796,16 +2804,21 @@ export class Worker {
     const shifted = old.length !== seen.nodes.length || old.some((n, i) => n.role !== seen.nodes[i].role
       || parentAt(n, oldAt) !== parentAt(seen.nodes[i], newAt));
     const page = this.livingPage(held);
-    if (shifted && !page) return fail("The window's controls changed, so nothing was done. Call perceive_window and use its new ids.");
+    // A page's control whose name says something risky lives on a page that changes on its own too: it may be found
+    // again in a read by its own ids, but only where its own surroundings can then be bound (bindPage), never by a twin.
+    const onPage = page || this.pageControl(held);
+    if (shifted && !onPage) return fail("The window's controls changed, so nothing was done. Call perceive_window and use its new ids.");
     // The original accessible object must still be the target at this position, not a neighbouring replacement.
     const at = oldAt.get(id)!;
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
-    if (page && live && !isDisabled(live.states) && live.role === held.role && live.name === held.name) {
+    if (onPage && live && !isDisabled(live.states) && live.role === held.role && live.name === held.name) {
       const twins = seen.nodes.filter(n => n.role === live.role && n.name === live.name).length > 1;
-      if (!twins || PAGE_TWIN.test(live.role)) {
-        this.pageTarget = id;
-        this.pageSelection = seen.nodes.find(n => n.role === live.role && n.name === live.name)?.selection;
+      if (!twins || (page && PAGE_TWIN.test(live.role))) {
+        if (page) {
+          this.pageTarget = id;
+          this.pageSelection = seen.nodes.find(n => n.role === live.role && n.name === live.name)?.selection;
+        }
         if (shifted || twins) {
           // The page moved on, so its ids can't be mapped again: the ids it was read with stay, and what it says now is
           // still looked through. This read, by its own ids, is what a question's answer binds to (an empty or stale
@@ -2816,6 +2829,10 @@ export class Worker {
           this.actionWhole = !seen.truncated;
           this.actionOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
           this.actionAt = mine >= 0 ? mine : undefined;
+          this.bindPage(held, live, w.name, !!seen.truncated);
+          // A risky-named control is never taken on less than a binding: its page moved on and its surroundings can't
+          // be bound (cut short, a window titled for money), so it is refused as before.
+          if (!page && !this.pageBound) return fail("The window's controls changed, so nothing was done. Call perceive_window and use its new ids.");
           const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
           this.remember(w, words);
           this.flagInjection(words, "window", w.app);
@@ -2838,6 +2855,7 @@ export class Worker {
     this.knownWhole = this.actionWhole = !seen.truncated;
     this.actionOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
     this.actionAt = at;
+    this.bindPage(held, live, w.name, !!seen.truncated);
     this.labels = inferLabels(this.actionTree);
     const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
     this.remember(w, words);
@@ -2863,6 +2881,35 @@ export class Worker {
     })));
   }
 
+  /**
+   * A web page's control, in no dialog and not secret: what livingPage asks but for the name, which may say something
+   * risky. Its question's answer may bind to its own surroundings (bindPage).
+   */
+  private pageControl(node: AxNode): boolean {
+    return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld;
+  }
+
+  /**
+   * Whether this step binds as a page's control (pageBound): its target is one (`held`, as the latest perceive_window
+   * gave it; `live`, the object itself), it was found in the read the step binds to (actionTree, actionAt: never beside
+   * a twin), that read is whole, and its binding can be made there (pageBinding). Otherwise the whole tree binds.
+   */
+  private bindPage(held: AxNode, live: ElementInfo | null, title: string, truncated: boolean): void {
+    this.pageBound = null;
+    if (!live || truncated || this.actionAt === undefined || !this.pageControl(held)) return;
+    if (pageBinding(this.actionTree, this.actionAt, title) === null) return;
+    this.pageBound = { role: live.role, name: live.name };
+  }
+
+  /**
+   * What a step is bound to, before its question and after: the whole tree (actionContext), or for a page's control its
+   * own surroundings (pageBound, page-binding.ts), read in `nodes` by the control's role and name. `clickedTextAt`: as
+   * for actionContext (for a page's control: its own selection may have collapsed under Ember's click).
+   */
+  private boundContext(nodes: readonly AxNode[] = this.actionTree, title: string = this.window.name, clickedTextAt?: number): string {
+    return this.pageBound ? pageBindingOf(nodes, this.pageBound, title, clickedTextAt !== undefined) : this.actionContext(nodes, clickedTextAt);
+  }
+
   /** Fail closed after approval, a lease or pointer movement if the approved context cannot still be established. */
   private async checkActionContext(id: number, node: AxNode, context: string, clickedTextAt?: number): Promise<ToolResultObject | null> {
     const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
@@ -2873,7 +2920,7 @@ export class Worker {
       || w.app !== this.window.app || w.name !== this.window.name || w.role !== this.window.role
       || (this.target.pid !== undefined && w.pid !== this.target.pid)
       || (this.target.path !== undefined && w.path !== this.target.path)
-      || (!seen.truncated !== this.actionWhole) || this.actionContext(seen.nodes, clickedTextAt) !== context
+      || (!seen.truncated !== this.actionWhole) || this.boundContext(seen.nodes, w.name, clickedTextAt) !== context
       || JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal }))) !== this.actionOthers;
     if (changed && !unread && this.spend(this.pageOf(node))) return fail(spentYes(this.pageOf(node) ? "the page" : "the window"));
     if (changed) return fail("The window or its contents changed while preparing this action, so nothing was done. Call perceive_window and ask again if it is still needed.");
@@ -2892,7 +2939,8 @@ export class Worker {
    * preview, a counter), so its tree is rarely the same twice: binding such a step to all of it refused every click on
    * YouTube, as did the check on repeated names, a video's thumbnail and title being one link twice over. The click goes to
    * the object the model named, by id. So a step that asks nothing needs only that object and the window to hold
-   * (checkPageTarget); a question still binds its answer to the whole tree, and a risky word still asks.
+   * (checkPageTarget); a question binds its answer to the control's own surroundings (pageBound, page-binding.ts), or to
+   * the whole tree where those can't be bound, and a risky word still asks.
    */
   private livingPage(node: AxNode): boolean {
     return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld && !riskyOnPage(node.role, node.name, this.kc.os);
@@ -3049,7 +3097,7 @@ export class Worker {
     };
     // A click on text inside a link (or a row) works the link: the user is asked about what the click works.
     const req: ActionRequest = kind === "click" || kind === "toggle" ? { ...base, element: this.clickJudged(base, element, handler) } : base;
-    const context = this.actionContext();
+    const context = this.boundContext();
     const before = this.pageTarget === id ? null : await this.checkActionContext(id, node, context);
     if (before) return before;
     const verdict = await this.authorize(req);
@@ -3264,12 +3312,12 @@ export class Worker {
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
       ...(kind === "cursor_click" && inWebPage(node, i => this.known.get(i)) ? { onPage: true } : {}),
       ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
-    const context = this.actionContext();
+    const context = this.boundContext();
     // Append/replace explicitly choose where text goes after this click. Only the target's selection may collapse
     // under our own focus click; insert-at-caret never clicks and keeps its full selection binding.
     // Where the field is in the read the answer binds to (refreshActionContext): unknown, nothing is excused.
     const clickedTextAt = kind === "cursor_text" && clicks ? this.actionAt : undefined;
-    const afterClickContext = clickedTextAt !== undefined ? this.actionContext(undefined, clickedTextAt) : context;
+    const afterClickContext = clickedTextAt !== undefined ? this.boundContext(undefined, undefined, clickedTextAt) : context;
     const before = this.pageTarget === id ? null : await this.checkActionContext(id, node, context);
     if (before) return before;
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
