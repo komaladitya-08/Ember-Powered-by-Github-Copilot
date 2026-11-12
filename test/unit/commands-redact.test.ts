@@ -225,8 +225,39 @@ describe("redactSecrets", () => {
     ['listOf("--token", "s3cr3tT0ken99")', `listOf("--token", "${SECRET_HIDDEN}")`],
     ['["--one-time-password", "482193"]', `["--one-time-password", "${SECRET_HIDDEN}"]`],
     ['["--password", "Pa/ss.word"]', `["--password", "${SECRET_HIDDEN}"]`],
+    // Look-alikes of what is left alone below: a value that only starts like a word or a name, an option that only
+    // starts with "no", a pair after a switch, and a pair inside a mapping (memory-x7-1).
+    ['["--token", "none1234"]', `["--token", "${SECRET_HIDDEN}"]`],
+    ['["--password", "strings"]', `["--password", "${SECRET_HIDDEN}"]`],
+    ['("--password", "store_true!")', `("--password", "${SECRET_HIDDEN}")`],
+    ['["--api-key", "api_key_9f8e7d6c"]', `["--api-key", "${SECRET_HIDDEN}"]`],
+    ['["--token", "Auth_Token"]', `["--token", "${SECRET_HIDDEN}"]`],
+    ['["--nonce-token", "abc123xyz"]', `["--nonce-token", "${SECRET_HIDDEN}"]`],
+    ['["psql", "--no-password", "--password", "hunter2"]', `["psql", "--no-password", "--password", "${SECRET_HIDDEN}"]`],
+    ['{"cmd": ["--password", "hunter2"], "description": "x"}', `{"cmd": ["--password", "${SECRET_HIDDEN}"], "description": "x"}`],
+    ['args.push("--password", "hunter2"); opts = {"name": "x"}', `args.push("--password", "${SECRET_HIDDEN}"); opts = {"name": "x"}`],
+    ['["--secret", "top_secret"]', `["--secret", "${SECRET_HIDDEN}"]`],
+    ['["--token", "s3cr3t_token"]', `["--token", "${SECRET_HIDDEN}"]`],
+    ['("--password", "winter2024_password")', `("--password", "${SECRET_HIDDEN}")`],
+    ['parser.add_argument("--token", "auth_token", help="x")', `parser.add_argument("--token", "${SECRET_HIDDEN}", help="x")`],
+    ['case "--password", "hunter2":', `case "--password", "${SECRET_HIDDEN}":`],
+    ['switch (a) { case "--password", "hunter2": }', `switch (a) { case "--password", "${SECRET_HIDDEN}": }`],
   ])("hides the value in %j (memory-x7-1, memory-y7-2)", (text, want) => {
     expect(redactSecrets(text)).toBe(want);
+  });
+  // What only looks like the pair, kept at 6b750a2 and hidden by round seven's list pattern (memory-x7-1): an option
+  // that takes no value (`--no-password`), the option's own name as code writes it (click's explicit name, a dest), a
+  // null or type word, or a mapping's key after it.
+  it.each([
+    ['["psql", "--no-password", "shop"]'], ['["pg_dump", "--no-password", "mydb"]'], ['["--no-token", "anything"]'],
+    ['["--token", "none"]'], ['["--api-key", "null"]'], ['("--password", "store_true")'], ["  ['--token', 'string'],"],
+    ['  ["--password", "string", "The password"],'], ['("--secret", "None")'],
+    ['{"name": "--password", "description": "Password for the database"}'],
+    ['@click.option("--api-key", "api_key", envvar="API_KEY", help="API key")'], ['@click.option("--access-token", "access_token", required=True)'],
+    ['@click.option("--client-secret", "client_secret")'], ['@click.option("--db-password", "db_password", prompt=True)'],
+    ['options = [{"name": "--token", "description": "Access token"}]'],
+  ])("leaves %j alone: no value, the option's own name, a type or a mapping's key (memory-x7-1)", text => {
+    expect(redactSecrets(text)).toBe(text);
   });
 
   it("leaves ordinary text alone", () => {
@@ -360,6 +391,9 @@ describe("redactSecrets on long output (review #26)", () => {
     ["a run of quoted clients in a list (memory-q6-1)", repeat('"mysql", ')], ["a run of list elements (memory-q6-1)", repeat('"a", ')],
     ["a run of bare clients in a list (memory-q6-1)", repeat("mysql, ")], ["a YAML list of clients (memory-q6-1)", repeat("  - mysql\n")],
     ["a run of secret-named options in a list (memory-q6-1)", repeat('"--password", ')], ["a run of sshpass elements (memory-q6-1)", repeat('"sshpass", "-p", ')],
+    ["a run of switched-off options in a list (memory-x7-1)", repeat('"--no-password", ')], ["a run of null values in a list (memory-x7-1)", repeat('"--token", "none", ')],
+    ["a run of own names in a list (memory-x7-1)", repeat('"--api-key", "api_key", ')], ["a value before a run of spaces (memory-x7-1)", `"--password", "hunter2"${" ".repeat(size)}`],
+    ["a run of capital values (memory-x7-1)", `"--password", "${"A".repeat(size)}`],
   ])("takes linear time on %s (1 MiB)", (_name, text) => {
     const t0 = performance.now();
     redactSecrets(text);

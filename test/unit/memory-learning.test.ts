@@ -518,17 +518,17 @@ describe("getting to know the user while memory.json can't be read (memory-r7-1)
 
 describe("a Forget and the turns still waiting to be learned from (memory-c7-1)", () => {
   const VEG = answer([{ from: 1, fact: "Is vegetarian", about: [{ name: "User", kind: "person" }], predicate: "diet", single: true, confidence: 0.9, evidence: "I'm vegetarian" }]);
-  const TEA = { from: 2, fact: "Likes green tea", about: [{ name: "User", kind: "person" }], confidence: 0.9, evidence: "I like green tea" };
+  const TEA = { from: 1, fact: "Likes green tea", about: [{ name: "User", kind: "person" }], confidence: 0.9, evidence: "I like green tea" };
 
-  it("never brings back a fact forgotten within a minute of being said when the waiting turns are read, and still learns the rest (memory-c7-1)", async () => {
-    const { l, s, learned, advance } = learning({ model: async () => answer([JSON.parse(VEG).facts[0], TEA]) });
+  it("never brings back a fact forgotten within a minute of being said when the waiting turns are read, and learns from what is said after (memory-c7-1, memory-r8-1)", async () => {
+    const { l, s, learned, advance } = learning({ model: async () => answer([TEA]) });
     const tools = l.conductorMemory();
     expect(tools.remember("Is vegetarian", [{ name: "User", kind: "person" }], "Remember that I'm vegetarian")).toContain("Remembered");
     tools.heard("Remember that I'm vegetarian", "Got it.", true);
     advance(5000);
-    // The "Ember learned" line's Undo.
+    // The "Ember learned" line's Undo: the turns said before it are never read (memory-r8-1); one asked after it is.
     expect(l.forgetCounted(s.list()[0].id)).toMatchObject({ text: "Is vegetarian" });
-    tools.heard("I like green tea", "Noted.", true);
+    tools.heard("I like green tea", "Noted.", true, tools.asked());
     advance(61_000);
     expect(await l.flush()).toBe(1);
     expect(s.list().map(i => i.text)).toEqual(["Likes green tea"]);
@@ -566,6 +566,267 @@ describe("a Forget and the turns still waiting to be learned from (memory-c7-1)"
     advance(61_000);
     expect(await l.flush()).toBe(1);
     expect(s.list().map(i => i.text)).toEqual(["Is vegetarian"]);
+  });
+});
+
+describe("a Forget drops the turns said before it, however the extraction words the fact (memory-r8-1)", () => {
+  const USER = { name: "User", kind: "person" as const };
+  type About = { name: string; kind?: string }[];
+  /** What the remember tool kept, about what, and the user's words; what the turn's extraction gives, about what. */
+  const REWORDED: [string, About, string, string, About][] = [
+    ["Is vegetarian", [USER], "Remember that I'm vegetarian", "The user is a vegetarian", [USER]],
+    ["Is vegetarian", [USER], "Remember that I'm vegetarian", "Follows a vegetarian diet", [USER]],
+    ["Is vegetarian", [USER], "Remember that I'm vegetarian", "Does not eat meat", [USER]],
+    ["Is vegetarian", [USER], "Remember that I'm vegetarian", "Eats a vegetarian diet", []],
+    ["Lives in Leeds", [USER], "Remember that I live in Leeds", "User lives in Leeds, England", [USER, { name: "Leeds", kind: "place" }]],
+    ["Lives in Leeds", [USER], "Remember that I live in Leeds", "Home is in Leeds", [{ name: "Leeds", kind: "place" }]],
+    ["My manager is Priya Shah", [USER, { name: "Priya Shah", kind: "person" }], "Remember that my manager is Priya Shah", "Priya Shah is the user's manager", [{ name: "Priya Shah", kind: "person" }]],
+    ["Works on the Atlas project", [{ name: "Atlas", kind: "project" }], "Remember that I work on the Atlas project", "Works on Atlas", [USER]],
+    ["Prefers tea to coffee", [USER], "Remember that I prefer tea to coffee", "Likes tea more than coffee", [USER]],
+    ["Has a daughter called Maya", [USER], "Remember that I have a daughter called Maya", "Maya is the user's daughter", [{ name: "Maya", kind: "person" }]],
+    ["Works at Globex", [USER, { name: "Globex", kind: "organisation" }], "Remember that I work at Globex", "Employed by Globex", [{ name: "Globex", kind: "organisation" }]],
+    ["Prefers short answers", [USER], "Remember that I prefer short answers", "Wants brief replies", [USER]],
+    ["Uses Firefox", [{ name: "Firefox", kind: "app" }], "Remember that I use Firefox", "Firefox is the user's browser", [{ name: "Firefox", kind: "app" }]],
+    ["Has a dog named Rex", [USER], "Remember that I have a dog named Rex", "Rex is the user's dog", [{ name: "Rex", kind: "thing" }]],
+  ];
+  const extracted = (fact: string, about: About, said: string) => answer([{ from: 1, fact, about, confidence: 0.9, evidence: said.replace(/^Remember that /, "") }]);
+
+  it.each(REWORDED)("never learns “%s” back from the waiting turn that said it (memory-r8-1)", async (kept, about, said, reworded, rewordedAbout) => {
+    const { l, s, learned, advance } = learning({ model: async () => extracted(reworded, rewordedAbout, said) });
+    const tools = l.conductorMemory();
+    expect(tools.remember(kept, about, said)).toContain("Remembered");
+    tools.heard(said, "Got it.", true);
+    advance(5000);
+    expect(l.forgetCounted(s.list()[0].id)).toMatchObject({ text: kept });
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list()).toEqual([]);
+    // Only the remember tool's "Ember learned" line: none for the same fact in other words.
+    expect(learned).toEqual([`user: ${kept}`]);
+  });
+
+  it.each(REWORDED)("never learns “%s” back from its turn when it is forgotten while that turn is still under way (memory-r8-1)", async (kept, about, said, reworded, rewordedAbout) => {
+    const { l, s, advance } = learning({ model: async () => extracted(reworded, rewordedAbout, said) });
+    const tools = l.conductorMemory();
+    // The request is asked, the remember tool keeps the fact, and the user presses Undo before the answer ends.
+    const asked = tools.asked();
+    tools.remember(kept, about, said);
+    l.forgetCounted(s.list()[0].id);
+    advance(3000);
+    tools.heard(said, "Got it.", true, asked);
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list()).toEqual([]);
+  });
+
+  it.each(REWORDED)("abandons the reading of the turn that said “%s” when it is forgotten meanwhile (memory-r8-1)", async (kept, about, said, reworded, rewordedAbout) => {
+    let finish: (raw: string) => void = () => undefined;
+    let signal: AbortSignal | undefined;
+    const { l, s, advance } = learning({ model: async (_system, _prompt, abort) => { signal = abort; return new Promise<string>(resolve => { finish = resolve; }); } });
+    const tools = l.conductorMemory();
+    tools.remember(kept, about, said);
+    tools.heard(said, "Got it.", true);
+    advance(61_000);
+    const reading = l.flush();
+    l.forgetCounted(s.list()[0].id);
+    expect(signal?.aborted).toBe(true);
+    finish(extracted(reworded, rewordedAbout, said));
+    expect(await reading).toBe(0);
+    expect(s.list()).toEqual([]);
+  });
+
+  it("drops a turn handed over with no mark within two minutes of a Forget, and learns from one after that (memory-r8-1)", async () => {
+    const TEA = answer([{ from: 1, fact: "Likes green tea", about: [USER], confidence: 0.9, evidence: "I like green tea" }]);
+    const { l, s, advance } = learning({ model: async () => TEA });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [USER], "Remember that I'm vegetarian");
+    l.forgetCounted(s.list()[0].id);
+    advance(90_000);
+    // When these words were said can't be told: they may be from before the Forget.
+    tools.heard("I like green tea", "Noted.", true);
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    tools.heard("I like green tea", "Noted.", true);
+    advance(61_000);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text)).toEqual(["Likes green tea"]);
+  });
+
+  it("drops a task's result that comes in within two minutes of a Forget, however it words the fact, and learns from one after (memory-r8-1)", async () => {
+    const MEAT = answer([{ from: 1, fact: "Eats no meat", about: [USER], confidence: 0.9, evidence: "the user eats no meat" }]);
+    const { l, s, advance } = learning({ model: async () => MEAT });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [USER], "Remember that I'm vegetarian");
+    l.forgetCounted(s.list()[0].id);
+    advance(60_000);
+    // A task started before the Forget finishes: what it read may say the forgotten fact in other words.
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.");
+    expect(await l.flush()).toBe(0);
+    advance(61_000);
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.");
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text)).toEqual(["Eats no meat"]);
+  });
+
+  it("drops a task's result when the request that started it was asked before a Forget, however long the task ran (memory-x8-4)", async () => {
+    const VEGETARIAN = answer([{ from: 1, fact: "The user is vegetarian", about: [USER], confidence: 0.9, evidence: "the user is vegetarian" }]);
+    const { l, s, learned, advance } = learning({ model: async () => VEGETARIAN });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [USER], "Remember that I'm vegetarian");
+    // "Book me a table": its task starts, and the user forgets the fact while it runs.
+    const booked = tools.asked();
+    l.forgetCounted(s.list()[0].id);
+    const RESULT = "Booked Rosa's for 7 pm: the user is vegetarian, so I chose the vegetable menu.";
+    // It finishes a minute, two minutes or two and a half after the Forget: workers may run 20 minutes.
+    for (const ms of [60_000, 65_000, 25_000]) {
+      advance(ms);
+      l.taskDone("Book a table", RESULT, booked);
+      expect(await l.flush()).toBe(0);
+    }
+    expect(s.list()).toEqual([]);
+    expect(learned).toEqual(["user: Is vegetarian"]);
+  });
+
+  it("still drops a task's result within two minutes of a Forget when its request came after it, and learns from one after (memory-x8-4)", async () => {
+    const MEAT = answer([{ from: 1, fact: "Eats no meat", about: [USER], confidence: 0.9, evidence: "the user eats no meat" }]);
+    const { l, s, advance } = learning({ model: async () => MEAT });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [USER], "Remember that I'm vegetarian");
+    l.forgetCounted(s.list()[0].id);
+    // The mark only adds what is dropped: the two minutes after a Forget still hold for a task asked in them.
+    const asked = tools.asked();
+    advance(60_000);
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.", asked);
+    expect(await l.flush()).toBe(0);
+    advance(61_000);
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.", asked);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text)).toEqual(["Eats no meat"]);
+  });
+
+  it("drops the turn under way at a correction or at Forget everything too, and learns from requests asked after them (memory-r8-1)", async () => {
+    const VEGAN = answer([{ from: 1, fact: "The user is vegan", about: [USER], confidence: 0.9, evidence: "I'm vegan" }]);
+    const { l, s, advance } = learning({ model: async () => VEGAN });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [USER], "Remember that I'm vegetarian");
+    const before = tools.asked();
+    l.correct(s.list()[0], "Eats fish");
+    tools.heard("Remember that I'm vegan", "Got it.", true, before);
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    const again = tools.asked();
+    l.forgetAll();
+    tools.heard("Remember that I'm vegan", "Got it.", true, again);
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list()).toEqual([]);
+    tools.heard("By the way, I'm vegan", "Noted.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text)).toEqual(["The user is vegan"]);
+  });
+});
+
+describe("what the user asks Ember to remember is kept once, however its turn's reading words it (memory-c8-1)", () => {
+  const USER = { name: "User", kind: "person" as const };
+  type About = { name: string; kind?: string }[];
+  /** What the remember tool kept, about what, and the user's words; what the same turn's extraction gives, about what, on what words. */
+  const TWICE: [string, About, string, string, About, string][] = [
+    ["Is vegetarian", [USER], "Remember that I'm a vegetarian", "The user is a vegetarian", [USER], "I'm a vegetarian"],
+    ["Is vegetarian", [USER], "Remember that I'm vegetarian", "Follows a vegetarian diet", [USER], "I'm vegetarian"],
+    ["Is vegetarian", [USER], "Remember that I'm vegetarian", "Does not eat meat", [USER], "I'm vegetarian"],
+    ["Lives in Leeds", [USER], "Remember that I live in Leeds, England", "User lives in Leeds, England", [USER], "I live in Leeds, England"],
+    ["My manager is Priya Shah", [USER], "Remember that my manager is Priya Shah", "Priya Shah is the user's manager", [{ name: "Priya Shah", kind: "person" }], "my manager is Priya Shah"],
+    ["Works on the Atlas project", [{ name: "Atlas", kind: "project" }], "Remember that I work on the Atlas project", "Works on Atlas", [USER], "I work on the Atlas project"],
+    ["Prefers tea to coffee", [USER], "Remember that I prefer tea to coffee", "Likes tea more than coffee", [USER], "I prefer tea to coffee"],
+    ["Has a daughter called Maya", [USER], "Remember that I have a daughter called Maya", "Maya is the user's daughter", [USER], "I have a daughter called Maya"],
+    ["Prefers short answers", [USER], "Remember that I prefer short answers", "Wants brief replies", [USER], "I prefer short answers"],
+    ["Works at Globex", [USER, { name: "Globex", kind: "organisation" }], "Remember that I work at Globex", "Employed by Globex", [{ name: "Globex", kind: "organisation" }], "I work at Globex"],
+    // The same words, about other names: the graph's own check needs the same names, so it never folded these.
+    ["Lives in Leeds", [USER], "Remember that I live in Leeds", "Lives in Leeds", [USER, { name: "Leeds", kind: "place" }], "I live in Leeds"],
+    ["Lives in Leeds", [USER, { name: "Leeds", kind: "place" }], "Remember that I live in Leeds", "Lives in Leeds", [USER], "I live in Leeds"],
+    ["Works on Atlas", [{ name: "Atlas", kind: "project" }], "Remember that I work on Atlas", "Works on Atlas", [USER, { name: "Atlas", kind: "project" }], "I work on Atlas"],
+    ["Manager is Priya Shah", [USER, { name: "Priya Shah", kind: "person" }], "Remember that my manager is Priya Shah", "Manager is Priya Shah", [{ name: "Priya Shah", kind: "person" }], "my manager is Priya Shah"],
+  ];
+
+  it.each(TWICE)("keeps “%s” once when the turn that asked for it is read (memory-c8-1)", async (kept, about, said, reworded, rewordedAbout, evidence) => {
+    const { l, s, learned, advance } = learning({ model: async () => answer([{ from: 1, fact: reworded, about: rewordedAbout, confidence: 0.9, evidence }]) });
+    const tools = l.conductorMemory();
+    expect(tools.remember(kept, about, said)).toContain("Remembered");
+    tools.heard(said, "Got it.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list().map(i => i.text)).toEqual([kept]);
+    // One "Ember learned" line, so one Forget forgets it.
+    expect(learned).toEqual([`user: ${kept}`]);
+  });
+
+  it("keeps it once when Ember already remembered it and the turn's reading words it another way (memory-c8-1)", async () => {
+    const { l, s, advance } = learning({ model: async () => answer([{ from: 1, fact: "The user is a vegetarian", about: [USER], confidence: 0.9, evidence: "I'm vegetarian" }]) });
+    s.learn({ text: "Is vegetarian", about: [USER], source: "user" });
+    const tools = l.conductorMemory();
+    const before = s.list().map(i => i.text);
+    expect(tools.remember("Vegetarian", [USER], "Remember that I'm vegetarian")).toContain("Already remembered");
+    tools.heard("Remember that I'm vegetarian", "Got it.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(0);
+    expect(s.list().map(i => i.text)).toEqual(before);
+  });
+
+  it("still learns the other facts of that turn, and compares a fact only with what was kept in its own turn (memory-c8-1)", async () => {
+    const SAID = "Remember that I'm vegetarian, and I live in Leeds";
+    const { l, s, advance } = learning({ model: async () => answer([
+      { from: 1, fact: "The user is a vegetarian", about: [USER], confidence: 0.9, evidence: "I'm vegetarian" },
+      { from: 1, fact: "Lives in Leeds", about: [USER], confidence: 0.9, evidence: "I'm vegetarian, and I live in Leeds" },
+      { from: 3, fact: "Prefers Firefox", about: [USER], confidence: 0.9, evidence: "I prefer Firefox" },
+    ]) });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [USER], SAID);
+    tools.heard(SAID, "Got it.", true, tools.asked());
+    tools.remember("Prefers short answers", [USER], "Remember that I prefer short answers");
+    tools.heard("Remember that I prefer short answers", "Noted.", true, tools.asked());
+    // A turn of its own: what turn 2 kept is no reason to drop it, though the two share a word.
+    tools.heard("I prefer Firefox", "Noted.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(2);
+    expect(s.list().map(i => i.text).sort()).toEqual(["Is vegetarian", "Lives in Leeds", "Prefers Firefox", "Prefers short answers"]);
+  });
+
+  /**
+   * What the user said, what the remember tool kept, about what, and a different fact the same turn's reading finds
+   * (about what, on what words): it shares a word or a name with what was kept, is about someone else, or is said in a
+   * clause of its own.
+   */
+  const OTHER: [string, string, About, string, About, string][] = [
+    ["Remember that I live in Leeds. My sister Jo lives in York.", "Lives in Leeds", [USER], "Jo lives in York", [{ name: "Jo", kind: "person" }], "My sister Jo lives in York"],
+    ["Remember that I live in Leeds. My sister Jo lives in York.", "Lives in Leeds", [USER], "Jo lives in York", [USER], "My sister Jo lives in York"],
+    ["Remember that I'm allergic to peanuts. My daughter Maya is allergic to cats.", "Is allergic to peanuts", [USER], "Daughter Maya is allergic to cats", [{ name: "Maya", kind: "person" }], "My daughter Maya is allergic to cats"],
+    ["Remember that I work at Globex. I work from home on Fridays.", "Works at Globex", [USER, { name: "Globex", kind: "organisation" }], "Works from home on Fridays", [USER], "I work from home on Fridays"],
+    ["Remember that I speak French. I'm learning to speak Spanish too.", "Speaks French", [USER], "Speaks some Spanish", [USER], "I'm learning to speak Spanish"],
+    ["Remember that my wife Sarah's birthday is 9 June. Sarah is vegetarian.", "Wife Sarah's birthday is 9 June", [{ name: "Sarah", kind: "person" }], "Sarah is vegetarian", [{ name: "Sarah", kind: "person" }], "Sarah is vegetarian"],
+    ["Remember that my manager is Priya Shah. Priya works in London.", "Manager is Priya Shah", [USER, { name: "Priya Shah", kind: "person" }], "Priya Shah works in London", [{ name: "Priya Shah", kind: "person" }], "Priya works in London"],
+    ["Remember that I have a daughter called Maya. Maya is allergic to peanuts.", "Has a daughter called Maya", [USER], "Maya is allergic to peanuts", [], "Maya is allergic to peanuts"],
+    ["Remember that I use Thunderbird for email. I prefer plain-text email.", "Uses Thunderbird for email", [USER], "Prefers plain-text email", [USER], "I prefer plain-text email"],
+    ["Remember that I'm vegetarian. My partner Sam is vegetarian too.", "Is vegetarian", [USER], "Partner Sam is vegetarian", [USER], "My partner Sam is vegetarian too"],
+    ["Remember that I live in Leeds with my partner Sam", "Lives in Leeds", [USER], "Lives in Leeds with partner Sam", [USER, { name: "Sam", kind: "person" }], "I live in Leeds with my partner Sam"],
+    ["Remember that I'm allergic to peanuts and shellfish", "Is allergic to peanuts", [USER], "Is allergic to shellfish", [USER], "I'm allergic to peanuts and shellfish"],
+    ["Remember that I work at Globex from home on Fridays", "Works at Globex", [USER], "Works from home on Fridays", [USER], "I work at Globex from home on Fridays"],
+    // The other way round: what was kept is about someone else, and the user says the same of themselves.
+    ["Remember that my partner Sam is vegetarian. I'm vegetarian too.", "Partner Sam is vegetarian", [USER], "Is vegetarian", [USER], "I'm vegetarian too"],
+    ["Remember that my partner Sam is vegetarian. I'm vegetarian too.", "Partner Sam is vegetarian", [{ name: "Sam" }], "Is vegetarian", [USER], "I'm vegetarian too"],
+    ["Remember that my sister Jo lives in York. I live in York too.", "Sister Jo lives in York", [USER], "Lives in York", [USER], "I live in York too"],
+  ];
+
+  it.each(OTHER)("still learns a different fact of “%s”, though it shares a word or a name with what was kept (memory-x8-1)", async (said, kept, about, other, otherAbout, evidence) => {
+    const { l, s, learned, advance } = learning({ model: async () => answer([{ from: 1, fact: other, about: otherAbout, confidence: 0.9, evidence }]) });
+    const tools = l.conductorMemory();
+    expect(tools.remember(kept, about, said)).toContain("Remembered");
+    tools.heard(said, "Got it.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text).sort()).toEqual([kept, other].sort());
+    // Its own "Ember learned" line, so the user sees what was kept.
+    expect(learned.map(line => line.replace(/^\w+: /, ""))).toEqual([kept, other]);
   });
 });
 

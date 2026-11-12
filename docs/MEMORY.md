@@ -105,7 +105,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   Smith": memory-x7-3). It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face, GitLab,
   SendGrid, DigitalOcean and Twilio keys among them, and a password given to a program's option, on its line or as its own element of a list of
   arguments: a compose healthcheck's `["CMD", "mysqladmin", "ping", "-phunter2"]`, `["sshpass", "-p", "hunter2", …]`,
-  memory-q6-1), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
+  memory-q6-1; never what follows an option that takes no value, `"--no-password"`, a word for no value or a type,
+  `"none"`, `"string"`, `"store_true"`, the next key of a mapping that holds the option, or exactly the option's own name,
+  `@click.option("--api-key", "api_key")`: memory-x7-1), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
   "hashed" and "masked" only before more words with no digit or symbol: "password: never logged", but "Wi-Fi password
   is its BlueSky99" and "Password for Gmail is never Summer2024!" are refused, memory-v5-1; "typed", "entered",
@@ -371,6 +373,22 @@ download, so English-only MiniLM is the trade-off for now.
      folding look-alike letters with `viewNorm`) is ever kept, whoever said it: a
      one-off order is not a preference. The conductor's `remember` keeps one only in the user's own words. Every fact
      goes through `MemoryGraph.add()` and the guard.
+   - What the remember tool kept (or found already kept) in a turn goes with that turn to its reading (`kept`: one
+     turn runs at a time), and with no other: as each turn begins (`began`), what a turn that ended unread kept
+     (stopped, cut short by a wake or a cut-in, silent) is let go of (memory-x8-2). No candidate from that turn that
+     is the same fact is kept again (`keptInTurn`, memory-c8-1): every content word of it in what was kept, the same
+     way round, unless its evidence is plainly in another clause; or, only when its evidence is in the one clause of
+     the turn that holds the most of what was kept and neither leaves out a word of that evidence the other says, half
+     or more of the smaller one's content words in common, or evidence that holds half of what was kept in words the
+     candidate mostly doesn't use. A person one of them names in its own words and the other's words don't makes them
+     two facts; otherwise `about` is not compared, since the two models choose it apart and the graph's own check
+     needs the same names. Where it can't tell, it learns (memory-x8-1): a second copy shows its own "Ember learned"
+     line, a dropped fact would be lost without a word. So a fact said in a clause of its own ("…My sister Jo lives
+     in York"), about someone else, or beside what was kept in one clause ("…peanuts and shellfish") is learned
+     whatever words it shares. It still can't tell two apart when one only adds to the other in its clause with no
+     person named ("Lives in Leeds with my wife" after "Lives in Leeds": not learned), and a fact the remember tool
+     kept in words that share none with what the user said ("Is vegetarian" for "I don't eat meat") can still be
+     learned a second time in the user's words.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten
      minutes forgets the newest without a model turn. Forgetting an open fact Ember kept in those ten minutes (the
      line's **Undo**, "forget that", a Forget soon after) undoes it: the one it had replaced is open again
@@ -380,11 +398,18 @@ download, so English-only MiniLM is the trade-off for now.
      where it was and says "Ember forgot: …" (with the notes that went and what holds again), with the Undo that puts
      it back; that Undo makes it "Ember remembers “…” again". Focus moves to the line's new words, never to the page
      (memory-c1-3). **Forget everything** clears the lines too.
-     A Forget is never undone by the turn that said the fact: every turn waits up to a minute (longer at the hourly
-     cap) to be read for facts, so what was forgotten is held in RAM, never on disk, while a batch that began before
-     the Forget (or within two minutes of it, `FORGOTTEN_TURN_MS`: the turn may still be under way) waits, and an
-     extracted fact at least `DUPLICATE` like it with the same polarity is skipped; the batch's other facts are still
-     learned, Undo of the Forget lifts it, and a later turn that says it again is learned from (memory-c7-1).
+     A Forget is never undone by the turn that said the fact, however extraction words it: every turn waits up to a
+     minute (longer at the hourly cap) to be read for facts, so a Forget, a correction and Forget everything drop
+     every turn and task result said before them, in RAM (`dropSaid`): those waiting, the reading under way, and a
+     turn still under way, told by the mark the conductor took as its request was asked (`ConductorMemory.asked`,
+     handed back with `heard`; a turn with no mark, and any task's result, is dropped within two minutes of one,
+     `FORGOTTEN_TURN_MS`). A task the conversation started carries its request's mark too (the host hands it back
+     with `taskDone`), so its result is dropped however long it ran after the Forget (memory-x8-4); one with no mark
+     (a card's Try again, a task carried over from an earlier connection) has only the two minutes. It learns less:
+     their other facts go too, also when the Forget is undone, until they are said again (memory-r8-1). Behind that,
+     for two minutes the forgotten words are held in RAM, never on disk, and a fact at least
+     `DUPLICATE` like them with the same polarity is not learned from what comes in (memory-c7-1);
+     Undo of the Forget lifts that, and a later turn that says it again is learned from.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
      only for Ember to forget something about the user ("forget that I…", "forget my address", "forget my wife's

@@ -279,12 +279,17 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     picks out lasting facts as JSON (zod-checked, dropped whole if invalid): at most one call per three turns or a
     minute, 12 an hour, 60 a day. A fact is yours only when you were heard to say it and every word of it is yours,
     the same way round; a task's are `task`; nothing that reads like an instruction is ever learned (the remember
-    tool keeps one only in your own words). Learned facts are recalled by meaning too, once Better recall's model is
-    in. After 5 idle minutes (no turn, no task,
+    tool keeps one only in your own words). What you ask Ember to remember is kept once: that turn's reading doesn't
+    add it again in other words or about other names, and learns another thing you said in it unless it reads as the
+    same fact (docs/MEMORY.md says how that is told). Learned facts are recalled by meaning too, once Better recall's
+    model is in. After 5 idle minutes (no turn, no task,
     the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
     idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
     fact shows in the conversation as "Ember learned: …" with **Undo**; once forgotten the line says "Ember forgot: …"
-    with an Undo that puts it back, and focus stays on it. The kill switch stops all of it (`memory`).
+    with an Undo that puts it back, and focus stays on it. What you forget or correct is never learned back from what
+    was said before: Forget, a correction and Forget everything drop the turns and task results not yet read (and the
+    turn under way, a task asked before them whenever it finishes, and any task result that comes in within two
+    minutes), so their other facts are learned only when said again. The kill switch stops all of it (`memory`).
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you

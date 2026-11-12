@@ -260,7 +260,7 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   and `samePolarity`, so "Priya is not my manager" never makes "Priya is the manager" theirs). Anything else is
   `conversation`.
 - **Learning on its own** (`MemoryLearning`, learning.ts; docs/MEMORY.md steps 3–5) runs only while memory is in force,
-  and the host and conductor reach it only through `HostOptions.memory` (`heard`, `forRequest`, `taskDone`,
+  and the host and conductor reach it only through `HostOptions.memory` (`asked`, `heard`, `forRequest`, `taskDone`,
   `useModel`, `intent`, `rememberNote`):
   - every model call is `copilotOneShot()` (agent/one-shot.ts): `hardenedSessionConfig` with `tools: []`,
     `verifySessionTools(session, [])`, deleted after (also when creating it failed); its answer is capped
@@ -273,6 +273,17 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   - `own` (not `voiceUnchecked`) travels with every request: `Conductor.ask(…, own)` → `heard(said, reply, own)` and
     `forRequest(request, own)`. Gaps are counted only in `forRequest`, from the user's own words, never from the
     recall tool (`context`), whose query the model wrote and the screen may steer;
+  - so does the mark `asked()` gives as a request is asked, back to `heard` with its turn: a Forget, a correction and
+    Forget everything drop every turn and result said before them (`dropSaid`: waiting, being read or still under
+    way; with no mark, any within `FORGOTTEN_TURN_MS`, as every `taskDone` result is), never a similarity of words
+    (memory-r8-1); a task the conversation starts carries its request's mark (`Conductor.askedMark`, the host's
+    `taskMarks`) back with `taskDone`, which only adds to what is dropped (memory-x8-4); a new path into `Learner`
+    carries such a mark or fails closed the same way;
+  - what the remember tool kept in a turn goes with that turn (`Learner.heard`'s `kept`) and no other (the conductor's
+    `began` at every turn's start lets go of what an unread turn kept: memory-x8-2), and its reading keeps no
+    candidate `keptInTurn` calls the same fact, compared on words and on the clause of the turn they were said in;
+    `about` only ever tells two apart (a person only one names), and where it can't tell, it learns (memory-c8-1,
+    memory-x8-1);
   - keep within `LEARN_BUDGET` and `REFINE_PER_DAY`; register nothing long-running outside its `memory` StopPart;
   - a fact the user gives (introduction, interview, an answer to Ember's question) is `user` only when they said it
     (`own`); a request (`looksLikeRequest`) or "forget that" is never taken as an answer, except "call me <a short
