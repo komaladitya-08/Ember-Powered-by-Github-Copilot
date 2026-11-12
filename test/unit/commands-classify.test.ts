@@ -2063,8 +2063,9 @@ describe("the option tables: a flag that takes no value never takes the word aft
       ["ssh -M host rm -rf ~/", "ssh host rm -rf ~/"], ["stat -f ~/.config/ember/settings.json", "stat ~/.config/ember/settings.json"],
       ["mkdir --context ~/.config/ember/x", "mkdir ~/.config/ember/x"], ["zip -T out.zip ~/.config/ember/settings.json", "zip out.zip ~/.config/ember/settings.json"],
     ]);
-    // A commit signed with -S or listing -u's untracked files still has its message.
-    for (const cmd of ["git commit -S -m wip", "git commit -u -m wip", "git commit --gpg-sign -m wip"]) expect(decided(cmd).decision.rules, cmd).not.toContain("unclear.interactive");
+    // A commit signed with -S or listing -u's untracked files still has its message: it opens no editor. It asks all the
+    // same, because main's table read the message as the option's value and asked (commands-held-2).
+    for (const cmd of ["git commit -S -m wip", "git commit -u -m wip", "git commit --gpg-sign -m wip"]) expect(decided(cmd).decision.rules, cmd).toEqual(["unclear.option-value"]);
     // gawk -i inplace edits the files it reads.
     expect(decided("gawk -i inplace '{}' ~/.config/ember/settings.json").cls.refuse?.says).toBe("Ember won't run this: it would change Ember's own safety settings, records or programs.");
     // node -C's condition isn't the script: the download after it is.
@@ -2873,6 +2874,7 @@ describe("option values and assignments main read as words, decided no less safe
 describe("commands held to main at 4d64d3a: no way of reading one decides less safely than it did there (round nine)", () => {
   const decided = (cmd: string, context: ContextName = "linux", o: { missing?: string[]; words?: string } = {}) =>
     runCase({ cmd, verdict: "run", context, ...o }, { shell: context === "darwin" ? "zsh" : "bash", context }).decision;
+  const HELD = "Ember can't tell whether one of its options takes the word after it.";
 
   it("refuses `sudo -h host rm -rf ~` and judges the command after sudo's -h host and --preserve-env list, as main did (commands-held-1)", () => {
     for (const context of ["linux", "darwin"] as const) {
@@ -2891,5 +2893,25 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     expect(decided("sudo -h rm -rf ~").verdict).toBe("refuse");
     // Where both tables read the line alike nothing is added.
     for (const cmd of ["sudo -hhost ls", "sudo -u root ls", "sudo --host=db ls", "sudo -E ls"]) expect(decided(cmd).rules, cmd).toEqual(["system.sudo"]);
+  });
+
+  it("asks before a git commit whose -S, -u, --gpg-sign or --untracked-files stands apart in front of -m, as main did (commands-held-2)", () => {
+    for (const cmd of [
+      "git commit -S -m wip", "git commit -u -m wip", "git commit --gpg-sign -m wip", "git commit --untracked-files -m wip", "git commit -S -am wip", "git commit -u -am wip",
+      "git commit -u -m wip a.txt", "git commit --untracked-files -m wip a.txt", "git commit --gpg-sign -am wip", "git -C sub commit -S -m wip",
+    ]) {
+      expect(decided(cmd).verdict, cmd).toBe("ask");
+      expect(decided(cmd).rules, cmd).toEqual(["unclear.option-value"]);
+      expect(decided(cmd).says, cmd).toContain(HELD);
+    }
+    expect(decided("git commit -S -m wip", "darwin").verdict).toBe("ask");
+    // The user's words never announce it: main asked whatever they said.
+    expect(decided("git commit -S -m wip", "linux", { words: "commit my changes with the message wip" }).verdict).toBe("ask");
+    // A value attached, the option after the message, and a commit without them run as on main; with no message at all
+    // it still says what would open.
+    for (const cmd of ["git commit -m wip", "git commit -SKEY -m wip", "git commit --gpg-sign=KEY -m wip", "git commit -uno -m wip", "git commit -m wip -S", "git commit -am wip -u"]) {
+      expect(decided(cmd).verdict, cmd).toBe("run");
+    }
+    expect(decided("git commit -S").rules).toEqual(["unclear.interactive"]);
   });
 });
