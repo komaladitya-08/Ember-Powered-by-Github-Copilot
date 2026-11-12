@@ -2617,3 +2617,44 @@ the user's own words, never one that would read or print secrets or outlive the 
 organisation's policy or the user's own "ask every command" requires. (8) **Routines:** a routine's saved steps are
 not the user's words for Assisted's check; the request that started the routine is. (9) **"Okay" and "go on":** while
 a question is up, a bare "okay" or "go on" allows it, as "okay, go with it" and "sure" do.
+
+**A page's link clicked** (loosened 2026-11-12, `.claude/rules/agent-and-policy.md`, not CLAUDE.md; found by the
+investigation of the owner's report). Policy read a page's link by what it leads to (`linkCommands`) only with
+`inPage`, which the worker sends for keys and typing; a click carries `onPage`, so a result titled "How to install
+Node.js" was judged as a button, asked "You didn't ask for this" and put the rest of the task back to asking, and with
+its thumbnail's twin was refused before any question. `riskOf` and the worker's `livingPage()` now read it by either.
+What counts as a title is `linkIsTitle`'s allow-list, and its review (W-1) found commands in a title's shape that it
+let through, clicked now and with Enter before ("Share Document - Drive", "Grant Access - Drive", "Merge Pull Request -
+GitHub", "What are you waiting for? Delete your account"). So it was narrowed for both: a title in parts ("Artist -
+Song", "Name | Site") is one only with a song's or a video's tag ("Post Malone - Circles (Official Video)"; never
+"(Live)", never where a part turns a protection off), since a command may stand before or after the separator ("Acme
+Bank - Transfer Funds", "My Shop | Buy Now"); a command after a question or a colon, or, after a how, what or why,
+after any other punctuation or symbol but a dot, hyphen or apostrophe inside a word (`CLAUSE_BREAK`), is never one;
+nor is a suggestion ("Why not share your location") or a grant of access (`GRANTS_ACCESS`). Its second review (R2-1)
+found that a clicked link read as content was spared by a file's name before any of its words was read ("Sign
+contract.pdf", "Delete report.pdf"), and that a how, what or why title was split into clauses only at stops, commas
+and dashes ("What next / Delete account", "Why wait (Delete your account now)", "What's new → Buy now"). So a clicked
+page link now asks wherever a link's name asked before, or `linkCommands` says it does something, unless `linkIsTitle`
+takes it for a title, and the worker's twin check reads it so too; with Enter it is read as content, as before. Proof:
+round eight's corpus (838,392 steps) decides byte for byte as before, but it holds no link named in a title's shape,
+so it shows only that nothing else moved. On 169 command-shaped names (the review's 94, 57
+led by the policy's other acting words and 18 with the command after the separator or other punctuation; 2,704
+clicked steps), every step decides as before the loosening but two names': "Restore Defaults - Settings" asks more
+(read as a button's name now), and "Post Malone - Circles (Official Video)", a title, asks less. With Enter, 31 of the
+review's names now ask where they went unasked, and none asks less. On 140 titles and commands in five shapes
+(11,200 steps), the only steps that ask less than before are eight titles' clicks on an ordinary page ("How to install
+Node.js on Windows 11", "Post Malone - Circles (Official Video)", "How to install Python: Complete guide"), which lose
+their question and flag; on a payment page they still ask. A title in parts with a risky word and no tag ("Post Malone
+- Circles", "Rusted Root - Send Me On My Way", "Kill Bill - Official Trailer") asks as before, and off the task is
+called something the user didn't ask for. A native app's link, a page's button or menu item and a payment page's
+control ask as before, and `judge()` still calls an off-task link that says what it does something the user didn't
+ask for. After R2-1, every corpus above decides as before it, round eight's byte for byte. On the review's 57 names
+and 29 more (bare file names, more separators, titles with punctuation) in four shapes (2,752 steps), every step that
+asks less than before the loosening is a click on an ordinary page of a link `linkIsTitle` takes for a title: 17
+names, among them the allow-list's residue, a command that reads as a title with no separator ("What to do next Delete
+account", "Why Delete Your Account Today", "Why Buy Now", "How do I pay now") or with a song's tag ("Acme Bank -
+Transfer Funds (Official Video)"); so is one joined to a title inside a word ("What next-Delete account", "Why
+wait.Buy now"). With Enter, 26 of the 86 names now ask where they went unasked before the loosening (19 of them since
+R2-1), and none asks less; a command before a file's name still goes unasked with Enter, as it did before the
+loosening. A file's link with a risky word in its name ("report.pdf", "Install guide.pdf") asks again when clicked, as
+it did before the loosening.

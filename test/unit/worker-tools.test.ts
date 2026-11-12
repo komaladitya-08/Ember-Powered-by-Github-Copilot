@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { LINUX_WORKER_SYSTEM, WINDOW_CLOSED_BY_TASK, Worker, afterKeys, closesWindow, dialogClosedNote, otherWindowClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
+import { ASKING_AGAIN, LINUX_WORKER_SYSTEM, WINDOW_CLOSED_BY_TASK, Worker, afterKeys, closesWindow, dialogClosedNote, otherWindowClosedNote, windowReplacedNote, cellOf, clearLane, dismissName, guideSay, pickOption, sameFocus, usableBounds, type WorkerDeps } from "../../app/main/agent/worker";
 import { KEYS } from "../../app/shared/shortcuts";
 import type { ActionResult, AxNode } from "../../app/main/perception/sidecar";
 import { TaskManager } from "../../app/main/agent/tasks";
@@ -79,6 +79,8 @@ function makeWorker(o: {
   rateLimit?: number;
   /** The task's goal (the conductor's words, default "make it bold") and the user's own words for it (TaskSpec.userWords). */
   goal?: string; userWords?: string;
+  /** How the user answered the questions (Confirmer.howAnswered; default: not known). */
+  answeredBy?: "bubble" | "key" | "panel" | "voice";
   /** A password prompt the desktop's shell draws (GNOME Shell's polkit dialog) is open now (Perception.promptOpen). */
   promptOpen?: () => boolean | "unchecked" | "helper";
   /** Is a system dialog open, as the borrow asks before it takes the keyboard (default: none). */
@@ -184,7 +186,8 @@ function makeWorker(o: {
       ...(o.canDo ? { canDo: async (id: number, kind: string, caret: boolean) => o.canDo!(id, kind, caret) } : {}),
     } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" }, ...(o.rateLimit ? { rateLimit: o.rateLimit } : {}) }),
-    confirmer: { ask: async (q: { prompt: string; risky?: boolean }) => { asked.push(q.prompt); questions.push(q); o.onAsk?.(); return o.answer ?? "once"; } } as never,
+    confirmer: { ask: async (q: { prompt: string; risky?: boolean }) => { asked.push(q.prompt); questions.push(q); o.onAsk?.(); return o.answer ?? "once"; },
+      howAnswered: () => (o.answeredBy ? { via: o.answeredBy } : undefined) } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {}, ...(o.screenImages ? { screenImages: o.screenImages() } : {}) }), update: () => undefined } as never,
     presenter,
@@ -1046,7 +1049,7 @@ describe("approval stays with the action the user saw (safety review)", () => {
     });
     await call("perceive_window", {});
     const first = await call("click", { id: 1 });
-    expect(first.textResultForLlm).toMatch(/closed when you answered/);
+    expect(first.textResultForLlm).toMatch(/^The user allowed this, but the menu holding "Delete" closed while they decided/);
     expect(asked).toHaveLength(1);
     closed = false;
     await call("switch_window", { title });
@@ -1054,6 +1057,200 @@ describe("approval stays with the action the user saw (safety review)", () => {
     expect(asked).toHaveLength(2);
     expect(audit.filter(e => e.event === "decision" && e.kind === "cursor_click")).toHaveLength(2);
     expect(audit).not.toContainEqual(expect.objectContaining({ reason: expect.stringMatching(/already allowed this menu item/) }));
+    // Asked again in the same window, the question says why; in another, it doesn't.
+    expect(asked[1].startsWith(ASKING_AGAIN.menu)).toBe(title === "Disposable.txt");
+  });
+
+  // The note said a click on Allow closed the menu however the question was answered, and told everyone to answer by
+  // voice or with keys that may not leave another app's menu open, or may not be Ember's at all (review W-5).
+  it.each([["a click", "bubble"], ["a click in its prompt window", "panel"], ["Ember's keys", "key"], ["voice", "voice"], ["a way not known", undefined]] as const)(
+    "says a click on Allow closed the menu only when the yes came by a click (answered by %s), and names no other way to answer (owner's report of 2026-11-12)", async (_how, via) => {
+      const clicked = via === "bubble" || via === "panel";
+      let closed = false;
+      const { call, asked } = makeWorker({
+        role: "menu item", name: "Delete", parentRole: "menu", answeredBy: via,
+        canDo: () => ({ tier1: false, why: "the menu item needs the mouse" }),
+        onAsk: () => { closed = true; }, live: () => closed ? null : undefined,
+      });
+      await call("perceive_window", {});
+      const first = await call("click", { id: 1 });
+      expect(first.textResultForLlm).toMatch(clicked ? /closed when they clicked Allow \(the click landed outside it\)/ : /closed while they decided/);
+      closed = false;
+      await call("perceive_window", {});
+      await call("click", { id: 1 });
+      expect(asked[1].startsWith(`${clicked ? "Clicking Allow closed the menu, so I'm asking again." : "The menu closed while you decided, so I'm asking again."} `)).toBe(true);
+      expect(asked[1]).not.toMatch(/voice|keys/);
+    });
+
+  // The model reopens the menu with a click, which asks nothing: that step cleared the reason, so the retry was asked
+  // the same as the first time, with no word of why (review W-2).
+  it("says why it asks again about a menu's item once its menu is reopened with a click (owner's report of 2026-11-12)", async () => {
+    let closed = false;
+    const edit: AxNode = { id: 2, parent: null, depth: 1, role: "menu", name: "Edit", states: ["enabled", "sensitive"], bounds: { x: 0, y: 0, width: 40, height: 20 } };
+    const { call, asked } = makeWorker({
+      role: "menu item", name: "Delete", parentRole: "menu", more: [edit], goal: "delete the selected line", userWords: "delete the selected line",
+      canDo: id => (id === 1 ? { tier1: false, why: "the menu item needs the mouse" } : { tier1: true }),
+      onAsk: () => { closed = true; }, live: id => (id === 1 && closed ? null : undefined),
+      onAction: () => { closed = false; return { ok: true, after: { role: "menu", name: "Edit", states: ["enabled"], bounds: edit.bounds } }; },
+    });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 1 })).resultType).toBe("failure");
+    await call("perceive_window", {});
+    expect((await call("click", { id: 2 })).resultType).toBe("success");
+    expect(asked).toHaveLength(1);
+    await call("click", { id: 1 });
+    expect(asked).toHaveLength(2);
+    expect(asked[1].startsWith(`${ASKING_AGAIN.menu} `)).toBe(true);
+  });
+
+  // An Allow spent by a change made while the user decided was told to the model as a new attempt ("ask again"), and
+  // the user was asked the same thing again with no word of why (investigation of the owner's report of 2026-11-12,
+  // causes 3 and 13).
+  describe("an Allow a change spent while the user decided", () => {
+    const video = "Thummak Thummak, 3 minutes";
+    const clock = (t: number): AxNode => ({ id: 3, parent: 0, depth: 1, role: "label", name: `0:0${t}`, states: [], bounds: null });
+
+    // (A link that takes the user's mouse: a borrowed step asks every time, so the next try asks again.)
+    const borrowed = { canDo: () => ({ tier1: false, why: "it takes no click by accessibility" }) };
+
+    it("asks again saying the page changed while the user decided, and tells the model it was a yes, not a new request (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const clicks: string[] = [];
+      const { call, asked } = makeWorker({ role: "link", name: video, parentRole: "document web", ...borrowed, more: [clock(0)], onInput: k => { clicks.push(k); },
+        onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      const first = await call("click", { id: 1 });
+      expect(first.resultType).toBe("failure");
+      expect(first.textResultForLlm).toMatch(/^The user allowed this, but the page changed while they decided, so nothing was done/);
+      expect(first.textResultForLlm).toMatch(/It wasn't a no, nor a new request/);
+      expect(first.textResultForLlm).not.toMatch(/ask again if/);
+      expect(clicks).toEqual([]);
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(2);
+      expect(asked[1].startsWith(`${ASKING_AGAIN.page} `)).toBe(true);
+      expect(asked[0].startsWith(ASKING_AGAIN.page)).toBe(false);
+    });
+
+    it("says the window changed in an app's own window, and that nothing was pressed for keys (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const status: AxNode = { id: 3, parent: null, depth: 1, role: "label", name: "Ln 1, Col 1", states: [], bounds: null };
+      const app = makeWorker({ ...borrowed, more: [status], onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `Ln 1, Col ${t}` } : n) });
+      await app.call("perceive_window", {});
+      expect((await app.call("click", { id: 1 })).textResultForLlm).toMatch(/^The user allowed this, but the window changed while they decided/);
+      await app.call("perceive_window", {});
+      await app.call("click", { id: 1 });
+      expect(app.asked[1].startsWith(`${ASKING_AGAIN.window} `)).toBe(true);
+      // Keys in a page's field.
+      let k = 0;
+      const keys = makeWorker({ role: "entry", name: "Search", parentRole: "document web", grants: {}, states: () => ["enabled", "sensitive", "editable", "focused"], more: [clock(0)],
+        onAsk: () => { if (k === 0) k = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${k}` } : n) });
+      await keys.call("perceive_window", {});
+      const r = await keys.call("press_keys", { keys: "ctrl+b" });
+      expect(r.resultType).toBe("failure");
+      expect(r.textResultForLlm).toMatch(/^The user allowed this, but the page changed while they decided, so nothing was pressed/);
+      expect((await keys.call("press_keys", { keys: "ctrl+b" })).resultType).toBe("success");
+      expect(keys.asked[1].startsWith(`${ASKING_AGAIN.page} `)).toBe(true);
+    });
+
+    it("says nothing of it in a question about another step, or after a no (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const other: AxNode = { id: 4, parent: 0, depth: 1, role: "link", name: "Next page", states: ["enabled", "sensitive"], bounds: { x: 10, y: 40, width: 40, height: 20 } };
+      // (Another link that takes the user's mouse, so it is asked about though the browser was allowed for the task.)
+      const made = makeWorker({ role: "link", name: video, parentRole: "document web", grants: {}, more: [clock(0), other],
+        canDo: id => (id === 4 ? { tier1: false, why: "it takes no click by accessibility" } : { tier1: true }),
+        onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await made.call("perceive_window", {});
+      await made.call("click", { id: 1 });
+      await made.call("perceive_window", {});
+      await made.call("click", { id: 4 });
+      expect(made.asked).toHaveLength(2);
+      expect(made.asked[1].startsWith(ASKING_AGAIN.page)).toBe(false);
+      // A "Not now" spends nothing: the model is told the user said no.
+      let n = 0;
+      const no = makeWorker({ role: "link", name: video, parentRole: "document web", grants: {}, answer: "deny", more: [clock(0)],
+        onAsk: () => { if (n === 0) n = 5; }, treeNodes: nodes => nodes.map(x => x.id === 3 ? { ...x, name: `0:0${n}` } : x) });
+      await no.call("perceive_window", {});
+      expect((await no.call("click", { id: 1 })).textResultForLlm).toMatch(/^The user said no/);
+    });
+
+    // Every step cleared the reason on its way in, so a scroll or a click elsewhere before the retry lost it (review W-2).
+    const next: AxNode = { id: 4, parent: 0, depth: 1, role: "link", name: "Next page", states: ["enabled", "sensitive"], bounds: { x: 10, y: 40, width: 40, height: 20 } };
+
+    it("still says the page changed when a step that asked nothing came before the retry (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const { call, asked } = makeWorker({ role: "link", name: video, parentRole: "document web", more: [clock(0), next],
+        canDo: id => (id === 4 ? { tier1: true } : { tier1: false, why: "it takes no click by accessibility" }),
+        onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      await call("perceive_window", {});
+      expect((await call("click", { id: 4 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(2);
+      expect(asked[1].startsWith(`${ASKING_AGAIN.page} `)).toBe(true);
+    });
+
+    it("says nothing of it once a question about another step came between (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const { call, asked } = makeWorker({ role: "link", name: video, parentRole: "document web", ...borrowed, more: [clock(0), next],
+        onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      await call("perceive_window", {});
+      expect((await call("click", { id: 4 })).resultType).toBe("success");
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(3);
+      expect(asked.slice(1).some(a => a.startsWith(ASKING_AGAIN.page))).toBe(false);
+    });
+
+    it("says nothing of it once that step went ahead without a question (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      let mouse = true;
+      const { call, asked } = makeWorker({ role: "link", name: video, parentRole: "document web", more: [clock(0)],
+        canDo: () => (mouse ? { tier1: false, why: "it takes no click by accessibility" } : { tier1: true }),
+        onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      // By accessibility, in a browser allowed for the task, it goes without a question.
+      mouse = false;
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      mouse = true;
+      await call("perceive_window", {});
+      await call("click", { id: 1 });
+      expect(asked).toHaveLength(2);
+      expect(asked[1].startsWith(ASKING_AGAIN.page)).toBe(false);
+    });
+
+    // A look made before a step's own question found the window changed: the model was told a yes to the step before
+    // was spent, and the next question about that step said so (review W-4).
+    it("says the window changed while preparing, never that a yes was spent, about a step it never asked about (owner's report of 2026-11-12)", async () => {
+      let ticking = false;
+      let t = 1;
+      const status: AxNode = { id: 3, parent: null, depth: 1, role: "label", name: "Ln 1, Col 1", states: [], bounds: null };
+      const italic: AxNode = { id: 4, parent: null, depth: 1, role: "push button", name: "Italic", states: ["enabled", "sensitive"], bounds: { x: 60, y: 10, width: 40, height: 20 } };
+      const { call, asked } = makeWorker({ more: [status, italic], canDo: id => (id === 1 ? { tier1: false, why: "it takes no click by accessibility" } : { tier1: true }),
+        treeNodes: nodes => nodes.map(n => n.id === 3 && ticking ? { ...n, name: `Ln 1, Col ${++t}` } : n) });
+      await call("perceive_window", {});
+      // Step A asks (it borrows the mouse), and is done.
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      // Then the window changes between every read: step B, never asked about, finds it changed before any question.
+      ticking = true;
+      const b = await call("click", { id: 4 });
+      expect(b.resultType).toBe("failure");
+      expect(b.textResultForLlm).toMatch(/^The window or its contents changed while preparing this action/);
+      expect(asked).toHaveLength(1);
+      // Asked about step A again, the question says nothing of a spent yes.
+      ticking = false;
+      await call("perceive_window", {});
+      await call("click", { id: 1 });
+      expect(asked).toHaveLength(2);
+      expect(asked[1].startsWith(ASKING_AGAIN.window)).toBe(false);
+    });
   });
 
   it.each(["approval", "lease"])("does not overwrite text added during the %s wait", async wait => {
@@ -1377,6 +1574,73 @@ describe("approval stays with the action the user saw (safety review)", () => {
       expect(events).toEqual([]);
     });
 
+    // A result's title is what it leads to: "install" in it isn't a request to install (investigation V2 and P2b).
+    it("opens a result titled with a risky word whose thumbnail repeats its name, and asks nothing more of the task for it (owner's report of 2026-11-12)", async () => {
+      const title = "How to install Node.js on Windows 11";
+      const next: AxNode = { id: 4, parent: 0, depth: 1, role: "link", name: "Next page", states: ["enabled", "sensitive"], bounds: null };
+      const { call, asked, events } = makeWorker({ role: "link", name: title, parentRole: "document web", grants: {}, more: [{ ...twin, name: title }, next],
+        goal: "find me a video about node", userWords: "find me a video about node" });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).not.toMatch(/didn't ask for this/);
+      // Allowed in the browser for this task, the next ordinary step asks nothing: the task wasn't put back to asking.
+      expect((await call("click", { id: 4 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(events.filter(e => e === "start")).toHaveLength(2);
+    });
+
+    it("still refuses a page's button whose risky name repeats, before asking (owner's report of 2026-11-12)", async () => {
+      const { call, asked, events } = makeWorker({ role: "push button", name: "Install", parentRole: "document web",
+        more: [{ ...twin, role: "push button", name: "Install" }] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(asked).toEqual([]);
+      expect(events).toEqual([]);
+    });
+
+    it("still refuses a page's link that says what it does when its name repeats, before asking (owner's report of 2026-11-12)", async () => {
+      const { call, asked, events } = makeWorker({ role: "link", name: "Delete my account", parentRole: "document web",
+        more: [{ ...twin, name: "Delete my account" }] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(asked).toEqual([]);
+      expect(events).toEqual([]);
+    });
+
+    // A command in a title's shape was read as a title, and clicked with no question (review W-1).
+    // (And after a how, what or why behind other punctuation: review R2-1.)
+    it.each(["Merge Pull Request - GitHub", "What are you waiting for? Delete your account", "What next / Delete account", "Why wait (Delete your account now)"])(
+      "still refuses a page's link that says what it does in a title's shape, “%s”, when its name repeats (owner's report of 2026-11-12)", async name => {
+        const { call, asked, events } = makeWorker({ role: "link", name, parentRole: "document web", more: [{ ...twin, name }], goal: "find me a video", userWords: "find me a video" });
+        await call("perceive_window", {});
+        expect((await call("click", { id: 1 })).resultType).toBe("failure");
+        expect(asked).toEqual([]);
+        expect(events).toEqual([]);
+      });
+
+    it("asks about a page's link that turns a protection off in a title's shape, saying the user didn't ask for it (owner's report of 2026-11-12)", async () => {
+      const name = "Disable Antivirus - Defender";
+      const { call, asked } = makeWorker({ role: "link", name, parentRole: "document web", answer: "deny", goal: "find me a video", userWords: "find me a video" });
+      await call("perceive_window", {});
+      await call("click", { id: 1 });
+      expect(asked).toEqual([expect.stringMatching(/didn't ask for this/)]);
+    });
+
+    // A command before a file's name was spared by the file's name, and clicked with no question (review R2-1).
+    it.each(["Permanently delete report.pdf", "Sign contract.pdf", "Approve budget.xlsx"])(
+      "still refuses a page's link that does something to a file, “%s”, when its name repeats, and otherwise asks saying the user didn't ask for it (owner's report of 2026-11-12)", async name => {
+        const twice = makeWorker({ role: "link", name, parentRole: "document web", more: [{ ...twin, name }], goal: "find me a video", userWords: "find me a video" });
+        await twice.call("perceive_window", {});
+        expect((await twice.call("click", { id: 1 })).resultType).toBe("failure");
+        expect(twice.asked).toEqual([]);
+        expect(twice.events).toEqual([]);
+        const once = makeWorker({ role: "link", name, parentRole: "document web", answer: "deny", goal: "find me a video", userWords: "find me a video" });
+        await once.call("perceive_window", {});
+        await once.call("click", { id: 1 });
+        expect(once.asked).toEqual([expect.stringMatching(/didn't ask for this/)]);
+      });
+
     it("still refuses repeated names in a dialog on the page", async () => {
       const { call, events } = makeWorker({ role: "link", name: "Open", parentRole: "dialog",
         more: [{ id: 9, parent: null, depth: 0, role: "document web", name: "", states: [], bounds: null }, { ...twin, name: "Open" }] });
@@ -1400,6 +1664,92 @@ describe("approval stays with the action the user saw (safety review)", () => {
       await call("perceive_window", {});
       expect((await call("click", { id: 1 })).resultType).toBe("failure");
       expect(asked.length).toBe(1);
+      expect(events).toEqual([]);
+    });
+
+    // After an Allow, a step on a page whose names repeat, or that grew since it was read, failed every time: it was
+    // checked against an empty or stale copy of the window (investigation of the owner's report of 2026-11-12, V1, P2,
+    // P4, P11, P12).
+    it("clicks a link whose thumbnail repeats its name once the user allows it, on a page that didn't change while they decided (owner's report of 2026-11-12)", async () => {
+      const { call, asked, events } = makeWorker({ ...page, grants: {}, more: [twin] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(events).toContain("start");
+    });
+
+    it("clicks a link once the user allows it, on a page that grew since it was read (owner's report of 2026-11-12)", async () => {
+      // perceive_window read it before the clock showed; every read since has it.
+      const { call, asked, events } = makeWorker({ ...page, grants: {}, treeNodes: nodes => [...nodes, clock(1)] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(events).toContain("start");
+    });
+
+    it("clicks a page's link with the user's mouse once they allow it, though its thumbnail repeats its name (owner's report of 2026-11-12)", async () => {
+      const clicks: string[] = [];
+      const { call, asked } = makeWorker({ ...page, more: [twin], canDo: () => ({ tier1: false, why: "the page's link takes no click by accessibility" }), onInput: k => { clicks.push(k); } });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(clicks).toEqual(["click"]);
+    });
+
+    it("types into a page's field once the user allows it, on a page that grew since it was read (owner's report of 2026-11-12)", async () => {
+      const typed: string[] = [];
+      const { call, asked } = makeWorker({ ...box, grants: {}, setTextOk: true, onSetText: t => typed.push(t), treeNodes: nodes => [...nodes, clock(1)] });
+      await call("perceive_window", {});
+      expect((await call("type_text", { id: 1, text: "ghazals", mode: "replace" })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(typed).toEqual(["ghazals"]);
+    });
+
+    // With the user's keyboard, Ember's own click into the field collapses its selection: only that field's may change.
+    it("types with the user's keyboard once they allow it into a page's field whose selection Ember's click collapsed, on a page that grew (owner's report of 2026-11-12)", async () => {
+      let clicked = false;
+      const input: string[] = [];
+      const { call, asked } = makeWorker({ ...box, states: () => ["enabled", "sensitive", "editable", "focused"], nodeExtra: { selection: "old" },
+        canDo: () => ({ tier1: false, why: "the page's field takes no text by accessibility" }), onInput: (k, v) => { if (k === "click") clicked = true; input.push(`${k}:${v ?? ""}`); },
+        // The page grew above the field: its place in the page isn't where perceive_window had it.
+        treeNodes: nodes => [clock(1), ...nodes].map(n => n.id === 1 && clicked ? { ...n, selection: undefined } : n) });
+      await call("perceive_window", {});
+      expect((await call("type_text", { id: 1, text: "ghazals", mode: "replace" })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(input[0]).toBe("click:");
+      expect(input).toContain("type:ghazals");
+    });
+
+    it("types nothing with the user's keyboard when Ember's click changed another part of a page that grew (owner's report of 2026-11-12)", async () => {
+      let clicked = false;
+      const input: string[] = [];
+      const other: AxNode = { id: 4, parent: 0, depth: 1, role: "entry", name: "Comment", text: "draft", selection: "draft", states: ["enabled", "editable"], bounds: null };
+      const { call, asked } = makeWorker({ ...box, states: () => ["enabled", "sensitive", "editable", "focused"], more: [other],
+        canDo: () => ({ tier1: false, why: "the page's field takes no text by accessibility" }), onInput: (k, v) => { if (k === "click") clicked = true; input.push(`${k}:${v ?? ""}`); },
+        // The page grew under the field, and the other field moved to the field's old place in it.
+        treeNodes: nodes => [...nodes.filter(n => n.id !== 1), ...nodes.filter(n => n.id === 1), clock(1)].map(n => n.id === 4 && clicked ? { ...n, selection: undefined } : n) });
+      await call("perceive_window", {});
+      expect((await call("type_text", { id: 1, text: "ghazals", mode: "replace" })).resultType).toBe("failure");
+      expect(asked).toHaveLength(1);
+      expect(input.some(i => i.startsWith("type:") || i.startsWith("keys:"))).toBe(false);
+    });
+
+    it("still undoes a yes when a page with repeated names changes while the user decides (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const { call, asked, events } = makeWorker({ ...page, grants: {}, more: [twin, clock(0)], onAsk: () => { t = 5; },
+        treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(asked).toHaveLength(1);
+      expect(events).toEqual([]);
+    });
+
+    it("still undoes a yes when a page that grew since it was read changes while the user decides (owner's report of 2026-11-12)", async () => {
+      let t = 1;
+      const { call, asked, events } = makeWorker({ ...page, grants: {}, onAsk: () => { t = 5; }, treeNodes: nodes => [...nodes, clock(t)] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(asked).toHaveLength(1);
       expect(events).toEqual([]);
     });
 
@@ -2022,11 +2372,33 @@ describe("while the desktop's own password prompt is open (safety-privacy-3)", (
       expect(r.resultType).toBe("denied");
       expect(r.textResultForLlm).toContain(why.slice(1));
       expect(made.audit.filter(e => e.event === "decision").at(-1)).toMatchObject({ verdict: "deny", reason: why });
-      // (A borrow asks every time: its question, then the refusal.)
+      // (Refused before the borrow's question: nobody is asked about a step that would be refused, owner's report of
+      // 2026-11-12.)
       const { card, home } = rowsOf(made.activity, from, "press_keys");
-      expect(card).toEqual(["Asked you: you allowed it", row]);
+      expect(card).toEqual([row]);
+      expect(made.asked).toEqual([]);
       expect(home).toEqual(card);
       expect(card.at(-1)!.endsWith("…")).toBe(false);
+    }
+  });
+
+  it("asks nothing about a step with the user's mouse or keyboard that the window system's check would refuse: a Wayland session, secure keyboard entry, Windows' secure desktop (owner's report of 2026-11-12)", async () => {
+    const secure = `${secureInputCause("Terminal")}, so Ember won't look at the screen or use the mouse or keyboard until it's off`;
+    const cell: AxNode = { id: 5, parent: null, depth: 1, role: "table cell", name: "B5", text: "", states: ["enabled", "focusable", "editable"], bounds: { x: 10, y: 40, width: 80, height: 20 } };
+    for (const why of [WAYLAND_REASON, secure, null]) {
+      const input: string[] = [];
+      const made = makeWorker({ grants: {}, systemDialogOpen: () => true, systemDialogReason: () => why, more: [cell], states: () => ["enabled", "focused"],
+        canDo: () => ({ tier1: false, why: "it takes no click by accessibility" }), onInput: k => { input.push(k); } });
+      await made.call("perceive_window", {});
+      for (const step of [() => made.call("click", { id: 1 }), () => made.call("press_keys", { keys: "ctrl+b" }), () => made.call("fill_cells", { cells: [{ cell: "B5", text: "42" }] })]) {
+        const r = await step();
+        expect(r.resultType).toBe("denied");
+        expect(r.textResultForLlm.startsWith(why ? `${why[0]!.toUpperCase()}${why.slice(1)}` : "A system dialog (such as a password prompt) is open")).toBe(true);
+      }
+      expect(made.asked).toEqual([]);
+      expect(input).toEqual([]);
+      expect(made.audit.some(e => e.event === "confirm")).toBe(false);
+      expect(made.audit.filter(e => e.event === "decision").map(e => e.verdict)).toEqual(["deny", "deny", "deny"]);
     }
   });
 

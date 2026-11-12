@@ -178,6 +178,107 @@ describe("what still asks in a browser, whatever is on", () => {
     asks(edge({ kind: "click", inPage: true, element: { role: "link", name } }));
   });
 
+  // The worker says a click lands in a page with `onPage` (from the tree), never `inPage`: a result titled with a risky
+  // word was judged as a button, asked "You didn't ask for this" and put the rest of the task back to asking.
+  const titles = ["Post Malone - Circles (Official Video)", "How to install Node.js on Windows 11", "How to Remove Malware from Windows 11", "Why people share passwords"];
+  const plain = new PolicyEngine({ neverLook: () => [], grants: () => ({ msedge: "act" }), os: "win32", keys: KEYS.win32 });
+
+  it.each(titles.flatMap(name => (["click", "cursor_click"] as const).map(kind => [name, kind] as const)))(
+    "follows a page's link titled “%s” as the worker sends a %s, and never calls it unasked (owner's report of 2026-11-12)", (name, kind) => {
+      expect(engine(true).decide(edge({ kind, onPage: true, goal: "play a song on youtube", element: { role: "link", name } })).verdict).toBe("allow");
+      const d = plain.decide(edge({ kind, onPage: true, goal: "play a song on youtube", element: { role: "link", name } }));
+      expect(d.aligned).toBeUndefined();
+      expect(d.prompt).not.toMatch(/didn't ask for this/);
+    });
+
+  it.each(["Delete my account", "Delete Repository - GitHub", "Buy now | Shop", "Post All - Blog", "Send Money - PayPal"])(
+    "still asks every time about a page's link that says what it does, “%s”, as the worker sends a click (owner's report of 2026-11-12)", name => {
+      for (const kind of ["click", "cursor_click"] as const) {
+        const d = engine(true).decide(edge({ kind, onPage: true, element: { role: "link", name } }));
+        expect(d).toMatchObject({ verdict: "confirm", risky: true });
+        expect(d.autonomy).toBeUndefined();
+        // Off the user's task, it is still called something they didn't ask for (and the task goes back to asking).
+        expect(plain.decide(edge({ kind, onPage: true, goal: "play a song on youtube", element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", aligned: false });
+      }
+    });
+
+  // A command can take a title's shape: led by a word that acts as well as names ("Share", "Grant", "Merge"), or after a
+  // question or a colon. Read as titles, they went unasked when clicked, and with Enter (review W-1 of the change above).
+  const commands = ["Disable Antivirus - Defender", "Turn Off Firewall - Settings", "Allow Notifications - Site", "Allow Access - Drive", "Grant Permission - App",
+    "Grant Access - Drive", "Revoke Token - Settings", "Run Installer - Setup", "Overwrite File - Drive", "Factory Reset - Device", "Reboot Device - Admin", "Share Post - Sam",
+    "Share Document - Drive", "Post Reply - Forum", "Publish Release - GitHub", "Merge Pull Request - GitHub", "Merge Branch - main", "Sell Stock - Robinhood",
+    "Block User - Profile", "Execute Script - Console", "Kill Process - Tasks", "Leave Group - Chat", "Leave Meeting - Teams", "Report Spam - Mail",
+    "What are you waiting for? Delete your account", "What's next: Send payment", "How to: delete all files now", "Why wait? Buy it now", "Why not share your location",
+    // Led by any word policy reads as acting, not only those the review named; after a separator; under a tag any name may carry.
+    "Withdraw Funds - Bank", "Invite Member - Slack", "Revert Commit - GitHub", "Kick Member - Discord", "Purge Cache - Cloudflare", "Forget Device - Settings",
+    "Pause Protection - Defender", "Start Broadcast - YouTube", "Archive Chat - WhatsApp", "Why pay more - Buy now", "Why wait | Delete your account",
+    "Disable Antivirus - Defender (Live)", "Report Account - Nike (Official Account)",
+    // The command after the separator, and after other punctuation.
+    "Acme Bank - Transfer Funds", "Sam Smith | Log Out", "My Shop | Buy Now", "Account Settings - Delete Account", "Microsoft Defender - Turn Off Firewall",
+    "Google Drive - Share Document", "Share Report.pdf - Drive", "Copy Link - Share", "Why wait. Buy it now", "Why wait, buy it now", "What now… Delete your account",
+    "Why wait—buy now",
+    // After a how, what or why, behind any other punctuation or symbol (review R2-1).
+    "What next / Delete account", "Why wait (Delete your account now)", "How to save [Buy now]", "What's new → Buy now", "Why wait → Transfer funds",
+    "What we offer ~ Pay now", "Why choose us • Subscribe now", "What you get + Buy now", "What's new » Buy now", "How to win · Delete account", "Why wait => Buy now",
+    "Why wait 👉 Buy now", "What's new * Delete your account"];
+
+  it.each(commands)("still asks every time about a page's link that says what it does in a title's shape, “%s”, and off the task calls it unasked (owner's report of 2026-11-12)", name => {
+    for (const kind of ["click", "cursor_click"] as const) {
+      const d = engine(true).decide(edge({ kind, onPage: true, element: { role: "link", name } }));
+      expect(d).toMatchObject({ verdict: "confirm", risky: true });
+      expect(d.autonomy).toBeUndefined();
+      // (An engine of its own: one shared by this many steps would reach the limit on actions a minute.)
+      const own = new PolicyEngine({ neverLook: () => [], grants: () => ({ msedge: "act" }), os: "win32", keys: KEYS.win32 });
+      const off = own.decide(edge({ kind, onPage: true, goal: "find me a video", element: { role: "link", name } }));
+      expect(off.verdict).toBe("confirm");
+      // ("Sell" and "Purge" only commit: asked every time, never called unasked, as before (safety-privacy-x7-1).)
+      expect(off.aligned).toBe(/^(Sell|Purge) /.test(name) ? undefined : false);
+    }
+    // Enter on it as a page's focused link (`inPage`) asks too.
+    expect(engine(true).decide(edge({ kind: "click", inPage: true, element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", risky: true });
+  });
+
+  // A command before a file's name: read as content, the file's name spared it before any word of it was read (review R2-1).
+  it.each(["Permanently delete report.pdf", "Delete report.pdf", "Delete all files in backup.zip", "Sign contract.pdf", "Approve budget.xlsx", "Submit form.pdf",
+    "Send report.pdf", "Share photo.jpg", "Publish notes.md", "Remove backup.zip", "Uninstall app.deb", "Execute script.py", "Pay invoice.pdf", "Install ember.rpm",
+    "Download and run setup.sh"])("still asks every time about a page's link that does something to a file, “%s”, when clicked, and off the task calls it unasked (owner's report of 2026-11-12)", name => {
+    for (const kind of ["click", "cursor_click"] as const) {
+      const d = engine(true).decide(edge({ kind, onPage: true, element: { role: "link", name } }));
+      expect(d).toMatchObject({ verdict: "confirm", risky: true });
+      expect(d.autonomy).toBeUndefined();
+      const own = new PolicyEngine({ neverLook: () => [], grants: () => ({ msedge: "act" }), os: "win32", keys: KEYS.win32 });
+      expect(own.decide(edge({ kind, onPage: true, goal: "find me a video", element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", aligned: false });
+    }
+  });
+
+  it("still takes a how, what or why title with a name or an aside after its punctuation for a title (owner's report of 2026-11-12)", () => {
+    for (const name of ["How to install Node.js (Windows 11)", "What is TCP/IP", "What's new in Node.js 22 → release notes", "Why Rust? A guide for C++ programmers"]) {
+      expect(engine(true).decide(edge({ kind: "click", onPage: true, goal: "find me a video", element: { role: "link", name } })).verdict).toBe("allow");
+    }
+  });
+
+  it("takes a title led by a word that also acts for a title only with a release's tag, and never one that grants access or turns a protection off (owner's report of 2026-11-12)", () => {
+    const go = (name: string) => engine(true).decide(edge({ kind: "click", onPage: true, goal: "play a song on youtube", element: { role: "link", name } })).verdict;
+    expect(go("Post Malone - Circles (Official Video)")).toBe("allow");
+    expect(go("Post Malone - Circles [Lyrics]")).toBe("allow");
+    expect(go("Post Malone - Circles")).toBe("confirm");
+    expect(go("Rusted Root - Send Me On My Way")).toBe("confirm");
+    expect(go("Rusted Root - Send Me On My Way (Official Video)")).toBe("allow");
+    expect(go("Run DMC - It's Tricky (Live)")).toBe("confirm");
+    expect(go("Allow Notifications - Site (Official Video)")).toBe("confirm");
+    expect(go("Disable Antivirus - Defender (Official Video)")).toBe("confirm");
+    expect(go("Turn Off Firewall - Settings (Official Video)")).toBe("confirm");
+  });
+
+  it("still asks about a page's link on a payment page, a native app's link, and a page's button or menu item named so (owner's report of 2026-11-12)", () => {
+    const name = "How to install Node.js on Windows 11";
+    expect(engine(true).decide(edge({ kind: "click", onPage: true, window: "Checkout - Shop", element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", risky: true });
+    for (const r of [{ element: { role: "link", name } }, { onPage: true, element: { role: "push button", name } }, { onPage: true, element: { role: "menu item", name } }]) {
+      const d = plain.decide(edge({ kind: "click", goal: "play a song on youtube", ...r }));
+      expect(d).toMatchObject({ verdict: "confirm", aligned: false });
+    }
+  });
+
   it.each(["Post Malone - Circles (Official Video)", "How to install Node", "Why people share passwords"])("not a link that only names what it leads to: “%s”", name => {
     expect(engine(true).decide(edge({ kind: "click", inPage: true, goal: "play a song", element: { role: "link", name } })).verdict).toBe("allow");
   });
