@@ -5,7 +5,9 @@
  * for another host. The API key is typed into a password field and sent to main once; the page only ever hears whether
  * one is saved ("Key saved", with Replace and Remove). An edit of the provider in force to another host is held here,
  * unsaved, until that host's card is agreed and its details answer as a model service does, or the person says to use
- * them as typed (integrations-c3-1, -c5-1): the details in force stay in force meanwhile, as first run's step for a provider in use keeps them (first-run-r2-1). Words come from copy.ts.
+ * them as typed (integrations-c3-1, -c5-1): the details in force stay in force meanwhile, as first run's step for a provider in use keeps them (first-run-r2-1).
+ * A first yes is followed by Test connection's one check of that host, and what it found is said (integrations-r8-2).
+ * Words come from copy.ts.
  */
 
 import type { EmberProviderApi, ProviderMove, ProviderState } from "../../shared/ipc";
@@ -13,7 +15,7 @@ import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, heldAnswer, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { noteProviderChoice } from "./provider-choice";
-import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldUnlisted, providerHint, providerTestText, providerTestWaits } from "./copy";
+import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldUnlisted, providerHint, providerTestText, providerTestWaits } from "./copy";
 import { providerFailField, providerKeepLabel } from "./first-run-copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
@@ -57,6 +59,11 @@ let checkingFor: string | null = null;
  * with), and nothing is saved before that press (integrations-c5-1, -c7-1).
  */
 let asTyped: { host: string; run: number; asked: string } | null = null;
+/**
+ * Counts first "I agree"s in Home and the edits that change what their check asks with (the switch, the provider
+ * type, the address, Azure's version, the key), so a check's late answer about what was set before says nothing.
+ */
+let agreedRun = 0;
 
 /**
  * What a held edit's check asks with: the provider type (which sets the list's path and the key's header), the
@@ -85,6 +92,8 @@ const agreedFor = (p: Own, host: string | null) => !!host && p.consent.version >
  * the organisation's policy applies here are never written back, and the card's record never travels this way.
  */
 function change(patch: Partial<Omit<Own, "consent">>): Promise<boolean> {
+  // The check after a first "I agree" asked with what was saved then: its answer says nothing about this (integrations-r8-2).
+  if ("on" in patch || "type" in patch || "baseUrl" in patch || "azureApiVersion" in patch) agreedRun++;
   // An edit held for another host takes the rest of the details with it, saved together (integrations-c3-1).
   if (held && !("on" in patch)) { held = { ...held, fields: { ...held.fields, ...patch } }; draw(); return Promise.resolve(true); }
   noteProviderChoice();
@@ -364,11 +373,19 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     }
     if (held) { if (checkingFor === null) void adopt(next.agree); return; }
     noteProviderChoice();
-    void a.agree(next.agree).then(r => {
+    const run = ++agreedRun;
+    void a.agree(next.agree).then(async r => {
       if (!r.ok) { say(r.why, true); return; }
       say(providerAgreedText(next.agree));
       $("byok-consent").hidden = true;
       input("byok-url").focus();
+      // Then asked at once, as first run's step and a held edit are, so a wrong address shows now rather than at the
+      // first request: Test connection's one GET, to the host just agreed only (integrations-r8-2). What it finds is
+      // only said: the yes stands.
+      const tried = await a.test().catch(() => ({ ok: false as const, why: PROVIDER_WORDS.testFailed }));
+      if (run !== agreedRun || held || !own?.on || endpointHost(own.baseUrl) !== next.agree) return;
+      say(providerAgreedChecked(next.agree, tried), !tried.ok);
+      if (tried.ok) suggestModels(tried.ids ?? []);
     });
   });
   // The second, explicit press for a host that answered its check with no model list (integrations-c5-1): for the card
@@ -421,6 +438,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     // Saved now it would be for the host still in force: it waits in the field for the held edit's yes (integrations-c3-1).
     if (held) { say(providerHeldKey(endpointHost(held.fields.baseUrl ?? ""))); return; }
     noteProviderChoice();
+    agreedRun++;
     void a.saveKey(key).then(r => {
       if (r.ok) { field.value = ""; replacing = false; say(PROVIDER_WORDS.keySaved); } else say(r.why, true);
       return reread();
@@ -429,6 +447,7 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
   $("byok-key-replace").addEventListener("click", () => { replacing = true; draw(); input("byok-key").focus(); });
   $("byok-key-remove").addEventListener("click", () => {
     noteProviderChoice();
+    agreedRun++;
     void a.removeKey().then(r => { say(r.ok ? PROVIDER_WORDS.keyRemoved : r.why, !r.ok); replacing = false; return reread(); }).then(() => input("byok-key").focus());
   });
   $("byok-test").addEventListener("click", () => {

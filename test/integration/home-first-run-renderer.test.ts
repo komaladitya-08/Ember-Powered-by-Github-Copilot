@@ -583,6 +583,50 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(ao) a first “I agree” in Home asks that host once and says what it found, and an answer that comes after the switch went off says nothing (integrations-r8-2)", async () => {
+    const agreeTo = async (page: Page) => {
+      await expect.poll(() => page.locator("#byok-consent").isVisible()).toBe(true);
+      await page.waitForTimeout(AGREE_ARM_MS + 100);
+      await page.locator("#byok-yes").click();
+      await expect.poll(() => calls(page)).toContain("test");
+    };
+    // Ollama's address without /v1: it answers 404 to GET /models.
+    const p = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "http://127.0.0.1:18108" } });
+    await agreeTo(p);
+    // Only after the yes, and only of the saved details (no draft, no other host).
+    expect((await calls(p)).filter(c => c === "test" || c.startsWith("test-draft:") || c.startsWith("agree:"))).toEqual(["agree:127.0.0.1:18108", "test"]);
+    expect(await p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18108.");
+    await settle(p, "test", { ok: false, why: "127.0.0.1:18108 answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" });
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18108. 127.0.0.1:18108 answered, but has no model list at that address. Check the endpoint and the provider.");
+    expect(await p.locator("#byok-msg").getAttribute("class")).toContain("error");
+    // The yes stands: nothing was turned off or taken back.
+    expect(await p.evaluate(() => window.__frState.settings.provider)).toMatchObject({ on: true, consent: { host: "127.0.0.1:18108" } });
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "byok-agreed-checked.png"), fullPage: true });
+    }
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+
+    // A service that lists models: named, and offered in both model fields.
+    const q = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "http://127.0.0.1:18109/v1" } });
+    await agreeTo(q);
+    await settle(q, "test", { ok: true, host: "127.0.0.1:18109", models: 1, ids: ["llama3.2:3b"] });
+    await expect.poll(() => q.locator("#byok-msg").innerText()).toBe("Agreed. Ember now sends your requests to 127.0.0.1:18109, which lists 1 model: llama3.2:3b.");
+    expect(await q.locator("#byok-msg").getAttribute("class")).not.toContain("error");
+    expect(await q.locator("#byok-models option").evaluateAll(os => os.map(o => (o as HTMLOptionElement).value))).toEqual(["llama3.2:3b"]);
+    expect((q as Page & { errors: string[] }).errors).toEqual([]);
+
+    // The switch turned off while the check was out: its answer is about a provider no longer in use, and says nothing.
+    const r = await open({ home: true, liveState: true, provider: { on: true, baseUrl: "http://127.0.0.1:18110/v1" } });
+    await agreeTo(r);
+    await r.locator("#byok-on").uncheck();
+    await expect.poll(() => r.evaluate(() => window.__frState.settings.provider.on)).toBe(false);
+    await settle(r, "test", { ok: false, why: "Ember can't reach 127.0.0.1:18110. Check the address and the network.", cause: "refused" });
+    await r.waitForTimeout(200);
+    expect(await r.locator("#byok-msg").innerText()).toBe("");
+    expect((r as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
   it("(aj) Home holds an edit of my provider in use to another host until its note is agreed and it answers: requests stay with the one in use, and a failed check or Keep using changes nothing; the lines under it say that once (integrations-c3-1, -r7-3)", async () => {
     const using = "127.0.0.1:18308";
     const service = { kind: "user", host: using };

@@ -1115,7 +1115,12 @@ offered as suggestions in both model fields, set as option values only. It is di
 until the card below is agreed for the endpoint's host: nothing at all goes to a host the user hasn't agreed to, with
 or without a key. A line under it says why it waits (its `aria-describedby`), and when the card comes up for an
 address just entered, the status line says "Read the note above: Ember sends nothing to <host> until you agree."
-(focus has moved on to the next field by then), and once agreed "Agreed. Ember now sends your requests to <host>.". It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
+(focus has moved on to the next field by then), and once agreed "Agreed. Ember now sends your requests to <host>.".
+That yes is followed at once by the same one GET, to that host only, as first run's step and a held edit are, and
+the line then says what it found after the agreement: "Agreed. Ember now sends your requests to <host>, which lists 1
+model: llama3.2:3b.", or main's sentence for an address that answers without a model list (Ollama's without `/v1`),
+wants a key or can't be reached, in red (`providerAgreedChecked`, integrations-r8-2). It only says it: the yes stands,
+and an answer that comes after the switch, the address, the type or the key changed says nothing. It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
 headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever address the service named.
 First run's provider step, opened for a provider already in use, checks edited details before any of them replaces the
 details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the
