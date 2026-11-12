@@ -18033,6 +18033,62 @@
   {
    "cmd": "tar -xf a.tar --transform=\"s,^x,$p,\"",
    "verdict": "run"
+  },
+  {
+   "cmd": "rclone copy ./src remote:dst --max-transfer 10G",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.rclone-operands"
+   ]
+  },
+  {
+   "cmd": "rclone copy ./src remote:dst --tpslimit 10",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.rclone-operands"
+   ]
+  },
+  {
+   "cmd": "rclone copy ./src remote:dst --s3-chunk-size 64M",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.rclone-operands"
+   ]
+  },
+  {
+   "cmd": "rclone copy remote:b ./d --max-transfer 10G",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.rclone-operands"
+   ]
+  },
+  {
+   "cmd": "rclone move ./src remote:dst --max-transfer 10G",
+   "verdict": "ask",
+   "rules": [
+    "unclear.rclone-operands",
+    "cloud.delete"
+   ]
+  },
+  {
+   "cmd": "rclone copy remote:x . --transfers 4",
+   "verdict": "run"
+  },
+  {
+   "cmd": "rclone copy ./a ./b --max-transfer=10G",
+   "verdict": "run"
   }
  ]
 }

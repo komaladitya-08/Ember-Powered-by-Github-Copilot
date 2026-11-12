@@ -273,6 +273,18 @@ describe("the download-and-run fixes, decided no less safely than main (round ei
     }
   });
 
+  it("asks when an rclone copy has more operands than it takes, so its destination is a guess (commands-remote-y8-5)", () => {
+    for (const opt of ["--max-transfer 10G", "--tpslimit 10", "--max-delete 5", "--cutoff-mode soft", "--s3-chunk-size 64M", "--drive-chunk-size 64M"]) {
+      const r = run(`rclone copy ./src remote:dst ${opt}`);
+      expect(r.decision.verdict, opt).toBe("ask");
+      expect(r.decision.rules, opt).toContain("unclear.rclone-operands");
+    }
+    expect(run("rclone move ./src remote:dst --max-transfer 10G").decision.rules).toContain("unclear.rclone-operands");
+    // A value option rclone's table knows, or one attached, is read as before.
+    expect(run("rclone copy remote:x . --transfers 4").decision.verdict).toBe("run");
+    expect(run("rclone copy ./a ./b --max-transfer=10G").decision.verdict).toBe("run");
+  });
+
   it("asks before rclone sends data to a cloud remote named in a value option (commands-remote-x8-1)", () => {
     for (const cmd of [
       "rclone copy src dst --backup-dir remote:backups", "rclone copy a b --compare-dest remote:ref", "rclone copy a b --copy-dest remote:ref",

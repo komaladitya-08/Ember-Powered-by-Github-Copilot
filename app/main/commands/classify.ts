@@ -7430,6 +7430,9 @@ reg(NATIVE, ["rclone"], h => {
   if (/^(config|password|obscure|authorize)$/.test(verb)) { h.e.add("secret", "secret.program", SAYS.secrets); return; }
   if (/^(delete|purge|deletefile|rmdir|rmdirs|cleanup|dedupe)$/.test(verb)) { h.e.add(remoteAt ? "remote-delete" : "destroy", remoteAt ? "cloud.delete" : "posix.rm", "Deletes files."); return; }
   if (/^(copy|copyto|sync|move|moveto|copyurl|bisync|rcat|mkdir|touch|settier|link)$/.test(verb)) {
+    // More operands than the verb takes: an option this table doesn't know took a value (`--max-transfer 10G`), so which
+    // word is the destination is a guess, and it asks (commands-remote-y8-5).
+    if (/^(copy|copyto|sync|move|moveto|copyurl|bisync)$/.test(verb) && ops.length > 2) h.e.unclear("unclear.rclone-operands", "Ember can't tell where it copies files to.");
     const dest = ops[ops.length - 1] ?? "";
     const sentTo = [dest, mainOps[mainOps.length - 1] ?? "", optRemote ?? ""].find(remote);
     if (sentTo !== undefined) {
