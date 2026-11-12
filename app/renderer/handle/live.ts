@@ -1,12 +1,14 @@
 /**
  * What the handle says in its live region, which a screen reader reads once per change: pure, so it is unit-tested
  * (handle-mic.test.ts, handle-live.test.ts). The pill says only news about the microphone; the no-compositor card, where
- * nothing else speaks for Ember, also says the status line and the bubble's words.
+ * nothing else speaks for Ember, also says the status line, the bubble's words and, in a region of its own, a task's end.
  */
 
 import { announcement, wholeReadNews, type BubbleView } from "@ember/bubble";
 import type { MicState } from "../../shared/voice";
 import { micAnnouncement } from "../../shared/mic";
+import type { EmberState, TaskCard } from "../../shared/overlay";
+import { taskAnnouncement } from "../home/tasks-copy";
 
 /**
  * States the microphone passes through on its way somewhere (starting to listen, fetching the speech models): no news
@@ -14,6 +16,18 @@ import { micAnnouncement } from "../../shared/mic";
  * Ember's retries (error, starting, error…) is said once, and again only once listening has worked in between.
  */
 const PASSING: ReadonlySet<MicState> = new Set(["starting", "downloading"]);
+
+/** A task's states once it has ended: news once, on the card (taskNews). */
+const ENDED: ReadonlySet<TaskCard["status"]> = new Set(["done", "failed", "stopped"]);
+
+/**
+ * The microphone opens or is open for a request (a wake's window, a conversation's, Listen once's) or for Voice Match's
+ * phrases: a screen reader would say a line through the speakers into what Ember hears (design-system.md "Screen
+ * readers"), so the card holds a task's end meanwhile, as Home holds its own (holdTaskNews).
+ */
+export function micOpen(s: Pick<EmberState, "mic" | "micLearning">): boolean {
+  return s.mic === "active" || s.mic === "starting" || s.micLearning === true;
+}
 
 /** The question a bubble's buttons answer (their "q<n>:" ids, the Confirmer's number), or null for none. */
 export function questionOf(actions: readonly { id: string }[]): number | null {
@@ -33,6 +47,8 @@ export class HandleLive {
   private announcedView: BubbleView | null = null;
   private question: number | null = null;
   private inRegion = false;
+  /** Each task's state as last said (or first seen): its end is news once. */
+  private tasksSaid = new Map<string, TaskCard["status"]>();
   /** The status line last said. */
   private announcedStatus = "";
   /** Whether a microphone state came before: the first one is only what it was, no news. */
@@ -66,6 +82,25 @@ export class HandleLive {
     if (!said) return gone();
     this.inRegion = true;
     return said;
+  }
+
+  /**
+   * What the card says of tasks that ended since it last said ("Print two lines: Done"), in Home's words for a task's
+   * change (taskAnnouncement), or null. Without it a task that worked in the corner ended in silence on the card, with
+   * Home closed (accessibility-c8-2). One it first sees is no news. `held` (micOpen): nothing is said, and what a task
+   * comes to meanwhile is said once it is let go.
+   */
+  taskNews(tasks: readonly TaskCard[], held: boolean): string | null {
+    const said: string[] = [];
+    for (const t of tasks) {
+      const before = this.tasksSaid.get(t.id);
+      if (held && before !== undefined) continue;
+      if (before !== undefined && before !== t.status && ENDED.has(t.status)) said.push(taskAnnouncement(t.title, t.status, t.unanswered === true));
+      this.tasksSaid.set(t.id, t.status);
+    }
+    // A card that has gone is forgotten (its id is never used again).
+    for (const id of [...this.tasksSaid.keys()]) if (!tasks.some(t => t.id === id)) this.tasksSaid.delete(id);
+    return said.length ? said.join(". ") : null;
   }
 
   /** What to say about the microphone with this update (a change to a problem, voice not set up, muted), or null. */

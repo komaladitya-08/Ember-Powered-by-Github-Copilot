@@ -5,7 +5,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { WHOLE_READ_SAID, type BubbleView } from "@ember/bubble";
-import { HandleLive, questionOf } from "../../app/renderer/handle/live";
+import { HandleLive, micOpen, questionOf } from "../../app/renderer/handle/live";
+import type { TaskCard } from "../../app/shared/overlay";
 
 const STEP = "Ctrl+Alt+Y allow · Ctrl+Alt+N not now";
 /** A command question as the card showed it twice in one task (elevated Ember: every command asks). */
@@ -75,9 +76,49 @@ describe("the corner card's live region", () => {
     expect(questionOf([])).toBeNull();
   });
 
+  it("says a task that ended, once, in Home's words for it, and nothing for one it first sees (accessibility-c8-2)", () => {
+    const live = new HandleLive();
+    const task = (status: TaskCard["status"], extra: Partial<TaskCard> = {}): TaskCard => ({ id: "t1", title: "Print two lines with two commands", status, detail: "", ...extra });
+    expect(live.taskNews([task("running")], false)).toBeNull();
+    expect(live.taskNews([task("waiting")], false)).toBeNull();
+    expect(live.taskNews([task("running")], false)).toBeNull();
+    expect(live.taskNews([task("done")], false)).toBe("Print two lines with two commands: Done");
+    expect(live.taskNews([task("done")], false)).toBeNull();
+    // Two at once, each in its own words; one whose question went unanswered says so.
+    const two = new HandleLive();
+    two.taskNews([task("running"), { ...task("running"), id: "t2", title: "Tidy the desktop" }], false);
+    expect(two.taskNews([task("failed"), { ...task("stopped", { unanswered: true }), id: "t2", title: "Tidy the desktop" }], false))
+      .toBe("Print two lines with two commands: Didn't finish. Tidy the desktop: No answer in time");
+    // A task the card first sees already ended is no news.
+    expect(new HandleLive().taskNews([task("done")], false)).toBeNull();
+  });
+
+  it("holds a task's end while the microphone opens or is open for a request, and says it after (accessibility-c8-2)", () => {
+    const live = new HandleLive();
+    const task = (status: TaskCard["status"]): TaskCard => ({ id: "t1", title: "Print two lines with two commands", status, detail: "" });
+    live.taskNews([task("running")], false);
+    expect(live.taskNews([task("done")], true)).toBeNull();
+    expect(live.taskNews([task("done")], true)).toBeNull();
+    expect(live.taskNews([task("done")], false)).toBe("Print two lines with two commands: Done");
+    expect(micOpen({ mic: "active" })).toBe(true);
+    expect(micOpen({ mic: "starting" })).toBe(true);
+    expect(micOpen({ mic: "waiting", micLearning: true })).toBe(true);
+    expect(micOpen({ mic: "waiting" })).toBe(false);
+    expect(micOpen({ mic: "off" })).toBe(false);
+    expect(micOpen({})).toBe(false);
+  });
+
   it("is what the card's page says, emptied when the bubble's words have gone and nothing else is said (accessibility-c8-1)", () => {
     const main = readFileSync("app/renderer/handle/main.ts", "utf8");
     expect(main).toContain("const said = live.bubble(view, questionOf(b.actions), name);");
     expect(main).toContain('else if (said === "" && $("live").textContent) $("live").textContent = "";');
+  });
+
+  it("says a task's end on the card in a status region of its own, held a second past the microphone (accessibility-c8-2)", () => {
+    const main = readFileSync("app/renderer/handle/main.ts", "utf8");
+    const page = readFileSync("app/renderer/handle/index.html", "utf8");
+    expect(page).toContain('<div id="task-live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>');
+    expect(main).toContain("const news = live.taskNews(tasksNow, newsHeld);");
+    expect(main).toContain("newsSoon = setTimeout(() => { newsSoon = undefined; newsHeld = false; sayTasks(); }, LIVE_SETTLE_MS);");
   });
 });
