@@ -2393,9 +2393,11 @@ describe("the option tables: a flag that takes no value never takes the word aft
       ]);
     }
     for (const d of ["/home/ana/.config/ember", "/home/ana/.ssh"]) each([[`redis-cli --cacertdir ${d} PING`, `ls ${d}`], [`O='--cacertdir ${d}'; redis-cli $O PING`, `ls ${d}`]]);
-    // A dump to the project or the terminal, and a read, run as before; options in a variable still ask.
-    for (const cmd of ["redis-cli --rdb dump.rdb", "redis-cli --rdb -", "redis-cli -h db --rdb backup/dump.rdb", "redis-cli --tls --cacertdir certs PING", "redis-cli -h db PING"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
+    // A dump to the project or the terminal, and a read, run as before; options in a variable still ask, and so does a
+    // read behind --tls or --cacertdir, which main's table read otherwise (commands-held-3).
+    for (const cmd of ["redis-cli --rdb dump.rdb", "redis-cli --rdb -", "redis-cli -h db --rdb backup/dump.rdb", "redis-cli -h db PING"]) expect(decided(cmd).decision.verdict, cmd).toBe("run");
     expect(decided("O='--rdb dump.rdb'; redis-cli $O").decision.verdict).toBe("ask");
+    expect(decided("redis-cli --tls --cacertdir certs PING").decision.rules).toEqual(["unclear.option-value", "db.change"]);
   });
 
   it("keeps GNU grep's --ignore (its --ignore-case), rg's --ignore and lsd's -L and -t switches, so the file after them is judged (commands-remote-v5-5)", () => {
@@ -2913,5 +2915,24 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
       expect(decided(cmd).verdict, cmd).toBe("run");
     }
     expect(decided("git commit -S").rules).toEqual(["unclear.interactive"]);
+  });
+
+  it("asks before redis-cli behind an option main's table read otherwise, and keeps its change to the data on the card (commands-held-3)", () => {
+    for (const cmd of [
+      "redis-cli --tls GET x", "redis-cli --tls KEYS '*'", "redis-cli --tls --rdb dump.rdb", "redis-cli --cacertdir x PING", "redis-cli --cacertdir x", "redis-cli --tls --cacertdir certs PING",
+      "redis-cli --tls --cert x PING", "redis-cli --sni x PING", "redis-cli --sni x INFO", "redis-cli -c GET x", "redis-cli --show-pushes yes INFO", "redis-cli --show-pushes yes PING",
+    ]) {
+      expect(decided(cmd).verdict, cmd).toBe("ask");
+      expect(decided(cmd).classes, cmd).toContain("destroy");
+      expect(decided(cmd).says, cmd).toContain("Changes or deletes data in a database.");
+    }
+    // CONFIG SET behind one of them was a change to the data on main and is a change to the server now: both are said.
+    for (const cmd of ["redis-cli --tls CONFIG SET dir /tmp", "redis-cli -c CONFIG SET dir /tmp", "redis-cli --sni x CONFIG SET dir /tmp", "redis-cli --show-pushes yes CONFIG SET dir /tmp"]) {
+      expect(decided(cmd).classes, cmd).toEqual(expect.arrayContaining(["destroy", "system"]));
+    }
+    // Options both tables read alike, no option at all, and a line main ran whichever way it is read, run as before.
+    for (const cmd of ["redis-cli PING", "redis-cli -h db PING", "redis-cli GET x", "redis-cli -h db -p 6380 -n 2 INFO", "redis-cli --rdb dump.rdb", "redis-cli --tls=1 PING", "redis-cli -c INFO"]) {
+      expect(decided(cmd).verdict, cmd).toBe("run");
+    }
   });
 });
