@@ -714,7 +714,13 @@ words), and stops it when what the recognizer made of it isn't Ember's own words
 approves anything (`overEmber`). With other sound playing, only what is said by name counts: Windows reads the output's
 level while a conversation is open, a question is up or a task is at work (app/renderer/mic/output-watch.ts: Chromium
 gives system audio only with a screen's video, which is stopped at once; main's `syncOutputWatch`), Linux uses the
-speakers' stream, macOS can't tell yet. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
+speakers' stream, macOS can't tell yet. Ember's own voice isn't other sound, and what follows it is, at once: on Linux
+whatever sounds in the speakers' stream after Ember's voice left it (`ownSoundUntil` in engine.ts: its last sound
+before the stream was quiet for 160 ms, or 400 ms after it says it stopped); on Windows whatever the watch sees from
+0.4 s after its last look at Ember speaking (`EMBER_LINGER_MS`), and what played up to Ember's voice counts as playing
+through it and for 2.5 s after. Before, neither counted anything for the first second or so after Ember's voice, and
+a video's or a call's lone “Okay.” right after Ember read a question out was taken (second review of the voice lane,
+V2-S1); a word that starts and ends within those 0.4 s on Windows is still not seen. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
 has looked past Ember's own voice, or after it stopped or was refused: `soundKnown` in engine.ts), a yes to a question
 said without the name, in the answer window, a follow-up or a conversation, is taken as said over other sound: with
 Voice Match off it isn't taken, and the question says once to say the name first (`sound-unknown`); a no and anything

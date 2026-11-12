@@ -868,6 +868,72 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(heard(null, 0).filter(e => e.type === "utterance" || e.type === "answer-over")).toEqual([]);
   }, 180_000);
 
+  /**
+   * Words in one of the default voice's speakers (Kitten, which comes with the listening models: nothing more to fetch),
+   * on the WebAssembly build, at 16 kHz, cut to the words, at `level` RMS: other voices than the clips', for what a video,
+   * a call or the room says. Each rendition comes out a little different.
+   */
+  let kitten: { generate(o: { text: string; sid: number; speed: number }): { samples: Float32Array; sampleRate: number } } | null = null;
+  const speak = (text: string, sid: number, level: number): Float32Array => {
+    const { kind: _kind, ...files } = kittenSpec(path.join(dir, "models", DEFAULT_VOICE.target));
+    kitten ??= sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsKittenModelConfig: files, numThreads: 1, debug: 0, provider: "cpu" }, maxNumSentences: 1 });
+    const a = kitten!.generate({ text, sid, speed: 1 });
+    const raw = new Float32Array(Math.floor(a.samples.length * 16000 / a.sampleRate));
+    for (let i = 0; i < raw.length; i++) { const x = i * a.sampleRate / 16000, k = Math.floor(x), f = x - k; raw[i] = a.samples[k] * (1 - f) + (a.samples[Math.min(k + 1, a.samples.length - 1)] ?? 0) * f; }
+    let from = 0, to = raw.length;
+    while (from < to && Math.abs(raw[from]) < 0.01) from++;
+    while (to > from && Math.abs(raw[to - 1]) < 0.01) to--;
+    const cut = raw.subarray(from, to);
+    const gain = level / Math.sqrt(cut.reduce((n, v) => n + v * v, 0) / Math.max(1, cut.length));
+    return cut.map(x => x * gain);
+  };
+  /** `x` added into `into` from sample `from`, at `gain`. */
+  const mix = (into: Float32Array, x: Float32Array, from: number, gain = 1) => { for (let i = 0; i < x.length && from + i < into.length; i++) into[from + i] += x[i] * gain; };
+  /** The microphone hears the speakers 64 ms after their own stream has the sound. */
+  const SPEAKERS_LAG = at(0.064);
+  /** The utterances that read as a yes and carry no mark: what main would take from anyone heard. */
+  const yeses = (events: VoiceEvent[]) => sent(events).filter(e => spokenAnswer(e.text) === "allow" && !e.overSound && !e.overEmber);
+
+  it("takes a video's or a call's lone yes begun right after Ember reads its question out for no one's, where the speakers' own stream says it played (Linux with parec; V2-S1)", () => {
+    // A video is on (its last sentence 2 s before the question), Ember reads the question out through the speakers
+    // (their stream has it; the microphone hears it 12 dB down), the page says it stopped as its audio ends and main
+    // opens the answer window. Then a lone yes, `on` s after Ember's voice: the video's (in the stream, and in the
+    // microphone 6 dB down), or the user's own (the microphone only).
+    const ember = speak("To allow, press Control Alt Y; for not now, press Control Alt N.", 0, 0.1);
+    const before = speak("And then we can book the flights to Lisbon.", 3, 0.1);
+    const tAsk = 0.5 + before.length / 16000 + 2, tStop = tAsk + ember.length / 16000;
+    const after = (yes: Float32Array, on: number, by: "video" | "user") => {
+      const total = at(tStop + on + yes.length / 16000 + 3);
+      const speakers = new Float32Array(total), mic = new Float32Array(total);
+      mix(speakers, before, at(0.5)); mix(mic, before, at(0.5) + SPEAKERS_LAG, 0.5);
+      mix(speakers, ember, at(tAsk)); mix(mic, ember, at(tAsk) + SPEAKERS_LAG, 0.25);
+      if (by === "user") mix(mic, yes, at(tStop + on));
+      else { mix(speakers, yes, at(tStop + on)); mix(mic, yes, at(tStop + on) + SPEAKERS_LAG, 0.5); }
+      const s = session({ speakers: true });
+      const asks = Math.round(at(tAsk) / 512), stops = Math.round(at(tStop) / 512);
+      s.hear(inRoom(mic), { speakers, onFrame: k => {
+        if (k === asks - 30) s.engine.questionUp(true);
+        if (k === asks) s.engine.selfSpeaking(true);
+        if (k === stops) { s.engine.selfSpeaking(false); s.engine.answerWindow(8000); }
+      } });
+      s.end();
+      return s.events;
+    };
+    // (On 01493d0 nothing in the stream counted as other sound for 1.5 s after Ember's voice: "Yes." and "Sure." begun
+    // 0.2 to 0.3 s after it went out unmarked, 7 of 72 runs with a video quiet between its sentences.)
+    const taken: string[] = [];
+    for (const [text, sid] of [["Yes.", 3], ["Yes.", 5], ["Sure.", 3], ["Sure.", 5]] as const) {
+      const yes = speak(text, sid, 0.1);
+      for (const on of [0.2, 0.3, 0.4]) for (const e of yeses(after(yes, on, "video"))) taken.push(`${text} (voice ${sid}) ${on} s after Ember: “${e.text}”`);
+    }
+    expect(taken).toEqual([]);
+    // The user's own, with nothing else in the stream then, is taken as before (a rendition the recognizer writes as
+    // other words leaves nothing: up to four are tried).
+    let own = 0;
+    for (let take = 0; take < 4 && !own; take++) own = yeses(after(speak("Yes, please.", 5, 0.1), 0.3, "user")).length;
+    expect(own).toBe(1);
+  }, 300_000);
+
   it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
     // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for
     // phrases: the owner's held-out clips then scored 0.47-0.66 against the voiceprint, the screen reader's 0.70-0.82.

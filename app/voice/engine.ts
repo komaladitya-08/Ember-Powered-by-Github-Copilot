@@ -768,6 +768,13 @@ export class VoiceEngine {
   private monitorSoundAt = Number.NEGATIVE_INFINITY;
   private monitorFrameAt = Number.NEGATIVE_INFINITY;
   private monitorSpotting = false;
+  /**
+   * Sound in the speakers' stream up to then is Ember's own voice: all of it while the page says Ember speaks, then up to
+   * its last sound before the stream was quiet for a turn's gap (OWN_GAP_MS), and at most the tail after the page said
+   * it stopped (selfSpeaking). Not selfSpeakingUntil, which a cut-in dates from the moment the user spoke over Ember:
+   * Ember's voice, hushed a moment later, was other sound by that, and what the user went on to say was dropped.
+   */
+  private ownSoundUntil = 0;
   /** The microphone's recent frame energies (as long as the speakers' ring), and how much later it hears the speakers (ms, measured as Ember speaks). */
   private micLevels: number[] = [];
   /** Which of those frames held Ember's own voice (SELF_LAG_MS). */
@@ -885,10 +892,12 @@ export class VoiceEngine {
   /**
    * Other sound is playing: a song's or a video's words reach the microphone, and the echo canceller knows only Ember's
    * own voice. In a conversation Ember then hears only what is said to it by name, and isn't interrupted by the rest.
-   * The speakers' own stream says so too where there is one (Linux with parec), once Ember's voice has left it.
+   * The speakers' own stream says so too where there is one (Linux with parec): what sounds in it after Ember's own voice
+   * left it (ownSoundUntil) is other sound at once. It was other sound only from 1.5 s after Ember's voice, and for that
+   * long a video's or a call's lone "Okay." right after Ember read a question out was anyone's yes (V2-S1).
    */
   private soundPlaying(now: number): boolean {
-    return this.output === true || (this.hearsSpeakers(now) && now >= this.selfSpeakingUntil + OTHER_SOUND_MS && now - this.monitorSoundAt < OTHER_SOUND_MS);
+    return this.output === true || (this.hearsSpeakers(now) && this.monitorSoundAt > this.ownSoundUntil && now - this.monitorSoundAt < OTHER_SOUND_MS);
   }
 
   /** Words Ember is about to say (spokenByEmber tells them from the user's). */
@@ -1020,10 +1029,12 @@ export class VoiceEngine {
       if (this.selfSpeakingUntil > now) { this.tailFrom = now; this.micLag = this.measureLag() ?? this.micLag; }
       this.selfSpeakingUntil = Math.min(this.selfSpeakingUntil, now + tailMs);
       this.selfVoiceUntil = Math.min(this.selfVoiceUntil, now + SELF_LAG_MS);
+      this.ownSoundUntil = Math.min(this.ownSoundUntil, now + tailMs);
       return;
     }
     this.selfSpeakingUntil = now + SELF_SPEAKING_MAX_MS;
     this.selfVoiceUntil = now + SELF_SPEAKING_MAX_MS;
+    this.ownSoundUntil = now + SELF_SPEAKING_MAX_MS;
     this.tailFrom = 0;
     this.tail = [];
     if (this.mode.kind !== "listening") return;
@@ -1165,6 +1176,8 @@ export class VoiceEngine {
     this.monitorFrameAt = at;
     const rms = rmsOf(frame);
     const sound = rms >= (this.o.silenceRms ?? 0.0008);
+    // Ember said it stopped, and the stream has been quiet for a turn's gap since its last sound: its voice has left it.
+    if (!sound && !this.pageSpeaking && at < this.ownSoundUntil && at - this.monitorSoundAt >= OWN_GAP_MS) this.ownSoundUntil = this.monitorSoundAt;
     if (sound) this.monitorSoundAt = at;
     this.speakers.push({ frame, at, sound, energy: rms * rms });
     if (this.speakers.length > SPEAKERS_RING_FRAMES) this.speakers.shift();
@@ -2290,6 +2303,12 @@ export function withoutAnnounced(heard: string, announced: readonly string[]): s
 const NAME_ALONE = /^\W*(?:(?:hey|hi|hay|ok|okay|a|day)\W+)?(?:amber|member|ember|emmer|remember|number)\W*$/i;
 /** Other sound counts as playing this long after the speakers' stream last had any (ms). */
 const OTHER_SOUND_MS = 1500;
+/**
+ * The speakers' stream quiet for this long (ms: a turn's gap, TURN_GAP_FRAMES) after Ember said it stopped speaking: its
+ * voice has left the stream, and what sounds there next is someone else's. A shorter gap is a pause in Ember's own last
+ * words, which reach the stream a moment after the page says so.
+ */
+const OWN_GAP_MS = TURN_GAP_FRAMES * 32;
 /** How the recognizer ends a name written as a word of its own: "Number.", "Andber.", "Day number.", "Embra." */
 const NAME_WRITTEN = /(?:ber|mer|bra|bro)\W*$/i;
 /** The spotter heard the name this long ago (ms) at most: what the recognizer wrote then holds it. */

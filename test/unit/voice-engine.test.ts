@@ -2590,3 +2590,132 @@ describe("the answer window after one of Ember's questions (owner's report of 20
     expect(utterances(request)).toEqual([{ type: "utterance", text: "Open the downloads folder.", ms: 0, window: "follow-up" }]);
   });
 });
+
+describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)", () => {
+  /**
+   * A scripted backend whose VAD ends a segment after 0.6 s of quiet, as Silero does, so a segment is judged when the real
+   * one is. A microphone frame says which words it holds ([0], in thousandths, so its level stays its own) and which name
+   * the spotter hears in it ([1]: 1 "ember", 2 "hey_ember"); a frame of the speakers' stream says which name its own
+   * spotter hears ([1]).
+   */
+  const NAMES = ["", "ember", "hey_ember"];
+  const HANG = 19;
+  const code = (x: number) => Math.round(x * 1000);
+  function hears(words: Record<number, string>, speakers: boolean): VoiceBackend {
+    let speaking = false, quiet = 0, seg: Float32Array[] = [];
+    const whole = () => { const s = new Float32Array(seg.length * 512); seg.forEach((f, i) => s.set(f, i * 512)); return s; };
+    const end = () => { const s = whole(); seg = []; speaking = false; quiet = 0; return s; };
+    const spot = (f: Float32Array) => (NAMES[code(f[1])] ? [NAMES[code(f[1])]] : []);
+    const b: VoiceBackend = {
+      spot,
+      vad(f) {
+        if (code(f[0]) > 0) { speaking = true; quiet = 0; seg.push(f); return []; }
+        if (!speaking) return [];
+        seg.push(f);
+        return ++quiet >= HANG ? [end()] : [];
+      },
+      speaking: () => speaking,
+      speechSoFar: () => (speaking ? whole() : null),
+      flushVad: () => (speaking ? [end()] : []),
+      resetVad: () => { speaking = false; quiet = 0; seg = []; },
+      transcribe: s => { for (let i = 0; i < s.length; i += 512) if (words[code(s[i])]) return words[code(s[i])]; return ""; },
+    };
+    if (speakers) { b.spotMonitor = spot; b.padMonitor = () => []; b.resetMonitor = () => undefined; }
+    return b;
+  }
+  /** A microphone frame: the words `tag` at `level` (0: no speech, only sound at that level), the spotter hearing `name` in it. */
+  const mic = (tag: number, level = 0.05, name = 0) => { const f = new Float32Array(512).fill(level); f[0] = tag / 1000; f[1] = name / 1000; return f; };
+  /** A frame of the speakers' own stream at `level`, its spotter hearing `name` in it. */
+  const out = (level: number, name = 0) => { const f = new Float32Array(512).fill(level); f[0] = 0; f[1] = name / 1000; return f; };
+  const frames = (ms: number) => Math.round(ms / 32);
+  type Scene = { e: VoiceEngine; events: VoiceEvent[]; run: (n: number, m?: () => Float32Array, s?: () => Float32Array) => void; emberSays: (ms: number, mic?: number, also?: number) => void; heard: () => unknown[] };
+  /** `speakers`: their own stream arrives (Linux with parec); `otherSound`: what the platform says of other sound (null: nothing). */
+  function scene(words: Record<number, string>, o: { speakers?: boolean; otherSound?: boolean | null; conversation?: boolean } = {}): Scene {
+    const events: VoiceEvent[] = [], c = { t: 1_000_000 };
+    const e = new VoiceEngine(hears(words, !!o.speakers), ev => events.push(ev), { now: () => c.t, conversation: !!o.conversation, otherSound: o.otherSound === undefined ? null : o.otherSound });
+    const run: Scene["run"] = (n, m = () => mic(0, 0), s = () => out(0)) => { for (let i = 0; i < n; i++) { c.t += 32; if (o.speakers) e.feedMonitor(s()); e.feed(m()); } };
+    /** Ember says something for `ms`: the page says so, its speakers' stream carries it (over `also`), the microphone hears `level` of it. */
+    const emberSays: Scene["emberSays"] = (ms, level = 0.02, also = 0) => { e.selfSpeaking(true); run(frames(ms), () => mic(0, level), () => out(0.06 + also)); e.selfSpeaking(false); };
+    /** What left the engine, as main and the voice gate get it: each utterance's words, window and marks, and each other verdict. */
+    const heard = () => events.flatMap(v => (v.type === "utterance" ? [[v.text, v.window, ...(v.overSound ? ["over other sound"] : []), ...(v.soundUnknown ? ["sound unknown"] : []), ...(v.overEmber ? ["over Ember"] : [])].join(" | ")]
+      : v.type === "answer-over" || v.type === "unclear" || v.type === "stop" || v.type === "wake" ? [v.type] : v.type === "rejected" ? [`rejected (${v.reason})`] : []));
+    return { e, events, run, emberSays, heard };
+  }
+  /**
+   * A question comes up, Ember reads it out (the microphone hears `echo` of it; a bed of sound `bed` goes on in the room
+   * and the stream meanwhile), and main opens its answer window as Ember stops (VoiceService does both at once).
+   */
+  const asks = (s: Scene, o: { echo?: number; bed?: number } = {}) => {
+    const bed = o.bed ?? 0;
+    s.e.questionUp(true);
+    s.run(frames(700), () => mic(0, bed / 2), () => out(bed));
+    s.emberSays(2000, o.echo ?? 0.02, bed);
+    s.e.answerWindow(8000);
+  };
+
+  describe("right after Ember reads a question out (V2-S1)", () => {
+    /** A video, quiet between its sentences, says "Okay." (0.4 s) `gap` ms after Ember's voice: in the speakers' stream and the microphone alike. */
+    const videoSays = (gap: number, o: { bed?: boolean; mine?: boolean; conversation?: boolean } = {}) => {
+      const s = scene({ 5: "Okay.", 6: "What time is it?" }, { speakers: true, conversation: o.conversation });
+      const bedMic = () => mic(0, o.bed ? 0.002 : 0), bedOut = () => out(o.bed ? 0.004 : 0);
+      s.run(100, bedMic, bedOut);
+      if (o.conversation) {
+        // The user's own "Hey Ember, what time is it?" first, and Ember's answer: the conversation is open.
+        for (let i = 0; i < 30; i++) s.run(1, () => mic(6, 0.05, i === 10 ? 2 : 0));
+        s.run(40);
+        s.emberSays(1200);
+        s.run(frames(600));
+      }
+      // The video talks for 3 s before the question, then pauses.
+      s.run(frames(3000), () => mic(0, 0.03), () => out(0.05));
+      s.run(frames(400), bedMic, bedOut);
+      s.events.length = 0;
+      asks(s, { echo: o.conversation ? 0 : 0.02, bed: o.bed ? 0.004 : 0 });
+      s.run(frames(gap), bedMic, bedOut);
+      s.run(frames(400), () => mic(5, 0.03), () => out(o.mine ? (o.bed ? 0.004 : 0) : 0.05));
+      s.run(frames(2500), bedMic, bedOut);
+      return s.heard();
+    };
+
+    it("takes a video's or a call's “Okay.” begun a moment after Ember's voice for no one's yes, where the speakers' own stream says it played (Linux with parec)", () => {
+      // The stream went quiet as Ember's voice ended: what sounds in it a turn's gap later is other sound at once. Before, nothing
+      // counted as other sound for 1.5 s after Ember's voice, and the "Okay." went to main unmarked: anyone's yes.
+      for (const gap of [160, 256, 352, 448, 640, 1300]) expect(videoSays(gap), `${gap} ms`).toEqual(["Okay. | answer | over other sound"]);
+      // With a bed of sound under the video the stream never goes quiet: Ember's voice counts as over 400 ms after it says so.
+      for (const gap of [544, 800, 1300]) expect(videoSays(gap, { bed: true }), `bed, ${gap} ms`).toEqual(["Okay. | answer | over other sound"]);
+      // (Begun under the tail of Ember's voice it was never an answer, as before.)
+      for (const gap of [160, 352]) expect(videoSays(gap, { bed: true }), `bed, ${gap} ms`).toEqual(["answer-over"]);
+    });
+
+    it("so in a conversation, the default after a spoken request", () => {
+      for (const gap of [350, 450, 700, 1200]) expect(videoSays(gap, { conversation: true }), `${gap} ms`).toEqual(["Okay. | conversation | over other sound"]);
+    });
+
+    it("still takes the user's own “Okay.” said then, while the speakers' stream is silent or only its bed goes on under Ember's voice", () => {
+      for (const gap of [160, 352, 640]) expect(videoSays(gap, { mine: true }), `${gap} ms`).toEqual(["Okay. | answer"]);
+      for (const gap of [350, 700]) expect(videoSays(gap, { mine: true, conversation: true }), `${gap} ms`).toEqual(["Okay. | conversation"]);
+    });
+
+    it("doesn't take Ember's own voice, hushed when the user cuts in, for other sound: what they go on to say is heard", () => {
+      // A conversation over nothing else: the user talks over Ember, main hushes it, and its last sound leaves the stream
+      // a moment after the cut-in. Dated from the cut-in, that sound was "other sound" for the 1.5 s after it.
+      const s = scene({ 5: "Open my mail please.", 6: "What time is it?" }, { speakers: true, conversation: true });
+      s.run(100);
+      for (let i = 0; i < 30; i++) s.run(1, () => mic(6, 0.05, i === 10 ? 2 : 0));
+      s.run(40);
+      s.events.length = 0;
+      s.e.selfWords("It is ten past four in the afternoon.");
+      s.e.selfSpeaking(true);
+      s.run(30, () => mic(0, 0), () => out(0.06));
+      let hushed = false;
+      for (let i = 0; i < 24; i++) {
+        s.run(1, () => mic(5, 0.05), () => out(hushed ? 0 : 0.06));
+        // Main hushes Ember on the cut-in: the page says it stopped, and its sound leaves the stream three frames later.
+        if (!hushed && s.events.some(v => v.type === "cut-in")) { hushed = true; s.e.selfSpeaking(false); s.run(3, () => mic(5, 0.05), () => out(0.06)); }
+      }
+      s.run(40);
+      expect(hushed).toBe(true);
+      expect(s.heard()).toEqual(["Open my mail please. | conversation | over Ember"]);
+    });
+  });
+});
