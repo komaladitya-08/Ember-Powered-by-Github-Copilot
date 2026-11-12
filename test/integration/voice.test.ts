@@ -795,13 +795,20 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     // (In this test-only voice Moonshine writes a lone "Allow." as "Hello", which is no answer, and "Go ahead." and a lone
     // "Yes." as other words: the window's part is tested on what it writes as said. "Not now." comes out "No, no.".)
     const answers = [["Allow it.", "allow"], ["Allow, please.", "allow"], ["Okay, go with it.", "allow"], ["Yes, please.", "allow"], ["I accept.", "allow"], ["Sounds good.", "allow"], ["No, thanks.", "deny"], ["Not now.", "deny"], ["No.", "deny"]] as const;
+    // This voice comes out a little different each time, and now and then the recognizer writes one rendition as other
+    // words, which leave nothing (no answer): up to four renditions are tried, and none may leave as anything else. With
+    // one each, the test failed in 4 of 8 runs, on 64a6405 as on later commits ("Allow it.", "Not now.", "No.").
     for (const [text, answer] of answers) {
-      const events = asked(said(text));
-      const u = sent(events);
-      expect(u.map(e => e.window), text).toEqual(["answer"]);
-      expect(spokenAnswer(u[0].text), `${text} heard as “${u[0].text}”`).toBe(answer);
-      // No conversation opens after it: what is said next needs the name again.
-      expect(events.some(e => e.type === "listening" && e.window === "conversation"), text).toBe(false);
+      const heard: string[] = [];
+      for (let take = 0; take < 4 && !heard.length; take++) {
+        const events = asked(said(text));
+        const u = sent(events);
+        expect(u.map(e => e.window), text).toEqual(u.length ? ["answer"] : []);
+        for (const e of u) { expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer); heard.push(e.text); }
+        // No conversation opens after it: what is said next needs the name again.
+        expect(events.some(e => e.type === "listening" && e.window === "conversation"), text).toBe(false);
+      }
+      expect(heard, `${text}: never heard as an answer in four renditions`).toHaveLength(1);
     }
     // The room's talk said then, in the clips' voice and in another: nothing leaves the window.
     for (const room of [inRoom(cat(silence(0.5), trimmed("chat"), silence(2))), said("Let's meet at the station after lunch.")]) expect(sent(asked(room))).toEqual([]);
