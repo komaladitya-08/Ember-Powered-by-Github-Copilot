@@ -2935,4 +2935,22 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
       expect(decided(cmd).verdict, cmd).toBe("run");
     }
   });
+
+  it("asks before parallel behind a value option main's table took for a switch, or a switch it took for a value (commands-held-4)", () => {
+    for (const o of [
+      "--wd ...", "--wd /tmp", "--workdir sub", "--slf hosts.txt", "--colsep ' '", "--timeout 5", "--delay 1", "--max-args 1", "-X", "--halt now,fail=1", "--retries 2", "--env X", "--id x",
+      "--nice 10", "--memfree 1G", "--load 80%", "--block 1M", "--return x", "--basefile x", "--rpl '{x} s/a/b/'", "--tagstring x", "-n 1", "-N 1", "-L 1", "-C ,", "-s 100",
+    ]) {
+      for (const run of ["echo", "sh -c 'echo {}'"]) expect(decided(`ls | parallel ${o} ${run}`).verdict, `${o} ${run}`).toBe("ask");
+    }
+    expect(decided("ls | parallel --timeout 5 echo").says).toContain(HELD);
+    for (const context of ["darwin", "wsl-mnt"] as const) expect(decided("ls | parallel --wd ... echo", context).verdict, context).toBe("ask");
+    // What the corrected table finds is still found: the command after the value is judged.
+    expect(decided("ls | parallel --timeout 5 rm -rf").rules).toContain("posix.rm");
+    expect(decided("ls | parallel --wd ~/.config/ember echo").verdict).toBe("refuse");
+    // A job count and the options both tables read alike run as they did.
+    for (const cmd of ["ls | parallel echo", "ls | parallel -j 4 echo", "ls | parallel -j4 echo", "ls | parallel -j$(nproc) echo", "ls | parallel --jobs 4 echo", "ls | parallel -k echo", "ls | parallel --keep-order echo", "ls | parallel --jobs=4 --timeout=5 echo"]) {
+      expect(decided(cmd).verdict, cmd).toBe("run");
+    }
+  });
 });

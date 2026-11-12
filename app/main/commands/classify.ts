@@ -4652,14 +4652,18 @@ function xargsBuilds(p: Parsed, seen: string, repl: string | undefined, ops: rea
 reg(NATIVE, ["parallel"], h => {
   if (h.args.some(a => a.v !== null && /^:::+\+?$/.test(a.v))) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
   // -X (context replace) is a switch, and -l, -i and -e take a value only attached (commands-remote-c4-1).
-  const p = parseOpts(h.args, {
+  const spec: OptSpec = {
     shortValue: "jSaEdINnLCs", shortOptional: "lie", stopAtOperand: true, jobCounts: ["j", "jobs"],
     longValue: [
       "jobs", "sshlogin", "sshloginfile", "slf", "arg-file", "delimiter", "joblog", "results", "tmpdir", "max-args", "colsep", "timeout", "delay", "workdir", "wd",
       "basefile", "bf", "return", "transferfile", "tf", "tagstring", "tag-string", "header", "halt", "nice", "retries", "memfree", "load", "env", "termseq",
       "limit", "arg-sep", "arg-file-sep", "block", "blocksize", "recstart", "recend", "semaphorename", "id", "ssh", "sshdelay", "rpl", "process-slot-var", "max-chars",
     ],
-  });
+  };
+  // Main's table knew eight value options and took -X for one, so the word after any other (`--timeout 5`, `--wd dir`,
+  // `-n 1`) was the program it ran: judged that way too; a job count is the one thing read as now (commands-held-4).
+  const was: OptSpec = { shortValue: "jSaEdIX", longValue: ["jobs", "sshlogin", "arg-file", "eof", "delimiter", "joblog", "results", "tmpdir"], stopAtOperand: true, jobCounts: ["j", "jobs"] };
+  const p = heldOpts(h, spec, was);
   if (p.operands.length === 1 && (p.operands[0].v ?? " ").includes(" ")) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
   if (has(p, "S", "sshlogin")) h.e.add("publish", "send.ssh", "Sends data to another computer.");
   // --wd: the folder each command runs in, judged as a cd to it is (commands-remote-v5-3); `...` is a new one.
