@@ -1058,6 +1058,27 @@ describe("approval stays with the action the user saw (safety review)", () => {
     expect(asked[1].startsWith(ASKING_AGAIN.menu("linux"))).toBe(title === "Disposable.txt");
   });
 
+  // The model reopens the menu with a click, which asks nothing: that step cleared the reason, so the retry was asked
+  // the same as the first time, with no word of why (review W-2).
+  it("says why it asks again about a menu's item once its menu is reopened with a click (owner's report of 2026-11-12)", async () => {
+    let closed = false;
+    const edit: AxNode = { id: 2, parent: null, depth: 1, role: "menu", name: "Edit", states: ["enabled", "sensitive"], bounds: { x: 0, y: 0, width: 40, height: 20 } };
+    const { call, asked } = makeWorker({
+      role: "menu item", name: "Delete", parentRole: "menu", more: [edit], goal: "delete the selected line", userWords: "delete the selected line",
+      canDo: id => (id === 1 ? { tier1: false, why: "the menu item needs the mouse" } : { tier1: true }),
+      onAsk: () => { closed = true; }, live: id => (id === 1 && closed ? null : undefined),
+      onAction: () => { closed = false; return { ok: true, after: { role: "menu", name: "Edit", states: ["enabled"], bounds: edit.bounds } }; },
+    });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 1 })).resultType).toBe("failure");
+    await call("perceive_window", {});
+    expect((await call("click", { id: 2 })).resultType).toBe("success");
+    expect(asked).toHaveLength(1);
+    await call("click", { id: 1 });
+    expect(asked).toHaveLength(2);
+    expect(asked[1].startsWith(`${ASKING_AGAIN.menu("linux")} `)).toBe(true);
+  });
+
   // An Allow spent by a change made while the user decided was told to the model as a new attempt ("ask again"), and
   // the user was asked the same thing again with no word of why (investigation of the owner's report of 2026-11-12,
   // causes 3 and 13).
@@ -1127,6 +1148,84 @@ describe("approval stays with the action the user saw (safety review)", () => {
         onAsk: () => { if (n === 0) n = 5; }, treeNodes: nodes => nodes.map(x => x.id === 3 ? { ...x, name: `0:0${n}` } : x) });
       await no.call("perceive_window", {});
       expect((await no.call("click", { id: 1 })).textResultForLlm).toMatch(/^The user said no/);
+    });
+
+    // Every step cleared the reason on its way in, so a scroll or a click elsewhere before the retry lost it (review W-2).
+    const next: AxNode = { id: 4, parent: 0, depth: 1, role: "link", name: "Next page", states: ["enabled", "sensitive"], bounds: { x: 10, y: 40, width: 40, height: 20 } };
+
+    it("still says the page changed when a step that asked nothing came before the retry (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const { call, asked } = makeWorker({ role: "link", name: video, parentRole: "document web", more: [clock(0), next],
+        canDo: id => (id === 4 ? { tier1: true } : { tier1: false, why: "it takes no click by accessibility" }),
+        onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      await call("perceive_window", {});
+      expect((await call("click", { id: 4 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(2);
+      expect(asked[1].startsWith(`${ASKING_AGAIN.page} `)).toBe(true);
+    });
+
+    it("says nothing of it once a question about another step came between (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const { call, asked } = makeWorker({ role: "link", name: video, parentRole: "document web", ...borrowed, more: [clock(0), next],
+        onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      await call("perceive_window", {});
+      expect((await call("click", { id: 4 })).resultType).toBe("success");
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(3);
+      expect(asked.slice(1).some(a => a.startsWith(ASKING_AGAIN.page))).toBe(false);
+    });
+
+    it("says nothing of it once that step went ahead without a question (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      let mouse = true;
+      const { call, asked } = makeWorker({ role: "link", name: video, parentRole: "document web", more: [clock(0)],
+        canDo: () => (mouse ? { tier1: false, why: "it takes no click by accessibility" } : { tier1: true }),
+        onAsk: () => { if (t === 0) t = 5; }, treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      // By accessibility, in a browser allowed for the task, it goes without a question.
+      mouse = false;
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      mouse = true;
+      await call("perceive_window", {});
+      await call("click", { id: 1 });
+      expect(asked).toHaveLength(2);
+      expect(asked[1].startsWith(ASKING_AGAIN.page)).toBe(false);
+    });
+
+    // A look made before a step's own question found the window changed: the model was told a yes to the step before
+    // was spent, and the next question about that step said so (review W-4).
+    it("says the window changed while preparing, never that a yes was spent, about a step it never asked about (owner's report of 2026-11-12)", async () => {
+      let ticking = false;
+      let t = 1;
+      const status: AxNode = { id: 3, parent: null, depth: 1, role: "label", name: "Ln 1, Col 1", states: [], bounds: null };
+      const italic: AxNode = { id: 4, parent: null, depth: 1, role: "push button", name: "Italic", states: ["enabled", "sensitive"], bounds: { x: 60, y: 10, width: 40, height: 20 } };
+      const { call, asked } = makeWorker({ more: [status, italic], canDo: id => (id === 1 ? { tier1: false, why: "it takes no click by accessibility" } : { tier1: true }),
+        treeNodes: nodes => nodes.map(n => n.id === 3 && ticking ? { ...n, name: `Ln 1, Col ${++t}` } : n) });
+      await call("perceive_window", {});
+      // Step A asks (it borrows the mouse), and is done.
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      // Then the window changes between every read: step B, never asked about, finds it changed before any question.
+      ticking = true;
+      const b = await call("click", { id: 4 });
+      expect(b.resultType).toBe("failure");
+      expect(b.textResultForLlm).toMatch(/^The window or its contents changed while preparing this action/);
+      expect(asked).toHaveLength(1);
+      // Asked about step A again, the question says nothing of a spent yes.
+      ticking = false;
+      await call("perceive_window", {});
+      await call("click", { id: 1 });
+      expect(asked).toHaveLength(2);
+      expect(asked[1].startsWith(ASKING_AGAIN.window)).toBe(false);
     });
   });
 

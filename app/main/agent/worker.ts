@@ -1270,7 +1270,10 @@ export class Worker {
   private asked = false;
   /** The step the user last said yes to (stepKey), until the next decision. */
   private yesFor: string | null = null;
-  /** A change spent that yes (spend): the next question about the same step says why it is asked again. */
+  /**
+   * A change spent that yes (spend): the next question, if it is about the same step, says why it is asked again. Kept
+   * across steps that ask nothing, until a question is shown or that step goes ahead or is refused without one.
+   */
   private reask: { key: string; words: string } | null = null;
   /** The working window's frame from the latest perceive_window (an element outside it is scrolled away). */
   private frame: Bounds | null = null;
@@ -3648,7 +3651,6 @@ export class Worker {
   private async authorizeCells(jobs: CellJob[]): Promise<ToolResultObject | null | "each"> {
     this.asked = false;
     this.ahead = null;
-    this.reask = null;
     this.yesFor = null;
     if (this.isOver) return STOPPED();
     this.keyed = { window: "", selected: null };
@@ -3729,6 +3731,8 @@ export class Worker {
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
     const taskLine = this.tainted ? this.ownWordsLine() : undefined;
     this.asked = true;
+    // A question about other steps: a reason to ask one again (reask) is never said after it.
+    this.reask = null;
     // On another computer the question says where (§2.4), as every other question of a task does.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
@@ -4601,9 +4605,6 @@ export class Worker {
     this.asked = false;
     this.lastAuth = null;
     this.ahead = null;
-    // A yes a change spent is said once, in the question about the same step that comes next, if one does.
-    const reask = this.reask;
-    this.reask = null;
     this.yesFor = null;
     if (this.isOver) return STOPPED();
     const inWindow = request.kind !== "open_app" && request.kind !== "setting";
@@ -4669,6 +4670,11 @@ export class Worker {
     // step that look refuses is recorded only as refused (safety-privacy-v4-2).
     if (decision.verdict === "allow" && decision.autonomy) this.ahead = { entries: [entry], words: decision.announce ?? null };
     else this.audit(entry);
+    // A yes a change spent (reask) is said once, in the next question if it is about the same step. A step that asks
+    // nothing keeps it for later (the model reopens the menu, or scrolls, before it tries again: review W-2), unless it
+    // is that step itself, which then needs no question or is refused.
+    const step = this.stepKey(req.element);
+    if (this.reask?.key === step && (decision.verdict === "deny" || decision.verdict === "allow" || sessionAllowed)) this.reask = null;
     if (decision.verdict === "deny") {
       this.activity({ type: "refused", reason: decision.reason });
       return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
@@ -4694,8 +4700,8 @@ export class Worker {
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
     // Once text on screen tried to steer Ember, every step it asks about looks risky too (it is asked every time).
     const risky = !!decision.risky || this.steered;
-    const step = this.stepKey(req.element);
-    const again = reask?.key === step ? `${reask.words} ` : "";
+    const again = this.reask?.key === step ? `${this.reask.words} ` : "";
+    this.reask = null;
     const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: `${again}${decision.prompt}`, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
