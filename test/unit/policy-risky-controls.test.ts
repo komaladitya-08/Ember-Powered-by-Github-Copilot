@@ -426,16 +426,19 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     }
   });
 
-  // What was written or typed in a working dialog isn't its question: a mail's body, a card's description, the text being found.
+  // What was written or typed in a working dialog read whole isn't its question: a mail's body, a card's description, the
+  // text being found.
   const fields = [{ role: "entry", name: "To", editable: true }, { role: "entry", name: "Subject", editable: true }, { role: "section", name: "Message Body", editable: true },
     { role: "push button", name: "Attach files" },
     { role: "push button", name: "Formatting options" }, { role: "push button", name: "Bold" }, { role: "push button", name: "Send" }];
+  const card = [{ role: "entry", name: "Write a comment…", editable: true }, { role: "push button", name: "Checklist" }, { role: "push button", name: "Members" }];
   const written: [string, string, ActionRequest["dialog"], Partial<ActionRequest>][] = [
     ...["Attach files", "Formatting options", "Bold"].flatMap((name): [string, string, ActionRequest["dialog"], Partial<ActionRequest>][] => [
-      [name, "a mail's body asks", { name: "New Message", text: "To Subject Lunch Hi Ana, are you free on Friday?", alert: true, page: true }, {}],
+      [name, "a mail's body asks", { name: "New Message", text: "To Subject Lunch Hi Ana, are you free on Friday?", alert: true, page: true, controls: fields }, {}],
       [name, "a mail's body says “do you want to”", { name: "New Message", text: "To Subject Lunch Hi Ana, do you want to meet on Friday", alert: true, page: true, controls: fields }, {}]]),
     ...["Checklist", "Members"].map((name): [string, string, ActionRequest["dialog"], Partial<ActionRequest>] =>
-      [name, "a card's description asks", { name: "Plan the trip", text: "in list To do Description Where should we go this year? Activity", alert: true, page: true }, { window: "Plan the trip | Trello — Mozilla Firefox" }]),
+      [name, "a card's description asks", { name: "Plan the trip", text: "in list To do Description Where should we go this year? Activity", alert: true, page: true, controls: card },
+        { window: "Plan the trip | Trello — Mozilla Firefox" }]),
     ["Find Next", "the text being found has a question mark", { name: "Find and Replace", text: "Find why?", controls: [{ role: "text", name: "", editable: true }, { role: "push button", name: "Find Next" },
       { role: "push button", name: "Close" }] }, { app: "soffice", window: "letter.odt - LibreOffice Writer", onPage: undefined }],
   ];
@@ -452,6 +455,31 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     asksEveryTime(click("Leave", { inPage: undefined, onPage: true, window: "Edit post - Blog — Mozilla Firefox", goal: "close the tab", dialog: leaving }));
     asksEveryTime(click("Leave", { inPage: undefined, onPage: true, window: "Edit post - Blog — Mozilla Firefox", goal: "close the tab",
       dialog: { name: "Leave without saving?", text: "Title Body", alert: true, page: true } }));
+  });
+
+  // A read cut short (MAX_NODES, time, depth, a page still loading) sends no `controls`: nothing shows the dialog holds a
+  // field, so its words are its question, a page's own and an Electron app's too.
+  const page = (name: string, text: string) => ({ name, text, alert: true, page: true });
+  it.each([
+    ["“Leave”", "linux", "Firefox", "Edit post - Blog — Mozilla Firefox", "Leave", page("Unsaved changes", "You have unsaved changes. Are you sure you want to leave?"), {}],
+    ["“Leave page”", "linux", "Firefox", "Edit post - Blog — Mozilla Firefox", "Leave page", page("Unsaved changes", "You have unsaved changes. Are you sure you want to leave?"), {}],
+    ["Enter on “Leave”", "linux", "Firefox", "Edit post - Blog — Mozilla Firefox", "Leave", page("Unsaved changes", "You have unsaved changes. Are you sure you want to leave?"),
+      { kind: "keys", value: "Return", onPage: undefined, inPage: true }],
+    ["“Reload”", "linux", "Firefox", "Edit post - Blog — Mozilla Firefox", "Reload", page("Reload page", "Reloading will lose the form you filled in. Are you sure you want to reload?"), {}],
+    ["“Exit”", "linux", "Firefox", "Edit post - Blog — Mozilla Firefox", "Exit", page("Exit editor", "Your draft has not been saved. Do you want to exit anyway?"), {}],
+    ["“No”", "linux", "Firefox", "Edit post - Blog — Mozilla Firefox", "No", page("Unsaved changes", "Do you want to save your changes before leaving?"), {}],
+    ["“Resubmit”", "linux", "Firefox", "Orders - Shop — Mozilla Firefox", "Resubmit", page("", "Going on will resubmit your order."), {}],
+    ["“Leave”", "linux", "slack", "general - Acme - Slack", "Leave", page("Unsent message", "You have an unsent message. Are you sure you want to leave this conversation?"), {}],
+    ["“No”", "win32", "code", "notes.md - Visual Studio Code", "No", page("Visual Studio Code", "Do you want to save the changes you made to notes.md?"), { element: { role: "button", name: "No" } }],
+    ["“Leave”", "darwin", "Microsoft Teams", "Chat | Microsoft Teams", "Leave", page("Unsent message", "Your message hasn't been sent. Do you want to leave and lose it?"), {}],
+  ] as const)("%s on %s (%s) in “%s”, a dialog read in part that asks, asks every time (safety-privacy-y8-1)", (_label, os, app, window, name, dialog, r) => {
+    for (const [grant, autonomy] of [[true, false], [false, true]]) {
+      const e = new PolicyEngine({ neverLook: () => [], grants: () => (grant ? { [app.toLowerCase()]: "act" } : {}), autonomy: () => (autonomy ? { ...ALL_SCOPES } : null),
+        isTerminalApp: () => false, os, keys: KEYS[os] });
+      const d = e.decide(click(name, { app, window, inPage: undefined, onPage: true, goal: "close the tab", dialog, ...r }));
+      expect(d, `grant=${grant} autonomy=${autonomy}`).toMatchObject({ verdict: "confirm", risky: true, remember: false });
+      expect(d.autonomy).toBeUndefined();
+    }
   });
 
   // A whole read of a question box lists its buttons, and may list a document or text it shows (Firefox's prompt is a

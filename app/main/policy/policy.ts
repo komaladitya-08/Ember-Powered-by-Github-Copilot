@@ -2709,10 +2709,11 @@ export class PolicyEngine {
     // checked against the request (its words are the app's; audit of 2026-11-11, safety-privacy-c8-1). Not a dialog that
     // only names something risky: Find & Replace, Share, a file chooser with a Trash place. After `answer`, so an OK that
     // only acknowledges a message box (acknowledgesOnly) stays Ember's doubt.
-    // Its words count only where they can't be what was written in it: a page's own dialog (a mail's compose window, a
-    // card) is judged by its title, unless a whole read shows nothing in it to type into; any other dialog by its words,
-    // unless a whole read shows such a field (typedIn: Find & Replace's; regression review of round eight, safety-privacy-x8-2).
-    const written = !!r.dialog && (r.dialog.controls ? r.dialog.controls.some(typedIn) : !!r.dialog.page);
+    // Its words count unless a whole read shows a field in it (typedIn: a mail's compose window, a card's comment box,
+    // Find & Replace's), where they may be what was written there and its title is what asks (regression review of round
+    // eight, safety-privacy-x8-2). Where nothing is known, a page's own dialog too, the words count: an "Unsaved changes"
+    // modal read in part still asks at "Leave" (safety-privacy-y8-1).
+    const written = !!r.dialog?.controls?.some(typedIn);
     const asked = r.dialog ? (written ? r.dialog.name : told) : "";
     const asksInFew = asked.length <= 300 && (/[?？¿]/.test(asked) || ASKS_IF_SURE.test(plainText(asked)) || SENDS_AGAIN.test(plainText(asked)));
     const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !backsOffDialog(name, told) && !plainDialog;

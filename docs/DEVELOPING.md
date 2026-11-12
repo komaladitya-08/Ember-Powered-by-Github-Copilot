@@ -393,7 +393,8 @@ Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Rem
 to a dialog's question but one that backs off (“Leave page”, “Resend” and “Close tabs” ask; Cancel, Close, “Stay on page”,
 “Remind me later” and No don't, but for No where the dialog asks to save, since it throws the changes away); the
 question quotes the dialog. A question in what was written in a working dialog, a mail's
-body or a card's description, doesn't make its buttons ask. Any button, link or tab of a page (or of an app built on one) whose window's title
+body or a card's description, doesn't make its buttons ask once Ember has read the whole dialog and seen the field it was
+written in; where its read was cut short, the dialog's words still count, so a page's “Are you sure you want to leave?” asks at “Leave”. Any button, link or tab of a page (or of an app built on one) whose window's title
 mentions a checkout, a payment or billing asks every time too, saying so (“The window's title mentions billing, so this
 may pay for something.”): a title that only mentions one, a mail's subject or a file's name, asks as well. After **Not now** (or a question nobody answered, a refusal, or a step that failed), a step Ember had lined
 up to follow it in the same breath isn't taken either: it looks again and decides afresh. A progress note or card view that
