@@ -375,10 +375,17 @@ download, so English-only MiniLM is the trade-off for now.
      goes through `MemoryGraph.add()` and the guard.
    - What the remember tool kept (or found already kept) in a turn goes with that turn to its reading (`kept`: one
      turn runs at a time, so the facts kept since the last turn ended), and no candidate from that turn that is the
-     same fact is kept again (`keptInTurn`, memory-c8-1): half or more of the smaller one's content words in common,
-     or evidence that holds half of what was kept in words the candidate mostly doesn't use. On words alone, never on
-     whom either names, since the two models choose `about` apart and the graph's own check needs the same names. It
-     learns less: a fact of that turn sharing half its words with what was kept is not learned from it either.
+     same fact is kept again (`keptInTurn`, memory-c8-1): every content word of it in what was kept, the same way
+     round; or, only when its evidence is in the one clause of the turn that holds the most of what was kept and
+     neither leaves out a word of that evidence the other says, half or more of the smaller one's content words in
+     common, or evidence that holds half of what was kept in words the candidate mostly doesn't use. A person one of
+     them names in its own words and the other's words don't makes them two facts; otherwise `about` is not
+     compared, since the two models choose it apart and the graph's own check needs the same names. Where it can't
+     tell, it learns (memory-x8-1): a second copy shows its own "Ember learned" line, a dropped fact would be lost
+     without a word. So a fact said in a clause of its own ("…My sister Jo lives in York"), about someone else, or
+     beside what was kept in one clause ("…peanuts and shellfish") is learned whatever words it shares; and a fact
+     the remember tool kept in words that share none with what the user said ("Is vegetarian" for "I don't eat
+     meat") can still be learned a second time in the user's words.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten
      minutes forgets the newest without a model turn. Forgetting an open fact Ember kept in those ten minutes (the
      line's **Undo**, "forget that", a Forget soon after) undoes it: the one it had replaced is open again

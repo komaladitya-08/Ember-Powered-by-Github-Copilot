@@ -276,7 +276,9 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     way; with no mark, any within `FORGOTTEN_TURN_MS`, as `taskDone`'s results are), never a similarity of words
     (memory-r8-1); a new path into `Learner` carries such a mark or fails closed the same way;
   - what the remember tool kept in a turn goes with that turn (`Learner.heard`'s `kept`), and its reading keeps no
-    candidate `keptInTurn` calls the same fact, compared on words, never on `about` (memory-c8-1);
+    candidate `keptInTurn` calls the same fact, compared on words and on the clause of the turn they were said in;
+    `about` only ever tells two apart (a person only one names), and where it can't tell, it learns (memory-c8-1,
+    memory-x8-1);
   - keep within `LEARN_BUDGET` and `REFINE_PER_DAY`; register nothing long-running outside its `memory` StopPart;
   - a fact the user gives (introduction, interview, an answer to Ember's question) is `user` only when they said it
     (`own`); a request (`looksLikeRequest`) or "forget that" is never taken as an answer, except "call me <a short

@@ -16,7 +16,7 @@
 import { memoryPausedReply } from "../../shared/memory-owner";
 import { DUPLICATE, type AddResult, type Fact, type NewFact, type Source } from "./graph";
 import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
-import { CallBudget, Learner, soundsLikeInstruction, type LearnBudget, type OneShot } from "./learn";
+import { CallBudget, Learner, soundsLikeInstruction, type KeptFact, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
 import {
   ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, INTRO_NOTE, MEMORY_UNREADABLE, NOTHING_TO_FORGET, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes,
@@ -39,7 +39,7 @@ export const IDLE_CHECK_MS = 60_000;
 export const FORGOTTEN_TURN_MS = 2 * 60_000;
 /** The most forgotten facts held for that at once. */
 const FORGOTTEN_MAX = 50;
-/** The most words of facts the remember tool kept that one turn hands to its reading (memory-c8-1). */
+/** The most facts the remember tool kept that one turn hands to its reading (memory-c8-1). */
 const TURN_KEPT_MAX = 20;
 /** Refinement passes a day, at most (and one per idle stretch). */
 export const REFINE_PER_DAY = 6;
@@ -142,10 +142,11 @@ export class MemoryLearning {
   private drops = 0;
   private droppedAt: number | null = null;
   /**
-   * The words of what the remember tool kept (or found already kept) since the last turn ended: one turn runs at a
-   * time, so they go with the next turn `heard` hands over, whose reading never keeps them again (memory-c8-1).
+   * What the remember tool kept (or found already kept) since the last turn ended, with what it was said to be about:
+   * one turn runs at a time, so it goes with the next turn `heard` hands over, whose reading never keeps it again
+   * (memory-c8-1).
    */
-  private turnKept: string[] = [];
+  private turnKept: KeptFact[] = [];
 
   constructor(private d: LearningDeps) {
     this.lastActive = this.now();
@@ -215,7 +216,7 @@ export class MemoryLearning {
         this.noteNew(m.list().filter(i => !before.has(i.id)));
         // Kept, or already kept: this turn's reading must not keep it again in its own words (memory-c8-1).
         const id = /^(?:Already remembered|Remembered) \[([^\]]+)\]/.exec(answer)?.[1];
-        if (id) this.turnKept = [...this.turnKept, fact, m.factText(id) ?? fact].slice(-TURN_KEPT_MAX);
+        if (id) this.turnKept = [...this.turnKept, { text: fact, about }, { text: m.factText(id) ?? fact, about }].slice(-TURN_KEPT_MAX);
         return answer;
       },
       // The recall tool: its query is the model's, so it never counts gaps (the screen could choose the question).

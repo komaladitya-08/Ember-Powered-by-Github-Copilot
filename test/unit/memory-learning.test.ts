@@ -755,6 +755,39 @@ describe("what the user asks Ember to remember is kept once, however its turn's 
     expect(await l.flush()).toBe(2);
     expect(s.list().map(i => i.text).sort()).toEqual(["Is vegetarian", "Lives in Leeds", "Prefers Firefox", "Prefers short answers"]);
   });
+
+  /**
+   * What the user said, what the remember tool kept, about what, and a different fact the same turn's reading finds
+   * (about what, on what words): it shares a word or a name with what was kept, is about someone else, or is said in a
+   * clause of its own.
+   */
+  const OTHER: [string, string, About, string, About, string][] = [
+    ["Remember that I live in Leeds. My sister Jo lives in York.", "Lives in Leeds", [USER], "Jo lives in York", [{ name: "Jo", kind: "person" }], "My sister Jo lives in York"],
+    ["Remember that I live in Leeds. My sister Jo lives in York.", "Lives in Leeds", [USER], "Jo lives in York", [USER], "My sister Jo lives in York"],
+    ["Remember that I'm allergic to peanuts. My daughter Maya is allergic to cats.", "Is allergic to peanuts", [USER], "Daughter Maya is allergic to cats", [{ name: "Maya", kind: "person" }], "My daughter Maya is allergic to cats"],
+    ["Remember that I work at Globex. I work from home on Fridays.", "Works at Globex", [USER, { name: "Globex", kind: "organisation" }], "Works from home on Fridays", [USER], "I work from home on Fridays"],
+    ["Remember that I speak French. I'm learning to speak Spanish too.", "Speaks French", [USER], "Speaks some Spanish", [USER], "I'm learning to speak Spanish"],
+    ["Remember that my wife Sarah's birthday is 9 June. Sarah is vegetarian.", "Wife Sarah's birthday is 9 June", [{ name: "Sarah", kind: "person" }], "Sarah is vegetarian", [{ name: "Sarah", kind: "person" }], "Sarah is vegetarian"],
+    ["Remember that my manager is Priya Shah. Priya works in London.", "Manager is Priya Shah", [USER, { name: "Priya Shah", kind: "person" }], "Priya Shah works in London", [{ name: "Priya Shah", kind: "person" }], "Priya works in London"],
+    ["Remember that I have a daughter called Maya. Maya is allergic to peanuts.", "Has a daughter called Maya", [USER], "Maya is allergic to peanuts", [], "Maya is allergic to peanuts"],
+    ["Remember that I use Thunderbird for email. I prefer plain-text email.", "Uses Thunderbird for email", [USER], "Prefers plain-text email", [USER], "I prefer plain-text email"],
+    ["Remember that I'm vegetarian. My partner Sam is vegetarian too.", "Is vegetarian", [USER], "Partner Sam is vegetarian", [USER], "My partner Sam is vegetarian too"],
+    ["Remember that I live in Leeds with my partner Sam", "Lives in Leeds", [USER], "Lives in Leeds with partner Sam", [USER, { name: "Sam", kind: "person" }], "I live in Leeds with my partner Sam"],
+    ["Remember that I'm allergic to peanuts and shellfish", "Is allergic to peanuts", [USER], "Is allergic to shellfish", [USER], "I'm allergic to peanuts and shellfish"],
+    ["Remember that I work at Globex from home on Fridays", "Works at Globex", [USER], "Works from home on Fridays", [USER], "I work at Globex from home on Fridays"],
+  ];
+
+  it.each(OTHER)("still learns a different fact of “%s”, though it shares a word or a name with what was kept (memory-x8-1)", async (said, kept, about, other, otherAbout, evidence) => {
+    const { l, s, learned, advance } = learning({ model: async () => answer([{ from: 1, fact: other, about: otherAbout, confidence: 0.9, evidence }]) });
+    const tools = l.conductorMemory();
+    expect(tools.remember(kept, about, said)).toContain("Remembered");
+    tools.heard(said, "Got it.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text).sort()).toEqual([kept, other].sort());
+    // Its own "Ember learned" line, so the user sees what was kept.
+    expect(learned.map(line => line.replace(/^\w+: /, ""))).toEqual([kept, other]);
+  });
 });
 
 describe("“forget that”, the instruction check and the conversation's line", () => {
