@@ -2058,6 +2058,12 @@ const LINK_OBJECT = /^(my|your|our|this|that|these|those|the|all|everything|acco
  * Swae Lee". Never "(Live)" or "(Official Account)", which any name may carry.
  */
 const RELEASE_TAG = /[([]\s*(official\s+((music|lyric)\s+)?(video|audio|visuali[sz]er|trailer|teaser)|lyrics?|lyric video|music video|audio)\s*[)\]]|\s(ft|feat)\.\s/i;
+/**
+ * Where a new clause may start after a how, what or why: any mark but a letter, a digit or a space, other than a dot, a
+ * hyphen or an apostrophe inside a word ("Node.js", "re-install", "What's"). A list of stops, commas and dashes missed
+ * "What next / Delete account", "Why wait (Delete your account now)" and "What's new → Buy now" (review R2-1).
+ */
+const CLAUSE_BREAK = /[^\p{L}\p{M}\p{N}\s.'’-]|(?<![\p{L}\p{M}\p{N}])[.'’-]|[.'’-](?![\p{L}\p{M}\p{N}])/u;
 
 /**
  * A link that plainly names what it leads to, an allow-list that fails closed (review of #180): an article's title ("How to
@@ -2066,15 +2072,15 @@ const RELEASE_TAG = /[([]\s*(official\s+((music|lyric)\s+)?(video|audio|visuali[
  * commands. So, read by its shape alone, was a command in parts, before or after the separator ("Share Document - Drive",
  * "Acme Bank - Transfer Funds", "My Shop | Buy Now"): a title in parts is one only with a song's or a video's tag
  * (RELEASE_TAG), and never where a part turns a protection off or talks of security. Never a command after a question
- * or a colon, or, after a how, what or why, after any stop, comma or dash ("Why wait? Buy it now", "How to: delete all
- * files now", "Why wait, buy it now"); a suggestion ("Why not share your location"); or a grant of access
- * (GRANTS_ACCESS: "Allow Notifications - Site"), whatever its shape (review W-1 of the change for the owner's report of
- * 2026-11-12, which found those read as titles, clicked or with Enter).
+ * or a colon, or, after a how, what or why, after any other punctuation or symbol (CLAUSE_BREAK: "Why wait? Buy it now",
+ * "How to: delete all files now", "Why wait, buy it now", "What next / Delete account"); a suggestion ("Why not share
+ * your location"); or a grant of access (GRANTS_ACCESS: "Allow Notifications - Site"), whatever its shape (reviews W-1
+ * and R2-1 of the change for the owner's report of 2026-11-12, which found those read as titles, clicked or with Enter).
  */
 function linkIsTitle(name: string, os: OS): boolean {
   if (name.split(/[?!:;]/).slice(1).some(clause => linkCommands(clause, true, os))) return false;
   if (GRANTS_ACCESS.test(normalizeLabel(name))) return false;
-  if (/^\s*(how (to|do)|what|why(?! not\b)|guide to|review of)\b/i.test(name)) return !name.split(/[,…—–|]|\.\s|\s-\s/).slice(1).some(clause => linkCommands(clause, true, os));
+  if (/^\s*(how (to|do)|what|why(?! not\b)|guide to|review of)\b/i.test(name)) return !name.split(CLAUSE_BREAK).slice(1).some(clause => linkCommands(clause, true, os));
   const parts = /^\s*([\p{L}\p{N}']+)\s+([\p{L}\p{N}']+)[^-–—|]*\s[-–—|]\s/u.exec(name);
   if (!parts || LINK_ACTS_FOR_GOOD.test(parts[1]) || !/^\p{Lu}/u.test(parts[2]) || LINK_OBJECT.test(parts[2]) || !RELEASE_TAG.test(name)) return false;
   return !name.split(/\s[-–—|]\s/).some(part => securityTalk(part) || saysWord(WEAKENS, part) || TURNS_OFF.test(normalizeLabel(part)) || COMMITS_PHRASE.test(normalizeLabel(part)));
@@ -2090,10 +2096,11 @@ function linkCommands(name: string, acts: boolean, os: OS): boolean {
 
 /**
  * Does a web page's control say something risky by its name, as policy reads it there: any risky word (isRiskyLabel), but
- * a link's only where it says what it does (linkCommands), never where it names what it leads to ("How to install
- * Node.js"). The worker's livingPage: such a control is refused before any question where its name repeats.
+ * a link's never where linkIsTitle takes it for a title ("How to install Node.js"). The worker's livingPage: such a
+ * control is refused before any question where its name repeats. (Read as content, linkCommands, a command before a
+ * file's name, "Sign contract.pdf", was spared by the file's name and clicked with no question: review R2-1.)
  */
-export const riskyOnPage = (role: string, name: string, os: OS = "linux"): boolean => isRiskyLabel(name, os) && (role !== "link" || linkCommands(name, true, os));
+export const riskyOnPage = (role: string, name: string, os: OS = "linux"): boolean => isRiskyLabel(name, os) && (role !== "link" || !linkIsTitle(name, os));
 
 function riskyContent(name: string, acts: boolean, os: OS): boolean {
   const label = plainText(name).trim();
@@ -2686,7 +2693,11 @@ export class PolicyEngine {
     const content = CONTENT_ROLES.test(role) || (role === "link" && (!!r.inPage || !!r.onPage));
     const selects = !!r.clickSelects && (r.kind === "click" || r.kind === "cursor_click");
     const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name);
-    const riskyNamed = (role === "link" && content ? linkCommands(name, !selects, os) : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
+    // A page's link clicked (`onPage`, not keys) still asks as a link's name did before, unless linkIsTitle takes it for a
+    // title: read as content alone, a command before a file's name ("Sign contract.pdf") was spared by the file's name
+    // (review R2-1). Keys read it by linkCommands alone, as before.
+    const clickedLink = role === "link" && !!r.onPage && !r.inPage && (isRiskyControl(role, name, os) || clicked) && !linkIsTitle(name, os);
+    const riskyNamed = (role === "link" && content ? linkCommands(name, !selects, os) || clickedLink : content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     // A bare "Disable" or "Turn off" on a page or dialog titled for a protection ("Two-factor authentication") turns it off.
     const unprotects = ACTIVATING_ROLES.test(role) && TURNS_OFF.test(normalizeLabel(name)) && PROTECTION_TITLE.test(normalizeLabel(`${r.window} ${r.dialog?.name ?? ""}`));

@@ -216,7 +216,11 @@ describe("what still asks in a browser, whatever is on", () => {
     // The command after the separator, and after other punctuation.
     "Acme Bank - Transfer Funds", "Sam Smith | Log Out", "My Shop | Buy Now", "Account Settings - Delete Account", "Microsoft Defender - Turn Off Firewall",
     "Google Drive - Share Document", "Share Report.pdf - Drive", "Copy Link - Share", "Why wait. Buy it now", "Why wait, buy it now", "What now… Delete your account",
-    "Why wait—buy now"];
+    "Why wait—buy now",
+    // After a how, what or why, behind any other punctuation or symbol (review R2-1).
+    "What next / Delete account", "Why wait (Delete your account now)", "How to save [Buy now]", "What's new → Buy now", "Why wait → Transfer funds",
+    "What we offer ~ Pay now", "Why choose us • Subscribe now", "What you get + Buy now", "What's new » Buy now", "How to win · Delete account", "Why wait => Buy now",
+    "Why wait 👉 Buy now", "What's new * Delete your account"];
 
   it.each(commands)("still asks every time about a page's link that says what it does in a title's shape, “%s”, and off the task calls it unasked (owner's report of 2026-11-12)", name => {
     for (const kind of ["click", "cursor_click"] as const) {
@@ -232,6 +236,25 @@ describe("what still asks in a browser, whatever is on", () => {
     }
     // Enter on it as a page's focused link (`inPage`) asks too.
     expect(engine(true).decide(edge({ kind: "click", inPage: true, element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", risky: true });
+  });
+
+  // A command before a file's name: read as content, the file's name spared it before any word of it was read (review R2-1).
+  it.each(["Permanently delete report.pdf", "Delete report.pdf", "Delete all files in backup.zip", "Sign contract.pdf", "Approve budget.xlsx", "Submit form.pdf",
+    "Send report.pdf", "Share photo.jpg", "Publish notes.md", "Remove backup.zip", "Uninstall app.deb", "Execute script.py", "Pay invoice.pdf", "Install ember.rpm",
+    "Download and run setup.sh"])("still asks every time about a page's link that does something to a file, “%s”, when clicked, and off the task calls it unasked (owner's report of 2026-11-12)", name => {
+    for (const kind of ["click", "cursor_click"] as const) {
+      const d = engine(true).decide(edge({ kind, onPage: true, element: { role: "link", name } }));
+      expect(d).toMatchObject({ verdict: "confirm", risky: true });
+      expect(d.autonomy).toBeUndefined();
+      const own = new PolicyEngine({ neverLook: () => [], grants: () => ({ msedge: "act" }), os: "win32", keys: KEYS.win32 });
+      expect(own.decide(edge({ kind, onPage: true, goal: "find me a video", element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", aligned: false });
+    }
+  });
+
+  it("still takes a how, what or why title with a name or an aside after its punctuation for a title (owner's report of 2026-11-12)", () => {
+    for (const name of ["How to install Node.js (Windows 11)", "What is TCP/IP", "What's new in Node.js 22 → release notes", "Why Rust? A guide for C++ programmers"]) {
+      expect(engine(true).decide(edge({ kind: "click", onPage: true, goal: "find me a video", element: { role: "link", name } })).verdict).toBe("allow");
+    }
   });
 
   it("takes a title led by a word that also acts for a title only with a release's tag, and never one that grants access or turns a protection off (owner's report of 2026-11-12)", () => {
