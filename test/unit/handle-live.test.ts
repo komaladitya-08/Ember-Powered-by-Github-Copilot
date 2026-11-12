@@ -74,6 +74,29 @@ describe("the corner card's live region", () => {
     expect(live.bubble(answer, null)).toBeNull();
   });
 
+  it("doesn't say an answer, a problem or a notice again when main puts it back after “Listening…” (accessibility-x8-1)", () => {
+    // main.ts's covers: a wake's, Listen once's, speech heard, and Listen once checking what it heard.
+    const wake: BubbleView = { visible: true, mood: "listening", title: "Listening…", thought: "", streaming: true };
+    const covers: BubbleView[] = [wake, { ...wake, thought: "Say one request." }, { ...wake, thought: "…" }, { ...wake, title: "Checking what I heard…" }];
+    const problem: BubbleView = { visible: true, mood: "error", title: "Couldn't reach Copilot", thought: "Check your connection and try again.", streaming: false };
+    const notice: BubbleView = { visible: true, mood: "done", title: "Ember", thought: "Saved to your Documents folder.", streaming: false };
+    for (const shown of [answer, problem, notice]) {
+      for (const cover of covers) {
+        const live = new HandleLive();
+        const said = live.bubble(shown, null);
+        expect(said).toMatch(/^Ember (says|has a problem): /);
+        // A wake that was another word, or a Listen once that heard nothing: the very same bubble put back.
+        expect(live.bubble(cover, null)).toBe("");
+        expect(live.bubble(shown, null)).toBeNull();
+        // A request heard after all: "Thinking…", then its answer, said even in the same words. (The region stayed
+        // empty since the cover: nothing to empty.)
+        expect(live.bubble(cover, null)).toBeNull();
+        expect(live.bubble(thinking, null)).toBeNull();
+        expect(live.bubble(shown, null)).toBe(said);
+      }
+    }
+  });
+
   it("says only that a question's whole text has all been shown, and a new question whole", () => {
     const live = new HandleLive();
     const text = "Dear team, the figures are attached. Bye";

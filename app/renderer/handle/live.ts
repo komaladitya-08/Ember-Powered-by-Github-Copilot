@@ -66,12 +66,16 @@ export class HandleLive {
    * new one is said, in the words of the one before too (kept from it, every command question of a task after the first
    * went unsaid: accessibility-c8-1), and the same one shown again after a cover ("Listening…") or a hide isn't, but for
    * the news that its whole text has all been shown (wholeReadNews). Anything else is said when its words differ from
-   * the last said, and as the overlay's bubble does, a bubble with nothing to say ("Thinking…") forgets them.
+   * the last said, and as the overlay's bubble does, a bubble with nothing to say ("Thinking…") forgets them; but not
+   * "Listening…", a cover too, under which main puts the very same bubble back (accessibility-x8-1).
    */
   bubble(view: BubbleView, question: number | null, speaker = "Ember"): string | null {
     const gone = (): string | null => { if (!this.inRegion) return null; this.inRegion = false; return ""; };
-    // Hidden: what was said is kept (shown again, it isn't news), but its words leave the region.
-    if (!view.visible) return gone();
+    // Hidden: what was said is kept (shown again, it isn't news), but its words leave the region. So under "Listening…"
+    // (a wake's window, Listen once's, "Checking what I heard…"): a wake that was another word, or a Listen once that
+    // heard nothing, puts the bubble before it back, the same one, said again as the microphone went back to waiting
+    // for the name (accessibility-x8-1). A request heard goes on to "Thinking…", which forgets it.
+    if (!view.visible || view.mood === "listening") return gone();
     const text = announcement(view, speaker);
     const was = this.asked;
     let said: string;
