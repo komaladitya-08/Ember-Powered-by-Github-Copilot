@@ -4182,13 +4182,16 @@ reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir", "grm", "grmdir", "
 /**
  * The words a pattern's brace groups and extglob groups stand for, as rimraf's and del-cli's matchers expand them
  * (`{a,b}`, `{1..3}`, `+(a|b)`, `@(…)`; `?(…)` and `*(…)` may be empty; `!(…)` is anything, `*`), or null past
- * MAX_SIMPLE of them (commands-remote-x8-8). What is left may still hold `*`, `?` or `[…]`.
+ * MAX_SIMPLE of them (commands-remote-x8-8). What is left may still hold `*`, `?` or `[…]`. A `{` with a comma after it
+ * that never closes is null too: the matcher reads it as a letter and expands a group after it (`'{,/../{..,x}'` is
+ * `{,/../..`), which braceGroup doesn't find.
  */
 function patternWords(s: string): string[] | null {
   const out: string[] = [];
   const go = (w: string): boolean => {
     const g = braceGroup(w);
-    if (g !== null && g !== "partial") return g.alts.every(alt => go(w.slice(0, g.from) + alt + w.slice(g.to + 1)));
+    if (g === "partial") return false;
+    if (g !== null) return g.alts.every(alt => go(w.slice(0, g.from) + alt + w.slice(g.to + 1)));
     const m = /([?*+@!])\(([^()]*)\)/.exec(w);
     if (m) {
       const alts = m[1] === "!" ? ["*"] : [...m[2].split("|"), ...(m[1] === "?" || m[1] === "*" ? [""] : [])];

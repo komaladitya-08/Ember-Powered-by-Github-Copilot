@@ -20787,6 +20787,62 @@
    "rules": [
     "posix.rm"
    ]
+  },
+  {
+   "cmd": "rimraf '{,/../{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf 'a{,/../../{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{a,b'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{x'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rimraf 'weird{,name'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "del-cli '{,/../{..,x}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}'",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "rimraf '{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }

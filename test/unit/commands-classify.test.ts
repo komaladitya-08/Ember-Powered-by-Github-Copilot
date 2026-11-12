@@ -331,8 +331,11 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
       "rimraf '{a,b}/{c,..}/{..,e}'"]) {
       expect(run(cmd).decision.verdict, cmd).toBe("refuse");
     }
-    // Over 64 alternatives Ember can't tell what the pattern reaches.
+    // Over 64 alternatives, or a `{` that never closes before a group that may (`'{,/../{..,x}'` reaches `{,/../..`),
+    // Ember can't tell what the pattern reaches.
     expect(run(`rimraf '${"{a,b}".repeat(7)}'`).decision.verdict).toBe("refuse");
+    for (const cmd of ["rimraf '{,/../{..,x}'", "rimraf 'a{,/../../{..,x}'", "del-cli '{,/../{..,x}'"]) expect(run(cmd).decision.verdict, cmd).toBe("refuse");
+    expect(run("rimraf '{x'").decision.verdict).toBe("ask");
     // Patterns in the project's folder ask, as before.
     for (const cmd of ["rimraf '{build,dist}'", "rimraf 'src/**/*.{js,map}'", "rimraf 'dist/@(a|b)'", "rimraf 'file (copy)'", "del-cli 'dist/!(keep.js)'",
       "rimraf '{build,dist}/*'"]) {
