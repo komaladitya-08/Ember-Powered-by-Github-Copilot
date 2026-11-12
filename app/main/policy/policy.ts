@@ -483,14 +483,24 @@ const RISKY_ACT_INTL_SOURCE = intlSource(RISKY_ACT_WORDS, RISKY_ACT_ANYWHERE);
 const RISKY_ACT_INTL = new RegExp(RISKY_ACT_INTL_SOURCE, "u");
 /** Does this label post, invite, change an account or a repository (RISKY_ACT), in any of the languages above? */
 const isRiskyActLabel = (s: string) => { const n = normalizeLabel(s); return RISKY_ACT_LEAD.test(n) || RISKY_ACT.test(n) || RISKY_ACT_INTL.test(foldLabel(s)); };
+/** COMMITS_LEAD_WORDS leading a label, and COMMITS_PHRASES anywhere in it. */
+const COMMITS_LEAD = new RegExp(String.raw`^[^\p{L}\p{N}]*(${COMMITS_LEAD_WORDS})\b`, "u");
+const COMMITS_PHRASE = new RegExp(String.raw`\b(${COMMITS_PHRASES})\b`);
+/** A lone word that grants access: "Allow", "Permit". */
+const LONE_GRANT = /^[^\p{L}\p{N}]*(allow|permit)[^\p{L}\p{N}]*$/u;
 /**
- * Is this label risky to act on only by a word or phrase that grants or commits (COMMITS_LEAD_WORDS, COMMITS_PHRASES: the
+ * Is this label risky to act on only by a word that grants or commits as it leads the label (COMMITS_LEAD_WORDS: the
  * audit of 2026-11-11), and by nothing Ember asked about before (RISKY's lists, the other acting verbs, another language's,
- * a disk's Format) nor any talk of security ("Turn off firewall")?
+ * a disk's Format) nor any talk of security ("Turn off firewall")? Those words lead headlines, tabs and settings too
+ * ("Reserve Bank raises rates", "Email", "Allow Editing"). Never a phrase (COMMITS_PHRASES) that grants rights, changes
+ * who can see something, drops work or turns a protection off ("Make admin", "Change visibility", "Drop changes", "Turn
+ * off antivirus", "Continue as Ana"), nor a lone "Allow" or "Permit": those mean what they say wherever they stand
+ * (regression review of round eight, safety-privacy-x8-4).
  */
 const commitsOnly = (s: string, os: OS) => {
   const n = normalizeLabel(s);
-  return isRiskyActLabel(s) && !ACT_LEAD_BEFORE.test(n) && !RISKY_ACT_BEFORE.test(n) && !RISKY_ACT_INTL.test(foldLabel(s)) && !isRiskyLabel(s, os) && !securityTalk(s);
+  return COMMITS_LEAD.test(n) && !COMMITS_PHRASE.test(n) && !LONE_GRANT.test(n) && !ACT_LEAD_BEFORE.test(n) && !RISKY_ACT_BEFORE.test(n)
+    && !RISKY_ACT_INTL.test(foldLabel(s)) && !isRiskyLabel(s, os) && !securityTalk(s);
 };
 /** Links, tabs and menu items: also named by what they lead to, show or set (a headline, a tab "Email", "Allow Editing"). */
 const COMMITS_FLAG_ROLES = /^(link|page tab|menu item)$/;

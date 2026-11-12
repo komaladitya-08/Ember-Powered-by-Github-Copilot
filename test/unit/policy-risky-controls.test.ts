@@ -145,7 +145,7 @@ describe("labels that start with a word that grants or commits", () => {
   // the user didn't ask for, which put the rest of the task back to asking (regression review of round seven).
   it.each([["link", "Reserve Bank raises interest rates again", "read the top story"], ["link", "Sell-off deepens as markets slide", "read the top story"],
     ["link", "Purge of officials continues", "read the top story"], ["link", "Permit applications open on Monday", "read the top story"],
-    ["link", "Make public transport free, says mayor", "read the top story"], ["link", "Book a demo", "find out what it costs"], ["page tab", "Email", "open the email settings tab"],
+    ["link", "Book a demo", "find out what it costs"], ["page tab", "Email", "open the email settings tab"],
     ["page tab", "Book", "open the reading list"], ["menu item", "Allow Editing", "edit the document"], ["menu item", "Email", "look at the menus"]])(
     "a %s named “%s” asks every time, and isn't flagged as unasked for “%s” (safety-privacy-x7-1)", (role, name, goal) => {
       // (Enter on a tab goes as before: only a click on one is judged by its name.)
@@ -161,6 +161,23 @@ describe("labels that start with a word that grants or commits", () => {
     ["link", "Turn off firewall"], ["menu item", "Allow remote content in messages from Ana"]])(
     "a %s named “%s” the user didn't ask for is still flagged as unasked (safety-privacy-x7-1)", (role, name) => {
       expect(engine().decide(click(name, { inPage: undefined, onPage: true, goal: "read the top story", element: { role, name } }))).toMatchObject({ verdict: "confirm", aligned: false });
+    });
+
+  // Only a word that leads headlines, tabs and settings ("Reserve…", "Email", "Allow Editing") spares the flag: a phrase
+  // that grants rights, changes who can see something, drops work or turns a protection off, or a lone "Allow", keeps it.
+  it.each([["menu item", "Make admin"], ["menu item", "Add member"], ["menu item", "Change visibility"], ["menu item", "Make public"], ["menu item", "Allow"],
+    ["menu item", "Mark as spam"], ["menu item", "Drop changes"], ["menu item", "Pause protection"], ["menu item", "Turn off antivirus"], ["menu item", "Disable screen lock"],
+    ["menu item", "Pause real-time protection"], ["link", "Continue as Ana"], ["page tab", "Make public"], ["link", "Permit"],
+    ["link", "Make public transport free, says mayor"]])(
+    "a %s named “%s” the user didn't ask for asks every time and is flagged as unasked (safety-privacy-x8-4)", (role, name) => {
+      // (Enter on a page's link is judged by what it leads to, as before; on a menu item, by its name.)
+      const enter = role === "menu item" ? [click(name, { kind: "keys", value: "Return", goal: "look at the team page", element: { role, name } })] : [];
+      for (const r of [click(name, { inPage: undefined, onPage: true, window: "Members - Acme — Mozilla Firefox", goal: "look at the team page", element: { role, name } }), ...enter]) {
+        asksAlways(r);
+        const d = engine().decide(r);
+        expect(d).toMatchObject({ verdict: "confirm", aligned: false });
+        expect(d.prompt).toMatch(/You didn't ask for this, so say no if it looks wrong\.$/);
+      }
     });
 });
 
