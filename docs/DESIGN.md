@@ -104,7 +104,8 @@ They share one emotion rig, so switching never changes behaviour.
   words as the one before it too (each command of a task that asks before every one), and its words leave the card's
   live region once it has gone. An answer or a problem that comes back after "Listening…" (a wake that was another
   word, a Listen once that heard nothing) isn't heard again. They hear a task's end there too ("Print two lines: Done", as Home's Task activity
-  says it), with Home closed as well, never while the microphone is open for a request. A step Ember took **without asking** (Work without asking) shows its announcement with a
+  says it), with Home closed as well, never while the microphone is open for a request: then once it has closed,
+  even where the task's card went meanwhile (a voice conversation stays open longer than a done card). A step Ember took **without asking** (Work without asking) shows its announcement with a
   "Without asking" tag in the accent tint, set only by Ember (`BubbleState.autonomous`): a task's
   own note never carries it. When
   "Thinking…" has heard nothing from Copilot for 10 seconds it says "Still waiting for Copilot…"

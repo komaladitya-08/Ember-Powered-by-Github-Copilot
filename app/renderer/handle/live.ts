@@ -50,6 +50,8 @@ export class HandleLive {
   private inRegion = false;
   /** Each task's state as last said (or first seen): its end is news once. */
   private tasksSaid = new Map<string, TaskCard["status"]>();
+  /** The words of each task's end that came while news was held, by task, until it is let go (taskNews). */
+  private endsHeld = new Map<string, string>();
   /** The status line last said. */
   private announcedStatus = "";
   /** Whether a microphone state came before: the first one is only what it was, no news. */
@@ -99,18 +101,26 @@ export class HandleLive {
    * What the card says of tasks that ended since it last said ("Print two lines: Done"), in Home's words for a task's
    * change (taskAnnouncement), or null. Without it a task that worked in the corner ended in silence on the card, with
    * Home closed (accessibility-c8-2). One it first sees is no news. `held` (micOpen): nothing is said, and what a task
-   * comes to meanwhile is said once it is let go.
+   * comes to meanwhile is said once it is let go, even where its card has gone by then, as Home's Task activity, which
+   * keeps ended tasks, says it: a conversation holds the microphone open past a done card's 15 s (accessibility-x8-2).
    */
   taskNews(tasks: readonly TaskCard[], held: boolean): string | null {
     const said: string[] = [];
+    const here = new Set(tasks.map(t => t.id));
+    // Let go: first the ends of cards that went meanwhile, which ended before the others.
+    if (!held) {
+      for (const [id, words] of this.endsHeld) if (!here.has(id)) said.push(words);
+      this.endsHeld.clear();
+    }
     for (const t of tasks) {
       const before = this.tasksSaid.get(t.id);
-      if (held && before !== undefined) continue;
-      if (before !== undefined && before !== t.status && ENDED.has(t.status)) said.push(taskAnnouncement(t.title, t.status, t.unanswered === true));
+      const ended = before !== undefined && before !== t.status && ENDED.has(t.status);
+      if (held && before !== undefined) { if (ended) this.endsHeld.set(t.id, taskAnnouncement(t.title, t.status, t.unanswered === true)); continue; }
+      if (ended) said.push(taskAnnouncement(t.title, t.status, t.unanswered === true));
       this.tasksSaid.set(t.id, t.status);
     }
-    // A card that has gone is forgotten (its id is never used again).
-    for (const id of [...this.tasksSaid.keys()]) if (!tasks.some(t => t.id === id)) this.tasksSaid.delete(id);
+    // A card that has gone is forgotten (its id is never used again), but for an end that waits to be said.
+    for (const id of [...this.tasksSaid.keys()]) if (!here.has(id)) this.tasksSaid.delete(id);
     return said.length ? said.join(". ") : null;
   }
 

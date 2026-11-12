@@ -147,6 +147,31 @@ describe("the corner card's live region", () => {
     expect(micOpen({})).toBe(false);
   });
 
+  it("says a task's end once it is let go, though its card went while the microphone was open (accessibility-x8-2)", () => {
+    // A voice conversation (on by default) holds the microphone open past a done card's 15 s on the card.
+    const live = new HandleLive();
+    const task = (status: TaskCard["status"], id = "t1", title = "Print two lines with two commands"): TaskCard => ({ id, title, status, detail: "" });
+    live.taskNews([task("running")], false);
+    expect(live.taskNews([task("running")], true)).toBeNull();
+    expect(live.taskNews([task("done")], true)).toBeNull();
+    expect(live.taskNews([], true)).toBeNull();
+    expect(live.taskNews([], false)).toBe("Print two lines with two commands: Done");
+    expect(live.taskNews([], false)).toBeNull();
+    // Several over a long hold: each once, the gone ones too, beside one whose card still shows.
+    const many = new HandleLive();
+    many.taskNews([task("running"), task("running", "t2", "Tidy the desktop")], false);
+    expect(many.taskNews([task("failed"), task("done", "t2", "Tidy the desktop")], true)).toBeNull();
+    expect(many.taskNews([task("done", "t2", "Tidy the desktop")], true)).toBeNull();
+    expect(many.taskNews([task("done", "t2", "Tidy the desktop")], false)).toBe("Print two lines with two commands: Didn't finish. Tidy the desktop: Done");
+    expect(many.taskNews([task("done", "t2", "Tidy the desktop")], false)).toBeNull();
+    // One first seen while held, already ended, is still no news; nor is one never seen to end before its card went.
+    const first = new HandleLive();
+    first.taskNews([task("running")], false);
+    expect(first.taskNews([task("done", "t3", "Rename the files")], true)).toBeNull();
+    expect(first.taskNews([], true)).toBeNull();
+    expect(first.taskNews([], false)).toBeNull();
+  });
+
   it("is what the card's page says, emptied when the bubble's words have gone and nothing else is said (accessibility-c8-1)", () => {
     const main = readFileSync("app/renderer/handle/main.ts", "utf8");
     expect(main).toContain("const said = live.bubble(view, questionOf(b.actions), name);");
