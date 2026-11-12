@@ -546,6 +546,15 @@ describe("spoken answers can't be padded or asked (review of #143)", () => {
     for (const yes of ["Okay.", "OK.", "Alright.", "All right.", "Go on.", "So okay.", "Um okay.", "Ember, okay."]) expect(spokenAnswer(yes), yes).toBe("allow");
   });
 
+  it("takes “Okay, thanks.” for the yes that “Okay.” is: what trails an answer goes before what leads it (V2-S10)", () => {
+    // "Sounds good, thanks." was a yes and "Okay, thanks." wasn't: the lone "okay" was taken off as a filler before the
+    // "thanks" after it was, and nothing was left.
+    for (const yes of ["Okay, thanks.", "Alright, thank you.", "Okay, please.", "OK, thanks, Ember.", "Sounds good, thanks."]) expect(spokenAnswer(yes), yes).toBe("allow");
+    // A filler that is no answer stays none, and a run of fillers still pads nothing.
+    for (const other of ["So, thanks.", "Um, thank you.", "Well, please.", "Oh, Ember.", "Okay, okay, okay, okay.", "Um, um, um, yes.", "Thanks.", "Please.", "Okay, thanks?"]) expect(spokenAnswer(other), other).toBeNull();
+    expect(spokenAnswer("No, thanks.")).toBe("deny");
+  });
+
   it("counts “please” once in all, wherever it stands (review of #143)", () => {
     for (const padded of ["Please please do.", "Please, please go ahead.", "Yes please please.", "Please go ahead please.", "Allow it please please."]) {
       expect(spokenAnswer(padded), padded).toBeNull();

@@ -29,7 +29,10 @@ function withoutLead(words: string[]): string[] {
   return words.slice(i);
 }
 
-/** The answer without what trails it: "please", "thanks" or "thank you", and the name, each at most once. */
+/**
+ * The answer without what trails it: "please", "thanks" or "thank you", and the name, each at most once. Taken off
+ * before what leads it (withoutLead), so a filler left as the last word is the answer itself ("Okay, thanks.").
+ */
 function withoutTail(words: string[]): string[] {
   const w = [...words];
   const seen = new Set<string>();
@@ -88,7 +91,9 @@ export function spokenAnswer(text: string): "allow" | "deny" | null {
   if (!t || t.length > 60) return null;
   // Punctuation first ("Hey, Ember. Allow."), then what leads and trails the answer.
   const spoken = t.replace(/[,.!;:]/g, " ").split(/\s+/).filter(Boolean);
-  const words = withoutTail(withoutLead(spoken));
+  // (The tail first: a lone "okay" before "thanks" is the answer, not a filler leading into one. "Okay, thanks." was no
+  // answer where "Sounds good, thanks." was one: V2-S10.)
+  const words = withoutLead(withoutTail(spoken));
   // "Please" leads many answers ("please go ahead"), and is part of one ("please do").
   const cores = [words.join(" "), ...(words[0] === "please" ? [words.slice(1).join(" ")] : [])];
   if (cores.some(c => SPOKEN_NO.has(c))) return "deny";
