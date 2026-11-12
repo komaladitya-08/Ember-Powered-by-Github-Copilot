@@ -2625,16 +2625,21 @@ Node.js" was judged as a button, asked "You didn't ask for this" and put the res
 its thumbnail's twin was refused before any question. `riskOf` and the worker's `livingPage()` now read it by either.
 What counts as a title is `linkIsTitle`'s allow-list, and its review (W-1) found commands in a title's shape that it
 let through, clicked now and with Enter before ("Share Document - Drive", "Grant Access - Drive", "Merge Pull Request -
-GitHub", "What are you waiting for? Delete your account"). So it was narrowed for both: a title in parts led by a word
-that acts as often as it names (`LINK_ACTS`: allow, grant, revoke, disable, turn, share, post, publish, merge, run,
-sell and their like) is one only with a release's tag ("Post Malone - Circles (Official Video)"), and a command after a
-question or a colon, a suggestion ("Why not share your location") and a grant of access (`GRANTS_ACCESS`) never are.
-Proof: round eight's corpus (838,392 steps) decides byte for byte as before, but it holds no link named in a title's
-shape, so it shows only that nothing else moved. On the review's 94 command-shaped names (1,504 clicked steps) every
-step decides as before the loosening, and with Enter 30 of them now ask where they went unasked. On 140 titles and
-commands in five shapes (11,200 steps), the only steps that ask less than before are eight titles' clicks on an
-ordinary page ("How to install Node.js on Windows 11", "Post Malone - Circles (Official Video)", "How to install
-Python: Complete guide"), which lose their question and flag; on a payment page they still ask. A title led by such a
-word with no tag ("Post Malone - Circles", "Kill Bill - Official Trailer") asks as before, and off the task is called
-something the user didn't ask for. A native app's link, a page's button or menu item and a payment page's control ask
-as before, and `judge()` still calls an off-task link that says what it does something the user didn't ask for.
+GitHub", "What are you waiting for? Delete your account"). So it was narrowed for both: a title in parts ("Artist -
+Song", "Name | Site") is one only with a song's or a video's tag ("Post Malone - Circles (Official Video)"; never
+"(Live)", never where a part turns a protection off), since a command may stand before or after the separator ("Acme
+Bank - Transfer Funds", "My Shop | Buy Now"); a command after a question or a colon, or, after a how, what or why,
+after any stop, comma or dash, is never one; nor is a suggestion ("Why not share your location") or a grant of access
+(`GRANTS_ACCESS`). Proof: round eight's corpus (838,392 steps) decides byte for byte as before, but it holds no link
+named in a title's shape, so it shows only that nothing else moved. On 169 command-shaped names (the review's 94, 57
+led by the policy's other acting words and 18 with the command after the separator or other punctuation; 2,704
+clicked steps), every step decides as before the loosening but two names': "Restore Defaults - Settings" asks more
+(read as a button's name now), and "Post Malone - Circles (Official Video)", a title, asks less. With Enter, 31 of the
+review's names now ask where they went unasked, and none asks less. On 140 titles and commands in five shapes
+(11,200 steps), the only steps that ask less than before are eight titles' clicks on an ordinary page ("How to install
+Node.js on Windows 11", "Post Malone - Circles (Official Video)", "How to install Python: Complete guide"), which lose
+their question and flag; on a payment page they still ask. A title in parts with a risky word and no tag ("Post Malone
+- Circles", "Rusted Root - Send Me On My Way", "Kill Bill - Official Trailer") asks as before, and off the task is
+called something the user didn't ask for. A native app's link, a page's button or menu item and a payment page's
+control ask as before, and `judge()` still calls an off-task link that says what it does something the user didn't
+ask for.

@@ -2054,29 +2054,30 @@ const LINK_ACTS_FOR_GOOD = /^(delete|remove|erase|wipe|destroy|empty|reset|clear
 /** What a command acts on, as a second word: "Post All - Blog" is a command, whatever its shape. */
 const LINK_OBJECT = /^(my|your|our|this|that|these|those|the|all|everything|account|now|money|payment|data|it)$/i;
 /**
- * Words that say what a link does as often as they lead a name ("Post Malone", "Run DMC", "Kill Bill"): a link starting
- * with one is a title in parts only where it carries a release's tag (RELEASE_TAG). Read by their shape alone, "Share
- * Document - Drive", "Grant Access - Drive" and "Merge Pull Request - GitHub" went unasked, clicked or with Enter (review
- * W-1 of the change for the owner's report of 2026-11-12).
+ * A song's or a video's own tag in its title: "(Official Video)", "[Official Music Video]", "(Lyrics)", "(Audio)", "ft.
+ * Swae Lee". Never "(Live)" or "(Official Account)", which any name may carry.
  */
-const LINK_ACTS = /^(allow|permit|grant|revoke|disable|enable|turn|switch|block|ban|report|kill|execute|run|leave|merge|publish|post|share|sell|reboot|restart|factory|overwrite)$/i;
-/** A song's or a video's tag in its title: "(Official Video)", "[Lyrics]", "(Live)", "ft. Swae Lee". */
-const RELEASE_TAG = /[([]\s*(official|lyrics?|lyric video|music video|audio|live|remix|visuali[sz]er)\b[^)\]]*[)\]]|\s(ft|feat)\.\s/i;
+const RELEASE_TAG = /[([]\s*(official\s+((music|lyric)\s+)?(video|audio|visuali[sz]er|trailer|teaser)|lyrics?|lyric video|music video|audio)\s*[)\]]|\s(ft|feat)\.\s/i;
 
 /**
  * A link that plainly names what it leads to, an allow-list that fails closed (review of #180): an article's title ("How to
- * install Node"), or a title in parts with a name after its first word ("Post Malone - Circles (Official Video)"), first
- * word not one that acts for good, nor one that acts as often as it names (LINK_ACTS) without a release's tag.
- * Punctuation alone says nothing: "Delete my account (permanently)" and "Delete: my account" are commands, and so is one
- * after a question or a colon ("Why wait? Buy it now", "How to: delete all files now"), a suggestion ("Why not share your
- * location") and a grant of access (GRANTS_ACCESS: "Allow Notifications - Site"), whatever its shape (review W-1).
+ * install Node"), or a song's or a video's title in parts ("Post Malone - Circles (Official Video)"), first word not one
+ * that acts for good. Punctuation alone says nothing: "Delete my account (permanently)" and "Delete: my account" are
+ * commands. So, read by its shape alone, was a command in parts, before or after the separator ("Share Document - Drive",
+ * "Acme Bank - Transfer Funds", "My Shop | Buy Now"): a title in parts is one only with a song's or a video's tag
+ * (RELEASE_TAG), and never where a part turns a protection off or talks of security. Never a command after a question
+ * or a colon, or, after a how, what or why, after any stop, comma or dash ("Why wait? Buy it now", "How to: delete all
+ * files now", "Why wait, buy it now"); a suggestion ("Why not share your location"); or a grant of access
+ * (GRANTS_ACCESS: "Allow Notifications - Site"), whatever its shape (review W-1 of the change for the owner's report of
+ * 2026-11-12, which found those read as titles, clicked or with Enter).
  */
 function linkIsTitle(name: string, os: OS): boolean {
   if (name.split(/[?!:;]/).slice(1).some(clause => linkCommands(clause, true, os))) return false;
   if (GRANTS_ACCESS.test(normalizeLabel(name))) return false;
-  if (/^\s*(how (to|do)|what|why(?! not\b)|guide to|review of)\b/i.test(name)) return true;
+  if (/^\s*(how (to|do)|what|why(?! not\b)|guide to|review of)\b/i.test(name)) return !name.split(/[,…—–|]|\.\s|\s-\s/).slice(1).some(clause => linkCommands(clause, true, os));
   const parts = /^\s*([\p{L}\p{N}']+)\s+([\p{L}\p{N}']+)[^-–—|]*\s[-–—|]\s/u.exec(name);
-  return !!parts && !LINK_ACTS_FOR_GOOD.test(parts[1]) && (!LINK_ACTS.test(parts[1]) || RELEASE_TAG.test(name)) && /^\p{Lu}/u.test(parts[2]) && !LINK_OBJECT.test(parts[2]);
+  if (!parts || LINK_ACTS_FOR_GOOD.test(parts[1]) || !/^\p{Lu}/u.test(parts[2]) || LINK_OBJECT.test(parts[2]) || !RELEASE_TAG.test(name)) return false;
+  return !name.split(/\s[-–—|]\s/).some(part => securityTalk(part) || saysWord(WEAKENS, part) || TURNS_OFF.test(normalizeLabel(part)) || COMMITS_PHRASE.test(normalizeLabel(part)));
 }
 
 /**

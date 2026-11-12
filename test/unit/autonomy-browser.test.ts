@@ -208,7 +208,15 @@ describe("what still asks in a browser, whatever is on", () => {
     "Grant Access - Drive", "Revoke Token - Settings", "Run Installer - Setup", "Overwrite File - Drive", "Factory Reset - Device", "Reboot Device - Admin", "Share Post - Sam",
     "Share Document - Drive", "Post Reply - Forum", "Publish Release - GitHub", "Merge Pull Request - GitHub", "Merge Branch - main", "Sell Stock - Robinhood",
     "Block User - Profile", "Execute Script - Console", "Kill Process - Tasks", "Leave Group - Chat", "Leave Meeting - Teams", "Report Spam - Mail",
-    "What are you waiting for? Delete your account", "What's next: Send payment", "How to: delete all files now", "Why wait? Buy it now", "Why not share your location"];
+    "What are you waiting for? Delete your account", "What's next: Send payment", "How to: delete all files now", "Why wait? Buy it now", "Why not share your location",
+    // Led by any word policy reads as acting, not only those the review named; after a separator; under a tag any name may carry.
+    "Withdraw Funds - Bank", "Invite Member - Slack", "Revert Commit - GitHub", "Kick Member - Discord", "Purge Cache - Cloudflare", "Forget Device - Settings",
+    "Pause Protection - Defender", "Start Broadcast - YouTube", "Archive Chat - WhatsApp", "Why pay more - Buy now", "Why wait | Delete your account",
+    "Disable Antivirus - Defender (Live)", "Report Account - Nike (Official Account)",
+    // The command after the separator, and after other punctuation.
+    "Acme Bank - Transfer Funds", "Sam Smith | Log Out", "My Shop | Buy Now", "Account Settings - Delete Account", "Microsoft Defender - Turn Off Firewall",
+    "Google Drive - Share Document", "Share Report.pdf - Drive", "Copy Link - Share", "Why wait. Buy it now", "Why wait, buy it now", "What now… Delete your account",
+    "Why wait—buy now"];
 
   it.each(commands)("still asks every time about a page's link that says what it does in a title's shape, “%s”, and off the task calls it unasked (owner's report of 2026-11-12)", name => {
     for (const kind of ["click", "cursor_click"] as const) {
@@ -219,19 +227,24 @@ describe("what still asks in a browser, whatever is on", () => {
       const own = new PolicyEngine({ neverLook: () => [], grants: () => ({ msedge: "act" }), os: "win32", keys: KEYS.win32 });
       const off = own.decide(edge({ kind, onPage: true, goal: "find me a video", element: { role: "link", name } }));
       expect(off.verdict).toBe("confirm");
-      // ("Sell" only commits: asked every time, never called unasked, as before (safety-privacy-x7-1).)
-      expect(off.aligned).toBe(name.startsWith("Sell ") ? undefined : false);
+      // ("Sell" and "Purge" only commit: asked every time, never called unasked, as before (safety-privacy-x7-1).)
+      expect(off.aligned).toBe(/^(Sell|Purge) /.test(name) ? undefined : false);
     }
     // Enter on it as a page's focused link (`inPage`) asks too.
     expect(engine(true).decide(edge({ kind: "click", inPage: true, element: { role: "link", name } }))).toMatchObject({ verdict: "confirm", risky: true });
   });
 
-  it("takes a title led by a word that also acts for a title only with a release's tag, and never one that grants access (owner's report of 2026-11-12)", () => {
+  it("takes a title led by a word that also acts for a title only with a release's tag, and never one that grants access or turns a protection off (owner's report of 2026-11-12)", () => {
     const go = (name: string) => engine(true).decide(edge({ kind: "click", onPage: true, goal: "play a song on youtube", element: { role: "link", name } })).verdict;
     expect(go("Post Malone - Circles (Official Video)")).toBe("allow");
     expect(go("Post Malone - Circles [Lyrics]")).toBe("allow");
     expect(go("Post Malone - Circles")).toBe("confirm");
+    expect(go("Rusted Root - Send Me On My Way")).toBe("confirm");
+    expect(go("Rusted Root - Send Me On My Way (Official Video)")).toBe("allow");
+    expect(go("Run DMC - It's Tricky (Live)")).toBe("confirm");
     expect(go("Allow Notifications - Site (Official Video)")).toBe("confirm");
+    expect(go("Disable Antivirus - Defender (Official Video)")).toBe("confirm");
+    expect(go("Turn Off Firewall - Settings (Official Video)")).toBe("confirm");
   });
 
   it("still asks about a page's link on a payment page, a native app's link, and a page's button or menu item named so (owner's report of 2026-11-12)", () => {
