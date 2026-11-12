@@ -270,7 +270,7 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
     expect(run("rimraf '{build,dist}'").decision.verdict).toBe("ask");
   });
 
-  it("asks when a program Ember has no row for is given the home folder, a folder above the task's or one that holds Ember's files (commands-remote-c8-2)", () => {
+  it("asks when a program Ember has no row for is given the home folder, a folder that holds it or one that holds Ember's files (commands-remote-c8-2)", () => {
     for (const cmd of ["mytool ~", "mytool ~/", "mytool \"$HOME\"", "mytool ..", "mytool ../", "mytool ../..", "mytool /", "mytool /home", "mytool ~/.config",
       "mytool ~/.local/share", "rmlint ~", "stow -t ~ dotfiles", "cd src && mytool ../..", "fdupes -r ~"]) {
       expect(run(cmd).decision.verdict, cmd).toBe("ask");
@@ -304,6 +304,25 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
     }
     for (const cmd of ["fdupes -o $HOME\\.bashrc .", "& jdupes.exe -o $HOME\\.bashrc ."]) expect(run(cmd, "win32", "powershell").decision.rules, cmd).toContain("path.startup");
     expect(run("fdupes -o ~/.bashrc .", "wsl").decision.rules).toContain("path.startup");
+  });
+
+  it("runs an out-of-source build given the project's folder from a folder in it, a --prefix written apart and a row's own fallback (commands-remote-x8-7)", () => {
+    // The command window's folder after `cd build` (or run_command's own folder): `..` is the project itself.
+    const inBuild = { ...contextOf("linux"), cwd: "/home/ana/proj/build" };
+    for (const cmd of ["qmake ..", "qmake6 ..", "qmake-qt5 ..", "ccmake ..", "cmake-gui ..", "autoreconf -fi ..", "gcovr -r ..", "cppcheck ..", "protoc -I .. ../x.proto",
+      "xmake -P ..", "cloc ..", "scc ..", "hugo -s ..", "jekyll build -s ..", "sphinx-build .. _build", "git-cliff -r .."]) {
+      const c = classifyCommand(cmd, "bash", inBuild);
+      expect(c.findings.map(f => f.rule), cmd).not.toContain("unclear.broad-folder");
+    }
+    for (const cmd of ["./configure --prefix ~/.local", "./configure --prefix $HOME/.local", "waf configure --prefix ~/.local", "./configure --exec-prefix ~/.local",
+      "busybox ls ~", "busybox du -sh ..", "sponge out.txt"]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("run");
+    }
+    // The home folder, a folder that holds it and one that holds Ember's files still ask, from any folder.
+    for (const cmd of ["mytool ../..", "mytool ../../..", "mytool ~", "rmlint ~/.local"]) {
+      expect(classifyCommand(cmd, "bash", inBuild).findings.map(f => f.rule), cmd).toContain("unclear.broad-folder");
+    }
+    for (const cmd of ["stow -t ~ dotfiles", "stow --target ~ dotfiles", "mytool --verbose ~"]) expect(run(cmd).decision.verdict, cmd).toBe("ask");
   });
 });
 

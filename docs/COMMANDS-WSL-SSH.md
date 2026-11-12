@@ -127,9 +127,10 @@ Ember stops and asks before a command that:
   which expand a pattern themselves, so a quoted one is read as a pattern too, and one with braces that could reach
   Ember's files is refused), `trash`, `gio trash`, `trash-rm`, `shred`, `scrub`,
   a Mac's GNU `grm`, duplicate finders told to delete (`fdupes -d`, `jdupes -d`), rewriting a repository's history
-  (`bfg`, `git filter-repo`), a program Ember doesn't know given your home folder, a folder your project is in or one
-  that holds Ember's own files (`mytool ~`, `mytool ..`, `stow -t ~ dotfiles`; your project's folder and the folders
-  in it don't ask), `git clean`,
+  (`bfg`, `git filter-repo`), a program Ember doesn't know given your home folder, a folder that holds it or one
+  that holds Ember's own files (`mytool ~`, `mytool ..` in a folder in your home folder, `stow -t ~ dotfiles`; other
+  folders don't ask, such as your project's from its build folder, `qmake ..`, nor does an install prefix, `./configure
+  --prefix ~/.local`), `git clean`,
   `git reset --hard`, discarding changes (`git checkout -- <file>`, `git restore`), `git branch -D`,
   `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`; a `cp`
   or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it

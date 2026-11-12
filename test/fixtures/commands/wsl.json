@@ -2380,6 +2380,10 @@
    "rules": [
     "path.startup"
    ]
+  },
+  {
+   "cmd": "./configure --prefix ~/.local",
+   "verdict": "run"
   }
  ]
 }

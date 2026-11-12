@@ -2803,7 +2803,7 @@ class Engine extends Classifier {
     if (windowsSide && (key === "bash" || (!NATIVE[key] && DISTRO_LAUNCHER.test(key)))) { distroLauncher(h); return; }
     const n = NATIVE[key];
     if (n) n(h);
-    else generic(h);
+    else generic(h, true);
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5).
     optionPaths(h, !n || NEW_DELETERS.has(key));
   }
@@ -2959,7 +2959,7 @@ class Engine extends Classifier {
     const n = NATIVE[key];
     const dlBefore = this.downloads.length;
     if (n) n(inner);
-    else generic(inner);
+    else generic(inner, true);
     optionPaths(inner, !n || NEW_DELETERS.has(key));
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
@@ -3514,8 +3514,11 @@ function runners(): ReadonlySet<string> {
   return RUNNERS;
 }
 
-/** An unknown program: its operands read as paths; an operand naming a program may mean it runs it. */
-function generic(h: H): void {
+/**
+ * An unknown program: its operands read as paths; an operand naming a program may mean it runs it. With `noRow` (a
+ * program with no row at all, not a row's own fallback such as busybox's or sponge's), a broad folder asks too.
+ */
+function generic(h: H, noRow = false): void {
   const k = h.key;
   if (INPUT_SYNTH.has(k)) { h.e.refuseWith("ember.input", "input"); return; }
   if (GUI_PROGRAMS.has(k)) h.e.unclear("unclear.gui", SAYS.openApp);
@@ -3527,7 +3530,7 @@ function generic(h: H): void {
   if (DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) h.e.add("destroy", "disk.erase", "Erases or repartitions a disk.");
   h.e.readArgs(h.args, h.sc, { unresolvedUnclear: !TEXT.has(k) });
   if (KNOWN_ORDINARY.has(k) || GUI_PROGRAMS.has(k) || INTERACTIVE.has(k) || SECRET_PROGRAMS.has(k)) return;
-  broadOperand(h);
+  if (noRow) broadOperand(h);
   const at = h.args.findIndex(a => {
     const base = (a.v ?? "").split(/[\\/]/).pop() ?? "";
     return a.v !== null && /^[A-Za-z]/.test(base) && runners().has(base.toLowerCase().replace(/\.(exe|com)$/, ""));
@@ -3541,26 +3544,30 @@ function generic(h: H): void {
 /** Programs Ember has no row for that only list or measure what a folder holds (`eza -la ~`, `fd foo ~`, `dust ~`). */
 const LISTS_ONLY = new Set(["eza", "exa", "lsd", "fd", "fdfind", "dust", "duf", "gdu", "erdtree", "erd"]);
 
+/** A long option naming an install prefix, whose value may be written apart (`./configure --prefix ~/.local`). */
+const PREFIX_OPTION = /^--([a-z]+-)*prefix$/i;
+
 /**
- * An operand of a program Ember has no row for that is the home folder or holds it, a folder above the task's, or one
- * that holds Ember's own files (`rimraf ~` before it had a row, `rmlint ~`, `stow -t ~ dotfiles`, `mytool ..`): Ember
- * can't tell what the program does to all that is there, so it asks (commands-remote-c8-2). The task's own folder and
- * folders in it, beside it or elsewhere in the home folder run as before, and so do option values (`./configure
- * --prefix=$HOME/.local`). "Above" is the task's folder, so `cd build && qmake ..` runs.
+ * An operand of a program Ember has no row for that is the home folder or holds it, or one that holds Ember's own files
+ * (`rimraf ~` before it had a row, `rmlint ~`, `stow -t ~ dotfiles`, `mytool ..` from a folder in the home folder):
+ * Ember can't tell what the program does to all that is there, so it asks (commands-remote-c8-2). Other folders run as
+ * before, and so do install prefixes, attached or apart (`./configure --prefix ~/.local`). A folder above the command's
+ * folder no longer asks for that alone: after `cd build` it is the project itself (`qmake ..`: commands-remote-x8-7),
+ * and Ember can't tell where a project starts.
  */
 function broadOperand(h: H): void {
   if (LISTS_ONLY.has(h.key)) return;
   const sc = h.sc;
   const env = sc.path;
-  const top = h.e.ctx.cwd || null;
-  for (const a of h.args) {
+  for (let k = 0; k < h.args.length; k++) {
+    const a = h.args[k];
     if (a.param !== undefined || a.v === null || a.v === "" || a.glob || isOption(a) || URL_LIKE.test(a.v)) continue;
+    if (k > 0 && PREFIX_OPTION.test(h.args[k - 1].v ?? "")) continue;
     if (a.v.startsWith("~") ? !sc.home : !isAbsolute(a.v, env.flavour) && !sc.cwd) continue;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     const root = env.flavour === "posix" ? abs === "/" : /^[A-Za-z]:\\?$/.test(abs);
     const what = sc.home && isUnder(abs, sc.home, env) && isUnder(sc.home, abs, env) ? "your home folder"
       : root || (sc.home && isUnder(sc.home, abs, env)) ? "a folder that holds your home folder"
-      : top !== null && isUnder(top, abs, env) && !isUnder(abs, top, env) ? "a folder your project is in"
       : holdsEmberPath(abs, env) ? "a folder that holds Ember's own files" : null;
     if (what === null) continue;
     h.e.unclear("unclear.broad-folder", `Ember can't tell what ${h.prog} does with ${what}.`);
@@ -4149,7 +4156,7 @@ const asBefore = (h: H): void => {
   if (!NEW_DELETERS.has(h.key)) return;
   // A PowerShell word shaped like a cmdlet's name (`del-cli`, `gvfs-rm`) was an unknown cmdlet's, which asked.
   if (h.sc.family === "powershell" && /^[a-z]+-[a-z0-9]+$/.test(h.key)) unknownCmdlet(h);
-  else generic(h);
+  else generic(h, true);
 };
 
 // a: rm and friends (§3.5.1); GNU coreutils' own as Homebrew names them on a Mac (grm, gshred…), and scrub, which

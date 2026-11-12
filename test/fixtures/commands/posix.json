@@ -20120,6 +20120,84 @@
    "rules": [
     "posix.rm"
    ]
+  },
+  {
+   "cmd": "./configure --prefix ~/.local",
+   "verdict": "run"
+  },
+  {
+   "cmd": "./configure --prefix $HOME/.local",
+   "verdict": "run"
+  },
+  {
+   "cmd": "waf configure --prefix ~/.local",
+   "verdict": "run"
+  },
+  {
+   "cmd": "./configure --exec-prefix ~/.local",
+   "verdict": "run"
+  },
+  {
+   "cmd": "./configure --prefix ~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "meson setup build --prefix ~/.local",
+   "verdict": "run"
+  },
+  {
+   "cmd": "busybox ls ~",
+   "verdict": "run"
+  },
+  {
+   "cmd": "busybox du -sh ..",
+   "verdict": "run"
+  },
+  {
+   "cmd": "busybox rm -rf ~",
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
+  },
+  {
+   "cmd": "stow --target ~ dotfiles",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mytool --verbose ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "rmlint ~/.local",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "mkdir -p build && cd build && qmake .. && make",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cd src && mytool ../..",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
+  },
+  {
+   "cmd": "env mytool ~",
+   "verdict": "ask",
+   "rules": [
+    "unclear.broad-folder"
+   ]
   }
  ]
 }
