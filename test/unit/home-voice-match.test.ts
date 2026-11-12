@@ -45,11 +45,11 @@ describe("Voice Match's states", () => {
     expect(matchView(enrolling(1, "over"), shown).prompt).toBe("Your screen reader was still reading. Wait for it to finish, then say: “Ember, what's the weather like”");
   });
 
-  it("without its model: off with a note (a kept voiceprint isn't used, so every voice is heard), nothing to switch on or teach", () => {
+  it("without its model: a note that no spoken yes is taken till it is back, never that it is merely off, and nothing to switch on or teach (owner's report of 2026-11-12)", () => {
     const kept = matchView({ enrolled: true, on: false, model: false, wanted: true, enrolling: null }, { ...shown, speakerBytes: 26_534_365 });
     expect(kept).toMatchObject({ checked: false, disabled: true, forgetHidden: false, focus: ["voice-download", "voice-listen-once", "wake"] });
     expect(kept.teach.hidden).toBe(true);
-    expect(kept.text).toMatch(/^Off for now: Voice Match's model is missing or was damaged, so your voice can't answer .*Download it above \(27 MB\)/);
+    expect(kept.text).toBe("Voice Match can't work for now: its model is missing or was damaged, so Ember takes no spoken yes. Download it above (27 MB) to put that right.");
     const fresh = matchView({ enrolled: false, on: false, model: false, enrolling: null }, shown);
     expect(fresh).toMatchObject({ disabled: true, text: "Voice Match needs its own model, which isn't on this computer. Download it above, then teach Ember your voice." });
     // Its model back: as before.

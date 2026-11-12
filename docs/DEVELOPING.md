@@ -499,7 +499,9 @@ Once Ember has said the question (or at once, where it doesn't speak), and again
 answer it didn't take, it listens for 8 s (`ANSWER_WINDOW_MS`, app/main/voice.ts) for the answer without its name: a
 bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). Only what the list
 reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
-wake, “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere. It opens no conversation, is
+wake, “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere; a word or two that read as
+no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
+to answer (`unclear`). It opens no conversation, is
 no follow-up, ends with the question, and takes nothing said over other sound unless it is said with the name (the
 question then says so, once). An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
 voice ended is heard whole from its start, also when it starts in the 400 ms after Ember says it stopped; one that
@@ -522,7 +524,7 @@ yes (“Ember, allow”) counts too for a question asked by a task you asked for
 you, Voice Match has turned another voice away since, you forgot or taught your voice again,
 or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
 another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
-question (“Proceed?”), or padded with more than one filler word, isn't one. Otherwise the bubble says how, and the question stays. Measured on
+question (“Proceed?”), or padded with more than one filler word, isn't one. Otherwise the bubble says how, and the question stays (naming the keys only while Ember holds them: `refusalLine`). Measured on
 LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time. With the task trust,
 someone else saying “Hey Ember, allow” is taken about 2.5 % of the time, and someone who plays your recorded “Hey
 Ember” then says “allow” 35–40 %, once: any voice turned away ends the trust; a yes too

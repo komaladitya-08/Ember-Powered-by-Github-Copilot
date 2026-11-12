@@ -2417,6 +2417,15 @@ describe("the answer window after one of Ember's questions (owner's report of 20
     expect(idle.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "answer" });
   });
 
+  it("says when a word or two heard in it was no answer, most likely one misheard, never the words, and nothing for longer talk (owner's report of 2026-11-12)", () => {
+    // In one voice the recognizer writes a lone "Allow." as "Hello": it went nowhere, and nothing showed.
+    const misheard = run(saying({ 5: "Hello." }), (e, c) => { e.questionUp(true); e.answerWindow(8000); say(e, c, 5); }, asking);
+    expect(misheard.filter(v => v.type === "unclear")).toEqual([{ type: "unclear" }]);
+    expect(utterances(misheard)).toEqual([]);
+    const talk = run(saying({ 5: "I'll be there in five minutes." }), (e, c) => { e.questionUp(true); e.answerWindow(8000); say(e, c, 5); }, asking);
+    expect(talk.filter(v => v.type === "unclear")).toEqual([]);
+  });
+
   it("takes a request said by name in it as a wake's, so “Ember, …” still works while it is open", () => {
     const events = run(saying({ 5: "Ember, open my mail." }), (e, c) => { e.questionUp(true); e.answerWindow(8000); say(e, c, 5); }, asking);
     expect(events).toContainEqual({ type: "wake", keyword: "ember" });

@@ -130,7 +130,13 @@ export type VoiceEvent =
    * 2026-11-12). Only which answer it read as, never the words. So for an answer in a question's answer window or a
    * follow-up that began before Ember's voice had ended (TURN_GAP_FRAMES): only its end was heard.
    */
-  | { type: "answer-over"; answer: "allow" | "deny" };
+  | { type: "answer-over"; answer: "allow" | "deny" }
+  /**
+   * In a question's answer window, a word or two that read as no answer and weren't said by name (UNCLEAR_WORDS): most
+   * likely an answer misheard (in one voice a lone "Allow." is written "Hello"). Never the words: main says once a
+   * question how to answer (owner's report of 2026-11-12: it went nowhere, and nothing showed).
+   */
+  | { type: "unclear" };
 
 export interface EngineOptions {
   /** Audio kept before a wake so a one-breath command isn't cut (seconds). */
@@ -670,6 +676,8 @@ const TAIL_HOLD_FRAMES = 8;
  */
 const TURN_GAP_FRAMES = 5;
 const TURN_LEAD_MS = 64;
+/** At most this many words heard in an answer window, and no answer: an answer misheard, more likely than the room's talk. */
+const UNCLEAR_WORDS = 2;
 /** The microphone's lag behind the speakers' stream is measured up to 0.4 s; a match this good says it hears them at all. */
 const MAX_LAG_FRAMES = 12;
 const LAG_MIN_CORRELATION = 0.5;
@@ -2045,7 +2053,11 @@ export class VoiceEngine {
     if (this.mode.reason === "answer" && !this.answering(text)) {
       // Not an answer, in a question's answer window: the room's talk goes nowhere (nothing without the name leaves this
       // computer here). Said by name, it is a request, as at a wake (the bare name isn't spotted as one in this window).
-      if (!calledByName(heard)) { this.peak = 0; return; }
+      if (!calledByName(heard)) {
+        this.peak = 0;
+        if (wordsOf(text).length <= UNCLEAR_WORDS) this.emit({ type: "unclear" });
+        return;
+      }
       this.mode.reason = "wake";
       this.emit({ type: "wake", keyword: BARE_NAME });
       this.emit({ type: "listening", on: true, reason: "wake", window: "wake" });

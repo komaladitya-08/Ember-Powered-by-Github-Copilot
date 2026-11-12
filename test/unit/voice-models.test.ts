@@ -169,8 +169,8 @@ describe("the download button and Voice Match's note", () => {
     expect(modelsDownloadLabel(["tts", "speaker"], byId("tts").bytes + byId("speaker").bytes)).toBe("Download Kitten Nano and Voice Match (90 MB)");
   });
 
-  it("explains Voice Match without its model: off for now with a voiceprint kept, or not yet teachable", () => {
-    expect(matchNoModelText(true, byId("speaker").bytes)).toMatch(/^Off for now: .*your voice can't answer.*Download it above \(27 MB\)/);
+  it("explains Voice Match without its model: no spoken yes taken while it is wanted, or not yet teachable (owner's report of 2026-11-12)", () => {
+    expect(matchNoModelText(true, byId("speaker").bytes)).toBe("Voice Match can't work for now: its model is missing or was damaged, so Ember takes no spoken yes. Download it above (27 MB) to put that right.");
     expect(matchNoModelText(false, null)).toBe("Voice Match needs its own model, which isn't on this computer. Download it above, then teach Ember your voice.");
   });
 });

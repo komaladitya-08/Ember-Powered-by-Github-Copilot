@@ -22,7 +22,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyHeld, autonomyInForce, holdAutonomyOff, releaseAutonomyHold, ALL_SCOPES } from "./policy/autonomy";
-import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, heardUnchecked, refusalEndsTrust, refusalNote, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -1854,6 +1854,8 @@ function start(): void {
   let answerListening = false;
   /** The question Ember last said an answer over other sound wasn't taken for (said once a question). */
   let overSoundFor: number | null = null;
+  /** The question Ember last said it didn't catch an answer to (engine.ts "unclear", said once a question). */
+  let unclearFor: number | null = null;
   const speechStarts = () => { saidFrom = Date.now(); questionWhenSaid = confirmer?.currentNumber ?? null; };
   /**
    * A spoken answer to the question up (voice-answer.ts judged the words): taken through the Confirmer, which holds a yes
@@ -1900,7 +1902,7 @@ function start(): void {
   const refuseVoiceAnswer = (why: VoiceAnswerNote, answer: "allow" | "deny") => {
     if (!confirmer) return;
     const note = refusalNote(why, { answer, locked: confirmer.voiceLocked, unready: settings.get().voice.match && !matchNow() });
-    if (!confirmer.note(VOICE_ANSWER_REFUSED[note])) return;
+    if (!confirmer.note(refusalLine(note, heldKeys().length > 0))) return;
     // (The keys stay under the note in the bubble; said aloud, they are named after it: tasks-approvals-6.)
     if (maySpeak()) voice?.speak(voiceAnswerSaid(note, heldKeys().map(k => k.say)));
     // "Say it again now": heard without the name once Ember has said why (the answer window, as after the question).
@@ -2102,6 +2104,11 @@ function start(): void {
       case "answer-over":
         answerOverEmber("own-voice", e.answer);
         break;
+      case "unclear":
+        // A word or two after the question that read as no answer, most likely one misheard: the question says once how
+        // to answer, rather than nothing (owner's report of 2026-11-12). Told as a no, so it is never a note only a yes gets.
+        if (confirmer?.waiting && unclearFor !== confirmer.currentNumber) { unclearFor = confirmer.currentNumber; refuseVoiceAnswer("unclear", "deny"); }
+        break;
       case "cut-in":
         // The user is talking over Ember: it stops at once. What they say comes next, as an utterance.
         log.info("voice.cut_in");
@@ -2120,7 +2127,7 @@ function start(): void {
         if (rejectionEndsTrust(e.reason)) voiceTrust.endAll("other-voice");
         if (e.reason === "voice" && confirmer?.lockVoice()) {
           log.info("voice.answer_locked");
-          confirmer.note(VOICE_ANSWER_REFUSED.locked);
+          confirmer.note(refusalLine("locked", heldKeys().length > 0));
         }
         // "Ember, allow" said while Ember read the question out, where it can't tell its voice from the user's (Windows,
         // macOS): the wake was turned away, silently until now. It is never taken (it may be Ember's own words): Ember

@@ -100,13 +100,15 @@ export interface MatchView {
 }
 
 /**
- * Voice Match without its model (missing, or damaged): why it's off (a kept voiceprint isn't used meanwhile, so Ember
- * hears every voice rather than none), or why it can't be taught yet. `bytes`: the model's size, when it alone is missing.
+ * Voice Match without its model (missing, or damaged): that while it is wanted no spoken yes is taken (voice-answer.ts
+ * "voice-match-unready"; everyone is still heard, as Voice Match never decides who is), or why it can't be taught yet.
+ * "Off for now…" read as if anyone could say yes meanwhile (owner's report of 2026-11-12). `bytes`: the model's size,
+ * when it alone is missing.
  */
 export function matchNoModelText(wanted: boolean, bytes: number | null = null): string {
   const size = bytes ? ` (${Math.max(1, Math.round(bytes / 1e6))} MB)` : "";
   return wanted
-    ? `Off for now: Voice Match's model is missing or was damaged, so your voice can't answer Ember's questions. Download it above${size} to put that right.`
+    ? `Voice Match can't work for now: its model is missing or was damaged, so Ember takes no spoken yes. Download it above${size} to put that right.`
     : `Voice Match needs its own model, which isn't on this computer. Download it above${size}, then teach Ember your voice.`;
 }
 

@@ -196,7 +196,7 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
 }
 
 /** Every reason a spoken answer can be turned away: voiceAnswer's, the Confirmer's, and an answer said over Ember's voice. */
-export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound" | "sound-unknown";
+export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound" | "sound-unknown" | "unclear";
 
 /**
  * What the bubble says under the question when a spoken answer wasn't taken (the question stays up): what happened,
@@ -219,7 +219,25 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
   // A nameless yes where nothing can tell whether other sound plays (macOS, Linux without parec, Windows before its
   // output watch has looked: engine.ts soundKnown), which the gate drops without a voiceprint as over other sound.
   "sound-unknown": "I can't tell here whether something else is playing, so I didn't take that as a yes: say my name first, then your answer.",
+  // A word or two in the answer window that read as no answer (engine.ts "unclear"): most likely one misheard.
+  unclear: "I didn't catch that as an answer. Say “allow” or “not now” once more, or click on the question.",
 };
+
+/**
+ * Those of the lines that name the keys, as they read where Ember holds none (another app took them): a shortcut is named
+ * only while Ember holds it, and none ends on an answer (owner's report of 2026-11-12: "…click Allow or use the keys."
+ * showed with no key to use).
+ */
+const WITHOUT_KEYS: Readonly<Partial<Record<VoiceAnswerNote, string>>> = {
+  "voice-match-unready": "Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow on the question.",
+  unverified: "That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow on the question.",
+  locked: "I heard a voice that isn't yours, so for this question I'll take a click only.",
+};
+
+/** The note for `why` as the question shows it: the keys are named only while Ember holds them (`keysHeld`). */
+export function refusalLine(why: VoiceAnswerNote, keysHeld: boolean): string {
+  return (!keysHeld && WITHOUT_KEYS[why]) || VOICE_ANSWER_REFUSED[why];
+}
 
 /** The lines that point to a click or the keys: said aloud, they name the keys Ember holds too (tasks-approvals-6). */
 const POINTS_TO_KEYS: ReadonlySet<VoiceAnswerNote> = new Set(["voice-match-unready", "unverified", "locked"]);
@@ -243,7 +261,7 @@ export function refusalNote(why: VoiceAnswerNote, o: { answer: "allow" | "deny";
  * a click or the keys, so someone answering without the mouse hears how (tasks-approvals-6).
  */
 export function voiceAnswerSaid(why: VoiceAnswerNote, keys: readonly string[] = []): string {
-  const line = VOICE_ANSWER_REFUSED[why].replace(/\s*›\s*/g, ", then ").replace(/[“”]/g, "");
+  const line = refusalLine(why, keys.length > 0).replace(/\s*›\s*/g, ", then ").replace(/[“”]/g, "");
   if (!keys.length || !POINTS_TO_KEYS.has(why)) return line;
   const said = keysSaid(keys);
   return `${line} ${why === "locked" ? said : `Or, ${said.charAt(0).toLowerCase()}${said.slice(1)}`}`;
