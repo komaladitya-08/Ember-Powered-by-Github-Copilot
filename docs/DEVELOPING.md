@@ -387,7 +387,10 @@ The bubble beside your cursor stays for your conversation, for guides, and for a
 task in the background doesn't speak there, but its questions still do. It works through the app's accessibility interface, so
 your mouse and keyboard stay yours. Before its first action in an app it asks **Allow / Always in this app / Not now**;
 answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N** (not now), so you never need the mouse (the
-question shows the keys). **Always** is a click only: a global key could take an app's own shortcut and grant for good
+question shows the keys). A press the question can't take yet says why on it (`KEY_REFUSED`, app/main/agent/confirm.ts):
+pressed as it came up, Ember using the mouse, again too soon after a long text's end has shown, a command card whose
+window doesn't show all of the command yet, or a consent card, which takes a click; the key that pages a long text on
+says nothing, as that is what it does. **Always** is a click only: a global key could take an app's own shortcut and grant for good
 by accident. A hidden Ember shows itself to ask, and with **Speak replies, questions and results out loud** set to
 **Always** (the default), or a screen reader running and it set to **When a screen reader runs**, it says the question
 out loud; **Never** keeps it quiet even for a screen reader, and chosen while Ember talks it stops at once (as does a

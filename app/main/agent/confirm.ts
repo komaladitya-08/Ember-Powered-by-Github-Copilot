@@ -153,6 +153,23 @@ export function answerSettler(d: { onScreen: () => BubbleState; reshow: () => bo
   };
 }
 
+/**
+ * Why Ember's allow or not-now key, pressed while a question is up, was refused, said on the question under its
+ * sentence and above its keys (owner's report of 2026-11-12: a refused press did nothing visible). Its gates stay as
+ * they were: `not-yet`, pressed in the question's first moments (its arm time); `busy`, while Ember borrows the mouse;
+ * `too-soon`, again too soon after a whole text's end had shown (the key must rest first); `click-only`, a consent card,
+ * which only a click allows; `panel`, a command card whose window doesn't show all of it yet. None reads as a spoken
+ * answer, nor names Ember: a screen reader may read it while Ember listens for an answer.
+ */
+export const KEY_REFUSED = {
+  "not-yet": "That key was pressed as the question came up, so it didn't count. Press it again.",
+  busy: "I'm using the mouse just now, so that key didn't count. Press it again once I've stopped.",
+  "too-soon": "All of it has been shown now. Press the key again to answer.",
+  "click-only": "This one needs a click in its window: the keys can't say yes to it.",
+  panel: "The command window isn't showing all of the command yet. Bring it up, then press the key again.",
+} as const;
+export type KeyRefusal = keyof typeof KEY_REFUSED;
+
 /** The hash a panel question's yes must carry back: the command card's, or the consent card's. */
 const panelSha256 = (panel: QuestionPanel): string => (panel.kind === "command" ? panel.card.sha256 : panel.consent.sha256);
 /** A SHA-256 as sha256Hex writes it: a card whose hash isn't one (empty, cut short) can't be allowed (fail closed). */
@@ -475,17 +492,44 @@ export class Confirmer {
     if (which !== "deny" && c.whole) {
       const now = this.now();
       if (!c.whole.seen) {
+        // Paging on is what the key does until the end has shown: no refusal, and nothing to say about it.
         if (!this.blocked()) {
           c.whole.page += 1;
           c.whole.keyAt = now;
           this.show({ bubble: this.bubbleOf(c) });
-        }
+        } else this.keyRefused(c, "busy");
         return false;
       }
-      if (now - c.whole.keyAt < this.armOf(c.q)) { c.whole.keyAt = now; return false; }
+      if (now - c.whole.keyAt < this.armOf(c.q)) { c.whole.keyAt = now; this.keyRefused(c, "too-soon"); return false; }
     }
     const opt = which === "primary" ? c.q.options.find(o => o.primary) ?? c.q.options[0] : c.q.options.find(o => o.id === which);
-    return opt ? this.answer(`q${c.n}:${opt.id}`, "key") : false;
+    if (!opt) return false;
+    if (this.answer(`q${c.n}:${opt.id}`, "key")) return true;
+    const why = this.keyRefusal(c, opt.id);
+    if (why) this.keyRefused(c, why);
+    return false;
+  }
+
+  /**
+   * Why answer() just refused option `option` of question `p` by key, as the press would be told (KEY_REFUSED), or null
+   * (it is no longer the question up). Read from the same gates answer() and allowedFrom() check, which it changes
+   * nothing of.
+   */
+  private keyRefusal(p: Pending, option: string): KeyRefusal | null {
+    if (this.current !== p) return null;
+    if (this.now() - p.shownAt < this.armOf(p.q)) return "not-yet";
+    if (this.blocked()) return "busy";
+    if (option === "deny") return null;
+    if (p.whole && (!p.whole.seen || this.now() - p.whole.seenAt < this.armOf(p.q))) return "too-soon";
+    if (p.q.clickOnly) return "click-only";
+    return p.q.panel ? "panel" : null;
+  }
+
+  /** Says on question `p` why a key press was refused (its note, above the keys): the question stays as it is. */
+  private keyRefused(p: Pending, why: KeyRefusal): void {
+    if (this.current !== p) return;
+    p.note = KEY_REFUSED[why];
+    this.show({ bubble: this.bubbleOf(p) });
   }
 
   /**

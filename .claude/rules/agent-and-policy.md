@@ -97,6 +97,8 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
   - panel questions (the command card, consent cards) answered only from their own window, with the hash of what it showed;
   - Allow on a whole-text question only after all of it was in view.
 
+  A key press one of these refuses says why on the question (`KEY_REFUSED`, `keyRefusal`: never silent, owner's report of 2026-11-12), and changes no gate; the approve key paging a whole text on is no refusal and says nothing.
+
   "Always in <app>" is a click only, never bound to a key, because a global key could take an app's own shortcut and grant for good.
 
 ## Views (show_view, update_view, finish_task's view)
