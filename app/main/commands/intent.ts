@@ -1369,7 +1369,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     if (fs.some(f => f.objects.some(o => !w.tokens.includes(o.text.toLowerCase())))) return null;
     return { intent: "git.stash.drop", announce: "Dropping the stash, as you asked." };
   },
-  "delete.paths": (fs, w, ctx) => {
+  "delete.paths": (fs, w, ctx, _all, whole) => {
     if (!asks(w, ROW_VERBS["delete.paths"])) return null;
     if (!ctx.cwd) return null;
     const env = envOf(ctx);
@@ -1388,6 +1388,10 @@ const ROWS: Readonly<Record<string, RowFn>> = {
         const inside = isUnder(o.resolved, ctx.cwd, env) || (ctx.home !== "" && isUnder(o.resolved, ctx.home, env));
         if (!inside && !w.tokens.some(t => normPath(t) === normPath(o.resolved!) || (isAbsoluteText(o.text, ctx.os) && normPath(t) === normPath(o.text)))) return null;
         if (recursive && !recursionNear(idx, w)) return null;
+        // Main read all the words, so the first word naming the folder had to stand by "folder" too: "before you build,
+        // delete the build folder" names it first as a verb, and still asks (commands-remote-x8-6).
+        const first = o.kind === "glob" ? whole.tokens.indexOf(o.text.toLowerCase()) : pathToken(o, whole, ctx);
+        if (recursive && first >= 0 && !recursionNear(first, whole)) return null;
         texts.push(o.text);
       }
     }

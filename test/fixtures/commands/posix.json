@@ -19976,6 +19976,150 @@
   {
    "cmd": "fdupes -o name -r .",
    "verdict": "run"
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "before you build, delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "before you build again, delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "before building, delete the build folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder before you build",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf dist",
+   "words": "before you build, delete the dist folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "build it, then delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "build the app and then delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "so we can build cleanly, delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "the build is broken, delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "my build fails. please delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "build failed; delete build/",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build dist",
+   "words": "delete the build and dist folders",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete build/ before you build",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "to fix the build, delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf node_modules",
+   "words": "before you build, delete node_modules",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf out",
+   "words": "before you build, delete the out folder",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "delete the build folder, then build",
+   "verdict": "announce",
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "rm -rf build",
+   "words": "clean build: delete the build folder",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }

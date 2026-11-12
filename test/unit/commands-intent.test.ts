@@ -1140,3 +1140,24 @@ describe("matchIntent: a deletion the words describe as another one, or hold bac
     expect(announce(cmd, words)).toBe(said);
   });
 });
+
+describe("matchIntent: a folder's name said first as another word (commands-remote-x8-6)", () => {
+  it.each([
+    // The first word in all the words that names the folder is a verb, far from "folder": main asked for these.
+    "before you build, delete the build folder",
+    "before you build again, delete the build folder",
+    "the build is broken, delete the build folder",
+    "build it, then delete the build folder",
+  ])("asks for `rm -rf build` after %j, as main did (commands-remote-x8-6)", words => {
+    expect(announce("rm -rf build", words)).toBeNull();
+  });
+
+  it.each([
+    ["rm -rf build", "delete the build folder before you build", "Deleting build, as you asked."],
+    ["rm -rf build", "before building, delete the build folder", "Deleting build, as you asked."],
+    ["rm -rf dist", "before you build, delete the dist folder", "Deleting dist, as you asked."],
+    ["rm -rf build", "delete the build folder", "Deleting build, as you asked."],
+  ])("still announces `%s` after %j (commands-remote-x8-6)", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+});

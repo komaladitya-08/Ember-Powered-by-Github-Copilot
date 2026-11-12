@@ -493,7 +493,9 @@ and "folder", that names nothing in the path describes another one, so it asks: 
 is like ("the old, stale, whole, entire, generated, empty or huge build folder") doesn't. Anything broader than what you named asks: a force flag, a
 wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
 as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
-build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`).
+build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`). The
+first word in what you said that names the folder must say so too: "before you build, delete the build folder" and
+"the build is broken, delete the build folder" ask, because their first "build" isn't the folder.
 
 **When your words name another computer.** If your words for the task also name a computer other than the one the task
 runs on, even without a place word ("build-01 delete build/" while Ember works on this computer), or a place that
