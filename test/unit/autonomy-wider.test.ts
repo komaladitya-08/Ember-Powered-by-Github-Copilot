@@ -761,6 +761,22 @@ describe("the worker's reading of a dialog (dialogAround)", () => {
     ]);
     expect(read(more, false).controls).toBeUndefined();
   });
+
+  it("says which controls can be typed into, so a working dialog's words aren't taken for its question (safety-privacy-x8-2)", () => {
+    const find: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "dialog", name: "Find and Replace", states: [], bounds: FRAME },
+      { id: 2, parent: 1, depth: 1, role: "label", name: "Find", states: [], bounds: null },
+      { id: 3, parent: 1, depth: 1, role: "push button", name: "Find Next", states: [], bounds: null },
+      { id: 4, parent: 1, depth: 1, role: "text", name: "", text: "why?", states: ["editable", "focused"], bounds: null },
+      { id: 5, parent: 1, depth: 1, role: "document frame", name: "", states: [], bounds: null },
+    ];
+    const dialog = read(find);
+    expect(dialog.text).toBe("Find why?");
+    expect(dialog.controls).toEqual([{ role: "push button", name: "Find Next" }, { role: "text", name: "", editable: true }, { role: "document frame", name: "" }]);
+    expect(new PolicyEngine({ neverLook: () => [], grants: () => ({ soffice: "act" }) })
+      .decide({ taskId: "t", kind: "click", app: "soffice", window: "letter.odt - LibreOffice Writer", goal: "find why in the letter", element: { role: "push button", name: "Find Next" }, dialog }).verdict)
+      .toBe("allow");
+  });
 });
 
 describe("a plain editor's console still asks (security re-review of #140)", () => {

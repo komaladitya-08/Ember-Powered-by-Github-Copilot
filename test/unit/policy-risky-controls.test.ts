@@ -425,7 +425,8 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
   });
 
   // What was written or typed in a working dialog isn't its question: a mail's body, a card's description, the text being found.
-  const fields = [{ role: "entry", name: "To" }, { role: "entry", name: "Subject" }, { role: "section", name: "Message Body" }, { role: "push button", name: "Attach files" },
+  const fields = [{ role: "entry", name: "To", editable: true }, { role: "entry", name: "Subject", editable: true }, { role: "section", name: "Message Body", editable: true },
+    { role: "push button", name: "Attach files" },
     { role: "push button", name: "Formatting options" }, { role: "push button", name: "Bold" }, { role: "push button", name: "Send" }];
   const written: [string, string, ActionRequest["dialog"], Partial<ActionRequest>][] = [
     ...["Attach files", "Formatting options", "Bold"].flatMap((name): [string, string, ActionRequest["dialog"], Partial<ActionRequest>][] => [
@@ -433,7 +434,7 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
       [name, "a mail's body says “do you want to”", { name: "New Message", text: "To Subject Lunch Hi Ana, do you want to meet on Friday", alert: true, page: true, controls: fields }, {}]]),
     ...["Checklist", "Members"].map((name): [string, string, ActionRequest["dialog"], Partial<ActionRequest>] =>
       [name, "a card's description asks", { name: "Plan the trip", text: "in list To do Description Where should we go this year? Activity", alert: true, page: true }, { window: "Plan the trip | Trello — Mozilla Firefox" }]),
-    ["Find Next", "the text being found has a question mark", { name: "Find and Replace", text: "Find why?", controls: [{ role: "text", name: "" }, { role: "push button", name: "Find Next" },
+    ["Find Next", "the text being found has a question mark", { name: "Find and Replace", text: "Find why?", controls: [{ role: "text", name: "", editable: true }, { role: "push button", name: "Find Next" },
       { role: "push button", name: "Close" }] }, { app: "soffice", window: "letter.odt - LibreOffice Writer", onPage: undefined }],
   ];
 
@@ -449,6 +450,29 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     asksEveryTime(click("Leave", { inPage: undefined, onPage: true, window: "Edit post - Blog — Mozilla Firefox", goal: "close the tab", dialog: leaving }));
     asksEveryTime(click("Leave", { inPage: undefined, onPage: true, window: "Edit post - Blog — Mozilla Firefox", goal: "close the tab",
       dialog: { name: "Leave without saving?", text: "Title Body", alert: true, page: true } }));
+  });
+
+  // A whole read of a question box lists its buttons, and may list a document or text it shows (Firefox's prompt is a
+  // document): none of them is typed into, so its words still count.
+  const shown = [{ role: "document frame", name: "" }, { role: "text", name: "" }, { role: "section", name: "" }];
+  const buttons = (...names: string[]) => names.map(name => ({ role: "push button", name }));
+  const resendText = "To display this page, Firefox must send information that will repeat any action (such as a search or order confirmation) that was performed earlier.";
+  it.each([
+    ["Resend", "win32", "firefox", { name: "", text: resendText, controls: buttons("Resend", "Cancel") }],
+    ["Resend", "darwin", "Firefox", { name: "", text: resendText, controls: [...shown, ...buttons("Resend", "Cancel")] }],
+    ["Resend", "linux", "Firefox", { name: "", text: resendText, alert: true, controls: [...shown, ...buttons("Resend", "Cancel")] }],
+    ["Leave page", "win32", "firefox", { name: "", text: "This page is asking you to confirm that you want to leave — information you've entered may not be saved.",
+      controls: [...shown, ...buttons("Leave page", "Stay on page")] }],
+    ["No", "win32", "wordpad", { name: "WordPad", text: "Do you want to save changes to Document?", messageBox: true, controls: buttons("Yes", "No", "Cancel") }],
+    ["No", "darwin", "TextEdit", { name: "", text: "Do you want to keep this new document “Untitled”?", controls: [...shown, ...buttons("Yes", "No")] }],
+  ] as const)("“%s” on %s (%s) asks every time when a whole read lists the box's buttons and what it shows (safety-privacy-x8-2, x8-5, x8-7)", (name, os, app, dialog) => {
+    for (const [grant, autonomy] of [[true, false], [false, true]]) {
+      const e = new PolicyEngine({ neverLook: () => [], grants: () => (grant ? { [app.toLowerCase()]: "act" } : {}), autonomy: () => (autonomy ? { ...ALL_SCOPES } : null),
+        isTerminalApp: () => false, os, keys: KEYS[os] });
+      const d = e.decide(click(name, { app, window: "Mozilla Firefox", inPage: undefined, goal: "close the window", dialog: { ...dialog, controls: [...dialog.controls] } }));
+      expect(d, `grant=${grant} autonomy=${autonomy}`).toMatchObject({ verdict: "confirm", risky: true, remember: false });
+      expect(d.autonomy).toBeUndefined();
+    }
   });
 });
 

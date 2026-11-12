@@ -36,9 +36,10 @@ export type TextMode = "replace" | "insert" | "append";
 
 /**
  * A control in a dialog (ActionRequest.dialog.controls): its role and name, as the screen reader gives them.
- * `caption`: the Close of the dialog's own title bar (its other standard caption buttons are left out).
+ * `caption`: the Close of the dialog's own title bar (its other standard caption buttons are left out). `editable`: text
+ * can be typed or written into it (a field, a mail's body), as the reader says.
  */
-export interface DialogControl { role: string; name: string; caption?: boolean }
+export interface DialogControl { role: string; name: string; caption?: boolean; editable?: boolean }
 
 export interface ActionRequest {
   taskId: string;
@@ -2347,10 +2348,12 @@ const SENDS_AGAIN = /\b(repeat (any|the|an|this|that|your) (actions?|orders?|pur
 /** Buttons and links that answer a dialog: what they do there is its question's answer. */
 const ANSWER_ROLES = /^(push button|push button menu|button|split button|toggle button|link)$/;
 /**
- * Controls one types or writes into (a field, a mail's body, an editable page section): a dialog that holds one is a
- * working dialog, and its words may be what was written there ("Hi Ana, are you free on Friday?", the text being found).
+ * A control one types or writes into (a field, a mail's body, an editable page section: `editable`, as the reader says,
+ * or a password field): a dialog that holds one is a working dialog, and its words may be what was written there ("Hi
+ * Ana, are you free on Friday?", the text being found). Never by a role alone that a dialog's own words may have (a
+ * document, text, a section): Firefox's prompt is a document.
  */
-const TYPED_IN = /^(entry|text|password text|terminal|spin button|editbar|section|paragraph|document( text| web| frame)?)$/;
+const typedIn = (c: DialogControl) => c.editable === true || c.role === "password text";
 /**
  * Dialogs whose OK only shapes the open document (DSK9-3), by their titles in LibreOffice and the mail composers: its
  * formatting and styles, sizes, sorting and filtering, what is inserted (a table, a break, a caption, a link), where to
@@ -2696,16 +2699,16 @@ export class PolicyEngine {
     // Any other answer to a message box (a native one: a page's own dialog is one only by what it asks), or to a dialog
     // that asks a question in a few words (a question mark, or ASKS_IF_SURE: a browser's "Leave site?", "Reload site?",
     // "Close 12 tabs?", Firefox's "…confirm that you want to leave"; or SENDS_AGAIN: Firefox's "Resend", a message box on
-    // Linux only),
-    // that doesn't back off (DECLINES: Cancel, Stay on page, No, Close): asked every time, quoting the dialog, and not
+    // Linux only), that doesn't back off (backsOffDialog: Cancel, Stay on page, Close, Later, and No but to saving):
+    // asked every time, quoting the dialog, and not
     // checked against the request (its words are the app's; audit of 2026-11-11, safety-privacy-c8-1). Not a dialog that
     // only names something risky: Find & Replace, Share, a file chooser with a Trash place. After `answer`, so an OK that
     // only acknowledges a message box (acknowledgesOnly) stays Ember's doubt.
     // Its words count only where they can't be what was written in it: a page's own dialog (a mail's compose window, a
     // card) is judged by its title, unless a whole read shows nothing in it to type into; any other dialog by its words,
-    // unless a whole read shows such a field (Find & Replace's: regression review of round eight, safety-privacy-x8-2).
-    const typedIn = !!r.dialog && (r.dialog.controls ? r.dialog.controls.some(c => TYPED_IN.test(c.role)) : !!r.dialog.page);
-    const asked = r.dialog ? (typedIn ? r.dialog.name : told) : "";
+    // unless a whole read shows such a field (typedIn: Find & Replace's; regression review of round eight, safety-privacy-x8-2).
+    const written = !!r.dialog && (r.dialog.controls ? r.dialog.controls.some(typedIn) : !!r.dialog.page);
+    const asked = r.dialog ? (written ? r.dialog.name : told) : "";
     const asksInFew = asked.length <= 300 && (/[?？¿]/.test(asked) || ASKS_IF_SURE.test(plainText(asked)) || SENDS_AGAIN.test(plainText(asked)));
     const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !backsOffDialog(name, told) && !plainDialog;
     const answersQuestion: Risk = { reason: "this answers a dialog's question or warning, and Ember can't be sure what that answer does", note };
