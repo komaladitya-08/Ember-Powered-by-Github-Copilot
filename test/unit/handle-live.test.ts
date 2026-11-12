@@ -172,6 +172,17 @@ describe("the corner card's live region", () => {
     expect(first.taskNews([], false)).toBeNull();
   });
 
+  it("holds a task's end while Listen once opens the microphone, before the voice says so, as Home does (accessibility-x8-3)", () => {
+    // With the wake word on, Listen once waits "waiting" for its window to open (after Ember's hush, if it speaks).
+    expect(micOpen({ mic: "waiting", listeningOnce: true })).toBe(true);
+    expect(micOpen({ mic: "waiting", listeningOnce: false })).toBe(false);
+    // Main tells the card from Listen once's own phase, starting or listening, as Home's micHeld reads it.
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain('const listeningOnce = phase === "starting" || phase === "listening";');
+    expect(main).toContain("if (listeningOnce !== (lastState.listeningOnce === true)) setState({ listeningOnce });");
+    expect(main.indexOf("setState({ listeningOnce })")).toBeLessThan(main.indexOf("if (key === lastListenStatus) return;"));
+  });
+
   it("is what the card's page says, emptied when the bubble's words have gone and nothing else is said (accessibility-c8-1)", () => {
     const main = readFileSync("app/renderer/handle/main.ts", "utf8");
     expect(main).toContain("const said = live.bubble(view, questionOf(b.actions), name);");

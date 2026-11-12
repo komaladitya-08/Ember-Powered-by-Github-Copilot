@@ -23,10 +23,11 @@ const ENDED: ReadonlySet<TaskCard["status"]> = new Set(["done", "failed", "stopp
 /**
  * The microphone opens or is open for a request (a wake's window, a conversation's, Listen once's) or for Voice Match's
  * phrases: a screen reader would say a line through the speakers into what Ember hears (design-system.md "Screen
- * readers"), so the card holds a task's end meanwhile, as Home holds its own (holdTaskNews).
+ * readers"), so the card holds a task's end meanwhile, as Home holds its own (holdTaskNews). Listen once's opening
+ * too, where the voice still says "waiting" (`listeningOnce`, as Home's micHeld reads it: accessibility-x8-3).
  */
-export function micOpen(s: Pick<EmberState, "mic" | "micLearning">): boolean {
-  return s.mic === "active" || s.mic === "starting" || s.micLearning === true;
+export function micOpen(s: Pick<EmberState, "mic" | "micLearning" | "listeningOnce">): boolean {
+  return s.mic === "active" || s.mic === "starting" || s.micLearning === true || s.listeningOnce === true;
 }
 
 /** The question a bubble's buttons answer (their "q<n>:" ids, the Confirmer's number), or null for none. */

@@ -1594,6 +1594,10 @@ function start(): void {
   const syncListenOnce = () => {
     const phase = voice?.listenOnceStatus.phase;
     if (manualCall && (phase === undefined || phase === "ready" || phase === "blocked")) clearManualCall();
+    // The corner card holds a task's end while Listen once opens the microphone: with the wake word on, the voice says
+    // "waiting" until its window opens, and a line said then was heard in the request (accessibility-x8-3).
+    const listeningOnce = phase === "starting" || phase === "listening";
+    if (listeningOnce !== (lastState.listeningOnce === true)) setState({ listeningOnce });
     const ask = listenOnceStatus("ask");
     // (The microphone's name too: Settings' voice line names it, and a headset plugged in changes it.)
     const key = JSON.stringify([ask, listenOnceStatus("home"), voice?.micLabel ?? null]);
