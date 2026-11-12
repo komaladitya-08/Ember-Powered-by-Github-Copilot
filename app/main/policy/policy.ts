@@ -2235,8 +2235,12 @@ const BACKS_OFF = /^\s*(cancel|close|no|help|notify|keep|open (a )?copy|open rea
  * verification"). "Anyway" also in the languages of RISKY_WORDS (written with their accents, folded when the pattern is
  * built). "Enable Editing" only in a window or dialog that says it is in protected view (PROTECTED_VIEW).
  */
-/** Phrases that go past a warning wherever they stand: also as a link's first words. */
-const PAST_WARNING_PHRASES = ["(proceed|continue|go on|go) to (the |this )?(site|website|web ?page|page)",
+/**
+ * Phrases that go past a warning wherever they stand: also as a link's first words. On to a site by "proceed",
+ * "continue" or "go on" only: a list's "Go to page 2" (MUI's pagination), a business's "Go to website" and a form's
+ * "Continue to page 2" go nowhere a warning stood (regression review of round eight, safety-privacy-x8-1).
+ */
+const PAST_WARNING_PHRASES = ["(proceed|continue|go on) to (the |this )?(site|website|web ?page)",
   "visit this (unsafe |dangerous |deceptive |insecure |unsecure |suspicious )?(site|website|web ?page|page)", "enable (all )?macros?",
   "enable (the |all )?(active |external |blocked )?content", "run (the |all )?macros?", "exit protected view",
   "(load|show|display|allow|download|enable) (the |all )?(remote|external) (content|images?|pictures|resources)",
@@ -2258,23 +2262,27 @@ const LINK_PAST_WARNING = new RegExp(`^[^\\p{L}\\p{N}]*(${foldLabel([...PAST_WAR
 /** A window or dialog that says its document is in protected view (Word's "[Protected View]"), where "Enable Editing" leaves it. */
 const PROTECTED_VIEW = /\bprotected (view|mode)\b/;
 const PAST_WARNING_REASON = "this goes past a warning or turns a protection off";
+/** Checks of a text's spelling or grammar ("Disable spell check", "Turn off spelling and grammar checking"): no protection. */
+const WRITING_CHECKS = /\b(spell(ing)?|grammar)( and (spelling|grammar))?[ -]?check(s|ing|er)?\b/giu;
 /**
  * Does pressing this control (by its own name: a button, link or menu item, ACTING_CONTROL) go past a security warning
  * or turn a protection off? A link only by its first words (LINK_PAST_WARNING); "Enable Editing" only in protected view
  * (`context`: the window's title and the dialog's words).
  */
 function goesPastWarning(role: string, name: string, context: string): boolean {
-  if (!ACTING_CONTROL.test(role) || !/[\p{L}\p{N}]/u.test(name)) return false;
+  // An answer that backs off ("Thanks anyway", DECLINES) goes past nothing.
+  if (!ACTING_CONTROL.test(role) || !/[\p{L}\p{N}]/u.test(name) || declines(name)) return false;
   if (role === "link") return saysWord(LINK_PAST_WARNING, name);
   if (/^\s*enable editing\s*$/.test(plainText(name)) && PROTECTED_VIEW.test(plainText(context))) return true;
-  return saysWord(PAST_WARNING, name) || saysWord(WEAKENS, name);
+  // (WEAKENS was written for settings: its checks are a protection's, never spelling's or grammar's.)
+  return saysWord(PAST_WARNING, name) || saysWord(WEAKENS, name.replace(WRITING_CHECKS, " "));
 }
 /**
  * Answers that back off a dialog's question, as the whole label (an access key "(C)" or "…" may follow): Cancel, No,
  * Close, Stay, Stay on page, Don't leave, Keep editing, Go back, Help, Not now, in the languages of RISKY_WORDS. Not
  * BACKS_OFF, which reads only the first word ("Close tabs" and "Keep anyway" go ahead).
  */
-const DECLINE_WORDS = ["cancel", "close", "close (this )?(dialog|message|window|notification|prompt|pop-?up)", "dismiss", "no", "no,? thanks?", "not now",
+const DECLINE_WORDS = ["cancel", "close", "close (this )?(dialog|message|window|notification|prompt|pop-?up)", "dismiss", "no", "no,? thanks?", "(no,? )?thanks,? anyway", "not now",
   "never mind", "stay", "stay (here|on (this )?(page|site))", "(don't|do not) leave", "keep editing", "keep working", "go back", "back", "help", "learn more",
   "more info(rmation)?", "(show |hide )?details",
   "abbrechen", "schließen", "nein", "nicht jetzt", "auf (der|dieser) seite bleiben", "bleiben", "zurück", "hilfe",

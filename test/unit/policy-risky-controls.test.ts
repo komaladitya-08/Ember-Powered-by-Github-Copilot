@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { PolicyEngine, isSecretField, type ActionRequest } from "../../app/main/policy/policy";
 import { ALL_SCOPES } from "../../app/main/policy/autonomy";
+import { KEYS } from "../../app/shared/shortcuts";
 
 /**
  * Everyday controls that grant access, commit money, change who can see or join something, turn a protection off or
  * delete: asked every time, whatever the app's standing "Always" and with "Work without asking" on (round-seven audit).
  */
-const GRANTS = { firefox: "act", nautilus: "act", "org.gnome.nautilus": "act", gedit: "act", thunderbird: "act", soffice: "act", "google-chrome": "act", winword: "act" } as const;
+const GRANTS = { firefox: "act", nautilus: "act", "org.gnome.nautilus": "act", gedit: "act", thunderbird: "act", soffice: "act", "google-chrome": "act", winword: "act", evince: "act" } as const;
 const engine = (autonomy = false) => new PolicyEngine({ neverLook: () => [], grants: () => ({ ...GRANTS }), autonomy: () => (autonomy ? { ...ALL_SCOPES } : null), isTerminalApp: () => false });
 const click = (name: string, r: Partial<ActionRequest> = {}): ActionRequest =>
   ({ taskId: "t", kind: "click", app: "Firefox", window: "Page - Mozilla Firefox", inPage: true, goal: "tidy up", element: { role: "push button", name }, ...r });
@@ -270,6 +271,29 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
   it.each(["Enable", "Editing", "Continue", "Keep", "Open", "Show content", "Enable dark mode", "Enable Editing", "Remote desktop help", "Load more"])(
     "an ordinary button named “%s” still goes without a question under “Always”", name => {
       expect(engine().decide(click(name, { app: "soffice", window: "letter.odt - LibreOffice Writer", inPage: undefined, goal: `use ${name}` })).verdict).toBe("allow");
+    });
+
+  // Names that only look like one: a list's pages, a business's site, spelling, a polite refusal (regression review of round eight).
+  const shop = { window: "Orders - Shop — Mozilla Firefox", inPage: undefined, onPage: true };
+  const lookalikes: [string, string, Partial<ActionRequest>][] = [
+    ["push button", "Go to page 2", shop], ["link", "Go to page 3", shop], ["push button", "Go to page", { app: "evince", window: "manual.pdf", inPage: undefined }],
+    ["link", "Go to website", shop], ["push button", "Go to site", shop], ["link", "Continue to page 2", shop], ["push button", "Go to the page", shop],
+    ["push button", "Disable spell check", { app: "thunderbird", window: "Write: hello", inPage: undefined }],
+    ["menu item", "Turn off spell checking", { app: "soffice", window: "letter.odt - LibreOffice Writer", inPage: undefined }],
+    ["push button", "Disable grammar checking", { app: "soffice", window: "letter.odt - LibreOffice Writer", inPage: undefined }], ["push button", "Thanks anyway", shop]];
+
+  it.each(lookalikes)("a %s named “%s” goes without a question under “Always”, and is announced with Work without asking (safety-privacy-x8-1)", (role, name, r) => {
+    const step = click(name, { goal: "find my oldest order", element: { role, name }, ...r });
+    expect(engine().decide(step).verdict).toBe("allow");
+    expect(unGranted(true).decide(step)).toMatchObject({ verdict: "allow", autonomy: true });
+  });
+
+  it.each([["linux", "Firefox"], ["win32", "msedge"], ["darwin", "Safari"]] as const)(
+    "a list's “Go to page 2” on %s goes without a question under “Always”, and Enter on it (a borrow) is announced with Work without asking (safety-privacy-x8-1)", (os, app) => {
+      const e = (autonomy: boolean) => new PolicyEngine({ neverLook: () => [], grants: () => ({ [app.toLowerCase()]: "act" }), autonomy: () => (autonomy ? { ...ALL_SCOPES } : null),
+        isTerminalApp: () => false, os, keys: KEYS[os] });
+      expect(e(false).decide(click("Go to page 2", { app, ...shop })).verdict).toBe("allow");
+      expect(e(true).decide(click("Go to page 2", { app, window: shop.window, kind: "keys", value: "Return" }))).toMatchObject({ verdict: "allow", autonomy: true });
     });
 
   const leave = { name: "", text: "This page is asking you to confirm that you want to leave — information you've entered may not be saved.", alert: true };
