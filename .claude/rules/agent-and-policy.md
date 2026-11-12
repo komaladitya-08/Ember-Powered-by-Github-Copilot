@@ -273,8 +273,10 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     recall tool (`context`), whose query the model wrote and the screen may steer;
   - so does the mark `asked()` gives as a request is asked, back to `heard` with its turn: a Forget, a correction and
     Forget everything drop every turn and result said before them (`dropSaid`: waiting, being read or still under
-    way; with no mark, any within `FORGOTTEN_TURN_MS`, as `taskDone`'s results are), never a similarity of words
-    (memory-r8-1); a new path into `Learner` carries such a mark or fails closed the same way;
+    way; with no mark, any within `FORGOTTEN_TURN_MS`, as every `taskDone` result is), never a similarity of words
+    (memory-r8-1); a task the conversation starts carries its request's mark (`Conductor.askedMark`, the host's
+    `taskMarks`) back with `taskDone`, which only adds to what is dropped (memory-x8-4); a new path into `Learner`
+    carries such a mark or fails closed the same way;
   - what the remember tool kept in a turn goes with that turn (`Learner.heard`'s `kept`) and no other (the conductor's
     `began` at every turn's start lets go of what an unread turn kept: memory-x8-2), and its reading keeps no
     candidate `keptInTurn` calls the same fact, compared on words and on the clause of the turn they were said in;

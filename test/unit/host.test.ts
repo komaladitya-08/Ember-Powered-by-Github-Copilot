@@ -4801,6 +4801,33 @@ describe("memory hears whose words a request was (review of PR #142, B2)", () =>
     expect(calls.heard).toEqual([false, true]);
     await host.stop();
   });
+
+  it("hands memory a finished task's result with the mark of the request that started it, however long it ran (memory-x8-4)", async () => {
+    vi.useFakeTimers();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-host-mem-"));
+    fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ version: 1, memory: { on: true, consent: { version: FEATURE_CONSENT_VERSION.memory, at: "2026-11-03T00:00:00Z" } } }));
+    let drops = 0;
+    const done: [string, string, number | undefined][] = [];
+    const memory = {
+      remember: () => "Remembered [f1].", context: () => "", forget: () => true, forgetAll: () => undefined, asked: () => drops,
+      taskDone: (title: string, result: string, asked?: number) => { done.push([title, result, asked]); },
+    };
+    const { host } = makeHost({ userData: dir, memory, hands: hands() });
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    await host.ask("book me a table at Rosa's");
+    await conductorSession().config.tools.find((t: { name: string }) => t.name === "start_task").handler({ goal: "book a table at Rosa's" }, {});
+    await vi.advanceTimersByTimeAsync(50);
+    // The user forgets a fact while the task runs.
+    drops++;
+    const task = sim.sessions.filter(x => x.sessionId.startsWith("ember-task-")).at(-1);
+    await task.config.tools.find((t: { name: string }) => t.name === "finish_task").handler({ success: true, summary: "Booked Rosa's for 7 pm." }, {});
+    task.emit("session.idle", { aborted: true });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(done).toEqual([[expect.any(String), "Booked Rosa's for 7 pm.", 0]]);
+    const stopped = host.stop();
+    await vi.advanceTimersByTimeAsync(5000);
+    await stopped;
+  });
 });
 
 

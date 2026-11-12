@@ -1749,7 +1749,7 @@ function start(): void {
     pauseAccount: (why?: MemoryWait) => { if (memoryAccount.paused(why)) memoryEpoch++; memoryOwner.pause(why); publishMemoryOwner(); },
     accountReady: memoryOn,
     useModel: (model: OneShot | null) => learning.setModel(model),
-    taskDone: (title: string, result: string) => learning.taskDone(title, result),
+    taskDone: (title: string, result: string, asked?: number) => learning.taskDone(title, result, asked),
     intent: (text: string, how: { own: boolean }) => learning.intent(text, how),
     rememberNote: (text: string) => learning.rememberNote(text),
   };

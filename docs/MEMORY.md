@@ -400,10 +400,12 @@ download, so English-only MiniLM is the trade-off for now.
      minute (longer at the hourly cap) to be read for facts, so a Forget, a correction and Forget everything drop
      every turn and task result said before them, in RAM (`dropSaid`): those waiting, the reading under way, and a
      turn still under way, told by the mark the conductor took as its request was asked (`ConductorMemory.asked`,
-     handed back with `heard`; a turn with no mark, and a task's result, which has none, is dropped within two
-     minutes of one, `FORGOTTEN_TURN_MS`). It learns less: their other facts go too, also when the Forget is undone,
-     until they are said again (memory-r8-1). A task that runs on for more than two minutes after the Forget is not
-     covered. Behind that, for two minutes the forgotten words are held in RAM, never on disk, and a fact at least
+     handed back with `heard`; a turn with no mark, and any task's result, is dropped within two minutes of one,
+     `FORGOTTEN_TURN_MS`). A task the conversation started carries its request's mark too (the host hands it back
+     with `taskDone`), so its result is dropped however long it ran after the Forget (memory-x8-4); one with no mark
+     (a card's Try again, a task carried over from an earlier connection) has only the two minutes. It learns less:
+     their other facts go too, also when the Forget is undone, until they are said again (memory-r8-1). Behind that,
+     for two minutes the forgotten words are held in RAM, never on disk, and a fact at least
      `DUPLICATE` like them with the same polarity is not learned from what comes in (memory-c7-1);
      Undo of the Forget lifts that, and a later turn that says it again is learned from.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).

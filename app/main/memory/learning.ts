@@ -383,12 +383,15 @@ export class MemoryLearning {
   }
 
   /**
-   * A task finished: learn from its result (source `task`). It carries no mark of when it was asked, so within
-   * FORGOTTEN_TURN_MS of a Forget, a correction or Forget everything it is dropped, as a turn with none is (memory-r8-1).
+   * A task finished: learn from its result (source `task`). Within FORGOTTEN_TURN_MS of a Forget, a correction or Forget
+   * everything it is dropped, as a turn with no mark is (memory-r8-1); and so is one whose request was asked before one
+   * of them (`asked`, its mark from `asked`), however long the task ran (memory-x8-4). A task with no mark (a retry, one
+   * carried over from an earlier connection) has only the first.
    */
-  taskDone(title: string, result: string): void {
+  taskDone(title: string, result: string, asked?: number): void {
     this.active();
-    if (this.saidBeforeDrop(undefined)) { this.d.log.info("memory.learn_skipped", { why: "said_before_forget" }); return; }
+    const before = asked !== undefined && asked !== this.drops;
+    if (before || this.saidBeforeDrop(undefined)) { this.d.log.info("memory.learn_skipped", { why: "said_before_forget" }); return; }
     this.learner.taskDone(title, result);
   }
 

@@ -779,6 +779,11 @@ export class Conductor {
     return this.routineWords.join("\n");
   }
 
+  /** Memory's mark for the turn under way's request (ConductorMemory.asked), for the tasks it starts (memory-x8-4). */
+  get askedMark(): number | undefined {
+    return this.saidMark;
+  }
+
   /**
    * Match the whole prompt actually sent, not a suffix of another request. Identical prompts take the oldest
    * dispatched request; an unmatched runtime message carries no user authority and consumes no waiting request.

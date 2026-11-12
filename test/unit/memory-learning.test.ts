@@ -668,6 +668,42 @@ describe("a Forget drops the turns said before it, however the extraction words 
     expect(s.list().map(i => i.text)).toEqual(["Eats no meat"]);
   });
 
+  it("drops a task's result when the request that started it was asked before a Forget, however long the task ran (memory-x8-4)", async () => {
+    const VEGETARIAN = answer([{ from: 1, fact: "The user is vegetarian", about: [USER], confidence: 0.9, evidence: "the user is vegetarian" }]);
+    const { l, s, learned, advance } = learning({ model: async () => VEGETARIAN });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [USER], "Remember that I'm vegetarian");
+    // "Book me a table": its task starts, and the user forgets the fact while it runs.
+    const booked = tools.asked();
+    l.forgetCounted(s.list()[0].id);
+    const RESULT = "Booked Rosa's for 7 pm: the user is vegetarian, so I chose the vegetable menu.";
+    // It finishes a minute, two minutes or two and a half after the Forget: workers may run 20 minutes.
+    for (const ms of [60_000, 65_000, 25_000]) {
+      advance(ms);
+      l.taskDone("Book a table", RESULT, booked);
+      expect(await l.flush()).toBe(0);
+    }
+    expect(s.list()).toEqual([]);
+    expect(learned).toEqual(["user: Is vegetarian"]);
+  });
+
+  it("still drops a task's result within two minutes of a Forget when its request came after it, and learns from one after (memory-x8-4)", async () => {
+    const MEAT = answer([{ from: 1, fact: "Eats no meat", about: [USER], confidence: 0.9, evidence: "the user eats no meat" }]);
+    const { l, s, advance } = learning({ model: async () => MEAT });
+    const tools = l.conductorMemory();
+    tools.remember("Is vegetarian", [USER], "Remember that I'm vegetarian");
+    l.forgetCounted(s.list()[0].id);
+    // The mark only adds what is dropped: the two minutes after a Forget still hold for a task asked in them.
+    const asked = tools.asked();
+    advance(60_000);
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.", asked);
+    expect(await l.flush()).toBe(0);
+    advance(61_000);
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.", asked);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text)).toEqual(["Eats no meat"]);
+  });
+
   it("drops the turn under way at a correction or at Forget everything too, and learns from requests asked after them (memory-r8-1)", async () => {
     const VEGAN = answer([{ from: 1, fact: "The user is vegan", about: [USER], confidence: 0.9, evidence: "I'm vegan" }]);
     const { l, s, advance } = learning({ model: async () => VEGAN });
