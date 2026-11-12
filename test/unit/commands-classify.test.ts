@@ -2869,3 +2869,27 @@ describe("option values and assignments main read as words, decided no less safe
     expect(decided("time x=1 sh -c 'rm -rf build'").rules).toContain("posix.rm");
   });
 });
+
+describe("commands held to main at 4d64d3a: no way of reading one decides less safely than it did there (round nine)", () => {
+  const decided = (cmd: string, context: ContextName = "linux", o: { missing?: string[]; words?: string } = {}) =>
+    runCase({ cmd, verdict: "run", context, ...o }, { shell: context === "darwin" ? "zsh" : "bash", context }).decision;
+
+  it("refuses `sudo -h host rm -rf ~` and judges the command after sudo's -h host and --preserve-env list, as main did (commands-held-1)", () => {
+    for (const context of ["linux", "darwin"] as const) {
+      expect(decided("sudo -h host rm -rf ~", context).verdict, context).toBe("refuse");
+      expect(decided("sudo -h host rm -rf ~", context).rules, context).toEqual(["ember.path"]);
+    }
+    expect(decided("sudo -h host rm -rf ~/.config/ember").verdict).toBe("refuse");
+    // The command behind the host is named on the card, so a mode that asks by class still asks.
+    expect(decided("sudo -h host rm -rf build").rules).toEqual(expect.arrayContaining(["system.sudo", "posix.rm"]));
+    expect(decided("sudo -h host rm -rf build").says).toContain("Deletes build and everything in it.");
+    expect(decided("sudo -h host git push").classes).toContain("publish");
+    for (const cmd of ["sudo -h host printenv", "sudo -h host gh auth token", "sudo --preserve-env PATH printenv"]) expect(decided(cmd).classes, cmd).toContain("secret");
+    expect(decided("sudo -h host printenv", "darwin").classes).toContain("secret");
+    // The corrected reading still stands beside it: a bare -h is no host, so the word after it is the command.
+    expect(decided("sudo -h rm -rf build").rules).toContain("posix.rm");
+    expect(decided("sudo -h rm -rf ~").verdict).toBe("refuse");
+    // Where both tables read the line alike nothing is added.
+    for (const cmd of ["sudo -hhost ls", "sudo -u root ls", "sudo --host=db ls", "sudo -E ls"]) expect(decided(cmd).rules, cmd).toEqual(["system.sudo"]);
+  });
+});

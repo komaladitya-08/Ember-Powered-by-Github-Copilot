@@ -206,6 +206,7 @@ export const SAYS = {
   mayRunDownloaded: "May run a file downloaded in this task: Ember can't tell which files an earlier command downloaded or changed.",
   downloadsUnnamed: "Downloads to a file Ember can't name.",
   guardedWord: "It uses a ${…:?} word, which Ember reads as the folder it names but can't be sure of.",
+  optionValue: "Ember can't tell whether one of its options takes the word after it.",
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
   unclear: "Ember can't tell exactly what this does.",
@@ -528,19 +529,58 @@ class Classifier {
   }
 
   /**
+   * The refusal as it stands, and putting one back: for a row judged a second way whose own refusal, when it has one,
+   * is the one to say (runRow: `ltrace -F <Ember's file> ls` reads the file, though main's table ran it).
+   */
+  refusal(): { refuse: Classifier["refuse"]; read: boolean } {
+    return { refuse: this.refuse, read: this.refusedRead };
+  }
+  putRefusal(r: { refuse: Classifier["refuse"]; read: boolean }): void {
+    this.refuse = r.refuse;
+    this.refusedRead = r.read;
+  }
+
+  /**
    * Whether `judge` finds anything to ask about, judged apart: what it finds is not kept (a refusal, and what it notes
    * of files and variables, is). For a form Ember judges a second way, which must never decide less safely than the
    * first (commands-remote-r7-2). `apartFrom`: rules that don't count as asking (a flow word's own, which the command
    * proper finds too).
    */
   asksApart(judge: () => void, apartFrom?: RegExp): boolean {
+    return this.foundApart(judge, apartFrom).length > 0;
+  }
+
+  /**
+   * What `judge` finds, judged apart, without the rules of `apartFrom`: asksApart's findings themselves, for heldTo,
+   * which keeps the dangers among them.
+   */
+  foundApart(judge: () => void, apartFrom?: RegExp): Finding[] {
     const kept = this.findings;
     this.findings = [];
     try {
       judge();
-      return apartFrom ? this.findings.some(f => !apartFrom.test(f.rule)) : this.findings.length > 0;
+      return apartFrom ? this.findings.filter(f => !apartFrom.test(f.rule)) : this.findings;
     } finally {
       this.findings = kept;
+    }
+  }
+
+  /**
+   * Holds what was found since `from` to what the same command asked read the way it was before (`was`: foundApart's
+   * findings for that reading), so no way of reading a command decides less safely than the one before it
+   * (commands-held). Where that reading asked, this asks (asksAtLeast). A danger it named that this one doesn't (any
+   * class but unclear, by its rule; one that depends on a file being there doesn't stand for one that doesn't) stays, in
+   * its own words and for no intent row to cover: the card, the audit and an approval mode that asks by class (a secret
+   * read, a command that outlives Stop) are told no less than they were.
+   */
+  heldTo(was: readonly Finding[], from: number, rule: string, says: string): void {
+    if (was.length === 0) return;
+    const found = this.findings.slice(from);
+    this.asksAtLeast(from, rule, says);
+    for (const f of was) {
+      if (f.cls === "unclear" || found.some(g => g.rule === f.rule && (g.ifExists === undefined || g.ifExists === f.ifExists))) continue;
+      if (this.findings.some(g => g.at === this.at && g.rule === f.rule && g.says === f.says && g.ifExists === f.ifExists)) continue;
+      this.findings.push({ ...f, widening: f.widening.includes("fed") ? [...f.widening] : [...f.widening, "fed"], at: this.at });
     }
   }
 
@@ -554,6 +594,17 @@ class Classifier {
     const found = this.findings.slice(from);
     for (const f of found) if (!f.widening.includes("fed")) f.widening.push("fed");
     if (!found.some(f => f.ifExists === undefined && !READ_FLOW_RULE.test(f.rule))) this.unclear(rule, says);
+  }
+
+  /**
+   * Forgets what is kept by a command's index for the commands from `n` on, which were judged apart and are taken back
+   * (foundApartWhole): the commands registered next take those indexes, and a read's seen text or a listing kept for
+   * another command must never count for them.
+   */
+  protected forgetFrom(n: number): void {
+    for (const kept of [this.listed, this.globalOpts, this.stdinGiven, this.readText, this.closerInput, this.hereVarsAt, this.hereAt, this.readSets]) {
+      for (const k of [...kept.keys()]) if (k >= n) kept.delete(k);
+    }
   }
 
   noteUnclear(list: readonly Unclear[]): void {
@@ -1960,11 +2011,24 @@ class Engine extends Classifier {
    * current command and the folder, are taken back too, so the command proper is judged as if this never ran.
    */
   asksApartWhole(judge: () => void, apartFrom?: RegExp): boolean {
+    return this.foundApartWhole(judge, apartFrom).length > 0;
+  }
+
+  /**
+   * asksApartWhole's findings themselves, for heldTo. `row`: the judging is a row's, of the command that is current, read
+   * another way (runRow): what a wrapper's unwrap made of that command (its program, arguments and wrappers) is
+   * taken back as well, and so is what the commands it registered left behind by their index.
+   */
+  foundApartWhole(judge: () => void, apartFrom?: RegExp, row = false): Finding[] {
     const n = this.commands.length;
     const kept = { count: this.simpleCount, at: this.at, program: this.program, pipe: this.pipe, state: { ...this.pipe }, cd: this.cdTarget, top: this.topCd };
+    const pc = row ? this.commands[this.at] : undefined;
+    const own = pc ? { program: pc.program, args: pc.args, wrappers: pc.wrappers } : undefined;
     try {
-      return this.asksApart(judge, apartFrom);
+      return this.foundApart(judge, apartFrom);
     } finally {
+      if (pc && own) Object.assign(pc, own);
+      if (row) this.forgetFrom(n);
       this.commands.length = n;
       this.simpleCount = kept.count;
       this.at = kept.at;
@@ -1979,6 +2043,54 @@ class Engine extends Classifier {
   }
   /** The single top-level cd, for cdOnly. */
   topCd: { at: number; abs: string | null } | null = null;
+
+  /** A row is being judged by main's option tables (runRow): every table it and the commands it runs read is main's. */
+  private asMain = false;
+  /** A table the row being judged read differs from main's on this line (parseHeld). */
+  private tablesDiffer = false;
+
+  /**
+   * A line's options by a row's table (`now`), or by main's (`was`) while the row is judged main's way; where the two
+   * read the line differently (another option takes a value, so other words are the operands), runRow is told.
+   */
+  parseHeld(args: readonly Arg[], now: OptSpec, was: OptSpec): Parsed {
+    const p = parseOpts(args, now);
+    const m = parseOpts(args, was);
+    if (this.asMain) return m;
+    if (!sameParse(p, m)) this.tablesDiffer = true;
+    return p;
+  }
+
+  /** The table parseHeld reads by now, for a row that parses more words by it (a variable's value split into options). */
+  tableInUse(now: OptSpec, was: OptSpec): OptSpec {
+    return this.asMain ? was : now;
+  }
+
+  /**
+   * Judges a program's row, held to main's option tables (commands-held): when a table the row read (heldOpts) reads this
+   * line differently from the table main had at 4d64d3a, the row is judged again main's way, apart. Main's refusal
+   * stands (the row's own, in its own words, when it has one), and unless everything main's reading found the row's
+   * own found too, the command asks and the dangers main named stay on the card (heldTo). Where the tables agree, which
+   * is nearly always, the row is judged once, as before.
+   */
+  runRow(row: Handler, h: H): void {
+    if (this.asMain) { row(h); return; }
+    const outer = this.tablesDiffer;
+    const stood = this.refusal();
+    const from = this.findings.length;
+    this.tablesDiffer = false;
+    let differ: boolean;
+    try { row(h); } finally { differ = this.tablesDiffer; this.tablesDiffer = outer; }
+    if (!differ) return;
+    const own = this.refusal();
+    let before: Finding[];
+    this.asMain = true;
+    try { before = this.foundApartWhole(() => row(h), undefined, true); } finally { this.asMain = false; }
+    if (own.refuse !== stood.refuse) this.putRefusal(own);
+    const found = this.findings.slice(from);
+    if (before.every(f => found.some(g => sameFinding(f, g)))) return;
+    this.heldTo(before, from, "unclear.option-value", SAYS.optionValue);
+  }
 
   run(text: string): ClassificationExtra {
     const sc = this.topScope();
@@ -2802,7 +2914,7 @@ class Engine extends Classifier {
     const windowsSide = sc.os === "win32" || sc.family !== "posix" || pn.interop;
     if (windowsSide && (key === "bash" || (!NATIVE[key] && DISTRO_LAUNCHER.test(key)))) { distroLauncher(h); return; }
     const n = NATIVE[key];
-    if (n) n(h);
+    if (n) this.runRow(n, h);
     else generic(h, true);
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5).
     optionPaths(h, !n || NEW_DELETERS.has(key));
@@ -2958,7 +3070,7 @@ class Engine extends Classifier {
     }
     const n = NATIVE[key];
     const dlBefore = this.downloads.length;
-    if (n) n(inner);
+    if (n) this.runRow(n, inner);
     else generic(inner, true);
     optionPaths(inner, !n || NEW_DELETERS.has(key));
     this.unnamedWrites(key, inner.args, sc);
@@ -3193,6 +3305,30 @@ class Engine extends Classifier {
 // Handler helpers.
 
 const opts = (h: H, spec: OptSpec = {}): Parsed => parseOpts(h.args, spec);
+
+/** Whether two option tables read a line alike: the same options with the same values at the same words, the same operands. */
+function sameParse(a: Parsed, b: Parsed): boolean {
+  return a.restAt === b.restAt && a.missingValue === b.missingValue && a.opts.length === b.opts.length && a.operands.length === b.operands.length
+    && a.opts.every((o, k) => o.name === b.opts[k].name && o.value === b.opts[k].value && o.at === b.opts[k].at)
+    && a.operands.every((w, k) => w === b.operands[k]);
+}
+
+/** Whether two findings say the same thing of the same objects, with nothing more for an intent row to refuse in one. */
+function sameFinding(a: Finding, b: Finding): boolean {
+  return a.cls === b.cls && a.rule === b.rule && a.says === b.says && a.ifExists === b.ifExists && a.program === b.program
+    && a.widening.length === b.widening.length && a.widening.every(w => b.widening.includes(w))
+    && a.objects.length === b.objects.length && a.objects.every((o, k) => o.kind === b.objects[k].kind && o.text === b.objects[k].text && o.resolved === b.objects[k].resolved);
+}
+
+/**
+ * A row's options, read by its own table and held to main's (`was`: the table as it stood at 4d64d3a, read by today's
+ * parser, so a job count is still a count): where the two read the line differently, Engine.runRow judges the row
+ * main's way too, so no way of writing an option decides less safely than it did there (commands-held, as xargs since
+ * commands-remote-x7-5). Give every table that changes one: the options as they were, copied, never corrected.
+ */
+function heldOpts(h: H, now: OptSpec, was: OptSpec, args: readonly Arg[] = h.args): Parsed {
+  return h.e.parseHeld(args, now, was);
+}
 const objsOf = (h: H, list: Arg[], use: PathUse): Obj[] => list.map(a => h.e.usePath(a, use, h.sc));
 /** Objects for the card: as written; an unresolved one by its text. */
 /**
@@ -5496,14 +5632,22 @@ reg(NATIVE, [...SUDO_LIKE], h => {
     else h.e.unclear("unclear.shell-text", "It runs a command Ember can't see.");
     return;
   }
-  const p = parseOpts(h.args, {
+  const spec: OptSpec = {
     // sudo's -h takes a host only attached (alone it is help), and --preserve-env a list only after = (commands-remote-i5a).
     shortValue: k === "sudo" || k === "sudoedit" ? "ugpCUTrtDRca" : k === "doas" ? "uC" : k === "pkexec" ? "u" : "u",
     shortOptional: k === "sudo" || k === "sudoedit" ? "h" : "",
     longValue: ["user", "group", "host", "prompt", "close-from", "other-user", "command-timeout", "role", "type", "chdir", "chroot", "login-class", "auth-type"],
     longOptional: ["preserve-env"],
     stopAtOperand: true,
-  });
+  };
+  // Main's table gave -h and --preserve-env the next word (sudo itself takes a word after a lone -h for the host when a
+  // command follows), so `sudo -h host rm -rf ~` was the rm, refused: judged that way too (commands-held-1).
+  const was: OptSpec = {
+    shortValue: k === "sudo" || k === "sudoedit" ? "ugpCUTrthD" : k === "doas" ? "uC" : "u",
+    longValue: ["user", "group", "host", "prompt", "close-from", "other-user", "command-timeout", "role", "type", "chdir", "preserve-env"],
+    stopAtOperand: true,
+  };
+  const p = heldOpts(h, spec, was);
   const other = values(p, "u", "user")[0];
   h.e.add("system", "system.sudo", other && !/^(root|0|#0)$/.test(other) ? `Runs as another user (${other}).` : say, { program: k });
   if (k === "sudoedit" || has(p, "e", "edit")) { objsOf(h, p.operands, "write"); h.e.unclear("unclear.interactive", SAYS.interactive); return; }
