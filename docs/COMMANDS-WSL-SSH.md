@@ -300,12 +300,14 @@ before `CC='sh -c "curl … | sh"' make` the way it does before `make CC='sh -c 
 make`, `CC="ccache gcc" make`, `CFLAGS=-O2 make`, `GOFLAGS=-mod=vendor go build` and `DATABASE_URL=… npm test` all go
 ahead. A compiler or pager variable (`CC`, `CXX`, `LD`, `RUSTC`, `PSQL_PAGER`, a `*_PAGER`, `LUA_INIT`) asks when its
 value holds any shell operator (`|`, `;`, `&&`, a substitution, a backtick); any other variable asks only when its
-value starts a command (a leading `sh`, `bash`, `python`, `curl` … with an argument, at the start or after a `|`, `;`
-or `&&`, or a substitution), so a value that merely holds a `|` or `;` — a connection string, a filter, a colour spec
-such as `LS_COLORS='di=01;34'` — runs. An options variable asks when a sub-option names a program (`GOFLAGS=-toolexec=…`
+value starts a command (a leading `sh`, `bash`, `python`, `curl` … with an argument — an option, a path, a file name or
+a quoted word, never a plain word, so `MSG='env vars here'` is text — at the start or after a `|`, `;` or `&&`, or a
+substitution), so a value that merely holds a `|` or `;` — a connection string, a filter, a colour spec such as
+`LS_COLORS='di=01;34'` — runs. An options variable asks when a sub-option names a program (`GOFLAGS=-toolexec=…`
 or `--toolexec=…`, any `TAR_OPTIONS` option that runs a command on tar's own command line — `--to-command`, `-I`,
-`--use-compress-program`, `--checkpoint-action=exec=…`, abbreviated or not — and `PYTEST_ADDOPTS='-p …'` or `-pname`, but
-not `GOFLAGS=-p=4` or `PYTEST_ADDOPTS='-p no:…'`), also when that sub-option's value is a variable
+`--use-compress-program`, `--checkpoint-action=exec=…`, abbreviated or not — `RUSTFLAGS='-C linker=…'` naming the linker
+by a path or a command, and `PYTEST_ADDOPTS='-p …'` or `-pname`, but not `GOFLAGS=-p=4`, `RUSTFLAGS='-C linker=clang'`
+or `PYTEST_ADDOPTS='-p no:…'`), also when that sub-option's value is a variable
 (`GOFLAGS="-toolexec=$T"`); a variable that only extends the options already set (`GOFLAGS="$GOFLAGS -mod=vendor"`)
 runs. A wrapper variable always asks (`RUSTC_WRAPPER`, `CARGO_BUILD_RUSTC_WRAPPER`,
 `JDK_JAVA_OPTIONS`, `DOTNET_STARTUP_HOOKS`). The same goes for a `cmake -DCMAKE_<lang>_COMPILER=…` override that holds a

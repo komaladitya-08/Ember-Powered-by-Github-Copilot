@@ -17445,6 +17445,65 @@
   {
    "cmd": "TAR_OPTIONS=--no-same-owner tar xf a.tar",
    "verdict": "run"
+  },
+  {
+   "cmd": "RUSTFLAGS='-C linker=clang' cargo build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "RUSTFLAGS='-C target-cpu=native -C linker=lld' cargo build --release",
+   "verdict": "run"
+  },
+  {
+   "cmd": "RUSTFLAGS='-C linker=/tmp/x' cargo build",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "RUSTFLAGS='--codegen linker=./x' cargo build",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "MSG='env vars here' make",
+   "verdict": "run"
+  },
+  {
+   "cmd": "TITLE='sed and awk tips' make docs",
+   "verdict": "run"
+  },
+  {
+   "cmd": "COMMIT_MSG='exec bit fixed' make",
+   "verdict": "run"
+  },
+  {
+   "cmd": "PS_FORMAT='command args' make",
+   "verdict": "run"
+  },
+  {
+   "cmd": "FOO='env sh' make",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "FOO='python3 evil.py' make",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "START_CMD='node dist/server.js' npm run e2e",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
   }
  ]
 }

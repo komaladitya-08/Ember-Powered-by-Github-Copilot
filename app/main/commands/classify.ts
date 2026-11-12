@@ -1522,11 +1522,17 @@ const SHELL_SHAPE = /[|;`\n]|&&|\$\(/;
 const SHELL_WORD = String.raw`(?:sh|bash|zsh|dash|ksh|fish|ash|busybox|env|eval|exec|command|xargs|python[0-9.]*|perl|ruby|node|nodejs|php|lua|awk|sed|curl|wget)`;
 const SHELL_LEAD = new RegExp(String.raw`^\s*${SHELL_WORD}\s+\S`);
 /**
- * A value that STARTS a shell command: a shell or interpreter with an argument at the start or right after a `|`, `;` or
- * `&&`, or a substitution. An ordinary value that merely holds a `|` or `;` (a connection string, a colour spec, a
- * filter) is not a command, so `TEST_FILTER='unit|integration' npm test` runs (commands-remote-c8-1).
+ * The word after a shell or interpreter when it is that program's argument, not prose: an option, a path, a file name
+ * with an extension, a quoted, substituted or assigned word, or another shell word (`env sh`). So `env vars here`, `sed
+ * and awk tips` and `exec bit fixed` are words, not commands (commands-remote-x8-3).
  */
-const SHELL_START = new RegExp(String.raw`(?:^|[|;]|&&)\s*${SHELL_WORD}\s+\S`);
+const SHELL_ARG = String.raw`(?:[-./~$'"\\{(]\S*|\S*[/=$'"\\{(]\S*|\S*\.[A-Za-z]\w*|${SHELL_WORD})(?=\s|$)`;
+/**
+ * A value that STARTS a shell command: a shell or interpreter with an argument (SHELL_ARG) at the start or right after a
+ * `|`, `;` or `&&`, or a substitution. An ordinary value that merely holds a `|` or `;` (a connection string, a colour
+ * spec, a filter) is not a command, so `TEST_FILTER='unit|integration' npm test` runs (commands-remote-c8-1).
+ */
+const SHELL_START = new RegExp(String.raw`(?:^|[|;]|&&)\s*${SHELL_WORD}\s+${SHELL_ARG}`);
 /** go's options that name a program it runs over a build or its tests, with one dash or two (go reads `--toolexec` too). */
 const GO_PROGRAM_OPT = String.raw`--?(?:toolexec|exec|vettool)`;
 /** A go argument that is one of them, its value attached or not (`-toolexec=/tmp/t`, `--exec`). */
@@ -1542,9 +1548,19 @@ function optNamesProgram(name: string, value: string): boolean {
   if (name === "TAR_OPTIONS") {
     return /(^|[\s,'"=])--?to-command(=|\s)/.test(value) || tarRunsCommand(parseOpts(value.split(/\s+/).filter(Boolean).map(w => lit(w)), tarSpec(false)), false);
   }
-  if (/RUSTFLAGS$/.test(name)) return /(^|[\s,'"=])-C\s*linker=/.test(value);
+  // `-C linker=…` (`-Clinker=`, `--codegen linker=`) names the program rustc links with, judged as go's `-toolexec` value
+  // is: a plain linker name (`clang`, `lld`, `mold`) runs, as `CC=clang` does; a path, a command or a value Ember can't
+  // see asks (commands-remote-x8-3).
+  if (/RUSTFLAGS$/.test(name)) {
+    for (const m of value.matchAll(/(?:^|[\s,'"=])(?:-C\s*|--codegen(?:\s+|=))linker=(\S*)/g)) if (programUnvouched(/[$`]/.test(m[1]) ? null : m[1])) return true;
+    return false;
+  }
   if (name === "PYTEST_ADDOPTS") return /(^|[\s,'"=])-p(=|\s+)?(?!no:)\S/.test(value);
   return false;
+}
+/** Whether a program an option names (go's `-toolexec`, rustc's linker) is one Ember can't vouch for: unseen, a path or a command. */
+function programUnvouched(prog: string | null): boolean {
+  return prog === null || namesProgram("CC", prog) || /[\\/]/.test(prog);
 }
 /**
  * Whether a variable set in front of a command names a program or command the command runs (commands-remote-c8-1), so
@@ -6682,7 +6698,7 @@ reg(NATIVE, ["go"], h => {
     const m = GO_PROGRAM_ARG.exec(word);
     if (!m) continue;
     const prog = rest[k].v === null ? null : m[1] !== undefined ? m[1] : rest[k + 1]?.v ?? null;
-    if (prog === null || namesProgram("CC", prog) || /[\\/]/.test(prog)) h.e.unclear("unclear.assignment", "It runs a program Ember can't vouch for.");
+    if (programUnvouched(prog)) h.e.unclear("unclear.assignment", "It runs a program Ember can't vouch for.");
   }
   if (verb === "install" || verb === "get") { languageInstall(h, rest.filter(a => !isOption(a))); return; }
   if (verb === "run" && rest.some(a => /@/.test(a.v ?? "") && !isOption(a))) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return; }
