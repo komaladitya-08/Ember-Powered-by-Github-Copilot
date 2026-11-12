@@ -163,7 +163,7 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 - **Tier 3** (borrowing the cursor):
   - an ordinary borrow is announced instead of asked in every mode (`waivable: ["cursor"]`), a risky one asks as its mode says, and below Interactive every borrow asks;
   - wait for the user to be still;
-  - let go on any user input, and after that never move the pointer again;
+  - let go on any user input, and after that never move the pointer again; for the rest of that task no borrow goes ahead unasked either (`takenBack`, `askedAfterTakeover` in worker.ts: a mode's announcement is turned back into the question it is below Interactive, which says "You took the mouse back earlier, so I'm asking before I use it again.", for one step and for fill_cells; without a question nothing else would keep a model that tries again from taking the pointer once the user is still; cause 4 of the investigation of the owner's report of 2026-11-12);
   - unless the user took over, restore the pointer and the active window when the borrow ends.
 
   Target-dependent refusals (no borrowing in WSLg windows) live only in policy/target-rules.ts. On the user's screen, text typed with the borrowed keyboard always goes in by paste (any layout, accents, long text), and the clipboard is put back afterwards. Ember pastes only when it can put the clipboard back. On the desk, text is typed.

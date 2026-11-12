@@ -494,7 +494,8 @@ under them says so in one sentence; where it caps the mode (`approvals.maxMode`)
 
 In Interactive, Ember doesn't ask before its first step in an app (in an app you asked for help in, the one you were
 in or one your request names, that step isn't announced either),
-before borrowing your mouse and keyboard (it still waits until you're still and lets go when you move), before
+before borrowing your mouse and keyboard (it still waits until you're still and lets go when you move; once you have
+taken them back from a task, it asks before using them again in that task), before
 moving text between apps (it says which apps and how many characters, never the text), before pressing OK on a
 message box whose only button is that OK, with nothing to choose, tick or type, and nothing in it Ember couldn't see ("Answering a message box in Notepad…";
 any dialog with a Cancel, a check box or another control, or a title bar's Close (except in a real Windows dialog box) still asks, and so does one that asks a question, says what has happened or will happen, is longer than 120 characters, is cut

@@ -31,7 +31,7 @@ import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import { helperCantRun } from "../perception/sidecar";
-import type { PolicyEngine, ActionKind, ActionRequest, Agreement, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
+import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { riskyOnPage } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
@@ -1227,6 +1227,10 @@ export class Worker {
   private place: DeskPlace | null = null;
   /** True while this worker holds the user's mouse and keyboard. */
   private guideStep = 0;
+  /**
+   * The user took the mouse or keyboard back from a borrow of this task: its outcome says so, and for the rest of the
+   * task no borrow goes ahead unasked (takenBack). Never cleared.
+   */
   private userTookOver = false;
   /** Aborted when the task must stop: the user's Stop, or a limit. Every tool checks it before acting. */
   private halt = new AbortController();
@@ -3679,7 +3683,9 @@ export class Worker {
         ...(job.expected !== undefined ? { currentText: job.expected, ...this.ownText(field, job.expected) } : {}) };
       if (job.text) typed = { field, text: (typedHere ?? job.text).slice(-TYPED_MAX) };
       const d = i === 0 ? this.d.policy.decide(req) : this.d.policy.recheck(req);
-      // "Work without asking" is suspended for the rest of a task the user already said no in, as for one step (authorize).
+      // "Work without asking" is suspended for the rest of a task the user already said no in, as for one step (authorize),
+      // and for its borrows once the user took the mouse back.
+      if (d.autonomy && !this.saidNoThisTask && this.takenBack(req.kind)) return { job, req, d: this.askedAfterTakeover(d) };
       if (!d.autonomy || !this.saidNoThisTask) return { job, req, d };
       const { autonomy: _a, announce: _n, ...asked } = d;
       return { job, req, d: { ...asked, verdict: "confirm" as const, tier: "confirm" as const, reason: `${d.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` } };
@@ -4642,6 +4648,11 @@ export class Worker {
       const { autonomy: _a, announce: _n, ...asked } = decision;
       decision = { ...asked, verdict: "confirm", tier: "confirm", reason: `${decision.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` };
     }
+    // The user took the mouse or keyboard back from this task: no later borrow of it goes ahead unasked (CLAUDE.md "Least
+    // intrusive tier first": Ember never moves the pointer again after the user takes over). Without a question nothing
+    // else would stand between a model that tries again and Ember taking the pointer a second and a half after the
+    // user lets go of it (cause 4 of the investigation of the owner's report of 2026-11-12).
+    if (decision.autonomy && this.takenBack(req.kind)) decision = this.askedAfterTakeover(decision);
     // After a step the user didn't ask for came up (a page may have steered Ember, or the model went its own way),
     // nothing more happens without the user's click, and every question says why (one that would have been asked
     // anyway too; the step that was flagged says so itself).
@@ -4805,6 +4816,18 @@ export class Worker {
       });
     }
     return !this.isOver;
+  }
+
+  /** Did the user take the mouse or keyboard back from this task, and is `kind` a step that would borrow them again? */
+  private takenBack(kind: ActionKind): boolean {
+    return this.userTookOver && !this.place && BORROWED.has(kind);
+  }
+
+  /** A borrow a mode would announce, turned back into the question it would be below Interactive, saying why it is asked. */
+  private askedAfterTakeover(d: Decision): Decision {
+    const { autonomy: _a, announce: _n, ...asked } = d;
+    return { ...asked, verdict: "confirm", tier: "confirm", reason: `${d.reason.replace(/; the user lets Ember work without asking$/, "")}; the user took the mouse back earlier in this task`,
+      prompt: `${d.prompt} (You took the mouse back earlier, so I'm asking before I use it again.)` };
   }
 
   /**

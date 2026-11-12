@@ -124,7 +124,7 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
   - It never reads or acts in its own windows or in never-look windows.
   - Password text never reaches the model, and nor does any value from the vault.
 - **Screenshots** go only to workers. They are JPEGs at most 1280 px, with Ember hidden and never-look windows and secret fields blacked out. If masking fails, no image is sent. Prefer AT-SPI text to pixels.
-- **Least intrusive tier first:** 0 app APIs, 1 background accessibility, 2 Ember's desk (Linux only), 3 borrowing the cursor. An ordinary tier 3 borrow is announced instead of asked in every mode (below Interactive it asks every time), and a risky one asks as its mode says; it waits for the user to be still, and lets go on any user input. Ember never moves the pointer again after the user takes over.
+- **Least intrusive tier first:** 0 app APIs, 1 background accessibility, 2 Ember's desk (Linux only), 3 borrowing the cursor. An ordinary tier 3 borrow is announced instead of asked in every mode (below Interactive it asks every time), and a risky one asks as its mode says; it waits for the user to be still, and lets go on any user input. Ember never moves the pointer again after the user takes over, and for the rest of that task it asks before any borrow.
 - **Kill switch.** The stop shortcut (Ctrl+Alt+X on Linux), "Ember, stop", "Stop everything" and a typed "stop" while a task is at work (`AgentHost.stopsNow`) call `KillSwitch.pull()`, which tells every part to stop at once and returns within 300 ms, logging any part still winding down as `late`. Register any new long-running part as a `StopPart`.
 - **Consent.**
   - Nothing is read, heard or sent until `hasConsent` is true.
