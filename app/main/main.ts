@@ -2020,10 +2020,10 @@ function start(): void {
         }
         break;
       case "dropped":
-        // From a question's answer window it was an answer (nothing else leaves that window): the question says so, once,
-        // and how to be heard, rather than nothing at all (owner's report of 2026-11-12).
-        // ("sound-unknown": nothing could tell whether other sound played, macOS say, so a yes needed the name.)
-        if (e.window === "answer" && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer(e.reason, "allow"); }
+        // It read as an answer, in a question's answer window, a follow-up or a conversation over a playing video (the
+        // default): the question says so, once, and how to be heard, rather than nothing at all (owner's report of
+        // 2026-11-12). ("sound-unknown": nothing could tell whether other sound played, macOS say, so a yes needed the name.)
+        if (e.answer && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer(e.reason, e.answer); }
         if (e.reason !== "over-sound" || !conversing || overSoundSaid || statusBy.listen !== CONVERSATION_STATUS) break;
         overSoundSaid = true;
         setStatus("listen", OVER_SOUND_STATUS);

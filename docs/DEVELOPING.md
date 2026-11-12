@@ -717,7 +717,10 @@ Voice Match off it isn't taken, and the question says once to say the name first
 said by name are taken as ever (owner's report of 2026-11-12: a video's “Okay.” outside a conversation allowed a
 question; settled by the integrator on the owner's direction, and the owner can overrule it). The first time something said
 then without the name isn't heard, the status line says “Music or a video is playing: say “Ember” first.” for 5 s
-(engine.ts `dropped`), once a conversation. With the switch off, after Ember
+(engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer window, a
+follow-up or a conversation, makes the question say once why and to say the name first (`dropped` says which answer it
+read as, never the words: in a conversation over a playing video a nameless “allow” vanished, owner's report of
+2026-11-12). With the switch off, after Ember
 answers you have 8 seconds (12 when it asked you something) for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). While Ember is talking, “Hey Ember” stops it and listens; on Windows, macOS and Linux without

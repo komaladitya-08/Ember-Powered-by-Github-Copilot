@@ -118,9 +118,11 @@ export type VoiceEvent =
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number }
   /**
    * What was said in a conversation over other sound, without the name, wasn't heard: it can't be told from the song's
-   * words (match.ts, owner decision of 2026-11-05). Main says so, once a conversation (voice-listening-10).
+   * words (match.ts, owner decision of 2026-11-05). Main says so, once a conversation (voice-listening-10). `answer`:
+   * which answer it read as, in any window, never the words, so a question up says so once (owner's report of
+   * 2026-11-12); `window` "answer": from a question's answer window; `reason` "sound-unknown": see soundKnown.
    */
-  | { type: "dropped"; reason: "over-sound" | "sound-unknown"; window?: "answer" }
+  | { type: "dropped"; reason: "over-sound" | "sound-unknown"; window?: "answer"; answer?: "allow" | "deny" }
   /**
    * In a conversation, while one of Ember's questions is up, an answer ("Allow.", "Not now.") was said over Ember's voice
    * in words Ember was saying itself (its read-out names them): never taken, as it may be Ember's own, but no longer

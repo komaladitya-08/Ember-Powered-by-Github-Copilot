@@ -13,6 +13,7 @@
 import type { VoiceEvent } from "./engine";
 import { ENROL_MIN_SECONDS, ENROL_PHRASES, VOICE_MATCH_THRESHOLD, averagePrint, consistentPrints, similarity } from "./voiceprint";
 import { gateMatches } from "./adapt";
+import { spokenAnswer } from "../shared/spoken-answer";
 
 /** Makes a voiceprint (unit length) of 16 kHz audio. */
 export interface Printer {
@@ -181,9 +182,11 @@ export class VoiceGate {
     const generation = this.revision;
     const owner = this.owner;
     // Over a song with no name said: only a voice that can be told apart from it is heard.
-    // (`window`: from a question's answer window, so main can say on the question that its answer wasn't taken; `reason`
-    // "sound-unknown": a yes where nothing could tell whether other sound played, which the question says instead.)
-    const dropped: VoiceEvent = { type: "dropped", reason: e.type === "utterance" && e.soundUnknown ? "sound-unknown" : "over-sound", ...(e.type === "utterance" && e.window === "answer" ? { window: "answer" as const } : {}) };
+    // (`window`: from a question's answer window; `answer`: which answer it read as, in whatever window, never the words:
+    // main says so on a question up, once (owner's report of 2026-11-12: in a conversation over a video, the default, a
+    // nameless "allow" vanished). `reason` "sound-unknown": a yes where nothing could tell whether other sound played.)
+    const answer = e.type === "utterance" ? spokenAnswer(e.text) : null;
+    const dropped: VoiceEvent = { type: "dropped", reason: e.type === "utterance" && e.soundUnknown ? "sound-unknown" : "over-sound", ...(e.type === "utterance" && e.window === "answer" ? { window: "answer" as const } : {}), ...(answer ? { answer } : {}) };
     if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) { this.send(dropped); return; }
     if (e.type !== "utterance" || e.overEmber || !owner || !audio?.length) { this.send(e); return; }
     // Capture one immutable configuration for the whole request, including its post-wake check.

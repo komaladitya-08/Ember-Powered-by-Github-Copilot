@@ -327,7 +327,8 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
   it("says once a question when an answer said over other sound wasn't taken, and how to be heard, rather than nothing (owner's report of 2026-11-12)", () => {
     expect(VOICE_ANSWER_REFUSED["over-sound"]).toBe("Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.");
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
-    expect(main).toMatch(/if \(e\.window === "answer" && confirmer\?\.waiting && overSoundFor !== confirmer\.currentNumber\) \{ overSoundFor = confirmer\.currentNumber; refuseVoiceAnswer\(e\.reason, "allow"\); \}/);
+    // Whichever window it was said in: a conversation over a playing video (the default) or a follow-up too.
+    expect(main).toMatch(/if \(e\.answer && confirmer\?\.waiting && overSoundFor !== confirmer\.currentNumber\) \{ overSoundFor = confirmer\.currentNumber; refuseVoiceAnswer\(e\.reason, e\.answer\); \}/);
   });
 
   it("says why a yes without the name wasn't taken where nothing can tell whether other sound plays, and how to be heard (owner's report of 2026-11-12)", () => {
