@@ -47,8 +47,8 @@ export const AdminPolicySchema = z.object({
     /** SSH: connecting to other computers (on the PC); on a remote: letting Ember in at all. */
     ssh: z.boolean().optional(),
     /**
-     * AI review of commands (commands/review.ts): false, every command the rules flag asks the user, and no command is
-     * sent to the model for review ("Ask only about dangerous commands" is off and managed).
+     * AI review (commands/review.ts, Assisted's check): false, every command the rules flag asks the user, and nothing
+     * is sent to the model for review (a chosen Assisted is in force as Interactive, and Home says so).
      */
     aiReview: z.boolean().optional(),
     /** Long-term memory (docs/MEMORY.md): false, Ember remembers nothing between runs and keeps no memory file. */
@@ -60,8 +60,9 @@ export const AdminPolicySchema = z.object({
     /** Extensions (plugins' MCP tools, app/main/extensions/): false, none load or run, and none can be installed. */
     extensions: z.boolean().optional(),
     /**
-     * "Work without asking" (app/main/policy/autonomy.ts): false, Ember asks before ordinary steps as it did before, and
-     * the switch shows off and managed. Also off wherever `allowGrants` is false or `confirmEveryAction` is true.
+     * The approval modes (app/main/policy/autonomy.ts): false, Ember stays below Interactive and asks before ordinary
+     * steps as it did before the modes, and Home's choice shows managed. So it does wherever `allowGrants` is false or
+     * `confirmEveryAction` is true.
      */
     autonomy: z.boolean().optional(),
     /**
@@ -230,8 +231,9 @@ export function heldUntilRestart(next: LoadedAdminPolicy): LoadedAdminPolicy {
 }
 
 /**
- * May users turn on "Work without asking"? Not where the administrator turned it off (`features.autonomy`), keeps users
- * from letting Ember act without asking (`allowGrants` false), wants a click before every action, or turned acting off.
+ * May users have an approval mode at all? Not where the administrator turned them off (`features.autonomy`), keeps users
+ * from letting Ember act without asking (`allowGrants` false), wants a click before every action, or turned acting off:
+ * Ember is then below Interactive (the same rule as policy/autonomy.ts autonomyPermitted).
  */
 export function autonomyAllowed(admin: Pick<AdminPolicy, "features" | "allowGrants" | "confirmEveryAction">): boolean {
   return admin.features.autonomy !== false && admin.allowGrants !== false && !admin.confirmEveryAction && admin.features.actions !== false;
@@ -262,16 +264,15 @@ export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
     s.privacy = { ...s.privacy, neverLook: [...s.privacy.neverLook, ...admin.neverLook.filter(x => !have.has(x.toLowerCase()))] };
   }
   if (!admin.allowGrants) s.grants = {};
-  // No working in an asked-for app unasked where users may not let Ember act without asking (the policy engine holds to
-  // that too), and no AI review where the organisation turned it off.
-  if (!admin.allowGrants) s.trust = { ...s.trust, askedApps: false };
-  if (admin.features.aiReview === false) s.trust = { ...s.trust, reviewCommands: false };
   if (admin.features.memory === false) s.memory = { ...s.memory, on: false };
   if (admin.features.routines === false) s.routines = { ...s.routines, on: false };
   if (admin.features.updates === false) s.updates = { ...s.updates, on: false };
   if (admin.features.extensions === false) s.extensions = { ...s.extensions, on: false };
-  // Acting without asking is off wherever the organisation keeps users from it, in any of its three ways.
-  if (!autonomyAllowed(admin)) s.autonomy = { ...s.autonomy, on: false };
+  // Below Interactive wherever the organisation keeps users from acting without asking, in any of its ways: no card
+  // counts as agreed to in the settings in force, so they say so on their own (modeInForce holds to the policy too).
+  // The user's own choice and cards stay in their file.
+  const none = { version: 0, at: null };
+  if (!autonomyAllowed(admin)) s.approvals = { ...s.approvals, consent: { interactive: none, assisted: none, autopilot: none } };
   const allowed = admin.models.allowed;
   const pick = (pinned: string | undefined, chosen: string | null) => pinned ?? (chosen && allowed && !allowed.includes(chosen) ? null : chosen);
   s.models = { conductor: pick(admin.models.conductor, s.models.conductor), worker: pick(admin.models.worker, s.models.worker) };
@@ -289,8 +290,7 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.features.voice === false || admin.features.speak === false) keys.push("naturalVoice");
   if (admin.features.screenImages === false) keys.push("screenImages");
   if (modelsManaged(admin.models)) keys.push("models");
-  if (!admin.allowGrants) keys.push("grants", "askedApps");
-  if (admin.features.aiReview === false) keys.push("reviewCommands");
+  if (!admin.allowGrants) keys.push("grants");
   if (admin.features.memory === false) keys.push("memory");
   if (admin.features.routines === false) keys.push("routines");
   if (admin.features.updates === false) keys.push("updates");

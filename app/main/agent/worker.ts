@@ -88,10 +88,10 @@ export const LINUX_WORKER_SYSTEM: WorkerSystem = {
 
 export interface WorkerDeps {
   client: CopilotClient;
-  /** The user's "Ask only about dangerous commands" (Settings › Commands): commands that would ask are reviewed first. */
+  /** The approval mode in force reviews commands (policy/autonomy.ts approvalInputs: Assisted): commands that would ask are reviewed first. */
   reviewCommands?: () => boolean;
   /**
-   * "Work without asking" (policy/autonomy.ts autonomyInForce): its scopes in force, or null while it is off. App steps
+   * The approval mode in force (policy/autonomy.ts approvalInputs): its scopes, or null below Interactive. App steps
    * hear of it through the policy engine; this is for run_command's flow (an ordinary command carrying text from elsewhere).
    */
   autonomy?: () => AutonomyScopes | null;

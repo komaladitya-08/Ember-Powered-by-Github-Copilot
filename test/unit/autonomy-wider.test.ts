@@ -26,10 +26,14 @@ import type { AxNode, Bounds } from "../../app/main/perception/sidecar";
 import type { Hand } from "../../app/main/hands/borrow";
 import type { Logger } from "../../app/main/logger";
 import { friendlyApp } from "../../app/shared/apps";
-import { AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf } from "../../app/renderer/home/copy";
+import { AUTONOMY_CONSENT_TEXT, approvalsNote, elevationOf } from "../../app/renderer/home/copy";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import type { ApprovalsState } from "../../app/shared/approvals";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
+/** How Ember asks as main tells Home: Interactive in force, and nothing agreed to yet. */
+const IN_FORCE: ApprovalsState = { chosen: "interactive", inForce: "interactive", why: null, offered: ["interactive"], agreed: ["interactive"], cap: null };
+const NOT_AGREED: ApprovalsState = { chosen: "interactive", inForce: "asking", why: "card", offered: ["interactive"], agreed: [], cap: null };
 const FRAME: Bounds = { x: 0, y: 0, width: 800, height: 600 };
 const ALL = (): AutonomyScopes => ({ ...ALL_SCOPES });
 /** Notepad as Ember names it to the user (friendlyApp). */
@@ -1004,10 +1008,15 @@ describe("working without asking while an authentication prompt has the keyboard
 
 describe("Home's line while Ember runs elevated (the owner's complaint)", () => {
   it("says every command asks while Ember runs as an administrator or as root, and nothing more otherwise", () => {
-    expect(autonomyHint(false, "administrator")).toMatch(/ Ember is running as an administrator, so it asks before every command\. Start it normally to change that\.$/);
-    expect(autonomyHint(false, "root")).toMatch(/ Ember is running as root, so it asks before every command\. Start it as yourself to change that\.$/);
-    expect(autonomyHint(false, "maybe-administrator")).toMatch(/ Ember may be running as an administrator \(it couldn't tell\), and then it asks before every command\. Start it normally to be sure\.$/);
-    expect(autonomyHint(false)).not.toMatch(/every command/);
+    // Under How Ember asks, whatever stands there: a mode in force, none yet, or the organisation's.
+    for (const [state, managed] of [[IN_FORCE, false], [NOT_AGREED, false], [IN_FORCE, true], [null, true]] as const) {
+      expect(approvalsNote(state, managed, "administrator")).toMatch(/ Ember is running as an administrator, so it asks before every command\. Start it normally to change that\.$/);
+      expect(approvalsNote(state, managed, "root")).toMatch(/ Ember is running as root, so it asks before every command\. Start it as yourself to change that\.$/);
+      expect(approvalsNote(state, managed, "maybe-administrator")).toMatch(/ Ember may be running as an administrator \(it couldn't tell\), and then it asks before every command\. Start it normally to be sure\.$/);
+      expect(approvalsNote(state, managed)).not.toMatch(/every command/);
+    }
+    // Before main has said how the modes stand, nothing is said.
+    expect(approvalsNote(null, false, "administrator")).toBe("");
     expect(elevationOf([{ id: "elevated", label: "Administrator", status: "warn" }])).toBe("administrator");
     expect(elevationOf([{ id: "elevated", label: "Root", status: "warn" }])).toBe("root");
     expect(elevationOf([{ id: "root", label: "Root", status: "warn" }])).toBe("root");
@@ -1192,13 +1201,13 @@ describe("red team: an injected screen tries to make an ordinary-looking command
   });
 });
 
-describe("Home's words for the switch", () => {
-  it("say that answering an app's message box is one of the steps it no longer asks about, and the card still covers it", () => {
-    expect(autonomyHint(false)).toMatch(/^Off, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps\. On, it tells you what it's doing instead/);
-    expect(autonomyHint(true)).toMatch(/before pressing OK on an app's message box/);
-    // The card names the wider scope, and its version moved so the user agrees to it again (S1).
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/press OK on a simple message box \(one whose only button is OK, with nothing to choose or tick\) for what you ask, without asking you first each time/);
+describe("Home's words for the choice", () => {
+  it("say that answering an app's message box is one of the steps Ember asks about until a mode is in force, and the card still covers it", () => {
+    expect(approvalsNote(NOT_AGREED, false)).toBe("Until you agree to Interactive, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps.");
+    expect(approvalsNote(IN_FORCE, true)).toBe("Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps.");
+    // The card names the wider scope, and its version moved with each change so the user agrees to it again (S1).
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/presses OK on a message box that has nothing else to choose\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/and any dialog that asks a question\./);
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(2);
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(3);
   });
 });

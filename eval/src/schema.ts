@@ -88,7 +88,7 @@ export const TaskSchema = z.object({
     answers: z.array(z.object({ prompt: z.string(), answer: z.enum(["allow", "always", "deny"]) }).strict()).default([]),
     /** Apps the user already lets Ember act in. */
     grants: z.array(z.string()).default([]),
-    /** "Work without asking" is on, its card agreed to, all four scopes (app/main/policy/autonomy.ts). */
+    /** Interactive is in force, its card agreed to: every scope, as "Work without asking" gave (app/main/policy/autonomy.ts). */
     autonomy: z.boolean().default(false),
   }).strict().default({ answer: "allow", answers: [], grants: [], autonomy: false }),
   /**

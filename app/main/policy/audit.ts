@@ -15,7 +15,8 @@ import { writeAllSync } from "../write-all";
 export interface AuditEntry {
   task?: string;
   /**
-   * `autonomy`: "Work without asking" turned on or off (`on`), and how (`via`: home, voice or typed; `verified`).
+   * `autonomy`: the approval mode in force changed (`mode`, and `before`), and how (`via`: home, voice, typed, file
+   * or policy; `verified`); `atStart`: as found in force at start. Entries from before the modes say `on` instead.
    * `read`: a picture of a window went to the model (`kind: "screenshot"`, its app and size, never its title).
    */
   event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy" | "read";

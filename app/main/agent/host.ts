@@ -60,7 +60,7 @@ import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
 import type { TaskVoiceTrust } from "./voice-answer";
-import { autonomyInForce } from "../policy/autonomy";
+import { approvalInputs, modeInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, READ_OUT_REPLY, readOutRequest, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
@@ -255,14 +255,15 @@ export interface HostOptions {
    */
   voiceTrust?: Pick<TaskVoiceTrust, "grant" | "end">;
   /**
-   * "Work without asking" by voice (autonomy-intent.ts): its state, turning it on or off, and opening its switch (with
-   * its card) in Settings. Absent: the words go to the conversation like any others.
+   * "Work without asking" and "ask me first again" by voice or typed words (autonomy-intent.ts), against the approval
+   * mode: whether a mode is in force (`on`), whether Interactive's card is agreed to, taking it in or out of force, and
+   * opening the choice (with its card) in Settings. Absent: the words go to the conversation like any others.
    */
   autonomy?: {
     state(): { on: boolean; consented: boolean; managed: boolean };
     /**
      * `how`: spoken (and whether Voice Match verified it) or typed, for the audit entry. False when it couldn't be made
-     * so (its audit entry couldn't be written, so a turn on was undone).
+     * so (its audit entry couldn't be written, so a mode that asks less was undone).
      */
     set(on: boolean, how: { via: "voice" | "typed"; verified: boolean }): boolean;
     open(consent: boolean): void;
@@ -2117,8 +2118,10 @@ export class AgentHost {
             provider: provider?.config, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
             settings: this.o.settings, presenter,
-            reviewCommands: () => this.o.settings.get().trust.reviewCommands && this.o.admin?.().features.aiReview !== false,
-            autonomy: () => autonomyInForce(this.o.settings.get().autonomy, this.o.admin?.() ?? null),
+            // The approval mode in force (policy/autonomy.ts), read at each step: Assisted reviews a command that would
+            // ask, as the old switch did; Interactive and above give every scope; below Interactive, neither.
+            reviewCommands: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).reviewCommands,
+            autonomy: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).scopes,
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUpdate: update, onActivity: activity, onUsage: (i, o) => this.recordUsage(i, o),
@@ -3056,8 +3059,9 @@ export class AgentHost {
     // Its turn begins at once only when no turn was under way or waiting as it was asked (before its own "Thinking…"):
     // otherwise main's acknowledgement would be said over the earlier turn's answer, so one queued behind gets none.
     const first = this.betweenTurns();
-    // "Work without asking" / "ask me first again": the switch, set here and never by the conductor (it has no tool for
-    // it). On only from the owner's verified voice with its card agreed to; off from anyone (autonomy-intent.ts).
+    // "Work without asking" / "ask me first again": the approval mode, set here and never by the conductor (it has no
+    // tool for it). On only from the owner's verified voice with Interactive's card agreed to; off from anyone
+    // (autonomy-intent.ts).
     const mode = this.o.autonomy ? autonomyIntent(text) : null;
     if (mode && this.o.autonomy) {
       const plan = planAutonomyIntent(mode, { ...this.o.autonomy.state(), verified: how.verified === true, short: how.short === true });

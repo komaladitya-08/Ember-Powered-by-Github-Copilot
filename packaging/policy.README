@@ -27,7 +27,7 @@ Every key is optional:
                         flag asks), "memory" (false: Ember remembers nothing between runs and learns nothing on its
                         own), "routines" (false: no routines, and reminders end when Ember quits), "updates" (false:
                         Ember never asks GitHub whether a new version is out), "extensions" (false: no extension
-                        loads, runs or can be added), "autonomy" (false: "Work without asking" stays off, so Ember
+                        loads, runs or can be added), "autonomy" (false: no approval mode is in force, so Ember
                         asks before ordinary steps) and "userProvider" (false: users can't send their requests and
                         screenshots to a model service of their own; the organisation's "provider" turns it off too)
   "neverLook"           apps and windows Ember never reads, captures or acts in (added to each user's list)

@@ -1,0 +1,369 @@
+/**
+ * The approval modes (app/main/policy/autonomy.ts, PLAN.md §2 "Approvals", owner decision of 2026-11-12): the one mode
+ * setting that replaces the three switches, how an older settings.json is read, the mode in force for every
+ * administrator's switch, cap, card and hold, the inputs each state gives the policy engine, and the one call that
+ * chooses a mode from Home.
+ */
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  ALL_SCOPES, OFFERED_MODES, approvalInputs, approvalsState, autonomyInForce, chooseMode, holdAutonomyOff, modeAgreed, modeInForce, modeWithoutHold,
+  releaseAutonomyHold, type ApprovalsSetting,
+} from "../../app/main/policy/autonomy";
+import { AdminPolicySchema, applyAdminPolicy, autonomyAllowed, managedKeys, parseAdminPolicy } from "../../app/main/admin";
+import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore, migrateApprovals } from "../../app/main/settings";
+import { settingsFromHome } from "../../app/main/windows";
+import { APPROVAL_MODES, modeCardVersion, modeRank, type ApprovalMode, type ModeInForce } from "../../app/shared/approvals";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { PolicyEngine, type ActionRequest } from "../../app/main/policy/policy";
+import { ChooseArgs, registerApprovalsIpc, type ApprovalsIpcEvent } from "../../app/main/approvals-ipc";
+import { APPROVALS_IPC, type ApprovalsDone } from "../../app/shared/approvals";
+
+afterEach(() => releaseAutonomyHold());
+
+const AT = "2026-11-12T10:00:00.000Z";
+const NONE = { version: 0, at: null };
+/** The setting with `mode` chosen and the cards of `agreed` agreed to as they read now. */
+const setting = (mode: ApprovalMode, ...agreed: ApprovalMode[]): ApprovalsSetting => ({
+  mode,
+  consent: {
+    interactive: agreed.includes("interactive") ? { version: modeCardVersion("interactive"), at: AT } : NONE,
+    assisted: agreed.includes("assisted") ? { version: modeCardVersion("assisted"), at: AT } : NONE,
+    autopilot: agreed.includes("autopilot") ? { version: modeCardVersion("autopilot"), at: AT } : NONE,
+  },
+});
+const admin = (o: Record<string, unknown> = {}) => AdminPolicySchema.parse(o);
+/** A policy with the mode capped at `cap`, as the mode in force reads one. */
+const capped = (o: Record<string, unknown>, cap: ApprovalMode | undefined) => ({ ...admin(o), ...(cap ? { approvals: { maxMode: cap } } : {}) });
+
+describe("the approval mode setting (modes-A1)", () => {
+  it("is Interactive by default with no card agreed to, so a new settings file is below Interactive until its card is", () => {
+    expect(DEFAULT_SETTINGS.approvals).toEqual({ mode: "interactive", consent: { interactive: NONE, assisted: NONE, autopilot: NONE } });
+    expect(modeInForce(DEFAULT_SETTINGS.approvals)).toBe("asking");
+    expect("autonomy" in DEFAULT_SETTINGS).toBe(false);
+    expect("trust" in DEFAULT_SETTINGS).toBe(false);
+  });
+
+  it("versions each mode's card on its own: Interactive's is Work without asking's, bumped to 3; Assisted's and Autopilot's start at 1", () => {
+    expect(FEATURE_CONSENT_VERSION).toMatchObject({ autonomy: 3, assisted: 1, autopilot: 1 });
+    expect(APPROVAL_MODES.map(modeCardVersion)).toEqual([3, 1, 1]);
+    expect(["asking", ...APPROVAL_MODES, "nonsense"].map(modeRank)).toEqual([0, 1, 2, 3, 0]);
+  });
+
+  it("refuses a mode it doesn't know, and repairs it to Interactive without losing the cards agreed to", () => {
+    expect(SettingsSchema.safeParse({ approvals: { mode: "everything" } }).success).toBe(false);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-modes-"));
+    try {
+      fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ approvals: { mode: "everything", consent: setting("interactive", "interactive").consent } }));
+      const store = new SettingsStore(path.join(dir, "settings.json"));
+      store.load();
+      expect(store.get().approvals).toEqual(setting("interactive", "interactive"));
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe("a settings.json from before the modes (modes-A2)", () => {
+  const OLD_CARD = 2;
+  const scopes = [undefined, { apps: true, commands: true, cursor: true, crossWindow: true }, { apps: true, commands: false, cursor: false, crossWindow: false }];
+  const consents = [undefined, { version: 0, at: null }, { version: 1, at: "2026-11-02T10:00:00.000Z" }, { version: 2, at: "2026-11-03T10:00:00.000Z" }, { version: 3, at: "2026-11-04T10:00:00.000Z" }, { version: 99, at: "t" }];
+  const autonomies: (Record<string, unknown> | undefined)[] = [undefined];
+  for (const on of [true, false]) for (const s of scopes) for (const consent of consents) autonomies.push({ on, ...(s ? { scopes: s } : {}), ...(consent ? { consent } : {}) });
+  const trusts: (Record<string, unknown> | undefined)[] = [undefined];
+  for (const askedApps of [true, false]) for (const reviewCommands of [true, false]) trusts.push({ askedApps, reviewCommands });
+
+  it("loads with every combination of the old keys, drops them, and counts none of them as agreement to a new card", () => {
+    let combos = 0;
+    for (const autonomy of autonomies) {
+      for (const trust of trusts) {
+        if (!autonomy && !trust) continue;
+        combos++;
+        const old = { size: 72, ...(autonomy ? { autonomy } : {}), ...(trust ? { trust } : {}) };
+        const parsed = SettingsSchema.safeParse(migrateApprovals(old));
+        expect(parsed.success, JSON.stringify(old)).toBe(true);
+        if (!parsed.success) continue;
+        const s = parsed.data;
+        expect(s.size).toBe(72);
+        expect("autonomy" in s || "trust" in s).toBe(false);
+        // The mode is the default, never read from the old switches; Assisted's and Autopilot's cards were never shown.
+        expect(s.approvals.mode).toBe("interactive");
+        expect(s.approvals.consent.assisted).toEqual(NONE);
+        expect(s.approvals.consent.autopilot).toEqual(NONE);
+        // Work without asking's agreement is kept as what it was, at most the old card's version: below the new card.
+        const was = (autonomy?.consent as { version: number; at: string | null } | undefined) ?? NONE;
+        expect(s.approvals.consent.interactive).toEqual(was.version > 0 ? { version: Math.min(was.version, OLD_CARD), at: was.at } : NONE);
+        expect(s.approvals.consent.interactive.version).toBeLessThan(FEATURE_CONSENT_VERSION.autonomy);
+        expect(modeInForce(s.approvals), JSON.stringify(old)).toBe("asking");
+        expect(approvalInputs(modeInForce(s.approvals))).toEqual({ scopes: null, askedApps: false, reviewCommands: false });
+      }
+    }
+    expect(combos).toBe(autonomies.length * trusts.length - 1);
+  });
+
+  it("leaves a file that already has the new key as it is, old keys beside it or not", () => {
+    const now = { approvals: setting("interactive", "interactive") };
+    expect(migrateApprovals(now)).toBe(now);
+    const both = { approvals: setting("interactive", "interactive"), autonomy: { on: false, consent: { version: 2, at: "t" } }, trust: { askedApps: false, reviewCommands: true } };
+    expect(migrateApprovals(both)).toEqual({ approvals: setting("interactive", "interactive") });
+    for (const odd of [null, undefined, 5, "autonomy", ["autonomy"]]) expect(migrateApprovals(odd)).toBe(odd);
+  });
+
+  it("reads broken old values without judging the file invalid: nothing of them is kept", () => {
+    for (const autonomy of ["yes", null, 5, [], { on: "yes", scopes: { apps: "no" }, consent: { version: "one" } }, { consent: { version: -1 } }, { consent: { version: 1.5 } }, { consent: null }]) {
+      const parsed = SettingsSchema.safeParse(migrateApprovals({ autonomy, trust: "all" }));
+      expect(parsed.success && parsed.data.approvals, JSON.stringify(autonomy)).toEqual(DEFAULT_SETTINGS.approvals);
+    }
+  });
+
+  it("is read by the store with no notice and no backup, and the old keys go with the next save", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-modes-"));
+    try {
+      const file = path.join(dir, "settings.json");
+      fs.writeFileSync(file, JSON.stringify({ size: 72, trust: { askedApps: true, reviewCommands: true }, autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: AT } } }));
+      const store = new SettingsStore(file);
+      const loaded = store.load();
+      expect(loaded.recoveredFrom).toBeUndefined();
+      expect(store.lastProblem).toBeNull();
+      expect(fs.readdirSync(dir)).toEqual(["settings.json"]);
+      expect(store.get().approvals).toEqual({ mode: "interactive", consent: { interactive: { version: 2, at: AT }, assisted: NONE, autopilot: NONE } });
+      expect(modeInForce(store.get().approvals)).toBe("asking");
+      // Read, not rewritten: the file is the user's until Ember next saves.
+      expect(JSON.parse(fs.readFileSync(file, "utf8"))).toHaveProperty("autonomy");
+      store.update({ size: 80 });
+      const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+      expect("autonomy" in saved || "trust" in saved).toBe(false);
+      expect(saved.approvals.consent.interactive).toEqual({ version: 2, at: AT });
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe("the mode in force (modes-A3)", () => {
+  const CHOSEN: ApprovalMode[] = ["interactive", "assisted", "autopilot"];
+  const CARDS: ApprovalMode[][] = [[], ["interactive"], ["assisted"], ["autopilot"], ["interactive", "assisted"], ["interactive", "autopilot"], ["assisted", "autopilot"], ["interactive", "assisted", "autopilot"]];
+  const CAPS: (ApprovalMode | undefined)[] = [undefined, "interactive", "assisted", "autopilot"];
+  /** Each of the administrator's switches that bear on it, and whether it keeps Ember below Interactive. */
+  const SWITCHES: { name: string; policy: Record<string, unknown>; below: boolean; checkOff?: true }[] = [
+    { name: "no policy", policy: {}, below: false },
+    { name: "features.autonomy true", policy: { features: { autonomy: true } }, below: false },
+    { name: "features.autonomy false", policy: { features: { autonomy: false } }, below: true },
+    { name: "allowGrants false", policy: { allowGrants: false }, below: true },
+    { name: "confirmEveryAction", policy: { confirmEveryAction: true }, below: true },
+    { name: "features.actions false", policy: { features: { actions: false } }, below: true },
+    { name: "features.aiReview false", policy: { features: { aiReview: false } }, below: false, checkOff: true },
+    { name: "features.aiReview true", policy: { features: { aiReview: true } }, below: false },
+  ];
+  /** Written out again here, apart from the code: the highest agreed mode at or below the choice, the cap and what is built. */
+  const expected = (chosen: ApprovalMode, cards: ApprovalMode[], cap: ApprovalMode | undefined, sw: (typeof SWITCHES)[number], held: boolean): ModeInForce => {
+    if (held || sw.below) return "asking";
+    // Autopilot isn't built yet: chosen, it is Interactive at most.
+    const top = chosen === "autopilot" ? "interactive" : chosen;
+    const order: ApprovalMode[] = ["assisted", "interactive"];
+    for (const m of order) {
+      if (modeRank(m) > modeRank(top) || (cap && modeRank(m) > modeRank(cap))) continue;
+      if (m === "assisted" && sw.checkOff) continue;
+      if (cards.includes(m)) return m;
+    }
+    return "asking";
+  };
+
+  it("is the highest mode at or below the choice and the cap whose own card is agreed to, and below Interactive otherwise", () => {
+    let rows = 0;
+    for (const chosen of CHOSEN) for (const cards of CARDS) for (const cap of CAPS) for (const sw of SWITCHES) for (const held of [false, true]) {
+      const a = capped(sw.policy, cap);
+      if (held) holdAutonomyOff(); else releaseAutonomyHold();
+      const want = expected(chosen, cards, cap, sw, held);
+      const what = `${chosen} chosen, ${cards.join("+") || "no"} cards, cap ${cap ?? "none"}, ${sw.name}${held ? ", held" : ""}`;
+      expect(modeInForce(setting(chosen, ...cards), a), what).toBe(want);
+      // The hold is the only difference between the two.
+      expect(modeWithoutHold(setting(chosen, ...cards), a), what).toBe(expected(chosen, cards, cap, sw, false));
+      // The scopes view is the same decision.
+      expect(autonomyInForce(setting(chosen, ...cards), a), what).toEqual(want === "asking" ? null : ALL_SCOPES);
+      rows++;
+    }
+    expect(rows).toBe(3 * 8 * 4 * 8 * 2);
+  });
+
+  it("is below Interactive in a lockdown, for a setting that can't be read, and for a card agreed to in an older wording", () => {
+    const lockdown = parseAdminPolicy("{ nope", "/etc/ember/policy.json").policy;
+    expect(lockdown.features.autonomy).toBe(false);
+    expect(autonomyAllowed(lockdown)).toBe(false);
+    expect(modeInForce(setting("interactive", "interactive"), lockdown)).toBe("asking");
+    expect(modeInForce(undefined)).toBe("asking");
+    expect(modeInForce({ mode: "interactive" } as unknown as ApprovalsSetting)).toBe("asking");
+    expect(modeInForce({ ...setting("interactive"), mode: "everything" } as unknown as ApprovalsSetting)).toBe("asking");
+    const older: ApprovalsSetting = { mode: "interactive", consent: { ...setting("interactive").consent, interactive: { version: FEATURE_CONSENT_VERSION.autonomy - 1, at: AT } } };
+    expect(modeAgreed(older, "interactive")).toBe(false);
+    expect(modeInForce(older)).toBe("asking");
+    // With no administrator at all (no policy file), the user's own choice and card decide.
+    expect(modeInForce(setting("interactive", "interactive"))).toBe("interactive");
+    expect(modeInForce(setting("interactive", "interactive"), null)).toBe("interactive");
+  });
+
+  it("gives a hand-edited settings.json no more than what is built: Assisted only with its own card, Autopilot never", () => {
+    expect(modeInForce(setting("assisted", "interactive"))).toBe("interactive");
+    expect(modeInForce(setting("assisted", "assisted"))).toBe("assisted");
+    expect(modeInForce(setting("autopilot", "interactive", "assisted", "autopilot"))).toBe("interactive");
+    expect(modeInForce(setting("autopilot", "assisted", "autopilot"))).toBe("asking");
+    expect(OFFERED_MODES).toEqual(["interactive"]);
+  });
+
+  it("is what the settings in force say on their own too: below Interactive no card counts, and the user's own file is left alone", () => {
+    const user = { ...DEFAULT_SETTINGS, approvals: setting("assisted", "interactive", "assisted") };
+    expect(applyAdminPolicy(user, admin()).approvals).toEqual(user.approvals);
+    for (const a of [admin({ features: { autonomy: false } }), admin({ allowGrants: false }), admin({ confirmEveryAction: true }), admin({ features: { actions: false } }), parseAdminPolicy("{ nope", "p").policy]) {
+      const s = applyAdminPolicy(user, a);
+      expect(modeInForce(s.approvals)).toBe("asking");
+      expect(s.approvals.consent).toEqual(DEFAULT_SETTINGS.approvals.consent);
+      expect(managedKeys(a)).toContain("autonomy");
+    }
+    // The user's own file is never what the policy made of it.
+    expect(user.approvals).toEqual(setting("assisted", "interactive", "assisted"));
+    expect(managedKeys(admin({ features: { autonomy: true } }))).toEqual([]);
+  });
+});
+
+describe("what each state gives the policy engine (modes-A4)", () => {
+  const click: ActionRequest = { taskId: "t", kind: "click", app: "mousepad", window: "notes", element: { role: "push button", name: "Bold" } };
+  const asked: ActionRequest = { ...click, askedIn: "mousepad", goal: "make the title bold" };
+  const borrow: ActionRequest = { ...click, kind: "cursor_click" };
+  const risky: ActionRequest = { ...click, element: { role: "push button", name: "Delete all" } };
+  const verdicts = (o: { autonomy: typeof ALL_SCOPES | null; trustAskedApps: boolean }) => {
+    const e = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => (o.autonomy ? { ...o.autonomy } : null), trustAskedApps: () => o.trustAskedApps });
+    return [click, asked, borrow, risky].map(r => { const d = e.decide(r); return [d.verdict, d.autonomy ?? false, d.reason]; });
+  };
+
+  it("gives Interactive exactly what Work without asking with every scope and the app switch gave, and below it what all three switches off gave", () => {
+    expect(approvalInputs("asking")).toEqual({ scopes: null, askedApps: false, reviewCommands: false });
+    expect(approvalInputs("interactive")).toEqual({ scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, askedApps: true, reviewCommands: false });
+    expect(approvalInputs("interactive").scopes).toEqual(ALL_SCOPES);
+    // Decided through the engine, whose inputs keep their shape: the same decisions as the old switches' values.
+    const from = (m: ModeInForce) => { const i = approvalInputs(m); return verdicts({ autonomy: i.scopes, trustAskedApps: i.askedApps }); };
+    expect(from("interactive")).toEqual(verdicts({ autonomy: ALL_SCOPES, trustAskedApps: true }));
+    expect(from("asking")).toEqual(verdicts({ autonomy: null, trustAskedApps: false }));
+    expect(from("interactive")).not.toEqual(from("asking"));
+    // And what that is: ordinary steps go ahead (announced where they are not in an app asked for), the risky one asks.
+    expect(from("interactive").map(v => v[0])).toEqual(["allow", "allow", "allow", "confirm"]);
+    expect(from("interactive").map(v => v[1])).toEqual([true, false, true, false]);
+    expect(from("asking").map(v => v[0])).toEqual(["confirm", "confirm", "confirm", "confirm"]);
+  });
+
+  it("runs the command reviewer only in Assisted, as the old switch did, and gives the app steps Interactive's inputs there", () => {
+    expect(approvalInputs("assisted")).toEqual({ ...approvalInputs("interactive"), reviewCommands: true });
+    expect(approvalInputs("autopilot")).toEqual(approvalInputs("interactive"));
+    for (const m of ["asking", "interactive", "autopilot"] as const) expect(approvalInputs(m).reviewCommands).toBe(false);
+  });
+});
+
+describe("what Home is told of the modes (modes-A5)", () => {
+  it("says the choice, what is in force and why they differ", () => {
+    expect(approvalsState(DEFAULT_SETTINGS.approvals, null)).toEqual({ chosen: "interactive", inForce: "asking", why: "card", offered: ["interactive"], agreed: [], cap: null });
+    expect(approvalsState(setting("interactive", "interactive"), admin())).toEqual({ chosen: "interactive", inForce: "interactive", why: null, offered: ["interactive"], agreed: ["interactive"], cap: null });
+    expect(approvalsState(setting("interactive", "interactive"), admin({ features: { autonomy: false } }))).toMatchObject({ inForce: "asking", why: "organisation", agreed: ["interactive"] });
+    expect(approvalsState(setting("assisted", "interactive", "assisted"), capped({}, "interactive"))).toMatchObject({ chosen: "assisted", inForce: "interactive", why: "cap", cap: "interactive" });
+    expect(approvalsState(setting("assisted", "interactive", "assisted"), admin({ features: { aiReview: false } }))).toMatchObject({ inForce: "interactive", why: "check-off" });
+    expect(approvalsState(setting("assisted", "interactive"), admin())).toMatchObject({ inForce: "interactive", why: "card" });
+    expect(approvalsState(setting("autopilot", "interactive", "autopilot"), admin())).toMatchObject({ chosen: "autopilot", inForce: "interactive", why: "unavailable" });
+    holdAutonomyOff();
+    expect(approvalsState(setting("interactive", "interactive"), admin())).toMatchObject({ inForce: "asking", why: "not-recorded" });
+    // The organisation's reason comes first: it holds whatever else does.
+    expect(approvalsState(setting("interactive", "interactive"), admin({ confirmEveryAction: true }))).toMatchObject({ inForce: "asking", why: "organisation" });
+  });
+});
+
+describe("choosing a mode from Home (modes-A6)", () => {
+  const own = DEFAULT_SETTINGS.approvals;
+  const card = modeCardVersion("interactive");
+
+  it("records the agreement to the card and the mode in one change, keeping the other cards as they were", () => {
+    expect(chooseMode(own, "interactive", card, null, AT)).toEqual({ ok: true, approvals: { mode: "interactive", consent: { ...own.consent, interactive: { version: card, at: AT } } } });
+    const was = setting("assisted", "assisted");
+    const next = chooseMode(was, "interactive", card, admin(), AT);
+    expect(next).toEqual({ ok: true, approvals: { mode: "interactive", consent: { ...was.consent, interactive: { version: card, at: AT } } } });
+    if (next.ok) expect(modeInForce(next.approvals, admin())).toBe("interactive");
+  });
+
+  it("refuses a card that isn't the one in force now, older or newer", () => {
+    for (const v of [card - 1, card + 1, 0]) expect(chooseMode(own, "interactive", v, null, AT)).toEqual({ ok: false, why: "card" });
+  });
+
+  it("refuses a mode Home doesn't offer yet, whatever card comes with it", () => {
+    for (const m of ["assisted", "autopilot"] as const) expect(chooseMode(own, m, modeCardVersion(m), null, AT)).toEqual({ ok: false, why: "unavailable" });
+    expect(chooseMode(own, "asking" as unknown as ApprovalMode, 1, null, AT)).toEqual({ ok: false, why: "unavailable" });
+  });
+
+  it("refuses where the organisation keeps Ember below Interactive", () => {
+    for (const a of [admin({ features: { autonomy: false } }), admin({ allowGrants: false }), admin({ confirmEveryAction: true }), admin({ features: { actions: false } })]) {
+      expect(chooseMode(own, "interactive", card, a, AT)).toEqual({ ok: false, why: "organisation" });
+    }
+  });
+
+  it("is the only way Home changes the mode or a card's record: a general settings change never carries them", () => {
+    const sneaky = { size: 70, approvals: setting("autopilot", "interactive", "assisted", "autopilot") };
+    expect(settingsFromHome(sneaky)).toEqual({ patch: { size: 70 }, dropped: ["approvals"] });
+  });
+});
+
+describe("the one call that chooses a mode (APPROVALS_IPC.choose, modes-A6)", () => {
+  const state = approvalsState(DEFAULT_SETTINGS.approvals, null);
+  const wire = (o: { home?: boolean; choose?: (mode: ApprovalMode, version: number) => ApprovalsDone } = {}) => {
+    const handlers = new Map<string, (event: ApprovalsIpcEvent, ...args: unknown[]) => unknown>();
+    const calls: [ApprovalMode, number][] = [];
+    const warned: Record<string, unknown>[] = [];
+    registerApprovalsIpc({ handle: (channel, fn) => { handlers.set(channel, fn); } }, () => o.home ?? true, {
+      state: () => state,
+      choose: (mode, version) => { calls.push([mode, version]); return o.choose ? o.choose(mode, version) : { ok: true, state }; },
+    }, { log: { warn: (_e, fields) => { warned.push(fields ?? {}); } } });
+    const choose = (...args: unknown[]) => handlers.get(APPROVALS_IPC.choose)!({ sender: {} }, ...args);
+    return { handlers, calls, warned, choose };
+  };
+
+  it("is the only channel Home has for the mode, and answers only the settings window", () => {
+    const w = wire({ home: false });
+    expect([...w.handlers.keys()]).toEqual(["approvals:choose"]);
+    expect(() => w.choose("interactive", modeCardVersion("interactive"))).toThrow(/untrusted IPC sender/);
+    expect(w.calls).toEqual([]);
+  });
+
+  it("takes exactly a mode's name and a card's version, and does nothing with anything else (CLAUDE.md IPC: type and size)", () => {
+    const w = wire();
+    const bad: unknown[][] = [
+      [], ["interactive"], ["interactive", 3, "extra"], ["asking", 1], ["Interactive", 3], [3, "interactive"], ["interactive", "3"], ["interactive", 3.5], ["interactive", 0], ["interactive", -1],
+      ["interactive", 10_001], ["interactive", Number.MAX_SAFE_INTEGER], ["interactive", NaN], ["interactive", null], [null, 3], [{ mode: "interactive", version: 3 }], [["interactive", 3]],
+      ["interactive".repeat(10_000), 3], ["interactive", { valueOf: () => 3 }],
+    ];
+    for (const args of bad) {
+      expect(ChooseArgs.safeParse(args).success, JSON.stringify(args).slice(0, 60)).toBe(false);
+      expect(w.choose(...args)).toEqual({ ok: false, why: "unavailable", state });
+    }
+    expect(w.calls).toEqual([]);
+    expect(w.choose("interactive", 3)).toEqual({ ok: true, state });
+    expect(w.choose("autopilot", 1)).toEqual({ ok: true, state });
+    expect(w.calls).toEqual([["interactive", 3], ["autopilot", 1]]);
+  });
+
+  it("answers a failure below as a choice that couldn't be recorded, with the state as it stands, and logs only the error's name", () => {
+    const w = wire({ choose: () => { throw Object.assign(new Error("ENOSPC: /home/ana/.config/ember/settings.json"), { code: "ENOSPC" }); } });
+    expect(w.choose("interactive", 3)).toEqual({ ok: false, why: "not-recorded", state });
+    expect(w.warned).toEqual([{ err: "Error" }]);
+  });
+
+  it("is wired in main to the user's own setting, the card's current version and the record, and is in force before it says so", () => {
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("const next = chooseMode(settings.own().approvals, mode, version, policy, new Date().toISOString());");
+    expect(main).toContain(`modes.as({ via: "home", verified: false }, () => settings.update({ approvals: next.approvals }));`);
+    expect(main).toContain(`return state.inForce === mode ? { ok: true, state } : { ok: false, why: "not-recorded", state };`);
+    // The general settings change drops the mode before it is saved.
+    expect(main).toContain("const { patch, dropped } = settingsFromHome(checkHomePatch(sent));");
+    expect(main).toContain("settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(patch, settings.own().provider), settings.own().extensions)), { soon: sizeOnly })");
+    // And no tool of the conductor's or a worker's reads or sets it: under app/main/agent only the host reads the
+    // setting (for a worker's inputs), and nothing there chooses a mode but the host's own intents, through main.
+    const agent = "app/main/agent";
+    const sources = fs.readdirSync(agent).filter(f => f.endsWith(".ts")).map(f => [f, fs.readFileSync(path.join(agent, f), "utf8")] as const);
+    expect(sources.filter(([, text]) => /\(\)\.approvals\b|approvals\s*:\s*\{|\{\s*approvals\b/.test(text)).map(([f]) => f)).toEqual(["host.ts"]);
+    expect(sources.filter(([, text]) => /\bchooseMode\b|ModeRecord|modeIntents|APPROVALS_IPC|holdAutonomyOff|releaseAutonomyHold/.test(text)).map(([f]) => f)).toEqual([]);
+    // The conductor and the workers load nothing of the mode's code: a worker is handed its inputs, as types only.
+    for (const [f, text] of sources) if (f === "conductor.ts" || f === "worker.ts") expect(text, f).not.toMatch(/import \{[^}]*\} from "[^"]*(policy\/autonomy|policy\/mode-record|autonomy-intent|shared\/approvals)"/);
+  });
+});

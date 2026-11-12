@@ -44,9 +44,11 @@ export function consentChangesSince(agreed: number): string[] {
  * card again, and nothing else. `provider`: the user's own model provider (Home's Copilot section), agreed to per
  * endpoint host (settings `provider.consent.host`). `memory` 4 (2026-11-07): its note says the profile (what to call
  * the user, how they like answers) goes with every request, and that the idle tidy sends up to 40 facts up to 6 times
- * a day (memory-5, memory-9).
+ * a day (memory-5, memory-9). The approval modes' cards (app/shared/approvals.ts MODE_CARD; owner decision of
+ * 2026-11-12): `autonomy` is Interactive's, 3 since it replaced Work without asking's card (2), so an agreement to
+ * that one is no agreement to this; `assisted` and `autopilot` are those modes' own.
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 3, autonomy: 2, provider: 1, updates: 1 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 3, autonomy: 3, provider: 1, updates: 1, assisted: 1, autopilot: 1 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

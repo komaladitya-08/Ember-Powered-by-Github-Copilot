@@ -42,6 +42,7 @@ import { textScale } from "../page-prefs";
 import type { QuickContext } from "../perception";
 import type { PlatformDoctorRow, SystemPlatform } from "../platform/types";
 import { PolicyEngine } from "../policy/policy";
+import { approvalInputs, modeInForce } from "../policy/autonomy";
 import { createConnections } from "../remote/connections";
 import { parseTypedDestination } from "../remote/destination";
 import { createPromptWindow } from "../remote/prompt-window";
@@ -1489,7 +1490,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants,
           rateLimit: admin().policy.maxActionsPerMinute, actionsAllowed: () => admin().policy.features.actions !== false,
           confirmEveryAction: () => admin().policy.confirmEveryAction, allowGrants: () => admin().policy.allowGrants,
-          trustAskedApps: () => settings.get().trust.askedApps,
+          // The approval mode in force (policy/autonomy.ts): below Interactive, a first step in an app asks.
+          trustAskedApps: () => approvalInputs(modeInForce(settings.get().approvals, admin().policy)).askedApps,
           isTerminalApp: name => isTerminalWindowApp(name, deps.sys.apps, deps.os), keys: deps.sys.keys, os: deps.os,
           isSecurityWindow: deps.sys.privacy.isSecurityWindow,
         }),

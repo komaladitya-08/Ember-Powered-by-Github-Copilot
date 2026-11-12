@@ -75,9 +75,9 @@ export interface CommandFlowContext {
   /** `howAnswered` (optional): how the card was answered, for the audit (a spoken answer, and whether Voice Match verified it). */
   confirmer: Pick<Confirmer, "ask"> & { howAnswered?: Confirmer["howAnswered"] };
   /**
-   * "Work without asking" (policy/autonomy.ts): its scopes in force for this task, or null (off, or the task was steered or
-   * told no). With commands and crossWindow on, an ordinary command that asks only because it carries text read
-   * elsewhere announces instead (autonomousCommand).
+   * The approval mode in force (policy/autonomy.ts): its scopes for this task, or null (below Interactive, or the task
+   * was steered or told no). With commands and crossWindow on, as every mode has them, an ordinary command that asks
+   * only because it carries text read elsewhere announces instead (autonomousCommand).
    */
   autonomy?: () => AutonomyScopes | null;
   presenter: Presenter;
@@ -99,7 +99,7 @@ export interface CommandFlowContext {
   /** The user said no to a question of this flow (or let it go unanswered): the worker's `declined` (extension, AG). */
   onDeclined?: (expired?: boolean) => void;
   /**
-   * AI review (review.ts), while the user's "Ask only about dangerous commands" is on: a command that would ask, and
+   * AI review (review.ts), while the approval mode in force reviews commands (Assisted): a command that would ask, and
    * that no hard rule makes ask, is reviewed first, and runs with its announcement when the reviewer finds it routine.
    */
   review?: CommandReviewer;

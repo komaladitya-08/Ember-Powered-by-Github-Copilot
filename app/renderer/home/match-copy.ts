@@ -1,6 +1,6 @@
 /**
- * Voice Match (in Voice) and "When Ember asks first" (in Apps & privacy): what the settings window shows, says to screen
- * readers and focuses for each state, as plain data. home/main.ts applies it to the page; the tests read it without a DOM.
+ * Voice Match (in Voice): what the settings window shows, says to screen readers and focuses for each state, as plain
+ * data. home/main.ts applies it to the page; the tests read it without a DOM.
  */
 import type { VoiceMatchStatus } from "../../shared/ipc";
 
@@ -188,30 +188,6 @@ export function matchAnnouncement(prev: VoiceMatchStatus | undefined, m: VoiceMa
   return null;
 }
 
-// ───── When Ember asks first ─────
-
-/** The settings keys behind the two switches; admin.ts managedKeys locks each one (allowGrants false, aiReview false). */
-export const TRUST_ROWS = [
-  { id: "trust-apps", key: "askedApps" },
-  { id: "trust-commands", key: "reviewCommands" },
-] as const;
-export const TRUST_TEXT = {
-  heading: "When Ember asks first",
-  apps: "Don't ask before working in an app I asked for help with",
-  appsHint: "The app you were in when you asked, or one your request names. Ember still asks before anything hard to undo, such as sending or deleting.",
-  commands: "Ask only about dangerous commands",
-  commandsHint: "A command Ember would ask about is first reviewed by Copilot against your request. A routine one runs in Ember's command window, where you can stop it during its countdown. Commands that touch passwords or keys or change the system always ask.",
-} as const;
 /** Said (and shown as the tooltip) on a row the organisation set, as on Ember's other managed rows. */
 export const MANAGED_TEXT = "Managed by your organisation";
 
-export interface TrustRowView { id: string; checked: boolean; disabled: boolean; locked: boolean; title: string; describedBy: string }
-
-export function trustView(trust: { askedApps: boolean; reviewCommands: boolean }, managed: ReadonlySet<string>): TrustRowView[] {
-  return TRUST_ROWS.map(({ id, key }) => {
-    const locked = managed.has(key);
-    // aria-describedby wins over the title, so the managed note is one of the descriptions too.
-    // Off while the organisation turns it off, as in force (the settings may still hold it on: safety-privacy-w5-2).
-    return { id, checked: trust[key] && !locked, disabled: locked, locked, title: locked ? MANAGED_TEXT : "", describedBy: locked ? `${id}-hint trust-managed` : `${id}-hint` };
-  });
-}
