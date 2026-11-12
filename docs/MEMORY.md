@@ -378,7 +378,8 @@ download, so English-only MiniLM is the trade-off for now.
      (stopped, cut short by a wake or a cut-in, silent) is let go of (memory-x8-2). No candidate from that turn that
      is the same fact is kept again (`keptInTurn`, memory-c8-1): every content word of it in what was kept, the same
      way round, unless its evidence is plainly in another clause; or, only when its evidence is in the one clause of
-     the turn that holds the most of what was kept and neither leaves out a word of that evidence the other says, half
+     the turn that holds the most of what was kept and neither leaves out a word the other says (the candidate one of
+     its evidence, what was kept one of it or of its clause: "I live in Paris where I work", review of PR #210), half
      or more of the smaller one's content words in common, or evidence that holds half of what was kept in words the
      candidate mostly doesn't use. A person one of them names in its own words and the other's words don't makes them
      two facts; otherwise `about` is not compared, since the two models choose it apart and the graph's own check

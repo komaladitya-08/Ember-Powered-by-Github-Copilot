@@ -164,7 +164,8 @@ function holding(said: string, want: ReadonlySet<string>): number[] {
  *   plainly in another clause than the one that holds the most of what was kept ("…Partner Sam is vegetarian. I'm
  *   vegetarian too.").
  * - Otherwise only when its evidence is in the one clause of the turn that holds the most of what was kept, and
- *   neither leaves out a word of that evidence the other says ("allergic to peanuts and shellfish" holds two): half
+ *   neither leaves out a word the other says, the candidate one of its evidence, what was kept one of it or of its
+ *   clause ("allergic to peanuts and shellfish" holds two, "I live in Paris where I work" too, review of PR #210): half
  *   or more of the smaller one's content words in common, the same way round ("Works at Globex", "Employed by
  *   Globex"); or evidence holding half or more of what was kept in words the candidate mostly doesn't use ("I'm
  *   vegetarian" read as "Does not eat meat"). A fact said in a clause of its own ("…My sister Jo lives in York") is
@@ -174,6 +175,9 @@ export function keptInTurn(c: Pick<Candidate, "fact" | "evidence" | "about">, ke
   const C = content(c.fact);
   const E = new Set(terms(c.evidence));
   const at = holding(said, E);
+  // The clause that holds the evidence: what was kept may say its own word there and not in the evidence ("I live
+  // in Paris where I work", evidence "Paris where I work"), which still makes them two (review of PR #210).
+  const clause = new Set(at.length === 1 ? terms(said.split(CLAUSE)[at[0]] ?? "") : []);
   return kept.some(k => {
     const K = content(k.text);
     if (!K.size || !C.size) return false;
@@ -184,7 +188,7 @@ export function keptInTurn(c: Pick<Candidate, "fact" | "evidence" | "about">, ke
     const apart = where.length === 1 && at.length === 1 && at[0] !== where[0];
     if (sameWay && !apart && [...C].every(t => K.has(t))) return true;
     if (!here) return false;
-    const two = [...C].some(t => !K.has(t) && E.has(t)) && [...K].some(t => !C.has(t) && E.has(t));
+    const two = [...C].some(t => !K.has(t) && E.has(t)) && [...K].some(t => !C.has(t) && (E.has(t) || clause.has(t)));
     if (two) return false;
     return (sameWay && Math.max(share(K, C), share(C, K)) >= SAME_IN_TURN) || (share(K, E) >= SAME_IN_TURN && share(C, E) < SAME_IN_TURN);
   });

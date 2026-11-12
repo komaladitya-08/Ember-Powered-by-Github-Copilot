@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { copilotOneShot } from "../../app/main/agent/one-shot";
 import { MemoryGraph } from "../../app/main/memory/graph";
 import { IntroSchema, Interview, INTRO_DONE, INTRO_OFF, answerFacts, introFacts, isGetToKnowMe, styleOf } from "../../app/main/memory/intro";
-import { CallBudget, EXTRACT_SYSTEM, Learner, MAX_ANSWER_CHARS, extractPrompt, learnedFacts, parseExtraction, soundsLikeInstruction, subjectOf, turnSource, type OneShot } from "../../app/main/memory/learn";
+import { CallBudget, EXTRACT_SYSTEM, Learner, MAX_ANSWER_CHARS, extractPrompt, keptInTurn, learnedFacts, parseExtraction, soundsLikeInstruction, subjectOf, turnSource, type OneShot } from "../../app/main/memory/learn";
 import { IDLE_MS, MemoryLearning, REFINE_PER_DAY, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "../../app/main/memory/learning";
 import { FORGET_OFF, Gaps, INTRO_NOTE, MEMORY_UNREADABLE, NOTHING_TO_FORGET, answersQuestion, describes, forgetReply, gapQuestion, isForgetThat, looksLikeRequest, memoryActionOpens, memoryAsk, memoryNoteActions, namesIn, rememberNote } from "../../app/main/memory/questions";
 import { negated, samePolarity } from "../../app/main/memory/text";
@@ -827,6 +827,55 @@ describe("what the user asks Ember to remember is kept once, however its turn's 
     expect(s.list().map(i => i.text).sort()).toEqual([kept, other].sort());
     // Its own "Ember learned" line, so the user sees what was kept.
     expect(learned.map(line => line.replace(/^\w+: /, ""))).toEqual([kept, other]);
+  });
+
+  /**
+   * What the user said, what the remember tool kept, a candidate the same turn's reading finds, its evidence, and
+   * whether it is learned: another relation the same clause says of the same place or thing ("I live in Paris where I
+   * work") is learned too, though half its words are what was kept's (review of PR #210); a rewording of what was kept
+   * is not kept again.
+   */
+  const CLAUSE: [string, string, string, string, "learned too" | "not kept again"][] = [
+    ["I live in Paris where I work.", "Lives in Paris", "Works in Paris", "Paris where I work", "learned too"],
+    ["I live in Paris where I work.", "Lives in Paris", "Works in Paris", "where I work", "learned too"],
+    ["I live in Paris where I work.", "Works in Paris", "Lives in Paris", "I live in Paris", "learned too"],
+    ["I work in Berlin where I was born.", "Works in Berlin", "Was born in Berlin", "Berlin where I was born", "learned too"],
+    ["I work in Berlin, where I was born.", "Works in Berlin", "Was born in Berlin", "Berlin, where I was born", "learned too"],
+    ["I teach maths at the school my kids attend.", "Teaches maths", "Kids attend the school where the user teaches", "the school my kids attend", "learned too"],
+    ["I live in Leeds near my office.", "Lives in Leeds", "Office is in Leeds", "Leeds near my office", "learned too"],
+    ["I use Linux at work where I write Rust.", "Uses Linux at work", "Writes Rust at work", "at work where I write Rust", "learned too"],
+    // A rewording of what was kept, its other words never said: the remember tool's fact in other words.
+    ["Remember I'm vegetarian.", "Is vegetarian", "Does not eat meat", "I'm vegetarian", "not kept again"],
+    ["Remember that I'm a strict vegetarian.", "Is vegetarian", "Does not eat meat", "I'm a strict vegetarian", "not kept again"],
+    ["Remember that I work at Globex.", "Works at Globex", "Employed by Globex", "I work at Globex", "not kept again"],
+    ["Remember that I work at Globex.", "Works at Globex", "Employed by Globex", "at Globex", "not kept again"],
+    ["Remember that Globex employs me", "Works at Globex", "Employed by Globex", "Globex employs me", "not kept again"],
+    ["Remember that home for me is Leeds", "Lives in Leeds", "Home is Leeds", "home for me is Leeds", "not kept again"],
+    ["Remember I write with my left hand", "Is left-handed", "Writes with the left hand", "I write with my left hand", "not kept again"],
+    ["Remember I'd rather have tea than coffee", "Prefers tea to coffee", "Would rather have tea than coffee", "I'd rather have tea than coffee", "not kept again"],
+    // The limit docs/MEMORY.md names: one only adds to the other in its clause, with no person named.
+    ["Remember that I live in Leeds with my wife", "Lives in Leeds", "Lives in Leeds with wife", "I live in Leeds with my wife", "not kept again"],
+    ...TWICE.map(([kept, , said, fact, , evidence]): [string, string, string, string, "not kept again"] => [said, kept, fact, evidence, "not kept again"]),
+  ];
+
+  it.each(CLAUSE)("when the user said “%s” and “%s” was kept, the turn's reading “%s” (on “%s”) is %s (review of PR #210)", (said, kept, fact, evidence, expected) => {
+    const same = keptInTurn({ fact, evidence, about: [USER] }, [{ text: kept, about: [USER] }], said);
+    expect(same ? "not kept again" : "learned too").toBe(expected);
+  });
+
+  it("learns where the user works when the clause that said it also said where they live, and that was kept (review of PR #210)", async () => {
+    const SAID = "Remember that I live in Paris where I work.";
+    const { l, s, learned, advance } = learning({ model: async () => answer([
+      { from: 1, fact: "Lives in Paris", about: [USER], confidence: 0.9, evidence: "I live in Paris" },
+      { from: 1, fact: "Works in Paris", about: [USER], confidence: 0.9, evidence: "Paris where I work" },
+    ]) });
+    const tools = l.conductorMemory();
+    expect(tools.remember("Lives in Paris", [USER], SAID)).toContain("Remembered");
+    tools.heard(SAID, "Got it.", true, tools.asked());
+    advance(61_000);
+    expect(await l.flush()).toBe(1);
+    expect(s.list().map(i => i.text).sort()).toEqual(["Lives in Paris", "Works in Paris"]);
+    expect(learned.map(line => line.replace(/^\w+: /, ""))).toEqual(["Lives in Paris", "Works in Paris"]);
   });
 });
 
