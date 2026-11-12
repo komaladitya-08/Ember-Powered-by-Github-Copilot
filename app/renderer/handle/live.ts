@@ -1,9 +1,10 @@
 /**
- * What the handle says about the status line and the microphone in its live region, which a screen reader reads once
- * per change: pure, so it is unit-tested (handle-mic.test.ts). The pill says only news about the microphone; the
- * no-compositor card, where nothing else speaks for Ember, also says the status line (and the bubble's words, main.ts).
+ * What the handle says in its live region, which a screen reader reads once per change: pure, so it is unit-tested
+ * (handle-mic.test.ts, handle-live.test.ts). The pill says only news about the microphone; the no-compositor card, where
+ * nothing else speaks for Ember, also says the status line and the bubble's words.
  */
 
+import { announcement, wholeReadNews, type BubbleView } from "@ember/bubble";
 import type { MicState } from "../../shared/voice";
 import { micAnnouncement } from "../../shared/mic";
 
@@ -14,7 +15,24 @@ import { micAnnouncement } from "../../shared/mic";
  */
 const PASSING: ReadonlySet<MicState> = new Set(["starting", "downloading"]);
 
+/** The question a bubble's buttons answer (their "q<n>:" ids, the Confirmer's number), or null for none. */
+export function questionOf(actions: readonly { id: string }[]): number | null {
+  for (const a of actions) {
+    const m = /^q([1-9]\d{0,8}):/.exec(a.id);
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
 export class HandleLive {
+  /**
+   * The bubble's announcement last said on the card ("" once a bubble with nothing to say showed), what it said that from
+   * (wholeReadNews compares the two), the question it was (its number, or null) and whether its words are in the region.
+   */
+  private announced = "";
+  private announcedView: BubbleView | null = null;
+  private question: number | null = null;
+  private inRegion = false;
   /** The status line last said. */
   private announcedStatus = "";
   /** Whether a microphone state came before: the first one is only what it was, no news. */
@@ -23,6 +41,32 @@ export class HandleLive {
   private settledMic: MicState | undefined | null = null;
   /** The microphone's news last said, until the status line next changes (main often puts the same words there). */
   private micSaid: string | null = null;
+
+  /**
+   * What the card says of the bubble with this update (no compositor: nothing else speaks for Ember): finished answers,
+   * questions and problems, once (`announcement`); null for nothing new; "" when the words it said have gone (a bubble
+   * with nothing to say, or none), so the page empties its region. As the overlay's bubble does, a bubble with nothing to
+   * say ("Thanks! Carrying on.", "Thinking…") forgets what was said, so the next question in the same words is said
+   * again, and so is another question (`question`, its number) after no bubble at all: kept from the one before, every
+   * command question of a task after the first went unsaid (accessibility-c8-1). The same question shown again after a
+   * hide isn't said again, and the same question with its whole text now all shown says only that news (wholeReadNews).
+   */
+  bubble(view: BubbleView, question: number | null, speaker = "Ember"): string | null {
+    const gone = (): string | null => { if (!this.inRegion) return null; this.inRegion = false; return ""; };
+    // Hidden: what was said is kept (shown again, it isn't news), but its words leave the region.
+    if (!view.visible) return gone();
+    const text = announcement(view, speaker);
+    const fresh = question !== null && question !== this.question;
+    this.question = question;
+    if (!fresh && text === this.announced) return null;
+    // Another question in the same words is said whole, never as the news that its text was read.
+    const said = fresh ? text : wholeReadNews(this.announcedView, view) ?? text;
+    this.announced = text;
+    this.announcedView = view;
+    if (!said) return gone();
+    this.inRegion = true;
+    return said;
+  }
 
   /** What to say about the microphone with this update (a change to a problem, voice not set up, muted), or null. */
   micNews(mic: MicState | undefined): string | null {
