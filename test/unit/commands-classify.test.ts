@@ -2953,4 +2953,26 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
       expect(decided(cmd).verdict, cmd).toBe("run");
     }
   });
+
+  it("asks before env and the wrappers whose options main's table gave a value run what stands after one (commands-held-5)", () => {
+    for (const cmd of ["env --block-signal ls", "env --default-signal ls", "env --ignore-signal ls"]) {
+      expect(decided(cmd).verdict, cmd).toBe("ask");
+      expect(decided(cmd).rules, cmd).toContain("secret.env");
+    }
+    // The word after the option's old value is the command main judged: what it would print or change is still said.
+    for (const cmd of [
+      "numactl -H x printenv", "ltrace -L x printenv", "ltrace -E x printenv", "faketime -m x y printenv", "nsenter -t 1 -m x printenv", "nsenter -t 1 -n x printenv",
+      "env --block-signal x printenv", "sudo --preserve-env x printenv",
+    ]) expect(decided(cmd).classes, cmd).toContain("secret");
+    expect(decided("numactl -H x git push").classes).toContain("publish");
+    expect(decided("numactl -H x rm -rf ~").verdict).toBe("refuse");
+    // The corrected reading is kept: the word right after the switch is the command.
+    for (const cmd of ["env --block-signal rm -rf build", "numactl -H rm -rf build", "ltrace -L rm -rf build", "nsenter -t 1 -m rm -rf build", "faketime -m '2020-01-01' rm -rf build"]) {
+      expect(decided(cmd).rules, cmd).toContain("posix.rm");
+    }
+    // Lines both tables read alike run as before.
+    for (const cmd of ["env ls", "env --block-signal=INT ls", "env -u HOME ls", "env FOO=1 ls", "numactl -N 0 ls", "faketime '2020-01-01' ls", "ltrace -e malloc ls", "nice -n 5 ls", "env -a name ls"]) {
+      expect(decided(cmd).verdict, cmd).toBe("run");
+    }
+  });
 });

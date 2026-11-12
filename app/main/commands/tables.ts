@@ -173,6 +173,12 @@ export interface WrapperRule {
   finding?: { cls: DangerClass; rule: string; says: string };
   /** With nothing after it, it is interactive (a shell). */
   aloneInteractive?: boolean;
+  /**
+   * The value options main's table listed (at 4d64d3a), for a wrapper whose table was corrected to its manual since:
+   * the command it runs is judged by that table too, and where the two differ it asks (classify.ts heldOpts,
+   * commands-held-5). Add one whenever a wrapper's value options change, with the options as they were.
+   */
+  main?: { shortValue?: string; longValue?: readonly string[] };
 }
 
 const KEEPS_RUNNING = "Keeps running after Ember stops; Stop can't end it.";
@@ -197,11 +203,14 @@ export const WRAPPERS: Readonly<Record<string, WrapperRule>> = {
   unbuffer: {},
   chronic: {},
   ifne: {},
-  fakeroot: { shortValue: "isl", longValue: ["lib", "faked"] },
+  fakeroot: { shortValue: "isl", longValue: ["lib", "faked"], main: { shortValue: "is", longValue: ["lib", "faked"] } },
   // faketime's -m and -f, numactl's -H, ltrace's -L and nsenter's namespace options take no value of their own: the next
   // word is the command (commands-remote-i5a).
-  faketime: { longValue: ["date-prog"], positional: 1 },
-  numactl: { shortValue: "CNmpPi", longValue: ["physcpubind", "cpunodebind", "membind", "preferred", "interleave", "preferred-many"] },
+  faketime: { longValue: ["date-prog"], positional: 1, main: { shortValue: "m" } },
+  numactl: {
+    shortValue: "CNmpPi", longValue: ["physcpubind", "cpunodebind", "membind", "preferred", "interleave", "preferred-many"],
+    main: { shortValue: "CNmpPiH", longValue: ["physcpubind", "cpunodebind", "membind", "preferred", "interleave"] },
+  },
   cgexec: { shortValue: "g" },
   "dbus-run-session": { longValue: ["config-file", "dbus-daemon"] },
   "dbus-launch": { longValue: ["autolaunch", "config-file"] },
@@ -219,14 +228,17 @@ export const WRAPPERS: Readonly<Record<string, WrapperRule>> = {
   "systemd-inhibit": { longValue: ["what", "who", "why", "mode"] },
   "systemd-cat": { shortValue: "tp", longValue: ["identifier", "priority", "stderr-priority", "level-prefix"] },
   valgrind: {},
-  ltrace: { shortValue: "aAeDFlnopsuwx" },
+  ltrace: { shortValue: "aAeDFlnopsuwx", main: { shortValue: "eopsuEanlLAD" } },
   strace: { shortValue: "eopsuEaIOSPXb" },
   tini: {},
   "dumb-init": {},
   chroot: { positional: 1, aloneInteractive: true, finding: { cls: "system", rule: "system.chroot", says: "Runs as an administrator (root)." } },
   sg: { positional: 1, finding: { cls: "system", rule: "system.sg", says: "Runs as another group." } },
   newgrp: { aloneInteractive: true, finding: { cls: "system", rule: "system.newgrp", says: "Runs as another group." } },
-  nsenter: { shortValue: "tSG", shortOptional: "muinpUCTrw", finding: { cls: "system", rule: "system.nsenter", says: "Runs as an administrator (root)." }, aloneInteractive: true },
+  nsenter: {
+    shortValue: "tSG", shortOptional: "muinpUCTrw", finding: { cls: "system", rule: "system.nsenter", says: "Runs as an administrator (root)." }, aloneInteractive: true,
+    main: { shortValue: "tSGmuinpUCTrw" },
+  },
   unshare: { finding: { cls: "system", rule: "system.unshare", says: "Changes how the system works." }, aloneInteractive: true },
   setpriv: { longValue: ["reuid", "regid", "groups", "inh-caps", "ambient-caps", "bounding-set", "securebits", "selinux-label", "apparmor-profile"], finding: { cls: "system", rule: "system.setpriv", says: "Runs as an administrator (root)." } },
   capsh: { finding: { cls: "system", rule: "system.capsh", says: "Runs as an administrator (root)." }, aloneInteractive: true },
