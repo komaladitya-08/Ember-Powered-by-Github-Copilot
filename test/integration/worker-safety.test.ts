@@ -1967,7 +1967,41 @@ describe("review round 9: policy and selections", () => {
     }
   });
 
-  it("any button of a page on a payment site is asked about by a click, as the policy says, and the same button elsewhere isn't (safety-privacy-c7-2)", async () => {
+  it("a page's tab “Email” is asked about every time, but doesn't put the rest of the task back to asking; a button the user didn't ask for does (safety-privacy-x7-1)", async () => {
+    for (const [goal, role, name, later] of [["Open the email settings tab", "page tab", "Email", 0], ["Open the email settings tab (a button)", "push button", "Sell BTC", 1]] as const) {
+      plan(goal, [perceive, { tool: { name: "click", args: { id: 2 } } }, { tool: { name: "click", args: { id: 3 } } }]);
+      const screen = fakeScreen([{ id: 1, role: "document web", name: "Settings" }, { id: 2, role, name, parent: 1 }, { id: 3, role: "push button", name: "Next", parent: 1 }]);
+      const asked: string[] = [];
+      await makeWorker(screen, goal, { confirmer: asking(["once", "once"], asked) }).run(new AbortController().signal);
+      expect(asked[0], goal).toMatch(new RegExp(`^Click the “${name}” `));
+      expect(/You didn't ask for this/.test(asked[0]), goal).toBe(later === 1);
+      // The next ordinary step, "Next" under the app's "Always": asked only once a step came up that the user didn't ask for.
+      expect(asked.length - 1, goal).toBe(later);
+      expect(screen.log.length, goal).toBe(2);
+    }
+  });
+
+  it("an answer to a message box that doesn't back off, and a button that goes past a warning, are asked about by a click and by Enter under “Always” (safety-privacy-r8-1, -c8-1)", async () => {
+    for (const [goal, button, enter, asks] of [
+      ["Close the draft (click Leave page)", "Leave page", false, true],
+      ["Close the draft (Enter on Leave page)", "Leave page", true, true],
+      ["Close the draft (click Stay on page)", "Stay on page", false, false],
+      ["Close the draft (click Keep anyway)", "Keep anyway", false, true],
+    ] as const) {
+      plan(goal, [perceive, enter ? { tool: { name: "press_keys", args: { keys: "Return" } } } : { tool: { name: "click", args: { id: 2 } } }]);
+      const screen = fakeScreen([{ id: 1, role: "alert", name: "" },
+        { id: 3, role: "label", name: "This page is asking you to confirm that you want to leave — information you've entered may not be saved.", parent: 1 },
+        { id: 2, role: "push button", name: button, parent: 1, ...(enter ? { states: ["enabled", "sensitive", "focused"] } : {}) }]);
+      const asked: string[] = [];
+      const keys: string[] = [];
+      await makeWorker(screen, goal, { confirmer: asking(["deny"], asked), cursor: borrowing(keys) }).run(new AbortController().signal);
+      expect(asked.length, goal).toBe(asks ? 1 : 0);
+      if (asks) expect(asked[0], goal).toMatch(button === "Keep anyway" ? /It goes past a warning or turns off a protection\. It says: “This page is asking you/ : /It says: “This page is asking you to confirm/);
+      expect(screen.log.length + keys.length, goal).toBe(asks ? 0 : 1);
+    }
+  });
+
+  it("any button of a page on a payment site is asked about by a click, as the policy says, saying why, and the same button elsewhere isn't (safety-privacy-c7-2, -x7-4)", async () => {
     const nodes: FakeNode[] = [{ id: 1, role: "document web", name: "Plans" }, { id: 2, role: "push button", name: "Continue", parent: 1 }];
     for (const [title, asks] of [["Billing - Example", true], ["Plans - Example", false]] as const) {
       const goal = `Look at the plans (${title})`;
@@ -1975,7 +2009,7 @@ describe("review round 9: policy and selections", () => {
       const screen = fakeScreen(nodes, { title });
       const asked: string[] = [];
       await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-      expect(asked, title).toEqual(asks ? ["Click the “Continue” button in Testapp?"] : []);
+      expect(asked, title).toEqual(asks ? ["Click the “Continue” button in Testapp? The window's title mentions billing, so this may pay for something."] : []);
       expect(screen.log.length, title).toBe(asks ? 0 : 1);
     }
   });

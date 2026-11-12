@@ -761,6 +761,43 @@ describe("the worker's reading of a dialog (dialogAround)", () => {
     ]);
     expect(read(more, false).controls).toBeUndefined();
   });
+
+  it("says which controls can be typed into, so a working dialog's words aren't taken for its question (safety-privacy-x8-2)", () => {
+    const find: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "dialog", name: "Find and Replace", states: [], bounds: FRAME },
+      { id: 2, parent: 1, depth: 1, role: "label", name: "Find", states: [], bounds: null },
+      { id: 3, parent: 1, depth: 1, role: "push button", name: "Find Next", states: [], bounds: null },
+      { id: 4, parent: 1, depth: 1, role: "text", name: "", text: "why?", states: ["editable", "focused"], bounds: null },
+      { id: 5, parent: 1, depth: 1, role: "document frame", name: "", states: [], bounds: null },
+    ];
+    const dialog = read(find);
+    expect(dialog.text).toBe("Find why?");
+    expect(dialog.controls).toEqual([{ role: "push button", name: "Find Next" }, { role: "text", name: "", editable: true }, { role: "document frame", name: "" }]);
+    expect(new PolicyEngine({ neverLook: () => [], grants: () => ({ soffice: "act" }) })
+      .decide({ taskId: "t", kind: "click", app: "soffice", window: "letter.odt - LibreOffice Writer", goal: "find why in the letter", element: { role: "push button", name: "Find Next" }, dialog }).verdict)
+      .toBe("allow");
+  });
+
+  it("a page's “Unsaved changes” modal asks at “Leave” whether it was read whole or in part (safety-privacy-y8-1)", () => {
+    const modal: AxNode[] = [
+      { id: 0, parent: null, depth: 0, role: "document web", name: "Edit post - Blog", states: [], bounds: FRAME },
+      { id: 1, parent: 0, depth: 1, role: "dialog", name: "Unsaved changes", states: [], bounds: FRAME },
+      { id: 2, parent: 1, depth: 2, role: "paragraph", name: "You have unsaved changes. Are you sure you want to leave?", states: [], bounds: null },
+      { id: 3, parent: 1, depth: 2, role: "push button", name: "Leave", states: [], bounds: null, actions: ["press"] },
+      { id: 4, parent: 1, depth: 2, role: "push button", name: "Stay", states: [], bounds: null, actions: ["press"] },
+    ];
+    for (const whole of [true, false]) {
+      const dialog = read(modal, whole);
+      expect(dialog.page).toBe(true);
+      expect(dialog.controls === undefined).toBe(!whole);
+      for (const [grants, autonomy] of [[{ firefox: "act" as const }, () => null], [{}, ALL]] as const) {
+        const d = new PolicyEngine({ neverLook: () => [], grants: () => ({ ...grants }), autonomy, isTerminalApp: () => false }).decide({ taskId: "t", kind: "click", app: "Firefox",
+          window: "Edit post - Blog — Mozilla Firefox", onPage: true, goal: "close the tab", element: { role: "push button", name: "Leave" }, dialog });
+        expect(d, `whole=${whole}`).toMatchObject({ verdict: "confirm", risky: true, remember: false });
+        expect(d.autonomy).toBeUndefined();
+      }
+    }
+  });
 });
 
 describe("a plain editor's console still asks (security re-review of #140)", () => {

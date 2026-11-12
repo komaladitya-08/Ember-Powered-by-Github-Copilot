@@ -388,7 +388,15 @@ by accident. A hidden Ember shows itself to ask, and with **Speak replies, quest
 out loud; **Never** keeps it quiet even for a screen reader, and chosen while Ember talks it stops at once (as does a
 screen reader turned off, at the answer's next sentence). Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
-for them. After **Not now** (or a question nobody answered, a refusal, or a step that failed), a step Ember had lined
+for them. So are buttons, links and menu items that go past a security warning or turn a protection off (“Enable
+Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Remote Content”), and any answer to a message box or
+to a dialog's question but one that backs off (“Leave page”, “Resend” and “Close tabs” ask; Cancel, Close, “Stay on page”,
+“Remind me later” and No don't, but for No where the dialog asks to save, since it throws the changes away); the
+question quotes the dialog. A question in what was written in a working dialog, a mail's
+body or a card's description, doesn't make its buttons ask once Ember has read the whole dialog and seen the field it was
+written in; where its read was cut short, the dialog's words still count, so a page's “Are you sure you want to leave?” asks at “Leave”. Any button, link or tab of a page (or of an app built on one) whose window's title
+mentions a checkout, a payment or billing asks every time too, saying so (“The window's title mentions billing, so this
+may pay for something.”): a title that only mentions one, a mail's subject or a file's name, asks as well. After **Not now** (or a question nobody answered, a refusal, or a step that failed), a step Ember had lined
 up to follow it in the same breath isn't taken either: it looks again and decides afresh. A progress note or card view that
 wasn't accepted holds nothing back; a command that ended with an error does, however it ended. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
 "Waiting for you" while it asks, "Starts when another task ends" while two others are at work), how long it has worked and which step of its plan it is on, and shows what it did
@@ -419,7 +427,12 @@ working: then Ember says so and points to the setup check),
 it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
 it's going ahead without asking), until the prompt is done. A request carries only the window you're in (its app, title, focused control and selected text); other
 windows' titles go only when you ask about them ("what apps are open?"). If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
-still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
+still asks first, the question says you didn't ask for it, and from then on that task asks before every step. A
+link, tab or menu item asked about only because its name starts with a word that grants or commits (a headline
+“Reserve Bank raises rates”, a tab “Email”, “Allow Editing”) asks every time too, but isn't called something you didn't
+ask for and doesn't put the task back to asking, since such words lead headlines, tabs and settings as well; a button so
+named is, and so is a name that grants rights, changes who can see something or turns a protection off (“Make admin”,
+“Change visibility”, “Turn off antivirus”, “Continue as Ana”) or grants access (“Allow”, “Allow notifications”).
 **Ctrl+Alt+X** (or “Ember, stop”, **Stop everything** in the handle menu, or typing “stop”, “stop typing” or “abort” in
 the Ask box while a task is at work) stops every task, question, borrowed mouse,
 desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for
