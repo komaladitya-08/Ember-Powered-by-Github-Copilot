@@ -192,7 +192,11 @@ Ember stops and asks before a command that:
   `gh release download` and `gh run download`, `aws s3 cp`, `gsutil cp` and `gcloud storage cp` from a bucket, `az
   storage blob download`, `docker cp` and `kubectl cp` out of a container or a pod, `scp` and `rsync` from another
   computer, or what `ssh host …` prints, saved with `>` or piped into a shell; checked out or fetched with `svn
-  checkout`, `svn export`, `hg clone`, `rclone copy`, `pip download` or `git archive --remote`; also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
+  checkout`, `svn export`, `hg clone`, `rclone copy`, `pip download` or `git archive --remote`; anything at all once
+  the task has used a settings file curl or wget reads, a `wget -e` setting or a file-transfer client that can fetch
+  (`curl -K cfg.txt`, `wget --config=w.rc`, `sftp`, `ftp`, `lftp`, `tftp`, `smbclient`), since Ember can't tell what
+  they saved or where (a client whose commands on the line only send, `lftp -c 'put dist.tgz' host`, doesn't count);
+  also once it is renamed, copied, linked or written out again with `mv`, `cp`, `ln`,
   `rsync`, `dd`, `cat x.py > y.py`, `tee`, `dos2unix -n`, `sort -o`, `split` and `cat` of its pieces, or a `tar` or
   `zip` of it unpacked again, also through `xargs`, with PowerShell's `Rename-Item`, `Move-Item`, `Copy-Item`
   or a `New-Item` link, also from a pipeline (`Get-Item x.exe | Copy-Item -Destination y.exe`; when Ember can't tell

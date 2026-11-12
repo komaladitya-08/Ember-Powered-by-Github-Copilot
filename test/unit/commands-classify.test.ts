@@ -295,6 +295,39 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
   });
 });
 
+describe("downloads by a config file or a file-transfer client (commands-remote-r8-3)", () => {
+  const run = (cmd: string, downloaded: string[] = []) => runCase({ cmd, verdict: "run", downloaded }, { shell: "bash", context: "linux" });
+  /** Each command's verdict in turn, the task's downloads carried from one to the next. */
+  const steps = (...cmds: string[]): string[] => {
+    const dl: string[] = [];
+    return cmds.map(cmd => {
+      const r = run(cmd, [...dl]);
+      dl.push(...r.cls.downloads);
+      return r.decision.verdict;
+    });
+  };
+
+  it("asks before running what curl -K, wget --config, sftp, ftp, lftp or smbclient may have fetched (commands-remote-r8-3)", () => {
+    for (const get of ["curl -K cfg.txt", "curl --config cfg.txt", "wget --config=w.rc", "sftp host:run.sh", "sftp -b batch.txt host", "ftp -o x.py ftp://e.x/x.py",
+      "lftp -c 'get ftp://e.x/x.py'", "tftp -c get x.py h", "smbclient //h/s -c 'get x.py'"]) {
+      for (const then of ["python3 x.py", "bash run.sh", "npm test"]) expect(steps(get, then)[1], `${get} / ${then}`).toBe("ask");
+    }
+  });
+
+  it("marks nothing for a curl or wget that reads no config, a client given only sends, or a remote shell with no transfer (commands-remote-r8-3)", () => {
+    expect(steps("curl -s https://example.org/api", "python3 x.py")[1]).toBe("run");
+    for (const put of ["lftp -c 'put dist.tgz' host", "lftp -c 'open h; put dist.tgz; bye'", "smbclient //h/s -c 'put x'", "tftp h -c put x"]) {
+      for (const then of ["npm test", "make"]) expect(steps(put, then)[1], `${put} / ${then}`).toBe("run");
+    }
+    // A session, a batch file, a mirror and a command Ember can't see may fetch.
+    for (const get of ["sftp host", "sftp -b put.txt host", "ftp host", "lftp -c 'open h; mirror -R dist /www'", "lftp -c \"$CMDS\"", "smbclient //h/s -Tc backup.tar"]) {
+      expect(steps(get, "npm test")[1], get).toBe("ask");
+    }
+    expect(steps("telnet h 80", "python3 x.py")[1]).toBe("run");
+    expect(steps("ncftpput h /up x.py", "python3 x.py")[1]).toBe("run");
+  });
+});
+
 describe("the download-and-run fixes, decided no less safely than main (round eight's review)", () => {
   const run = (cmd: string, o: { downloaded?: string[]; missing?: string[] } = {}) => runCase({ cmd, verdict: "run", ...o }, { shell: "bash", context: "linux" });
 

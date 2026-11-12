@@ -7183,7 +7183,9 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
   const urls = [...p.operands.map(a => a.v ?? ""), ...values(p, "url").map(v => v ?? "")].filter(u => u !== "");
   const host = hostOf(urls[0] ?? "") || "another computer";
   for (const u of urls) if (/^file:/i.test(u)) h.e.usePath(lit(decodeURIComponent(u.replace(/^file:\/\/(localhost)?/i, ""))), "read", h.sc);
-  if (values(p, "K", "config").length) h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see.");
+  // What the file says it fetches, and where it saves it, Ember can't see: a download of no name it knows, anywhere
+  // (commands-remote-r8-3).
+  if (values(p, "K", "config").length) { h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see."); h.e.markUnnamed(null, h.sc); }
   if (has(p, "n", "netrc") || values(p, "netrc-file").length) h.e.add("secret", "secret.netrc", SAYS.secrets);
   for (const f of values(p, "netrc-file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   if (values(p, "u", "user", "proxy-user").some(u => u !== null && u.includes(":") && !u.endsWith(":")) || values(p, "oauth2-bearer").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
@@ -7247,9 +7249,9 @@ reg(NATIVE, ["wget", "wget2"], h => {
   const method = (values(p, "method")[0] ?? "").toUpperCase();
   for (const f of values(p, "post-file", "body-file", "i", "input-file", "load-cookies", "certificate", "private-key")) if (f && f !== "-") h.e.usePath(lit(f), "read", h.sc);
   if (values(p, "post-data", "post-file", "body-data", "body-file").length || /^(POST|PUT|PATCH|DELETE)$/.test(method)) h.e.add("publish", "send.http", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }], program: "wget" });
-  if (values(p, "e", "execute").length) h.e.unclear("unclear.wget-execute", "It runs settings Ember can't see.");
+  if (values(p, "e", "execute").length) { h.e.unclear("unclear.wget-execute", "It runs settings Ember can't see."); h.e.markUnnamed(null, h.sc); }
   if (h.args.some(a => /^--use-askpass/.test(a.v ?? ""))) h.e.unclear("unclear.wget-askpass", "It runs a program Ember can't see.");
-  if (values(p, "config").length) h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see.");
+  if (values(p, "config").length) { h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see."); h.e.markUnnamed(null, h.sc); }
   const dir = values(p, "P", "directory-prefix")[0];
   const out = values(p, "O", "output-document")[0];
   if (out !== undefined) {
@@ -7433,7 +7435,26 @@ reg(NATIVE, ["sftp", "ftp", "lftp", "tftp", "ncftp", "ncftpput", "smbclient", "t
   if (!batch) h.e.unclear("unclear.interactive", SAYS.interactive);
   if (h.args.some(a => /^-U$/.test(a.v ?? "")) && h.args.some(a => /%/.test(a.v ?? ""))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   for (const a of h.args) if (/^-[A]$/.test(a.v ?? "")) h.e.usePath(h.args[h.args.indexOf(a) + 1] ?? lit("?"), "read", h.sc);
+  if (clientMayFetch(h)) h.e.markUnnamed(null, h.sc);
 });
+/** Commands a file-transfer client may be given that only send, list or move about, never fetch (clientMayFetch). */
+const SENDS_ONLY = /^(put|mput|reput|cd|lcd|ls|dir|pwd|lpwd|mkdir|lmkdir|rmdir|rm|mrm|del|chmod|rename|mv|open|user|bye|quit|exit|close|set|prompt|binary|ascii|passive|hash|verbose)$/i;
+/**
+ * Whether a file-transfer client may fetch files, of names and into folders Ember can't tell (commands-remote-r8-3):
+ * a session, a batch file, its input or an address may (every sftp: `host:file` fetches, and it takes no commands on
+ * its line); commands it is given on its line (lftp's, smbclient's and tftp's `-c`) only when one of them isn't on
+ * SENDS_ONLY (`get`, `mget`, `mirror`…). ncftpput only sends and telnet moves no files.
+ */
+function clientMayFetch(h: H): boolean {
+  if (h.key === "ncftpput" || h.key === "telnet") return false;
+  if (h.s.stdin !== null) return true;
+  const k = h.args.findIndex(a => (h.key === "lftp" || h.key === "smbclient" || h.key === "tftp") && /^-c/.test(a.v ?? ""));
+  if (k < 0) return true;
+  const rest = h.args.slice(k + 1);
+  const text = h.key === "tftp" ? (rest.some(a => a.v === null) ? null : rest.map(a => a.v).join(" ")) : h.args[k].v === "-c" ? h.args[k + 1]?.v : h.args[k].v?.slice(2);
+  if (text === null || text === undefined || /[`$]/.test(text)) return true;
+  return text.split(/[;\n]|&&|\|\|/).some(c => { const w = c.trim().split(/\s+/)[0] ?? ""; return w !== "" && !SENDS_ONLY.test(w); });
+}
 reg(NATIVE, ["rsync"], h => {
   const p = opts(h, {
     // --mkpath and every other switch take no value (commands-remote-r4-1).
