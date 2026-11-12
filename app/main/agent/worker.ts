@@ -1188,10 +1188,16 @@ export class Worker {
   private labels = new Map<number, string>();
   /** The latest perceive_window read the whole window (not cut short, not busy): see dialogAround. */
   private knownWhole = false;
-  /** Other windows owned by this app can change what a control will act on. */
-  private knownOthers = "[]";
   /** The current quick-tree baseline, separate from readElement's longer, differently represented target text. */
   private actionTree: AxNode[] = [];
+  /**
+   * That read's own `truncated`, the app's other windows then (they can change what a control will act on), and where
+   * the step's target is in it (cursorAct's clickedTextAt). A living page's read keeps its own ids
+   * (refreshActionContext), so `known` and `knownWhole` stay perceive_window's, and these are what an answer binds to.
+   */
+  private actionWhole = false;
+  private actionOthers = "[]";
+  private actionAt: number | undefined;
   private window: { app: string; name: string; role?: string } = { app: "", name: "" };
   private target: WindowTarget;
   /** Apps the user allowed for this task only ("Allow once"). */
@@ -2485,7 +2491,6 @@ export class Worker {
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     // Only a whole read says every control a dialog holds (dialogAround's `whole`).
     this.knownWhole = !p.truncated && !p.busy;
-    this.knownOthers = JSON.stringify((p.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
     this.labels = inferLabels(p.nodes);
     // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
     // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped. Each
@@ -2699,7 +2704,14 @@ export class Worker {
         this.pageSelection = seen.nodes.find(n => n.role === live.role && n.name === live.name)?.selection;
         if (shifted || twins) {
           // The page moved on, so its ids can't be mapped again: the ids it was read with stay, and what it says now is
-          // still looked through.
+          // still looked through. This read, by its own ids, is what a question's answer binds to (an empty or stale
+          // one failed every Allow there: owner's report of 2026-11-12). The target is found in it by its role and name
+          // alone, never by position, and not at all beside a twin (no field: PAGE_TWIN), which then binds all of it.
+          const mine = twins ? -1 : seen.nodes.findIndex(n => n.role === live.role && n.name === live.name);
+          this.actionTree = seen.nodes;
+          this.actionWhole = !seen.truncated;
+          this.actionOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
+          this.actionAt = mine >= 0 ? mine : undefined;
           const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
           this.remember(w, words);
           this.flagInjection(words, "window", w.app);
@@ -2719,8 +2731,9 @@ export class Worker {
     }
     this.actionTree = seen.nodes.map((n, i) => ({ ...n, id: old[i].id, parent: old[i].parent }));
     this.known = new Map(this.actionTree.map(n => [n.id, n]));
-    this.knownWhole = !seen.truncated;
-    this.knownOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
+    this.knownWhole = this.actionWhole = !seen.truncated;
+    this.actionOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
+    this.actionAt = at;
     this.labels = inferLabels(this.actionTree);
     const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
     this.remember(w, words);
@@ -2755,8 +2768,8 @@ export class Worker {
       || w.app !== this.window.app || w.name !== this.window.name || w.role !== this.window.role
       || (this.target.pid !== undefined && w.pid !== this.target.pid)
       || (this.target.path !== undefined && w.path !== this.target.path)
-      || (!seen.truncated !== this.knownWhole) || this.actionContext(seen.nodes, clickedTextAt) !== context
-      || JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal }))) !== this.knownOthers;
+      || (!seen.truncated !== this.actionWhole) || this.actionContext(seen.nodes, clickedTextAt) !== context
+      || JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal }))) !== this.actionOthers;
     if (changed) return fail("The window or its contents changed while preparing this action, so nothing was done. Call perceive_window and ask again if it is still needed.");
     // A quick tree read can finish before the original accessible object changes: check that object too.
     const live = await this.sidecar.readElement(id).catch(() => null);
@@ -3125,7 +3138,8 @@ export class Worker {
     const context = this.actionContext();
     // Append/replace explicitly choose where text goes after this click. Only the target's selection may collapse
     // under our own focus click; insert-at-caret never clicks and keeps its full selection binding.
-    const clickedTextAt = kind === "cursor_text" && clicks ? [...this.known.keys()].indexOf(id) : undefined;
+    // Where the field is in the read the answer binds to (refreshActionContext): unknown, nothing is excused.
+    const clickedTextAt = kind === "cursor_text" && clicks ? this.actionAt : undefined;
     const afterClickContext = clickedTextAt !== undefined ? this.actionContext(undefined, clickedTextAt) : context;
     const before = this.pageTarget === id ? null : await this.checkActionContext(id, node, context);
     if (before) return before;

@@ -1403,6 +1403,92 @@ describe("approval stays with the action the user saw (safety review)", () => {
       expect(events).toEqual([]);
     });
 
+    // After an Allow, a step on a page whose names repeat, or that grew since it was read, failed every time: it was
+    // checked against an empty or stale copy of the window (investigation of the owner's report of 2026-11-12, V1, P2,
+    // P4, P11, P12).
+    it("clicks a link whose thumbnail repeats its name once the user allows it, on a page that didn't change while they decided (owner's report of 2026-11-12)", async () => {
+      const { call, asked, events } = makeWorker({ ...page, grants: {}, more: [twin] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(events).toContain("start");
+    });
+
+    it("clicks a link once the user allows it, on a page that grew since it was read (owner's report of 2026-11-12)", async () => {
+      // perceive_window read it before the clock showed; every read since has it.
+      const { call, asked, events } = makeWorker({ ...page, grants: {}, treeNodes: nodes => [...nodes, clock(1)] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(events).toContain("start");
+    });
+
+    it("clicks a page's link with the user's mouse once they allow it, though its thumbnail repeats its name (owner's report of 2026-11-12)", async () => {
+      const clicks: string[] = [];
+      const { call, asked } = makeWorker({ ...page, more: [twin], canDo: () => ({ tier1: false, why: "the page's link takes no click by accessibility" }), onInput: k => { clicks.push(k); } });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(clicks).toEqual(["click"]);
+    });
+
+    it("types into a page's field once the user allows it, on a page that grew since it was read (owner's report of 2026-11-12)", async () => {
+      const typed: string[] = [];
+      const { call, asked } = makeWorker({ ...box, grants: {}, setTextOk: true, onSetText: t => typed.push(t), treeNodes: nodes => [...nodes, clock(1)] });
+      await call("perceive_window", {});
+      expect((await call("type_text", { id: 1, text: "ghazals", mode: "replace" })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(typed).toEqual(["ghazals"]);
+    });
+
+    // With the user's keyboard, Ember's own click into the field collapses its selection: only that field's may change.
+    it("types with the user's keyboard once they allow it into a page's field whose selection Ember's click collapsed, on a page that grew (owner's report of 2026-11-12)", async () => {
+      let clicked = false;
+      const input: string[] = [];
+      const { call, asked } = makeWorker({ ...box, states: () => ["enabled", "sensitive", "editable", "focused"], nodeExtra: { selection: "old" },
+        canDo: () => ({ tier1: false, why: "the page's field takes no text by accessibility" }), onInput: (k, v) => { if (k === "click") clicked = true; input.push(`${k}:${v ?? ""}`); },
+        // The page grew above the field: its place in the page isn't where perceive_window had it.
+        treeNodes: nodes => [clock(1), ...nodes].map(n => n.id === 1 && clicked ? { ...n, selection: undefined } : n) });
+      await call("perceive_window", {});
+      expect((await call("type_text", { id: 1, text: "ghazals", mode: "replace" })).resultType).toBe("success");
+      expect(asked).toHaveLength(1);
+      expect(input[0]).toBe("click:");
+      expect(input).toContain("type:ghazals");
+    });
+
+    it("types nothing with the user's keyboard when Ember's click changed another part of a page that grew (owner's report of 2026-11-12)", async () => {
+      let clicked = false;
+      const input: string[] = [];
+      const other: AxNode = { id: 4, parent: 0, depth: 1, role: "entry", name: "Comment", text: "draft", selection: "draft", states: ["enabled", "editable"], bounds: null };
+      const { call, asked } = makeWorker({ ...box, states: () => ["enabled", "sensitive", "editable", "focused"], more: [other],
+        canDo: () => ({ tier1: false, why: "the page's field takes no text by accessibility" }), onInput: (k, v) => { if (k === "click") clicked = true; input.push(`${k}:${v ?? ""}`); },
+        // The page grew under the field, and the other field moved to the field's old place in it.
+        treeNodes: nodes => [...nodes.filter(n => n.id !== 1), ...nodes.filter(n => n.id === 1), clock(1)].map(n => n.id === 4 && clicked ? { ...n, selection: undefined } : n) });
+      await call("perceive_window", {});
+      expect((await call("type_text", { id: 1, text: "ghazals", mode: "replace" })).resultType).toBe("failure");
+      expect(asked).toHaveLength(1);
+      expect(input.some(i => i.startsWith("type:") || i.startsWith("keys:"))).toBe(false);
+    });
+
+    it("still undoes a yes when a page with repeated names changes while the user decides (owner's report of 2026-11-12)", async () => {
+      let t = 0;
+      const { call, asked, events } = makeWorker({ ...page, grants: {}, more: [twin, clock(0)], onAsk: () => { t = 5; },
+        treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${t}` } : n) });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(asked).toHaveLength(1);
+      expect(events).toEqual([]);
+    });
+
+    it("still undoes a yes when a page that grew since it was read changes while the user decides (owner's report of 2026-11-12)", async () => {
+      let t = 1;
+      const { call, asked, events } = makeWorker({ ...page, grants: {}, onAsk: () => { t = 5; }, treeNodes: nodes => [...nodes, clock(t)] });
+      await call("perceive_window", {});
+      expect((await call("click", { id: 1 })).resultType).toBe("failure");
+      expect(asked).toHaveLength(1);
+      expect(events).toEqual([]);
+    });
+
     it("still reads nothing into an app's own window that changes (only a web page lives on its own)", async () => {
       let t = 0;
       const { call, events } = makeWorker({ more: [clock(0)], treeNodes: nodes => nodes.map(n => n.id === 3 ? { ...n, name: `0:0${++t}` } : n) });
