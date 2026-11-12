@@ -124,6 +124,19 @@ describe("“Ask me before every command” where commands run as root or an adm
   it("leaves the user's own switch as it was where commands don't run that way (accessibility-c8-3)", () => {
     expect(view([]).rows.map(r => [r.askEvery.checked, r.askEvery.disabled, r.managed])).toEqual([[false, false, null], [false, false, null], [false, false, null]]);
   });
+
+  it("says nothing of asking where the organisation turned commands off, as none can run there (accessibility-x8-4)", () => {
+    const v = view(["local"], { source: "p", features: {}, commands: { local: "off", wsl: "on", ssh: "on" } });
+    expect(v.rows[0].run).toMatchObject({ checked: false, disabled: true });
+    expect(v.rows[0].managed).toBeNull();
+    expect(v.managed).toEqual(["Your organisation has turned off commands on this computer."]);
+    // Turned off by the user, the note stays under their switch, as the organisation's ask line does.
+    const own = cc.commandsView({
+      summaries: [{ ...summary({}), privileged: true }], admin: noPolicy,
+      settings: settings({ commands: { local: { ...on, on: false } } }),
+    });
+    expect(own.rows[0].managed).toBe("Commands here run as the administrator, so Ember asks before every one.");
+  });
 });
 
 describe("the status lines keep a command or a host name in one piece (commands-remote-8)", () => {

@@ -292,7 +292,8 @@ export function commandsView(i: { summaries: readonly TargetSummary[]; settings:
     const own = i.settings.commands?.[id];
     if (mode === "off") managed.add(OFF_LINES[kind]);
     const on = own?.on === true && mode !== "off";
-    const privileged = i.summaries.some(t => t.id === id && t.privileged === true);
+    // (Not where the organisation turned commands off: none can run there, and its line above says so: accessibility-x8-4.)
+    const privileged = mode !== "off" && i.summaries.some(t => t.id === id && t.privileged === true);
     const asks = mode === "ask" || privileged;
     const why = [privileged ? ASK_EVERY_PRIVILEGED : null, mode === "ask" ? ASK_EVERY_MANAGED : null].filter((s): s is string => s !== null);
     return {
