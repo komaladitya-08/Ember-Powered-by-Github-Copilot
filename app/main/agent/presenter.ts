@@ -107,7 +107,11 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (!theirs) {
     if (watchers) return "This computer has run out of file watchers, so I couldn't go on. Close a few apps, then ask again.";
     if (/\b(EMFILE|ENFILE)\b|\(os error (?:23|24)\)/.test(raw)) return "This computer has too many files open, so I couldn't go on. Close a few apps, then ask again.";
-    if (/\b(EACCES|EPERM|EROFS)\b|\(os error (?:1|13|30)\)/.test(raw)) return "I couldn't go on: this computer didn't let me read or write a file I need. Check that my data folder can be written, then ask again.";
+    // A socket or a program the system refused (a firewall, an egress filter, SELinux: "connect EPERM", the native
+    // client's "tcp connect error: Permission denied (os error 13)") is no file: it stays the network rule's below, or
+    // the general sentence, as before (product-platform-y9-1).
+    const socket = /\b(connect|listen|bind|accept|getaddrinfo|spawn) E(ACCES|PERM)\b|tcp connect error|error sending request|fetch failed|client error \(connect\)/i.test(raw);
+    if (!socket && /\b(EACCES|EPERM|EROFS)\b|\(os error (?:1|13|30)\)/.test(raw)) return "I couldn't go on: this computer didn't let me read or write a file I need. Check that my data folder can be written, then ask again.";
   }
   // Before the policy rule: a filtered prompt mentions a "content management policy", not the user's seat.
   if (/content.?(management|filter)|content_filter|filtered due to|responsible ?ai/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} content filter blocked that request. Try asking in other words.`;

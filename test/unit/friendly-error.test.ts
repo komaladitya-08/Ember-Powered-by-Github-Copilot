@@ -95,6 +95,17 @@ describe("friendlyError: what used to show raw", () => {
     expect(friendlyError("ENOSPC: no space left on device, write")).toBe("This computer's disk (or your storage quota) is full, so I couldn't go on. Free some space, then ask again.");
   });
 
+  it("a connection this computer's firewall or SELinux refused is the network's, never the data folder's (product-platform-y9-1)", () => {
+    const NET = "I can't reach Copilot right now. Check the network, then ask again.";
+    expect(friendlyError("fetch failed: connect EPERM 140.82.112.21:443")).toBe(NET);
+    expect(friendlyError("TypeError: fetch failed\n  cause: Error: connect EACCES 140.82.112.21:443")).toBe(NET);
+    expect(friendlyError("error sending request for url (https://api.githubcopilot.com/models): client error (Connect): tcp connect error: Permission denied (os error 13)")).toBe(NET);
+    // A socket or a program this computer refused, with nothing else said, is no file of Ember's either.
+    for (const raw of ["connect EACCES 140.82.112.21:443", "Error: listen EACCES: permission denied 127.0.0.1:8080", "spawn EACCES"]) expect(friendlyError(raw)).not.toMatch(/data folder|file I need/);
+    // A file the system refused is still said as the file.
+    expect(friendlyError("EACCES: permission denied, open '/home/u/.config/ember/copilot/x'")).toMatch(/file I need/);
+  });
+
   it("a bare status code is a refused request, with what to try", () => {
     expect(friendlyError("Error: 400 {\"error\":{\"message\":\"\"}}")).toBe("Copilot refused that request (400). Try asking in other words.");
     expect(friendlyError("422")).toBe("Copilot refused that request (422). Try asking in other words.");
