@@ -32,7 +32,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
-import { REFUSED, classify, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult } from "./gate";
+import { REFUSED, classify, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
@@ -132,9 +132,10 @@ function toolInfo(server: StoredServer, tools: PinnedTool[], review = false): To
   const clashes = clashingToolNames(server.key, tools.map(t => t.name));
   return tools.map(t => ({
     ...(review ? { server: server.name } : {}),
-    name: t.name, description: t.description, readOnly: isReadOnly(t),
+    // Hidden characters written out: the model reads them, so the card shows them (r10-integrations-y10-1).
+    name: t.name, description: writeOutHidden(t.description), readOnly: isReadOnly(t),
     // The words of its inputs the model reads too, for the review card (integrations-c9-1).
-    ...(review ? { inputs: schemaWords(t.inputSchema) } : {}),
+    ...(review ? { inputs: schemaWords(t.inputSchema).map(writeOutHidden) } : {}),
     ...(!review && t.changed ? { changed: true } : {}),
     ...(clashes.has(modelToolName(server.key, t.name)) ? { nameConflict: true } : {}),
   }));

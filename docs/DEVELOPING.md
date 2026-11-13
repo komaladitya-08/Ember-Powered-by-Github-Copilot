@@ -860,7 +860,10 @@ it builds on:
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
   Allow and Not now, never Always. Where the sentence shows only the first 200 characters of the arguments, the
   question carries all of them to read, one field to a line (`argsDetail`, the question's `detail`), and Allow waits
-  until all of it has been in view, as for long typed text (integrations-c9-3). A yes counts only if the gate still allows the call when it comes. Every decision,
+  until all of it has been in view, as for long typed text (integrations-c9-3). Both write out every hidden
+  character (`writeOutHidden`: format characters such as the tag characters that spell a sentence nothing draws,
+  variation selectors, blank look-alikes) as `\u202e` or `\u{e0041}`, and so does the review card for each tool's
+  description and the words of its inputs (r10-integrations-y10-1). A yes counts only if the gate still allows the call when it comes. Every decision,
   answer and result is an `extension` audit entry, with sizes and names only (the item's and the tool's, through
   `plainName`), and What Ember did draws a line for each (integrations-c9-2: the cards promised every use was there,
   and it drew none): asked, answered, refused, without asking, done and didn't work, and an item added, agreed to,
