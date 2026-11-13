@@ -13,7 +13,8 @@
  * SendInput), pressed while the user types in the bench's Name field, opens the box, and what it holds of letters typed
  * straight after is printed (review #78: Windows has no typed-ahead hold; typeahead-probe.ts), with when Ember heard
  * the chord, showed the box and had the keyboard (its log), how many letters the bench got, and the box's tip to wait
- * for it (its first openings); then its right-click menu dismissed by a click on the bench leaves the bench the
+ * for it (its first openings); then its right-click menu, opened once the field is the window under the pointer (waited
+ * for and named in the output, window-at.ts: cifix-2) and dismissed by a click on the bench, leaves the bench the
  * keyboard (review #77). Last, Ember started again with Text size set to Larger through its settings opens the box
  * 728 × 142 DIP (173 with the tip's row), its page and field at that size (review #57; ask-size.ts).
  *
@@ -44,6 +45,7 @@ import type { Capture } from "../../app/main/perception/capture";
 import { startOverlayChild, type OverlayChild } from "./overlay-child";
 import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
 import { askWant, closeAsk, openAskAt, setTextSize, type InEmber } from "./ask-size";
+import { waitForWindowAt, type WindowAt } from "./window-at";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
@@ -55,6 +57,11 @@ const POWERSHELL_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Execution
 const benchScript = path.join(root, "test", "fixtures", "win_bench.ps1");
 const packaged = process.env.EMBER_PACKAGED_APP ? path.resolve(root, process.env.EMBER_PACKAGED_APP) : "";
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/**
+ * How long the Ask field may be under another window before the right-click is given up (cifix-2): Ember's hello can
+ * come up to 6 s after start and stays 15 s at most, and nothing else of Ember's is over the box by itself.
+ */
+const ASK_FIELD_WAIT_MS = 22_000;
 const notTestable = (what: string, reason: string) => console.log(`not testable on this runner: ${what}: ${reason}`);
 
 interface BenchReady { hwnd: number; pid: number; window: Rect; controls: Record<string, Rect> }
@@ -461,8 +468,36 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       const menuState = () => ember.evaluate(() => (globalThis as { __askMenuProbe?: AskMenuProbe }).__askMenuProbe);
       const api = loadWin32()!;
       const hit = (x: number, y: number) => api.root(api.windowFromPoint(x, y));
+      // What is under a point, named in this suite's words: Ember's own windows by their titles, the bench, or the
+      // program another window belongs to (cifix-2: CI found "262636" over the field, and nothing said what it was).
+      const windowAt = (px: number, py: number): WindowAt | null => {
+        const id = hit(px, py);
+        return id ? { id, className: api.className(id), title: api.title(id, false), pid: api.threadProcess(id).pid } : null;
+      };
+      const emberFacts = () => ember.evaluate(({ BrowserWindow }) => {
+        const hooks = (globalThis as { __ember?: { overlay(): { overlays?: Map<number, { interactive: unknown; clickThrough: boolean }> } | null; state(): { bubble?: { visible?: boolean; title?: string; actions?: unknown[] } } } }).__ember;
+        const bubble = hooks?.state().bubble;
+        return {
+          windows: BrowserWindow.getAllWindows().map(w => ({ title: w.getTitle(), id: w.getNativeWindowHandle().readUInt32LE(0), visible: w.isVisible(), focused: w.isFocused(), bounds: w.getBounds() })),
+          overlays: [...(hooks?.overlay()?.overlays?.values() ?? [])].map(o => ({ clickThrough: o.clickThrough, interactive: o.interactive })),
+          bubble: bubble ? { visible: bubble.visible === true, title: bubble.title ?? "", actions: bubble.actions?.length ?? 0 } : null,
+        };
+      });
+      const own = new Map((await emberFacts()).windows.map(w => [w.id, w.title]));
+      const named = (w: WindowAt) => (w.id === ready.hwnd ? "the bench" : own.has(w.id) ? `Ember's window ${JSON.stringify(own.get(w.id))}`
+        : `a window of ${api.processImage(w.pid) ?? "a program that can't be named"}`);
+      /** Waits for `want` to be the window under the point (window-at.ts), prints what it saw, and fails saying what was there instead. */
+      const reaches = async (what: string, want: number, px: number, py: number, limitMs: number) => {
+        const seen = await waitForWindowAt({ what, want, limitMs, read: () => windowAt(px, py), name: named, now: Date.now, sleep });
+        console.log(seen.line);
+        if (!seen.reached) throw new Error(`${seen.line}; Ember's side: ${JSON.stringify(await emberFacts().catch((e: unknown) => String(e)))}`);
+      };
       x.move(at.x, at.y);
       await sleep(150);
+      // The box is topmost, and so are Ember's overlay and handle, which raise themselves and take the pointer where
+      // they have something to click (the hello's buttons, for as long as it stays up: 15 s at most, from up to 6 s
+      // after start). The right-click needs the field itself under the pointer: waited for, never assumed.
+      await reaches("the Ask field under the pointer before the right-click (review #77)", askId, at.x, at.y, ASK_FIELD_WAIT_MS);
       expect(hit(at.x, at.y), "the right-click reaches the Ask field").toBe(askId);
       x.button(3, true);
       x.button(3, false);
@@ -475,6 +510,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       });
       expect((await askWindow())?.visible, "Ask stays open while its menu is up").toBe(true);
       const benchX = ready.window.x + ready.window.width - 40, benchY = ready.window.y + ready.window.height - 40;
+      await reaches("the bench's corner under the dismissing click (review #77)", ready.hwnd, benchX, benchY, 3_000);
       expect(hit(benchX, benchY), "the dismissing click reaches the bench, not Ask or its menu").toBe(ready.hwnd);
       x.move(benchX, benchY);
       await sleep(150);
