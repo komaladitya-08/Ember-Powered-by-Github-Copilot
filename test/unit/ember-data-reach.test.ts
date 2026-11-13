@@ -42,6 +42,25 @@ describe("Ember's own settings, audit log and policy reached through another app
     expect(namesEmberData("~/Ember/report.odt")).toBe(false);
   });
 
+  it("refuses their folder typed with a doubled or dotted slash, a percent-escaped letter or an escaped space, in every mode (r10-safety-y10-2)", () => {
+    const rows: [OS, string, string][] = [
+      ["linux", "gedit", "~/.config//ember/settings.json"],
+      ["linux", "gedit", "~/.config/./ember/settings.json"],
+      ["linux", "gedit", "file:///home/u/.config/%65mber/settings.json"],
+      ["linux", "gedit", "/home/u/%2Econfig/ember/audit"],
+      ["darwin", "TextEdit", "~/Library/Application\\ Support/ember/settings.json"],
+      ["win32", "notepad", "%userprofile%\\AppData\\\\Local\\ember\\settings.json"],
+    ];
+    for (const [os, app, value] of rows) {
+      expect(namesEmberData(value), value).toBe(true);
+      for (const mode of ["asking", "interactive", "assisted", "autopilot"] as const) {
+        const d = engine(mode, os, { [app]: "act" }).decide(req(app, "Open", { kind: "text", value, element: { role: "text", name: "Location" } }));
+        expect(d.verdict, `${os} ${value} ${mode}`).toBe("deny");
+      }
+    }
+    expect(namesEmberData("100%25 of the .config/./embers")).toBe(false);
+  });
+
   it("asks every time in an editor whose title names settings.json with no folder, and Autopilot refuses (safety-privacy-r10-1)", () => {
     const rows: [OS, string, string][] = [
       ["linux", "kate", "settings.json — Kate"], ["linux", "org.xfce.mousepad", "settings.json - Mousepad"],
@@ -128,6 +147,31 @@ describe("Ember's own settings, audit log and policy reached through another app
         expect(inter.autonomy).toBeUndefined();
       }
     }
+  });
+
+  it("refuses in Autopilot, and asks elsewhere, a Delete, a cut or a rename of the folder that holds Ember's data or policy folder from the folder above it (r10-safety-y10-3)", () => {
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "org.gnome.Nautilus", "Home", { kind: "keys", value: "Delete", element: { role: "table cell", name: ".config" } }],
+      ["linux", "org.gnome.Nautilus", "Home", { kind: "keys", value: "shift+Delete", element: { role: "table cell", name: ".config" } }],
+      ["linux", "org.gnome.Nautilus", "Home", { kind: "keys", value: "F2", element: { role: "table cell", name: ".config" } }],
+      ["linux", "org.gnome.Nautilus", "Home", { kind: "keys", value: "ctrl+x", element: { role: "table cell", name: ".config" } }],
+      ["linux", "org.gnome.Nautilus", "/", { kind: "keys", value: "Delete", element: { role: "table cell", name: "etc" } }],
+      ["win32", "explorer", "u - File Explorer", { kind: "keys", value: "Delete", element: { role: "list item", name: "AppData" } }],
+      ["win32", "explorer", "AppData - File Explorer", { kind: "keys", value: "F2", element: { role: "list item", name: "Local" } }],
+      ["darwin", "Finder", "u", { kind: "keys", value: "cmd+BackSpace", element: { role: "AXRow", name: "Library" } }],
+      ["darwin", "Finder", "Library", { kind: "keys", value: "cmd+BackSpace", element: { role: "AXRow", name: "Application Support" } }],
+    ];
+    for (const [os, app, w, step] of rows) {
+      const r = req(app, w, step);
+      expect(engine("autopilot", os).decide(r).verdict, `${w} ${step.value} ${step.element?.name} autopilot`).toBe("deny");
+      const inter = engine("interactive", os).decide(r);
+      expect(inter.verdict, `${w} ${step.value} ${step.element?.name} interactive`).toBe("confirm");
+      expect(inter.autonomy).toBeUndefined();
+    }
+    // Moving past that row, opening it with a click, and another row stay as they were.
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { kind: "keys", value: "Down", element: { role: "table cell", name: ".config" } }))).toBe(false);
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { kind: "click", element: { role: "table cell", name: ".config" } }))).toBe(false);
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { kind: "keys", value: "Delete", element: { role: "table cell", name: "Documents" } }))).toBe(false);
   });
 
   it("never sends such a step to Assisted's check, and Autopilot refuses the worker's held question about it (safety-privacy-r10-1)", async () => {

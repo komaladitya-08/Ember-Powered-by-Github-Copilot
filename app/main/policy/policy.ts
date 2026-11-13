@@ -772,7 +772,16 @@ export const showsEmberData = (title: string | undefined): boolean => !!title &&
  */
 const EMBER_DATA_TYPED = /(?:^|[/\\%{\s"'“(=:]|\$)(?:\.config|appdata[/\\]local|localappdata%|application support|etc|xdg_config_home\}?)[/\\]ember(?=$|[/\\)\]\s"'”»,;:])/i;
 /** Does text a task would type name Ember's data folder or the organisation's policy folder? */
-export const namesEmberData = (text: string | undefined): boolean => !!text && EMBER_DATA_TYPED.test(normalizeLabel(text));
+export const namesEmberData = (text: string | undefined): boolean => !!text && EMBER_DATA_TYPED.test(plainPath(normalizeLabel(text)));
+/**
+ * A typed path as the dialog will read it (r10-safety-y10-2): a percent-escaped letter, digit or dot decoded ("%65mber"),
+ * an escaped space unescaped ("Application\ Support"), and doubled separators and "/./" parts dropped.
+ */
+const plainPath = (text: string): string => text
+  .replace(/%([0-9a-f]{2})/gi, (all, hex: string) => { const c = String.fromCharCode(parseInt(hex, 16)); return /[a-z0-9.]/i.test(c) ? c : all; })
+  .replace(/\\ /g, " ")
+  .replace(/([/\\])(?:\.[/\\])+/g, "$1")
+  .replace(/([/\\])[/\\]+/g, "$1");
 /**
  * Ember's own files by name (settings.json, the audit log's months, the mode's seal, the provider's key and its host,
  * the vault, extensions.json, the organisation's policy.json), and its data and audit folders' own names as a file
@@ -822,7 +831,10 @@ const MOVES_ITEMS = /delete|trash|\bbin\b|remove|erase|rename|\bcut\b|move/i;
 function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value"> & { app?: string }, name: string): boolean {
   if (!FILE_MANAGER_APP.test((r.app ?? "").trim())) return false;
   const folder = name.split(/[/\\]/).filter(Boolean).pop() ?? "";
-  if (!EMBER_DATA_PARENT.test(folder)) return false;
+  // That folder's own row, from the folder above it (Home's ".config", the user's "AppData", Finder's "Library"):
+  // a key on it but one that moves about may delete, cut or rename it (r10-safety-y10-3).
+  const onParentRow = r.kind === "keys" && EMBER_DATA_PARENT.test((r.element?.name ?? "").trim());
+  if (!EMBER_DATA_PARENT.test(folder) && !onParentRow) return false;
   if (r.kind === "keys") {
     const k = canonicalKeys(r.value ?? "");
     return !k || !MOVING_KEY.test(keyFamily(k));

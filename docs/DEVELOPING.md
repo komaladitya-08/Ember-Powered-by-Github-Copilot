@@ -592,9 +592,10 @@ would ask is announced where neither administrator asks for a click before every
 acting; the step's stamp says it was announced, never that you said yes, and the remote's own check accepts that only
 where its own administrator allows Autopilot (it refuses the step otherwise). Autopilot keeps every refusal exactly
 as Interactive has it (password, card and secret fields, your terminals, never-look and Ember's own windows, its
-settings, audit log and policy open in another app or their folder typed anywhere (and a step where Ember can't tell a
-file or folder in front of it isn't one of those, such as “settings.json — Kate”, a file manager titled “audit”, or a
-Delete, cut or rename in the folder that holds Ember's (“.config”, “Local”, “Application Support”)), the
+settings, audit log and policy open in another app or their folder's path typed in one step (and a step where Ember
+can't tell a file or folder in front of it isn't one of those, such as “settings.json — Kate”, a project's settings.json
+in VS Code, a file manager titled “audit”, or a Delete, cut or rename in the folder that holds Ember's (“.config”,
+“Local”, “Application Support”) or of that folder itself from Home), the
 system's sign-in and password prompts, desktop-level keys and Ember's own shortcuts, making a file executable),
 consent and each first-use card, masked screenshots, the audit log (a step that can't be recorded isn't taken), Stop,
 the limits on tasks, steps, time and actions a minute, and your organisation's policy: `confirmEveryAction`,
