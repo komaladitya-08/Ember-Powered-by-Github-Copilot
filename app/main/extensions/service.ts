@@ -808,8 +808,9 @@ export class ExtensionsService implements ExtensionsApi {
    * the runtime (launch.ts), so this is for a remote server, and for anything that got past.
    */
   private announced(gate: SessionGate, server: string): void {
+    // Logged once a session for each server: how often it says so is the server's choice, and the log isn't its to fill.
+    if (!gate.listChanged.has(server)) this.o.log.info("extensions.list_changed", { server });
     gate.listChanged.add(server);
-    this.o.log.info("extensions.list_changed", { server });
     // An old session is nobody's, and a server already on its way out has nothing more to lose.
     if (gate !== this.session || gate.epoch !== this.epoch || gate.withdrawn.has(server)) return;
     const names = [...gate.tools].filter(([, e]) => e.server.key === server).map(([name]) => name);

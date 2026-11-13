@@ -1334,7 +1334,8 @@ describe("ExtensionsService", () => {
   });
 
   it("never lets a server's notices hold the conversation: none is answered with a question, and one wait covers them all (integrations-x9-4)", async () => {
-    const s = await installed();
+    const logged: string[] = [];
+    const s = await installed({ log: { info: (event: string) => { logged.push(event); }, warn: () => undefined, error: () => undefined, debug: () => undefined, child: () => undefined } as never });
     const ext = s.forSession()!;
     live = asShown([LOOKUP, POST]);
     let asks = 0, stops = 0;
@@ -1350,6 +1351,8 @@ describe("ExtensionsService", () => {
     await c.hooks!.onPostToolUse!({ toolName: "set_appearance", toolArgs: {}, toolResult: { textResultForLlm: "ok", resultType: "success" } } as never, { sessionId: "s" });
     expect(Date.now() - t0).toBeLessThan(1000);
     expect([asks, stops]).toEqual([0, 1]);
+    // Nor do they fill the log: one line for the server, not one for each notice.
+    expect(logged.filter(e => e === "extensions.list_changed")).toHaveLength(1);
   });
 
   it("turns off a tool whose hints alone changed, seen in its server's list after a call, and leaves a list that still matches its pins alone (integrations-r9-1)", async () => {
