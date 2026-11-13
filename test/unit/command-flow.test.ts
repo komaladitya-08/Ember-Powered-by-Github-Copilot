@@ -38,6 +38,8 @@ import { BubbleOwner, Presenter } from "../../app/main/agent/presenter";
 import { taskLineOf, type Question } from "../../app/main/agent/confirm";
 import type { EmberState } from "../../app/shared/overlay";
 import { announcement } from "../../packages/bubble/src/bubble";
+import { VAULT_REDACTED, VaultRedactor } from "../../app/main/vault/redact";
+import { CANARY } from "../fixtures/vault/leaky";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const tick = () => new Promise(r => setTimeout(r, 0));
@@ -284,6 +286,129 @@ describe("CL's own judge (the default)", () => {
       setOutputRedactor(null);
     }
   });
+});
+
+describe("Stop while a run's kept output is cleaned (merge review integ-y-2)", () => {
+  afterEach(() => setOutputRedactor(null));
+
+  it("sees a Stop pulled while the output is cleaned, and hands on nothing of it (merge review integ-y-2)", async () => {
+    setCommandJudge(null);
+    const printed = "Compiled 12 modules\ntoken=abcdef123456\nAll tests passed\n";
+    let passes = 0;
+    const abort = new AbortController();
+    // The stop shortcut's handler, waiting on the thread while the cleaning has it: it runs at the cleaning's next turn.
+    setOutputRedactor(t => { if (passes++ === 0) setImmediate(() => abort.abort()); return t; });
+    const h = harness({ binding: LOCAL, abort, run: () => ({ output: [printed] }) });
+    const r = await call(h, { target: "this computer", command: "make test" });
+    expect(r.resultType).toBe("denied");
+    expect(r.textResultForLlm).toBe("Stopped. Do nothing more.");
+    expect(passes).toBe(1);
+    expect(h.audit.some(e => e.phase === "tainted")).toBe(false);
+    const ended = h.audit.filter(e => e.phase === "ended");
+    expect(ended).toHaveLength(1);
+    expect(ended[0].stopped).toBe(true);
+    expect(JSON.stringify(h.audit)).not.toMatch(/Compiled|abcdef|tests passed/);
+  });
+
+  /** Three logins, cards and contacts filled: the vault's redactor at its costliest in the measurements (x3). */
+  const filledThrice = (): VaultRedactor => {
+    const v = new VaultRedactor();
+    for (const n of [1, 2, 3]) {
+      v.note("user", `${n}${CANARY.login.user}`);
+      v.note("password", `${CANARY.login.password}${n}`);
+      v.note("cardName", `${CANARY.card.cardName} ${n}`);
+      v.note("cardNumber", `411111111111111${n}`);
+      v.note("expiry", `0${n}/29`);
+      v.note("name", `${CANARY.contact.name} ${n}`);
+      v.note("email", `${n}${CANARY.contact.email}`);
+      v.note("phone", `+44 20 7946 095${n}`);
+      v.note("address", `${n} Canary Wharf Row\nLondon E14 9ZZ`);
+    }
+    return v;
+  };
+  /** 4 MiB of coloured build output, with a filled email at its start and its end. */
+  const buildOutput = (): string[] => {
+    const line = "src/module.ts compiled \x1b[32mok\x1b[0m\n";
+    const chunk = line.repeat(Math.ceil((64 * 1024) / line.length));
+    const chunks = Array.from({ length: 64 }, () => chunk);
+    chunks[0] = `mail: 1${CANARY.contact.email}\n${chunks[0]}`;
+    chunks[63] = `${chunks[63]}mail: 2${CANARY.contact.email}\n`;
+    return chunks;
+  };
+  /**
+   * Watches the thread from the cleaning's first pass: a macrotask chain counts the turns other work gets, and the
+   * longest stretch between two of them.
+   */
+  const watch = () => {
+    const w = { turns: 0, longest: 0, started: 0, on: false };
+    let last = 0;
+    const tick = () => {
+      if (!w.on) return;
+      const now = performance.now();
+      w.longest = Math.max(w.longest, now - last);
+      last = now;
+      w.turns++;
+      setImmediate(tick);
+    };
+    const start = () => {
+      if (w.on || w.started) return;
+      w.on = true;
+      w.started = performance.now();
+      last = w.started;
+      setImmediate(tick);
+    };
+    return Object.assign(w, { start, stop: () => { w.on = false; } });
+  };
+
+  it("gives the thread back while 4 MiB is cleaned with three of each vault entry filled, and the model gets it redacted (merge review integ-y-2)", async () => {
+    setCommandJudge(null);
+    const v = filledThrice();
+    const w = watch();
+    setOutputRedactor(t => { w.start(); return v.text(t); }, t => { w.start(); return v.textSteps(t); });
+    const h = harness({ binding: LOCAL, run: () => ({ output: buildOutput() }) });
+    const r = await call(h, { target: "this computer", command: "make" });
+    w.stop();
+    expect(r.resultType).toBe("success");
+    expect(r.textResultForLlm).toContain(`mail: ${VAULT_REDACTED}`);
+    expect(r.textResultForLlm).not.toMatch(/canary/i);
+    expect(r.textResultForLlm).toContain("src/module.ts compiled ok");
+    // Turns all the way through: a macrotask at least every 8 ms of passes (about 1.8 s of them here, 135-214 ms
+    // the longest stretch between two turns as measured on a loaded 4-core machine).
+    expect(w.turns).toBeGreaterThan(20);
+  }, 60_000);
+
+  it("ends a run as stopped when Stop comes while 4 MiB with vault entries filled is cleaned, at the next pass (merge review integ-y-2)", async () => {
+    setCommandJudge(null);
+    const v = filledThrice();
+    const w = watch();
+    const abort = new AbortController();
+    let stoppedAt = 0;
+    let passesAfter = 0;
+    const steps = function* (t: string): Generator<void, string, void> {
+      const inner = v.textSteps(t);
+      for (;;) {
+        if (stoppedAt) passesAfter++;
+        const r = inner.next();
+        if (r.done) return r.value;
+        yield;
+      }
+    };
+    const begin = () => {
+      if (w.started) return;
+      w.start();
+      // The stop shortcut, pressed a moment into the cleaning.
+      setTimeout(() => { stoppedAt = performance.now(); abort.abort(); }, 50);
+    };
+    setOutputRedactor(t => { begin(); return v.text(t); }, t => { begin(); return steps(t); });
+    const h = harness({ binding: LOCAL, abort, run: () => ({ output: buildOutput() }) });
+    const r = await call(h, { target: "this computer", command: "make" });
+    w.stop();
+    expect(stoppedAt).toBeGreaterThan(0);
+    expect(r.textResultForLlm).toBe("Stopped. Do nothing more.");
+    // Seen at the next pass: none starts once Stop is pulled.
+    expect(passesAfter).toBe(0);
+    expect(JSON.stringify(h.audit)).not.toMatch(/canary|compiled/i);
+  }, 60_000);
 });
 
 /** The rules of a harness's last decision. */

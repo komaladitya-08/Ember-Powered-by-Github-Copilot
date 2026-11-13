@@ -7,12 +7,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { RunExit } from "../../app/main/commands/types";
 import {
-  boundOutput, capLines, CLEAN_MAX_LINE, cleanOutput, clearCut, CUT_SLACK, CUT_TRIES, OUTPUT_HEAD_LINES, OUTPUT_MAX_BYTES, OUTPUT_MAX_LINE, OUTPUT_TAIL_LINES, redactedWhole, SECRET_ANSWERED, SECRET_UNANSWERED,
+  boundOutput, capLines, CLEAN_MAX_LINE, cleanOutput, cleanOutputAsync, clearCut, CUT_SLACK, CUT_TRIES, OUTPUT_HEAD_LINES, OUTPUT_MAX_BYTES, OUTPUT_MAX_LINE, OUTPUT_TAIL_LINES, redactedWhole, SECRET_ANSWERED, SECRET_UNANSWERED,
   setOutputRedactor, shapeOutput, stripTerminal, TYPED_BY_USER, type ShapeOptions,
 } from "../../app/main/commands/output";
 import { VAULT_REDACTED, VaultRedactor } from "../../app/main/vault/redact";
 import { OPEN_SPAN_END, trackSecretPrompts } from "../../app/main/commands/prompts";
-import { SECRET_HIDDEN } from "../../app/main/commands/redact";
+import { REDACT_PASSES, redactSecrets, redactSecretsYielding, runSteps, runStepsYielding, SECRET_HIDDEN } from "../../app/main/commands/redact";
+import { CANARY } from "../fixtures/vault/leaky";
+import type { VaultPart } from "../../app/shared/vault";
+import { readFileSync } from "node:fs";
 import { OutputKeeper } from "../../app/main/commands/flow";
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s);
@@ -440,4 +443,124 @@ describe("output after a fill from the vault (vault-3)", () => {
     setOutputRedactor(() => { throw new Error("down"); });
     expect(keep(text).text).toMatch(/^\n\[… \d+ characters of output left out …\]\n$/);
   }, 30_000);
+});
+
+describe("cleaning a run's kept output a pass at a time (merge review integ-y-2)", () => {
+  afterEach(() => setOutputRedactor(null));
+  const never = (): boolean => false;
+  /** A login, a card and a contact filled, as the vault's leak tests fill them. */
+  const filledOnce = (): VaultRedactor => {
+    const v = new VaultRedactor();
+    v.note("user", CANARY.login.user);
+    v.note("password", CANARY.login.password);
+    for (const [part, value] of Object.entries(CANARY.card)) v.note(part as VaultPart, value);
+    for (const [part, value] of Object.entries(CANARY.contact)) v.note(part as VaultPart, value);
+    return v;
+  };
+  const ESC = "\x1b";
+  /** Outputs that reach every pass: tokens, blocks and lists across lines, escapes that run to the end, the vault's values in every form. */
+  const OUTPUTS: string[] = [
+    "",
+    "Compiled 12 modules\nAll tests passed\n",
+    `${ESC}[32mok${ESC}[0m\r\nprogress 10%\rprogress 100%\nback\b\bspace\n`,
+    "ghp_" + "a".repeat(36) + " AKIAABCDEFGHIJKLMNOP xoxb-1234567890-abc\n",
+    "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\nabc\n-----END RSA PRIVATE KEY-----\nafter\n-----BEGIN OPENSSH PRIVATE KEY-----\nno end\n",
+    `${ESC}]0;title runs to the end`,
+    `${ESC}Pdcs string\nacross lines${ESC}\\ plain`,
+    "test:\n  - CMD\n  - mysqladmin\n  - ping\n  - -phunter2secret\n",
+    '["CMD", "mysqladmin", "ping", "-phunter2"]\nexecFile("sshpass", ["-p", "s3cr3tpw", "ssh"])\n',
+    '{"id": "https://kv1.vault.azure.net/secrets/db/1", "tags": {"value": "x"}, "value": "the-kv-secret"}\n',
+    '{"value": "kv-rest-secret", "contentType": "text/plain", "id": "https://kv1.vault.azure.net/secrets/db/2"}\n',
+    "mysql -u root -pWint3r!Sh0p db\ncurl -u admin:pa55word https://x\nhttps://bob:pw1234@example.org/\npassword=abc123 token: zyx987\n",
+    "machine api.example.org login bob password s3cret\nAuthorization: Bearer abc.def.ghi\n",
+    `mail: ${CANARY.contact.email}\nuser ${CANARY.login.user.toUpperCase()}\n`,
+    `pw ${CANARY.login.password} card 4111 1111 1111 1111 exp 12/2027 phone (020) 7946-0958\n`,
+    `${CANARY.contact.address.replace("\n", ", ")}\n${CANARY.contact.name}\n`,
+    `json ${JSON.stringify(CANARY.login.password)} markup ${CANARY.login.password.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}\n`,
+    ` ada.${ESC}[01;31m${ESC}[Kcontact-canary${ESC}[m${ESC}[K@example.org \n`,
+    `${ESC}[1${CANARY.login.user}${ESC}(${CANARY.contact.email}\n`,
+    "private  use  marks  in output\n",
+    "Password: hunter22\nok\nPassword: \n",
+    "a".repeat(CLEAN_MAX_LINE + 50) + CANARY.contact.email + "\n",
+  ];
+  /** The corpus's commands as printed output (a prompt and the line, forty to an output). */
+  const corpusOutputs = (): string[] => {
+    const out: string[] = [];
+    for (const family of ["posix", "powershell", "cmd", "wsl", "everyday"]) {
+      const cases = (JSON.parse(readFileSync(`test/fixtures/commands/${family}.json`, "utf8")) as { cases: { cmd: string }[] }).cases;
+      for (let i = 0; i < cases.length; i += 40) out.push(cases.slice(i, i + 40).map(c => `$ ${c.cmd}\n`).join(""));
+    }
+    return out;
+  };
+  const OPTIONS: Pick<ShapeOptions, "typed" | "secretSpans">[] = [
+    { typed: [], secretSpans: [] },
+    { typed: ["hunter22", "make test"], secretSpans: [{ from: 10, to: 19 }, { from: 30, to: OPEN_SPAN_END }] },
+  ];
+
+  it("gives the model the same bytes as cleaning at once, over the corpus and every pass, with and without the vault's entries filled (merge review integ-y-2)", async () => {
+    const outputs = [...OUTPUTS, ...corpusOutputs()];
+    const v = filledOnce();
+    const redactors: [string, () => void][] = [
+      ["none", () => setOutputRedactor(null)],
+      ["the vault's, at once", () => setOutputRedactor(t => v.text(t))],
+      ["the vault's, in steps", () => setOutputRedactor(t => v.text(t), t => v.textSteps(t))],
+    ];
+    let compared = 0;
+    for (const [name, set] of redactors) {
+      set();
+      for (const text of outputs) {
+        for (const o of OPTIONS) {
+          const raw = bytes(text);
+          const work = { steps: 0, turns: 0 };
+          const stepped = await cleanOutputAsync(raw, o, never, work);
+          expect(stepped, `${name}: ${JSON.stringify(text.slice(0, 80))}`).toBe(cleanOutput(raw, o));
+          expect(work.steps).toBeGreaterThan(REDACT_PASSES.length);
+          compared++;
+        }
+        expect(await redactSecretsYielding(text, never)).toBe(redactSecrets(text));
+        expect(runSteps(v.textSteps(text))).toBe(v.text(text));
+      }
+    }
+    expect(compared).toBeGreaterThan(300);
+    // And it hides what cleaning at once hides (a check that the comparison above compares something).
+    setOutputRedactor(t => v.text(t), t => v.textSteps(t));
+    const hidden = await cleanOutputAsync(bytes(OUTPUTS[13] + OUTPUTS[11]), OPTIONS[0], never);
+    expect(hidden).toContain(VAULT_REDACTED);
+    expect(hidden).toContain(SECRET_HIDDEN);
+    expect(hidden).not.toMatch(/canary|Wint3r/i);
+  }, 120_000);
+
+  it("gives the same bytes for output the flow cut between its first and last characters, with a coloured value at the cut (merge review integ-y-2)", async () => {
+    const v = filledOnce();
+    setOutputRedactor(t => v.text(t), t => v.textSteps(t));
+    const HEAD = 64 * 1024, ROOM = 4 * 1024 * 1024 - HEAD;
+    const coloured = ` ada.${ESC}[01;31m${ESC}[Kcontact-canary${ESC}[m${ESC}[K@example.org \n`;
+    const fill = (n: number): string => "0123456789abcde\n".repeat(Math.ceil(n / 16)).slice(0, n);
+    for (const inside of [3, 9]) {
+      const k = new OutputKeeper(trackSecretPrompts({ interactive: false }));
+      k.push(bytes(fill(HEAD + 5000 - inside) + coloured + fill(ROOM - (coloured.length - inside))));
+      k.end();
+      const kept = k.kept([]);
+      expect(kept.text).toMatch(/characters of output left out/);
+      // The cut itself, a pass at a time as the run's end makes it, is the same.
+      const again = new OutputKeeper(trackSecretPrompts({ interactive: false }));
+      again.push(bytes(fill(HEAD + 5000 - inside) + coloured + fill(ROOM - (coloured.length - inside))));
+      again.end();
+      expect(await runStepsYielding(again.keptSteps([]), never)).toEqual(kept);
+      const raw = bytes(kept.text);
+      const o = { typed: [], secretSpans: kept.spans };
+      expect(await cleanOutputAsync(raw, o, never)).toBe(cleanOutput(raw, o));
+    }
+  }, 120_000);
+
+  it("stops at the next pass once told to, with nothing of the text (merge review integ-y-2)", async () => {
+    let calls = 0;
+    setOutputRedactor(t => t, function* (t) { for (let i = 0; i < 10; i++) { calls++; yield; } return t; });
+    let turns = 0;
+    const stopped = (): boolean => ++turns > 5;
+    expect(await cleanOutputAsync(bytes("token=abcdef123456\n"), OPTIONS[0], stopped)).toBeNull();
+    // (Decoding is a step, and the terminal codes another; then the redactor's first three passes, and no more.)
+    expect(calls).toBe(3);
+    expect(await redactSecretsYielding("token=abcdef123456", () => true)).toBeNull();
+  });
 });

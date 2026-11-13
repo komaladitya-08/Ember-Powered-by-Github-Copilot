@@ -2,11 +2,12 @@
  * What the model gets back from a command (design §3.11 steps 1-6): the raw bytes decoded, terminal codes removed, the
  * answers to secret prompts and everything the user typed cut out, secrets redacted, the text bounded, and the result
  * wrapped as untrusted data. Always computed on the PC from the raw bytes (a remote's bytes included), never
- * pre-rendered by a remote. Pure and synchronous.
+ * pre-rendered by a remote. Pure: cleanOutput runs at once; cleanOutputAsync runs the same steps with Ember's main
+ * thread given back between whole-text passes, for a run's end (merge review integ-y-2).
  */
 
 import type { CommandRunner, RunExit, ShellId } from "./types";
-import { redactSecrets } from "./redact";
+import { redactSteps, runSteps, runStepsYielding } from "./redact";
 import { OPEN_SPAN_END } from "./prompts";
 
 /** A target's id (the contract's own type, so this file imports nothing outside the commands package). */
@@ -145,14 +146,38 @@ export function capLines(text: string, max = CLEAN_MAX_LINE): string {
  * on another computer, where nothing is filled): output is cleaned as it is.
  */
 let beforeCut: ((text: string) => string) | null = null;
-/** Sets (or, with null, clears) what a command's output passes before its lines are cut. Main calls it once, before any run. */
-export function setOutputRedactor(redact: ((text: string) => string) | null): void {
+/** The same redactor as steps, a step before each of its passes (the vault's VaultRedactor.textSteps); null: one step. */
+let beforeCutSteps: ((text: string) => Generator<void, string, void>) | null = null;
+/**
+ * Sets (or, with null, clears) what a command's output passes before its lines are cut. Main calls it once, before any
+ * run. `steps`, where given, must give the same text as `redact` (main passes the vault's `textSteps`, which `text`
+ * runs at once): a run's end runs it a pass at a time.
+ */
+export function setOutputRedactor(redact: ((text: string) => string) | null, steps?: (text: string) => Generator<void, string, void>): void {
   beforeCut = redact;
+  beforeCutSteps = redact && steps ? steps : null;
 }
 /** `s` as it may be cut: nothing of output that couldn't be checked. */
 function whole(s: string): string {
   if (!beforeCut) return s;
   try { return beforeCut(s); } catch { return ""; }
+}
+
+/** The redactor over `s` as steps: its own where it has them, else one; what it throws goes to the caller. */
+function* redactorSteps(s: string, R: (text: string) => string, steps: ((text: string) => Generator<void, string, void>) | null): Generator<void, string, void> {
+  if (steps) return yield* steps(s);
+  yield;
+  return R(s);
+}
+
+/** whole() as steps. */
+function* wholeSteps(s: string, R: ((text: string) => string) | null, steps: ((text: string) => Generator<void, string, void>) | null): Generator<void, string, void> {
+  if (!R) return s;
+  try {
+    return yield* redactorSteps(s, R, steps);
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -165,8 +190,13 @@ function whole(s: string): string {
  * step 1 acts on is the same before and after it, and is left for the pass that follows the cleaning.
  */
 function wholeAsPrinted(s: string): string {
-  if (!beforeCut || !ANY_CONTROL.test(s)) return s;
-  return whole(s.replace(/\ue002/g, "\ufffd").replace(CSI_OPEN, `$&${MARK_CSI}`)).replace(/\ue002/g, "");
+  return runSteps(wholeAsPrintedSteps(s, beforeCut, beforeCutSteps));
+}
+
+/** wholeAsPrinted as steps. */
+function* wholeAsPrintedSteps(s: string, R: ((text: string) => string) | null, steps: ((text: string) => Generator<void, string, void>) | null): Generator<void, string, void> {
+  if (!R || !ANY_CONTROL.test(s)) return s;
+  return (yield* wholeSteps(s.replace(/\ue002/g, "\ufffd").replace(CSI_OPEN, `$&${MARK_CSI}`), R, steps)).replace(/\ue002/g, "");
 }
 
 /**
@@ -221,30 +251,41 @@ const AFTER_HEAD = "\n[…]\n";
  * tried, for the tests.
  */
 export function clearCut(before: string, after: string, side: "before" | "after", work?: { tried: number }): number | null {
-  if (!beforeCut) return 0;
+  return runSteps(clearCutSteps(before, after, side, work));
+}
+
+/**
+ * clearCut as steps, a step before each of the redactor's passes: a run's end gives Ember's main thread back between
+ * them (merge review integ-y-2: with three of each vault entry filled the two cuts held it about 0.24 s, and up to
+ * CUT_TRIES places a side more). clearCut runs the same steps at once.
+ */
+export function* clearCutSteps(before: string, after: string, side: "before" | "after", work?: { tried: number }): Generator<void, number | null, void> {
+  const R = beforeCut, S = beforeCutSteps;
+  if (!R) return 0;
   try {
-    const R = beforeCut;
+    const red = (s: string) => redactorSteps(s, R, S);
     const text = before + after, at = before.length;
     const cleaned = stripTerminal(text);
-    const all = R(text), allCleaned = R(cleaned);
+    const all = yield* red(text), allCleaned = yield* red(cleaned);
     // (What cleanOutput makes of it: redacted as printed, its terminal codes out, redacted again: integ-z-1.)
-    const read = (s: string): string => R(stripTerminal(wholeAsPrinted(s)));
-    const allRead = read(text);
+    const read = function* (s: string): Generator<void, string, void> { return yield* red(stripTerminal(yield* wholeAsPrintedSteps(s, R, S))); };
+    const allRead = yield* read(text);
     // Nothing the vault filled is near the cut: not as printed, not with its escape sequences out, not as cleaned,
     // not as cleanOutput reads it.
     if (all === text && allCleaned === cleaned && allRead === cleaned) {
       const bare = stripEscapes(text);
-      if (R(bare) === bare) return 0;
+      if ((yield* red(bare)) === bare) return 0;
     }
-    const clear = (c: number): boolean => {
+    const clear = function* (c: number): Generator<void, boolean, void> {
       const left = text.slice(0, c), right = text.slice(c);
       // (How the text is built first: it costs the same however many values the vault has filled: integ-z-4.)
       const l = stripTerminal(left), r = stripTerminal(right);
       if (l + r !== cleaned) return false;
-      if (R(left) + R(right) !== all || R(l) + R(r) !== allCleaned) return false;
+      if ((yield* red(left)) + (yield* red(right)) !== all) return false;
+      if ((yield* red(l)) + (yield* red(r)) !== allCleaned) return false;
       // The two sides read as the whole does: a value the whole hides only because it stands whole as printed (its
       // first character an escape's final byte once cut) is in neither side as a part.
-      if (read(left) + read(right) !== allRead) return false;
+      if ((yield* read(left)) + (yield* read(right)) !== allRead) return false;
       return side === "after" || stripTerminal(left + AFTER_HEAD) === l + AFTER_HEAD;
     };
     let tried = 0;
@@ -256,10 +297,10 @@ export function clearCut(before: string, after: string, side: "before" | "after"
       return true;
     };
     if (side === "before") {
-      for (let c = at; c > 0 && more(); c--) if (clear(c)) return at - c;
+      for (let c = at; c > 0 && more(); c--) if (yield* clear(c)) return at - c;
       return null;
     }
-    for (let c = at; c < text.length && more(); c++) if (clear(c)) return c - at;
+    for (let c = at; c < text.length && more(); c++) if (yield* clear(c)) return c - at;
     return null;
   } catch {
     return null; // fail closed: nothing of text that couldn't be checked
@@ -271,18 +312,43 @@ export function clearCut(before: string, after: string, side: "before" | "after"
  * lines are taken out. outputTaint (step 7) reads this, so nothing can hide in the lines step 5 leaves out.
  */
 export function cleanOutput(raw: Uint8Array, o: Pick<ShapeOptions, "typed" | "secretSpans">): string {
+  return runSteps(cleanSteps(raw, o, beforeCut, beforeCutSteps));
+}
+
+/**
+ * cleanOutput with Ember's main thread given back between its whole-text passes (merge review integ-y-2): a run's
+ * kept output is up to 4 MiB, and cleaning it at once held the thread about 1 s (1.7 s with three of each vault
+ * entry filled), while Stop must answer within 300 ms. The same steps as cleanOutput, so the same bytes; none of them
+ * cuts the text into slices, since several passes match across lines. null once `stopped()` says so: nothing of the
+ * text, cleaned or not, goes anywhere. `work` counts the steps run and the macrotasks given (runStepsYielding).
+ */
+export function cleanOutputAsync(raw: Uint8Array, o: Pick<ShapeOptions, "typed" | "secretSpans">, stopped: () => boolean, work?: { steps: number; turns: number }): Promise<string | null> {
+  return runStepsYielding(cleanSteps(raw, o, beforeCut, beforeCutSteps), stopped, work);
+}
+
+/** cleanOutput's steps: a step after decoding, before each redactor's pass, and after the terminal codes go. */
+function* cleanSteps(
+  raw: Uint8Array, o: Pick<ShapeOptions, "typed" | "secretSpans">,
+  R: ((text: string) => string) | null, steps: ((text: string) => Generator<void, string, void>) | null,
+): Generator<void, string, void> {
   // The output's own private-use markers can't pose as a cut span: replaced one for one, so offsets hold.
   const decoded = decode(raw).replace(/[\ue000-\ue002]/g, "\ufffd");
+  yield;
   // What the vault filled goes before the terminal codes do, where it stands whole as printed (integ-z-1): between
   // the markers, as below, so a marker is never taken for the redactor's own.
-  const printed = cutSpans(decoded, o.secretSpans).split(/([\ue000\ue001])/).map((part, i) => (i % 2 ? part : wholeAsPrinted(part))).join("");
-  const plain = stripTerminal(printed);
+  const parts = cutSpans(decoded, o.secretSpans).split(/([\ue000\ue001])/);
+  for (let i = 0; i < parts.length; i += 2) parts[i] = yield* wholeAsPrintedSteps(parts[i], R, steps);
+  const plain = stripTerminal(parts.join(""));
+  yield;
   // What the vault filled goes first, from the whole text (vault-3-y9-1). Typed lines and secrets are handled between the markers, so a marker's own words ("secret: the …") are never taken
   // for a key and its value.
-  return plain
-    .split(/([\ue000\ue001])/)
-    .map(part => (part === MARK_ANSWERED ? SECRET_ANSWERED : part === MARK_UNANSWERED ? SECRET_UNANSWERED : redactSecrets(capLines(cutTyped(whole(part), o.typed)))))
-    .join("");
+  const out = plain.split(/([\ue000\ue001])/);
+  for (let i = 0; i < out.length; i++) {
+    const part = out[i];
+    out[i] = part === MARK_ANSWERED ? SECRET_ANSWERED : part === MARK_UNANSWERED ? SECRET_UNANSWERED
+      : yield* redactSteps(capLines(cutTyped(yield* wholeSteps(part, R, steps), o.typed)));
+  }
+  return out.join("");
 }
 
 const utf8Length = (s: string): number => new TextEncoder().encode(s).length;

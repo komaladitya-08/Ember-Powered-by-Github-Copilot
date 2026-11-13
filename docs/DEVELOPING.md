@@ -1785,7 +1785,8 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   the worker's `list_windows` and a click's landing place, Assisted's description of a step), which main hands the
   redactor (`setQuoteRedactor`); code that cuts screen text for a model some other way must do the same. A
   command's output is redacted whole the same way before its lines are cut at 4,096 and 1,000 characters
-  (commands/output.ts `cleanOutput`, `setOutputRedactor`), and output that can't be checked is not handed on. And
+  (commands/output.ts `cleanOutput`, `setOutputRedactor`, at a run's end a pattern at a time: `cleanOutputAsync` and
+  the vault's `textSteps`), and output that can't be checked is not handed on. And
   `Perception` asks the redactor about every element first
   (`holdsVaultValue`): whatever says a filled value (the field itself, a line that repeats it, a tab named after it)
   loses its words and is blacked out of every picture as a secret field is, and a field is kept secret by the helper
@@ -2805,6 +2806,16 @@ downloads it on first use per target and checks it before sending.
   user's SID).
 - **Fail closed**: an unknown target, a malformed message from a remote or a distro, an unverifiable bundle, a policy
   that can't be read, or a command that can't be shown exactly as it will run is refused, saying why in plain words.
+- **A run's end gives Stop its turn**: a run keeps up to 4 MiB of output, and cleaning it at once held Ember's main
+  thread about 1 s (1.7 s with three logins, cards and contacts filled in the vault), where Stop must answer within
+  300 ms. So the run's end (flow.ts `finishRun`) makes the cut between its first and last output
+  (`OutputKeeper.keptSteps`), cleans (`cleanOutputAsync`) and redacts its own check copy (`redactSecretsYielding`) a
+  whole-text pass at a time, with a macrotask at least every 8 ms (`runStepsYielding`), and a Stop seen there ends
+  the call as stopped with nothing of the output for the model, the audit or the log. Never cut the text into slices
+  to do this: several passes match across lines. The passes are one list for both ways (`REDACT_PASSES`, the vault's
+  `textSteps`, `cleanSteps`), so `cleanOutput` and `cleanOutputAsync` give the same bytes; give a new pass to that
+  list, never to only one of them. The longest single step is MySQL's `-p` pattern, about 140 ms on 4 MiB of build
+  output.
 - **Command output is not completion status**: remote runs use the child process's exit code and signal. Printed
   `ember-exit` sequences on stdout or stderr cannot override them, including on pipes and Linux/macOS PTYs.
 - **Nothing changes without them**: with commands off everywhere and only this computer, the prompts are today's
