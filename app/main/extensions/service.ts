@@ -30,12 +30,12 @@ import type { AuditLog } from "../policy/audit";
 import type { Settings, SettingsPatch } from "../settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
-import { MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed } from "../../renderer/home/extensions-copy";
+import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
 import { REFUSED, classify, failureNote, gateQuestion, wrapResult } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
-import { canonical, checkPins, isReadOnly, pinAll, shownHash, type PinnedTool } from "./pin";
-import { probeHttp, probeStdio, type ProbeResult } from "./probe";
+import { canonical, checkPins, isReadOnly, pinAll, shownHash, toolHash, type PinnedTool } from "./pin";
+import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
 import { SAVED_OUTPUT } from "../agent/runtime-temp";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
 import { MCP_TOOL_NAME, clashingToolNames, modelToolName } from "./tool-name";
@@ -127,8 +127,38 @@ interface SessionGate {
   listChanged: Set<string>;
   epoch: number;
   stop?: (servers: string[]) => Promise<void>;
+  /** A server's own tool list now, asked through the session (its running process, not a fresh one). */
+  served?: (server: string) => Promise<unknown>;
+  /**
+   * Server keys Ember took out of this session: one of their tools showed differently from its pin
+   * (integrations-r9-1), or the server said its list changed (integrations-x9-1). Their tools are denied here.
+   */
+  withdrawn: Set<string>;
+  /** Servers that didn't give their list when asked after a call: not asked after later calls in this session. */
+  mute: Set<string>;
+  /**
+   * Each withdrawn server's leaving, once asked of the runtime: whether it is out. One per server, each over within
+   * STOP_WAIT_MS, so what the session's hooks wait for is bounded by Ember, never by a server (integrations-x9-4).
+   */
+  stops: Map<string, Promise<boolean>>;
   tools: Map<string, { item: StoredItem; server: StoredServer; tool: PinnedTool }>;
 }
+
+/** How long Ember waits for the runtime to list or disable a server in a session before it goes on without (ms). */
+const STOP_WAIT_MS = 3000;
+
+/** How long a call's result waits for its server's list (ms): a server that just answered a call answers this at once. */
+const LIST_WAIT_MS = 1500;
+
+/** `p`, or a rejection once `ms` have passed without it settling (a runtime or a server that doesn't answer). */
+function inTime<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("no answer in time")), ms); timer.unref?.(); });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
+}
+
+/** What the session shows of a tool is exactly what was pinned: its name, description and input schema. */
+const asPinned = (pin: PinnedTool, now: ShownTool) => shownHash(pin.name, now.description ?? "", now.input_schema ?? null) === shownHash(pin.name, pin.description, pin.inputSchema);
 
 export class ExtensionsService implements ExtensionsApi {
   private store: ExtensionStore;
@@ -148,12 +178,24 @@ export class ExtensionsService implements ExtensionsApi {
    * asks. Kept here, not per session, so a reconnect (which builds a new session) keeps it; conversationEnded() clears it.
    */
   private tainted = false;
+  /**
+   * Server keys that said their tool list changed in this conversation (integrations-x9-1). Kept here as the taint
+   * is, across the reload such a word causes: a server that says it again has all its tools turned off.
+   */
+  private announcers = new Set<string>();
   /** Installs and agreements run one at a time (two at once could take the same server key or copy into one folder). */
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private o: ExtensionsDeps) {
     this.store = new ExtensionStore(o.dir);
     this.items = this.store.read();
+    // Turned off or removed while the list couldn't be written (integrations-r9-4): off before anything loads, and
+    // the marks go once the list says so itself.
+    const off = new Set(this.store.markedOff());
+    if (off.size) {
+      for (const item of this.items) if (off.has(item.id)) item.enabled = false;
+      try { this.save(); } catch (err) { o.log.warn("extensions.save_failed", { err }); }
+    }
     let active = this.active();
     o.settings.onChange?.(() => {
       const next = this.active();
@@ -169,6 +211,7 @@ export class ExtensionsService implements ExtensionsApi {
     this.stopPart().stop();
     this.session = null;
     this.tainted = false;
+    this.announcers.clear();
   }
 
   private serial<T>(run: () => Promise<T>): Promise<T> {
@@ -229,6 +272,22 @@ export class ExtensionsService implements ExtensionsApi {
 
   private save(): void {
     this.store.write(this.items);
+    // The list on disk is the whole truth again: no mark beside it is needed.
+    this.store.clearOff();
+  }
+
+  /**
+   * An item the user turned off or removed while the list couldn't be written (integrations-r9-4: Remove answered ok
+   * at the second press and the item came back, on and agreed, at the next start). It is off for the rest of this run
+   * whatever can be saved, a mark beside the list keeps it off at the next start where even that can be written, Home
+   * is told, and the request fails in words that say the change wasn't saved.
+   */
+  private heldOff(item: StoredItem, what: "removed" | "off", err: unknown): never {
+    this.o.log.warn("extensions.save_failed", { err, ext: item.id });
+    item.enabled = false;
+    const kept = this.store.markOff(item.id);
+    this.changed();
+    throw new Error(extensionUnsaved(what, kept), { cause: err });
   }
 
   private audit(e: Record<string, unknown>): void {
@@ -504,9 +563,16 @@ export class ExtensionsService implements ExtensionsApi {
   async uninstall(id: string): Promise<void> {
     const item = this.items.find(i => i.id === id);
     if (!item) return;
-    this.items = this.items.filter(i => i.id !== id);
+    // Stopped at once; gone from the list only once the list on disk no longer holds it.
     this.stopServers(id);
-    this.save();
+    const all = this.items;
+    this.items = all.filter(i => i.id !== id);
+    try {
+      this.save();
+    } catch (err) {
+      this.items = all;
+      this.heldOff(item, "removed", err);
+    }
     try { fs.rmSync(this.store.pluginDir(id), { recursive: true, force: true }); } catch (err) { this.o.log.warn("extensions.remove_files_failed", { err }); }
     try { this.audit({ phase: "removed", ext: id }); } catch { /* removing makes Ember stricter: it goes ahead */ }
     this.changed();
@@ -519,7 +585,17 @@ export class ExtensionsService implements ExtensionsApi {
     item.enabled = on;
     if (!on) this.stopServers(id);
     if (on) await this.serial(() => this.check(item));
-    this.save();
+    try {
+      this.save();
+    } catch (err) {
+      if (!on) this.heldOff(item, "off", err);
+      // On only once that is saved: what can't be recorded isn't started.
+      this.o.log.warn("extensions.save_failed", { err, ext: id });
+      item.enabled = false;
+      this.stopServers(id);
+      this.changed();
+      throw new Error(EXTENSION_ON_UNSAVED, { cause: err });
+    }
     this.changed();
   }
 
@@ -613,6 +689,16 @@ export class ExtensionsService implements ExtensionsApi {
     };
   }
 
+  /**
+   * Stopping a session's servers failed. A session whose connection is already gone took its servers with it (each
+   * change of model service disposes the old one first, and so does quitting): a note, not a warning with a stack
+   * (integrations-r9-13: 3 of 3 changes logged one).
+   */
+  private stopFailed(err: unknown): void {
+    if (/connection is (?:disposed|closed)/i.test(errorText(err))) this.o.log.debug("extensions.stop_moot");
+    else this.o.log.warn("extensions.stop_failed", { err });
+  }
+
   /** Revoke each selected launch, even one the runtime has not started yet; never signal a pid read from disk. */
   private stopServers(id?: string): void {
     for (const [item, leases] of this.leases) {
@@ -624,7 +710,7 @@ export class ExtensionsService implements ExtensionsApi {
     }
     const gate = this.session;
     const keys = gate ? [...new Set([...gate.tools.values()].filter(e => id === undefined || e.item.id === id).map(e => e.server.key))] : [];
-    if (keys.length && gate?.stop) void gate.stop(keys).catch(err => this.o.log.warn("extensions.stop_failed", { err }));
+    if (keys.length && gate?.stop) void gate.stop(keys).catch(err => this.stopFailed(err));
     // Old versions left pid files. Dropping them is safe; their numbers never identify a process to kill.
     try { for (const f of fs.readdirSync(this.store.runDir)) if (/^\d+\.pid$/.test(f)) fs.rmSync(path.join(this.store.runDir, f), { force: true }); } catch { /* no run folder */ }
     this.o.log.info("extensions.stopped", { servers: keys.length });
@@ -635,7 +721,7 @@ export class ExtensionsService implements ExtensionsApi {
   /** The extension tools for a new session (the conductor's), or undefined while extensions aren't active or none is ready. */
   forSession(): SessionExtensions | undefined {
     if (!this.active()) return undefined;
-    const gate: SessionGate = { refused: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, tools: new Map() };
+    const gate: SessionGate = { refused: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, withdrawn: new Set(), mute: new Set(), stops: new Map(), tools: new Map() };
     this.session = gate;
     const mcpServers: Record<string, MCPServerConfig> = {};
     for (const item of this.items) {
@@ -657,14 +743,19 @@ export class ExtensionsService implements ExtensionsApi {
       postToolUse: input => this.result(gate, input),
       postToolUseFailure: input => this.failure(gate, input),
       verify: shown => this.verify(gate, shown),
-      bind: (live, stop) => {
+      bind: (live, stop, served) => {
         gate.live = live;
         gate.stop = stop;
+        gate.served = served;
         // Removal/Stop can win the race with session startup; the late binding must not restart anything.
         const stale = [...new Set([...gate.tools.values()].filter(e => !this.active() || gate.epoch !== this.epoch || !this.items.some(i => i.id === e.item.id && i.enabled)).map(e => e.server.key))];
-        if (stale.length && stop) void stop(stale).catch(err => this.o.log.warn("extensions.stop_failed", { err }));
+        if (stale.length && stop) void stop(stale).catch(err => this.stopFailed(err));
+        // A server taken out before the session was bound (it said its list changed as the session loaded) leaves
+        // it now, and the session's hooks wait for that.
+        if (gate.withdrawn.size) void this.stopIn(gate, [...gate.withdrawn]);
       },
-      listChanged: server => { gate.listChanged.add(server); this.o.log.info("extensions.list_changed", { server }); },
+      listChanged: server => this.announced(gate, server),
+      settled: () => this.settle(gate),
       newTurn: () => gate.refused.clear(),
     };
   }
@@ -687,14 +778,141 @@ export class ExtensionsService implements ExtensionsApi {
     return { command: c.command, args: c.args, env: c.env, cwd, runDir: this.store.runDir, leaseFile, group: this.o.os !== "win32" };
   }
 
-  private verify(gate: SessionGate, shown: ShownTool[]): void {
+  /**
+   * What a session shows of its extension tools as it loads, against their pins. A tool that differs is taken out of
+   * the session before its first request (integrations-r9-1: the pin was compared only to decide calls, so the model
+   * was shown a description nobody agreed to for the whole conversation while Home said "Ready").
+   */
+  private async verify(gate: SessionGate, shown: ShownTool[]): Promise<void> {
+    const differ: string[] = [];
     for (const t of shown) {
       const e = gate.tools.get(t.name);
       if (!e) continue;
-      const ok = shownHash(e.tool.name, t.description ?? "", t.input_schema ?? null) === shownHash(e.tool.name, e.tool.description, e.tool.inputSchema);
+      const ok = asPinned(e.tool, t);
       gate.shown.set(t.name, ok);
-      if (!ok) this.o.log.warn("extensions.shown_differs", { ext: e.item.id, tool: e.tool.name });
+      if (!ok) { differ.push(t.name); this.o.log.warn("extensions.shown_differs", { ext: e.item.id, tool: e.tool.name }); }
     }
+    if (differ.length) await this.withdraw(gate, differ, false);
+  }
+
+  /**
+   * A server said its tool list changed (`mcp.tools.list_changed`). The runtime asks the server again as it builds
+   * its next request and shows the model what it gets, with no word to Ember first, so nothing Ember could ask the
+   * server now says what the model will be shown (integrations-x9-1: a server that answered Ember's own question as
+   * agreed and the runtime's with new text kept that text in every request of the conversation, Home saying
+   * "Ready"). The word itself is the change. The server leaves this session at once, unasked; the conversation is
+   * tainted (the notice may have reached the runtime a moment before a request was built) and reloads between
+   * turns, where the runtime's own first list is checked against the pins as at every load. A server that says it
+   * again in the same conversation has every tool it had in the session turned off until the user agrees again
+   * (PLAN.md §2 "Connectors"). A stdio server's notice doesn't get this far: Ember's launcher never passes it to
+   * the runtime (launch.ts), so this is for a remote server, and for anything that got past.
+   */
+  private announced(gate: SessionGate, server: string): void {
+    // Logged once a session for each server: how often it says so is the server's choice, and the log isn't its to fill.
+    if (!gate.listChanged.has(server)) this.o.log.info("extensions.list_changed", { server });
+    gate.listChanged.add(server);
+    // An old session is nobody's, and a server already on its way out has nothing more to lose.
+    if (gate !== this.session || gate.epoch !== this.epoch || gate.withdrawn.has(server)) return;
+    const names = [...gate.tools].filter(([, e]) => e.server.key === server).map(([name]) => name);
+    if (!names.length) return;
+    if (this.announcers.has(server)) {
+      void this.withdraw(gate, names, true).catch(err => this.o.log.warn("extensions.withdraw_failed", { err }));
+      return;
+    }
+    this.announcers.add(server);
+    this.tainted = true;
+    void this.stopIn(gate, [server]);
+    this.changed();
+  }
+
+  /**
+   * A server's own list after one of its calls, against the pins, before the result goes back
+   * (integrations-r9-1): a head start on a server that changes a tool as it answers and says so, since its notice
+   * and the result's hook reach Ember in either order (the hook first in 1 run of 14). Only ever a reason to turn
+   * something off: a list that matches proves nothing about what the runtime will be given (integrations-x9-1).
+   * Bounded by LIST_WAIT_MS, and a server that doesn't give its list isn't asked again in this session. A tool the
+   * server no longer lists isn't shown any more: nothing to take away, and the next start's check turns it off.
+   */
+  private async afterCall(gate: SessionGate, server: string): Promise<void> {
+    if (gate !== this.session || gate.epoch !== this.epoch || gate.withdrawn.has(server) || !gate.served || gate.mute.has(server)) return;
+    let now: Map<string, string>;
+    try {
+      const listed = await inTime(gate.served(server), LIST_WAIT_MS);
+      if (!Array.isArray((listed as { tools?: unknown })?.tools)) throw new Error("the runtime did not report the server's tools");
+      now = new Map(servedTools([listed]).map(t => [t.name, toolHash(t)]));
+    } catch {
+      gate.mute.add(server);
+      this.o.log.info("extensions.served_tools_unread", { server });
+      return;
+    }
+    // An old session's list must not change the pins of a newer conversation. A server that said meanwhile that its
+    // list changed is on its way out already: what its list shows to differ is still marked.
+    if (gate !== this.session || gate.epoch !== this.epoch) return;
+    const differ = [...gate.tools].filter(([, e]) => e.server.key === server && now.has(e.tool.name) && now.get(e.tool.name) !== e.tool.hash).map(([name]) => name);
+    if (differ.length) await this.withdraw(gate, differ, true);
+  }
+
+  /**
+   * Settles once every server Ember is taking out of this session is out, or the runtime's time to do it has run out
+   * (at once when there is none). Each leaving is asked for once and bounded by STOP_WAIT_MS on its own, so one wait
+   * here is at most that long whatever a server sends and however often (integrations-x9-4: each notice queued a
+   * question to the server, 27 s for one ordinary request).
+   */
+  private async settle(gate: SessionGate): Promise<void> {
+    if (gate.stops.size) await Promise.all(gate.stops.values());
+  }
+
+  /**
+   * Disables `servers` in the gate's own session (never another), each once, saying whether the runtime did it. From
+   * here on their tools are denied in this session whatever the runtime answers. A runtime that doesn't answer
+   * counts as not done after STOP_WAIT_MS: the call or the start waiting on this goes on (denied, tainted).
+   */
+  private async stopIn(gate: SessionGate, servers: string[]): Promise<boolean> {
+    const stops = servers.map(server => {
+      gate.withdrawn.add(server);
+      let stop = gate.stops.get(server);
+      if (!stop && gate.stop) {
+        // Asked of the runtime now, in this very step: nothing may be built in between.
+        let asked: Promise<void>;
+        try { asked = gate.stop([server]); } catch (err) { asked = Promise.reject(err); }
+        stop = inTime(asked, STOP_WAIT_MS).then(() => true, err => { this.stopFailed(err); return false; });
+        gate.stops.set(server, stop);
+      }
+      return stop ?? Promise.resolve(false);
+    });
+    return stops.length > 0 && (await Promise.all(stops)).every(Boolean);
+  }
+
+  /**
+   * Tools the session shows differently from their pins: each is marked changed for good (off until the user agrees
+   * again; Home says "Changed since you agreed"), audited without its text, and its server is disabled in that session
+   * so the model is no longer shown it; the conversation then reloads between turns without the tool. `seen`: the
+   * model may have been sent the text already (a change mid-session, or a server that said twice that its list
+   * changed), so every later extension call in this conversation asks; the same when the server couldn't be taken
+   * out. This only ever turns something off.
+   */
+  private async withdraw(gate: SessionGate, names: string[], seen: boolean): Promise<void> {
+    let marked = false;
+    // A replaced session or a pulled kill switch: the session is nobody's, and its list says nothing of today's pins.
+    const current = gate === this.session && gate.epoch === this.epoch;
+    // The server first (the runtime may be about to build a request), the record while the runtime works on it.
+    const stopping = this.stopIn(gate, [...new Set(names.flatMap(n => gate.tools.get(n)?.server.key ?? []))]);
+    for (const name of names) {
+      const e = gate.tools.get(name);
+      if (!e) continue;
+      gate.shown.set(name, false);
+      // The pin it was compared with, not one the user agreed to since (agreeing again pins the new text).
+      const stored = current && this.items.includes(e.item) ? e.item.servers.find(s => s === e.server)?.tools.find(t => t.name === e.tool.name && t.hash === e.tool.hash) : undefined;
+      if (!stored || stored.changed) continue;
+      stored.changed = true;
+      marked = true;
+      this.o.log.warn("extensions.tool_changed_live", { ext: e.item.id, tool: e.tool.name });
+      try { this.audit({ phase: "changed", ext: e.item.id, tool: name }); } catch { /* it is turned off either way */ }
+    }
+    if (marked) { try { this.save(); } catch (err) { this.o.log.warn("extensions.save_failed", { err }); } }
+    const out = await stopping;
+    if (current && (seen || !out)) this.tainted = true;
+    if (marked) this.changed();
   }
 
   /**
@@ -704,21 +922,17 @@ export class ExtensionsService implements ExtensionsApi {
    */
   private async shownNow(gate: SessionGate, name: string, generation: number): Promise<boolean> {
     const e = gate.tools.get(name);
-    if (!e || !gate.live || gate.shown.get(name) !== true) return false;
+    // A server Ember took out of this session: its tools are denied here whatever the runtime still shows of them.
+    if (!e || !gate.live || gate.shown.get(name) !== true || gate.withdrawn.has(e.server.key)) return false;
     let now: ShownTool | undefined;
     try { now = (await gate.live()).find(t => t.name === name); } catch (err) { this.o.log.warn("extensions.live_tools_failed", { err }); return false; }
     // An old lookup must not change the pins of a replacement item or a newer conversation.
     if (gate !== this.session || gate.epoch !== this.epoch || generation !== this.generation || !this.items.includes(e.item)) return false;
-    if (now && shownHash(e.tool.name, now.description ?? "", now.input_schema ?? null) === shownHash(e.tool.name, e.tool.description, e.tool.inputSchema)) return true;
-    gate.shown.set(name, false);
-    this.o.log.warn("extensions.tool_changed_live", { ext: e.item.id, tool: e.tool.name });
-    const stored = this.items.find(i => i.id === e.item.id)?.servers.find(s => s.key === e.server.key)?.tools.find(t => t.name === e.tool.name);
-    if (stored && !stored.changed) {
-      stored.changed = true;
-      try { this.save(); } catch (err) { this.o.log.warn("extensions.save_failed", { err }); }
-      try { this.audit({ phase: "changed", ext: e.item.id, tool: name }); } catch { /* the call is denied either way */ }
-      this.changed();
-    }
+    if (now && asPinned(e.tool, now)) return true;
+    // Its server left this session while the list was read: denied until the conversation reloads.
+    if (gate.withdrawn.has(e.server.key)) return false;
+    // Shown differently, or no longer shown: off for good, and its server leaves this session (integrations-r9-1).
+    await this.withdraw(gate, [name], true);
     return false;
   }
 
@@ -734,7 +948,7 @@ export class ExtensionsService implements ExtensionsApi {
       ...(tool ? { tool } : {}),
       shownAsPinned: shownAsPinned && gate.shown.get(name) === true,
       tainted: this.tainted, refused: gate.refused.has(name), remote: e?.server.spec?.type !== "stdio",
-      hintsStale: !!e && gate.listChanged.has(e.server.key),
+      hintsStale: !!e && gate.listChanged.has(e.server.key), serverStopped: !!e && gate.withdrawn.has(e.server.key),
     });
     if (decision.verdict === "deny") return decision;
     if (gate !== this.session || generation !== this.generation) return { verdict: "deny" as const, reason: "Extensions changed. Wait for the conversation to reload before trying again." };
@@ -743,6 +957,8 @@ export class ExtensionsService implements ExtensionsApi {
 
   private async decide(gate: SessionGate, input: PreToolUseHookInput): Promise<PreToolUseHookOutput> {
     const e = gate.tools.get(input.toolName);
+    // A server is leaving the session: the decision waits until it is out (its tools are denied).
+    await this.settle(gate);
     const generation = this.generation;
     const shownAsPinned = await this.shownNow(gate, input.toolName, generation);
     const { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation);
@@ -781,12 +997,20 @@ export class ExtensionsService implements ExtensionsApi {
     return deny(REFUSED);
   }
 
+  /** After a call of `server`'s (or of none): its list against the pins, then every server on its way out is out. */
+  private async checked(gate: SessionGate, server: string | undefined): Promise<void> {
+    if (server) await this.afterCall(gate, server).catch(err => this.o.log.warn("extensions.recheck_failed", { err }));
+    await this.settle(gate);
+  }
+
   /**
    * A failed call: the SDK passes its text to the model as it is (a failure can't be rewritten), so Ember says it is
    * untrusted, and the conversation is tainted (a failure is an easy way to smuggle text): every later call asks.
    */
   private async failure(gate: SessionGate, input: PostToolUseFailureHookInput): Promise<PostToolUseFailureHookOutput> {
     const e = gate.tools.get(input.toolName);
+    // As for a result: its server's list is compared with the pins before the runtime builds its next request.
+    await this.checked(gate, e?.server.key);
     const text = typeof input.error === "string" ? input.error : "";
     const signals = injectionSignals(text);
     this.tainted = true;
@@ -796,6 +1020,10 @@ export class ExtensionsService implements ExtensionsApi {
 
   private async result(gate: SessionGate, input: PostToolUseHookInput): Promise<PostToolUseHookOutput | void> {
     const e = gate.tools.get(input.toolName);
+    // A server that changes its list as it answers (a rug pull after a call): the runtime builds its next request
+    // only once this hook returns. So Ember asks the server for its list now, and this returns once a server that
+    // changed a tool, or said meanwhile that its list changed, is out of the session.
+    await this.checked(gate, e?.server.key);
     const text = typeof input.toolResult?.textResultForLlm === "string" ? input.toolResult.textResultForLlm : "";
     const signals = injectionSignals(text);
     // Output too big to pass on: the runtime saved it to a file and passes a pointer and a preview, so most of it was

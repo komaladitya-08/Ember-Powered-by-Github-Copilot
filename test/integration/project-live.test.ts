@@ -190,6 +190,61 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files an
 }, 120_000);
 
 
+it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("takes ordinary source files, names each file it refuses with its reason and keeps the rest of the choice (integrations-r9-2)", async () => {
+  const requireCjs = createRequire(import.meta.url);
+  const root = process.cwd();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-choice-"));
+  const userData = path.join(dir, "profile");
+  fs.mkdirSync(userData);
+  const at = (name: string) => { const f = path.join(dir, name); fs.writeFileSync(f, "export const x = 1;\n"); return f; };
+  const [main, vue, make, tokenizer, picture, tokens] = ["main.ts", "App.vue", "Makefile", "tokenizer.ts", "photo.png", "tokens.json"].map(at);
+  fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
+    version: 1, onboarded: true, wakeWord: false, consent: { version: CONSENT_VERSION, at: new Date().toISOString() },
+  }));
+  const mock = await startMockLlm({ delayMs: 2 });
+  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
+  try {
+    app = await _electron.launch({
+      executablePath: requireCjs("electron") as string,
+      args: [root, "--show-settings", ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
+      env: { ...process.env, EMBER_USER_DATA: userData, EMBER_TEST_PROVIDER_URL: mock.baseUrl },
+    });
+    // Only the OS file dialog is stood in for.
+    const choose = (selected: string[]) => app!.evaluate(({ dialog }, files) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: files });
+    }, selected);
+    const settingsPage = () => app?.windows().find(page => page.url().includes("/renderer/home/index.html"));
+    await expect.poll(() => !!settingsPage(), { timeout: 20_000 }).toBe(true);
+    const home = settingsPage()!;
+    await home.locator('a[href="#project-h"]').click({ timeout: 15_000 });
+    const chosen = async () => (await home.locator("#project-files li span").allInnerTexts()).map(t => t.split(" · ")[0]);
+    // Four ordinary files, each refused before in words about credentials, with nothing left chosen.
+    await choose([main, vue, make, tokenizer]);
+    await home.locator("#project-pick").click({ timeout: 30_000 });
+    await home.locator("#project-files").waitFor({ state: "visible" });
+    expect(await chosen()).toEqual(["main.ts", "App.vue", "Makefile", "tokenizer.ts"]);
+    expect(await home.locator("#project-status").innerText()).toBe("Review the selection before sending.");
+    // A choice with a picture and a file named for tokens in it: those two are named, each with its reason, and the
+    // other two are chosen.
+    await choose([main, picture, vue, tokens]);
+    await home.locator("#project-pick").click();
+    await expect.poll(chosen).toEqual(["main.ts", "App.vue"]);
+    expect(await home.locator("#project-status").innerText()).toBe(
+      "photo.png isn't a kind of file Projects takes. Choose source, documentation or diff files. tokens.json is named like a file that holds passwords, tokens or keys, so Ember won't send it. The other 2 files are chosen.");
+    // A choice with nothing Projects takes leaves the last one as it was, and says why.
+    await choose([picture]);
+    await home.locator("#project-pick").click();
+    await expect.poll(() => home.locator("#project-status").innerText()).toBe("photo.png isn't a kind of file Projects takes. Choose source, documentation or diff files.");
+    expect(await chosen()).toEqual(["main.ts", "App.vue"]);
+    // Nothing was read or sent by choosing.
+    expect(JSON.stringify(mock.requests)).not.toContain("export const x");
+  } finally {
+    await app?.close().catch(() => undefined);
+    await mock.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}, 90_000);
+
 it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps the chosen files, the typed request, the answer and its diff when a model change reconnects (integrations-r1)", async () => {
   const requireCjs = createRequire(import.meta.url);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-reconnect-"));

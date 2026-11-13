@@ -616,10 +616,44 @@ it builds on:
   an MCP tool silently replaces an Ember tool of the same name. `verifySessionTools` accepts an extension tool only as
   that MCP tool and checks its description and schema against the pin. With no extension tool the session is today's
   exactly.
-- **Checked at every call, not only at load.** A server can change a tool mid-session (`notifications/tools/list_changed`),
-  so `verifySessionTools` binds the gate to the session's live tool list, and every call compares what the model is
-  shown now with the pin; a tool that differs is denied and marked changed for good (off until the user agrees again).
-  A session never bound, or whose list can't be read, denies every extension call.
+- **Checked as the session loads, after each call and at every call; a server's word that its list changed takes
+  it out.** The pin decides what the model is shown, not only which calls run (integrations-r9-1: compared only at
+  calls, a description nobody agreed to stayed in every request of the conversation while Home said “Ready”).
+  `verifySessionTools` binds the gate to the session (its live tool list, the switch that disables one server in it,
+  and a server's own `tools/list` through `session.rpc.mcp.listTools`), then waits for the pins' check. A tool that
+  differs from its pin is marked changed for good (off until the user agrees again; Home says “Changed since you
+  agreed” and offers **Review tools**), audited (`phase: "changed"`, never its text), and its server is disabled in
+  that session (`session.rpc.mcp.disable`); `generation` moves, so the conversation reloads between turns with the
+  server's other tools. In the session it left, every tool of that server is denied.
+  - *As it loads:* the runtime's own metadata, which is what the model is sent, is compared with the pins (with the
+    two empty schema fields the runtime adds, `shownSchema`, integrations-x9-3). A server that lists one description
+    to Ember's own checks and another to the conversation is out before the session's first request.
+  - *The runtime's list never changes mid-session for a stdio server.* Measured on the bundled runtime: it asks a
+    server for its tools again only after the server's `notifications/tools/list_changed` (never without one, over
+    seven requests and two calls), as it builds its next request, and shows the model what it gets with no word to
+    Ember first. Ember's launcher stands between the runtime and a stdio server and never passes that notice on
+    (`passedOn`, launch.ts; every other line is passed on as the launcher read it), so the list the runtime holds is
+    the one checked as the session loaded. Nothing Ember asks a server can stand in for that: a server can answer
+    Ember's question as agreed and the runtime's with new text (integrations-x9-1: it did, in every request of the
+    conversation, 5 of 5).
+  - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: a remote server, which has
+    no launcher between, or anything that got past it), that word is the change. The server is disabled in the
+    session at once, unasked, the conversation is tainted and reloads between turns, where the runtime's first list
+    is checked against the pins as at every load. A server that says it again in the same conversation has every
+    tool it had in the session marked changed (off until the user agrees again). The event is heard from the
+    session's first moment (`onEvent` in the session's config). Not closed for a remote server: a notice that
+    reaches the runtime a few milliseconds before it builds a request can put the new text in that one request,
+    before Ember hears of it; after that the server is out and every extension call asks. Closing it needs the
+    runtime not to refresh a tool list mid-session, or Ember between the runtime and a remote server too.
+  - *After each of a server's calls*, before the result goes back, Ember asks that server for its list
+    (`session.rpc.mcp.listTools`, at most 1.5 s, and not again in that session once unanswered) and compares each
+    admitted tool with its pin whole, hints too: a head start on a server that changes a tool as it answers and says
+    so. It only ever turns something off; a list that matches proves nothing.
+  - The session's hooks (before and after every tool, and before a new request) wait until a server on its way out
+    is out: one `mcp.disable` per server, each at most 3 s, so a server's notices can't hold a turn however many it
+    sends (integrations-x9-4: each queued a question to the server, 27 s for one ordinary request).
+  - *At every call:* what the model is shown now is compared with the pin again; a tool that differs is denied and
+    turned off the same way. A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
   LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
   differently, or refused this turn: deny. A read-only tool in an agreed item, with no injected text seen: allow.
@@ -628,10 +662,10 @@ it builds on:
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
   Allow and Not now, never Always. A yes counts only if the gate still allows the call when it comes. Every decision,
   answer and result is an `extension` audit entry, with sizes only.
-- **Hints changed mid-session.** The runtime's tool list has no hints, so a change of hints alone (`readOnlyHint` to
-  `destructiveHint`) can't be compared with the pin during a session. When a server sends `tools/list_changed`
-  (`mcp.tools.list_changed`), every tool of that server asks for the rest of the session; the next start's check
-  (`refresh()`) re-pins nothing and turns the changed tool off.
+- **Hints changed mid-session.** The runtime's tool list has no hints, so what the model is shown can't tell a
+  change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked after each of its calls,
+  can, and such a tool is turned off as above. Ember decides by the hints it pinned, never by what a server says
+  later. The next start's check (`refresh()`) re-pins nothing and turns a changed tool off.
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
@@ -651,7 +685,9 @@ it builds on:
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
   in `extensions/run/` (Linux and macOS: as the leader of its own process group, so the kill switch ends everything
-  it started; Windows: `taskkill /T`). A server that needs a `${VAR}` from the user's environment is refused, and
+  it started; Windows: `taskkill /T`). The server's input and output go through the launcher (`relay`): the runtime's
+  requests as they are, the server's lines one by one through `passedOn`, which drops its notice that its tool list
+  changed and anything that is no JSON-RPC message, and ends the server at a line of more than 64 MiB. A server that needs a `${VAR}` from the user's environment is refused, and
   proxy addresses reach it without their user name and password. This (and the blanked credential variables: see "Where the sign-in goes") keeps Ember's sign-in out of the server's
   own environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
   environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token
@@ -663,6 +699,14 @@ it builds on:
   with extensions off reconnects nothing.
 - **The kill switch** part `extensions` refuses every call from sessions loaded before it, drops their questions and
   ends every server the launcher recorded.
+- **A list that can't be written** (a full disk, a data folder that can't be written; integrations-r9-4). Turning an
+  item off or removing it stops its servers and keeps it off for the rest of the run whatever can be saved; removing
+  takes it from the list only once `extensions.json` no longer holds it, so a second **Remove** never answers
+  “Removed” for an item that would be back, on and agreed, at the next start. An empty mark, `extensions/off/<id>`
+  (it needs no room), keeps it off at the next start, which turns it off before anything loads and drops the mark
+  once the list is saved. Home is told at once and the message line says the change wasn't saved (`extensionUnsaved`
+  in app/renderer/home/extensions-copy.ts), and that the item may be back after a restart where not even the mark
+  could be written. Turning an item on that can't be saved leaves it off.
 - **Off for now:** connectors (`connectors()` is empty, `connect()` says they aren't available: they need GitHub's
   service, which the spike couldn't reach without a real sign-in), `extension.mjs` extensions (bare tool names that
   aren't filtered by `availableTools` and could shadow Ember's), the SDK's catalog, legacy SSE servers, servers that
@@ -1205,7 +1249,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
-| Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`) |
+| Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`, and `off/` while a change couldn't be saved) |
 | The Copilot runtime's temporary files (large tool output it saves; 0700, emptied at each connect and at sign-out) | `~/.config/ember/copilot-tmp/` |
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 
@@ -1360,7 +1404,17 @@ the address in force and its saved key are kept and come back with the switch (i
   "Key saved", with **Replace** and **Remove**) or put in any process's environment: it reaches only the Copilot
   runtime's provider config. **Remove** and **Sign out** delete it. Another GitHub account signing in leaves it in
   place: the key belongs to the user's model service, not to a GitHub account, so an account change has nothing to do
-  with it (Sign out deletes it only because signing out forgets everything the user set up).
+  with it (Sign out deletes it only because signing out forgets everything the user set up). A key is printable ASCII
+  with no spaces (`apiKeyProblem`): one pasted with a hidden character, curly quotes or a look-alike letter is refused
+  before it is saved or sent, in words about the key and never with it ("That key has a character an API key can't
+  hold, such as a hidden character or curly quotes picked up in copying. Copy it again from your provider.";
+  integrations-r9-5: it was saved, Electron's fetch refused the header before sending, and every check then blamed
+  the address and the network). One saved by an earlier build is still said to be saved (Home's row has **Replace**
+  beside it) and is never sent or given to the runtime (`StoredKey.unsendable`, `keyFor`): Test connection sends
+  nothing and says "The saved API key has a character that can't be sent to <host>. Replace the key."
+  (integrations-x9-8: counted as no key, the check went out without one and said the service needs a key). A request
+  a header's value stops says the key is at fault, with no cause for the status to turn into "Start it" or "check
+  the network".
 - **When it fails** (no model named, a refused key, a host that doesn't answer), the status names the provider from the
   moment Ember starts connecting to it, so Home's Models & connections leads with **Check my provider's details**
   (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
@@ -2494,8 +2548,22 @@ added later has the same effect on the Embers before it: say so in the release n
 
 ### 14.7 Copilot project work
 
-In Home under Projects, choose up to six source files, then send a review, plan or patch request. The
-connected model sees only the files you send. For an exact patch to one existing UTF-8 file with a final
+In Home under Projects, choose up to six source, build, documentation or diff files, then send a review, plan or
+patch request. The connected model sees only the files you send. Projects takes source, build and markup files, documentation, text and
+diffs by their type, and well-known files that have none (`Makefile`, `Dockerfile`, `README`, `pom.xml`), alone or
+with which build, stage or platform they are for (`Dockerfile.dev`, `Makefile.am`), never with a type of their own
+(`README.ppk`): the list is `textFile` and `namedFile` in app/main/agent/project.ts. Data and settings files stay off
+it (`.csv`, `.tsv`, `.xml`, `.ini`, `.cfg`, `.conf`, `.properties`, `.plist`), as does every type that holds
+credentials or other people's data by convention: memory's secret guard reads prose and code, not every format that
+keeps passwords, so for those the list is what keeps them from being sent (integrations-x9-2: with them on it, a
+browser's `logins.csv`, password managers' exports, FileZilla's `sitemanager.xml`, `pgpass.conf` and `redis.conf`
+were sent whole). Adding such a type sends more, so it is the owner's decision, never a fix. A file it
+doesn't take is named with its own reason and the rest of the choice is kept (`projectChoice`, `projectRefusedText`;
+integrations-r9-2): not a kind Projects takes (a picture, an archive, a lock file, a key file, `.env`-like types), a
+hidden file (its name starts with a dot), a name that says password, token, secret, credential or private key
+(`tokenizer` and its forms don't, as memory's guard reads them) or that is a password manager's export or a program's
+own password file (`storeName`: `logins.csv`, `bitwarden_export.json`, `wp-config.php`), or a name Ember won't repeat
+(hidden characters, a colon, or one that itself looks like a secret). For an exact patch to one existing UTF-8 file with a final
 newline, Ember shows the diff in **Review changes before applying**. Check it, choose **Apply patch** and
 confirm the destination. If the source has changed since you sent it, draft the patch again. Ember keeps
 LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or
@@ -2546,12 +2614,26 @@ that can't be taken says which of four reasons holds (`projectCommandProblem`: n
 more than one line or hidden characters, or what looks like a password, token or key), and a request of several lines
 that looks like it holds a secret names the line (`projectRequestSecret`; integrations-i6).
 
-**Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or connected
-provider configuration. Saving requires the system keyring and stores encrypted paths and the last
+**Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or the connected
+model service. Saving requires the system keyring and stores encrypted paths and the last
 completed request and answer. Opening a workspace restores its file selection and command folder. On
 the next explicit Send, Ember reads the selected files again and includes the previous exchange if its
 checkbox is selected. Patch approvals, command text, running processes and command output are never
 restored. **Forget workspace** removes the checkpoint and leaves the project files in place.
+
+The library belongs to the GitHub account, or to the model service by whose it is (yours, the organisation's), its
+type and its host with its port, never its key or the rest of its address (`workspaceOwners`' `library`,
+app/main/agent/project-workspaces.ts; integrations-r9-3, integrations-x9-6: owned by a hash of the provider's whole
+config, a replaced or removed key, another wire API, a slash at the address's end or a query left every saved
+workspace in a file nothing listed or removed). A saved answer is still only its holder's (the account, or that
+whole config with its key and its address as written): opened after the key or the provider's settings changed, a
+workspace restores its
+files and folder and says “Its last answer was saved before this provider's key or settings changed, so Ember left it
+out.”, and the next save or forget drops such answers for good; with the earlier key back before that, they are
+there again. A provider's file holds its `holder` beside its `scope`; a GitHub account's file is as it was. A library
+from an earlier build is named for the whole config: while the key it was saved with is in force it is found and
+becomes the service's. One whose key was already replaced on an earlier build can't be told from any other
+service's, and stays where it is (`project-workspaces-<hash>.bin` in the data folder).
 
 With a build ready, run `EMBER_PROJECT_TEST=1 npm run test:integration -- test/integration/project-live.test.ts`
 to exercise the Home workflow through Electron and the Copilot runtime against an offline mock model.
