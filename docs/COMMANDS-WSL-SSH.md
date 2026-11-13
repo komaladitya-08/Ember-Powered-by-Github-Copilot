@@ -372,7 +372,11 @@ for that. Scripts it runs in turn are read too (four deep, sixteen in all; past 
 as fish or csh, scripts named by a pattern (`sh *.sh`), a script read from a device (`sh /dev/fd/3`), and a script
 that the same command writes first (`echo 'rm -rf build' > t.sh; sh t.sh`) ask. A script this task downloaded always
 asks (that is downloading code and running it); one it wrote in an earlier command asks when Ember can't read all of
-it (bigger than 64 KB, unreadable, or not a plain file). Any other script Ember can't read in full (a large build
+it (bigger than 64 KB, unreadable, or not a plain file). When the same command line both downloads a script and runs
+it (`curl -o t.sh https://example.com/t.sh; sh t.sh`, `pip download requests; ./t.sh`), Ember also reads the t.sh
+that is there now, because that is the file that runs if nothing is saved over it: the line asks as a download does
+("Runs a file downloaded in this task."), what the file there deletes, publishes or reads is on the card too, and one
+that would touch Ember's own safety files is refused. Any other script Ember can't read in full (a large build
 script of your project) is judged by its name, as before (§2.9). Ember reads scripts on this computer and in WSL; on
 an SSH computer, build-01's helper reads them there and asks when it finds more than this computer could see (§4.5).
 Programs in other languages (`python x.py`, `node x.js`) aren't read: their names count (§2.9).
@@ -678,7 +682,9 @@ an earlier command printed text that looked like instructions.").
   a file name, more than 64 commands or 8,000 characters, or zsh's, PowerShell's or cmd's `if` and `for`) asks, so most build and install scripts ask. What a build file, a program, a script in another language, or a shell script too big to read
   (more than 64 KB) does inside (`make`, `npm test`, `python build.py`) runs like a build, unless its name says deploy,
   publish, release, push, upload, delete, clean, wipe, prod, install or the like, which asks. A script this task
-  downloaded always asks, and one it wrote asks when it can't be read in full.
+  downloaded always asks, and one it wrote asks when it can't be read in full. A script an earlier command of the
+  task downloaded is asked about without being read (it is code from elsewhere either way); one the same line
+  downloads is read as it stands before the download (§2.4).
 - **Links.** Ember checks where each path really leads before it decides (a link into `~/.ssh` counts as `~/.ssh`,
   and `sub/../x` counts as the x beside where sub leads, §2.4); a link changed between that check and the run is not
   caught.

@@ -416,6 +416,8 @@ class Classifier {
   unnamedAnywhere = false;
   /** Scripts recorded only because a name may resolve to them (`.\x` → x.ps1), with what had been written by then. */
   private candidates = new Map<ScriptRef, { written: number; unnamed: boolean }>();
+  /** Scripts recorded though this same line marks them as a download (recordScript): the download's question is theirs. */
+  private savedHere = new Set<ScriptRef>();
   simpleCount = 0;
   /** The command being classified (index into commands), -1 before the first. */
   at = -1;
@@ -1154,15 +1156,20 @@ class Classifier {
 
   /**
    * Records a shell script this command runs by path, so the flow reads its text and classifies it (L8, the lead's
-   * ruling). Only a resolvable path on the target's own filesystem, not one this task downloaded (already escape),
-   * not a foreign scope's (another system Ember can't read). A pattern, a stream (`/dev/fd/3`, `/proc/self/fd/0`) or
-   * more scripts than Ember reads (MAX_SCRIPTS) asks: what would run can't be read first.
+   * ruling). Only a resolvable path on the target's own filesystem, not one an earlier command of this task downloaded
+   * (already escape, and the file there is the download: onRecord), not a foreign scope's (another system Ember can't
+   * read). One this same line marks as a download is recorded all the same (commands-held-x9-2, x9-6): nothing is saved
+   * yet, so the file there now is what runs if the fetch fails, saves elsewhere or, by another reading of the line's
+   * options (runRow), isn't one at all. Running it asks as running a download does, and what its text says stands
+   * beside that. A pattern, a stream (`/dev/fd/3`, `/proc/self/fd/0`) or more scripts than Ember reads (MAX_SCRIPTS)
+   * asks: what would run can't be read first.
    */
   recordScript(a: Arg, as: ScriptRef["as"], sc: Scope, candidate = false): void {
     if (a.v === null || a.v === "-" || a.v === "/dev/stdin" || sc.foreign) return;
     if (a.glob) { this.unclear("unclear.script-pattern", "It runs a script named by a pattern, which Ember can't read first."); return; }
     if (!isAbsolute(a.v, sc.path.flavour) && !a.v.startsWith("~") && !sc.cwd) return;
-    if (this.isDownloaded(a, sc)) return;
+    if (this.onRecord(a, sc)) return;
+    const savedHere = this.isDownloaded(a, sc);
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     const stream = (p: string) => sc.path.flavour === "posix" && /^\/(dev|proc)\//.test(p);
     if (stream(abs)) {
@@ -1193,6 +1200,7 @@ class Classifier {
     const ref: ScriptRef = { path: abs, as, cwd, ...(open !== null ? { open } : {}), ...(known !== undefined ? { real: known } : {}) };
     this.scripts.push(ref);
     if (candidate) this.candidates.set(ref, { written: this.written.length, unnamed: this.writesUnnamed });
+    if (savedHere) this.savedHere.add(ref);
   }
 
   /**
@@ -1202,6 +1210,8 @@ class Classifier {
    */
   protected scriptWritten(): boolean {
     return this.scripts.some(r => {
+      // A download this line saves under the script's name is what it writes: that already asks, as running a download.
+      if (this.savedHere.has(r)) return false;
       // By either name: `printf … > /x/t.sh; sh l/../t.sh` (l → /x/sub) writes the very file it runs.
       const names = r.real !== undefined ? [r.path, r.real] : [r.path];
       const hit = (w: { p: string; env: PathEnv }) => names.some(n => isUnder(n, w.p, w.env));
@@ -1450,12 +1460,14 @@ class Classifier {
 
   /**
    * Whether a path is a file this task downloaded, or inside a downloaded folder. `unnamed`: a copy Ember couldn't name
-   * counts for every file in its folder (a project tool's words aren't files it runs: commands-remote-r4-3).
+   * counts for every file in its folder (a project tool's words aren't files it runs: commands-remote-r4-3). `line`
+   * false: only what earlier commands of the task downloaded counts, not what this line marks (onRecord).
    */
-  isDownloaded(a: Arg, sc: Scope, unnamed = true): boolean {
-    if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
+  isDownloaded(a: Arg, sc: Scope, unnamed = true, line = true): boolean {
+    const here = line ? this.downloads : [];
+    if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && here.length === 0)) return false;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
-    const all = [...this.ctx.downloaded, ...this.downloads].filter(d => unnamed || baseName(d, sc.path.flavour) !== UNNAMED_COPY);
+    const all = [...this.ctx.downloaded, ...here].filter(d => unnamed || baseName(d, sc.path.flavour) !== UNNAMED_COPY);
     // Its real path too (§3.6): a link to a download, or `..` walked through a link (`sh sub/../x`), is the download.
     const phys = this.physical(a.v, "exec", sc);
     const names = [abs, this.ctx.real?.get(abs), phys === null ? undefined : this.ctx.real?.get(phys)].filter((n): n is string => typeof n === "string");
@@ -1475,6 +1487,15 @@ class Classifier {
       return under.length > 0;
     }
     return false;
+  }
+
+  /**
+   * Whether a path is a download an earlier command of this task saved (the task's record): the file on the target is
+   * then the download, so running it asks and it is not read as a script. A mark this same line makes is no such
+   * thing yet (recordScript).
+   */
+  onRecord(a: Arg, sc: Scope): boolean {
+    return this.isDownloaded(a, sc, true, false);
   }
 }
 
@@ -2915,7 +2936,7 @@ class Engine extends Classifier {
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
       if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
-      else this.scriptByPath(nameArg, pn, sc);
+      if (!this.onRecord(nameArg, sc)) this.scriptByPath(nameArg, pn, sc);
       scriptName(h, nameArg.v ?? "");
     } else if (sc.family === "cmd" && nameArg.v !== null && !CMD_BUILTINS[key]) {
       // cmd looks in the current folder first, with each runnable extension when none is written.
@@ -2923,7 +2944,7 @@ class Engine extends Classifier {
       if (names.some(n => this.isDownloaded(lit(n), sc))) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     }
     // cmd runs `x` or `.\x` as x.bat or x.cmd from the current folder when one is there: read them first (L8).
-    if (sc.family === "cmd" && pn.ext === "" && nameArg.v !== null && !CMD_BUILTINS[key] && !nameArg.glob && !this.isDownloaded(nameArg, sc)) {
+    if (sc.family === "cmd" && pn.ext === "" && nameArg.v !== null && !CMD_BUILTINS[key] && !nameArg.glob && !this.onRecord(nameArg, sc)) {
       for (const e of [".bat", ".cmd"]) this.recordScript(lit(nameArg.v + e), "cmd", sc, true);
     }
     if (pn.interop) {
@@ -2935,7 +2956,7 @@ class Engine extends Classifier {
     if (pn.ext === ".bat" || pn.ext === ".cmd") {
       // A batch file runs under cmd, which re-reads its arguments (critique wsl-3).
       if (!pn.isPath) scriptName(h, nameArg.v ?? "");
-      if (!this.isDownloaded(nameArg, sc)) this.recordScript(nameArg, "cmd", sc);
+      if (!this.onRecord(nameArg, sc)) this.recordScript(nameArg, "cmd", sc);
       if (args.some(a => a.v === null || /[&|<>^%!]/.test(a.v))) this.unclear("unclear.batch-args", "cmd would read its arguments as commands.");
       if (sc.wsl && sc.family === "posix" && !(sc.cwd && sc.mountRoot && isUnder(sc.cwd, sc.mountRoot, sc.path))) {
         this.unclear("unclear.cmd-linux-folder", SAYS.cmdLinuxFolder);
@@ -3111,7 +3132,7 @@ class Engine extends Classifier {
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
       if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
-      else {
+      if (!this.onRecord(nameArg, sc)) {
         // `env ./x.sh`, `exec ./x.sh`, `timeout 5 ./x.sh` run the script as `./x.sh` does (L8, the lead's ruling).
         this.scriptByPath(nameArg, pn, sc);
         if (pn.ext === ".bat" || pn.ext === ".cmd") this.recordScript(nameArg, "cmd", sc);
@@ -5321,7 +5342,7 @@ function intoInterpreter(h: H, readAs?: ScriptRef["as"]): void {
     for (const r of h.s.redirs) {
       if (r.kind !== "read" || !r.target) continue;
       if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
-      else if (readAs !== undefined) h.e.recordScript(r.target, readAs, h.sc);
+      if (readAs !== undefined) h.e.recordScript(r.target, readAs, h.sc);
     }
     return;
   }
@@ -5345,8 +5366,11 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   const exts = SCRIPT_EXTS[h.key] ?? [];
   const bareHit = exts.length > 0 && !/\.[^./\\]+$/.test(folder) && !script.glob && exts.some(e => h.e.isDownloaded(lit(script.v + e), h.sc));
   const globHit = script.glob && h.e.globMatchesDownload(script, h.sc);
-  if (h.e.isDownloaded(script, h.sc) || entry || bareHit || globHit) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
-  else if (readAs !== undefined) h.e.recordScript(script, readAs, h.sc);
+  const hit = entry || bareHit || globHit;
+  if (h.e.isDownloaded(script, h.sc) || hit) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  // Read first all the same, unless the task's record holds it (recordScript); a folder's entry file, a name an
+  // interpreter completes or a pattern that is a download is not this file.
+  if (readAs !== undefined && !hit) h.e.recordScript(script, readAs, h.sc);
   nameCheck(h, script.v, script.v);
 }
 /** The files node or python runs when given a folder (package.json names node's). */
