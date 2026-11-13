@@ -360,6 +360,27 @@ export function withOwnExtensions(patch: SettingsPatch, own: Settings["extension
   return { ...patch, extensions: { ...own, ...(typeof on === "boolean" ? { on } : {}), consent: own.consent } };
 }
 
+const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * A change sent as Home was shown the settings (the settings in force, `inForce`), built on the user's own (`own`,
+ * SettingsStore.own()) instead: a value it sends that is the one the organisation's policy forces (it differs from the
+ * user's own) is the user's own again, field by field, so a change of one field (Speaking speed under a policy that
+ * turns listening off) never writes the forced values (the voice choice, Hear me more clearly) into settings.json,
+ * where they would outlive the policy (home-r9-1). A value the user set themselves is kept; the policy still holds in
+ * force (applyAdminPolicy), so nothing it turns off comes on.
+ */
+export function withOwnWhereForced(patch: SettingsPatch, own: Settings, inForce: Settings): SettingsPatch {
+  const merge = (sent: Record<string, unknown>, mine: Record<string, unknown>, forced: Record<string, unknown>): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(sent).map(([k, v]) => {
+      const m = mine[k], f = forced[k];
+      if (plain(v) && plain(m) && plain(f)) return [k, merge(v, m, f)];
+      return [k, m !== undefined && same(v, f) && !same(f, m) ? m : v];
+    }));
+  return merge(patch as Record<string, unknown>, own as unknown as Record<string, unknown>, inForce as unknown as Record<string, unknown>) as SettingsPatch;
+}
+
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
 
 export { CONSENT_VERSION };

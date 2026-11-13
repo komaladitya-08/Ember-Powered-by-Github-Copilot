@@ -282,6 +282,86 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     asksEveryTime(click(name, { kind: "keys", value: "Return", goal: "open the file and read it", element: { role, name }, ...r, ...(r.onPage ? { inPage: true, onPage: undefined } : {}) }));
   });
 
+  // The names Chrome, Firefox, Gmail, Outlook, Edge and Brave give those controls (audit of 2026-11-13).
+  const chrome = { app: "google-chrome", window: "Downloads - Google Chrome", inPage: undefined };
+  const bubble = { name: "", text: "This file isn't commonly downloaded and may be dangerous." };
+  const gmail = { app: "firefox", window: "Acme weekly - me@example.com - Gmail - Mozilla Firefox", inPage: undefined, onPage: true };
+  const outlook = { app: "msedge", window: "Mail - Outlook - Microsoft Edge", inPage: undefined, onPage: true };
+  const products: [string, string, Partial<ActionRequest>][] = [
+    ["push button", "Keep dangerous file", chrome], ["push button", "Keep suspicious file", chrome], ["push button", "Keep unverified file", chrome],
+    ["push button", "Download dangerous file", chrome], ["push button", "Download suspicious file", chrome], ["push button", "Download unverified file", chrome],
+    ["menu item", "Keep dangerous file", chrome], ["link", "Download dangerous file", { ...chrome, onPage: true }],
+    ["push button", "Keep", { ...chrome, window: "Drivers - Google Chrome", dialog: bubble }], ["push button", "Open", { window: "Downloads", inPage: undefined, dialog: { name: "", text: "This file was blocked because it may harm your computer." } }],
+    ["push button", "Continue to HTTP Site", { app: "firefox", window: "HTTPS-Only Mode Alert - Mozilla Firefox", inPage: undefined, onPage: true }],
+    ["link", "Continue to HTTP Site", { app: "firefox", window: "HTTPS-Only Mode Alert - Mozilla Firefox", inPage: undefined, onPage: true }],
+    ["link", "Display images below", gmail], ["link", "Always display images from news@acme.example", gmail], ["push button", "Show blocked content", outlook],
+    ["push button", "Download pictures", outlook], ["push button", "Disable Tracking Prevention", { app: "msedge", window: "Shop - Microsoft Edge", inPage: undefined }],
+    ["push button", "Turn off Shields", { app: "brave", window: "Shop - Brave", inPage: undefined }], ["link", "Turn off Shields", { app: "brave", window: "Shop - Brave", inPage: undefined, onPage: true }],
+  ];
+
+  it.each(products)("a %s named “%s”, as a browser or mail app names it, asks every time, by a click and by Enter (safety-privacy-r9-2)", (role, name, r) => {
+    asksEveryTime(click(name, { goal: "download the driver and read the newsletter", element: { role, name }, ...r }));
+    asksEveryTime(click(name, { kind: "keys", value: "Return", goal: "download the driver and read the newsletter", element: { role, name }, ...r, ...(r.onPage ? { inPage: true, onPage: undefined } : {}) }));
+  });
+
+  // Their ordinary neighbours: a list's pages, spelling, an image viewer's and a photo site's pictures, a bar shown for good.
+  const neighbours: [string, string, Partial<ActionRequest>][] = [
+    ["push button", "Go to page 2", { window: "Orders - Shop — Mozilla Firefox", inPage: undefined, onPage: true }],
+    ["push button", "Disable spell check", { app: "thunderbird", window: "Write: hello", inPage: undefined }],
+    ["push button", "Keep", { app: "soffice", window: "letter.odt - LibreOffice Writer", inPage: undefined }],
+    ["push button", "Keep", { app: "google-chrome", window: "Drivers - Google Chrome", inPage: undefined }],
+    ["push button", "Download pictures", { app: "google-chrome", window: "Photos - Google Chrome", inPage: undefined, onPage: true }],
+    ["push button", "Show images", { app: "evince", window: "manual.pdf", inPage: undefined }],
+    ["menu item", "Always show bookmarks bar", { app: "google-chrome", window: "New Tab - Google Chrome", inPage: undefined }],
+    ["push button", "Keep file", { app: "org.gnome.Nautilus", window: "Downloads", inPage: undefined }],
+    ["push button", "Disable animations", { app: "google-chrome", window: "Settings - Google Chrome", inPage: undefined }],
+    ["link", "Continue to page 2", { window: "Orders - Shop — Mozilla Firefox", inPage: undefined, onPage: true }],
+  ];
+  it.each(neighbours)("a %s named “%s” still goes without a question under “Always” (safety-privacy-r9-2)", (role, name, r) => {
+    expect(engine().decide(click(name, { goal: "tidy up", element: { role, name }, ...r })).verdict).toBe("allow");
+  });
+
+  // Chrome's and Edge's own words under a bare "Keep": the contraction, and the insecure download (product-safety-x9-1).
+  const uncommon = "setup.exe isn't commonly downloaded. Make sure you trust setup.exe before you open it.";
+  it.each([["push button", uncommon, "google-chrome"], ["push button", uncommon.replace("'", "’"), "google-chrome"],
+    ["push button", "setup.exe can't be downloaded securely", "google-chrome"], ["push button", "setup.exe cannot be downloaded securely", "google-chrome"],
+    ["menu item", uncommon, "msedge"]])("a bare “Keep” %s under “%s” asks every time (product-safety-x9-1)", (role, text, app) => {
+    asksEveryTime(click("Keep", { app, window: "Downloads", inPage: undefined, element: { role, name: "Keep" }, goal: "download the driver", dialog: { name: "", text } }));
+  });
+
+  // A mail app by what its bar says, not its name: Geary's "This message contains remote images." (product-safety-y9-3).
+  it.each(["Show Images", "Load images"])("a bare “%s” under a mail's remote images bar asks every time (product-safety-y9-3)", name => {
+    asksEveryTime(click(name, { app: "geary", window: "Inbox - Geary", inPage: undefined, element: { role: "push button", name }, goal: "read the newsletter",
+      dialog: { name: "", text: "This message contains remote images." } }));
+  });
+
+  const notPast = (role: string, name: string, r: Partial<ActionRequest>) => {
+    for (const on of [false, true]) {
+      const d = engine(on).decide(click(name, { goal: "tidy up", element: { role, name }, ...r }));
+      expect(d.risky).toBeFalsy();
+      expect(d.reason).not.toContain("past a warning");
+    }
+  };
+  // A window's title is no warning: a page about malware, a folder named Blocked, Outlook's list of blocked senders, a
+  // PDF named for a mail merge (product-safety-x9-2).
+  it.each([
+    ["push button", "Download", { app: "google-chrome", window: "Malware - Wikipedia - Google Chrome", inPage: undefined, onPage: true }],
+    ["push button", "Open", { app: "org.gnome.Nautilus", window: "Blocked", inPage: undefined }],
+    ["push button", "Open", { app: "outlook", window: "Blocked Senders - Outlook", inPage: undefined }],
+    ["push button", "Show images", { app: "evince", window: "mail-merge.pdf", inPage: undefined }],
+  ] as [string, string, Partial<ActionRequest>][])("a %s named “%s” under a window's title is not read as going past a warning (product-safety-x9-2)", notPast);
+
+  // An ordinary setting's "prevention" is no protection; the browsers' own still are (product-safety-x9-3).
+  it.each([
+    ["push button", "Turn off sleep prevention", { app: "gnome-control-center", window: "Power", inPage: undefined }],
+    ["push button", "Disable accidental touch prevention", { app: "SystemSettings", window: "Touchpad", inPage: undefined }],
+  ] as [string, string, Partial<ActionRequest>][])("a %s named “%s” is not read as turning a protection off (product-safety-x9-3)", notPast);
+  it.each([["push button", "Turn off Tracking Prevention", "msedge"], ["push button", "Disable tracking prevention for this site", "msedge"],
+    ["push button", "Turn off Brave Shields", "brave"], ["link", "Turn off Shields", "brave"]])(
+    "a %s named “%s” still asks every time as a protection turned off (product-safety-x9-3)", (role, name, app) => {
+      asksEveryTime(click(name, { app, window: "Shop", inPage: undefined, element: { role, name }, goal: "buy the shoes" }));
+    });
+
   it("says why in the question (safety-privacy-r8-1)", () => {
     expect(engine().decide(click("Keep anyway", { app: "google-chrome", window: "Downloads", inPage: undefined, goal: "download the report" })).prompt)
       .toBe("Click the “Keep anyway” button in Google Chrome? It goes past a warning or turns off a protection.");
@@ -526,5 +606,97 @@ describe("an unnamed button in a row, cell or item named by its content (regress
     expect(engine().decide(click("", { window: "Opening hours - Example", place: { role: "document web", name: "Opening hours - Example" } })).prompt)
       .toBe("Click the button on the “Opening hours - Example” page in Firefox? I can't tell what it does: it has no name.");
     expect(engine().decide(click("", { app: "soffice", window: "Letter.odt", place: { role: "document text", name: "Letter" } })).prompt).toContain("on the “Letter” document in ");
+  });
+});
+
+/**
+ * Enter in a dialog that asks or warns presses its default button unless a button of its own has the keyboard (GTK's
+ * activate-default, Win32's IsDialogMessage), and on macOS always: where Ember can't tell which button that is, it asks
+ * as an answer to the dialog. A bare letter in a Win32 dialog presses the button it underlines (audit of 2026-11-13).
+ */
+describe("Enter in a dialog that asks, while no button of it has the keyboard", () => {
+  const del = { name: "", text: "Are you sure you want to permanently delete “Taxes 2025”? If you delete an item, it will be permanently lost.", alert: true };
+  const winDel = { name: "Delete File", text: "Are you sure you want to permanently delete this file?", messageBox: true };
+  const engineOn = (os: "linux" | "win32" | "darwin", grant: boolean, autonomy: boolean) => new PolicyEngine({ neverLook: () => [],
+    grants: (): Record<string, "act"> => (grant ? { "org.gnome.nautilus": "act", explorer: "act", finder: "act" } : {}), autonomy: () => (autonomy ? { ...ALL_SCOPES } : null),
+    isTerminalApp: () => false, os, keys: KEYS[os] });
+  const APP = { linux: "org.gnome.Nautilus", win32: "explorer", darwin: "Finder" } as const;
+  const key = (os: "linux" | "win32" | "darwin", role: string, name: string, value = "Return", dialog: ActionRequest["dialog"] = os === "linux" ? del : winDel): ActionRequest =>
+    ({ taskId: "t", kind: "keys", value, app: APP[os], window: "Documents", goal: "tidy up my documents folder", element: { role, name }, dialog });
+  const asksEvery = (r: ActionRequest, os: "linux" | "win32" | "darwin") => {
+    for (const [grant, autonomy] of [[true, false], [true, true], [false, true]]) {
+      const d = engineOn(os, grant, autonomy).decide(r);
+      expect(d, `grant=${grant} autonomy=${autonomy}`).toMatchObject({ verdict: "confirm", risky: true, remember: false });
+      expect(d.autonomy).toBeUndefined();
+    }
+  };
+  const focused: [string, string][] = [["check box", "Apply this action to all files"], ["radio button", "Skip"], ["label", "Are you sure?"], ["alert", ""], ["dialog", ""],
+    ["panel", ""], ["entry", "Type DELETE to confirm"], ["list item", "Taxes 2025.pdf"], ["image", "warning"]];
+
+  it.each((["linux", "win32", "darwin"] as const).flatMap(os => focused.map(([role, name]) => [os, role, name] as const)))(
+    "on %s, Enter with the %s “%s” focused asks every time, quoting the dialog (safety-privacy-r9-1)", (os, role, name) => {
+      for (const value of ["Return", "KP_Enter", "shift+Return"]) asksEvery(key(os, role, name, value), os);
+      const d = engineOn(os, true, false).decide(key(os, role, name));
+      expect(d.prompt).toContain("permanently delete");
+      expect(d.reason).toMatch(/answers a dialog's question/);
+    });
+
+  it("on macOS, Return with a button that backs off focused still asks: Return goes to the default button there (safety-privacy-r9-1)", () => {
+    asksEvery(key("darwin", "push button", "Cancel"), "darwin");
+  });
+
+  it("on Windows, a bare letter with no field focused asks: it presses the button it underlines (safety-privacy-r9-1)", () => {
+    for (const value of ["y", "d", "n"]) asksEvery(key("win32", "check box", "Apply this action to all files", value), "win32");
+  });
+
+  it("leaves the ordinary neighbours as they were: Space, Tab and Escape, a focused Cancel on Linux and Windows, a letter on Linux (safety-privacy-r9-1)", () => {
+    const announced = (r: ActionRequest, os: "linux" | "win32" | "darwin") => expect(engineOn(os, true, true).decide(r), `${os} ${r.value} ${r.element?.role}`).toMatchObject({ verdict: "allow", autonomy: true });
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      for (const value of ["space", "Tab", "Escape"]) announced(key(os, "check box", "Apply this action to all files", value), os);
+    }
+    announced(key("linux", "push button", "Cancel"), "linux");
+    announced(key("win32", "push button", "Cancel"), "win32");
+    announced(key("linux", "check box", "Apply this action to all files", "y"), "linux");
+    // A letter typed into a field of the dialog is typing, not a button's letter.
+    announced(key("win32", "entry", "Type DELETE to confirm", "d"), "win32");
+  });
+
+  it("keeps a message box read whole whose one button only acknowledges as Ember's doubt, and one whose buttons all back off as before (safety-privacy-r9-1)", () => {
+    const ok = { name: "gedit", text: "Cannot find \"milk\"", alert: true, controls: [{ role: "push button", name: "OK" }] };
+    expect(engineOn("linux", true, true).decide({ ...key("linux", "label", "Cannot find \"milk\"", "Return", ok), app: "gedit", window: "notes.txt - gedit" })).toMatchObject({ verdict: "allow", autonomy: true });
+    const off = { ...del, controls: [{ role: "check box", name: "Apply this action to all files" }, { role: "push button", name: "Cancel" }, { role: "push button", name: "Close" }] };
+    expect(engineOn("linux", true, true).decide(key("linux", "check box", "Apply this action to all files", "Return", off))).toMatchObject({ verdict: "allow", autonomy: true });
+    // A dialog that asks nothing: Enter in Find & Replace's field is as before.
+    const find = { name: "Find & Replace", text: "Find: Replace:" };
+    expect(engineOn("linux", true, true).decide({ ...key("linux", "entry", "Find", "Return", find), app: "soffice", window: "letter.odt - LibreOffice Writer" }).autonomy).toBe(true);
+  });
+
+  // A dialog that warns but asks nothing, whose own button goes past the warning: a click on it asks, so Enter does too.
+  const warns: [string, "linux" | "win32" | "darwin", string, NonNullable<ActionRequest["dialog"]>][] = [
+    ["a Win32 message box", "win32", "msedge", { name: "Microsoft Edge", messageBox: true, text: "driver-setup.exe may harm your device.",
+      controls: [{ role: "label", name: "driver-setup.exe may harm your device." }, { role: "push button", name: "Open" }, { role: "push button", name: "Cancel" }] }],
+    ["Chrome's download bubble", "linux", "google-chrome", { name: "", text: "This file isn't commonly downloaded and may be dangerous.",
+      controls: [{ role: "label", name: "This file isn't commonly downloaded and may be dangerous." }, { role: "push button", name: "Keep" }, { role: "push button", name: "Discard" }] }],
+    ["a Mac's blocked file", "darwin", "Safari", { name: "", text: "This file was blocked because it may contain malware.",
+      controls: [{ role: "label", name: "This file was blocked because it may contain malware." }, { role: "push button", name: "Run" }, { role: "push button", name: "Cancel" }] }],
+  ];
+  it.each(warns)("in %s that warns, Enter on its words asks every time, as a click on its button does (product-safety-y9-1)", (_what, os, app, dialog) => {
+    const at = (value: string, d: NonNullable<ActionRequest["dialog"]>) => ({ ...key(os, "label", "x", value, d), app, window: "Downloads", goal: "download the printer driver" });
+    asksEvery(at("Return", dialog), os);
+    // Read in part, its words alone warn.
+    const { controls: _c, ...part } = dialog;
+    asksEvery(at("Return", part), os);
+    if (os === "win32") asksEvery(at("o", dialog), os);
+  });
+
+  it("names a text field's Enter as one that may send what is in it, and the dialog's buttons as the dialog's (product-safety-y9-2)", () => {
+    const search: ActionRequest = { taskId: "t", kind: "keys", value: "Return", app: "firefox", window: "Shop - Mozilla Firefox", goal: "find running shoes", inPage: true,
+      element: { role: "entry", name: "Search" }, dialog: { name: "What are you looking for?", text: "", page: true, alert: true } };
+    for (const autonomy of [false, true]) {
+      const d = engineOn("linux", true, autonomy).decide(search);
+      expect(d).toMatchObject({ verdict: "confirm", risky: true, remember: false, reason: "Enter in a text field can send or submit what is in it" });
+      expect(d.prompt).toContain("Enter there may send or submit it.");
+    }
+    expect(engineOn("linux", true, false).decide(key("linux", "label", "Are you sure?")).prompt).toContain("I can't tell which of the dialog's buttons this presses.");
   });
 });

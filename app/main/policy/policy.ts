@@ -671,7 +671,7 @@ const SECURITY_WORD = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(SECURITY_STEMS
  */
 const WEAKENS = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(["not recommended", "unsafe", "insecure", "unsecured?", "allow all", "trust all", "accept all",
   "without (asking|confirmation|confirming|warning|warnings|prompting|a warning)", "(don't|do not|never) (ask|warn|prompt|confirm)",
-  "(disable|turn off|switch off|deactivate|bypass|skip)\\b.{0,40}\\b(protection|security|warnings?|checks?|checking|verification|sandbox|blocking|safe browsing)",
+  "(disable|turn off|switch off|deactivate|bypass|skip)\\b.{0,40}\\b(protection|tracking prevention|shields?|security|warnings?|checks?|checking|verification|sandbox|blocking|safe browsing)",
   "nicht empfohlen", "non recommandée?", "déconseillée?", "no recomendad[oa]", "sconsigliat[oa]", "non consigliat[oa]", "não recomendad[oa]",
   "niet aanbevolen", "niezalecane", "nie zalecane", "не рекомендуется", "rekommenderas inte", "anbefales ikke", "ei suositella", "nedoporučen[oéa]",
   "nedoporučuje se", "önerilmez", "tavsiye edilmez"].join("|"))})(?=$|[^\\p{L}\\p{N}])|${foldLabel(["推奨されません", "非推奨", "不推荐", "不推薦", "不建议",
@@ -2416,10 +2416,13 @@ const BACKS_OFF = /^\s*(cancel|close|no|help|notify|keep|open (a )?copy|open rea
  * "continue" or "go on" only: a list's "Go to page 2" (MUI's pagination), a business's "Go to website" and a form's
  * "Continue to page 2" go nowhere a warning stood (regression review of round eight, safety-privacy-x8-1).
  */
-const PAST_WARNING_PHRASES = ["(proceed|continue|go on) to (the |this )?(site|website|web ?page)",
+const PAST_WARNING_PHRASES = ["(proceed|continue|go on) to (the |this )?(http |insecure |unsecure |unsafe )?(site|website|web ?page)",
   "visit this (unsafe |dangerous |deceptive |insecure |unsecure |suspicious )?(site|website|web ?page|page)", "enable (all )?macros?",
   "enable (the |all )?(active |external |blocked )?content", "run (the |all )?macros?", "exit protected view",
-  "(load|show|display|allow|download|enable) (the |all )?(remote|external) (content|images?|pictures|resources)",
+  "(load|show|display|allow|download|enable) (the |all )?(remote|external|blocked) (content|images?|pictures|resources)",
+  // Chrome's download warnings, Gmail's hidden images (safety-privacy-r9-2).
+  "(keep|download|open|run|save|install) (the |this )?(dangerous|suspicious|unverified|malicious|harmful|unsafe|insecure|uncommon|blocked) (files?|downloads?|items?|apps?|programs?)",
+  "(display|show|load|download) (the )?(images?|pictures) below", "always (display|show|load|download) (the )?(external |remote )?(images?|pictures|content) from",
   "(ignore|dismiss|bypass|skip|override) (the |this |these |all )?(security )?(warnings?|risks?|alerts?)", "accept (the )?risks?", "i understand the risks?"];
 const PAST_WARNING_WORDS = ["anyways?", ...PAST_WARNING_PHRASES, "always (allow|trust|accept|open|run)", "(don't|do not|never) block", "unblock",
   "trust (this|the) (site|website|document|file|folder|publisher|authors?|app|application|certificate|source|device)", "(open|run) executable",
@@ -2433,23 +2436,39 @@ const PAST_WARNING = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(PAST_WARNING_WO
  */
 const LINK_PAST_WARNING = new RegExp(`^[^\\p{L}\\p{N}]*(${foldLabel([...PAST_WARNING_PHRASES,
   "(download|keep|open|run|install|continue|proceed|launch|use|save|visit|go|load|show|allow|accept) anyway",
-  "(turn off|disable|switch off|bypass|skip)\\b.{0,40}\\b(protection|security|warnings?|verification|safe browsing)"].join("|"))})(?=$|[^\\p{L}\\p{N}])`
+  "(turn off|disable|switch off|bypass|skip)\\b.{0,40}\\b(protection|tracking prevention|shields?|security|warnings?|verification|safe browsing)"].join("|"))})(?=$|[^\\p{L}\\p{N}])`
   + `|[(（]\\s*(${foldLabel(["unsafe", "not secure", "insecure", "dangerous", "not recommended"].join("|"))})\\s*[)）]`, "u");
 /** A window or dialog that says its document is in protected view (Word's "[Protected View]"), where "Enable Editing" leaves it. */
 const PROTECTED_VIEW = /\bprotected (view|mode)\b/;
 const PAST_WARNING_REASON = "this goes past a warning or turns a protection off";
+/**
+ * A bare "Keep", "Open", "Download" or "Run" goes past a warning where its dialog says the file is dangerous or blocked
+ * (Chrome's download bubble: "This file isn't commonly downloaded and may be dangerous"), and "Download pictures" or
+ * "Show images" in a mail app (Outlook's, which hides them to protect the reader's privacy) (safety-privacy-r9-2). Read
+ * from the dialog's words and the app's name, never the window's title, which is the page's or the file's: a page about
+ * malware, a folder named Blocked, "mail-merge.pdf" (product-safety-x9-2); a webmail only by its product's name as a
+ * whole part of the title ("Inbox - me@example.com - Gmail - Mozilla Firefox", MAIL_TITLE).
+ */
+const BARE_PAST_WARNING = /^\s*(keep|open|download|run)( (the |this )?file)?( anyway)?\s*$/;
+// Chrome's and Edge's own words too: "isn't commonly downloaded", "can't be downloaded securely" (product-safety-x9-1).
+const DANGER_CONTEXT = /\b(dangerous|harm(s|ful)?|malicious|malware|virus(es)?|suspicious|unverified|blocked|(not|isn't) commonly downloaded|may not be safe|can('|no)?t be downloaded securely|insecure|not secure)\b/;
+const SHOWS_PICTURES = /^\s*(download|show|display|load) (the |all )?(pictures|images)\s*$/;
+const MAIL_CONTEXT = /\b(outlook|gmail|thunderbird|evolution|mail|inbox)\b|\bprotect (your )?privacy\b|\bprevented\b|\bremote (images|pictures|content)\b/;
+const MAIL_TITLE = /(^| - | \| )(gmail|outlook|(mozilla )?thunderbird|evolution)( - | \| |$)/;
 /** Checks of a text's spelling or grammar ("Disable spell check", "Turn off spelling and grammar checking"): no protection. */
 const WRITING_CHECKS = /\b(spell(ing)?|grammar)( and (spelling|grammar))?[ -]?check(s|ing|er)?\b/giu;
 /**
  * Does pressing this control (by its own name: a button, link or menu item, ACTING_CONTROL) go past a security warning
  * or turn a protection off? A link only by its first words (LINK_PAST_WARNING); "Enable Editing" only in protected view
- * (`context`: the window's title and the dialog's words).
+ * (the window's title or the dialog's words, `told`); a bare word only by the dialog's words and the app (BARE_PAST_WARNING).
  */
-function goesPastWarning(role: string, name: string, context: string): boolean {
+function goesPastWarning(role: string, name: string, app: string, window: string, told: string): boolean {
   // An answer that backs off ("Thanks anyway", DECLINES) goes past nothing.
   if (!ACTING_CONTROL.test(role) || !/[\p{L}\p{N}]/u.test(name) || declines(name)) return false;
   if (role === "link") return saysWord(LINK_PAST_WARNING, name);
-  if (/^\s*enable editing\s*$/.test(plainText(name)) && PROTECTED_VIEW.test(plainText(context))) return true;
+  const said = plainText(name), dialog = plainText(told), mail = MAIL_CONTEXT.test(plainText(`${app} ${told}`)) || MAIL_TITLE.test(plainText(window).trim());
+  if ((BARE_PAST_WARNING.test(said) && DANGER_CONTEXT.test(dialog)) || (SHOWS_PICTURES.test(said) && (mail || DANGER_CONTEXT.test(dialog)))) return true;
+  if (/^\s*enable editing\s*$/.test(said) && PROTECTED_VIEW.test(plainText(`${window} ${told}`))) return true;
   // (WEAKENS was written for settings: its checks are a protection's, never spelling's or grammar's.)
   return saysWord(PAST_WARNING, name) || saysWord(WEAKENS, name.replace(WRITING_CHECKS, " "));
 }
@@ -2934,7 +2953,7 @@ export class PolicyEngine {
     // request by its name (audit of 2026-11-11, safety-privacy-r8-1). In a dialog the question quotes it too. After the
     // rules that asked before it, whose reasons and checks against the request stand ("Accept the Risk and Continue",
     // "Save Anyway" in a file's conflict). (A menu item that opens a dialog, "Run Macro…", does nothing yet.)
-    const pastWarning = goesPastWarning(role, name, `${r.window} ${told}`) && !opensDialog(role, name);
+    const pastWarning = goesPastWarning(role, name, r.app, r.window, told) && !opensDialog(role, name);
     const warned: Risk = { reason: PAST_WARNING_REASON, about: name, note: `It goes past a warning or turns off a protection.${r.dialog && note ? ` ${note}` : ""}` };
     // Any other answer to a message box (a native one: a page's own dialog is one only by what it asks), or to a dialog
     // that asks a question in a few words (a question mark, or ASKS_IF_SURE: a browser's "Leave site?", "Reload site?",
@@ -2953,6 +2972,21 @@ export class PolicyEngine {
     const asksInFew = asked.length <= 300 && (/[?？¿]/.test(asked) || ASKS_IF_SURE.test(plainText(asked)) || SENDS_AGAIN.test(plainText(asked)));
     const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !backsOffDialog(name, told) && !plainDialog;
     const answersQuestion: Risk = { reason: "this answers a dialog's question or warning, and Ember can't be sure what that answer does", note };
+    // Enter in such a dialog presses its default button unless a button of its own has the keyboard (GTK's
+    // activate-default, Win32's IsDialogMessage; on macOS Return goes to the default button whatever has the keyboard),
+    // and in a Win32 dialog a letter presses the button it underlines: judged as an answer to the dialog, asked every
+    // time, but where a whole read shows its buttons all back off, or only one that only acknowledges (audit of
+    // 2026-11-13, safety-privacy-r9-1). Read by the dialog alone: which button is its default, nothing tells.
+    // A dialog that warns but asks nothing counts too, where a click on one of its buttons would ask (a whole read: a
+    // button past the warning, or one named for a risk) or, read in part, where its words warn ("…may harm your device",
+    // Chrome's "isn't commonly downloaded and may be dangerous"; product-safety-y9-1).
+    const buttons = r.dialog?.controls?.filter(c => c.caption !== true && ANSWER_ROLES.test(c.role));
+    const warns = !!r.dialog && (r.dialog.controls ? !!buttons?.some(c => !backsOffDialog(c.name, told) && (goesPastWarning(c.role, c.name, r.app, r.window, told) || isRiskyControl(c.role, c.name, os)))
+      : DANGER_CONTEXT.test(plainText(told)) || saysWord(PAST_WARNING, told));
+    const asksDialog = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew || warns);
+    const harmless = !!buttons?.length && (buttons.every(c => backsOffDialog(c.name, told)) || (buttons.length === 1 && acknowledgesOnly(r, buttons[0].name, buttons[0].role, os)));
+    const pressesDefault = asksDialog && !harmless;
+    const answersDefault: Risk = { reason: "this answers a dialog's question or warning with one of its buttons, and Ember can't tell which", note: `I can't tell which of the dialog's buttons this presses.${note ? ` ${note}` : ""}` };
     // Any control of a page (or an Electron app's window) whose title mentions a payment: it may buy something whatever its
     // label says. The question says why, in words true of a title that only mentions one (a mail's subject, a file's name).
     const payment = ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) ? onPaymentPage(r.window) : null;
@@ -3039,6 +3073,9 @@ export class PolicyEngine {
           if (ACTIVATING_ROLES.test(role) && conflict) return goesAhead;
           if (pastWarning) return warned;
           if (questioned) return answersQuestion;
+          // (In a text field Enter may send what is in it, which says more than the dialog's buttons: product-safety-y9-2.)
+          if (!/space$/.test(k) && pressesDefault && enterMaySend(r, role, os) && !goesSomewhere(r, role, name, os)) return ENTER_IN_FIELD;
+          if (!/space$/.test(k) && pressesDefault && !(os !== "darwin" && ANSWER_ROLES.test(role))) return answersDefault;
           if (ACTIVATING_ROLES.test(role) && committing) return { reason: COMMITS_RISK, about: name };
           if (around) return BARE_IN(around);
           if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
@@ -3048,6 +3085,7 @@ export class PolicyEngine {
           if (!/space$/.test(k) && enterMaySend(r, role, os)) return goesSomewhere(r, role, name, os) ? { ...ENTER_IN_FIELD, plain: true } : ENTER_IN_FIELD;
           return null;
         }
+        if (os === "win32" && /^(shift\+)?[a-z0-9]$/.test(k) && pressesDefault && !TEXT_FIELD.test(role) && !r.element?.secret) return answersDefault;
         if (MNEMONIC_KEY.test(k)) return { reason: "this shortcut presses whichever button has that letter, and Ember can't tell which" };
         // In an open menu a plain letter picks the item with that underlined letter.
         if (/menu/.test(role) && /^(shift\+)?[a-z0-9]$/.test(k)) return { reason: "in an open menu a letter picks whichever item has that letter, and Ember can't tell which" };

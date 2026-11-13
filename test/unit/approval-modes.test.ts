@@ -481,7 +481,8 @@ describe("the one call that chooses a mode (APPROVALS_IPC.choose, modes-A6)", ()
     expect(main).toContain(`return state.inForce === mode ? { ok: true, state } : { ok: false, why: "not-recorded", state };`);
     // The general settings change drops the mode before it is saved.
     expect(main).toContain("const { patch, dropped } = settingsFromHome(checkHomePatch(sent));");
-    expect(main).toContain("settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(patch, settings.own().provider), settings.own().extensions)), { soon: sizeOnly })");
+    expect(main).toContain("const mine = withOwnWhereForced(patch, settings.own(), settings.get());");
+    expect(main).toContain("settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(mine, settings.own().provider), settings.own().extensions)), { soon: sizeOnly })");
     // And no tool of the conductor's or a worker's reads or sets it: under app/main/agent only the host reads the
     // setting (for a worker's inputs), and nothing there chooses a mode but the host's own intents, through main.
     const agent = "app/main/agent";

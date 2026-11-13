@@ -5,6 +5,7 @@
  */
 
 import { problemInHome } from "../../app/renderer/home/copy";
+import { providerModelMissing } from "../../app/renderer/home/first-run-copy";
 import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -465,14 +466,29 @@ describe("Test connection", () => {
     expect(await testConnection(settings(), STORED, electron)).toMatchObject({ ok: false, cause: "refused" });
   });
 
-  it("names the models it lists, as suggestions, keeping only real ids and at most 50 (integrations-9)", async () => {
+  it("fails first run's check on a mistyped name against a service that lists more than 50 models (first-run-r9-1)", async () => {
+    // OpenAI's list is one unpaged page of many more than 50: "gpt4.1" for "gpt-4.1" passed as Connected, and the try
+    // step's first question then failed with "The model I'm set to use isn't available".
+    const sixty = [{ id: "gpt-4.1" }, { id: "gpt-4.1-mini" }, ...Array.from({ length: 58 }, (_, i) => ({ id: `m-${i}` }))];
+    const tried = await testConnection(settings(), STORED, answer(200, { data: sixty }));
+    if (!tried.ok) throw new Error(tried.why);
+    expect(tried.models).toBe(60);
+    expect(providerModelMissing(tried, { type: "openai", conductor: "gpt4.1", worker: "" })?.field).toBe("conductor");
+    expect(providerModelMissing(tried, { type: "openai", conductor: "gpt-4.1", worker: "m-57" })).toBeNull();
+    // Its line still names only a few of them.
+    expect(providerModelMissing(tried, { type: "openai", conductor: "gpt4.1", worker: "" })?.line).toBe("models.example.com answered, but it doesn't list gpt4.1. It lists 60 models, such as gpt-4.1, gpt-4.1-mini, m-0 and m-1. Enter a name it lists.");
+  });
+
+  it("names the models it lists, as suggestions, keeping only real ids and at most 1,000 (integrations-9, first-run-r9-1)", async () => {
     const shown = await testConnection(settings(), STORED, answer(200, { data: [{ id: "gpt-4.1" }, { id: "has space" }, { id: "<b>x</b>" }, { id: "gpt-4.1" }, { id: 7 }, {}, { id: "o3-mini" }] }));
     expect(shown).toEqual({ ok: true, host: "models.example.com", models: 7, ids: ["gpt-4.1", "o3-mini"] });
     // Ollama's own list names them by name.
     expect(listedModelIds([{ name: "llama3.2:3b" }, { model: "qwen2.5:7b" }])).toEqual(["llama3.2:3b", "qwen2.5:7b"]);
-    const many = Array.from({ length: 80 }, (_, i) => ({ id: `m-${i}` }));
+    // All of a list of 80 are kept, for first run's check (first-run-r9-1); the fields suggest the first 50.
+    expect(listedModelIds(Array.from({ length: 80 }, (_, i) => ({ id: `m-${i}` })))).toHaveLength(80);
+    const many = Array.from({ length: 1200 }, (_, i) => ({ id: `m-${i}` }));
     expect(listedModelIds(many)).toHaveLength(TEST_IDS_MAX);
-    expect(TEST_IDS_MAX).toBe(50);
+    expect(TEST_IDS_MAX).toBe(1000);
     // A list with none it can name says only how many.
     expect(await testConnection(settings(), STORED, answer(200, { data: [{ object: "model" }] }))).toEqual({ ok: true, host: "models.example.com", models: 1 });
   });

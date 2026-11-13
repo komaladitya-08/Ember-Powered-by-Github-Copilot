@@ -400,10 +400,13 @@ out loud; **Never** keeps it quiet even for a screen reader, and chosen while Em
 screen reader turned off, at the answer's next sentence). Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
 for them. So are buttons, links and menu items that go past a security warning or turn a protection off (“Enable
-Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Remote Content”), and any answer to a message box or
+Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Remote Content”, and the names browsers and mail apps
+give them: “Keep dangerous file”, “Continue to HTTP Site”, “Display images below”, “Show blocked content”, “Turn off
+Shields”), and any answer to a message box or
 to a dialog's question but one that backs off (“Leave page”, “Resend” and “Close tabs” ask; Cancel, Close, “Stay on page”,
-“Remind me later” and No don't, but for No where the dialog asks to save, since it throws the changes away); the
-question quotes the dialog. A question in what was written in a working dialog, a mail's
+“Remind me later” and No don't, but for No where the dialog asks to save, since it throws the changes away), Enter in such a dialog
+included, or in one that warns where a click on its button would ask, while no button of it has the keyboard (it presses the dialog's default button; on a Mac always), and on
+Windows a bare letter there (it presses the button it underlines); the question quotes the dialog. A question in what was written in a working dialog, a mail's
 body or a card's description, doesn't make its buttons ask once Ember has read the whole dialog and seen the field it was
 written in; where its read was cut short, the dialog's words still count, so a page's “Are you sure you want to leave?” asks at “Leave”. Any button, link or tab of a page (or of an app built on one) whose window's title
 mentions a checkout, a payment or billing asks every time too, saying so (“The window's title mentions billing, so this
@@ -1591,7 +1594,10 @@ On Windows the same JSON goes in the registry (§10.7), on a Mac in `/Library/Ap
 (§11.7).
 
 An optional file that makes Ember stricter for everyone on the machine. Its values override users' settings, and
-users can't loosen them. If the file exists but can't be read or has a mistake, Ember locks down until it is fixed,
+users can't loosen them. They are applied on top of each user's settings.json, never written into it: a change made in
+Home under the policy (Speaking speed while listening is off) keeps the user's own values for what the policy forces
+(their voice, Hear me more clearly, memory on), so they come back as they were once the policy is lifted
+(`withOwnWhereForced`, home-r9-1). If the file exists but can't be read or has a mistake, Ember locks down until it is fixed,
 and says so in its settings window (Home's status panel reads "Locked by your organisation", with no Connect button,
 and the notice asks the user to have the computer's manager fix it; `ember doctor` and the log name the problem):
 no actions, commands or listening, nothing sent to any model service (neither

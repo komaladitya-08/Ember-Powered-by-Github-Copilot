@@ -19,7 +19,7 @@ import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { endRun, previousRun, startRun } from "./run-marker";
 import { readTextFile } from "./text-file";
-import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, type Settings, type SettingsPatch } from "./settings";
+import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, withOwnWhereForced, type Settings, type SettingsPatch } from "./settings";
 import { ANSWER_CLOSED_STATUS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQuestion, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { auditRetentionDays, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
 import { approvalInputs, approvalsState, chooseMode, modeInForce } from "./policy/autonomy";
@@ -56,8 +56,9 @@ import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine, isRiskyLabel } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, runningAppImage, watchAdminPolicy } from "./policy/admin-watch";
-import { ANSWER_MS, Confirmer, EXPIRED_MS, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
+import { ANSWER_MS, Confirmer, EXPIRED_MS, answerSettler, guardWhileAsking, hidesAgainAfter, questionPausesAnswer } from "./agent/confirm";
 import { taskNotice } from "./agent/tasks";
+import { withQuestionUp } from "../shared/activity";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
@@ -658,7 +659,10 @@ function start(): void {
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
     // A save that failed reaches the window as one plain sentence (review #84). The approval mode never comes this way
     // (settingsFromHome drops it): it changes only with the agreement to its card (APPROVALS_IPC.choose).
-    try { return settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(patch, settings.own().provider), settings.own().extensions)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); }
+    // Home sends a section whole as it was shown it, with the organisation's values in it: built on the user's own
+    // (withOwnWhereForced), so none of them is written into settings.json (home-r9-1).
+    const mine = withOwnWhereForced(patch, settings.own(), settings.get());
+    try { return settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(mine, settings.own().provider), settings.own().extensions)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); }
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
@@ -1090,6 +1094,8 @@ function start(): void {
     // So do the Ask box's suggestions: "Yes, please" there would only seem to answer it (companion-r2-1).
     askOffersChanged();
     targets?.questionChanged(q);
+    // Home's Task activity: the question up now may be another task's (tasks-approvals-r9-3).
+    tasksShown();
     presenceChanged();
     stepAside();
     if (!q) {
@@ -1113,7 +1119,7 @@ function start(): void {
     // A question with a whole text to read (review #116): the approve key shows its next part until all of it has been shown.
     const aloud = questionAloud(q.question, { keys: (q.question.detail ? readKeyWords(heldKeys()) : heldKeys()).map(k => k.say), spoken: spokenText });
     voice?.cancelListenOnce();
-    pauseAnswerSpeech();
+    pauseAnswerSpeech(questionPausesAnswer(q.question));
     if (maySpeak()) voice?.speak(words ?? aloud.say);
     // Then a moment for its answer without the name (owner's report of 2026-11-12): once Ember has said it, or at once
     // where it says nothing; only an answer leaves that window, through voiceAnswer's rules and the echo guard.
@@ -1247,14 +1253,21 @@ function start(): void {
     pieces.forEach((p, i) => voice?.speak(p.text, { append: i > 0, lang: p.lang }));
     return true;
   };
-  /** A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. */
-  const pauseAnswerSpeech = () => {
+  /**
+   * A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. A task's
+   * question (`own` false) comes from outside the turn: the answer being written goes on unsaid, as after Stop speaking,
+   * and its words still reach the bubble, Home and the transcript (tasks-approvals-r9-2).
+   */
+  const pauseAnswerSpeech = (own = true) => {
     const spoken = lastAskByVoice, interrupted = answerInterrupted, hushed = answerHushed;
+    const open = !!agent?.answerOpen;
     resetAnswerSpeech();
     lastAskByVoice = spoken;
-    answerInterrupted = interrupted;
-    answerHushed = hushed;
-    agent?.pauseAnswer();
+    if (own) {
+      answerInterrupted = interrupted;
+      answerHushed = hushed;
+      agent?.pauseAnswer();
+    } else answerHushed = open && !interrupted;
   };
 
   // ───── Copilot brain ─────
@@ -1568,7 +1581,7 @@ function start(): void {
     if (!voice || !consented() || policy.features.voice === false) return;
     voice.setMuted(!voice.isMuted);
     // Remembered: a restart (or login) doesn't quietly open the microphone again.
-    try { settings.update({ voice: { ...settings.get().voice, muted: voice.isMuted } }); } catch (err) { log.warn("voice.mute_not_saved", { err }); }
+    try { settings.update({ voice: { ...settings.own().voice, muted: voice.isMuted } }); } catch (err) { log.warn("voice.mute_not_saved", { err }); }
     setStatus("mic", voice.isMuted ? "Microphone off" : null);
     if (voice.isMuted) setTimeout(() => { if (voice?.isMuted) setStatus("mic", null); }, 2500);
   };
@@ -1721,7 +1734,7 @@ function start(): void {
     // Ember never asks who or what an installed app is (memory-r9-8).
     apps: () => sys.apps.list().map(a => a.name),
     askedAt: () => settings.get().memory.askedAt,
-    setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
+    setAskedAt: at => { try { settings.update({ memory: { ...settings.own().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
     idle: () => agent?.idle ?? false,
     // Fail closed: without a lock watcher the screen counts as locked (nothing runs while away).
     locked: () => screenLock?.locked ?? true,
@@ -2228,9 +2241,9 @@ function start(): void {
     },
     told: () => settings.get().updates.told,
     lastChecked: () => settings.get().updates.checkedAt,
-    checked: at => { try { settings.update({ updates: { ...settings.get().updates, checkedAt: at } }); } catch (err) { log.warn("updates.not_saved", { err }); } },
+    checked: at => { try { settings.update({ updates: { ...settings.own().updates, checkedAt: at } }); } catch (err) { log.warn("updates.not_saved", { err }); } },
     announce: version => {
-      try { settings.update({ updates: { ...settings.get().updates, told: version } }); } catch (err) { log.warn("updates.told_not_saved", { err }); }
+      try { settings.update({ updates: { ...settings.own().updates, told: version } }); } catch (err) { log.warn("updates.told_not_saved", { err }); }
       const notice = updateNotice(version);
       notify(notice.title, notice.body, () => { showHome(); sendToHome(IPC.focusSection, notice.section); });
     },
@@ -2273,11 +2286,13 @@ function start(): void {
   }));
   // Home's Task activity (in memory only): asked for by the settings window alone, and pushed to it alone when the cards
   // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
-  ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));
+  // Which task's question is up now goes with them: Home says where to answer in that task's group (tasks-approvals-r9-3).
+  const taskEntries = () => withQuestionUp(agent?.taskActivities() ?? [], confirmer?.currentTask);
+  ipcMain.handle(IPC.tasks, guard(taskEntries));
   ipcMain.handle(IPC.openApproval, guard(() => targets?.openApproval() ?? false));
   ipcMain.handle(IPC.historyProblem, guard(() => historyStore?.problem ?? null));
   ipcMain.handle(IPC.taskControl, guard((raw: unknown) => taskControl(agent, raw)));
-  const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []); });
+  const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, taskEntries()); });
   tasksShown = () => { if (home && !home.isDestroyed()) pushTasks(); };
   ipcMain.handle(IPC.signOut, guard(async () => {
     signOuts++;
@@ -2735,7 +2750,7 @@ function start(): void {
     personal.forgetVoice();
     // A task's voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).
     voiceTrust.endAll("voice-changed");
-    try { settings.update({ voice: { ...settings.get().voice, match: false } }); } catch (err) { log.warn("voice.match_off_not_saved", { err }); }
+    try { settings.update({ voice: { ...settings.own().voice, match: false } }); } catch (err) { log.warn("voice.match_off_not_saved", { err }); }
     voice?.setVoiceprint(null);
     log.info("voice.match_forgotten");
     broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
@@ -3863,7 +3878,7 @@ function start(): void {
             voiceprints.write(p.print);
             // Taught again: trust granted against the old voiceprint ends with it.
             voiceTrust.endAll("voice-changed");
-            settings.update({ voice: { ...settings.get().voice, match: true } });
+            settings.update({ voice: { ...settings.own().voice, match: true } });
             voice?.setVoiceprint(p.print);
             log.info("voice.match_enrolled", { phrases: p.got });
             enrolEnded = "learnt";

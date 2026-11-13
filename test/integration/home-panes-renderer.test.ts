@@ -180,6 +180,32 @@ describe.skipIf(gate)("Home's Task activity, while a task works (2026-11-07 prod
     await page.close();
   });
 
+  it("puts where to answer in the group of the task whose question is up, when two tasks wait (tasks-approvals-r9-3)", async () => {
+    const page = await open("home");
+    const cmd: ActivityItem = { id: "q1", kind: "question", at: 900, state: "waiting", words: "Asked to run a command", askedIn: "command" };
+    const bubble: ActivityItem = { id: "q2", kind: "question", at: 900, state: "waiting", words: "Asked to click in Text Editor", app: "Text Editor", askedIn: "bubble" };
+    // Newest first, as main sends them: task 2 asked second; the question up now is task 1's command card.
+    const two = task("2-new", "Say hello", [bubble], "waiting");
+    const one = { ...task("1-old", "Delete the old notes", [cmd], "waiting"), asking: true as const };
+    await page.evaluate(t => window.__pane.emit("onTasks", t), [two, one]);
+    const approval = page.locator("#tasks-open-approval");
+    await expect.poll(() => approval.isVisible()).toBe(true);
+    const inGroup = () => page.evaluate(() => {
+      const g = document.getElementById("tasks-open-approval")?.closest(".task-group");
+      const note = document.getElementById("tasks-open-approval")?.parentElement;
+      const shown = [...(note?.querySelectorAll<HTMLElement>("[data-asked-in]") ?? [])].filter(s => !s.hidden).map(s => s.dataset.askedIn);
+      return { title: g?.querySelector(".task-title")?.textContent ?? null, shown };
+    });
+    expect(await inGroup()).toMatchObject({ title: expect.stringContaining("Delete the old notes"), shown: ["command"] });
+    // Task 1 answered; task 2's question is up now.
+    await page.evaluate(t => window.__pane.emit("onTasks", t), [{ ...two, asking: true as const }, task("1-old", "Delete the old notes", [{ ...cmd, state: "done" }], "running")]);
+    await expect.poll(async () => (await inGroup()).title).toContain("Say hello");
+    expect((await inGroup()).shown).toEqual(["bubble"]);
+    await evidence(page, "tasks-two-waiting");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
   it("tells screen readers nothing of a task's state or the connection's unchanged line while a conversation is open, and the task's state once it closes (voice-listening-r4-2)", async () => {
     // "Hey Ember, turn on night light." opened a conversation, held open while the task worked and asked. A screen
     // reader said "Turn on night light: Waiting for you." and "…: Done." through the speakers into it, and each was sent

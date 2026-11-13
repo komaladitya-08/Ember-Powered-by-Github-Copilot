@@ -259,7 +259,8 @@ describe("a change sent from the settings window", () => {
     expect(home).not.toMatch(/save\(\{\s*(approvals|trust|autonomy)\b/);
     expect(home).toContain("window.ember.chooseMode(mode, modeCardVersion(mode))");
     const main = fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
-    expect(main).toContain("settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(patch, settings.own().provider), settings.own().extensions))");
+    expect(main).toContain("const mine = withOwnWhereForced(patch, settings.own(), settings.get());");
+    expect(main).toContain("settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(mine, settings.own().provider), settings.own().extensions))");
     // What main builds the choice on is the user's own setting, never the one shown with the administrator's values.
     expect(main).toContain("chooseMode(settings.own().approvals, mode, version, policy, new Date().toISOString())");
   });

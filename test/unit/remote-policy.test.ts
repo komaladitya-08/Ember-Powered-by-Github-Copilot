@@ -41,7 +41,7 @@ describe("gate 1 on a remote (§2.6's SSH column)", () => {
     // KeePassXC is on Linux's defaults even though the user's own list (on a Windows PC, say) has never had it.
     expect(policy.decide(click({ app: "keepassxc", window: "Passwords.kdbx" })).reason).toBe("this app is on the user's never-look list");
     expect(remoteNeverLook({ os: "linux", settings, localAdmin: () => policyOf({ neverLook: ["payroll", "signal"] }), remoteAdmin: () => remoteAdmin({ neverLook: ["HR Portal"] }) }))
-      .toEqual(["Signal", "payroll", "HR Portal", "keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
+      .toEqual(["Signal", "payroll", "HR Portal", "keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"]);
   });
 
   it("judges windows with the remote OS's vocabulary: its security windows, terminals and keys", () => {

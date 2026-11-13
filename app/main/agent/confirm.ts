@@ -93,6 +93,16 @@ export interface Question {
 }
 
 /** What question `q`'s "Your task:" line says (its taskLine, else its context), or "" for no line: the bubble's and the prompt card's. */
+/**
+ * Whether a question coming up retires the conversation's answer so far (AgentHost.pauseAnswer): only one of the
+ * conversation's own turn (an extension's tool call it made), which answers again once the tool is allowed or refused.
+ * A task's question comes from outside the turn: the answer being written meanwhile is still the answer, kept whole for
+ * the bubble, Home and the transcript (tasks-approvals-r9-2).
+ */
+export function questionPausesAnswer(q: Pick<Question, "task">): boolean {
+  return q.task === undefined;
+}
+
 export function taskLineOf(q: Pick<Question, "context" | "taskLine" | "prompt">): string {
   const t = (q.taskLine ?? q.context ?? "").trim();
   return t && t !== q.prompt ? t : "";

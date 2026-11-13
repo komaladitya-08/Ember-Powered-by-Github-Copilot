@@ -1434,6 +1434,26 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((q as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(am) after Try again finds a sign-in, the line says how its connection went, never “connecting…” for good (first-run-r9-2)", async () => {
+    const offline = { ...SIGNED_OUT, phase: "error", reason: "network", detail: "Ember can't reach GitHub right now. It will try again when the network is back." };
+    const p = await open({ agent: offline });
+    const line = () => p.locator("#w-signin-line").innerText();
+    await expect.poll(line).toBe("I can't reach GitHub right now. I'll try again when the network is back.");
+    await p.getByRole("button", { name: "Try again" }).click();
+    await expect.poll(() => calls(p)).toContain("retry");
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...SIGNED_OUT, phase: "starting", detail: "Connecting…" });
+    await settle(p, "retry", { found: true, source: "environment", hint: "" });
+    await expect.poll(line).toBe("Found a GitHub token in the environment; connecting…");
+    // Its connection fails again: the line says so, not that it is still connecting.
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, offline);
+    await expect.poll(line).toBe("I can't reach GitHub right now. I'll try again when the network is back.");
+    // A later start that connects: signed in, never the old "connecting…".
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...SIGNED_OUT, phase: "starting", detail: "Connecting…" });
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, readyAgent());
+    await expect.poll(line).not.toContain("connecting…");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(al) the sign-in step's line names only buttons the step shows: Try again for main's Check again, the GitHub CLI's Check again where it is shown (first-run-w5-2)", async () => {
     /** Every button the line tells me to press is on the step. */
     const pressable = async (p: Page) => {
