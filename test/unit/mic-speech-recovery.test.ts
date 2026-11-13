@@ -38,6 +38,59 @@ async function renderer(search = "") {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("mic renderer speech recovery", () => {
+  it("holds Ember's own voice until the system voice has finished the passage before it, then plays it (voice-speaking-r9-1)", async () => {
+    const r = await renderer();
+    r.hush(1);
+    // "José wrote:" in Ember's own voice: it plays and ends.
+    r.audio({ id: 1, samples: new Float32Array(10), rate: 10 });
+    r.done(1);
+    r.sources[0].onended?.();
+    // The passage, in the system's voice: it starts.
+    r.speak({ text: "Hola Alex, ¿cómo estás?", append: true });
+    const passage = r.synth.speak.mock.calls[0][0];
+    passage.onstart();
+    // "Shall I reply to it?" arrives while the passage is still being said.
+    r.audio({ id: 2, samples: new Float32Array(10), rate: 10 });
+    r.done(2);
+    expect(r.sources).toHaveLength(1);
+    expect(r.api.played).toHaveBeenCalledTimes(1);
+    // More of the passage, and a last word of Ember's own, keep their order too.
+    r.speak({ text: "Nos vemos el lunes.", append: true });
+    r.audio({ id: 3, samples: new Float32Array(10), rate: 10 });
+    r.done(3);
+    expect(r.synth.speak).toHaveBeenCalledTimes(1);
+    passage.onend();
+    expect(r.sources).toHaveLength(2);
+    expect(r.api.played).toHaveBeenLastCalledWith({ id: 2, seconds: 1 });
+    expect(r.api.speaking).toHaveBeenLastCalledWith(true, 1);
+    expect(r.synth.speak).toHaveBeenCalledTimes(1);
+    r.sources[1].onended?.();
+    expect(r.synth.speak).toHaveBeenCalledTimes(2);
+    expect(r.sources).toHaveLength(2);
+    const more = r.synth.speak.mock.calls[1][0];
+    more.onstart();
+    more.onend();
+    expect(r.sources).toHaveLength(3);
+    r.sources[2].onended?.();
+    expect(r.api.speaking).toHaveBeenLastCalledWith(false, 1);
+    expect(r.synth.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("plays Ember's own voice once a system voice that never started has been given up on, and at once after a hush (voice-speaking-r9-1)", async () => {
+    const r = await renderer();
+    r.speak({ text: "Hola Alex.", append: true });
+    r.audio({ id: 1, samples: new Float32Array(10), rate: 10 });
+    r.done(1);
+    expect(r.sources).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(r.sources).toHaveLength(1);
+    // A new reply: nothing of the old one holds it.
+    r.speak({ text: "Hola otra vez.", append: true });
+    r.hush(2);
+    r.audio({ id: 2, samples: new Float32Array(10), rate: 10 });
+    expect(r.sources).toHaveLength(2);
+  });
+
   it.each([["", true], ["?testMicWav=1", false]] as const)("keeps echo cancellation on except for synthetic WAV capture (%s)", async (search, echoCancellation) => {
     const r = await renderer(search);
     r.startCapture();

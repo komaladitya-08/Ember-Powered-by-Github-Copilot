@@ -1187,7 +1187,10 @@ veut dire « I don't know »."); one that quotes something follows it only where
 language's short words than English's, or as many and a letter or mark of that language ("Abrí "Ventas.xlsx".",
 "Voilà « Ventes.xlsx »."; "Literally, "I don't know"." and "In English: "thank you"." are Kitten's), and a message that ends before
 a tool call ("Sure, one moment.") decides nothing for the messages after it. Words for the system voice wait until the
-pieces Kitten is still making are done.
+pieces Kitten is still making are done, Kitten's words after them wait their turn behind those (never made ahead and
+said first), and on the speaking page each voice starts only once the other has fallen quiet (`SpeechOrder`,
+app/renderer/mic/speech-order.ts), so "Shall I reply to it?" is never said over the message it follows; a system voice
+that never starts (the 8 s watch) is not waited for.
 
 **When a request ends.** The VAD ends a request after 0.6 s of silence (about 0.72 s after the voice, with Silero's own
 lag). At a quiet pause of 0.35 s in it, what was said so far is transcribed ahead (`SPECULATE_FRAMES`,
