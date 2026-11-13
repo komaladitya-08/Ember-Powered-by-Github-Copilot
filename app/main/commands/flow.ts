@@ -662,7 +662,8 @@ export const HELD_BACK_LINE = "Your words say to leave this or to wait, so Ember
  * what lies in the folder they said to leave is theirs to leave too)?
  */
 function namesObject(findings: readonly Finding[], part: string): boolean {
-  const said = new Set(part.toLowerCase().split(/[^\p{L}\p{N}._-]+/u).map(w => w.replace(/\.+$/, "")).filter(Boolean));
+  // (A word with a dot in it whole, and in its pieces: "build.Keep src", typed without its space, still names build.)
+  const said = new Set(part.toLowerCase().split(/[^\p{L}\p{N}._-]+/u).flatMap(w => [w.replace(/\.+$/, ""), ...w.split(".")]).filter(Boolean));
   return findings.some(f => f.objects.some(o => {
     const names = o.text.toLowerCase().split(/[\\/]+/).filter(Boolean);
     const cut = names.findIndex(n => /[*?[\]{}]/.test(n));

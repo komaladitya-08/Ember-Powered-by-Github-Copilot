@@ -2998,6 +2998,7 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       ["commit, and hold the push until I say", "git push origin main"], ["commit everything; push tomorrow", "git push origin main"], ["commit everything; I'll push myself", "git push origin main"],
     ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
     expect(ruled("delete notes.txt and keep going. Thanks", "rm -f notes.txt")).toBe(false);
+    expect(ruled("tidy up, keep build.Then run the tests", "rm -rf build")).toBe(true);
     // A part that holds something else back, or holds nothing back, rules nothing out.
     for (const [words, command] of [
       ["delete the build folder and keep going", "rm -rf build"], ["wait for the tests, then push to origin", "git push origin main"], ["keep src, delete build", "rm -rf build"],
