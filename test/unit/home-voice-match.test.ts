@@ -333,7 +333,7 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
       "Ember doesn't ask before it acts.",
       "It sends, posts, shares, deletes, overwrites, pays, installs, signs out, changes settings, answers dialogs and runs dangerous commands, also as an administrator, without asking you first.",
       "By choosing Autopilot you accept that risk: what it does may be impossible to undo.",
-      "It still asks before a command that would show passwords or keys, one that would keep running after you stop Ember, one whose effect it can't tell, wherever you or your organisation set commands to ask every time, and before it turns on something you haven't agreed to yet.",
+      "It still asks before a command that would show passwords or keys, one that would keep running after you stop Ember, one whose effect it can't tell, one you may have ruled out, wherever you or your organisation set commands to ask every time, and before it turns on something you haven't agreed to yet.",
       "The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.",
       "It never repeats a step you said no to, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop.",
       "“Ember, stop” or Ember's stop shortcut stops everything at once.",
@@ -343,7 +343,8 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     // itself; the model never types or sees it, and the system's own prompts stay never.
     expect(AUTOPILOT_CONSENT_TEXT).toContain("Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.");
     expect(AUTOPILOT_CONSENT_TEXT).not.toMatch(/never types passwords or card numbers,/);
-    // Short enough to be read: the vault's sentence took it from 246 words to 275.
+    // Short enough to be read: the vault's sentence took it from 246 words to 275, and the commands it still asks
+    // about that it left unsaid (one the user's words rule out, one that may be a command they said no to: integ-x-6) to 280.
     expect(AUTOPILOT_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(280);
     // In force: its row is the one marked, nothing is offered to agree to, and the note says it is on and how to stop it.
     const on = { mode: "autopilot" as const, consent: { ...agreed.consent, autopilot: { version: modeCardVersion("autopilot"), at: AT } } };

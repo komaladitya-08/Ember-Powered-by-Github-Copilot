@@ -58,7 +58,9 @@ export function consentChangesSince(agreed: number): string[] {
  * card names everything the check is sent, a dialog's words, the text a step would replace, a cell's formula, where
  * carried text came from and a command's computer, shell and folder among them (modes-x9p-4). `autopilot` 2
  * (2026-11-13): its card says Ember fills what the user saved in the vault into password, card and sign-in fields,
- * where 1 said it never types them, so an agreement to 1 is asked again before Autopilot is in force.
+ * where 1 said it never types them, so an agreement to 1 is asked again before Autopilot is in force; the same 2 names
+ * every command it still asks about, among them one the user may have ruled out: by their own words for the task, or
+ * as what may be a command they said no to in it (integ-x-6).
  */
 export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 3, autonomy: 3, provider: 1, updates: 1, assisted: 2, autopilot: 2 } as const;
 
