@@ -1714,6 +1714,8 @@ function start(): void {
     paused: () => (memoryConfigured() ? (memoryOwner.ready ? null : memoryOwner.reason ?? "checking")
       : consented() && memoryAllowed() && memoryNoteOutdated(settings.get().memory) ? "note" : null),
     questionsOn: () => settings.get().memory.questions,
+    // Ember never asks who or what an installed app is (memory-r9-8).
+    apps: () => sys.apps.list().map(a => a.name),
     askedAt: () => settings.get().memory.askedAt,
     setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
     idle: () => agent?.idle ?? false,

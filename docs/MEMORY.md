@@ -550,7 +550,13 @@ download, so English-only MiniLM is the trade-off for now.
    most one pass an idle stretch and 6 a day; the kill switch (`memory` StopPart) abandons it.
 5. **Asking** (done; `questions.ts`). Names in the user's own requests (never the recall tool's queries, which the
    model writes, nor words Ember couldn't tell were the user's, nor a name that reads like an order) that recall finds
-   nothing for are counted (`Gaps`); once one
+   nothing for are counted (`Gaps`), but only names that may be someone or something of the user's (`askableNames`,
+   memory-r9-8): never an app, a site, a device or a day everyone knows (`NOT_SOMEONE`, `EVERYDAY`, with a setting's
+   words and well-known places), an app installed on this computer (`LearningDeps.apps`), or a name standing where
+   an app, a site, a setting or a place does (the object of "open", "close", "play", "search"…, after "in", "on" or
+   "using", after "to" behind a word of travel), so "Open Firefox", "Is Dark Mode on" and "the weather in London"
+   never make Ember ask who or what that is. A name Ember asked about is never counted or asked about again in that
+   run, whether it was answered, skipped or left unanswered (held in RAM only; a restart may ask once more). Once one
    was missed twice, at most once a day (`memory.askedAt`, kept across restarts), only while idle with the screen
    unlocked and nothing under way, Ember says "You've mentioned “Priya” a few times. Who or what is that?" in the
    conversation (and aloud when replies are spoken). The question is built from the name alone; no model writes it.

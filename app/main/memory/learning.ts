@@ -60,6 +60,8 @@ export interface LearningDeps {
   managed?: () => boolean;
   /** The user lets Ember ask questions (settings memory.questions). */
   questionsOn: () => boolean;
+  /** The names of the apps installed on this computer: Ember never asks who or what one of them is (memory-r9-8). */
+  apps?: () => readonly string[];
   /** When Ember last asked one (ISO), kept across restarts, and setting it. */
   askedAt: () => string | null;
   setAskedAt: (iso: string) => void;
@@ -131,6 +133,7 @@ export class MemoryLearning {
   /** When the last refinement ran (ISO): the next reads what changed since. */
   private refinedAt: string | null = null;
   private refining: AbortController | null = null;
+  private appNames: { at: number; names: readonly string[] } | null = null;
   private interview: Interview | null = null;
   private interviewAt = 0;
   /** How many of the interview's answers memory kept: with none, it never ends "I'll remember that" (memory-r9-6). */
@@ -171,6 +174,17 @@ export class MemoryLearning {
   }
 
   private now(): number { return (this.d.now ?? Date.now)(); }
+
+  /** The installed apps' names, read at most every ten minutes (a list that can't be read is none). */
+  private installed(): readonly string[] {
+    const now = this.now();
+    if (!this.appNames || now - this.appNames.at > 600_000) {
+      let names: readonly string[] = [];
+      try { names = [...new Set(this.d.apps?.() ?? [])].slice(0, 500); } catch { this.d.log.warn("memory.apps_unreadable"); }
+      this.appNames = { at: now, names };
+    }
+    return this.appNames.names;
+  }
 
   /** The model to use (a connected Copilot's one-shot sessions), or null. */
   setModel(model: OneShot | null): void { this.model = model; }
@@ -260,7 +274,7 @@ export class MemoryLearning {
         // doesn't count as a use). Never from words Ember couldn't tell were the user's.
         if (!matched && own && this.d.inForce()) {
           const known = m.list().map(i => fold(i.text));
-          this.gaps.missed(request, name => known.some(t => t.includes(fold(name))));
+          this.gaps.missed(request, name => known.some(t => t.includes(fold(name))), this.installed());
         }
         return [this.hold.gave(text), this.hold.changes()].filter(Boolean).join("\n\n");
       },
@@ -628,9 +642,11 @@ export class MemoryLearning {
 
   /** At most one question a day, while idle, about the gap recall missed most. */
   private maybeAsk(): void {
+    const now = this.now();
+    // A question nobody answered is over once its wait is, also when nothing was said since.
+    if (this.question && now - this.question.at > ANSWER_WAIT_MS) this.question = null;
     if (this.question || this.interview || !this.d.questionsOn()) return;
     const last = Date.parse(this.d.askedAt() ?? "");
-    const now = this.now();
     if (Number.isFinite(last) && now - last < QUESTION_EVERY_MS) return;
     const name = this.gaps.top();
     if (!name) return;

@@ -36,18 +36,75 @@ export const MAX_NAME_WORDS = 3;
 
 /** The names in a request: capitalised words not at its start (and runs of them: "Priya Shah"). */
 export function namesIn(request: string): string[] {
-  const out: string[] = [];
+  return [...new Set(namedIn(request).map(n => n.name))].slice(0, 5);
+}
+
+/** `namesIn`, each name with the words of its sentence before it (folded), nearest last. */
+function namedIn(request: string): { name: string; before: string[] }[] {
+  const out: { name: string; before: string[] }[] = [];
   for (const sentence of request.split(/[.!?\n]+/)) {
-    const words = sentence.trim().split(/\s+/);
+    const words = sentence.trim().split(/\s+/).map(raw => raw.replace(/^[^\p{L}]+|[^\p{L}\p{N}]+$/gu, "").replace(/'s$/, ""));
     let run: string[] = [];
+    let from = 0;
     // At most three words: a longer capitalised run is a title or a heading, not a name (review of PR #142).
-    const end = () => { if (run.length && run.length <= MAX_NAME_WORDS) out.push(run.join(" ")); run = []; };
-    words.forEach((raw, i) => {
-      const w = raw.replace(/^[^\p{L}]+|[^\p{L}\p{N}]+$/gu, "").replace(/'s$/, "");
-      if (i > 0 && /^\p{Lu}[\p{L}\p{N}-]{1,30}$/u.test(w) && !COMMON.has(fold(w))) run.push(w);
+    const end = () => { if (run.length && run.length <= MAX_NAME_WORDS) out.push({ name: run.join(" "), before: words.slice(0, from).map(fold) }); run = []; };
+    words.forEach((w, i) => {
+      if (i > 0 && /^\p{Lu}[\p{L}\p{N}-]{1,30}$/u.test(w) && !COMMON.has(fold(w))) { if (!run.length) from = i; run.push(w); }
       else end();
     });
     end();
+  }
+  return out;
+}
+
+/**
+ * Names everyone knows, which Ember never asks "who or what is that?" about (memory-r9-8), beside NOT_SOMEONE's apps,
+ * days, folders and devices: more sites and apps, a setting's words ("Dark Mode", "Night Light") and places people
+ * ask the weather, the time or a flight for. Any word of a name counts: asking less costs nothing.
+ */
+const EVERYDAY = new Set([
+  "youtube", "wikipedia", "instagram", "linkedin", "whatsapp", "tiktok", "pinterest", "paypal", "ebay", "bing", "yahoo", "duckduckgo",
+  "notepad", "paint", "calculator", "explorer", "powerpoint", "onenote", "onedrive", "sharepoint", "libreoffice", "writer", "calc",
+  "impress", "vscode", "xcode", "intellij", "pycharm", "eclipse", "vim", "emacs", "nano", "bash", "zsh", "powershell", "npm", "yarn", "pip",
+  "android", "iphone", "ipad", "ios", "macos", "gnome", "kde", "wayland", "xorg", "rhel", "debian", "centos", "rocky", "alma", "messenger",
+  "snapchat", "twitch", "hulu", "disney", "icloud", "itunes", "airdrop", "airplay", "cortana", "bixby", "internet", "web", "cloud",
+  "mode", "dark", "light", "night", "focus", "disturb", "airplane", "volume", "brightness", "wallpaper", "screenshot", "clipboard", "taskbar",
+  "dock", "launcher", "notifications", "accessibility", "magnifier", "narrator", "voiceover", "caps", "lock", "wifi",
+  "london", "berlin", "madrid", "rome", "lisbon", "dublin", "amsterdam", "brussels", "vienna", "zurich", "geneva", "prague", "warsaw", "budapest",
+  "athens", "stockholm", "oslo", "copenhagen", "helsinki", "moscow", "istanbul", "dubai", "delhi", "mumbai", "bangalore", "bengaluru", "chennai",
+  "hyderabad", "kolkata", "pune", "tokyo", "osaka", "kyoto", "seoul", "beijing", "shanghai", "singapore", "bangkok", "jakarta", "manila",
+  "melbourne", "brisbane", "auckland", "toronto", "vancouver", "montreal", "ottawa", "york", "boston", "chicago", "seattle", "dallas", "houston",
+  "denver", "miami", "atlanta", "philadelphia", "francisco", "angeles", "vegas", "cairo", "lagos", "nairobi", "johannesburg", "manchester",
+  "birmingham", "leeds", "liverpool", "glasgow", "edinburgh", "cardiff", "belfast", "bristol", "oxford", "cambridge",
+  "england", "scotland", "wales", "ireland", "britain", "uk", "usa", "america", "canada", "australia", "zealand", "japan", "france", "germany",
+  "spain", "italy", "portugal", "netherlands", "belgium", "switzerland", "austria", "sweden", "norway", "denmark", "finland", "poland", "greece",
+  "turkey", "russia", "brazil", "argentina", "egypt", "nigeria", "africa", "europe", "asia",
+]);
+/** Verbs whose object is an app, a site or a setting Ember is asked to work in, never someone to ask about. */
+const APP_VERB = /^(?:open|launch|start|run|close|quit|exit|restart|reopen|install|uninstall|update|play|pause|resume|stop|search|google|watch|visit|browse|mute|unmute|enable|disable|toggle)$/;
+/** Words that say where or with what: "in Notepad", "on YouTube", "using Krita". */
+const WHERE = /^(?:in|on|using|via|inside|within|onto|into)$/;
+/** Words before "to" that make what follows a place ("flights to Lisbon", "the train to Leeds"). */
+const TRAVEL = /^(?:flights?|trains?|bus|buses|coach|trips?|travel|travelling|traveling|go|goes|going|went|drive|driving|fly|flying|directions|route|way|navigate|tickets?|journey|move|moving|commute|get|getting)$/;
+const DETERMINER_BEFORE = /^(?:the|my|our|a|an|this|that|your)$/;
+
+/**
+ * The names in a request that Ember may ask about (memory-r9-8): `namesIn`, without what everyone knows (NOT_SOMEONE,
+ * EVERYDAY), an app installed on this computer (`apps`: its name or a word of it), and what stands where an app, a site,
+ * a setting or a place does: the object of "open", "close", "play", "search"…, after "in", "on" or "using", and after
+ * "to" behind a word of travel. People and projects are named otherwise ("Email Priya", "a note to Priya about
+ * Atlas"). Where it can't tell, it doesn't ask.
+ */
+export function askableNames(request: string, apps: readonly string[] = []): string[] {
+  const installed = new Set(apps.flatMap(a => [fold(a), ...fold(a).split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 3)]));
+  const out: string[] = [];
+  for (const { name, before } of namedIn(request)) {
+    const words = fold(name).split(/\s+/);
+    if (installed.has(fold(name)) || words.some(w => NOT_SOMEONE.has(w) || EVERYDAY.has(w) || installed.has(w))) continue;
+    const near = before.filter(w => w && !DETERMINER_BEFORE.test(w));
+    const last = near.at(-1) ?? "";
+    if (APP_VERB.test(last) || WHERE.test(last) || (last === "to" && TRAVEL.test(near.at(-2) ?? ""))) continue;
+    out.push(name);
   }
   return [...new Set(out)].slice(0, 5);
 }
@@ -55,10 +112,16 @@ export function namesIn(request: string): string[] {
 /** Names recall missed, counted per request. */
 export class Gaps {
   private misses = new Map<string, { name: string; n: number }>();
+  /** The names Ember asked about this run, whatever was answered: never counted or asked about again (memory-r9-8). */
+  private settled = new Set<string>();
 
-  /** Recall found nothing for `request`; `known`: whether memory already knows a name. */
-  missed(request: string, known: (name: string) => boolean): void {
-    for (const name of namesIn(request)) {
+  /**
+   * Recall found nothing for `request`; `known`: whether memory already knows a name; `apps`: the apps installed on
+   * this computer, whose names are never asked about.
+   */
+  missed(request: string, known: (name: string) => boolean, apps: readonly string[] = []): void {
+    for (const name of askableNames(request, apps)) {
+      if (this.settled.has(nameKey(name))) continue;
       // A name that reads like an order ("Always Approve Wire Transfers") is never asked about.
       if (known(name) || soundsLikeInstruction(name)) continue;
       const key = nameKey(name);
@@ -75,9 +138,12 @@ export class Gaps {
     return best?.name ?? null;
   }
 
-  /** Asked about (or learned): not asked again. */
-  drop(name: string): void { this.misses.delete(nameKey(name)); }
-  clear(): void { this.misses.clear(); }
+  /**
+   * Asked about: not counted or asked about again this run, whether it was answered, declined ("skip") or left
+   * unanswered (memory-r9-8). In RAM only: the names of a question nobody answered are kept nowhere.
+   */
+  drop(name: string): void { this.misses.delete(nameKey(name)); this.settled.add(nameKey(name)); }
+  clear(): void { this.misses.clear(); this.settled.clear(); }
 }
 
 /** Ember's question about a gap. */
