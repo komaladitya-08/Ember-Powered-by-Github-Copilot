@@ -14,8 +14,11 @@ import type { TargetId } from "./targets";
  * with Voice Match on, only the owner's voice can say yes (owner decision of 2026-11-12, PLAN.md §2 "Approvals"). On
  * Windows the output's level is read while a question is up or a task is at work as well as in a conversation, which
  * the “Hey Ember” card says (owner's report of 2026-11-12).
+ * 9 (2026-11-13): first run's one agreement turns on, each with its own switch and its own card's text, commands on
+ * this computer, memory, “Hey Ember” with spoken replies, screenshots for tasks and Interactive (owner decision of
+ * 2026-11-12, app/shared/first-run.ts); someone who agreed before keeps their settings and is asked about Interactive.
  */
-export const CONSENT_VERSION = 8;
+export const CONSENT_VERSION = 9;
 
 /**
  * What each bump of CONSENT_VERSION changed, in Ember's words, for someone who agreed to an earlier version: first run
@@ -30,6 +33,7 @@ export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
   6: "Once you call me, I keep listening through the conversation, and what I hear there is sent as text, without my name.",
   7: "If you turn on “Keep my recent conversation”, its latest messages stay on this computer after I restart.",
   8: "While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.",
+  9: "Agreeing now also turns on Interactive unless you switch it off here, so I don't ask before ordinary steps in an app. Your other settings stay as they are.",
 };
 
 /** The changes since the version the user agreed to (`agreed`), oldest first: none for a first agreement (0) or a current one. */

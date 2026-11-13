@@ -63,8 +63,10 @@ describe("first run's steps", () => {
     expect(gated(firstStep(1), false)).toBe("consent");
   });
 
-  it("goes forward from the consent step only once the agreement is saved", () => {
-    expect(SCRIPT).toContain('void saveStep(() => deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), "sign-in");');
+  it("goes forward from the consent step only once the agreement is saved, and turned on every row left on (slice4-24)", () => {
+    expect(SCRIPT).toContain("const done = await window.ember.agreeFirstRun(sent, sha).catch(() => ({ ok: false, failed: [] as FirstRunRow[] }));");
+    expect(SCRIPT).toContain("return done.failed.length === 0;");
+    expect(SCRIPT).not.toContain("deps.save({ consent:");
     expect(SCRIPT).toContain("step = gated(to, consented());");
   });
 
@@ -95,9 +97,11 @@ describe("the consent in short", () => {
       ["eye", /I read the window you're working in, and for tasks I may take a screenshot of it\./, "reads the window you're working in"],
       ["eye", /Never password prompts, or apps on your never-look list\./, "App windows on your never-look list and password prompts are never read"],
       ["send", /your request and what I read go to GitHub Copilot\. Nothing is sent before you ask\./, "Nothing is sent before you ask."],
-      ["hand", /I ask before acting in an app, and always before anything hard to undo\. I never type passwords\./, "It never types passwords."],
+      ["hand", /I ask before acting in an app unless you turn on Interactive, and always before anything hard to undo\. I never type passwords\./, "It never types passwords."],
+      ["hand", /unless you turn on Interactive/, "It asks before acting</b> in an app unless you turn on Interactive"],
       ["lock", /On this computer I keep your settings, logs and a record of what you asked and what I did \(kept 30 days\)\. If you save a workspace, I encrypt its paths and last request and answer\. I send no usage statistics\./, "It sends no usage statistics."],
-      ["plug", /The microphone, other computers and commands stay off until you turn them on\. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask\. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct \(never audio\)\./, "The microphone stays off</b> unless you turn on"],
+      ["plug", /^Agreeing turns on what you leave on here, and you can turn any of it off later in Settings\. Other computers stay off until you turn them on\. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask\. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct \(never audio\)\.$/, "<b>Agreeing turns on</b> what you leave switched on here"],
+      ["plug", /you can turn any of it off later in Settings/, "you can turn any of them off later in Settings"],
       ["plug", /If you teach me your voice, I keep a voiceprint I refine from your requests/, "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct"],
       // Said plainly at setup (owner decision B of 2026-11-12).
       ["plug", /While one of my questions is up, anyone near the computer can answer it by voice/, "anyone near the computer can answer it by voice"],
@@ -137,11 +141,13 @@ describe("the consent in short", () => {
       for (const source of CONSENT_CHANGE_SOURCES[v]) expect(full, `${v}: ${source}`).toContain(source);
     }
     expect(Object.keys(CONSENT_CHANGES).map(Number).every(v => v >= 2 && v <= CONSENT_VERSION)).toBe(true);
-    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7], CONSENT_CHANGES[8]]);
+    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9]]);
     expect(consentChangesSince(6)[0]).toContain("“Keep my recent conversation”");
-    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7], CONSENT_CHANGES[8]]);
+    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9]]);
     // Setup says plainly that anyone near the computer can answer Ember by voice (owner decision B of 2026-11-12).
-    expect(consentChangesSince(7)).toEqual(["While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes."]);
+    expect(consentChangesSince(7)[0]).toBe("While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.");
+    // Version 9, said truthfully to someone who agreed before: their settings stay, and they are asked about Interactive (slice4-25).
+    expect(consentChangesSince(8)).toEqual(["Agreeing now also turns on Interactive unless you switch it off here, so I don't ask before ordinary steps in an app. Your other settings stay as they are."]);
     expect(consentChangesSince(0)).toEqual([]);
     expect(consentChangesSince(CONSENT_VERSION)).toEqual([]);
     for (const line of Object.values(CONSENT_CHANGES)) expect(line, line).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);

@@ -676,9 +676,11 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
     const l = computersCopy.ONBOARDING_LINE;
     expect(page).toContain(`<li data-icon="plug"><b>${l.lead}</b><span id="targets-note">${l.rest}</span></li>`);
-    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
     // WSL is Windows' alone (review #221).
-    expect(keep(`${l.lead}${computersCopy.onboardingRest("win32")}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(keep(`${l.lead}${computersCopy.onboardingRest("win32")}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
+    // Apps & privacy, where first run's rows aren't, says it without their sentence (slice4-23).
+    expect(keep(`${l.lead}${l.settings}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     for (const s of [computersCopy.COMPUTERS_INTRO, computersCopy.COMMANDS_INTRO, computersCopy.WSL_SWITCH, computersCopy.OFFER_SWITCH, computersCopy.ADD_PLACEHOLDER, computersCopy.OPEN_COMMANDS]) {
       expect(page).toContain(s);
     }
@@ -694,8 +696,8 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     const allOff = { source: "error", features: { ssh: false, wsl: false }, commands: { local: "off", wsl: "off", ssh: "off" } } as const;
     const noCommands = { source: "/etc/ember/policy.json", features: {}, commands: { local: "off", wsl: "off", ssh: "off" } } as const;
     // Nothing turned on, nothing turned off: first run's own words, on each OS.
-    expect(rest(base, none)).toBe(l.rest);
-    expect(rest(base, none, "win32")).toBe(l.restWindows);
+    expect(rest(base, none)).toBe(l.settings);
+    expect(rest(base, none, "win32")).toBe(l.settingsWindows);
     // Commands on this computer, turned on with their card (the re-rater's probe).
     const local = { ...base, commands: { local: { on: true, askEvery: false, consent: agreed } } } as Settings;
     expect(keep(`${l.lead}${rest(local, none)}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
@@ -709,7 +711,7 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     const wsl = { ...base, targets: { ...base.targets, wsl: { on: true, consent: agreed } } } as Settings;
     // Never "other computers and commands on this computer", which reads as both on this computer (safety-privacy-r4-2).
     expect(keep(`${l.lead}${rest(wsl, none, "win32")}`)).toBe("Other computers and commands: you let Ember work in WSL. Other computers are off until you turn them on, and so are commands on this computer.");
-    expect(rest(wsl, none, "linux")).toBe(l.rest);
+    expect(rest(wsl, none, "linux")).toBe(l.settings);
     // Under the organisation's lockdown nothing is offered, and nothing the person turned on is said to be on.
     expect(keep(`${l.lead}${rest(both, allOff)}`)).toBe("Other computers and commands are turned off by your organisation.");
     expect(rest(both, allOff, "win32")).toBe(" are turned off by your organisation.");
@@ -724,8 +726,8 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     expect(keep(`${l.lead}${rest(ssh, localOnly)}`)).toBe("Other computers and commands: you let Ember work on computers you reach over SSH. Commands on this computer are off until you turn them on. Your organisation has turned off commands on computers you reach over SSH.");
     expect(keep(`${l.lead}${rest(local, { source: "/etc/ember/policy.json", features: { ssh: false }, commands: { local: "on" } })}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Your organisation has turned off working on other computers.");
     // A switch whose card isn't agreed to at its version isn't on, as main counts it.
-    expect(rest({ ...base, commands: { local: { on: true, askEvery: false, consent: { version: 0, at: null } } } } as Settings, none)).toBe(l.rest);
-    expect(rest({ ...base, targets: { ...base.targets, hosts: [{ ...host, consent: { version: 0, at: null } }] } } as Settings, none)).toBe(l.rest);
+    expect(rest({ ...base, commands: { local: { on: true, askEvery: false, consent: { version: 0, at: null } } } } as Settings, none)).toBe(l.settings);
+    expect(rest({ ...base, targets: { ...base.targets, hosts: [{ ...host, consent: { version: 0, at: null } }] } } as Settings, none)).toBe(l.settings);
   });
 });
 
@@ -1570,10 +1572,11 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
 
   it("says ordinary steps go ahead without asking while a mode is in force, and which apps never ask (safety-privacy-c4-1)", async () => {
     const { privacyFoldWords } = await import("../../app/renderer/home/copy");
-    const hand = " in an app, and always before anything hard to undo. It never types passwords. ";
-    // The words are first run's own, after the line's bold lead, as the page has them.
+    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never types passwords. ";
+    // The words are first run's own, after the line's bold lead, as the page has them; with no mode in force here,
+    // Apps & privacy says it asks (slice4-22).
     expect(page).toContain(`<b>It asks before acting</b>${hand}<span`);
-    expect(privacyFoldWords(hand, { screenImages: true })).toBe(hand);
+    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true })}`).toBe("It asks before acting in an app, and always before anything hard to undo. It never types passwords. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, autonomy: true, grants: true })}`).toBe(
       "It asks before acting on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never types passwords. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, grants: true })}`).toBe(

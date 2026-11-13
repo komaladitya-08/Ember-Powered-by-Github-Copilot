@@ -128,7 +128,7 @@ const TODAY = {
   "audit-dir": "Every decision and action is also in ~/.config/ember/audit/ and in the system journal (journalctl -t ember-audit).",
 } as const;
 const CHORD_SENTENCES: Record<ShortcutId, string> = {
-  stop: "It asks before acting in an app, and always before anything hard to undo. It never types passwords. Ctrl+Alt+X stops everything at once.",
+  stop: "It asks before acting in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never types passwords. Ctrl+Alt+X stops everything at once.",
   settings: "Press Ctrl+Alt+E any time to come back here, or click Ember's handle in the bottom-right corner.",
   ask: "Ask Ember anything with Ctrl+Alt+Space.",
   mute: TODAY["mic-indicator"],
@@ -412,12 +412,12 @@ describe("Computers and Commands before the targets runtime answers", () => {
     // The onboarding line sits in "Before Ember starts" (new users only), with no chord for the OS patches to change.
     const plug = elements(byId(root, "welcome")).filter(e => e.attrs["data-icon"] === "plug");
     expect(plug).toHaveLength(1);
-    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
     expect(elements(plug[0]).some(e => e.attrs.class === "chord")).toBe(false);
     // WSL is named on Windows only (review #221).
     const win = apply(page(), homePatches(WINDOWS));
     const winPlug = elements(byId(win, "welcome")).filter(e => e.attrs["data-icon"] === "plug")[0];
-    expect(visible(winPlug)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(visible(winPlug)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
     for (const os of [MAC, LINUX]) expect(visible(byId(apply(page(), homePatches(os)), "welcome")), os.os).not.toMatch(/WSL/);
   });
 });

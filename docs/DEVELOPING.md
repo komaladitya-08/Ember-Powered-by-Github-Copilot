@@ -139,7 +139,21 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
   lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
-  provider while it is in force, or the organisation's model service) and **Agree and continue**, or **Not now**, which keeps Ember off
+  provider while it is in force, or the organisation's model service), then what the one agreement turns on (owner
+  decision of 2026-11-12, `app/shared/first-run.ts`, `app/main/first-run.ts`): five rows, each with a switch that is on
+  by default and its own card's full text from the same source Settings uses (commands on this computer, this
+  computer's commands card as main builds it; memory, `MEMORY_CONSENT_TEXT`; listening for “Hey Ember” with spoken
+  replies, the Voice section's card as the page shows it; screenshots for tasks, `SCREEN_IMAGES_TEXT`; Interactive,
+  `AUTONOMY_CONSENT_TEXT`). A row the organisation turned off (every row under a lockdown) shows off and managed with
+  one sentence why; listening without the speech models shows off and says they must be downloaded first (nothing
+  downloads without its own yes; Voice Match isn't offered). **Agree and continue** records `CONSENT_VERSION` first,
+  then, for each row left on, what that card's own yes records (`commands.local` with its card's version once its hash
+  matches the text shown, `memory` with its note's version, `voice.consent` with `wakeWord` and `speak`, `screenImages`,
+  and Interactive through `chooseMode` with its `autonomy` audit entry, via `home`), each in its own saved change: a row
+  that can't be saved is left off without consent and the step says so before going on. A row switched off records
+  nothing (listening and screenshots are written off). Someone who agreed to an earlier version sees what changed and
+  only Interactive's row: the rest of their settings stay as they are. The defaults in `settings.ts` stay off until
+  agreed, so a settings file without the agreement never gains a feature. Or **Not now**, which keeps Ember off
   and offers **Quit Ember** (a press on either within half a second of its appearing is dropped, so a double click
   agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Ready to start** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on, only **Use GitHub Copilot instead** switches it off (pressed while Ember is still answering or at a task, the step says Ember will switch once it has finished, and lets you go on), and an edit is checked as typed before it replaces the details in use, so one that fails, or that you leave or change while it is checked, changes nothing and the step says Ember is still using the old host, with **Keep using** it to go on; once switched off, the step opens again as one to set up, and a check there that fails leaves it off; or **Skip for now**); the setup check shows only
   the rows that need you (and, once **Turn on** has switched screen reading on, that apps already open need a restart), in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission), and
@@ -1570,7 +1584,9 @@ Ember**; main restarts from Home's only while that lockdown is held; a message s
 from Home is refused with "…so Ember can't answer until you restart it.", and the
 settings window says so at once, already open or not: its notice, what it says Ember reads and sends, and the switches
 the lockdown turns off; a message sent there is refused with "Restart Ember, then send again"), and the restart
-reads the new policy whole. Every key is optional:
+reads the new policy whole. A feature the policy turns off (`commands.local`, `features.memory`, `features.voice`,
+`features.screenImages`, and what keeps Ember below Interactive) shows off and managed in first run's rows too, and
+first run's agreement gives it nothing; under a lockdown every row is so. Every key is optional:
 
 ```json
 {

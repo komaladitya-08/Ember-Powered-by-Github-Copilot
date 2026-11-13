@@ -290,7 +290,7 @@ export const SCREEN_IMAGES_TEXT = {
 export function privacyFoldWords(text: string, o: { screenImages: boolean; autonomy?: boolean; grants?: boolean; targets?: string }): string {
   if (o.targets !== undefined && (text === onboardingRest("linux") || text === onboardingRest("win32"))) return o.targets;
   const out = text.replace("The list is in settings", "The list is below, under Never look at")
-    .replace(" in an app, and always before anything hard to undo.", o.autonomy
+    .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.", o.autonomy
       ? " on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
       : o.grants ? " in an app, except those you let it act in without asking (below), and always before anything hard to undo."
         : " in an app, and always before anything hard to undo.");

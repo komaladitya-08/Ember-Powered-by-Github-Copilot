@@ -2344,6 +2344,8 @@ function syncPrivacyTerms(): void {
   const copy = source.cloneNode(true) as HTMLElement;
   copy.querySelector("#model-service")?.classList.add("model-service-copy");
   for (const el of [copy, ...copy.querySelectorAll("[id]")]) el.removeAttribute("id");
+  // What first run's agreement turns on is first run's alone: here each switch is in its own section.
+  for (const el of copy.querySelectorAll("[data-first-run]")) el.remove();
   // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4); How Ember asks
   // and the apps let in without asking are below too (safety-privacy-c4-1); other computers and commands are on
   // or off as the settings and the policy leave them (safety-privacy-r4-2). Each of screenshots, the approval mode and
