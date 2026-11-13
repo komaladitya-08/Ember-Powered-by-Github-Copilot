@@ -307,7 +307,12 @@ Ember stops and asks before a command that:
   word the command gives it, also after an option, so `dropdb -p 5433 production` needs "production", and never a
   word that is only part of a longer name, "prod" in "prod-copy", or that comes after "while"), it is announced
   instead, as in §2.5, and the announcement names them; a question about the program or a mention of it asks for
-  nothing. What else the command does is judged as before, and so is the command such a tool runs for you: what
+  nothing. Whatever else the command gives the program must be yours too: an option only when your words write it
+  out (`--verbose`, `-p 5433`) or, for a long option with no value, say its name ("to list the topics" for
+  `--list`); a number, a host, an address or a folder outside the task's only when your words write it out; a plain
+  file in the task's folder needs no naming. An option whose name says the program leaves the command and runs on
+  (`--fork`, `--detach`, `--daemon`, `--background`) or shows a secret (`--print-token`) always asks, whatever you
+  said: "in the background" never makes a detached run announceable. What else the command does is judged as before, and so is the command such a tool runs for you: what
   follows `stack exec --`, `pyenv exec`, `rustup run stable` or `entr`, and the shell text in `cargo watch -s`,
   `nodemon --exec` and `hyperfine '…'` are judged as commands of their own, and one Ember can't read (a tmux shell
   command, `watchexec` without `--`, Maven's `-Dexec.executable`, Gradle's `--init-script`) asks, whatever your words

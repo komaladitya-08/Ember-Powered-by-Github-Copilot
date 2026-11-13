@@ -101,7 +101,9 @@ describe("the operands the user's own words must name for a program Ember doesn'
     for (const cmd of ["dropdb -p 5433 production", "dropdb -h db.prod.example.com production", "dropdb ./x production", "dropdb a b production"]) {
       expect(decide(cmd, { words: "run dropdb on the test database" }).verdict, cmd).toBe("ask");
     }
-    expect(decide("dropdb -p 5433 production", { words: "run dropdb on production" }).requested?.announce).toBe("Running dropdb production, as you asked.");
+    // The port is the user's to give as well (modes-y9-7): unsaid, it asks.
+    expect(decide("dropdb -p 5433 production", { words: "run dropdb on production" }).verdict).toBe("ask");
+    expect(decide("dropdb -p 5433 production", { words: "run dropdb -p 5433 on production" }).requested?.announce).toBe("Running dropdb production, as you asked.");
   });
 
   it("asks when the words name the operand only inside a longer name, or only after a while (commands-closed-y9-3)", () => {

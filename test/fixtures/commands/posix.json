@@ -1103,7 +1103,7 @@
   },
   {
    "cmd": "nohup-free-name --flag",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run nohup-free-name"
   },
   {
@@ -18470,12 +18470,12 @@
   },
   {
    "cmd": "mytool ../other",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run mytool"
   },
   {
    "cmd": "mytool --dir=~",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run mytool"
   },
   {
@@ -18487,7 +18487,7 @@
   },
   {
    "cmd": "cd src && mytool ..",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run mytool"
   },
   {
@@ -18764,7 +18764,7 @@
   },
   {
    "cmd": "cd build && mytool ..",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run mytool"
   },
   {
@@ -18823,7 +18823,7 @@
   },
   {
    "cmd": "mytool ~/Documents",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run mytool"
   },
   {
@@ -18855,7 +18855,7 @@
   },
   {
    "cmd": "mytool /tmp",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run mytool"
   },
   {

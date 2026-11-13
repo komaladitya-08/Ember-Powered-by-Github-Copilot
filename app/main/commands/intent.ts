@@ -1675,6 +1675,57 @@ function insideLonger(name: string, raw: string): boolean {
   });
 }
 
+/** Option names that say the program leaves the command and runs on, or shows a secret: never announced by the words. */
+const NEVER_BY_WORDS = /^(fork|detach|detached|daemon|daemonize|daemonise|background|bg|nohup)$|token|secret|password|passwd|credential|api-?key|private-?key/;
+/** A name's ending that says a host, not a file, when no folder stands before it. */
+const HOST_ENDING = /\.(com|net|org|io|dev|app|co|uk|de|fr|eu|us|ca|au|jp|cn|ru|in|local|internal|lan|corp|cloud|ai|xyz|info|biz|edu|gov|example|test|invalid|localhost)$/i;
+
+/**
+ * Whether everything a program Ember doesn't know is given, beyond the words that name it (its finding's program:
+ * the tool, its verb, its plain-word operands), is something the user's words give or a plain file in the task's
+ * folder (modes-y9-7): the words asked to run the program, not to run it with `--fork`, `-d`, `--print-token`, a
+ * port, a host or a folder elsewhere that they never said. An option counts only written out in the words as the
+ * command writes it; one whose name says the program detaches or shows a secret never counts ("in the background"
+ * and even "--daemon" make no detached run announceable: it would outlive Stop). A number, a host, an address and a
+ * path outside the folder count only written out too. A word Ember can't see never counts.
+ */
+function extrasNamed(cls: Classification, f: Finding, userWords: string, ctx: ClassifyContext): boolean {
+  const cmd = cls.commands[f.at];
+  if (!cmd) return true;
+  const win = ctx.os === "win32";
+  const sep = win ? "\\" : "/";
+  const inFolder = (word: string): boolean => {
+    if (!ctx.cwd) return false;
+    const abs = resolveTargetPath(word, { os: ctx.os, home: ctx.home, cwd: ctx.cwd });
+    const [a, c] = win ? [abs.toLowerCase(), ctx.cwd.toLowerCase()] : [abs, ctx.cwd];
+    return a === c || a.startsWith(c.endsWith(sep) ? c : c + sep);
+  };
+  const words = new Set(userWordList(userWords));
+  const named = new Set(f.program.split(" "));
+  const said = new Set(userWords.normalize("NFKC").split(/\s+/).map(t => t.replace(/^["'“”‘’(`]+|["'“”‘’)`,;:!?]+$|\.$/g, "")).filter(t => t !== ""));
+  const saidLower = new Set([...said].map(t => t.toLowerCase()));
+  const windows = cmd.family !== "posix";
+  for (const a of cmd.args) {
+    if (a === null) return false;
+    if (a === "--" || a === "" || named.has(a)) continue;
+    if (a.startsWith("-") || (windows && /^\/[A-Za-z?]/.test(a))) {
+      const name = a.replace(/^-+|^\//, "").split(/[=:]/)[0].toLowerCase();
+      // Written out as the command writes it, or (a long option with no value) its name a word of the request ("use
+      // kafka-topics to list the topics" for `--list`).
+      if (NEVER_BY_WORDS.test(name)) return false;
+      if (!said.has(a) && !(/^--[a-z][a-z-]{2,}$/.test(a) && words.has(name))) return false;
+      continue;
+    }
+    // A plain file in the task's folder: a path written as one (`.`, `./x`, `src/main.c`, `~/proj/x`, an absolute
+    // one) that stays in the folder, or a bare name with one extension that is no host's ending.
+    const pathLike = /^(\.{1,2}$|\.{0,2}[/\\]|~|[A-Za-z]:[/\\])|[/\\]/.test(a) || /^\.[A-Za-z]/.test(a);
+    const fileName = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9]*$/.test(a) && (a.match(/\./g) ?? []).length === 1 && !HOST_ENDING.test(a);
+    if ((pathLike || fileName) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(a) && !a.includes("@") && inFolder(a)) continue;
+    if (!saidLower.has(a.toLowerCase())) return false;
+  }
+  return true;
+}
+
 /**
  * Matches a dangerous command against the user's own words (§3.7): the row's announcement when every finding is
  * covered by a row the words name, else null (the command asks). Empty or whitespace words never match.
@@ -1697,6 +1748,9 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     if (!names.every(n => runAsked(n, asked, names.filter(o => o !== n)))) return null;
     if (names.some(n => n.split(" ").slice(1).some(r => insideLonger(r, affirmed(userWords).normalize("NFKC"))))) return null;
     if (holdsBack(userWords, [...RUN_VERBS, ...names.map(n => n.split(" ")[0])], false)) return null;
+    // And only with nothing else Ember can't read: every option and every other operand is one the words give, or a
+    // plain file in the task's folder (modes-y9-7).
+    if (!unknown.every(f => extrasNamed(cls, f, userWords, ctx))) return null;
     const announce = `Running ${joinList(names)}, as you asked.`;
     const rest = F.filter(f => f.cls !== "unknown");
     if (rest.length === 0) return { intent: "unknown", announce };

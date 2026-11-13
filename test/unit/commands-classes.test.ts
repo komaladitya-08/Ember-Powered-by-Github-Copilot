@@ -524,3 +524,33 @@ describe("commands that start something that outlives Stop, filed where the mode
     }
   });
 });
+
+describe("a program Ember doesn't know, named in the user's words (modes-y9-7)", () => {
+  it("is announced only when every option and operand is one the words name or a plain file in the task's folder", () => {
+    for (const [cmd, words] of [["frobnicate --fork", "run frobnicate"], ["frobnicate -d", "run frobnicate"], ["frobnicate --detach", "run frobnicate"],
+      ["frobnicate --print-token", "run frobnicate"], ["frobnicate --export-env", "run frobnicate"], ["mongod --fork --logpath x.log", "run mongod"],
+      ["mongod --fork --logpath x.log", "start mongod"], ["frobnicate --fork", "run frobnicate in the background"], ["frobnicate --detach", "run frobnicate detached"],
+      ["frobnicate -d", "start frobnicate as a daemon"], ["frobnicate --daemon", "run frobnicate --daemon"], ["frobnicate --fork", "run frobnicate with fork"],
+      ["frobnicate --background", "run frobnicate --background"], ["frobnicate --serve", "run frobnicate"], ["dropdb -p 5433 scratch", "run dropdb on scratch"],
+      ["frobnicate ~/Documents", "run frobnicate"], ["frobnicate /etc/hosts", "run frobnicate"], ["frobnicate ../other", "run frobnicate"],
+      ["frobnicate db.prod.example.com", "run frobnicate"], ["frobnicate 8080", "run frobnicate"], ["frobnicate --mode=fast", "run frobnicate"],
+      ["frobnicate --token-file x", "run frobnicate --token-file x"], ["frobnicate --show-secrets", "run frobnicate --show-secrets"]] as const) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} «${words}»`).toBe("ask");
+    }
+    for (const o of WINDOWS) for (const [cmd, words] of [["frobnicate --fork", "run frobnicate"], ["frobnicate /d", "run frobnicate"]] as const) {
+      expect(decide(cmd, { ...o, words }).verdict, label(cmd, o)).toBe("ask");
+    }
+  });
+
+  it("is still announced with nothing else, with a plain file of the folder, and with options and operands the words give", () => {
+    for (const [cmd, words] of [["frobnicate", "run frobnicate"], ["frobnicate notes.txt", "run frobnicate"], ["frobnicate src/main.c", "run frobnicate on the source"],
+      ["frobnicate --verbose", "run frobnicate --verbose"], ["frobnicate -v", "run frobnicate -v"], ["frobnicate --mode=fast", "run frobnicate --mode=fast"],
+      ["frobnicate --mode fast", "run frobnicate with --mode fast"], ["dropdb -p 5433 scratch", "run dropdb -p 5433 on scratch"], ["dropdb scratch", "run dropdb on scratch"],
+      ["frobnicate 8080", "run frobnicate on port 8080"], ["frobnicate db.test.example.com", "run frobnicate against db.test.example.com"],
+      ["rails db:migrate", "run rails db:migrate"], ["stack exec -- hpack", "run stack exec hpack"]] as const) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} «${words}»`).toBe("announce");
+    }
+  });
+});
