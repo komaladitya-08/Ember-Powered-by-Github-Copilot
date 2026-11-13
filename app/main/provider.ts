@@ -80,13 +80,15 @@ export function userProviderInForce(s: Settings, loaded: LoadedAdminPolicy): Use
 }
 
 /**
- * The host whose card the user's own provider waits for: on and allowed, with a usable address that isn't agreed to;
- * null otherwise. Signed out then, agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1).
+ * The host whose card the user's own provider waits for: on and allowed, with a usable address that isn't agreed to,
+ * or whose yes the record holds back (`held`: provider-record.ts, until its seal is read or its coming into force is
+ * audited); null otherwise. Agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1), and while it waits
+ * Ember connects to nothing, Copilot included (r10-safety-x10-1).
  */
-export function providerWaitingHost(s: Settings, loaded: LoadedAdminPolicy): string | null {
+export function providerWaitingHost(s: Settings, loaded: LoadedAdminPolicy, held = false): string | null {
   if (loaded.error !== undefined || !userProviderAllowed(loaded.policy)) return null;
   const host = endpointHost(s.provider.baseUrl);
-  return s.provider.on && host && !providerAgreed(s.provider) ? host : null;
+  return s.provider.on && host && (held || !providerAgreed(s.provider)) ? host : null;
 }
 
 /**

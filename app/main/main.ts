@@ -819,7 +819,7 @@ function start(): void {
     // The user's own provider or the organisation's service is named, never GitHub or Copilot (first-run-r1).
     const service = agent?.getStatus().service;
     // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-v4-3).
-    const providerWaiting = phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null;
+    const providerWaiting = phase === "signed-out" ? ownProviderWaiting() : null;
     const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: keyName("settings"), settingsOpen, rows: connected ? setupRows() : [], providerWaiting, service, cannotWork });
     const bubble = { ...IDLE_BUBBLE, visible: true, mood: h.mood, title: "Hi, I'm Ember!", thought: h.thought, actions: h.actions };
     setState({ emotion: "happy", talking: true, bubble });
@@ -2256,6 +2256,8 @@ function start(): void {
   /** The endpoint in force now: the administrator's (or a development test server) once main has set it, else the user's own. */
   let fixedProvider: ActiveProvider | null = null;
   const providerNow = (): ActiveProvider | null => (!fixedProvider && providerRecord.held() ? null : activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providers.key() }));
+  /** The host whose card the user's own provider waits for, its yes held back included: nothing connects meanwhile (r10-safety-x10-1). */
+  const ownProviderWaiting = (): string | null => (fixedProvider ? null : providerWaitingHost(settings.get(), admin, providerRecord.held()));
   /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
   const refusedTokens = new Set<string>();
   /**
@@ -2327,7 +2329,7 @@ function start(): void {
     // Still starting, offline or reconnecting is said as such: Models & connections can't help with those. Signed out
     // while the user's own provider waits for its note, the host it waits for is named (integrations-r4-3).
     const status = agent?.getStatus() ?? { phase: "signed-out" as const };
-    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held);
+    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" ? ownProviderWaiting() : null, !!admin.held);
     if (refusal) throw new Error(refusal);
     // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
     void askEmber(text, {}, Promise.resolve(null));
@@ -3770,7 +3772,7 @@ function start(): void {
       // (A Sign out whose saved sign-in couldn't be removed is said, never passed over: reliability-r9-2.)
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : tokens?.uncleared ? SIGN_OUT_NOT_KEPT : null),
       // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-r3-1).
-      providerWaiting: () => (fixedProvider ? null : providerWaitingHost(settings.get(), admin)),
+      providerWaiting: ownProviderWaiting,
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
       onTurnStart: turn => {
@@ -3954,7 +3956,8 @@ function start(): void {
       // the next source. Signed out while it looked (the settings window is up during a keychain prompt or a slow
       // renewal): nothing found then is connected (final review S1).
       const { phase } = provider ? { phase: await agent?.start(null, undefined, "auto") } : await connectWith(found, "auto", since);
-      if (phase === "signed-out") { currentToken = null; keeper.use(null); }
+      // (Held back for the user's own provider's card, the sign-in found is kept for when it is turned off: r10-safety-x10-1.)
+      if (phase === "signed-out" && !ownProviderWaiting()) { currentToken = null; keeper.use(null); }
     };
     brainStart = startBrain();
     settings.onChange(() => { const p = startBrain(); if (brainStarted) brainStart = brainStart.then(() => p); });

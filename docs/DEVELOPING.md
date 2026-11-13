@@ -1639,7 +1639,10 @@ the address in force and its saved key are kept and come back with the switch (i
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
   pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees
-  to nothing (`AgreeGuard`). While the card waits with no GitHub sign-in, nothing is connected, and Models &
+  to nothing (`AgreeGuard`). While the card waits (a yes withdrawn or held at start included), nothing is connected,
+  with a GitHub sign-in or without one: the user chose their own provider, so nothing goes to Copilot in its place
+  (r10-safety-x10-1; the agent's `providerWaiting`, a sign-in found meanwhile kept for when the switch is turned off),
+  and Models &
   connections says "Not connected: Ember is waiting for you to agree to use <host>." and points to the card or the
   switch, with no "Sign in with GitHub" or "Use my own provider" (`homeConnectionView`'s `own`: integrations-c2-3).
   Nothing else points to Copilot then (integrations-r3-1): a request from the Ask box, by voice or from Home is
