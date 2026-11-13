@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { focusTrail, waitForWindowAt, type WindowAt } from "../integration/window-at";
+import { focusTrail, hoverActivation, waitForWindowAt, type WindowAt } from "../integration/window-at";
 
 const ASK: WindowAt = { id: 459336, className: "Chrome_WidgetWin_1", title: "Ask Ember", pid: 4000 };
 const OTHER: WindowAt = { id: 262636, className: "Chrome_WidgetWin_1", title: "Ember overlay", pid: 4000 };
@@ -106,5 +106,21 @@ describe("focusTrail (cifix-x9-2)", () => {
 
   it("says when nothing was recorded rather than printing an empty trail", () => {
     expect(focusTrail("w", 0, [])).toBe("w: nothing recorded");
+  });
+});
+
+describe("hoverActivation (cifix-x9-3)", () => {
+  const mask = (hex: string) => `\r\nHKEY_CURRENT_USER\\Control Panel\\Desktop\r\n    UserPreferencesMask    REG_BINARY    ${hex}\r\n`;
+  it("says activate on hover is off from Windows' default mask, and names the mask", () => {
+    expect(hoverActivation(mask("9E1E078012000000"), "")).toBe("activate on hover: off (UserPreferencesMask 9E1E078012000000, ActiveWndTrkTimeout unset)");
+  });
+
+  it("says it is on from bit 0 of the mask's first byte, with the wait the runner sets", () => {
+    const timeout = "\r\n    ActiveWndTrkTimeout    REG_DWORD    0x96\r\n";
+    expect(hoverActivation(mask("9F1E078012000000"), timeout)).toBe("activate on hover: on (UserPreferencesMask 9F1E078012000000, ActiveWndTrkTimeout 150 ms)");
+  });
+
+  it("says unknown when the registry couldn't be read, never off", () => {
+    expect(hoverActivation("", "")).toBe("activate on hover: unknown (UserPreferencesMask unreadable, ActiveWndTrkTimeout unset)");
   });
 });

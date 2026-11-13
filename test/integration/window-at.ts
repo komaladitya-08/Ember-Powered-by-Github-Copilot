@@ -82,3 +82,16 @@ export function focusTrail(what: string, t0: number, events: readonly TrailEvent
   const cut = sorted.length - kept.length;
   return `${what}: ${cut ? `(${cut} earlier left out) ` : ""}${kept.map(e => `${e.t - t0} ms ${e.what}`).join("; ")}`;
 }
+
+/**
+ * Whether Windows activates the window under the pointer (“Activate a window by hovering over it”), from what
+ * `reg query "HKCU\\Control Panel\\Desktop"` printed for UserPreferencesMask (its first byte's bit 0) and
+ * ActiveWndTrkTimeout: with it on, a pointer moved over another window takes the keyboard from the Ask box by itself
+ * (cifix-x9-3). One phrase for a failure line; what can't be read is said as unknown.
+ */
+export function hoverActivation(maskQuery: string, timeoutQuery: string): string {
+  const mask = /UserPreferencesMask\s+REG_BINARY\s+([0-9A-Fa-f]{2,})/.exec(maskQuery)?.[1];
+  const timeout = /ActiveWndTrkTimeout\s+REG_DWORD\s+0x([0-9A-Fa-f]+)/.exec(timeoutQuery)?.[1];
+  const on = mask ? (parseInt(mask.slice(0, 2), 16) & 1) === 1 : null;
+  return `activate on hover: ${on === null ? "unknown" : on ? "on" : "off"} (UserPreferencesMask ${mask ?? "unreadable"}, ActiveWndTrkTimeout ${timeout ? `${parseInt(timeout, 16)} ms` : "unset"})`;
+}
