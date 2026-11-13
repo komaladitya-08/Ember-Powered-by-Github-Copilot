@@ -506,11 +506,15 @@ also never acts in an app's window whose title shows a file in its data folder o
 Autopilot is in force the note under the modes says so first: "Autopilot is on: Ember sends, deletes, pays and
 installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it." Where the organisation keeps Ember below
 Interactive (`features.autonomy: false`, `allowGrants: false`, `confirmEveryAction`, `features.actions: false`, a
-lockdown) the modes are locked and the note under them says so in one sentence; where it caps the mode
-(`approvals.maxMode`) a higher choice works as the cap and the rows above it are locked ("Your organisation allows
-Interactive at most."); and where it turned the check off (`features.aiReview: false`) Assisted's row is locked, the
-note says "Your organisation turned off the check Assisted needs, so Assisted can't be chosen.", and an Assisted
-chosen earlier works as Interactive.
+lockdown) the modes are locked and the note under them says so in one sentence, with what that leaves ("Ember
+doesn't act in your apps." with actions off, "Ember asks before every action." with every action asked); where it
+caps the mode (`approvals.maxMode`) a higher choice works as the cap and the rows above it are locked ("Your
+organisation allows Interactive at most."), and where the cap's own card isn't agreed to the note says so and to choose
+it to read it; and where it turned the check off (`features.aiReview: false`) Assisted's row is locked, the note says
+"Your organisation turned off the check Assisted needs, so Assisted can't be chosen.", and an Assisted chosen earlier
+works as Interactive. A mode chosen whose card isn't agreed to as it reads now (a newer card) works as the next one
+down, and the note says "Autopilot's card isn't agreed to as it reads now, so Interactive is in use: choose Autopilot
+to read it."
 
 **Assisted** is Interactive with one thing more: where Ember would ask, it first checks the step against what you
 asked (`PolicyEngine.assist` for an app step, reached from the worker right before the question would be put up; the

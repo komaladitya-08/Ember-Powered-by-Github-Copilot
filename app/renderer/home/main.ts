@@ -561,6 +561,8 @@ window.ember.onSettingsNotice(n => { statusFence.pushedNotice(n); renderSettings
 let managed = new Set<string>();
 /** The organisation has Ember ask before every action: "Always in this app" grants don't apply. */
 let confirmEvery = false;
+/** The organisation turned acting in apps off: the note under the modes says so (modes-x9p-6). */
+let actionsOff = false;
 /** Never-look entries the administrator set (lower case): shown locked, never part of the user's own list. */
 let adminNeverLook = new Set<string>();
 /** The data list's "When you ask something" line as the page writes it, put back once Ember isn't locked down. */
@@ -609,6 +611,7 @@ renderRecipient();
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
   confirmEvery = a.confirmEveryAction;
+  actionsOff = a.features.actions === false;
   adminNeverLook = new Set((a.neverLook ?? []).map(x => x.trim().toLowerCase()));
   const el = $("managed");
   el.classList.toggle("error", !!a.error);
@@ -2193,7 +2196,7 @@ function closeModeCard(focus: boolean): void {
   if (focus || held) (row && !row.disabled ? row : $("approvals-h")).focus();
 }
 function renderApprovals(): void {
-  const view = approvalsView(approvalsNow, managed.has("autonomy"), elevationOf(checksNow));
+  const view = approvalsView(approvalsNow, managed.has("autonomy"), elevationOf(checksNow), { actionsOff, everyAction: confirmEvery });
   const group = $("approvals");
   // Drawn anew only when the modes offered change: a row under the pointer or the keyboard stays the one it was.
   if ([...group.children].map(c => (c as HTMLElement).dataset.mode).join() !== view.rows.map(r => r.mode).join()) {

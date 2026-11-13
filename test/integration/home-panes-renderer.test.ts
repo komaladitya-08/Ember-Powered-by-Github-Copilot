@@ -743,7 +743,8 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     expect(await page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("false");
     expect(await page.locator("#mode-interactive").isDisabled()).toBe(true);
     expect(await page.locator("#approvals-card").isHidden()).toBe(true);
-    expect(await page.locator("#approvals-note").innerText()).toMatch(/^Managed by your organisation: Ember asks before its first step in an app/);
+    // The lockdown turns acting in apps off: the note says that, not what Ember would ask (modes-x9p-6).
+    expect(await page.locator("#approvals-note").innerText()).toMatch(/^Managed by your organisation: Ember doesn't act in your apps\./);
   };
   const leftOn = (at: string) => ({
     wakeWord: true, voice: { ...DEFAULT_SETTINGS.voice, consent: true },

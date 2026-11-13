@@ -435,3 +435,36 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     for (const r of css.split("\n").filter(l => /^\.mode\b/.test(l))) expect(r, r).not.toMatch(/font(-size)?:[^;]*\d+px/);
   });
 });
+
+describe("the note under the modes gives the reason that applies (modes-x9p-6)", () => {
+  const card = (m: "interactive" | "assisted" | "autopilot") => ({ version: modeCardVersion(m), at: "2026-11-13T09:00:00.000Z" });
+  const NONE = { version: 0, at: null };
+  const setting = (mode: "interactive" | "assisted" | "autopilot", agreed: ("interactive" | "assisted" | "autopilot")[]) =>
+    ({ mode, consent: { interactive: agreed.includes("interactive") ? card("interactive") : NONE, assisted: agreed.includes("assisted") ? card("assisted") : NONE, autopilot: agreed.includes("autopilot") ? card("autopilot") : NONE } });
+  const capped = (maxMode: "interactive" | "assisted") => ({ ...AdminPolicySchema.parse({}), approvals: { maxMode } });
+
+  it("says what the organisation's switch does: actions off, or every action asked", () => {
+    const off = AdminPolicySchema.parse({ features: { actions: false } });
+    expect(approvalsView(approvalsState(setting("interactive", ["interactive"]), off), true, null, { actionsOff: true }).note).toBe("Managed by your organisation: Ember doesn't act in your apps.");
+    const every = AdminPolicySchema.parse({ confirmEveryAction: true });
+    expect(approvalsView(approvalsState(setting("interactive", ["interactive"]), every), true, null, { everyAction: true }).note).toBe("Managed by your organisation: Ember asks before every action.");
+  });
+
+  it("gives the card, not the cap, where the mode the organisation allows isn't agreed to, and offers it again", () => {
+    const v = approvalsView(approvalsState(setting("autopilot", ["interactive", "autopilot"]), capped("assisted")), false);
+    expect(v.inForce).toBe("interactive");
+    expect(v.note).toMatch(/^Your organisation allows Assisted at most, and Assisted's card isn't agreed to as it reads now, so Interactive is in use: choose Assisted to read it\./);
+  });
+
+  it("says why a chosen mode isn't in force when its card isn't agreed to as it reads now, and how to read it again", () => {
+    const v = approvalsView(approvalsState(setting("autopilot", ["interactive"]), null), false);
+    expect(v.inForce).toBe("interactive");
+    expect(v.note).toMatch(/^Autopilot's card isn't agreed to as it reads now, so Interactive is in use: choose Autopilot to read it\./);
+  });
+
+  it("names the cap where no mode is in force and the chosen one is above it", () => {
+    const v = approvalsView(approvalsState(setting("autopilot", []), capped("interactive")), false);
+    expect(v.inForce).toBeNull();
+    expect(v.note).toMatch(/Your organisation allows Interactive at most\.$/);
+  });
+});
