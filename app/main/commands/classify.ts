@@ -3938,10 +3938,11 @@ function interactive(h: H): void {
     case "top": if (!has(p, "b", "batch") && !(h.sc.os === "darwin" && has(p, "l"))) add(); return;
     case "tmux": {
       const sub = ops[0];
-      if (sub === undefined || sub === null || ["attach", "a", "at", "attach-session", "new", "new-session"].includes(sub)) {
+      const subs = sub === undefined || sub === null ? [] : tmuxVerbs(sub);
+      if (sub === undefined || sub === null || subs.some(n => ["attach", "a", "at", "attach-session", "new", "new-session"].includes(n))) {
         if (a.some(x => x.v === "-d" || (x.v !== null && /^-[A-Za-z]*d/.test(x.v) && !x.v.startsWith("--")))) h.e.add("escape", "escape.tmux", SAYS.keepsRunning);
         else add();
-      } else if (["kill-server", "kill-session", "kill-pane", "kill-window"].includes(sub)) h.e.add("system", "kill.process", "Stops programs that are running (tmux sessions).");
+      } else if (subs.some(n => ["kill-server", "kill-session", "kill-pane", "kill-window", "killp", "killw"].includes(n))) h.e.add("system", "kill.process", "Stops programs that are running (tmux sessions).");
       return;
     }
     case "screen":
@@ -4236,6 +4237,40 @@ const TMUX_DRIVES = new Set([
   "respawn-pane", "respawnp", "respawn-window", "respawnw", "pipe-pane", "pipep", "display-popup", "popup", "display-menu", "menu", "set-hook",
   "source-file", "source", "bind-key", "bind", "command-prompt", "confirm-before", "confirm",
 ]);
+/**
+ * tmux's whole command table, each name with its short name: tmux takes any prefix of a name that fits one command
+ * only (`send-k`, `run-sh`, `capture-p`), so a verb is read as tmux reads it (commands-classes-x9-1).
+ */
+const TMUX_COMMANDS: readonly (readonly [string, string?])[] = [
+  ["attach-session", "attach"], ["bind-key", "bind"], ["break-pane", "breakp"], ["capture-pane", "capturep"], ["choose-buffer"], ["choose-client"],
+  ["choose-tree"], ["choose-window"], ["choose-session"], ["clear-history", "clearhist"], ["clear-prompt-history", "clearphist"], ["clock-mode"],
+  ["command-prompt"], ["confirm-before", "confirm"], ["copy-mode"], ["customize-mode"], ["delete-buffer", "deleteb"], ["detach-client", "detach"],
+  ["display-menu", "menu"], ["display-message", "display"], ["display-popup", "popup"], ["display-panes", "displayp"], ["find-window", "findw"],
+  ["has-session", "has"], ["if-shell", "if"], ["join-pane", "joinp"], ["kill-pane", "killp"], ["kill-server"], ["kill-session"], ["kill-window", "killw"],
+  ["last-pane", "lastp"], ["last-window", "last"], ["link-window", "linkw"], ["list-buffers", "lsb"], ["list-clients", "lsc"], ["list-commands", "lscm"],
+  ["list-keys", "lsk"], ["list-panes", "lsp"], ["list-sessions", "ls"], ["list-windows", "lsw"], ["load-buffer", "loadb"], ["lock-client", "lockc"],
+  ["lock-server", "lock"], ["lock-session", "locks"], ["move-pane", "movep"], ["move-window", "movew"], ["new-session", "new"], ["new-window", "neww"],
+  ["next-layout", "nextl"], ["next-window", "next"], ["paste-buffer", "pasteb"], ["pipe-pane", "pipep"], ["previous-layout", "prevl"],
+  ["previous-window", "prev"], ["refresh-client", "refresh"], ["rename-session", "rename"], ["rename-window", "renamew"], ["resize-pane", "resizep"],
+  ["resize-window", "resizew"], ["respawn-pane", "respawnp"], ["respawn-window", "respawnw"], ["rotate-window", "rotatew"], ["run-shell", "run"],
+  ["save-buffer", "saveb"], ["select-layout", "selectl"], ["select-pane", "selectp"], ["select-window", "selectw"], ["send-keys", "send"],
+  ["send-prefix"], ["server-access"], ["server-info", "info"], ["set-buffer", "setb"], ["set-environment", "setenv"], ["set-hook"], ["set-option", "set"],
+  ["set-window-option", "setw"], ["show-buffer", "showb"], ["show-environment", "showenv"], ["show-hooks"], ["show-messages", "showmsgs"],
+  ["show-options", "show"], ["show-prompt-history", "showphist"], ["show-window-options", "showw"], ["source-file", "source"], ["split-window", "splitw"],
+  ["start-server", "start"], ["suspend-client", "suspendc"], ["swap-pane", "swapp"], ["swap-window", "swapw"], ["switch-client", "switchc"],
+  ["unbind-key", "unbind"], ["unlink-window", "unlinkw"], ["wait-for", "wait"],
+];
+/**
+ * The tmux commands a verb may stand for: itself when it is a command's name or short name, else every command it is
+ * a prefix of. tmux refuses a prefix that fits more than one; its table differs between versions, so Ember reads such
+ * a word as each command it could be, and the strictest decides.
+ */
+function tmuxVerbs(word: string): readonly string[] {
+  if (word === "") return [];
+  if (TMUX_COMMANDS.some(([name, short]) => name === word || short === word)) return [word];
+  const fits = TMUX_COMMANDS.filter(([name]) => name.startsWith(word)).map(([name]) => name);
+  return fits.length > 0 ? fits : [word];
+}
 /** tmux's commands that print what a pane shows, a paste buffer or the session's environment. */
 const TMUX_READS = new Set(["capture-pane", "capturep", "show-buffer", "showb", "save-buffer", "saveb", "list-buffers", "lsb", "show-environment", "showenv", "choose-buffer"]);
 /** screen's `-X` commands that type, paste or run in a session, and those that write out what it shows. */
@@ -4281,9 +4316,9 @@ function terminalDriver(h: H): void {
       if (v === null) continue;
       if (verb) {
         if (v.startsWith("-") && v !== "-") { if (/^-[LSfcT]$/.test(v)) k++; continue; }
-        const name = v.replace(/;$/, "");
-        if (TMUX_DRIVES.has(name)) drives();
-        else if (TMUX_READS.has(name)) reads();
+        const names = tmuxVerbs(v.replace(/;$/, ""));
+        if (names.some(n => TMUX_DRIVES.has(n))) drives();
+        else if (names.some(n => TMUX_READS.has(n))) reads();
         verb = false;
       }
       if (v === ";" || (v.endsWith(";") && !v.endsWith("\\;"))) verb = true;
@@ -4512,7 +4547,7 @@ function toolPayload(h: H): void {
     }
     case "tmux": {
       const first = firstOperand(args);
-      if (first.v !== null && TMUX_RUNS.has(first.v) && args.slice(first.at + 1).some(a => a.v === null || !a.v.startsWith("-"))) hidden();
+      if (first.v !== null && tmuxVerbs(first.v).some(n => TMUX_RUNS.has(n)) && args.slice(first.at + 1).some(a => a.v === null || !a.v.startsWith("-"))) hidden();
       // A format's `#(…)` is a shell command tmux runs (`tmux display-message -p '#(…)'`: commands-closed-y9-4).
       else if (args.some(a => a.v !== null && a.v.includes("#("))) hidden();
       return;

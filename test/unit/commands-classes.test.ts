@@ -669,3 +669,33 @@ describe("a deletion the user's words hold back or narrow in a later clause (com
     }
   });
 });
+
+describe("tmux's verbs written short (commands-classes-x9-1)", () => {
+  it("refuses a typing or running verb by any prefix tmux takes for it, whatever the user's words say", () => {
+    for (const o of POSIX) for (const cmd of ["tmux send-k -t rv 'echo typed' Enter", "tmux send-ke x", "tmux send-p", "tmux run-sh 'echo ran'", "tmux run-s ls", "tmux split-w -h htop",
+      "tmux new-w 'sh x.sh'", "tmux respawn-p -k 'sh x.sh'", "tmux respawn-w -k", "tmux pipe-p 'cat > ~/.bashrc'", "tmux paste-b", "tmux display-po -E 'sh x.sh'", "tmux if-s true ls",
+      "tmux set-h -g session-created 'run-shell ls'", "tmux source-f a.conf", "tmux bind-k k run-shell ls", "tmux command-p 'run-shell ls'", "tmux confirm-b kill-server",
+      "tmux -L work send-k ls Enter", "tmux ls \\; send-k ls Enter", "byobu send-k ls Enter",
+      // A prefix that fits several commands, one of which types or runs: tmux's table differs by version, so the strictest reading decides.
+      "tmux sen ls Enter", "tmux s ls", "tmux r ls", "tmux display-m x"]) {
+      expect(refusal(cmd, o)?.rule, label(cmd, o)).toBe("ember.terminal");
+      expect(decide(cmd, o).verdict, label(cmd, o)).toBe("refuse");
+    }
+    expect(decide("tmux send-k -t 0 ls Enter", { words: "run tmux send-k -t 0 ls Enter" }).verdict).toBe("refuse");
+    expect(decide("tmux send-k ls Enter", { shell: "powershell", context: "win32" }).verdict).toBe("refuse");
+  });
+
+  it("asks as a secret before a reading verb by any prefix, and reads a short new, attach or kill as the whole word", () => {
+    for (const o of POSIX) for (const cmd of ["tmux capture-p -p", "tmux capture-pan -p -S -3000", "tmux show-b", "tmux save-b out.txt", "tmux list-b", "tmux show-e", "tmux choose-b"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("secret.terminal");
+    }
+    expect(decide("tmux new-s -d -s work ./run.sh").rules).toContain("escape.tmux");
+    expect(decide("tmux kill-ser").rules).toContain("kill.process");
+    expect(decide("tmux attach-s").rules).toContain("unclear.interactive");
+    // What lists still runs by its own names, and a prefix of a listing verb asks.
+    for (const cmd of ["tmux ls", "tmux list-sessions", "tmux lsw", "tmux has -t work", "tmux display -p '#S'"]) expect(decide(cmd).verdict, cmd).toBe("run");
+    for (const cmd of ["tmux list-s", "tmux list-w", "tmux has-s -t work"]) expect(decide(cmd).verdict, cmd).toBe("ask");
+  });
+});

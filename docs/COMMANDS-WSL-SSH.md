@@ -762,8 +762,8 @@ windows.").
 Ember never types into your own terminals or editors with a command either. A command that would type into one or
 run something there is refused, whatever you asked for: "Ember won't run this: it would type or run commands in your
 own terminal or editor." That covers tmux (`send-keys`, `paste-buffer`, `run-shell`, `new-window`, `split-window`,
-`respawn-pane`, `pipe-pane`, `display-popup`, `if-shell`, `set-hook`, `source-file`, `bind-key` and their short
-names, in each command of a `\;` list), byobu, `screen -X stuff`, `paste`, `exec`, `eval` and `source`, zellij
+`respawn-pane`, `pipe-pane`, `display-popup`, `if-shell`, `set-hook`, `source-file`, `bind-key`, their short
+names and any shortened spelling tmux takes for them, such as `send-k`, in each command of a `\;` list), byobu, `screen -X stuff`, `paste`, `exec`, `eval` and `source`, zellij
 (`action write-chars`, `run`, `edit`, new panes and tabs), kitty's and wezterm's remote control (`kitty @ send-text`,
 `kitten @ launch`, `wezterm cli send-text`, `spawn`, `split-pane`), iTerm's `it2api`, an editor's `--remote-send` and
 `--remote-expr` (vim, nvim, `nvr`, and `nvr -c`), `emacsclient --eval`, Guake's `-e`, the desktop-bus calls that type
