@@ -240,10 +240,11 @@ export function retryRequest(text: string): boolean {
 }
 
 /**
- * "Stop", "stop everything", "cancel that", "stop typing", "abort", "no, stop", with "please" or the name about them: a
- * stop of everything, nothing more (never "stop the music", "abort the merge" or "forget that", a memory request).
+ * "Stop", "stop everything", "cancel that", "stop typing", "abort", "no, stop", with "please" or the name about them,
+ * a run of them ("stop, stop, stop"), "just", "wait wait", "can you … (now)", "immediately", this task or its command
+ * (tasks-approvals-r9-6): a stop of everything, nothing more (never "stop the music", "abort the merge" or "forget that", a memory request).
  */
-const STOP_RE = new RegExp(String.raw`^${LEAD}(?:(?:no|wait|oh)[,\s]+)?(?:please[,\s]+)?(?:stop|cancel|abort|halt)(?:[,\s]+(?:stop|cancel))?(?: (?:it|that|this|everything|all(?: (?:the )?tasks)?|(?:the |my )?tasks?|typing|working|clicking|doing (?:it|that|this)|what you(?:'re| are) doing))?(?:[,\s]+please)?${TAIL}$`, "i");
+const STOP_RE = new RegExp(String.raw`^${LEAD}(?:(?:no|wait|oh|just)[,\s]+)*(?:(?:can|could|would|will) you[,\s]+|you can[,\s]+)?(?:please[,\s]+)?(?:stop|cancel|abort|halt)(?:[,!\s]+(?:stop|cancel))*(?: (?:it|that|this(?: task)?|everything|all(?: (?:the )?tasks)?|(?:the |my )?tasks?|(?:the |this )?commands?|typing|working|running|clicking|doing (?:it|that|this)|what you(?:'re| are) doing))?(?:[,\s]+(?:immediately|please))*${TAIL}$`, "i");
 
 /**
  * Whether typed `text` asks Ember to stop everything (tasks-approvals-v2): while a task is at work the host stops it at
