@@ -35,10 +35,10 @@ import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
 import { heldByWords, mentioned, namedKind, ruledOut } from "./intent";
-import { capLines, cleanOutput, clearCut, CUT_SLACK, redactedWhole, shapeCleaned, shapeOutput, type ShapeOptions } from "./output";
+import { capLines, cleanOutput, cleanOutputAsync, clearCutSteps, CUT_SLACK, redactedWhole, shapeCleaned, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
-import { redactSecrets } from "./redact";
+import { redactSecrets, redactSecretsYielding, runSteps, runStepsYielding } from "./redact";
 import { judgeScripts, newTaskWrites, noteWrites, withoutReadFlow, type ScriptIo, type TaskWrites } from "./scripts";
 import { outputTaint } from "./taint";
 import {
@@ -553,14 +553,22 @@ export class OutputKeeper {
 
   /** The text kept, with a note where the middle went, and `spans` (positions in everything printed) moved into it. */
   kept(spans: { from: number; to: number }[]): { text: string; spans: { from: number; to: number }[] } {
+    return runSteps(this.keptSteps(spans));
+  }
+
+  /**
+   * `kept` as steps, a step before each of the redactor's passes in the two cuts: a run's end gives Ember's main thread
+   * back between them (merge review integ-y-2). `kept` runs the same steps at once.
+   */
+  *keptSteps(spans: { from: number; to: number }[]): Generator<void, { text: string; spans: { from: number; to: number }[] }, void> {
     let tail = this.trim();
     if (!this.dropped) return { text: this.head + tail, spans };
     // Neither end of what is left out may fall in a value the vault filled (integ-x-1): the head ends before one, the
     // tail starts after one, and a side with no such place is not kept at all.
-    const lose = clearCut(this.head.slice(-CUT_SLACK), this.afterHead, "before") ?? this.head.length;
+    const lose = (yield* clearCutSteps(this.head.slice(-CUT_SLACK), this.afterHead, "before")) ?? this.head.length;
     // (What stands before the tail: the last of what was left out, with the head's end where less than that was.)
     const lead = this.dropped < CUT_SLACK ? (this.head + this.beforeTail).slice(-CUT_SLACK) : this.beforeTail;
-    const skip = clearCut(lead, tail.slice(0, CUT_SLACK), "after") ?? tail.length;
+    const skip = (yield* clearCutSteps(lead, tail.slice(0, CUT_SLACK), "after")) ?? tail.length;
     const head = lose ? this.head.slice(0, this.head.length - lose) : this.head;
     if (skip) tail = tail.slice(skip);
     const dropped = this.dropped + lose + skip;
@@ -573,8 +581,12 @@ export class OutputKeeper {
   }
 }
 
-/** The text a run printed with its secret spans and the user's typed lines taken out, for the taint check. */
-function checkedText(text: string, spans: { from: number; to: number }[], typed: string[]): string {
+/**
+ * The text a run printed with its secret spans and the user's typed lines taken out, for the taint check, a whole-text
+ * operation a step: each typed line's removal is a pass over up to 4 MiB, and a run keeps up to 1,000 of them, about
+ * 0.8 s at once (stop-yield-y9-1).
+ */
+function* checkedTextSteps(text: string, spans: { from: number; to: number }[], typed: string[]): Generator<void, string, void> {
   let out = "";
   let at = 0;
   for (const s of [...spans].sort((a, b) => a.from - b.from)) {
@@ -582,9 +594,15 @@ function checkedText(text: string, spans: { from: number; to: number }[], typed:
     at = Math.max(at, s.to);
   }
   out += text.slice(at);
-  for (const t of typed.map(l => l.trim()).filter(l => l.length >= 3)) out = out.split(t).join(" ");
+  yield;
+  for (const t of typed.map(l => l.trim()).filter(l => l.length >= 3)) {
+    out = out.split(t).join(" ");
+    yield;
+  }
+  out = out.replace(TERMINAL_CODES, "");
+  yield;
   // Lines cut as cleanOutput cuts them: what is past that can't reach the model, and reading it costs main-thread time.
-  return capLines(out.replace(TERMINAL_CODES, ""));
+  return capLines(out);
 }
 
 /** A question with S0b's panel fields (confirm.ts §3.9.1): `where`, `armMs`, `panel`, `clickOnly`. */
@@ -1253,7 +1271,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       // The retry sent back too: that is the remote's refusal, and its tab says so (review #274).
       if (exit.ended === "refused-remote" && exit.needsConfirm) reaskEnded(svc, runId, "refused");
       if (exit.ended === "refused-remote") return resultOf(exit, "", { label: binding.label, timeoutS, redact: j.redactSecrets });
-      return finishRun(ctx, j, run, { cls, label: binding.label, shell, timeoutS, runId });
+      return await finishRun(ctx, j, run, { cls, label: binding.label, shell, timeoutS, runId });
     }
   } finally {
     release();
@@ -1522,25 +1540,70 @@ function noteDownloads(ctx: CommandFlowContext, cls: Classification): void {
   noteWrites(ctx.state.written ??= newTaskWrites(), cls);
 }
 
-/** Steps 14: shape, check for instructions, note downloads, audit the end, and say how it went. */
-function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string }): ToolResultObject {
+/** One macrotask: the stop shortcut's handler, waiting on Ember's main thread, runs first (merge review integ-y-2). */
+const nextTurn = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
+
+/**
+ * Steps 14: shape, check for instructions, note downloads, audit the end, and say how it went. A run keeps up to 4 MiB
+ * of output, and cleaning it held Ember's main thread about 1 s (1.7 s with three of each vault entry filled) where
+ * Stop must answer within 300 ms (merge review integ-y-2): the cut, CL's own cleaning, and the check copy's making
+ * (each typed line taken out, stop-yield-y9-1) and redaction run a whole-text operation a step (stop-yield-x9-1),
+ * with a macrotask between two steps once 8 ms of them have run (runStepsYielding), and a Stop seen between them ends
+ * the call as stopped, with nothing of the output, cleaned or not, for the model, the audit or the log. Measured on 4 MiB of coloured build output with a login, a card and
+ * contact details filled, one to three of each: the longest stretch went from 1,163-1,901 ms to 134-175 ms (132-188
+ * ms with nothing filled); with a colour code on every character, 115-216 ms; with 1,000 typed lines, 135-190 ms
+ * (872 ms before their removal was stepped). The instructions check (outputTaint) is one step, about 190-230 ms on
+ * Ember.js build output that says "ember" on every line. One known pass is longer still: the Key Vault value pattern over 4 MiB of secret
+ * ids with no value, about 1.6 s.
+ */
+async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string }): Promise<ToolResultObject> {
   const { exit, out, tracker, running } = run;
   const typed = running.typedLines();
   running.forgetTyped();
-  // The run's own tracker, when its runner keeps one, adds its spans: a secret hidden by either stays hidden.
-  const theirs = (running as RunningCommand & { secretSpans?: () => { from: number; to: number }[] }).secretSpans?.() ?? [];
-  const kept = out.kept([...tracker.spans(), ...theirs]);
-  const raw = new TextEncoder().encode(kept.text);
   const task = ctx.task.id;
   const target = ctx.service.binding.id;
+  /** The end of a run Stop came to while its output was cleaned: what it may have written is noted, its end audited. */
+  const stopped = (): ToolResultObject => {
+    if (exit.ended !== "failed-to-start") noteDownloads(ctx, o.cls);
+    ctx.audit({
+      event: "command", phase: "ended", task, target, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal, ms: exit.ms,
+      outBytes: out.bytes, typedLines: typed.length, stopped: true,
+    });
+    ctx.log.info("commands.ended", { task, target, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: out.bytes, stopped: true });
+    return STOPPED();
+  };
+  if (ctx.isOver()) return stopped();
+  // The run's own tracker, when its runner keeps one, adds its spans: a secret hidden by either stays hidden.
+  const theirs = (running as RunningCommand & { secretSpans?: () => { from: number; to: number }[] }).secretSpans?.() ?? [];
+  const kept = await runStepsYielding(out.keptSteps([...tracker.spans(), ...theirs]), () => ctx.isOver());
+  if (kept === null || ctx.isOver()) return stopped();
+  // The cut's last step, encoding and decoding are each a whole-text pass: a turn between them (stop-yield-x9-1).
+  await nextTurn();
+  if (ctx.isOver()) return stopped();
+  const raw = new TextEncoder().encode(kept.text);
+  await nextTurn();
+  if (ctx.isOver()) return stopped();
   // What it printed is checked whole, before shaping cuts it to size (CL's cleaned text, as the model's copy is made
   // from it; and the flow's own copy, which keeps what a carriage return overwrote), and as the model gets it.
-  const clean = j.cleanOutput ? j.cleanOutput(raw, { typed, secretSpans: kept.spans }) : null;
+  const own = j.cleanOutput === cleanOutput;
+  const clean = own ? await cleanOutputAsync(raw, { typed, secretSpans: kept.spans }, () => ctx.isOver()) : j.cleanOutput ? j.cleanOutput(raw, { typed, secretSpans: kept.spans }) : null;
+  if (ctx.isOver()) return stopped();
   const shape: ShapeOptions = { target, label: o.label, shell: o.shell, exit, typed, secretSpans: kept.spans };
   // CL's own shaping is that same cleaned text bounded and wrapped: made from it, so the kept output (up to 4 MiB) is
   // cleaned once on Ember's main thread, not twice (integ-y-2). A judge a test passes shapes as it does.
-  const shaped = clean !== null && j.shapeOutput === shapeOutput && j.cleanOutput === cleanOutput ? shapeCleaned(clean, shape) : j.shapeOutput(raw, shape);
-  const taint = (clean !== null ? j.outputTaint(clean) : null) ?? j.outputTaint(j.redactSecrets(checkedText(kept.text, kept.spans, typed))) ?? j.outputTaint(shaped);
+  const shaped = clean !== null && j.shapeOutput === shapeOutput && own ? shapeCleaned(clean, shape) : j.shapeOutput(raw, shape);
+  await nextTurn();
+  if (ctx.isOver()) return stopped();
+  let taint = clean !== null ? j.outputTaint(clean) : null;
+  if (taint === null) {
+    await nextTurn();
+    if (ctx.isOver()) return stopped();
+    const check = await runStepsYielding(checkedTextSteps(kept.text, kept.spans, typed), () => ctx.isOver());
+    if (check === null || ctx.isOver()) return stopped();
+    const checked = j.redactSecrets === redactSecrets ? await redactSecretsYielding(check, () => ctx.isOver()) : j.redactSecrets(check);
+    if (checked === null || ctx.isOver()) return stopped();
+    taint = j.outputTaint(checked) ?? j.outputTaint(shaped);
+  }
   if (taint) {
     ctx.state.outputTainted = true;
     ctx.task.taint(taint);

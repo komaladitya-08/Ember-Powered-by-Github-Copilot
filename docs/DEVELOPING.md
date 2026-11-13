@@ -1786,7 +1786,8 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   the worker's `list_windows` and a click's landing place, Assisted's description of a step), which main hands the
   redactor (`setQuoteRedactor`); code that cuts screen text for a model some other way must do the same. A
   command's output is redacted whole the same way before its lines are cut at 4,096 and 1,000 characters
-  (commands/output.ts `cleanOutput`, `setOutputRedactor`), and output that can't be checked is not handed on. And
+  (commands/output.ts `cleanOutput`, `setOutputRedactor`, at a run's end a pattern at a time: `cleanOutputAsync` and
+  the vault's `textSteps`), and output that can't be checked is not handed on. And
   `Perception` asks the redactor about every element first
   (`holdsVaultValue`): whatever says a filled value (the field itself, a line that repeats it, a tab named after it)
   loses its words and is blacked out of every picture as a secret field is, and a field is kept secret by the helper
@@ -2809,6 +2810,24 @@ downloads it on first use per target and checks it before sending.
   user's SID).
 - **Fail closed**: an unknown target, a malformed message from a remote or a distro, an unverifiable bundle, a policy
   that can't be read, or a command that can't be shown exactly as it will run is refused, saying why in plain words.
+- **A run's end gives Stop its turn**: a run keeps up to 4 MiB of output, and cleaning it at once held Ember's main
+  thread about 1 s (1.7 s with three logins, cards and contacts filled in the vault), where Stop must answer within
+  300 ms. So the run's end (flow.ts `finishRun`) makes the cut between its first and last output
+  (`OutputKeeper.keptSteps`), cleans (`cleanOutputAsync`), and makes (`checkedTextSteps`) and redacts
+  (`redactSecretsYielding`) its own check copy a whole-text pass at a time: every whole-text operation (decoding, each
+  of `stripTerminal`'s passes, the marking and unmarking around the vault's pass, taking each of up to 1,000 typed
+  lines out of the check copy, each redaction pass) is a step of its own, and `runStepsYielding` gives a
+  macrotask between two steps once 8 ms of them have run, and a Stop seen there ends the call as stopped with nothing
+  of the output for the model, the audit or the log. So the longest hold is one step plus up to 8 ms. Never cut the
+  text into slices to do this: several passes match across lines. The passes are one list for both ways
+  (`REDACT_PASSES`, the vault's `textSteps`, `cleanSteps`, `stripTerminalSteps`), so `cleanOutput` and
+  `cleanOutputAsync` give the same bytes; give a new pass to that list, never to only one of them, and never two
+  whole-text operations in one step. The long single steps on 4 MiB, measured on a loaded 4-core machine: a pass
+  over a colour code on every few characters (`stripTerminal`'s CSI pass, the marking and unmarking around the
+  vault's pass) about 150-200 ms, MySQL's `-p` pattern about 140-200 ms, the instructions check (`outputTaint`, all
+  its rules at once) over Ember.js build output, which says "ember" on every line, about 190-230 ms, and one known past
+  300 ms: the Azure Key
+  Vault value pattern over 4 MiB of secret ids with no value, about 1.6 s in one pass.
 - **Command output is not completion status**: remote runs use the child process's exit code and signal. Printed
   `ember-exit` sequences on stdout or stderr cannot override them, including on pipes and Linux/macOS PTYs.
 - **Nothing changes without them**: with commands off everywhere and only this computer, the prompts are today's

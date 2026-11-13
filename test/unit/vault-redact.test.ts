@@ -161,6 +161,23 @@ describe("VaultRedactor (vault-3)", () => {
     expect(r.text(`to ${EMAIL} now`)).toBe(`to ${VAULT_REDACTED} now`);
   });
 
+  it("words the marks it left in a step of its own, after its last pattern's pass, so a caller can give Ember's thread back between them (stop-yield-x9-1)", () => {
+    const r = new VaultRedactor();
+    r.note("email", EMAIL);
+    r.note("password", PASSWORD);
+    const patterns = (r as unknown as { noted: { patterns: RegExp[] }[] }).noted.flatMap(n => n.patterns).length;
+    const count = (text: string): { steps: number; out: string } => {
+      const g = r.textSteps(text);
+      let steps = 0;
+      for (;;) { const n = g.next(); if (n.done) return { steps, out: n.value }; steps++; }
+    };
+    const hit = count(`to ${EMAIL} now`);
+    expect(hit.out).toBe(r.text(`to ${EMAIL} now`));
+    expect(hit.steps).toBe(patterns + 1);
+    // Nothing found: nothing to word, and no step for it.
+    expect(count("nothing here").steps).toBe(patterns);
+  });
+
   it("goes through arrays and plain objects, keys too, and leaves what it is told to skip and what isn't text", () => {
     const r = new VaultRedactor();
     r.note("password", PASSWORD);
@@ -242,8 +259,9 @@ describe("redactingClient: where text leaves for a model (vault-3)", () => {
     expect(main).toContain("filling: (part, value) => vaultRedactor.note(part, value),");
     // Screen text passes it whole before it is cut short for a model (vault-3-x9-2).
     expect(main).toContain("setQuoteRedactor(text => vaultRedactor.text(text));");
-    // So does a command's output, before its lines are cut (vault-3-y9-1).
-    expect(main).toContain("setOutputRedactor(text => vaultRedactor.text(text));");
+    // So does a command's output, before its lines are cut (vault-3-y9-1), a pattern at a time at a run's end (merge
+    // review integ-y-2).
+    expect(main).toContain("setOutputRedactor(text => vaultRedactor.text(text), text => vaultRedactor.textSteps(text));");
     // No extension is called after a fill (vault-3-x9-4).
     expect(main).toContain("vaultFilled: () => vaultRedactor.active,");
     expect(main).toContain("holdsVaultValue: text => vaultRedactor.holds(text), vaultShown: () => vaultRedactor.shown,");

@@ -1,7 +1,8 @@
 /**
  * Best-effort secret redaction for command output and command lines (design §3.11 step 4, §3.5.4's "tokens on the
- * command line"). Pure and synchronous: the PC shapes every run's output with it before the model sees it, and the
- * classifier uses the same patterns to notice a token typed into a command. It can miss secrets (that is stated to the
+ * command line"). Pure: the PC shapes every run's output with it before the model sees it (a run's end in steps, with
+ * Ember's main thread given back between passes: redactSteps), and the classifier uses the same patterns to notice a
+ * token typed into a command. It can miss secrets (that is stated to the
  * model and in the commands consent card); what it never does is reach for anything outside its argument.
  */
 
@@ -279,22 +280,90 @@ const KEY_VALUE =
  */
 export function redactSecrets(text: string): string {
   let out = text;
-  for (const re of TOKEN_PATTERNS) out = re === PRIVATE_KEY ? hidePrivateKeys(out) : out.replace(re, SECRET_HIDDEN);
-  for (const re of VALUE_PATTERNS) out = out.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN);
-  for (const re of OPTION_PASSWORDS) {
-    out = out.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`);
-  }
-  for (const re of LIST_PASSWORDS) {
-    out = out.replace(re, (...m) => {
-      const g = m[m.length - 1] as { keep: string; value: string; q?: string; option?: string };
-      const [match, at, whole] = [String(m[0]), m[m.length - 3] as number, m[m.length - 2] as string];
-      const leave = g.option !== undefined && (ownName(g.option, g.value) || inMapping(whole, at, at + match.length, g.q ?? ""));
-      return leave ? match : `${g.keep}${SECRET_HIDDEN}`;
-    });
-  }
-  out = out.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`);
-  out = out.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
+  for (const pass of REDACT_PASSES) out = pass(out);
   return out;
+}
+
+/**
+ * redactSecrets's passes, in order: each reads and replaces in the whole text it is given, as redactSecrets folds them.
+ * A pass can match across lines (a private key block, a list's `\n- ` separator), so the text is never cut into
+ * slices; a caller that must keep Ember's main thread free between passes runs them one at a time
+ * (redactSecretsYielding) and gets the same bytes, since it is the same list (merge review integ-y-2).
+ */
+export const REDACT_PASSES: readonly ((text: string) => string)[] = [
+  ...TOKEN_PATTERNS.map(re => (re === PRIVATE_KEY ? hidePrivateKeys : (t: string) => t.replace(re, SECRET_HIDDEN))),
+  ...VALUE_PATTERNS.map(re => (t: string) => t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN)),
+  ...OPTION_PASSWORDS.map(re => (t: string) => t.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`)),
+  ...LIST_PASSWORDS.map(re => (t: string) => t.replace(re, (...m) => {
+    const g = m[m.length - 1] as { keep: string; value: string; q?: string; option?: string };
+    const [match, at, whole] = [String(m[0]), m[m.length - 3] as number, m[m.length - 2] as string];
+    const leave = g.option !== undefined && (ownName(g.option, g.value) || inMapping(whole, at, at + match.length, g.q ?? ""));
+    return leave ? match : `${g.keep}${SECRET_HIDDEN}`;
+  })),
+  t => t.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`),
+  t => t.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN)),
+];
+
+/**
+ * redactSecrets as steps: a step before each of REDACT_PASSES, so a caller can let other work run between them
+ * (output.ts cleanOutputAsync). Nothing but this generator holds the text between steps.
+ */
+export function* redactSteps(text: string): Generator<void, string, void> {
+  let out = text;
+  for (const pass of REDACT_PASSES) {
+    yield;
+    out = pass(out);
+  }
+  return out;
+}
+
+/** Runs steps to their end at once: what the synchronous functions return. */
+export function runSteps<T>(steps: Generator<void, T, void>): T {
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+  }
+}
+
+/** One macrotask: whatever is waiting on Ember's main thread (the stop shortcut's handler, a timer) runs first. */
+const turn = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
+
+/**
+ * How long steps run before a macrotask is given (ms): a step is a whole-text pass, often well under a millisecond on
+ * short output, and a turn for each would add up where a run printed many secret prompts.
+ */
+export const STEP_SLICE_MS = 8;
+
+/**
+ * Runs steps, giving a macrotask once STEP_SLICE_MS has passed since the last, and stops at the first step where
+ * `stopped()` says so: null then, and nothing of the text the steps held goes anywhere (merge review integ-y-2: the
+ * kill switch's handler must get the thread within 300 ms while up to 4 MiB of a run's output is cleaned). `work`
+ * counts the steps run and the macrotasks given.
+ */
+export async function runStepsYielding<T>(steps: Generator<void, T, void>, stopped: () => boolean, work?: { steps: number; turns: number }): Promise<T | null> {
+  let since = performance.now();
+  for (;;) {
+    if (stopped()) {
+      steps.return(undefined as never);
+      return null;
+    }
+    const r = steps.next();
+    if (work) work.steps++;
+    if (r.done) return r.value;
+    if (performance.now() - since >= STEP_SLICE_MS) {
+      await turn();
+      if (work) work.turns++;
+      since = performance.now();
+    }
+  }
+}
+
+/**
+ * redactSecrets with Ember's main thread given back between its passes: the same bytes, or null once `stopped()`
+ * says so.
+ */
+export function redactSecretsYielding(text: string, stopped: () => boolean, work?: { steps: number; turns: number }): Promise<string | null> {
+  return runStepsYielding(redactSteps(text), stopped, work);
 }
 
 /**

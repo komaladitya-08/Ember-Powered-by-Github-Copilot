@@ -188,11 +188,33 @@ export class VaultRedactor {
 
   /** `text` with every value the vault filled replaced. */
   text(text: string): string {
+    const steps = this.textSteps(text);
+    for (;;) {
+      const r = steps.next();
+      if (r.done) return r.value;
+    }
+  }
+
+  /**
+   * `text` as steps: a step before each pattern's pass over the whole text, so a caller can give Ember's main thread
+   * back between them while a run's output (up to 4 MiB) is cleaned (commands/output.ts cleanOutputAsync: merge
+   * review integ-y-2). `text` runs the same steps at once, so the two give the same bytes. The values are those noted
+   * when the steps start; the text with its marks stays inside the steps.
+   */
+  *textSteps(text: string): Generator<void, string, void> {
     if (typeof text !== "string" || !text || !this.noted.length) return text;
+    const patterns = this.noted.flatMap(n => n.patterns);
     // Marked first and worded last, so no value is ever looked for inside the words that stand for another.
     let out = text;
-    for (const n of this.noted) for (const p of n.patterns) { p.lastIndex = 0; out = out.replace(p, MARK); }
-    return out === text ? text : out.replace(MARKS, VAULT_REDACTED);
+    for (const p of patterns) {
+      yield;
+      p.lastIndex = 0;
+      out = out.replace(p, MARK);
+    }
+    if (out === text) return text;
+    // The wording is a whole-text pass too: a step of its own (stop-yield-x9-1).
+    yield;
+    return out.replace(MARKS, VAULT_REDACTED);
   }
 
   /**

@@ -218,7 +218,7 @@ const vaultRedactor = new VaultRedactor();
 // Screen text is redacted whole before it is cut short for a model: a value the cut fell in would pass the boundary (vault-3-x9-2).
 setQuoteRedactor(text => vaultRedactor.text(text));
 // And so is a command's output, before its lines are cut (vault-3-y9-1).
-setOutputRedactor(text => vaultRedactor.text(text));
+setOutputRedactor(text => vaultRedactor.text(text), text => vaultRedactor.textSteps(text));
 const log = createLogger({
   dir: path.join(userData, "logs"),
   level: wantedLevel.level,
