@@ -25,6 +25,34 @@ export type VaultValues = Partial<Record<VaultPart, string>>;
 /** Which parts are secret (typed into a password input, never shown again in any form). */
 export const SECRET_PARTS: ReadonlySet<VaultPart> = new Set<VaultPart>(["password", "cardNumber", "securityCode"]);
 
+/**
+ * What a task may ask Ember to fill (the worker's fill_from_vault tool): a name for one part of one kind, and nothing
+ * else. Never a value, a label or a destination: Ember reads where the field is itself.
+ */
+export const VAULT_FILL = {
+  "user name": ["login", "user"],
+  "password": ["login", "password"],
+  "name on card": ["card", "cardName"],
+  "card number": ["card", "cardNumber"],
+  "card expiry": ["card", "expiry"],
+  "card security code": ["card", "securityCode"],
+  "full name": ["contact", "name"],
+  "email": ["contact", "email"],
+  "phone": ["contact", "phone"],
+  "address": ["contact", "address"],
+} as const satisfies Record<string, readonly [VaultKind, VaultPart]>;
+export type VaultWhat = keyof typeof VAULT_FILL;
+/** The names the tool takes, in the order above. */
+export const VAULT_WHATS = Object.keys(VAULT_FILL) as [VaultWhat, ...VaultWhat[]];
+
+const PART_SAVED: Readonly<Record<VaultPart, string>> = {
+  user: "a saved user name", password: "a saved password", cardName: "a saved name on a card", cardNumber: "a saved card number",
+  expiry: "a saved card expiry date", securityCode: "a saved card security code", name: "a saved name", email: "a saved email address",
+  phone: "a saved phone number", address: "a saved address",
+};
+/** A part as a fill is announced and listed ("a saved password"): the kind of thing only, never a value or its length. */
+export const savedPart = (part: VaultPart): string => PART_SAVED[part];
+
 /** Each part's label in the form, and how it is checked (`max` characters; `required` for that kind). */
 export const PART_SPEC: Readonly<Record<VaultPart, { label: string; max: number; required: boolean; multiline?: true }>> = {
   user: { label: "User name or email", max: 256, required: false },
