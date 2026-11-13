@@ -110,6 +110,24 @@ it("lists a workspace saved with the old key under the new one, can forget it, a
   expect(await fs.readdir(dir)).toEqual([]);
 });
 
+it("keeps my saved workspaces listed, and lets me forget them, when I edit my provider's address at the same host (integrations-x9-6)", async () => {
+  // The library was owned by the whole address, so a slash at its end or a query left every saved workspace in a
+  // file nothing listed or removed.
+  const was = owners();
+  const edits = [owners({ baseUrl: "https://api.openai.com/v1/" }), owners({ baseUrl: "https://api.openai.com/v1?tenant=a" }), owners({ baseUrl: "https://API.OpenAI.com/v2" }), owners({ baseUrl: "https://api.openai.com:443/v1" })];
+  for (const now of edits) expect(now.library).toBe(was.library);
+  // A saved answer is still that exact address's and key's alone.
+  for (const now of edits.slice(0, 3)) expect(now.holder).not.toBe(was.holder);
+  // Another host or port is another service.
+  for (const other of [owners({ baseUrl: "https://api.openai.com:8443/v1" }), owners({ baseUrl: "https://eu.api.openai.com/v1" })]) expect(other.library).not.toBe(was.library);
+  const storage = new ProjectWorkspaceStore(dir, box(), false);
+  await storage.write(was.library, [entry], allow, was.holder);
+  const slash = edits[0];
+  expect(await storage.read(slash.library, slash.holder)).toEqual({ entries: [{ ...entry, exchange: null }], left: ["Greeting"] });
+  await storage.write(slash.library, [], allow, slash.holder);
+  expect(await fs.readdir(dir)).toEqual([]);
+});
+
 it("takes over a library saved before the service owned it, while the key it was saved with is still in force (integrations-r9-3)", async () => {
   const was = owners();
   const storage = new ProjectWorkspaceStore(dir, box(), false);

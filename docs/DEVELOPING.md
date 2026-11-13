@@ -2618,10 +2618,12 @@ checkbox is selected. Patch approvals, command text, running processes and comma
 restored. **Forget workspace** removes the checkpoint and leaves the project files in place.
 
 The library belongs to the GitHub account, or to the model service by whose it is (yours, the organisation's), its
-type and its address, never its key (`workspaceOwners`' `library`, app/main/agent/project-workspaces.ts;
-integrations-r9-3: owned by a hash of the provider's whole config, a replaced or removed key or another wire API left
-every saved workspace in a file nothing listed or removed). A saved answer is still only its holder's (the account,
-or that whole config with its key): opened after the key or the provider's settings changed, a workspace restores its
+type and its host with its port, never its key or the rest of its address (`workspaceOwners`' `library`,
+app/main/agent/project-workspaces.ts; integrations-r9-3, integrations-x9-6: owned by a hash of the provider's whole
+config, a replaced or removed key, another wire API, a slash at the address's end or a query left every saved
+workspace in a file nothing listed or removed). A saved answer is still only its holder's (the account, or that
+whole config with its key and its address as written): opened after the key or the provider's settings changed, a
+workspace restores its
 files and folder and says “Its last answer was saved before this provider's key or settings changed, so Ember left it
 out.”, and the next save or forget drops such answers for good; with the earlier key back before that, they are
 there again. A provider's file holds its `holder` beside its `scope`; a GitHub account's file is as it was. A library

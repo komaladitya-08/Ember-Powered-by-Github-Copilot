@@ -29,12 +29,18 @@ const library = z.object({ version: z.literal(1), scope: scopeKey, holder: scope
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
+/** The host an address names, with its port when it gives one other than its scheme's; the address itself when it isn't one. */
+function hostOf(baseUrl: string): string {
+  try { return new URL(baseUrl).host.toLowerCase(); } catch { return baseUrl; }
+}
+
 /**
  * Whose the saved workspaces are, and whose a saved answer is, for the connection in force (integrations-r9-3).
  *
  * `library`: the GitHub account, or the model service by whose it is (the user's, the organisation's), its type and its
- * address. Never its key: the owner used to be a hash of the provider's whole config, so a replaced or removed key, or
- * another wire API, left every saved workspace in a file nothing listed or removed, which the person could not forget.
+ * host (with its port). Never its key: the owner used to be a hash of the provider's whole config, so a replaced or
+ * removed key, or another wire API, left every saved workspace in a file nothing listed or removed, which the person
+ * could not forget. Nor the rest of its address: a slash at its end or a query did the same (integrations-x9-6).
  *
  * `holder`: the account, or that whole config, key included, as before: an answer goes to no other service, address,
  * key or account than the one that gave it (integrations-r1), from the Projects pane and from a saved workspace alike.
@@ -43,7 +49,7 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 export function workspaceOwners(provider: { kind: string; config: { type?: string; baseUrl: string } } | null, githubAccountId: number | null): { library: string; holder: string } | null {
   if (provider) {
     return {
-      library: sha(JSON.stringify(["workspaces", provider.kind, provider.config.type ?? "openai", provider.config.baseUrl])),
+      library: sha(JSON.stringify(["workspaces", provider.kind, provider.config.type ?? "openai", hostOf(provider.config.baseUrl)])),
       holder: sha(JSON.stringify([provider.kind, provider.config])),
     };
   }
