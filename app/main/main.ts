@@ -1801,6 +1801,8 @@ function start(): void {
     settings, admin: () => policy, client: () => agent?.copilotClient ?? null, confirmer: () => confirmer, audit: () => audit,
     // Autopilot: a call the gate would ask about is said in the conversation's bubble instead (never unsaid: it asks).
     autopilot: () => approvalsNow().autopilot, announce: words => agent?.announceUnasked(words) ?? false,
+    // After a fill from the vault no extension is called: a failed call's text reaches the model unredacted (vault-3-x9-4).
+    vaultFilled: () => vaultRedactor.active,
     log: log.child("extensions"), os: platform.os,
     // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no stdio servers there.
     launcher: platform.os === "darwin" ? null : { execPath: process.execPath, script: path.join(__dirname, "mcp-launch.cjs") },

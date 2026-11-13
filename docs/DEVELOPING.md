@@ -751,6 +751,8 @@ it builds on:
   later. The next start's check (`refresh()`) re-pins nothing and turns a changed tool off.
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
+  For the same reason no extension is called once Ember has filled something from its vault in this run (the
+  gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out.
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every
@@ -1651,6 +1653,10 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   name, an email, an address) has been filled in this run, of a window whose read was cut short. The helper's own
   fill makes the field secret before it writes; the typed fallback tells the helper so before the first key and types
   nothing if it can't; and a picture in which a field the task filled is listed as an ordinary field isn't sent.
+  Extensions are the one road the redactor can't close: a failed extension call's text goes to the model as the
+  extension wrote it (the SDK lets no hook rewrite it), and what an extension reads off a page could hold what
+  was filled. So once anything has been filled, Ember's gate denies every extension call until Ember is started
+  again (`vaultFilled`, gate.ts `VAULT_FILLED`), in every mode.
   What this doesn't cover: a value written some other way again (base64, a reordered address, a name's parts
   apart), a value an app draws without telling accessibility (a canvas), and what Ember's bubble
   and task card show the person of their own screen (an element's name).

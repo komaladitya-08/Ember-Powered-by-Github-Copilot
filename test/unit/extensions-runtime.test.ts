@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { classify, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, REFUSED, type GateInput } from "../../app/main/extensions/gate";
+import { classify, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, REFUSED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
 import { canonical, checkPins, isReadOnly, pinAll, toolHash, shownHash, shownSchema, type ServedTool } from "../../app/main/extensions/pin";
 import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
 import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
@@ -134,6 +134,20 @@ describe("the extensions gate", () => {
 
   it("tells the model a refusal is final", () => {
     expect(REFUSED).toMatch(/Don't try this again or try another way/);
+  });
+
+  it("denies every call once Ember has filled something from its vault in this run, read-only and Autopilot's included (vault-3-x9-4)", () => {
+    // A failed call's text goes to the model as the extension wrote it (the SDK lets no hook rewrite it), so after a
+    // fill no extension is called at all: what one reads off a page or a window could hold what was filled.
+    for (const o of [{}, { tool: PINNED_POST }, { autopilot: true }, { autopilot: true, tool: PINNED_POST }, { remote: true }] as Partial<GateInput>[]) {
+      const d = classify(gate({ vaultFilled: true, ...o }));
+      expect(d.verdict, JSON.stringify(o)).toBe("deny");
+      expect(d.reason).toBe(VAULT_FILLED);
+    }
+    expect(VAULT_FILLED).toBe("Ember filled something from its vault since it started, and what an extension reads could hold it, so extensions stay off until Ember is started again. Don't try an extension's tool again; say so to the user if they need one.");
+    // Everything that was denied before says why as before.
+    expect(classify(gate({ vaultFilled: true, allowed: false })).reason).toBe("Extensions are off.");
+    expect(classify(gate({ vaultFilled: false }))).toEqual(classify(gate()));
   });
 
   it("announces instead of asking in Autopilot, whatever made it ask, and denies exactly what it denied (modes-D3)", () => {
@@ -950,6 +964,25 @@ describe("ExtensionsService", () => {
     const entry = audit.find(e => e.phase === "decision")!;
     expect(entry).toMatchObject({ event: "extension", tool: "fake-lookup", verdict: "allow", argChars: 23 });
     expect(JSON.stringify(entry)).not.toContain("secret");
+  });
+
+  it("calls no extension after a fill from the vault: not asked, not announced, audited as denied (vault-3-x9-4)", async () => {
+    const said: string[] = [];
+    let filled: boolean | "unknown" = false;
+    const s = await installed({ autopilot: () => true, announce: words => { said.push(words); return true; }, vaultFilled: () => { if (filled === "unknown") throw new Error("down"); return filled; } });
+    const ext = s.forSession()!;
+    shown(ext);
+    expect(await call(ext, "fake-lookup", { q: "x" })).toEqual({ permissionDecision: "allow" });
+    filled = true;
+    for (const [tool, args] of [["fake-lookup", { q: "x" }], ["fake-post_message", { text: "hello team" }]] as const) {
+      expect(await call(ext, tool, args), tool).toEqual({ permissionDecision: "deny", permissionDecisionReason: VAULT_FILLED });
+    }
+    expect(asked).toEqual([]);
+    expect(said).toEqual([]);
+    expect(audit.filter(e => e.event === "extension" && e.phase === "decision").at(-1)).toMatchObject({ tool: "fake-post_message", verdict: "deny" });
+    // A check that fails counts as filled.
+    filled = "unknown";
+    expect(await call(ext, "fake-lookup", { q: "x" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: VAULT_FILLED });
   });
 
   it("announces a changing tool's call instead of asking in Autopilot, recorded with the mode (modes-D3)", async () => {

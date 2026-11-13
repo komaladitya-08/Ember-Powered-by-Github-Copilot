@@ -242,6 +242,8 @@ describe("redactingClient: where text leaves for a model (vault-3)", () => {
     expect(main).toContain("filling: (part, value) => vaultRedactor.note(part, value),");
     // Screen text passes it whole before it is cut short for a model (vault-3-x9-2).
     expect(main).toContain("setQuoteRedactor(text => vaultRedactor.text(text));");
+    // No extension is called after a fill (vault-3-x9-4).
+    expect(main).toContain("vaultFilled: () => vaultRedactor.active,");
     expect(main).toContain("holdsVaultValue: text => vaultRedactor.holds(text), vaultShown: () => vaultRedactor.shown,");
   });
 });

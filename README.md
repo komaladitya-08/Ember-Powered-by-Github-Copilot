@@ -430,6 +430,8 @@ itself from then on. It fills nothing in your computer's own password prompts, a
 
 - What it filled is hidden from then on in everything Ember reads, sends to the model, logs and records, and blacked
   out of its screenshots.
+- Once Ember has filled something, it uses no extension until you start it again: what an extension reads could
+  hold what was filled.
 - **Settings › Apps & privacy › Vault** lists what is kept (never the values) with **Forget**; Sign out and Forget
   everything forget it all.
 - It needs a keyring: where your computer has none, the form says so and keeps nothing.
