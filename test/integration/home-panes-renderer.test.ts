@@ -609,10 +609,11 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     const consent = await page.locator("#w-full ul.terms").evaluate(e => { const c = e.cloneNode(true) as HTMLElement; c.querySelector("[data-first-run]")?.remove(); return c.textContent; });
     // Word for word, but for where the never-look list is: below, in this pane (safety-privacy-r4); and without first
     // run's own sentences about its rows, which aren't here (slice4-30): what its agreement turns on, the Interactive
-    // and commands switches it offers.
+    // and commands switches it offers, and that “Hey Ember” is turned on as you agree (slice4-x9-5).
     expect(consent).toContain("The list is in settings");
     expect(shown).toBe(consent?.replace("The list is in settings", "The list is below, under Never look at")
       .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always", " in an app, and always")
+      .replace(" unless you turn on “Hey Ember”, when you agree or later in settings, or", " unless you turn on “Hey Ember” in Settings › Voice, or")
       .replace(" Each asks you first. Commands on this computer have their own switch here.", " Each asks you first."));
     expect(shown).not.toContain("Agreeing turns on");
     expect(shown).toContain("It sends no usage statistics.");
