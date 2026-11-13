@@ -56,7 +56,7 @@ import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine, isRiskyLabel } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, runningAppImage, watchAdminPolicy } from "./policy/admin-watch";
-import { ANSWER_MS, Confirmer, EXPIRED_MS, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
+import { ANSWER_MS, Confirmer, EXPIRED_MS, answerSettler, guardWhileAsking, hidesAgainAfter, questionPausesAnswer } from "./agent/confirm";
 import { taskNotice } from "./agent/tasks";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
@@ -1110,7 +1110,7 @@ function start(): void {
     // A question with a whole text to read (review #116): the approve key shows its next part until all of it has been shown.
     const aloud = questionAloud(q.question, { keys: (q.question.detail ? readKeyWords(heldKeys()) : heldKeys()).map(k => k.say), spoken: spokenText });
     voice?.cancelListenOnce();
-    pauseAnswerSpeech();
+    pauseAnswerSpeech(questionPausesAnswer(q.question));
     if (maySpeak()) voice?.speak(words ?? aloud.say);
     // Then a moment for its answer without the name (owner's report of 2026-11-12): once Ember has said it, or at once
     // where it says nothing; only an answer leaves that window, through voiceAnswer's rules and the echo guard.
@@ -1244,14 +1244,21 @@ function start(): void {
     pieces.forEach((p, i) => voice?.speak(p.text, { append: i > 0, lang: p.lang }));
     return true;
   };
-  /** A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. */
-  const pauseAnswerSpeech = () => {
+  /**
+   * A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. A task's
+   * question (`own` false) comes from outside the turn: the answer being written goes on unsaid, as after Stop speaking,
+   * and its words still reach the bubble, Home and the transcript (tasks-approvals-r9-2).
+   */
+  const pauseAnswerSpeech = (own = true) => {
     const spoken = lastAskByVoice, interrupted = answerInterrupted, hushed = answerHushed;
+    const open = !!agent?.answerOpen;
     resetAnswerSpeech();
     lastAskByVoice = spoken;
-    answerInterrupted = interrupted;
-    answerHushed = hushed;
-    agent?.pauseAnswer();
+    if (own) {
+      answerInterrupted = interrupted;
+      answerHushed = hushed;
+      agent?.pauseAnswer();
+    } else answerHushed = open && !interrupted;
   };
 
   // ───── Copilot brain ─────

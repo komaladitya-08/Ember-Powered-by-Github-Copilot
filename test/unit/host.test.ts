@@ -111,7 +111,7 @@ import { unavailableLine } from "../../app/renderer/ask/chips";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
 import { LOST_GAVE_UP, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
-import { Confirmer } from "../../app/main/agent/confirm";
+import { Confirmer, questionPausesAnswer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
@@ -587,6 +587,29 @@ describe("connecting and signing in", () => {
     expect(answers).toEqual(["The event is updated."]);
     expect(ends).toEqual([false]);
     expect(session.sent).toHaveLength(1);
+    await host.stop();
+  });
+
+  it("keeps the conversation's answer, whole, when a task's question comes up while it is being written (tasks-approvals-r9-2)", async () => {
+    const deltas: string[] = [], answers: string[] = [], ends: boolean[] = [];
+    const { host, screen } = makeHost({ onAnswerDelta: text => deltas.push(text), onAnswer: text => answers.push(text), onTurnEnd: aborted => ends.push(aborted) });
+    const confirmer = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, onChange: q => { if (q && questionPausesAnswer(q.question)) host.pauseAnswer(); } });
+    await host.start(TOKEN, "stored");
+    await host.ask("What is the capital of France?");
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { messageId: "answer", deltaContent: "The capital of " });
+    // A background task's step asks meanwhile: its question is the task's, not this turn's tool's.
+    const permission = confirmer.ask({ title: "May I?", prompt: "Delete the old notes?", task: "1-abc", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    session.emit("assistant.message_delta", { messageId: "answer", deltaContent: "France is Paris." });
+    session.emit("assistant.message", { messageId: "answer", content: "The capital of France is Paris." });
+    session.emit("session.idle");
+    expect(confirmer.answerKey("primary")).toBe(true);
+    await permission;
+    expect(deltas).toEqual(["The capital of ", "France is Paris."]);
+    expect(answers).toEqual(["The capital of France is Paris."]);
+    expect(host.getTranscript().map(e => e.text)).toContain("The capital of France is Paris.");
+    expect(ends).toEqual([false]);
+    expect(screen().bubble?.thought).toBe("The capital of France is Paris.");
     await host.stop();
   });
 
