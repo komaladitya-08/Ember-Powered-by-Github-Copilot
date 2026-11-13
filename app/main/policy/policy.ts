@@ -2986,7 +2986,7 @@ export class PolicyEngine {
     const asksDialog = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew || warns);
     const harmless = !!buttons?.length && (buttons.every(c => backsOffDialog(c.name, told)) || (buttons.length === 1 && acknowledgesOnly(r, buttons[0].name, buttons[0].role, os)));
     const pressesDefault = asksDialog && !harmless;
-    const answersDefault: Risk = { reason: "this answers a dialog's question or warning with one of its buttons, and Ember can't tell which", note: `I can't tell which of its buttons this presses.${note ? ` ${note}` : ""}` };
+    const answersDefault: Risk = { reason: "this answers a dialog's question or warning with one of its buttons, and Ember can't tell which", note: `I can't tell which of the dialog's buttons this presses.${note ? ` ${note}` : ""}` };
     // Any control of a page (or an Electron app's window) whose title mentions a payment: it may buy something whatever its
     // label says. The question says why, in words true of a title that only mentions one (a mail's subject, a file's name).
     const payment = ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) ? onPaymentPage(r.window) : null;
@@ -3073,6 +3073,8 @@ export class PolicyEngine {
           if (ACTIVATING_ROLES.test(role) && conflict) return goesAhead;
           if (pastWarning) return warned;
           if (questioned) return answersQuestion;
+          // (In a text field Enter may send what is in it, which says more than the dialog's buttons: product-safety-y9-2.)
+          if (!/space$/.test(k) && pressesDefault && enterMaySend(r, role, os) && !goesSomewhere(r, role, name, os)) return ENTER_IN_FIELD;
           if (!/space$/.test(k) && pressesDefault && !(os !== "darwin" && ANSWER_ROLES.test(role))) return answersDefault;
           if (ACTIVATING_ROLES.test(role) && committing) return { reason: COMMITS_RISK, about: name };
           if (around) return BARE_IN(around);

@@ -682,4 +682,15 @@ describe("Enter in a dialog that asks, while no button of it has the keyboard", 
     asksEvery(at("Return", part), os);
     if (os === "win32") asksEvery(at("o", dialog), os);
   });
+
+  it("names a text field's Enter as one that may send what is in it, and the dialog's buttons as the dialog's (product-safety-y9-2)", () => {
+    const search: ActionRequest = { taskId: "t", kind: "keys", value: "Return", app: "firefox", window: "Shop - Mozilla Firefox", goal: "find running shoes", inPage: true,
+      element: { role: "entry", name: "Search" }, dialog: { name: "What are you looking for?", text: "", page: true, alert: true } };
+    for (const autonomy of [false, true]) {
+      const d = engineOn("linux", true, autonomy).decide(search);
+      expect(d).toMatchObject({ verdict: "confirm", risky: true, remember: false, reason: "Enter in a text field can send or submit what is in it" });
+      expect(d.prompt).toContain("Enter there may send or submit it.");
+    }
+    expect(engineOn("linux", true, false).decide(key("linux", "label", "Are you sure?")).prompt).toContain("I can't tell which of the dialog's buttons this presses.");
+  });
 });
