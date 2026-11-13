@@ -224,3 +224,42 @@ describe("the conversation is told what the user had Ember forget, by id and nev
     expect(toolRules(PLATFORM_WORDS.linux, NO_CAPS)).not.toContain("memory_changed");
   });
 });
+
+describe("after a Forget, Ember still learns what the user states themselves (memory-x9-3)", () => {
+  const STATEMENTS: [string, string][] = [
+    ["I can't stand early mornings, schedule things after ten", "Dislikes early mornings"],
+    ["My sister Priya is visiting next week, find a restaurant", "Priya is the user's sister"],
+    ["I've just moved to Leeds for the new job", "Lives in Leeds"],
+    ["I'm allergic to peanuts by the way", "Has a peanut allergy"],
+  ];
+  it("keeps the facts of four ordinary statements an hour after an unrelated Forget, as it does without one (memory-x9-3)", async () => {
+    const kept = async (forget: boolean) => {
+      const r = rig();
+      await r.turn("Remember I like jazz", "Noted.", { remember: "Likes jazz" });
+      r.advance(20 * 60_000);
+      if (forget) r.l.forgetCounted(r.s.list()[0]!.id);
+      r.advance(60 * 60_000);
+      for (const [said, fact] of STATEMENTS) await r.turn(said, "OK.", { offers: [{ fact, evidence: said }] });
+      return r.list().filter(f => !f.includes("jazz")).sort();
+    };
+    expect(await kept(true)).toEqual(["conversation: Dislikes early mornings", "conversation: Has a peanut allergy", "conversation: Lives in Leeds", "user: Priya is the user's sister"]);
+    expect(await kept(true)).toEqual(await kept(false));
+  });
+
+  it("still holds back what rests on Ember's reply, on a question, or on words of the user's that don't say it (memory-x9-3)", async () => {
+    const r = rig();
+    await r.turn("Remember I like jazz", "Noted.", { remember: "Likes jazz" });
+    r.l.forgetCounted(r.s.list()[0]!.id);
+    r.advance(60 * 60_000);
+    await r.turn("Plan my week", "You live in Leeds, so I've kept Tuesday free for the commute.", { offers: [
+      { fact: "Lives in Leeds", evidence: "You live in Leeds" },
+      { fact: "Commutes on Tuesdays", evidence: "Plan my week" },
+      // What went, in the user's own words about something else.
+      { fact: "Enjoys jazz", evidence: "Plan my week" },
+    ] });
+    expect(r.list()).toEqual([]);
+    // Much like what went, resting on the user's own words that don't state it: still held.
+    await r.turn("Is there any jazz on this week?", "There's a quartet on Friday.", { offers: [{ fact: "Likes jazz", evidence: "any jazz on this week" }] });
+    expect(r.list()).toEqual([]);
+  });
+});

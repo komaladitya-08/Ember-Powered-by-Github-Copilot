@@ -168,7 +168,7 @@ export class MemoryLearning {
   constructor(private d: LearningDeps) {
     this.lastActive = this.now();
     this.learner = new Learner({
-      model: () => this.model, keep: (f, since, said) => this.keepLearned(f, since, said), inForce: d.inForce, log: d.log, now: d.now, budget: d.budget,
+      model: () => this.model, keep: (f, since, said, evidence) => this.keepLearned(f, since, said, evidence), inForce: d.inForce, log: d.log, now: d.now, budget: d.budget,
       onLearned: facts => this.learned(facts),
     });
   }
@@ -402,12 +402,13 @@ export class MemoryLearning {
    * holds back much the same words from what came in since (a task's result) for FORGOTTEN_TURN_MS. A later turn that
    * says it again is learned from as usual after that.
    */
-  private keepLearned(found: NewFact, since: number, said: string | null): AddResult {
+  private keepLearned(found: NewFact, since: number, said: string | null, evidence: string): AddResult {
     // What to call the user or how long answers should be, told in their own words in that turn and read as a fact
     // about them alone: the profile's own fact, as the remember tool keeps it (memory-r9-5, memory-x9-1).
     const f = (said ? profileSaid(found.text, found.about, said, found.source === "user") : null) ?? found;
-    // Forgotten or corrected in this conversation: only the user's own words bring it back (memory-r9-1).
-    if (this.hold.heldBack(f.text, f.source, said === null ? "task" : { said })) {
+    // Forgotten or corrected in this conversation: only the user's own words bring it back (memory-r9-1), and until
+    // it ends a turn teaches only what rests on them (memory-x9-3).
+    if (this.hold.heldBack(f.text, f.source, said === null ? "task" : { said, evidence })) {
       this.d.log.info("memory.learn_skipped", { why: "forgotten_here" });
       return { kind: "refused", reason: "it was forgotten in this conversation" };
     }

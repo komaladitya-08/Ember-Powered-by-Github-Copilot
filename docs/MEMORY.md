@@ -473,10 +473,14 @@ download, so English-only MiniLM is the trade-off for now.
      nothing much like a forgotten fact, or like the words a correction dropped, is kept again unless it is the
      user's own (`user`): half or more of the smaller one's words in common (`LIKE_FORGOTTEN`), whether it comes
      from a turn, a task's result or the remember tool, which is told why (`HELD_FORGOTTEN`). A turn in such a
-     conversation teaches memory only what is mostly in the user's own words in it (`ownWords`), since Ember's reply
-     may say what went in words that share none with it; after Forget everything, a task's result and the remember
-     tool are held to the same (`HELD_ALL`). The words are held in RAM, never on disk, and Undo lifts it. It learns
-     less: a fact Ember inferred in that conversation waits for the next. The conversation is told as well, with
+     conversation teaches memory only what rests on what the user said in it (`restsOnUser`): a fact mostly in
+     their own words (`ownWords`), or one whose evidence is their words word for word and holds half of the fact or
+     more (`RESTS_ON`), however the model worded it, so "I've just moved to Leeds for the new job" still teaches
+     "Lives in Leeds" (memory-x9-3). Ember's reply may say what went in words that share none with it, so what rests
+     on the reply, or on words of the user's that don't say it, waits; after Forget everything, a task's result and
+     the remember tool are held to the same (`HELD_ALL`). The words are held in RAM, never on disk, and Undo lifts
+     it. It learns less: a fact Ember inferred from its own reply in that conversation waits for the next. The
+     conversation is told as well, with
      the next request, in Ember's own `<memory_changed>` note (format.ts `memoryChanged`; the rules name it only
      while memory is on): the ids of the facts the user had it forget or correct, only those it was given (in
      `<memory>`, by recall or by remember), never their words, so a forgotten fact is not sent again and nothing a

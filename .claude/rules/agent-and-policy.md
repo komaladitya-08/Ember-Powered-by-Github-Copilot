@@ -308,8 +308,10 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   - a Forget, a correction and Forget everything hold until the conversation they were made in ends
     (`ConversationHold`, hold.ts; the host's `conversationEnded` in `forgetCurrent`): nothing much like what went is
     kept again unless it is the user's own, from a turn, a task or the remember tool, and a turn there teaches only
-    what is mostly in the user's own words (`heldBack`); the conversation is told by id only, and only of facts it
-    was given (`memoryChanged`), never in a forgotten fact's words (memory-r9-1). It may only hold back more;
+    what rests on what the user said in it (`heldBack`, `restsOnUser`: mostly their words, or evidence that is their
+    words word for word and holds half of the fact, never Ember's reply: memory-x9-3); the conversation is told by id
+    only, and only of facts it was given (`memoryChanged`), never in a forgotten fact's words (memory-r9-1). It may
+    only hold back more than main did;
   - what the remember tool kept in a turn goes with that turn (`Learner.heard`'s `kept`) and no other (the conductor's
     `began` at every turn's start lets go of what an unread turn kept: memory-x8-2), and its reading keeps no
     candidate `keptInTurn` calls the same fact, compared on words and on the clause of the turn they were said in;

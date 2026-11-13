@@ -2,7 +2,8 @@
  * What a Forget means for the conversation it was made in (memory-r9-1). The conversation still holds what the user had
  * Ember forget or correct: their own statement, earlier `<memory>` blocks, Ember's answers. So until it ends:
  * - nothing much like what went is kept again but in the user's own words (`heldBack`): never from Ember's own later
- *   reply, a task it started or its remember tool, however long after the Forget;
+ *   reply, a task it started or its remember tool, however long after the Forget; and a turn teaches only what rests
+ *   on what the user said in it, so what they state themselves is still learned (memory-x9-3);
  * - the conversation is told what went, by id and only for facts it was given (`changes`, ./format.ts `memoryChanged`):
  *   a forgotten fact's words are never sent again.
  *
@@ -12,6 +13,7 @@
 
 import { memoryChanged, memoryIds } from "./format";
 import type { Source } from "./graph";
+import { ownEvidence } from "./learn";
 import { ownWords } from "./service";
 import { terms } from "./text";
 
@@ -27,8 +29,29 @@ export const HELD_FORGOTTEN = "Not remembered: the user had Ember forget this ea
 /** And, after Forget everything, for any fact that isn't. */
 export const HELD_ALL = "Not remembered: the user had Ember forget everything earlier in this conversation, so until a new conversation only what they say themselves is kept. If they said this in this request, save it in their own words.";
 
-/** Where a fact comes from: a turn (the user's own words in it, "" when Ember couldn't tell they were theirs), a task's result, or the remember tool. */
-export type HeldFrom = { said: string } | "task" | "tool";
+/**
+ * At least this much of a fact's words in the user's own words it rests on makes them say it: "Lives in Leeds" on
+ * "I've just moved to Leeds for the new job", never "Does not eat meat" on "Suggest something for dinner".
+ */
+export const RESTS_ON = 0.5;
+
+/**
+ * Where a fact comes from: a turn (the user's own words in it, "" when Ember couldn't tell they were theirs, and the
+ * words of the turn the fact rests on, as the model quoted them), a task's result, or the remember tool.
+ */
+export type HeldFrom = { said: string; evidence?: string } | "task" | "tool";
+
+/**
+ * Whether a fact from a turn rests on what the user said in it (memory-x9-3): it is mostly their own words
+ * (`ownWords`), or the words it rests on are theirs word for word and hold half of it or more (RESTS_ON), however the
+ * model worded it ("Has a peanut allergy" on "I'm allergic to peanuts by the way"). Never what rests on Ember's
+ * reply, which may say what went in words that share none with it, nor on words of the user's that don't say it.
+ */
+function restsOnUser(text: string, from: { said: string; evidence?: string }): boolean {
+  if (ownWords(text, from.said)) return true;
+  if (!from.evidence || !ownEvidence(from.evidence, from.said)) return false;
+  return share(new Set(terms(text)), new Set(terms(from.evidence))) >= RESTS_ON;
+}
 
 const share = (a: ReadonlySet<string>, b: ReadonlySet<string>) => (a.size ? [...a].filter(t => b.has(t)).length / a.size : 0);
 const nothing = () => ({ forgot: [] as string[], corrected: [] as string[], back: [] as string[], all: false });
@@ -148,17 +171,18 @@ export class ConversationHold {
    * Whether a fact is held back, and why: `all` after Forget everything, `like` for what the user had Ember forget or
    * correct in this conversation. Never the user's own (`user`: their words, stated as true now). Otherwise:
    * - anything much like what went (LIKE_FORGOTTEN), from a turn, a task or the remember tool;
-   * - from a turn, anything that isn't mostly in the user's own words in it (`ownWords`): Ember's reply may say what
-   *   went in words that share none with it ("You don't eat meat" for "Is vegetarian");
+   * - from a turn, anything that doesn't rest on what the user said in it (`restsOnUser`): Ember's reply may say what
+   *   went in words that share none with it ("You don't eat meat" for "Is vegetarian"). What the user states is still
+   *   learned, however the model words it (memory-x9-3);
    * - after Forget everything, anything from a task or the remember tool, and from a turn as above.
    * The remember tool is otherwise refused only what is like it, so "remember…" still keeps what the model words freely.
    */
   heldBack(text: string, source: Source, from: HeldFrom): "all" | "like" | null {
     if (source === "user" || (!this.heldAll && !this.held.length)) return null;
-    const mostlyOwn = typeof from === "object" && ownWords(text, from.said);
-    if (this.heldAll && !mostlyOwn) return "all";
+    const theirs = typeof from === "object" && restsOnUser(text, from);
+    if (this.heldAll && !theirs) return "all";
     const words = new Set(terms(text));
     if (this.held.some(h => Math.max(share(h.words, words), share(words, h.words)) >= LIKE_FORGOTTEN)) return "like";
-    return typeof from === "object" && !mostlyOwn ? "like" : null;
+    return typeof from === "object" && !theirs ? "like" : null;
   }
 }

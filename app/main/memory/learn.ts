@@ -243,16 +243,25 @@ function statesNow(evidence: string, said: string): boolean {
 }
 
 /**
+ * Whether a fact's evidence is the user's own words in that turn, word for word (two or more): `stated` when their
+ * sentence says it as true now (`statesNow`: no question, nothing past or hypothetical), `said` when it asks or
+ * supposes it, null when the words aren't theirs (Ember's reply, which may quote the screen).
+ */
+export function ownEvidence(evidence: string, said: string): "stated" | "said" | null {
+  const quote = squash(evidence);
+  if (quote.split(" ").length < 2 || !` ${squash(said)} `.includes(` ${quote} `)) return null;
+  return statesNow(evidence, said) ? "stated" : "said";
+}
+
+/**
  * Whose a fact from a conversation turn is: the user's only when the user was heard to say it (`heard`: typed, or a
  * voice Ember could tell from its own speakers), its evidence is their own words word for word, said as true now
- * (`statesNow`: no question, nothing past or hypothetical), the fact's content words are in that evidence, and it says
- * it the same way round ("I hate Teams" is never "Likes Teams"). Ember's reply never counts (it may quote the screen).
+ * (`ownEvidence`), the fact's content words are in that evidence, and it says it the same way round ("I hate Teams"
+ * is never "Likes Teams"). Ember's reply never counts (it may quote the screen).
  */
 export function turnSource(c: Pick<Candidate, "fact" | "evidence">, said: string, heard = true): Extract<Source, "user" | "conversation"> {
   if (!heard) return "conversation";
-  const quote = squash(c.evidence);
-  const own = quote.split(" ").length >= 2 && ` ${squash(said)} `.includes(` ${quote} `);
-  return own && statesNow(c.evidence, said) && covered(c.fact, c.evidence) && samePolarity(c.fact, c.evidence) ? "user" : "conversation";
+  return ownEvidence(c.evidence, said) === "stated" && covered(c.fact, c.evidence) && samePolarity(c.fact, c.evidence) ? "user" : "conversation";
 }
 
 /**
@@ -303,9 +312,9 @@ export function learnedFacts(x: Extraction, items: LearnItem[]): NewFact[] {
   return learnedFrom(x, items).map(l => l.fact);
 }
 
-/** `learnedFacts`, each with the turn or result it was read from. */
-function learnedFrom(x: Extraction, items: LearnItem[]): { fact: NewFact; item: LearnItem }[] {
-  const out: { fact: NewFact; item: LearnItem }[] = [];
+/** `learnedFacts`, each with the turn or result it was read from and the words it rests on there. */
+function learnedFrom(x: Extraction, items: LearnItem[]): { fact: NewFact; item: LearnItem; evidence: string }[] {
+  const out: { fact: NewFact; item: LearnItem; evidence: string }[] = [];
   for (const c of x.facts.slice(0, 5)) {
     const item = items[c.from - 1];
     if (!item) continue;
@@ -323,7 +332,7 @@ function learnedFrom(x: Extraction, items: LearnItem[]): { fact: NewFact; item: 
       const kind = about.find(same)?.kind;
       about = [{ name: subject, ...(kind ? { kind } : {}) }, ...about.filter(a => fold(a.name) !== "user" && !same(a))];
     }
-    out.push({ item, fact: {
+    out.push({ item, evidence: c.evidence, fact: {
       text: c.fact, about, source, confidence: Math.min(CAP[source], c.confidence),
       ...(c.predicate ? { predicate: c.predicate, single: c.single === true } : {}),
     } });
@@ -384,9 +393,10 @@ export interface LearnerDeps {
    * Keeps one fact (MemoryService.learn). `since`: when the first turn or result of the batch it was read from came
    * (ms), so a fact forgotten after that isn't learned back from it (memory-c7-1). `said`: the user's own words in the
    * turn it was read from ("" when Ember couldn't tell they were the user's), or null for a task's result: after a
-   * Forget, only they bring a fact back (memory-r9-1).
+   * Forget, only they bring a fact back (memory-r9-1). `evidence`: the words of that turn or result the fact rests
+   * on, as the model quoted them (memory-x9-3).
    */
-  keep: (f: NewFact, since: number, said: string | null) => AddResult;
+  keep: (f: NewFact, since: number, said: string | null, evidence: string) => AddResult;
   /** Memory is on, agreed to and allowed now: checked again before every call and every fact kept. */
   inForce: () => boolean;
   log: MemoryLog;
@@ -481,8 +491,8 @@ export class Learner {
       if (!x) { this.d.log.info("memory.extract_dropped", { items: items.length, answered: raw !== null }); return 0; }
       // Turned off, or forgotten, while the model thought: nothing is kept.
       if (!this.d.inForce()) return 0;
-      for (const { fact: f, item } of learnedFrom(x, items)) {
-        const r = this.d.keep(f, since, item.kind === "task" ? null : item.own ? item.said : "");
+      for (const { fact: f, item, evidence } of learnedFrom(x, items)) {
+        const r = this.d.keep(f, since, item.kind === "task" ? null : item.own ? item.said : "", evidence);
         if (r.kind === "added") kept.push(r.fact);
       }
       this.d.log.info("memory.extracted", { items: items.length, offered: x.facts.length, kept: kept.length });
