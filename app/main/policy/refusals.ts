@@ -26,7 +26,7 @@ export type Standing = "refused" | "waiting";
  */
 const WAY: Readonly<Record<ActionKind, string>> = {
   read: "read", click: "press", cursor_click: "press", toggle: "press", text: "type", cursor_text: "type", select: "choose", value: "set",
-  keys: "keys", scroll: "scroll", setting: "setting", open_app: "open",
+  keys: "keys", scroll: "scroll", setting: "setting", open_app: "open", vault_fill: "fill",
 };
 
 /** An app step as its question was about it. */
@@ -54,6 +54,13 @@ export function stepNames(s: StepAsked): string[] {
   if (s.kind === "keys") return [`keys\n${s.key}\n${value}`, ...(s.activates && s.named ? [`press\n${s.key}`] : [])];
   return [`${WAY[s.kind]}\n${s.key}`];
 }
+
+/**
+ * The name a field goes by once the user closed Ember's Secure Form for a fill of it (worker.ts fillFromVault): a key
+ * that types into that field is the fill done another way, as text typed or set there is (stepNames' "type": integ-x-2).
+ * Apart from stepNames, so that a no to one key in a field is never a no to every other key there.
+ */
+export const formFieldName = (key: string): string => `vault-field\n${key}`;
 
 /**
  * What a risky step does, read from the words policy found it risky for: sending, deleting, paying… After a no, a later

@@ -187,7 +187,12 @@ export interface TextInfo { text?: string; truncated?: boolean; selection?: stri
 
 /** What `perform` can be asked to do (see RawNode.actions). */
 export type PerformOp = "invoke" | "toggle" | "select" | "addToSelection" | "removeFromSelection" | "expand" | "collapse"
-  | "setValue" | "setRange" | "focus" | "legacy" | "scrollIntoView";
+  | "setValue" | "setRange" | "focus" | "legacy" | "scrollIntoView"
+  /**
+   * The vault's fill: sets a field's text whole as setValue does, a password field's too. Only the host's vault_fill
+   * asks for it, for Ember's main process; no element lists it among its `actions`.
+   */
+  | "fillValue";
 
 /**
  * A platform's accessibility. Every call may throw a ProviderError; anything else thrown counts as "failed". Calls are

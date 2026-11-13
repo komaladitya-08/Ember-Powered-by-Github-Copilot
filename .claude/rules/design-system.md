@@ -30,7 +30,7 @@ paths:
 Ember's windows follow Apple's current Human Interface Guidelines (the macOS 26 Liquid Glass generation) on Linux, Windows and macOS. RHEL 8.4 (no GPU, software compositing, GNOME 3.32) sets the performance budget. Where to find each part:
 - `app/renderer/shared/ember.css` holds the tokens and shared controls.
 - The bubble's CSS is `BUBBLE_CSS` in `packages/bubble/src/bubble.ts`.
-- Page styles are in `app/renderer/{home,overlay,handle,ask,desk,command,prompt}/styles.css` (the mic page has none).
+- Page styles are in `app/renderer/{home,overlay,handle,ask,desk,command,prompt,vault}/styles.css` (the mic page has none).
 - docs/DESIGN.md "Design system" describes the result; update it when the system changes.
 
 When a case isn't covered here, follow the HIG page for that control.
@@ -51,7 +51,7 @@ When a case isn't covered here, follow the HIG page for that control.
 ## What Ember's look never includes
 
 Name these patterns when you design something new. Vague direction such as "make it clean" drifts toward defaults Ember rejects:
-- a light floating layer: the bubble, cards, handle and Ask box stay dark over any app. Only the content windows (`html.content`: Home, command, prompt) have a light look, from `settings.appearance` through `nativeTheme.themeSource` and ember.css's light blocks (owner decision of 2026-11-05)
+- a light floating layer: the bubble, cards, handle and Ask box stay dark over any app. Only the content windows (`html.content`: Home, command, prompt, the vault's Secure Form) have a light look, from `settings.appearance` through `nativeTheme.themeSource` and ember.css's light blocks (owner decision of 2026-11-05)
 - serif or display typefaces, or italic accent words
 - tracked all-caps, monospace labels, or numbered "01/02/03" section labels
 - gradient text, emoji icons, icon fonts, or spinning indicators
@@ -62,7 +62,7 @@ Name these patterns when you design something new. Vague direction such as "make
 
 ## Layers and glass
 
-- **Where glass goes.** Glass is for the floating layer only: the bubble, overlay task cards, the status pill, the handle and the Ask box. Home, the command window and the prompt window build on opaque `--surface-*`. The desk view is a black picture area under a `--glass-solid` bar with a `--separator` edge.
+- **Where glass goes.** Glass is for the floating layer only: the bubble, overlay task cards, the status pill, the handle and the Ask box. Home, the command window, the prompt window and the vault's Secure Form build on opaque `--surface-*`. The desk view is a black picture area under a `--glass-solid` bar with a `--separator` edge.
 - **How it is drawn.** Never use `backdrop-filter`, and never animate a blur: a blur costs about a core, and a transparent window can't sample other apps anyway. A button's `filter: brightness()` hover and press are not blurs; "What may animate" says where those may transition. Nor sample the screen to tint the glass. Ember's glass is Liquid Glass without the blur: the screen shows through a dense tint. Apply it as `border: 1px solid transparent; background: var(--glass); box-shadow: var(--glass-spec), var(--glass-depth);`, and keep the layer order inside `--glass` (sheen, fill in the padding box, the lit edge in the border box, `--glass-under`). Paint the body once: a fill in both the padding box and the border box made 0.88 into 0.99.
 - **Two densities, never mixed on one surface.**
   - **Regular** (`--glass-a` 0.88) under anything with sentences: the bubble, cards, the status line, the Ask box. At 0.88 a white page's black text shows through at under 1.5:1.
@@ -78,7 +78,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - Shadows on surfaces that move with Ember are tight, with a negative spread (the bubble's `0 12px 28px -8px`). The larger `--glass-depth` is for surfaces that stay put.
 - **Without a compositor.** A transparent window paints black there, so the whole window becomes one opaque panel: `var(--glass-solid)` plus `box-shadow: var(--glass-rim)`, with no outer shadows (`html.opaque` in Ask, `body.fallback` in the handle's corner card). Ember switches between the two on its own when the compositor comes or goes (Linux only: Windows and macOS always composite).
 - **Window backgrounds.** Set each BrowserWindow's `backgroundColor` to what its page paints, or it flashes before the first paint:
-  - `contentBackground()` for Home, the command window and the prompt window (`"#121011"`, or `"#f5f3f1"` when light);
+  - `contentBackground()` for Home, the command window, the prompt window and the vault's Secure Form (`"#121011"`, or `"#f5f3f1"` when light);
   - `"#242022"` when opaque or in fallback;
   - `"#000000"` for the desk;
   - `"#00000000"` for glass windows.
@@ -177,7 +177,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - the desk bar is 30px;
   - the handle pill is 200×56, and the hidden-Ember tab 56×56;
   - the no-compositor corner card is 360 wide, 120–360 tall to fit its content, and up to 640 (inside the work area, less 12 above and below) while a question or anything else that needs you shows, so its sentence shows whole at every text size (`cardMax()` in handle.ts);
-  - the command window is 760×480, and the prompt window `PROMPT_SIZE` (app/main/remote/prompt-window.ts): an SSH question longer than the small card shows (a two-factor menu) is 18px taller a quoted line, up to the consent card's height (`promptSizeOf`).
+  - the command window is 760×480, the vault's Secure Form `VAULT_FORM_SIZE` by kind (app/main/vault/form.ts; 440 wide, its words and boxes scroll when they don't fit), and the prompt window `PROMPT_SIZE` (app/main/remote/prompt-window.ts): an SSH question longer than the small card shows (a two-factor menu) is 18px taller a quoted line, up to the consent card's height (`promptSizeOf`).
 
   All but the corner card grow with the text size (`scaledSize` and `forText` in main, kept inside the work area); the card grows with what it holds instead.
 
@@ -307,7 +307,7 @@ Name these patterns when you design something new. Vague direction such as "make
 - **New windows.**
   - Add the page to `pages` in scripts/build-app.mjs, with `app/preload/<p>.ts` and `app/renderer/<p>/` (main.ts, and an index.html with the CSP `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:`; allow `'unsafe-inline'` styles only with a comment saying why, as the overlay and command pages do).
   - Create it in windows.ts with `webPreferences(<page>)` (spellcheck off, sandboxed, its own preload) and `show: false`, and show it on `ready-to-show` or from its controller.
-  - Anything floating over apps uses `showInactive()` and `focusable: false` (except the Ask box and the prompt window, which take the keyboard), and stays out of screenshots: `setContentProtection(true)` on Windows and macOS, the capture mask on Linux.
+  - Anything floating over apps uses `showInactive()` and `focusable: false` (except the Ask box, the prompt window and the vault's Secure Form, which take the keyboard), and stays out of screenshots: `setContentProtection(true)` on Windows and macOS, the capture mask on Linux.
   - Title it to match `EMBER_WINDOW` in policy.ts (the fallback when a window's process id is unknown), so no task reads or acts in it.
   - Calm and the text size reach it from main (page-prefs.ts); give it the CSS rules, and Calm for any motion driven from script.
   - In a frameless window with a drag region, give every control `-webkit-app-region: no-drag`.

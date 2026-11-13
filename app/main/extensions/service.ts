@@ -57,6 +57,11 @@ export interface ExtensionsDeps {
    */
   autopilot?: () => boolean;
   /**
+   * Has Ember filled something from its vault since it started (main: VaultRedactor.active)? Read at each call: from
+   * then on every extension call is denied (gate.ts VAULT_FILLED). A check that throws counts as yes. Absent: never.
+   */
+  vaultFilled?: () => boolean;
+  /**
    * Says what Ember does without asking in the conversation's bubble (the gate's own words, gateAnnouncement); false
    * when it couldn't be said. Absent, or false: the call asks, since nothing goes ahead in Autopilot unannounced.
    */
@@ -976,10 +981,16 @@ export class ExtensionsService implements ExtensionsApi {
       tainted: this.tainted, refused: gate.refused.has(name), remote: e?.server.spec?.type !== "stdio",
       hintsStale: !!e && gate.listChanged.has(e.server.key), serverStopped: !!e && gate.withdrawn.has(e.server.key),
       autopilot: this.o.autopilot?.() === true,
+      vaultFilled: this.vaultFilled(),
     });
     if (decision.verdict === "deny") return decision;
     if (gate !== this.session || generation !== this.generation) return { verdict: "deny" as const, reason: "Extensions changed. Wait for the conversation to reload before trying again." };
     return decision;
+  }
+
+  /** Has the vault filled something in this run? A check that fails says yes (fail closed). */
+  private vaultFilled(): boolean {
+    try { return this.o.vaultFilled?.() === true; } catch { return true; }
   }
 
   private async decide(gate: SessionGate, input: PreToolUseHookInput): Promise<PreToolUseHookOutput> {
@@ -1046,6 +1057,7 @@ export class ExtensionsService implements ExtensionsApi {
   /**
    * A failed call: the SDK passes its text to the model as it is (a failure can't be rewritten), so Ember says it is
    * untrusted, and the conversation is tainted (a failure is an easy way to smuggle text): every later call asks.
+   * Because it can't be rewritten, no extension is called once the vault has filled something (gate.ts VAULT_FILLED).
    */
   private async failure(gate: SessionGate, input: PostToolUseFailureHookInput): Promise<PostToolUseFailureHookOutput> {
     const e = gate.tools.get(input.toolName);

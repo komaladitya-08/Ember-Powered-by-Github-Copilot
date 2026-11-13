@@ -17,19 +17,23 @@ it("disconnects and clears credentials even when memory erasure fails, while rej
   const resetAnswerSpeech = vi.fn();
   const forgetProject = vi.fn();
   const forgetSessionWords = vi.fn();
+  const vault = { forgetAll: vi.fn(() => true) };
   let run!: () => Promise<void>;
-  const install = new Function("ipcMain", "IPC", "guard", "agent", "tokens", "keeper", "providers", "refusedTokens", "resetAnswerSpeech", "forgetProject", "forgetSessionWords", `
+  const install = new Function("ipcMain", "IPC", "guard", "agent", "tokens", "keeper", "providers", "refusedTokens", "resetAnswerSpeech", "forgetProject", "forgetSessionWords", "vault", `
     let signOuts = 0, accountErasures = 0, signInAbort = null, currentToken = "fake", askHistory = ["fake"];
     ${main.slice(start, end)}
     return () => ({ signOuts, accountErasures, currentToken, askHistory });
   `);
-  const state = install({ handle: (_channel: string, handler: () => Promise<void>) => { run = handler; } }, { signOut: "sign-out" }, (fn: unknown) => fn, agent, tokens, keeper, providers, refusedTokens, resetAnswerSpeech, forgetProject, forgetSessionWords);
+  const state = install({ handle: (_channel: string, handler: () => Promise<void>) => { run = handler; } }, { signOut: "sign-out" }, (fn: unknown) => fn, agent, tokens, keeper, providers, refusedTokens, resetAnswerSpeech, forgetProject, forgetSessionWords, vault);
   await expect(run()).rejects.toBe(failure);
   // What the person asked this session goes too, so none of it is suggested to the next one (memory-r9-2).
   expect(forgetSessionWords).toHaveBeenCalledOnce();
   expect(forgetSessionWords.mock.invocationCallOrder[0]).toBeLessThan(agent.start.mock.invocationCallOrder[0]);
   // Projects' work goes at once, before anything that can fail (integrations-c2-1).
   expect(forgetProject).toHaveBeenCalledWith("all");
+  // And so does the vault, whole (vault-6).
+  expect(vault.forgetAll).toHaveBeenCalledOnce();
+  expect(vault.forgetAll.mock.invocationCallOrder[0]).toBeLessThan(agent.forgetConversation.mock.invocationCallOrder[0]);
   expect(forgetProject.mock.invocationCallOrder[0]).toBeLessThan(agent.forgetConversation.mock.invocationCallOrder[0]);
   expect(tokens.clear).toHaveBeenCalledOnce(); expect(keeper.use).toHaveBeenCalledWith(null);
   expect(providers.forget).toHaveBeenCalledOnce(); expect(refusedTokens.clear).toHaveBeenCalledOnce();

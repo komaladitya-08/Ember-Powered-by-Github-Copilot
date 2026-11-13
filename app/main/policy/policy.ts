@@ -25,13 +25,16 @@ import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
 import { covers, movingWords, type AutonomyScope, type AutonomyScopes } from "./autonomy";
 import type { StepChecker, StepVerdict } from "../commands/review";
+import { SECRET_PARTS, savedPart, siteOrigin, vaultAppKey, type VaultDestination, type VaultKind, type VaultPart } from "../../shared/vault";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
 
 export type ActionKind = "read" | "click" | "toggle" | "text" | "select" | "value" | "setting" | "open_app"
   /** Tier 3: with the user's borrowed mouse and keyboard. */
-  | "cursor_click" | "cursor_text" | "keys" | "scroll";
+  | "cursor_click" | "cursor_text" | "keys" | "scroll"
+  /** The vault's fill (ActionRequest.vault): main puts a value the person saved into a field; the model never has it. */
+  | "vault_fill";
 
 export type TextMode = "replace" | "insert" | "append";
 
@@ -164,6 +167,32 @@ export interface ActionRequest {
   windowId?: WindowId;
   /** Windows this task has read (or seen listed): text typed or pasted into another window may carry what was read there. */
   readFrom?: ReadSource[];
+  /** For the vault's fill (kind "vault_fill"): what is asked for and where the field is, as the worker read it now. */
+  vault?: VaultFill;
+}
+
+/**
+ * The vault's fill as the worker describes it (never from a model but `kind` and `part`, which name what is asked for
+ * and hold no value): everything else is read from the screen right before the decision, and again right before the fill.
+ */
+export interface VaultFill {
+  kind: VaultKind;
+  part: VaultPart;
+  /** The field is one text can be put into now (a password field or a one-line or plain text field, editable). */
+  takesText: boolean;
+  /** The task acts on this computer's own screen: not on Ember's desk, in WSL or on a computer reached over SSH. */
+  local: boolean;
+  /** The field is in a web page, as the worker found it in the tree. */
+  inPage: boolean;
+  /**
+   * The addresses of the web documents around the field, the nearest first (a page, and the pages its frame sits in),
+   * as the helper read them from the app right now; [] outside any page; null where they couldn't be read.
+   */
+  pages: string[] | null;
+  /** The window holds a password field (a sign-in window or page), as the latest read found it. */
+  signIn: boolean;
+  /** The window holds a secret field of any sort (a payment page's card fields). */
+  payment: boolean;
 }
 
 /** A question of Ember's (`asked`: what the user saw it ask) and the user's reply to it (`answer`), a yes or a choice. */
@@ -285,6 +314,11 @@ export interface PolicyInputs {
    * holds that again itself: never while every action is confirmed for the organisation, or acting is off.
    */
   autopilot?: () => boolean;
+  /**
+   * The organisation lets the vault be used (admin.ts vaultAllowed: `features.vault` isn't false, and no lockdown).
+   * Absent or false, nothing is ever filled from it.
+   */
+  vaultAllowed?: () => boolean;
 }
 
 /** What Assisted's check is handed for the steps of one question (PolicyEngine.assist). */
@@ -1869,6 +1903,8 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
       return `${r.onDesk ? "Press" : "Borrow your keyboard to press"} ${key}${r.element ? ` on ${el}` : ""}${where}${desk}?`;
     }
     case "scroll": return `${r.onDesk ? "Scroll" : "Borrow your mouse to scroll"} ${el} ${r.value ?? ""}${where}${desk}?`;
+    // Never asked (the vault fills only in Autopilot): the words name the kind of thing, never the field's own name.
+    case "vault_fill": return `Fill in ${r.vault ? savedPart(r.vault.part) : "something saved"} from the vault${where}?`;
     default: return `Read ${r.window || friendlyApp(r.app)}?`;
   }
 }
@@ -1892,6 +1928,7 @@ const STEP_KIND: Record<ActionKind, string> = {
   value: "set a control to a value", setting: "change one of the computer's comfort settings", open_app: "open an app",
   cursor_click: "click a control, with the user's mouse", cursor_text: "type text into a field, with the user's keyboard",
   keys: "press keys, on the user's keyboard", scroll: "scroll, with the user's mouse",
+  vault_fill: "fill a field from the vault",
 };
 /** The most of each part Assisted's check is shown (characters): a part longer than its limit isn't cut, the step asks. */
 export const CHECK_LIMITS = { name: 200, title: 300, dialog: 600, typed: 1500, replaced: 200, step: 3500, words: 6000 } as const;
@@ -2696,6 +2733,45 @@ export function askedFor(r: Pick<ActionRequest, "app" | "askedIn" | "goal">): bo
   return [...names].some(n => new RegExp(`(^|[^\\p{L}\\p{N}])${escape(foldLabel(n).toLowerCase())}($|[^\\p{L}\\p{N}])`, "u").test(words));
 }
 
+/** A field of contact details, by what its own name says it is for (in lower case, normalised): anything else is no fill. */
+const CONTACT_FIELD = {
+  name: (n: string) => /\bname\b/.test(n) && !/\b(user|login|account|card|company|business|file|host|domain|display|nick)\b/.test(n) && !/username/.test(n),
+  email: (n: string) => /\be-?mail\b/.test(n),
+  phone: (n: string) => /\b(phone|mobile|telephone|tel)\b/.test(n),
+  address: (n: string) => /\b(address|street)\b/.test(n) && !/\b(e-?mail|web|ip|url|mac|site|link)\b/.test(n),
+} as const;
+
+/** A web browser, by its program's name: a field of its own (outside any page) belongs to no site and to no one app's sign-in. */
+const browserApp = (app: string): boolean => {
+  const n = appNameOf(app);
+  return BROWSER.test(n) || BAR_BROWSER.test(n) || /seamonkey|palemoon|tor ?browser|duckduckgo/i.test(n);
+};
+
+/**
+ * What the field of a vault fill belongs to, read by Ember alone (never from the page's words or a model): the site, by
+ * the origin of the web document around it, where it is in a page; else the app, by its program's name. No answer
+ * (`why`, in Ember's own words) where that can't be told: the page's address couldn't be read or isn't a web address,
+ * a frame in the page comes from another site than the page around it (which of the two the field belongs to can't be
+ * told), the field is a browser's own, or the app has no name to bind to. The decision and the worker's lookup of the
+ * entry both use this, so they can't differ.
+ */
+export function vaultTarget(r: Pick<ActionRequest, "app" | "vault">): { dest: VaultDestination } | { why: string } {
+  const v = r.vault;
+  if (!v) return { why: "nothing says what to fill from the vault" };
+  if (v.pages === null) return { why: "Ember couldn't read which site or app this field belongs to" };
+  if (v.pages.length) {
+    const origins = v.pages.map(siteOrigin);
+    const first = origins[0];
+    if (!first) return { why: "this field's page has no web address Ember can bind a vault entry to" };
+    if (origins.some(o => o !== first)) return { why: "this field sits in a frame from another site than the page around it, so Ember can't tell which site it belongs to" };
+    return { dest: { site: first } };
+  }
+  if (v.inPage) return { why: "Ember couldn't read the address of this field's page" };
+  if (browserApp(r.app)) return { why: "this is the browser's own field, not a site's" };
+  const app = vaultAppKey(appNameOf(r.app));
+  return app ? { dest: { app } } : { why: "Ember can't tell which app this field belongs to" };
+}
+
 export class PolicyEngine {
   /** When the last minute's actions happened, every task's together: the limit is on Ember, not on each task. */
   private recent: number[] = [];
@@ -2730,6 +2806,45 @@ export class PolicyEngine {
   }
 
   /**
+   * Why the vault's fill `r` isn't done, or null where it may be (PLAN.md §2 "Approvals", "The vault"; owner decision
+   * of 2026-11-12). Only while Autopilot is the mode in force and the organisation lets the vault be used; only on
+   * this computer's own screen; only into a field that takes text; a password only into a password field, a card's
+   * number or security code only into a field that is secret itself, and no other part into a password field; a user name only
+   * in a window that holds a password field, a card's other parts only beside a secret field, and contact details only
+   * into a field named for that detail; and only where Ember can tell what the field belongs to (vaultTarget). Each
+   * reason is Ember's own words: nothing from the screen is in it.
+   */
+  private vaultRefusal(r: ActionRequest): string | null {
+    const v = r.vault;
+    if (!v) return "nothing says what to fill from the vault";
+    if (!this.autopilot) return "Ember fills from its vault only in Autopilot; password, card and sign-in fields are for the user only";
+    if (!(this.o.vaultAllowed?.() ?? false)) return "the vault is turned off";
+    if (r.onDesk || !v.local) return "Ember fills from its vault only on this computer's own screen";
+    if (!r.element || !v.takesText) return "this isn't a field Ember can fill from its vault";
+    const role = r.element.role;
+    const secretField = role === "password text" || !!r.element.secret || isSecretField(r.element.name);
+    if (SECRET_PARTS.has(v.part)) {
+      // A password only where the app itself hides what is typed: never a field that is secret only by its label or
+      // because Ember filled something else there before (it would show the password in the clear).
+      if (v.part === "password" ? role !== "password text" : !secretField) return `Ember fills ${savedPart(v.part)} only into a password or payment field`;
+    } else if (role === "password text") {
+      return `a password field takes only a saved password, not ${savedPart(v.part)}`;
+    } else if (v.kind === "login") {
+      if (secretField) return "this looks like a password or payment field, which takes no user name";
+      if (!v.signIn) return "Ember fills a saved user name only in a sign-in window, beside its password field";
+    } else if (v.kind === "card") {
+      if (!secretField && !v.payment) return "Ember fills a card's details only beside the card's own secret fields";
+    } else {
+      if (secretField) return "this looks like a password or payment field, which takes no contact details";
+      if (r.element.withheld || !CONTACT_FIELD[v.part as keyof typeof CONTACT_FIELD]?.(normalizeLabel(r.element.name).toLowerCase())) {
+        return `Ember can't tell that this field is for ${savedPart(v.part).replace(/^a saved /, "a ").replace(/^a email/, "an email").replace(/^a address/, "an address")}`;
+      }
+    }
+    const target = vaultTarget(r);
+    return "dest" in target ? null : target.why;
+  }
+
+  /**
    * Autopilot (PLAN.md §2 "Approvals", §10 "Settled" (3); owner decision of 2026-11-12): it never asks about a step in
    * an app. `d` is a question about `r` as it would be put up (judge()'s own, or the worker's hold of a step in a task
    * that text tried to steer, that went off-task or where the user said no): it goes ahead instead, announced
@@ -2745,6 +2860,8 @@ export class PolicyEngine {
   private judgeAsked(r: ActionRequest, count: boolean): Decision {
     const d = this.decideBase(r, count);
     if (d.verdict === "deny") return d;
+    // The vault's fill is decided whole in decideBase (vaultRefusal): no grant, waiver or check has a say in it.
+    if (r.kind === "vault_fill") return d;
     // "Always in this app" is for ordinary steps; a risky or off-task question is answered for this once only.
     const remember = (this.o.allowGrants?.() ?? true) && !!d.needsGrant && !d.risky;
     // Risky and off-task: say so in the question, so a page that talked Ember into it is easy to spot. A check box or
@@ -2865,6 +2982,7 @@ export class PolicyEngine {
       read: "Reading", click: "Clicking", toggle: "Changing a setting", text: `Typing ${n}`, select: "Choosing an option", value: "Setting a value",
       setting: "Changing a setting", open_app: "Opening an app", cursor_click: `Using ${whose} mouse to click`, cursor_text: `Using ${whose} keyboard to type ${n}`,
       keys: `Using ${whose} keyboard to press ${key}`, scroll: `Using ${whose} mouse to scroll`,
+      vault_fill: `Filling ${r.vault ? savedPart(r.vault.part) : "something saved"}`,
     };
     const borrowed = !r.onDesk && (r.kind === "cursor_click" || r.kind === "cursor_text" || r.kind === "keys" || r.kind === "scroll");
     // An answer to a message box says that much (never the dialog's words, which are the app's).
@@ -3172,7 +3290,8 @@ export class PolicyEngine {
     if (r.kind !== "read" && isEmberWindow({ app: r.app, name: r.window, pid: r.windowId?.pid }, this.o.ownPid)) return never("Ember's own windows are for the user only");
     // Ember's settings, audit log and policy, open in another app: a task could forge the mode's agreement or weaken a setting there.
     if (r.kind !== "read" && showsEmberData(r.window)) return never("Ember's settings, audit log and policy are for the user only");
-    if (r.element?.role === "password text") return never("password fields are for the user only");
+    // (The vault's fill is the one step that may reach a password field: decided below, in Autopilot only.)
+    if (r.element?.role === "password text" && r.kind !== "vault_fill") return never("password fields are for the user only");
     if (r.element?.role === "terminal") return never("Ember doesn't type into terminal windows; it runs commands in its own command window when Commands is on");
     if (r.kind === "open_app" && this.o.isTerminalApp?.(r.app || r.value || "")) return never("Ember doesn't open terminal windows; it runs commands in its own command window when Commands is on");
     // Not their menus or settings either: Paste puts the clipboard into the shell, a profile's command runs.
@@ -3215,7 +3334,20 @@ export class PolicyEngine {
     if (r.kind === "read") return { tier: "read", verdict: "allow", reason: "reading is allowed", prompt: plain };
     if (this.o.actionsAllowed && !this.o.actionsAllowed()) return never("your organisation has turned off Ember acting in apps");
 
+    // The vault's fill: every refusal of its own comes here, after every "never" above (the system's own authentication
+    // prompts, Ember's windows, never-look windows and terminals are refused first, in every mode) and before the limit
+    // on actions a minute is counted, so a fill that is refused costs nothing and asks nothing.
+    if (r.kind === "vault_fill") {
+      const no = this.vaultRefusal(r);
+      if (no) return never(no);
+    }
+
     if (count && !this.withinRate()) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt: plain, paced: true };
+    // Never a question: where it may be done it goes ahead, announced by the kind of thing and the app alone.
+    if (r.kind === "vault_fill") {
+      return { tier: "confirm", verdict: "allow", reason: `filled from the vault; ${AUTOPILOT_REASON}`, prompt: plain, risky: true, everyTime: true, remember: false,
+        autonomy: true, mode: "autopilot", announce: `Filling ${savedPart(r.vault!.part)} in ${r.app ? friendlyApp(r.app) : "this app"}, from the vault: Autopilot is on.` };
+    }
 
     // An item whose type the file manager may hide (it shows "invoice.pdf" for invoice.pdf.exe): asked about, saying so.
     const own = this.riskOf(r);

@@ -4,6 +4,8 @@ import type { SpawnOptions } from "node:child_process";
 import type { RunnerFacts, RunSpec } from "../../app/main/commands/types";
 import type { Logger } from "../../app/main/logger";
 import type { Timers } from "../../app/main/commands/run/kill";
+import { setOutputRedactor } from "../../app/main/commands/output";
+import { VaultRedactor } from "../../app/main/vault/redact";
 import { BSD_SCRIPT_LAUNCH, NO_RC, PS_INNER, WSL_CD, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
 import {
   createRunner, DEFAULT_TIMEOUT_MS, isKeptRun, KEEP_BYTES, KEEP_HEAD_BYTES, launchArgv, LaunchError, START_MARKER,
@@ -477,6 +479,43 @@ describe("a local run", () => {
     p.child.out("\x1b[0m/bin/sh: 1: exec: /usr/bin/bash: not found\r\n");
     p.child.end(127);
     await expect(p.run.done).resolves.toMatchObject({ ended: "failed-to-start", error: "The command couldn't start: /bin/sh: 1: exec: /usr/bin/bash: not found" });
+  });
+
+  it("takes what the vault filled out of a start failure's reason before it is cut to 500 characters (integ-x-1)", async () => {
+    const r = new VaultRedactor();
+    r.note("email", "ada.canary@example.org");
+    setOutputRedactor(text => r.text(text));
+    try {
+      const h = harness(linuxPipes);
+      const { run, child } = await started(h);
+      // The cut at 500 characters falls four characters into the address.
+      child.err(`bash: ${"x".repeat(490)} ada.canary@example.org: No such file or directory\n`);
+      child.end(127);
+      const exit = await run.done;
+      expect(exit.ended).toBe("failed-to-start");
+      expect(exit.error).not.toMatch(/ada|canary/);
+      expect(exit.error).toMatch(/^The command couldn't start: bash: x+ \[h[a-z:]*…$/);
+    } finally {
+      setOutputRedactor(null);
+    }
+  });
+
+  it("takes a filled value that a colour code splits out of the Windows job host's reason (integ-y-1)", async () => {
+    const r = new VaultRedactor();
+    r.note("email", "ada.canary@example.org");
+    setOutputRedactor(text => r.text(text));
+    try {
+      const h = harness(windows);
+      const { run, child } = await started(h, spec({ shell: "powershell", cwd: "C:\\x" }));
+      child.err(`job: couldn't start ${"x".repeat(270)} ada.\x1b[01;31m\x1b[Kcanary\x1b[m\x1b[K@example.org here\n`);
+      child.end(125);
+      const exit = await run.done;
+      expect(exit.ended).toBe("failed-to-start");
+      // eslint-disable-next-line no-control-regex -- no terminal code goes on either
+      expect(exit.error).not.toMatch(/ada|canary|example|\x1b/);
+    } finally {
+      setOutputRedactor(null);
+    }
   });
 
   it("knows a Windows run that the job host couldn't contain failed to start", async () => {

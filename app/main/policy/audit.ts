@@ -48,8 +48,12 @@ export class AuditLog {
   /** The last write failed: the next failure isn't reported again until a write works. */
   private failing = false;
 
-  /** `onError`: told when writes start failing (once, until one works again). */
-  constructor(private dir: string, private now: () => Date = () => new Date(), private sink?: (line: string) => void, private onError?: (err: unknown) => void) {
+  /**
+   * `onError`: told when writes start failing (once, until one works again). `redact`: a pass over every entry before
+   * it is written (the vault's redactor: a value the vault filled is never audited, whatever name or title holds it).
+   */
+  constructor(private dir: string, private now: () => Date = () => new Date(), private sink?: (line: string) => void, private onError?: (err: unknown) => void,
+    private redact?: <T>(entry: T) => T) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
@@ -67,7 +71,8 @@ export class AuditLog {
    * unrecorded rely on that, and those that only keep a record catch it. The journal gets the line either way.
    */
   write(e: AuditEntry): void {
-    const line = JSON.stringify({ t: this.now().toISOString(), ...e });
+    // A redactor that throws writes nothing: the caller hears it as any write that failed.
+    const line = JSON.stringify({ t: this.now().toISOString(), ...(this.redact ? this.redact(e) : e) });
     try {
       this.append(line);
     } catch (err) {

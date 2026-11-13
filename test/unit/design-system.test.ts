@@ -7,7 +7,7 @@ const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url),
 const shared = read("app/renderer/shared/ember.css");
 /** Views' own sheet (app/renderer/shared/view.css), linked by every page that shows views. */
 const viewCss = read("app/renderer/shared/view.css");
-const PAGES = ["home", "overlay", "handle", "ask", "desk", "command", "prompt"];
+const PAGES = ["home", "overlay", "handle", "ask", "desk", "command", "prompt", "vault"];
 
 /** A token's value in the shared stylesheet's :root (the first one: the dark appearance). */
 const token = (name: string) => {
@@ -599,7 +599,7 @@ describe("HIG pass (Apple's Human Interface Guidelines, checked surface by surfa
   });
 
   it("keeps line heights on whole pixels at every text size, in every window but the Ask box (which main sizes exactly)", () => {
-    for (const p of ["home", "overlay", "handle", "desk", "command", "prompt"]) expect(page(p), p).not.toMatch(/line-height: calc\(/);
+    for (const p of ["home", "overlay", "handle", "desk", "command", "prompt", "vault"]) expect(page(p), p).not.toMatch(/line-height: calc\(/);
   });
 
   it("puts a tone's words in the label on Clear glass, where no state colour is both a colour and 4.5:1, and its mark in the colour", () => {

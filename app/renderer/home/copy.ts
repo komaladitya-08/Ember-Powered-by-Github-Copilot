@@ -5,6 +5,7 @@
  */
 
 import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, InstallKind, NaturalVoiceStatus, RetryResult, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
+import { kindName, type VaultKind } from "../../shared/vault";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
@@ -951,14 +952,15 @@ export const ASSISTED_CONSENT_TEXT = "In Assisted, Ember works as in Interactive
  * Autopilot's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autopilot; PolicyEngine.autopilotStep,
  * commands/autopilot.ts, extensions/gate.ts, app/remote/gate.ts): that Ember doesn't ask and what that takes in, said
  * as the risk the user accepts; that every step is still announced and recorded; the few things it still asks; what it
- * never does; how to stop it; and that the organisation can turn it off. It promises nothing of the vault, which isn't
- * built: passwords and card numbers are never typed. Four short paragraphs, the risk first, so that it can't be read
- * past (the card keeps a text's line breaks). Change it only with a bump of that version.
+ * never does; how to stop it; and that the organisation can turn it off. Since version 2 it says what the vault does
+ * (app/main/vault/): Ember asks once in its Secure Form, keeps what is given for that app or site and fills it in
+ * itself, and the model never types or sees it. Four short paragraphs, the risk first, so that it can't be read past
+ * (the card keeps a text's line breaks). Change it only with a bump of that version.
  */
 export const AUTOPILOT_CONSENT_TEXT = [
   "In Autopilot, Ember doesn't ask before it acts. It sends, posts, shares, deletes, overwrites, pays, installs, signs out, changes settings, answers dialogs and runs dangerous commands, also as an administrator, without asking you first. That includes steps you didn't ask for, a task that a web page, a file or a command's output tried to steer, tools from your extensions and computers you reach over SSH. By choosing Autopilot you accept that risk: what it does may be impossible to undo.",
-  "It tells you what it is doing as it goes, a dangerous command waits a few seconds with a Stop first, and What Ember did keeps a record. It still asks before a command that would show passwords or keys, one that would keep running after you stop Ember, one whose effect it can't tell, wherever you or your organisation set commands to ask every time, and before it turns on something you haven't agreed to yet.",
-  "It never repeats a step you said no to, never types passwords or card numbers, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop.",
+  "It tells you what it is doing as it goes, a dangerous command waits a few seconds with a Stop first, and What Ember did keeps a record. It still asks before a command that would show passwords or keys, one that would keep running after you stop Ember, one whose effect it can't tell, one you may have ruled out, wherever you or your organisation set commands to ask every time, and before it turns on something you haven't agreed to yet.",
+  "It never repeats a step you said no to, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop. The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.",
   "“Ember, stop” or Ember's stop shortcut stops everything at once. Once you move your mouse or press a key while Ember is using them, it doesn't take them again in that task. Your organisation can turn Autopilot off.",
 ].join("\n\n");
 
@@ -1261,6 +1263,7 @@ const KIND: Record<string, string> = {
   "project-patch": "Apply a project patch",
   click: "Click", toggle: "Switch", text: "Type into", select: "Choose in", value: "Set", setting: "Change setting", open_app: "Open",
   cursor_click: "Click (your mouse)", cursor_text: "Type (your keyboard)", keys: "Press keys", scroll: "Scroll", point: "Point at", read: "Read",
+  vault_fill: "Fill from the vault",
 };
 
 export interface EntryView { tag: string; cls: string; what: string; why?: string }
@@ -1317,7 +1320,7 @@ export function entryWords(p?: StatusPlatform): EntryWords {
 }
 
 /** The tools Ember's model is told to call: a sentence that names one is advice to the model, not news for the user. */
-const TOOL_NAME = /\b(perceive_window|finish_task|press_keys|type_text|fill_cells|list_windows|switch_window|open_app|open_on_desk|wait_for_click|choose_option|read_element)\b/;
+const TOOL_NAME = /\b(perceive_window|finish_task|press_keys|type_text|fill_cells|list_windows|switch_window|open_app|open_on_desk|wait_for_click|choose_option|fill_from_vault|read_element)\b/;
 /**
  * Why a step didn't work, as the user reads it: without what the model was told to do next ("Tell the user in
  * finish_task.", "call perceive_window and try again") or the helper's code before it ("background_unavailable: ").
@@ -1883,6 +1886,9 @@ const isAre = (n: number | null) => n === 1 ? "is" : "are";
 const UNKNOWN_NOTE = " Ember couldn't count everything right now, so those numbers are unknown, not zero.";
 const hasUnknown = (c: ForgetCounts) => [c.tasks, c.facts, c.reminders, c.routines].some(n => n === null);
 
+/** Both questions say the vault goes too (app/main/vault/): whatever it keeps, without a count. */
+const VAULT_GOES = " It also forgets what you saved in the vault.";
+
 /**
  * The question for Sign out: it clears all four, and the counts are today's. Saved memory Ember can't match to this
  * account (`kept`) isn't cleared, and the question says so and how to remove it (memory-11).
@@ -1890,17 +1896,17 @@ const hasUnknown = (c: ForgetCounts) => [c.tasks, c.facts, c.reminders, c.routin
 export function signOutScope(c: ForgetCounts): string {
   if (c.kept) {
     return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${isAre(c.tasks)} running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), `
-      + `${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}. Saved memory Ember can't match to this account stays on this computer; Forget everything in Memory removes it.`
+      + `${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}. Saved memory Ember can't match to this account stays on this computer; Forget everything in Memory removes it.${VAULT_GOES}`
       + (hasUnknown({ ...c, facts: 0 }) ? UNKNOWN_NOTE : "");
   }
   return `Sign out? This stops ${plural(c.tasks, "task", "tasks")} that ${isAre(c.tasks)} running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), `
-    + `${plural(c.facts, "saved fact", "saved facts")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}.`
+    + `${plural(c.facts, "saved fact", "saved facts")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")}.${VAULT_GOES}`
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
 }
 
 /** The question for Forget everything: only saved memory goes, and the other three are said to stay. */
 export function forgetEverythingScope(c: ForgetCounts): string {
-  return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")}, what Ember learned from them and the conversation saved on this computer, if you keep one. `
+  return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")}, what Ember learned from them and the conversation saved on this computer, if you keep one.${VAULT_GOES} `
     // The sentence's first words: "An unknown number of tasks", never "an …" after the full stop (memory-r7-3).
     + `${plural(c.tasks, "task", "tasks").replace(/^a/, "A")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are, and so do the lines on screen now, but they aren't saved again.`
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
@@ -1928,3 +1934,36 @@ export function closedUnexpectedlyText(logFile: string): string {
 export function showLogLabel(os: OS): string {
   return `Show in ${PLATFORM_WORDS[os].fileManager}`;
 }
+
+/**
+ * Apps & privacy › Vault (app/main/vault/, owner decision of 2026-11-12): what it is, in the words the Secure Form and
+ * Autopilot's card use; with the organisation's switch off (`features.vault`, or a lockdown), that nothing new is kept
+ * or filled in and that what is listed can still be forgotten.
+ */
+export const VAULT_HINT = "Logins, cards and contact details you gave Ember in its Secure Form, each for one app or site. In Autopilot, Ember asks for one the first time it needs it, keeps it locked with your computer's keyring and fills it in itself: the AI model never sees it, and Ember never shows it again. To change one, forget it and give it again.";
+export const VAULT_OFF_HINT = "Your organisation turned the vault off, so Ember keeps nothing new and fills nothing in. You can still forget what is listed here.";
+/** The vault's hint: the organisation's words while it is off. */
+export const vaultHint = (allowed: boolean): string => (allowed ? VAULT_HINT : VAULT_OFF_HINT);
+/** The list's one line while nothing is kept. */
+export const VAULT_EMPTY = "Nothing saved yet.";
+/** While the list couldn't be read from Ember. */
+export const VAULT_UNREAD = "Ember couldn't read the vault's list. Close and reopen this window to try again.";
+/** A row's words: "Login for github.com, saved 12 November 2026" (never a value). `date`: the day as this computer writes it. */
+export function vaultRowText(kind: VaultKind, where: string, date: string): string {
+  return `${kindName(kind)} for ${where}, saved ${date}`;
+}
+/** The day an entry was saved, as this computer writes dates. */
+export const vaultDay = (savedAt: number): string => new Date(savedAt).toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" });
+/** A row's Forget button, for a screen reader: which entry it forgets. */
+export const vaultForgetLabel = (kind: VaultKind, where: string): string => `Forget the ${kindName(kind).toLowerCase()} for ${where}`;
+/** Forget all asks first. */
+export function vaultForgetAllScope(n: number): string {
+  return `Forget ${n === 1 ? "the 1 entry" : `all ${n} entries`} in the vault? Ember deletes ${n === 1 ? "it" : "them"} from this computer. It asks again, in Autopilot, the next time it needs ${n === 1 ? "it" : "one"}.`;
+}
+/** What the line under the list says after a Forget. */
+export const VAULT_WORDS = {
+  forgot: (kind: VaultKind, where: string) => `Forgot the ${kindName(kind).toLowerCase()} for ${where}.`,
+  forgotAll: "The vault is empty.",
+  failed: "Ember couldn't delete that from the vault. Try Forget again.",
+  failedAll: "Ember couldn't delete the vault's file. Try Forget all again.",
+} as const;

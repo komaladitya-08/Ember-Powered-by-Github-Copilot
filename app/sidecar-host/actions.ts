@@ -518,6 +518,71 @@ async function chooseRow(host: Host, listEntry: IdEntry, row: RawNode): Promise<
   return chooseItem(host, entry, row, ROW_UNSELECTABLE, ROW_IN_BACKGROUND);
 }
 
+/** What the vault's fill may be put into: a password field or a plain text field (as VAULT_FILL_ROLES in ember_atspi.py). */
+const VAULT_FILL_ROLES = new Set(["password text", "text", "entry"]);
+/** How far up the web documents around a field are looked for. */
+const PAGE_LEVELS = 200;
+
+/**
+ * The addresses of the web documents around element `id`, the nearest first, as their app reports them now ("" for one
+ * that reports none); none outside any page (page_address in ember_atspi.py). UI Automation gives a web document's
+ * address as its value; AX gives it only as an object this host doesn't read, so on macOS a page's address is "" and
+ * Ember, which binds a vault entry to a site by it, fills nothing in a page there. A document that is gone, or a tree
+ * that can't be walked up to its window, is an error, never an empty answer.
+ */
+async function pageAddress(host: Host, params: Record<string, unknown>): Promise<{ urls: string[] }> {
+  const id = intParam(params, "id");
+  const entry = host.snapshots.get(id);
+  const { raw, roles } = entry.read;
+  const urls: string[] = [];
+  let at = raw[entry.index]?.parent ?? -1;
+  for (let i = 0; at >= 0; i++, at = raw[at].parent) {
+    if (i >= PAGE_LEVELS || !raw[at]) throw new Error("the element lies too deep to tell which page it is in");
+    if (roles[at] !== "document web") continue;
+    const now = await host.look(raw[at].handle);
+    if (!now) throw new GoneError(id);
+    urls.push(host.vocabulary === "uia" && !now.password && typeof now.value === "string" ? now.value.slice(0, 4096) : "");
+  }
+  return { urls };
+}
+
+/**
+ * The vault's fill, which Ember's main process alone asks for (vault_fill in ember_atspi.py): `text` replaces what
+ * field `id` holds, a password or secret field included; the one method that writes into one (set_text, set_value and
+ * select_option refuse them as before). Only a password field or a plain text field, usable now. The field counts as
+ * secret from here on. What it holds is never read back or returned (only whether an ordinary field now holds that
+ * many characters: `took`), and no error here carries the app's or the platform's own words.
+ */
+async function vaultFill(host: Host, params: Record<string, unknown>): Promise<{ ok: boolean; took?: boolean; keys: unknown[]; withheldKeys: unknown[] }> {
+  const id = intParam(params, "id");
+  const { n, role } = await usable(host, id);
+  if (!VAULT_FILL_ROLES.has(role)) throw new Error(`${BACKGROUND}this element is no field the vault can fill`);
+  const text = params.text;
+  if (typeof text !== "string" || !text) throw new Error("nothing to fill");
+  const key = host.keyOf(n);
+  if (!key) throw new Error("the field can't be told apart from others, so nothing was filled");
+  const password = role === "password text" || !!n.password;
+  if (!password && !takesText(n)) throw new Error(NO_TEXT);
+  // Secret before anything is written: no read from now on reports what it holds.
+  host.secrets.fields.add(key);
+  // What went wrong is kept to which of four things it was: the platform's own words (which could quote what was sent
+  // to it) are never attached to what is thrown from here, as a cause or otherwise.
+  const failed = await host.provider.perform(n.handle, "fillValue", text).then(() => null, (err: unknown) =>
+    isProviderError(err, "busy") ? "busy" as const : isProviderError(err, "gone") ? "gone" as const : isProviderError(err, "unsupported", "denied") ? "unsupported" as const : "refused" as const);
+  if (failed === "busy") throw new Error(NO_ANSWER);
+  if (failed === "gone") throw new GoneError(id);
+  if (failed === "unsupported") throw new Error(NO_TEXT);
+  if (failed) throw new Error("the app refused the text");
+  await host.settle();
+  // Whether it went in is told only of a field whose text the platform lets be counted: never a password field's.
+  let took: boolean | undefined;
+  if (!password) {
+    const now = await host.look(n.handle).catch(() => null);
+    if (now && typeof now.value === "string") took = now.value.length === text.length;
+  }
+  return { ok: true, ...(took !== undefined ? { took } : {}), keys: [key], withheldKeys: [] };
+}
+
 async function focus(host: Host, params: Record<string, unknown>): Promise<unknown> {
   const id = intParam(params, "id");
   const { entry, n } = await usable(host, id);
@@ -533,6 +598,8 @@ export const ACTING = {
   can_do: canDo,
   do_action: doAction,
   set_text: setText,
+  page_address: pageAddress,
+  vault_fill: vaultFill,
   set_value: setValue,
   select_option: selectOption,
   list_options: listOptions,

@@ -103,6 +103,7 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m3-tour.mjs out/` | Screen-reading tour. Runs as the desktop's user so the accessibility bus is reachable (`EMBER_DEMO_USER`, default `demo`) |
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/action-link.test.ts` | Reads and operates GTK3 test windows through the sidecar: a worker on the test bench, on Ember's desk, and on hostile windows (prompt injection, a password prompt); and a click that runs a modal dialog, which the user can still type in (PR10-1). Needs a desktop session with pyatspi; on a bare X server, `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" …` as in CI |
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception-electron.test.ts` | Reads Electron windows (Chromium's accessibility) through the sidecar and X11: window frames, scale 2, secret fields withheld and blacked out. Same needs as the line above (the test starts its windows with `ACCESSIBILITY_ENABLED=1`, as Chromium joins the accessibility bus only when asked); CI runs it with them on `rockylinux:8` |
+| `npm run test:integration -- test/integration/vault-leak.test.ts` | The vault's leak test ("The vault", below): every kind of entry filled with canary values on the real runtime with the scripted model, then looked for in everything the model was sent and everything Ember wrote (runs anywhere); with `EMBER_ATSPI_TEST=1` on a desktop with pyatspi, also a real Electron sign-in window through the real helper and X11 |
 | `npm run test:integration -- test/integration/borrow-live.test.ts test/integration/desk-robust.test.ts` | Borrowing the mouse and keyboard on a private Xvfb (other keyboard layouts need `setxkbmap`; skipped without Xvfb), and Ember's desk when things go wrong (its display dying, Ember killed). Need only Xvfb (and `xauth`, `dbus-daemon` for the desk), no desktop session |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
 | `node scripts/voice/prepare.mjs` | Downloads the standard verified speech models into `.cache/voice`, including the default Kitten Nano voice (63.8 MB), for the voice tests and tour. `--tts-voice` also fetches a separate test-only Piper Amy/Ryan voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesises new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
@@ -115,7 +116,7 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 Each test run works in a temporary folder of its own (`ember-run-…`), which it removes at the end with vitest's module
 cache (test/temp-folder.ts).
 
-After building, CI also runs the Ask, conversation, first-run (home-first-run-renderer: Copilot, own provider, failures, models), memory, sign-out and forget, microphone, speech-consent, status-race (home-status-race-renderer: a late or failed startup status, microphone and consent recovery after a retry), reminders/desk, natural-voice, integrations and panes renderer journeys with
+After building, CI also runs the Ask, conversation, first-run (home-first-run-renderer: Copilot, own provider, failures, models), memory, sign-out and forget, microphone, speech-consent, status-race (home-status-race-renderer: a late or failed startup status, microphone and consent recovery after a retry), reminders/desk, natural-voice, integrations, panes and vault (vault-form-renderer: the Secure Form; home-vault-renderer: Apps & privacy's list; `EMBER_VAULT_SHOTS=<folder>` saves their pictures) renderer journeys with
 `EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_FIRST_RUN_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_SIGNOUT_FORGET_TEST=1 EMBER_STATUS_RACE_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
 and `EMBER_CHROMIUM_PATH` pointing to Chrome or Chromium (each journey skips without its switch, so leave none out).
 The exact file list is in `.github/workflows/ci.yml`. Its `el8` job runs the Linux desktop suites with
@@ -592,7 +593,8 @@ consent and each first-use card, masked screenshots, the audit log (a step that 
 the limits on tasks, steps, time and actions a minute, and your organisation's policy: `confirmEveryAction`,
 `features.autonomy: false`, `allowGrants: false`, `features.actions: false` and a lockdown keep it out of force, and
 `approvals.maxMode` caps it. `features.aiReview: false` doesn't touch it: no model decides anything in Autopilot.
-The vault isn't built, so nothing is filled into a password, card or secret field or a sign-in window in any mode.
+Only in Autopilot, Ember fills a password, card or sign-in field from its vault itself ("The vault", below); in every
+other mode nothing is filled there, and no mode types into such a field.
 
 In Interactive, Ember doesn't ask before its first step in an app (in an app you asked for help in, the one you were
 in or one your request names, that step isn't announced either),
@@ -861,6 +863,8 @@ it builds on:
   later. The next start's check (`refresh()`) re-pins nothing and turns a changed tool off.
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
+  For the same reason no extension is called once Ember has filled something from its vault in this run (the
+  gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out.
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every
@@ -1708,6 +1712,104 @@ the address in force and its saved key are kept and come back with the switch (i
   choose another, not the service's raw error.
 - **The administrator's** `provider` always wins, and `features.userProvider: false` or a lockdown turns the user's off.
 
+### The vault
+
+The vault (app/main/vault/, owner decision of 2026-11-12, PLAN.md §2 "Approvals") keeps logins, cards and contact
+details the user gives Ember in its own **Secure Form**, each bound to one destination.
+
+- **What it keeps.** Three kinds of entry (app/shared/vault.ts): a login (user name, password), a card (name on the
+  card, number, expiry, security code) and contact details (name, email, phone, address). A destination is one app, by
+  its program name folded (`vaultAppKey`: "Firefox", "firefox.desktop" and "firefox.exe" are one), or one site, by its
+  origin (`siteOrigin`: scheme, host and port as the URL parser gives them, so a look-alike host is another site).
+  One entry of a kind for a destination, 200 entries at most.
+- **Where.** `vault.json` in Ember's data folder (0600, written whole), never `settings.json`. Each entry's values are
+  sealed with the OS keyring (`safeStorage`) together with the entry's id, kind and destination, so an edited file
+  opens nothing; only the kind, the destination and the date are in the clear, which is all Home lists. Nothing is
+  kept where the keyring is `basic_text`, can't be named or refuses: the form then says the vault can't be used on
+  this computer. The keyring is asked only when a form is about to open or a Save arrives (on macOS off the main
+  thread), never for Home's list.
+- **The Secure Form** (app/main/vault/form.ts, `createVaultWindow` in windows.ts, app/renderer/vault, its own preload).
+  Only main opens it, one form at a time, each in a window of its own that closes once it is answered. Its heading
+  ("Login for github.com"), its line saying where Ember fills it in and its labels are built by main from the kind
+  and the destination, never from model or screen text; the window's title stays "Ember". What is typed goes to main
+  once over the form's own channel (`vault:submit`: the sender is that window's page, the form the one on screen, the
+  values `unknown` and checked whole), is sealed at once and is never sent to any page again. Cancel, Esc and Close
+  keep nothing; Stop closes it. A form opens, and a Save is kept, only while the organisation allows the vault, the
+  consent stands and Autopilot is the mode in force (`VaultService`).
+- **In Home.** Apps & privacy › Vault lists the entries by kind, destination and date, with Forget for each and Forget
+  all (which asks first). Sign out and Memory's Forget everything forget the vault whole, and say so; when its file
+  can't be removed they say that too.
+- **Filling.** A task asks with `fill_from_vault`, whose arguments are a field's id and what it needs ("password",
+  "user name", "card number", …) and nothing else. The policy decides it as its own kind of step (`vault_fill`,
+  `PolicyEngine.vaultRefusal`) and refuses before any question or form: outside Autopilot, where the organisation
+  turned the vault off, on Ember's desk, in WSL or over SSH, in the system's own authentication prompts, Ember's
+  windows, never-look windows and terminals (each refused first, as in every mode), a password anywhere but a
+  password field, a card's number or security code anywhere but a secret field, a user name outside a sign-in window,
+  and contact details in a field not named for them. Ember reads what the field belongs to itself (`vaultTarget`):
+  the origin of the web documents around it, from the documents (the helper's `page_address`: AT-SPI's `DocURL`, UI
+  Automation's document value), or else the app by its program name, never a browser. A look-alike host, another
+  port or scheme, a frame from another site than its page and an address that can't be read are no destination, so
+  nothing is filled. macOS reports no page address, so there Ember fills only an app's own fields. With no entry for
+  the destination Ember opens the Secure Form once; a form closed without saving is a refusal for the rest of the
+  task. Right before the fill the field, its page and the decision are looked at again, and anything changed means
+  no fill. The value goes from the vault to the helper's `vault_fill` (the one method that writes into a secret
+  field; `set_text` refuses one as before), or, where the field takes no text by accessibility, is typed as keys
+  under the borrow's rules; it is never pasted. The fill is announced by kind and app ("Filling a saved password in
+  Firefox, from the vault: Autopilot is on.") and audited with the kind, the part and the destination. The task's
+  model hears only whether it was filled.
+- **After a fill.** Nothing Ember reads or captures afterwards holds the value. `VaultService.use` gives every value to
+  the redactor (app/main/vault/redact.ts, `VaultRedactor`) before it is put anywhere; a value it can't take (a
+  pattern that can't be built, or more than the 400 values it watches in a run) is not filled. The list lives in
+  main's memory for the run and is never written. From then on the value is replaced by
+  "[hidden: filled from Ember's vault]":
+  - in everything a model is sent: `AgentHost` wraps the runtime client in `redactingClient`
+    (app/main/agent/redacting-client.ts), so every session's system message, prompts, tool results (a tree read, a
+    read result, a command's output, a task's result to the conductor), tool errors and hook answers pass through
+    it; a picture's bytes don't;
+  - in the audit log (`AuditLog`'s `redact`) and in every log line (`createLogger`'s `redact`).
+
+  It finds the value as filled, as an address, a JSON line or markup escapes it, with any character as a numeric
+  entity and with characters that don't show inside it, a card number or a phone number by its digits whatever
+  stands between them (a phone number with its country code or without, with a trunk 0 or without), an expiry as
+  its month and year however written ("08/2029", "8/29", "2029-08"; never a part of a longer date), white space of
+  any length (an address's lines joined by commas too) and, for the parts
+  that aren't secret, any letter case; such a part is replaced only where it stands alone ("ada", never inside
+  "adamant"), a password or card number wherever it stands. A secret shorter than six characters (a card's security
+  code, a very short password) is not looked for in other text at all: a mark in place of three digits tells anyone
+  who knows the text around it which three they are, on any page for the rest of the run, so such a value is kept
+  by its field alone, which is secret from the fill on (never read, black in every picture); a page that repeats a
+  security code outside its field is not covered. Text cut short in the middle of a value
+  before it gets there isn't recognised, so screen text is redacted whole before it is cut: every title, name and
+  text quoted for a model goes through perception/elements.ts's quoting (`quoteUntrusted`, `serializeElements`,
+  the worker's `list_windows` and a click's landing place, Assisted's description of a step), which main hands the
+  redactor (`setQuoteRedactor`); code that cuts screen text for a model some other way must do the same. A
+  command's output is redacted whole the same way before its lines are cut at 4,096 and 1,000 characters
+  (commands/output.ts `cleanOutput`, `setOutputRedactor`), and output that can't be checked is not handed on. And
+  `Perception` asks the redactor about every element first
+  (`holdsVaultValue`): whatever says a filled value (the field itself, a line that repeats it, a tab named after it)
+  loses its words and is blacked out of every picture as a secret field is, and a field is kept secret by the helper
+  too. There is no picture of a window whose own title says a value, nor, once a part an app shows as it is (a user
+  name, an email, an address) has been filled in this run, of a window whose read was cut short. The helper's own
+  fill makes the field secret before it writes; the typed fallback tells the helper so before the first key and types
+  nothing if it can't; and a picture in which a field the task filled is listed as an ordinary field isn't sent.
+  Extensions are the one road the redactor can't close: a failed extension call's text goes to the model as the
+  extension wrote it (the SDK lets no hook rewrite it), and what an extension reads off a page could hold what
+  was filled. So once anything has been filled, Ember's gate denies every extension call until Ember is started
+  again (`vaultFilled`, gate.ts `VAULT_FILLED`), in every mode.
+  What this doesn't cover: a value written some other way again (base64, a reordered address, a name's parts
+  apart), a value an app draws without telling accessibility (a canvas), and what Ember's bubble
+  and task card show the person of their own screen (an element's name).
+- **The leak test.** test/unit/vault-leak.test.ts fills every kind of entry through the worker's real path, by
+  accessibility and as keys, on each OS's keys and words, into a pretend app that repeats everything it is given
+  but the card's security code (test/fixtures/vault/), then looks for the canary values in everything a model is handed, the audit log, the
+  logs at debug level, settings.json, every other file in the data folder, Home's answers, the announcements and
+  the clipboard, and checks every filled field is black in every picture. test/integration/vault-leak.test.ts does
+  the same on the real runtime with the scripted model (its own record of every request; it runs anywhere), and
+  against a real Electron window through the real helper and X11 (the helper's command line and environment too;
+  it needs pyatspi, so CI's `el8` job runs it with `EMBER_ATSPI_TEST=1`).
+- **Never.** A value is never logged, audited, shown again, put in an IPC answer, a command's environment, memory or a
+  conversation. `features.vault: false` in the organisation's policy, or a lockdown, turns the vault off.
+
 ### For administrators: `/etc/ember/policy.json`
 
 On Windows the same JSON goes in the registry (§10.7), on a Mac in `/Library/Application Support/Ember/policy.json`
@@ -1766,6 +1868,7 @@ first run's agreement gives it nothing; under a lockdown every row is so. Every 
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`). `wireApi` (`completions` or `responses`) says which API an `openai` endpoint speaks, and `azure`: `{ "apiVersion": "…" }` gives Azure's API version (only there: `apiVersion` directly under `provider` is an unknown key, which locks Ember down). It always wins over a user's own provider, which Home then shows as managed |
 | `features.userProvider` | `false`: users can't point Ember at a model service of their own ("Use my own model provider" in Home › Models & connections is off and managed; a key already saved stays unused until signing out or Remove deletes it). Allowed when absent; the organisation's own `provider` and LOCKDOWN turn it off too, and `models.allowed` and pinned models still hold for the user's model ids. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
+| `features.vault` | `false`: Ember keeps no logins, cards or contact details in its vault, never opens its Secure Form to ask for them and fills none in (Home › Apps & privacy shows the vault as managed; what a user saved before stays listed there, by kind, destination and date, with Forget). Allowed when absent; LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `auditRetentionDays` | How long the audit log is kept (default 30; nothing is deleted while Ember is locked down) |
 | `features.wsl` / `features.ssh` | No WSL / no connecting to other computers over SSH |
 | `commands` | Commands on this computer, in WSL and over SSH: `"on"`, `"ask"` (every command asks) or `"off"` |

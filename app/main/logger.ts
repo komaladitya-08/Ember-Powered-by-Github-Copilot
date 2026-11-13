@@ -30,6 +30,12 @@ export interface LoggerOptions {
   /** Rotated files to keep (ember.log.1 … ember.log.N). */
   keep?: number;
   now?: () => Date;
+  /**
+   * A last pass over every string and key of a line but its own time, level and event name (the vault's redactor,
+   * app/main/vault/redact.ts: a value the vault filled never reaches the file or stdout, whatever read it back). A pass
+   * that throws loses the line, never the value.
+   */
+  redact?: (text: string) => string;
   /** Where printed lines go: process.stdout and process.stderr unless a unit test passes its own. */
   streams?: { stdout?: LogStream; stderr?: LogStream };
 }
@@ -75,21 +81,29 @@ const MAX_DEPTH = 8;
  * The finished line then has anything shaped like a credential replaced (BE audit #1), so a token in a name, a code, an
  * object key, a scope or a deep value never reaches the file or stdout, whatever put it there.
  */
-function safeLine(entry: Fields): string {
+function safeLine(entry: Fields, more?: (text: string) => string): string {
   // Redacted as a parsed value, never as finished text: a text pass can turn `"secret":true` into `"secret":[token]`.
-  return JSON.stringify(redactValue(JSON.parse(rawLine(entry)) as unknown));
+  const line = redactValue(JSON.parse(rawLine(entry)) as unknown, more) as Record<string, unknown>;
+  // The line's own time, level and event name are Ember's words, never anything read back: the last pass leaves them
+  // (a filled user name "warn" or an expiry in the day's date would otherwise be marked in every line: vault-3-x9-3).
+  if (more) for (const k of OWN_KEYS) if (typeof entry[k] === "string") line[k] = redactSecretText(entry[k]);
+  return JSON.stringify(line);
 }
+
+/** What write() itself puts in a line. */
+const OWN_KEYS = ["t", "level", "msg"] as const;
 
 /** Names whose value is a credential whatever its type (the same words secret-text.ts finds in `name=value` text). */
 const CREDENTIAL_KEY = /^(?:[a-z]+[_-])?token$|password|passwd|secret|api[_-]?key|authorization/i;
 
 /** Every string and key redacted; a credential-named key's value, of any type, becomes "[token]". Output stays valid JSON. */
-function redactValue(v: unknown): unknown {
-  if (typeof v === "string") return redactSecretText(v);
-  if (Array.isArray(v)) return v.map(redactValue);
+function redactValue(v: unknown, more?: (text: string) => string): unknown {
+  const text = (s: string) => (more ? more(redactSecretText(s)) : redactSecretText(s));
+  if (typeof v === "string") return text(v);
+  if (Array.isArray(v)) return v.map(x => redactValue(x, more));
   if (v && typeof v === "object") {
     const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>; // so a `__proto__` key stays a key
-    for (const [k, x] of Object.entries(v)) out[redactSecretText(k)] = CREDENTIAL_KEY.test(k) ? "[token]" : redactValue(x);
+    for (const [k, x] of Object.entries(v)) out[text(k)] = CREDENTIAL_KEY.test(k) ? "[token]" : redactValue(x, more);
     return out;
   }
   return v;
@@ -150,7 +164,7 @@ export function createLogger(opts: LoggerOptions): Logger {
       // A field can't take the place of the time, level, event name or scope.
       const entry: Fields = { ...(fields ?? {}), t: now().toISOString(), level: lvl, msg };
       if (scope) entry.scope = scope;
-      const line = safeLine(entry) + "\n";
+      const line = safeLine(entry, opts.redact) + "\n";
       if (toStderr) print("stderr", line);
       else {
         try { rotateIfNeeded(); } catch { /* it can't be rotated now: the line is still written */ }

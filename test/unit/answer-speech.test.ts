@@ -45,6 +45,7 @@ function wiring() {
     const conversationNow = (entries = []) => entries;
     const forgetProject = () => {};
     const forgetSessionWords = () => {};
+    const vault = { forgetAll: () => true };
     ${speech}
     ${signOut}
     return {

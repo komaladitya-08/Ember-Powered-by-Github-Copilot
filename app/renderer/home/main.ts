@@ -20,6 +20,7 @@ import {
 } from "./copy";
 import { mountAboutYou } from "./about-you";
 import { mountReminders } from "./reminders";
+import { mountVault } from "./vault";
 import { dismissForgetConfirms, mountForgetConfirms } from "./forget-confirm";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { modeCardVersion, type ApprovalMode, type ApprovalsState } from "../../shared/approvals";
@@ -2126,6 +2127,9 @@ $("routines-yes").addEventListener("click", () => {
 });
 $("routines-no").addEventListener("click", () => { $("routines-consent").hidden = true; $("routines-on").focus(); });
 mountReminders(window.ember);
+
+// ───── The vault's list (app/main/vault/): kind, destination and date only, with Forget ─────
+mountVault(window.emberVault);
 
 // ───── Telling the user a newer Ember is out (app/main/updates.ts): on only once they agree to its note ─────
 const UPDATES_VERSION = FEATURE_CONSENT_VERSION.updates;

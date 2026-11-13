@@ -556,6 +556,7 @@ export const TOOL_STEPS: Record<string, string> = {
   fill_cells: "Filling cells (your keyboard)",
   choose_option: "Choosing an option",
   set_value: "Setting a value",
+  fill_from_vault: "Filling from the vault",
   change_setting: "Changing a setting",
   open_app: "Opening an app",
   open_on_desk: "Opening an app on my desk",
@@ -736,7 +737,7 @@ export const RECONNECTED = "I'm connected again. Ask me again.";
 export const TOOL_GESTURES: Record<string, Gesture> = {
   describe_screen: "chin", perceive_window: "chin", list_windows: "chin",
   click: "tap", toggle: "tap", choose_option: "tap", set_value: "tap", change_setting: "tap", open_app: "tap", scroll: "tap",
-  type_text: "type", fill_cells: "type", press_keys: "type", run_command: "type",
+  type_text: "type", fill_cells: "type", fill_from_vault: "type", press_keys: "type", run_command: "type",
   point_at: "point", wait_for_click: "point",
   set_appearance: "wave", start_task: "thumbsUp", show_me: "point",
 };

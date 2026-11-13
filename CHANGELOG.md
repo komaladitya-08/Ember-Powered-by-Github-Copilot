@@ -35,7 +35,8 @@ the automated tests don't stand in for them.
   the organisation's policy: each one false turns its feature off (`features.routines: false` keeps no routines and
   ends reminders when Ember quits; the sections below say what the others cover, and the RPM's `policy.README`, in
   `/usr/share/doc/ember`, lists every key). It also adds `approvals.maxMode` (`"interactive"` or `"assisted"`), the
-  highest approval mode users may choose. Ember 0.1.0 doesn't know them: it reads a policy with one as broken and
+  highest approval mode users may choose, and `features.vault`: false keeps Ember from keeping or filling in logins,
+  cards and contact details. Ember 0.1.0 doesn't know them: it reads a policy with one as broken and
   locks down, so update Ember on every computer first.
 - **`features.screenImages: false`** now also shows the new **Send screenshots for tasks** switch off and managed, as
   well as keeping screenshots from the model. Ember 0.1.0 knows this key, so a policy with it doesn't lock 0.1.0 down.

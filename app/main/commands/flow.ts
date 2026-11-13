@@ -35,7 +35,7 @@ import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
 import { heldByWords, mentioned, namedKind, ruledOut } from "./intent";
-import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
+import { capLines, cleanOutput, clearCut, CUT_SLACK, redactedWhole, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
 import { redactSecrets } from "./redact";
@@ -492,9 +492,18 @@ const TERMINAL_CODES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\
  * (the middle counted, not kept), and where its secret prompts were (the tracker sees every character and every Enter
  * the user pressed, never what they typed). The tail is a list of chunks, cut back to size only when it holds twice
  * what is kept: cutting a single string per chunk copied 4 MiB each time and saturated the main thread.
+ *
+ * The cut between the two comes before the output is cleaned, and so before the vault's redactor reads it: a value
+ * the cut fell in would go on as a fragment nothing recognises (integ-x-1). So the text each side of the cut is kept
+ * too (CUT_SLACK characters after the head, and the last of what was left out), and `kept` moves the cut off any
+ * value it would fall in (output.ts clearCut), counting what that gives up as left out. Exported for its tests.
  */
-class OutputKeeper {
+export class OutputKeeper {
   private head = "";
+  /** What the run printed right after the head, up to CUT_SLACK characters (kept or not). */
+  private afterHead = "";
+  /** The last CUT_SLACK characters left out before the tail. */
+  private beforeTail = "";
   private tail: string[] = [];
   private tailLength = 0;
   private dropped = 0;
@@ -521,6 +530,7 @@ class OutputKeeper {
       text = text.slice(take);
     }
     if (!text) return;
+    if (this.afterHead.length < CUT_SLACK) this.afterHead += text.slice(0, CUT_SLACK - this.afterHead.length);
     this.tail.push(text);
     this.tailLength += text.length;
     if (this.tailLength > 2 * (KEEP_CHARS - HEAD_CHARS)) this.trim();
@@ -531,8 +541,10 @@ class OutputKeeper {
     const room = KEEP_CHARS - HEAD_CHARS;
     let tail = this.tail.join("");
     if (tail.length > room) {
-      this.dropped += tail.length - room;
-      tail = tail.slice(tail.length - room);
+      const cut = tail.length - room;
+      this.dropped += cut;
+      this.beforeTail = cut >= CUT_SLACK ? tail.slice(cut - CUT_SLACK, cut) : (this.beforeTail + tail.slice(0, cut)).slice(-CUT_SLACK);
+      tail = tail.slice(cut);
     }
     this.tail = [tail];
     this.tailLength = tail.length;
@@ -541,14 +553,23 @@ class OutputKeeper {
 
   /** The text kept, with a note where the middle went, and `spans` (positions in everything printed) moved into it. */
   kept(spans: { from: number; to: number }[]): { text: string; spans: { from: number; to: number }[] } {
-    const tail = this.trim();
-    const h = this.head.length;
+    let tail = this.trim();
     if (!this.dropped) return { text: this.head + tail, spans };
-    const note = `\n[… ${this.dropped} characters of output left out …]\n`;
-    const end = h + this.dropped;
-    const from = (p: number) => (p < h ? p : p < end ? h : p - this.dropped + note.length);
-    const to = (p: number) => (p <= h ? p : p < end ? h + note.length : p - this.dropped + note.length);
-    return { text: this.head + note + tail, spans: spans.map(s => ({ from: from(s.from), to: to(s.to) })).filter(s => s.to > s.from) };
+    // Neither end of what is left out may fall in a value the vault filled (integ-x-1): the head ends before one, the
+    // tail starts after one, and a side with no such place is not kept at all.
+    const lose = clearCut(this.head.slice(-CUT_SLACK), this.afterHead, "before") ?? this.head.length;
+    // (What stands before the tail: the last of what was left out, with the head's end where less than that was.)
+    const lead = this.dropped < CUT_SLACK ? (this.head + this.beforeTail).slice(-CUT_SLACK) : this.beforeTail;
+    const skip = clearCut(lead, tail.slice(0, CUT_SLACK), "after") ?? tail.length;
+    const head = lose ? this.head.slice(0, this.head.length - lose) : this.head;
+    if (skip) tail = tail.slice(skip);
+    const dropped = this.dropped + lose + skip;
+    const h = head.length;
+    const note = `\n[… ${dropped} characters of output left out …]\n`;
+    const end = h + dropped;
+    const from = (p: number) => (p < h ? p : p < end ? h : p - dropped + note.length);
+    const to = (p: number) => (p <= h ? p : p < end ? h + note.length : p - dropped + note.length);
+    return { text: head + note + tail, spans: spans.map(s => ({ from: from(s.from), to: to(s.to) })).filter(s => s.to > s.from) };
   }
 }
 
@@ -769,7 +790,7 @@ function resultOf(exit: RunExit, shaped: string, o: { label: string; timeoutS: n
     case "lost":
       return fail(`The connection to ${o.label} dropped and the command was stopped there. What it already did stays.`);
     case "failed-to-start":
-      return fail(`It couldn't start: ${o.redact(exit.error ?? "an unknown error").replace(/</g, "‹").replace(/[.\s]+$/, "").slice(0, 300)}.`);
+      return fail(`It couldn't start: ${o.redact(redactedWhole(exit.error ?? "an unknown error")).replace(/</g, "‹").replace(/[.\s]+$/, "").slice(0, 300)}.`);
     case "refused-remote":
       return denied(`${o.label} refused it: ${forModel(o.redact(exit.error ?? "no reason given"))}. Don't try another way; tell the user in finish_task.`);
   }

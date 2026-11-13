@@ -126,6 +126,13 @@ describe("settings window words", () => {
     expect(describeEntry({ t, event: "action", kind: "keys", ok: true, value: "ctrl+s", element: { role: "text", name: "" }, app: "mousepad" })?.what).toBe("Press Ctrl+S in Mousepad");
     expect(describeEntry({ t, event: "decision", kind: "keys", verdict: "confirm", value: "Return", app: "soffice" })?.what).toBe("Press Enter in LibreOffice");
     expect(describeEntry({ t, event: "action", kind: "keys", ok: true, app: "mousepad" })?.what).toBe("Press keys in Mousepad");
+    // A fill from the vault, done or refused, in words (integ-x-4): never the raw kind, and never what was filled.
+    expect(describeEntry({ t, event: "decision", kind: "vault_fill", verdict: "allow", autonomy: true, mode: "autopilot", app: "firefox", element: { role: "password text", name: "Password" } }))
+      .toMatchObject({ tag: "Without asking", what: "Fill from the vault “Password” in Firefox" });
+    expect(describeEntry({ t, event: "decision", kind: "vault_fill", verdict: "deny", reason: "Ember fills from its vault only in Autopilot", app: "firefox", element: { role: "password text", name: "Password" } }))
+      .toMatchObject({ tag: "Refused", what: "Fill from the vault “Password” in Firefox" });
+    expect(describeEntry({ t, event: "action", kind: "vault_fill", ok: true, app: "firefox", element: { role: "entry", name: "Username or email address" } })?.what)
+      .toBe("Fill from the vault “Username or email address” in Firefox");
     expect(describeEntry({ t, event: "action", kind: "user_clicked", ok: true, element: { role: "push button", name: "Save draft" }, app: "electron" })?.what)
       .toBe("You used “Save draft” in Electron");
     expect(describeEntry({ t, event: "action", kind: "select", ok: true, value: "Vegetarian", element: { role: "combo box", name: "Meal" }, app: "firefox" })?.what)
@@ -932,7 +939,7 @@ describe("every new SSH, WSL and commands string", () => {
         if (/^[A-Z][a-z]/.test(word)) {
           const afterStop = new RegExp(`[.:?!] ${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(s);
           // (The approval modes' names, and the sections "What Ember did" and "How Ember asks", are names too.)
-          expect(afterStop || PROPER.test(word) || /^(Ubuntu|Remove|Voice|Match|Interactive|Assisted|Autopilot|What|How)$/.test(word), `${word} in: ${s}`).toBe(true);
+          expect(afterStop || PROPER.test(word) || /^(Ubuntu|Remove|Voice|Match|Interactive|Assisted|Autopilot|What|How|Secure|Form)$/.test(word), `${word} in: ${s}`).toBe(true);
         }
       }
     }
@@ -1573,15 +1580,15 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
 
   it("says ordinary steps go ahead without asking while a mode is in force, and which apps never ask (safety-privacy-c4-1)", async () => {
     const { privacyFoldWords } = await import("../../app/renderer/home/copy");
-    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never types passwords. ";
+    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never types passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
     // The words are first run's own, after the line's bold lead, as the page has them; with no mode in force here,
     // Apps & privacy says it asks (slice4-22).
     expect(page).toContain(`<b>It asks before acting</b>${hand}<span`);
-    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true })}`).toBe("It asks before acting in an app, and always before anything hard to undo. It never types passwords. ");
+    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true })}`).toBe("It asks before acting in an app, and always before anything hard to undo. It never types passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, autonomy: true, grants: true })}`).toBe(
-      "It asks before acting on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never types passwords. ");
+      "It asks before acting on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never types passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, grants: true })}`).toBe(
-      "It asks before acting in an app, except those you let it act in without asking (below), and always before anything hard to undo. It never types passwords. ");
+      "It asks before acting in an app, except those you let it act in without asking (below), and always before anything hard to undo. It never types passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     // The onboarding line's words after its lead, on either OS, are the ones the settings and the policy leave.
     const { onboardingRest } = await import("../../app/renderer/home/computers-copy");
     for (const os of ["linux", "win32"] as const) expect(privacyFoldWords(onboardingRest(os), { screenImages: true, targets: ": now" })).toBe(": now");

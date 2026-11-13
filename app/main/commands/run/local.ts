@@ -31,6 +31,7 @@ import { commandEnv, mergeEnv } from "./env";
 import { localFacts, SAFE_POSIX_PATH } from "./facts";
 import { gitRunner, readGitFacts } from "./git-facts";
 import { inspectPaths, readScriptText } from "./inspect";
+import { redactedWhole } from "../output";
 import { trackSecretPrompts, type SecretTracker } from "../prompts";
 import { REAL_TIMERS, startLadder, type Ladder, type LadderKind, type LadderOps, type Timers } from "./kill";
 import { BSD_SCRIPT_LAUNCH, NO_RC, PS_INNER, WSL_CD, WSL_EVAL, posixBody, posixInner } from "./shells";
@@ -787,16 +788,20 @@ class LocalRun implements KeptRun {
     if (this.failure !== null) return { ...base, ended: "failed-to-start", error: this.failure };
     if (this.stopWhy) return { ...base, ended: STOP_ENDED[this.stopWhy] };
     if (this.kind === "windows" && this.exitCode === JOB_FAILED && this.stderrText.startsWith(JOB_FAILED_PREFIX)) {
-      const why = this.stderrText.slice(JOB_FAILED_PREFIX.length).split(/\r?\n/)[0].trim().slice(0, 300);
+      const why = redactedWhole(this.stderrText.slice(JOB_FAILED_PREFIX.length).split(/\r?\n/)[0].trim()).slice(0, 300);
       return { ...base, ended: "failed-to-start", error: `Ember couldn't start the command safely, so it didn't run${why ? ` (${why})` : ""}.` };
     }
     if (this.kind !== "windows" && !this.markerSeen) return { ...base, ended: "failed-to-start", error: this.startFailure() };
     return { ...base, ended: "exit" };
   }
 
-  /** A POSIX start failure's reason: its stderr, else what the PTY showed, else the exit status. */
+  /**
+   * A POSIX start failure's reason: its stderr, else what the PTY showed, else the exit status. What the vault filled
+   * is taken out of the whole text before it is cut to 500 characters, so no part of a value the cut fell in goes on
+   * (integ-x-1).
+   */
   private startFailure(): string {
-    const clean = (s: string) => s.replace(TERMINAL_CODES, "").replace(OTHER_CONTROLS, "").trim();
+    const clean = (s: string) => redactedWhole(s.replace(TERMINAL_CODES, "").replace(OTHER_CONTROLS, "").trim());
     const text = clean(this.stderrText) || clean(new TextDecoder().decode(this.keep.head()));
     if (text) return `The command couldn't start: ${text.length > 500 ? `${text.slice(0, 500)}…` : text}`;
     return `The command couldn't start${this.exitCode !== null ? ` (exit code ${this.exitCode})` : this.exitSignal ? ` (${this.exitSignal})` : ""}.`;
