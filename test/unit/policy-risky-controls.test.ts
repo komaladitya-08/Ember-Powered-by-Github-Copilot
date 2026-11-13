@@ -345,6 +345,17 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     ["push button", "Show images", { app: "evince", window: "mail-merge.pdf", inPage: undefined }],
   ] as [string, string, Partial<ActionRequest>][])("a %s named “%s” under a window's title is not read as going past a warning (product-safety-x9-2)", notPast);
 
+  // An ordinary setting's "prevention" is no protection; the browsers' own still are (product-safety-x9-3).
+  it.each([
+    ["push button", "Turn off sleep prevention", { app: "gnome-control-center", window: "Power", inPage: undefined }],
+    ["push button", "Disable accidental touch prevention", { app: "SystemSettings", window: "Touchpad", inPage: undefined }],
+  ] as [string, string, Partial<ActionRequest>][])("a %s named “%s” is not read as turning a protection off (product-safety-x9-3)", notPast);
+  it.each([["push button", "Turn off Tracking Prevention", "msedge"], ["push button", "Disable tracking prevention for this site", "msedge"],
+    ["push button", "Turn off Brave Shields", "brave"], ["link", "Turn off Shields", "brave"]])(
+    "a %s named “%s” still asks every time as a protection turned off (product-safety-x9-3)", (role, name, app) => {
+      asksEveryTime(click(name, { app, window: "Shop", inPage: undefined, element: { role, name }, goal: "buy the shoes" }));
+    });
+
   it("says why in the question (safety-privacy-r8-1)", () => {
     expect(engine().decide(click("Keep anyway", { app: "google-chrome", window: "Downloads", inPage: undefined, goal: "download the report" })).prompt)
       .toBe("Click the “Keep anyway” button in Google Chrome? It goes past a warning or turns off a protection.");

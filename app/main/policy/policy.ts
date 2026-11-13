@@ -671,7 +671,7 @@ const SECURITY_WORD = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(SECURITY_STEMS
  */
 const WEAKENS = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(["not recommended", "unsafe", "insecure", "unsecured?", "allow all", "trust all", "accept all",
   "without (asking|confirmation|confirming|warning|warnings|prompting|a warning)", "(don't|do not|never) (ask|warn|prompt|confirm)",
-  "(disable|turn off|switch off|deactivate|bypass|skip)\\b.{0,40}\\b(protection|prevention|shields?|security|warnings?|checks?|checking|verification|sandbox|blocking|safe browsing)",
+  "(disable|turn off|switch off|deactivate|bypass|skip)\\b.{0,40}\\b(protection|tracking prevention|shields?|security|warnings?|checks?|checking|verification|sandbox|blocking|safe browsing)",
   "nicht empfohlen", "non recommandée?", "déconseillée?", "no recomendad[oa]", "sconsigliat[oa]", "non consigliat[oa]", "não recomendad[oa]",
   "niet aanbevolen", "niezalecane", "nie zalecane", "не рекомендуется", "rekommenderas inte", "anbefales ikke", "ei suositella", "nedoporučen[oéa]",
   "nedoporučuje se", "önerilmez", "tavsiye edilmez"].join("|"))})(?=$|[^\\p{L}\\p{N}])|${foldLabel(["推奨されません", "非推奨", "不推荐", "不推薦", "不建议",
@@ -2436,7 +2436,7 @@ const PAST_WARNING = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(PAST_WARNING_WO
  */
 const LINK_PAST_WARNING = new RegExp(`^[^\\p{L}\\p{N}]*(${foldLabel([...PAST_WARNING_PHRASES,
   "(download|keep|open|run|install|continue|proceed|launch|use|save|visit|go|load|show|allow|accept) anyway",
-  "(turn off|disable|switch off|bypass|skip)\\b.{0,40}\\b(protection|prevention|shields?|security|warnings?|verification|safe browsing)"].join("|"))})(?=$|[^\\p{L}\\p{N}])`
+  "(turn off|disable|switch off|bypass|skip)\\b.{0,40}\\b(protection|tracking prevention|shields?|security|warnings?|verification|safe browsing)"].join("|"))})(?=$|[^\\p{L}\\p{N}])`
   + `|[(（]\\s*(${foldLabel(["unsafe", "not secure", "insecure", "dangerous", "not recommended"].join("|"))})\\s*[)）]`, "u");
 /** A window or dialog that says its document is in protected view (Word's "[Protected View]"), where "Enable Editing" leaves it. */
 const PROTECTED_VIEW = /\bprotected (view|mode)\b/;
