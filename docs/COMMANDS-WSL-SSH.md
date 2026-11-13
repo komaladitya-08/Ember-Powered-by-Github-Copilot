@@ -733,7 +733,7 @@ that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`, `KEY=~/.
 (`npx tool $(…)`); a program, or a tool's command, Ember doesn't know, one that runs code nobody is shown
 (`rundll32`, `mshta`, `wscript`, `run-parts`) and a sandbox or a wrapper whose command Ember doesn't judge (`bwrap`,
 `firejail`, `envdir`, `expect`), since nobody can tell what it does; every command when your organisation, or
-you (**Ask before every command**), asked for that; a task
+you (**Ask me before every command**), asked for that; a task
 without your own words; and a command, a request or a list of findings too long to show whole (a command over 4,000
 characters). A command you said no to is refused without being reviewed, and one that may be it, where Ember can't
 tell, asks without being reviewed (§2.5). A loop or inline code whose programs Ember knows is still reviewed: that is
@@ -765,6 +765,7 @@ It still asks, with the card of §2.4, before:
   tunnel), so that Stop stops everything;
 - a command Ember can't tell the effect of (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`,
   text handed to `xargs` that Ember can't see, a program that waits for typing), since it may be either of those;
+- a program, or a tool's command, Ember doesn't know, since it too may be either of those;
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
   build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for
   this."; and one your words hold back ("leave the build folder alone", "keep notes.txt", "hold off on publishing",
@@ -777,7 +778,7 @@ It still asks, with the card of §2.4, before:
   push after a no to a push, another deletion after a no to a deletion or to deleting something in an app), any
   dangerous command after a no to one Ember couldn't read, and one Ember can't read (a loop, inline code) after a no
   to a dangerous one: the card says "You said no to something like this earlier in this task.";
-- every command where your organisation asks for that, where you turned on **Ask before every command** for that
+- every command where your organisation asks for that, where you turned on **Ask me before every command** for that
   computer, in a Podman distro, and in a project's chosen command folder;
 - turning commands on for a computer the first time (§2.1).
 
