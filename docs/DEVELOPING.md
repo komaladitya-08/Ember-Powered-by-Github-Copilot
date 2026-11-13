@@ -168,7 +168,7 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   **Check again**, which reads the rows anew once you have run the command or changed the setting yourself (Home's
   setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s, in the background, so Ember
   keeps answering while that import takes up to 5 s) (**Show the details** has every
-  row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
+  row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening; on, with the microphone not working or turned off, the step and **Ready to start** say so and name the microphone, never that it is off) and a first
   request in the ask box; and **Ready to start** sums it up before **Start** (neither says Ember's name, nor does “Setup is finished.”, which a screen reader is told as Start lands on Home's status line: after a changed consent “Hey Ember” already listens, first-run-r6-1). Nothing is read, heard or sent before
   **Agree and continue** (it saves the consent; the steps after it can't be reached without it). Back works on every
   step but the first. A run that agreed but didn't finish opens at sign-in next time. After an update that changed the consent

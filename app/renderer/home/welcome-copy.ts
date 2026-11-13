@@ -440,6 +440,10 @@ export const TRY_TEXT = {
   voiceLater: "To talk to me, turn on “Hey Ember” later in Settings › Voice. Then say, for example, “Hey Ember, what's in this window?”",
   /** Voice is on and agreed to, but its speech models aren't here and nothing fetches them by itself (first-run-r7-2). */
   voiceNoModels: "I can't listen for “Hey Ember” yet: my speech models aren't on this computer. Download them later in Settings › Voice.",
+  /** Voice is on and agreed to, but the microphone isn't working (the voice state's "error": first-run-r10-1). */
+  voiceNoMic: "“Hey Ember” is on, but I can't hear you: my microphone isn't working. Check it in Settings › Voice.",
+  /** Voice is on and agreed to, but the user turned the microphone off (muted). */
+  voiceMicOff: "“Hey Ember” is on, but my microphone is off, so I can't hear you. Mute microphone, in my handle's menu, turns it back on.",
   /** Voice is on but not listening yet (models downloading, or starting). */
   voiceWaiting: "I'm not listening yet. Once I am, say “Hey Ember”.",
 } as const;
@@ -449,15 +453,21 @@ export function askWhy(o: { locked: boolean; noSignIn: boolean }): string {
   return o.locked ? TRY_TEXT.askLocked : o.noSignIn ? TRY_TEXT.askWait : TRY_TEXT.askWhy;
 }
 
+/** Where “Hey Ember” stands on the try step and in the last step's card (voiceTry). */
+export type VoiceTry = "listening" | "waiting" | "off" | "no-models" | "no-mic" | "mic-off";
+
 /**
  * "Say “Hey Ember”" shows only while Ember listens for it: on, agreed to, allowed by the organisation
- * (`features.voice`), not muted, and the microphone open. Muted, off, not working or not allowed counts as off; on
- * with its speech models missing is "no-models": it won't listen until they are downloaded, so neither "not yet,
- * once I am" nor "On" is said (first-run-r7-2).
+ * (`features.voice`), not muted, and the microphone open. Off or not allowed counts as off; on with its speech models
+ * missing is "no-models": it won't listen until they are downloaded, so neither "not yet, once I am" nor "On" is said
+ * (first-run-r7-2). On with the microphone not working is "no-mic", and with it turned off "mic-off": the setting is
+ * on, so neither says to turn “Hey Ember” on, and each names the microphone (first-run-r10-1).
  */
-export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: string | null; allowed?: boolean; muted?: boolean }): "listening" | "waiting" | "off" | "no-models" {
-  if (!o.wakeWord || !o.voiceConsent || o.allowed === false || o.muted) return "off";
-  if (o.state === "off" || o.state === "muted" || o.state === "error") return "off";
+export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: string | null; allowed?: boolean; muted?: boolean }): VoiceTry {
+  if (!o.wakeWord || !o.voiceConsent || o.allowed === false) return "off";
+  if (o.muted || o.state === "muted") return "mic-off";
+  if (o.state === "error") return "no-mic";
+  if (o.state === "off") return "off";
   if (o.state === "needs-models") return "no-models";
   return o.state === "waiting" || o.state === "active" ? "listening" : "waiting";
 }
@@ -470,7 +480,7 @@ export interface SummaryRow { label: string; value: string }
 
 /** The last step's card's rows: who, Copilot, voice, and the keys Ember holds (a key another app holds isn't named). */
 export function summaryRows(o: {
-  character: string; size: number; signedIn: string | null; voice: "listening" | "waiting" | "off" | "no-models";
+  character: string; size: number; signedIn: string | null; voice: VoiceTry;
   /** The keys as Ember holds them ("" while another app holds one); null until the status names this OS's. */
   keys: { ask: string; stop: string; settings: string } | null;
   /** False when the model service isn't GitHub Copilot (the user's own, the organisation's): the row isn't called Copilot (first-run-1). */
@@ -480,7 +490,7 @@ export function summaryRows(o: {
     // The size in pixels only once the user changed it: "Default size" says as much without a number to decode.
     { label: "Character", value: o.size === DEFAULT_SIZE ? `${o.character}, default size` : `${o.character}, ${o.size} px` },
     { label: o.copilot === false ? "Model service" : "Copilot", value: o.signedIn ?? "Not signed in yet" },
-    { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : o.voice === "no-models" ? "Not yet: its speech models need downloading" : "On" },
+    { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : o.voice === "no-models" ? "Not yet: its speech models need downloading" : o.voice === "no-mic" ? "On, but the microphone isn't working" : o.voice === "mic-off" ? "On, but the microphone is off" : "On" },
   ];
   if (o.keys?.ask) rows.push({ label: "Ask", value: o.keys.ask });
   if (o.keys?.stop) rows.push({ label: "Stop everything", value: o.keys.stop });
