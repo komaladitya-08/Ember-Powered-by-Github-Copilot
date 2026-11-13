@@ -186,7 +186,8 @@ export function signInText(o: { managed: boolean; locked?: boolean; held?: boole
       ? { title: "Restart me to use your organisation's new policy", lead: "Your organisation changed my policy while I was running, so I can't connect to a model service until you restart me." }
       : { title: "Your organisation has locked me down", lead: "Your organisation's policy for me has a problem, so I can't connect to a model service for now. Ask your administrator to fix it." };
   }
-  if (o.managed) return { title: "Connecting to your organisation's service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." };
+  // Titled "Connecting…" only while it connects (first-run-r9-11).
+  if (o.managed) return { title: o.ownPhase === "starting" ? "Connecting to your organisation's service" : "Your organisation's model service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." };
   if (o.own) {
     const lead = o.ownPhase === "starting" ? `I'm connecting to the model provider you set up (${o.own}). You can change it later in Settings › Models & connections.`
       : o.ownPhase === "error" ? `I can't connect to the model provider you set up (${o.own}) yet: the line below says why. You can check its details here, or later in Settings › Models & connections.`
