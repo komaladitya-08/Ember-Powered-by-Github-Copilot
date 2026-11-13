@@ -491,3 +491,36 @@ describe("a file's or a variable's contents leaving in a request (commands-remot
     }
   });
 });
+
+describe("commands that start something that outlives Stop, filed where the modes read them (modes-y9-1)", () => {
+  it("files a package manager's service verbs as a service, and a program it opens as an app window", () => {
+    for (const o of [{}, { shell: "zsh" as const, context: "darwin" as const }, { context: "wsl" as const }]) {
+      for (const cmd of ["brew services start postgresql", "brew services run redis", "brew services restart redis", "brew services stop redis", "brew services cleanup",
+        "sudo brew services start nginx", "snap start foo", "snap restart foo", "snap enable foo", "snap stop foo", "snap disable foo", "snap set foo x=1",
+        "snap set system daemon.autostart=true", "snap unset foo x", "sudo snap start foo"]) {
+        const d = decide(cmd, o);
+        expect(d.verdict, label(cmd, o)).toBe("ask");
+        expect(d.rules.some(r => r.startsWith("service.")), label(cmd, o)).toBe(true);
+        expect(d.classes, label(cmd, o)).toContain("system");
+      }
+      for (const cmd of ["flatpak run org.gnome.gedit", "flatpak run --branch=stable org.mozilla.firefox", "flatpak --user run org.gnome.gedit"]) {
+        const d = decide(cmd, o);
+        expect(d.verdict, label(cmd, o)).toBe("ask");
+        expect(d.rules, label(cmd, o)).toContain("unclear.gui");
+        expect(d.classes, label(cmd, o)).toContain("unclear");
+      }
+    }
+    for (const cmd of ["brew list", "brew info redis", "snap list", "flatpak list"]) expect(decide(cmd).verdict, cmd).toBe("run");
+  });
+
+  it("names code that runs later by itself: a git hook written, and git's settings that run a program", () => {
+    for (const cmd of ["cp hook .git/hooks/pre-commit", "echo x > .git/hooks/pre-push", "mv hook .git/hooks/post-merge", "install -m755 hook .git/hooks/pre-commit",
+      "tee .git/hooks/pre-commit < hook", "ln -s ../../hook .git/hooks/pre-commit"]) {
+      expect(decide(cmd).rules, cmd).toContain("path.hook");
+    }
+    for (const cmd of ["git config --global core.hooksPath ~/hooks", "git config core.hooksPath .githooks", "git config core.fsmonitor ./x", "git config alias.x '!sh x'",
+      "git config --local core.sshCommand ./x", "git config core.pager ./x"]) {
+      expect(decide(cmd).rules, cmd).toContain("git.config.code");
+    }
+  });
+});

@@ -220,7 +220,9 @@ Ember stops and asks before a command that:
   machine's kind, the time, a commit or a version (`$(uname -m)`, `$(date +%s)`, `$(git rev-parse HEAD)`), from what
   another fetch returned, or from a variable the line didn't fill (`curl $URL`);
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
-  `brew`, `winget`, `npm install`, `pip install`), services, the registry and desktop settings (`gsettings set`,
+  `brew`, `winget`, `npm install`, `pip install`), services (`systemctl start`, `launchctl load`, and a package
+  manager's own: `brew services start`, `snap start`, `snap set`; these keep running after Stop, so Assisted's check
+  never clears them and Autopilot asks), the registry and desktop settings (`gsettings set`,
   `dconf write`, and `defaults write` to the screen saver, firewall and remote-access settings), the firewall, the
   certificates the computer trusts, users and groups, giving a container the container engine's socket or a system
   folder (`docker run -v /var/run/docker.sock:…`, `-v /usr:…`),

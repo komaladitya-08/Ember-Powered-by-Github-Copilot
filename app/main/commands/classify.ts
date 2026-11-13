@@ -8539,6 +8539,14 @@ reg(NATIVE, Object.keys(SYSTEM_PACKAGERS), h => {
   verb = verb.toLowerCase();
   if (read.includes(verb)) return;
   if (h.key === "winget" && (verb === "source" || verb === "settings") ) return;
+  // A package manager's own service verbs start, stop or set up a daemon that runs on after the command and after
+  // Stop: filed as a service, where the approval modes read what outlives the kill switch (modes-y9-1).
+  if ((h.key === "brew" && verb === "services") || (h.key === "snap" && /^(start|restart|stop|enable|disable|set|unset)$/.test(verb))) {
+    const sub = h.key === "brew" ? h.args.slice(start + 1).find(a => !isOption(a))?.v ?? null : verb;
+    if (sub === null || !/^(list|ls|info)$/.test(sub)) h.e.add("system", "service.change", "Starts, stops or changes a system service.", { program: `${h.prog} ${verb}` });
+  }
+  // `flatpak run` opens the app, as a launcher does.
+  if (h.key === "flatpak" && verb === "run") h.e.unclear("unclear.gui", SAYS.openApp);
   languageOrSystem(h, h.args.slice(start + 1).filter(a => !isOption(a)));
 });
 function languageOrSystem(h: H, specs: Arg[]): void {
