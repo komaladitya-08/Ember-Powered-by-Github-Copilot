@@ -48,7 +48,7 @@ import { checkState, fixCommand, recheckMessage } from "./welcome-copy";
 import { holdsBack } from "../../shared/setup-attention";
 import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
-import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
+import { LATEST_ANSWER, modeCardRequested, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { holdTaskNews, startTasks } from "./tasks";
 import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnLine } from "./status-copy";
@@ -2278,9 +2278,10 @@ function showSection(value: string, asked = false): void {
   const inPane = paneOf(h);
   const opened = !document.body.classList.contains("first-run") && !!inPane && inPane !== pane;
   if (opened && inPane) { restoring = null; showPane(inPane, true); }
-  // Asked for by voice ("work without asking" before Interactive's card was agreed to): the card shows, focused on its
-  // agree button, which takes no press for AGREE_ARM_MS.
-  if (control === "approvals-yes" && !managed.has("autonomy") && modeRow("interactive") && !modeRow("interactive")?.disabled) openModeCard("interactive");
+  // Asked for by voice or typed words (a mode named before its card was agreed to): the card shows, focused on its
+  // agree button, which takes no press for AGREE_ARM_MS. Never for a mode whose row is locked (the organisation's).
+  const cardFor = modeCardRequested(value);
+  if (cardFor && !managed.has("autonomy") && modeRow(cardFor) && !modeRow(cardFor)?.disabled) openModeCard(cardFor);
   // "Get to know me" or Open Memory while memory is off or waits for its note: the note shows, focused on its words,
   // never its agree button (memory-r7). Memory already agreed to (saved under another account) gets the section alone.
   if (control === "memory-consent-text" && !managed.has("memory") && !memoryOn()) showConsentCard("memory-consent", "memory-yes");

@@ -48,7 +48,7 @@ export const ENROL_LIMITS = { quietMs: 45_000, totalMs: 180_000 } as const;
 
 /**
  * The least voice what follows the wake phrase needs for Voice Match to vouch for it (`verified`, what a spoken yes and
- * turning "Work without asking" on need), checked on its own at VOICE_MATCH_THRESHOLD (owner decision of 2026-11-03;
+ * a mode that asks less, chosen by voice, need), checked on its own at VOICE_MATCH_THRESHOLD (owner decision of 2026-11-03;
  * it was 1.5 s, which almost no natural yes reached). Measured on LibriSpeech dev-clean (33 speakers, enrolled from four
  * 3 s phrases, pieces cut by voiced length): at 0.5 s another voice passes 0.5 % of the time and the owner's is turned
  * away 52 %; at 1.5 s, 1.9 % and 6.5 %. A shorter piece makes another voice no easier to pass, only the owner's harder.

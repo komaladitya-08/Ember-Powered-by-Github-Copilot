@@ -584,9 +584,20 @@ that does the same to the same thing (`find build -delete` after `rm -rf build`)
 never checked by Assisted and never announced, and "What Ember did" says "You said no to this step earlier in this
 task." A question nobody answered isn't asked a second time until you next say something to that task. To have Ember
 do it after all, ask again: a new request is a new task.
-Say or type “Ember, ask me first again” (anyone) to have Ember ask before ordinary steps again: it withdraws the
-agreement to the cards, so the way back is Interactive's card in Settings. “Ember, work without asking” opens that card
-(with it agreed to, Ember says it already works without asking); neither is a tool of the model's.
+**The mode by voice** (app/main/agent/autonomy-intent.ts, answered by Ember itself, never by a tool of the model's).
+Say a mode's name, “Ember, switch to Autopilot”, “Assisted mode”, “go back to Interactive” or “turn Autopilot off”, to
+change it. A mode that asks less is chosen only by voice, by the rule for a spoken yes: from anyone heard while
+**Only my voice can say yes (Voice Match)** is off, and only from your verified voice while it is on (one too short to
+be sure of is asked for again; while Voice Match is on but not ready, from nobody), never from words heard over Ember's
+own voice, and only once that mode's card has been agreed to in Settings: before that, Settings opens at its card, and
+saying the name never agrees to it. Typed words and a suggestion pressed never choose a mode that asks less: Settings
+opens at its row. The organisation's cap and switches hold as in Settings. A mode that asks more is chosen by anyone,
+typed too; where that mode's card isn't agreed to, Ember says where it lands (below Interactive, or in Interactive) and
+opens the card. “Ember, work without asking” is Interactive (in Assisted or Autopilot Ember says it already asks even
+less), and “Ember, ask me first again” (anyone, typed too) has Ember ask before ordinary steps again by withdrawing the
+agreement to every card, so the way back is a card in Settings. Each change is a "How Ember asks" entry in What Ember
+did, saying by voice or typed; one that can't be recorded is undone, and Ember says "I couldn't save or record that
+change, so I'll keep asking you first."
 
 **Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “yes please”, “yeah”, “sure”, “okay”,
 “okay, go with it”, “go ahead”, “go on”, “accept”, “I accept”, “continue”, “confirm”, “do it”, “sounds good”, “that's

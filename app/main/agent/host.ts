@@ -58,7 +58,8 @@ import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
-import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
+import { AUTONOMY_NOT_SAVED, modeIntent, planModeIntent, type ModeIntentState } from "./autonomy-intent";
+import type { ApprovalMode } from "../../shared/approvals";
 import type { TaskVoiceTrust } from "./voice-answer";
 import { approvalInputs, modeInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, READ_OUT_REPLY, readOutRequest, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
@@ -255,18 +256,19 @@ export interface HostOptions {
    */
   voiceTrust?: Pick<TaskVoiceTrust, "grant" | "end">;
   /**
-   * "Work without asking" and "ask me first again" by voice or typed words (autonomy-intent.ts), against the approval
-   * mode: whether a mode is in force (`on`), whether Interactive's card is agreed to, taking it in or out of force, and
-   * opening the choice (with its card) in Settings. Absent: the words go to the conversation like any others.
+   * The approval mode by voice or typed words (autonomy-intent.ts: a mode named, "work without asking", "ask me first
+   * again"): how the modes stand (main builds it from the settings, with Voice Match's switch), choosing a mode or
+   * withdrawing every card's agreement ("asking"), and opening Home's choice at a mode's row or its card. Absent: the
+   * words go to the conversation like any others.
    */
   autonomy?: {
-    state(): { on: boolean; consented: boolean; managed: boolean };
+    state(): ModeIntentState;
     /**
      * `how`: spoken (and whether Voice Match verified it) or typed, for the audit entry. False when it couldn't be made
      * so (its audit entry couldn't be written, so a mode that asks less was undone).
      */
-    set(on: boolean, how: { via: "voice" | "typed"; verified: boolean }): boolean;
-    open(consent: boolean): void;
+    set(to: ApprovalMode | "asking", how: { via: "voice" | "typed"; verified: boolean }): boolean;
+    open(mode: ApprovalMode, card: boolean): void;
   };
   /**
    * Tasks that do the work show it on their cards in the corner, and the bubble beside the cursor only while they use
@@ -3097,18 +3099,22 @@ export class AgentHost {
     // Its turn begins at once only when no turn was under way or waiting as it was asked (before its own "Thinking…"):
     // otherwise main's acknowledgement would be said over the earlier turn's answer, so one queued behind gets none.
     const first = this.betweenTurns();
-    // "Work without asking" / "ask me first again": the approval mode, set here and never by the conductor (it has no
-    // tool for it). On only from the owner's verified voice with Interactive's card agreed to; off from anyone
-    // (autonomy-intent.ts).
-    const mode = this.o.autonomy ? autonomyIntent(text) : null;
+    // The approval mode by its name, "work without asking" or "ask me first again": set here and never by the
+    // conductor (it has no tool for it). To a mode that asks less only by voice, from anyone heard while Voice Match is
+    // off and only from the owner's verified voice while it is on, never over Ember's voice, and only with that mode's
+    // card agreed to in Home; to one that asks more, from anyone (autonomy-intent.ts).
+    const mode = this.o.autonomy ? modeIntent(text) : null;
     if (mode && this.o.autonomy) {
-      const plan = planAutonomyIntent(mode, { ...this.o.autonomy.state(), verified: how.verified === true, short: how.short === true });
+      // A suggestion pressed is no one's voice: as typed.
+      const spoken = how.spoken === true && !how.suggested;
+      let plan: ReturnType<typeof planModeIntent> = { reply: AUTONOMY_NOT_SAVED };
       let saved = true;
       try {
-        if (plan.set !== undefined) saved = this.o.autonomy.set(plan.set, { via: how.spoken ? "voice" : "typed", verified: how.verified === true });
-        if (plan.open) this.o.autonomy.open(plan.open.consent);
+        plan = planModeIntent(mode, this.o.autonomy.state(), { spoken, verified: how.verified === true, short: how.short === true, overEmber: how.overEmber === true });
+        if (plan.set !== undefined) saved = this.o.autonomy.set(plan.set, { via: spoken ? "voice" : "typed", verified: how.verified === true });
+        if (plan.open) this.o.autonomy.open(plan.open.mode, plan.open.card);
       } catch (err) { saved = false; this.o.log.warn("agent.autonomy_not_saved", { err }); }
-      this.o.log.info("agent.autonomy_switch", { intent: mode, set: plan.set ?? null, saved, opened: !!plan.open, verified: how.verified === true });
+      this.o.log.info("agent.autonomy_switch", { intent: mode.kind, ...(mode.kind === "to" || mode.kind === "off" ? { mode: mode.mode } : {}), set: plan.set ?? null, saved, opened: !!plan.open, verified: how.verified === true });
       // Said only once it is so: a change that couldn't be saved or recorded says that instead (review of #127).
       this.answerLocally(text, saved ? plan.reply : AUTONOMY_NOT_SAVED, how);
       return true;

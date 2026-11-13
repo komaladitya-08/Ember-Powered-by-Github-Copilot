@@ -63,6 +63,8 @@ const canChmod = process.platform !== "win32" && process.getuid?.() !== 0;
 const FAULTS = canChmod ? (["ENOSPC", "permissions"] as const) : (["ENOSPC"] as const);
 
 const AUTOPILOT: ApprovalsSetting = { mode: "autopilot", consent: { ...ASSISTED.consent, autopilot: { version: modeCardVersion("autopilot"), at: AT } } };
+/** Every card agreed to, Interactive chosen. */
+const AUTOPILOT_AGREED_INTERACTIVE: ApprovalsSetting = { ...AUTOPILOT, mode: "interactive" };
 
 describe("Autopilot and the record (modes-D5)", () => {
   it("is recorded as every change of the mode is when Home chooses it, and when the user goes back", () => {
@@ -272,43 +274,52 @@ describe.each(FAULTS)("a mode that asks less whose entry can't be written (%s)",
   });
 });
 
-describe("“work without asking” and “ask me first again” against the mode (modes-A8)", () => {
-  const wired = (approvals: ApprovalsSetting) => { const c = setup(approvals); return { ...c, intents: modeIntents({ settings: c.settings, modes: c.record, admin: c.policy }) }; };
+describe("the mode intents against the mode (modes-A8, modes-E1)", () => {
+  const wired = (approvals: ApprovalsSetting) => { const c = setup(approvals); return { ...c, intents: modeIntents({ settings: c.settings, modes: c.record, admin: c.policy, voiceMatch: () => "off" }) }; };
 
-  it("says whether a mode is in force, whether Interactive's card is agreed to, and whether the organisation keeps Ember below it", () => {
-    expect(wired(ASKING).intents.state()).toEqual({ on: false, consented: false, managed: false });
-    expect(wired(INTERACTIVE).intents.state()).toEqual({ on: true, consented: true, managed: false });
+  it("says the mode in force, the cards agreed to, and the organisation's limits", () => {
+    expect(wired(ASKING).intents.state()).toEqual({ inForce: "asking", agreed: [], managed: false, cap: null, checkOff: false, voiceMatch: "off" });
+    expect(wired(INTERACTIVE).intents.state()).toMatchObject({ inForce: "interactive", agreed: ["interactive"], managed: false });
     const managed = wired(INTERACTIVE);
-    managed.setPolicy(AdminPolicySchema.parse({ features: { autonomy: false } }));
-    expect(managed.intents.state()).toEqual({ on: false, consented: true, managed: true });
+    managed.setPolicy(AdminPolicySchema.parse({ features: { autonomy: false, aiReview: false }, approvals: { maxMode: "assisted" } }));
+    expect(managed.intents.state()).toEqual({ inForce: "asking", agreed: ["interactive"], managed: true, cap: "assisted", checkOff: true, voiceMatch: "off" });
   });
 
   it("“ask me first again” takes Ember below Interactive for anyone, by withdrawing the cards' agreement, and says how in the record", () => {
     const c = wired(ASSISTED);
-    expect(c.intents.set(false, { via: "voice", verified: false })).toBe(true);
+    expect(c.intents.set("asking", { via: "voice", verified: false })).toBe(true);
     expect(c.inForce()).toBe("asking");
     expect(c.settings.own().approvals).toEqual(ASKING);
     expect(c.entries().at(-1)).toEqual({ mode: "asking", before: "assisted", via: "voice", verified: false });
     // The way back is the card: nothing is in force, and nothing counts as agreed to.
-    expect(c.intents.state()).toEqual({ on: false, consented: false, managed: false });
+    expect(c.intents.state()).toMatchObject({ inForce: "asking", agreed: [] });
   });
 
-  it("“work without asking” changes no setting: it only records a mode that is agreed to and couldn't be recorded before", () => {
-    const c = wired(INTERACTIVE);
-    const before = JSON.stringify(c.settings.own().approvals);
-    expect(c.intents.set(true, { via: "typed", verified: false })).toBe(true);
-    expect(JSON.stringify(c.settings.own().approvals)).toBe(before);
-    // Without its card agreed to it can't put a mode in force, whatever asks.
-    const none = wired(ASKING);
-    expect(none.intents.set(true, { via: "voice", verified: true })).toBe(false);
-    expect(none.inForce()).toBe("asking");
-    expect(none.settings.own().approvals).toEqual(ASKING);
-    expect(none.entries()).toEqual([]);
+  it("chooses a mode only with its card already agreed to, and never agrees to one", () => {
+    const c = wired(ASSISTED);
+    expect(c.intents.set("interactive", { via: "typed", verified: false })).toBe(true);
+    expect(c.settings.own().approvals).toEqual({ ...ASSISTED, mode: "interactive" });
+    expect(c.intents.set("assisted", { via: "voice", verified: true })).toBe(true);
+    expect(c.entries().slice(-2)).toEqual([
+      { mode: "interactive", before: "assisted", via: "typed", verified: false },
+      { mode: "assisted", before: "interactive", via: "voice", verified: true },
+    ]);
+    // Autopilot's card isn't agreed to: choosing it puts nothing new in force, and says so.
+    expect(c.intents.set("autopilot", { via: "voice", verified: true })).toBe(false);
+    expect(c.inForce()).toBe("assisted");
+    expect(c.settings.own().approvals.consent.autopilot).toEqual(NONE);
   });
 
-  it("is what main gives the host, with the choice opened in Settings at Interactive's row or its card", () => {
-    expect(main).toContain("...modeIntents({ settings, modes, admin: () => policy }),");
-    expect(main).toContain(`open: consent => { showHome(); sendToHome(IPC.focusSection, consent ? "privacy:autonomy-yes" : "privacy:autonomy-on"); },`);
+  it("chooses Autopilot by voice as Home does: recorded as the voice's, never put back as a hand edit", () => {
+    const c = wired(AUTOPILOT_AGREED_INTERACTIVE);
+    expect(c.intents.set("autopilot", { via: "voice", verified: false })).toBe(true);
+    expect(c.inForce()).toBe("autopilot");
+    expect(c.entries().at(-1)).toEqual({ mode: "autopilot", before: "interactive", via: "voice", verified: false });
+  });
+
+  it("is what main gives the host, with the choice opened in Settings at the mode's row or its card", () => {
+    expect(main).toContain("...modeIntents({ settings, modes, admin: () => policy, voiceMatch:");
+    expect(main).toContain("open: (mode, card) => { showHome(); sendToHome(IPC.focusSection, `privacy:${mode === \"interactive\" ? \"autonomy\" : mode}-${card ? \"yes\" : \"on\"}`); },");
   });
 });
 

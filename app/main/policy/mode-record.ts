@@ -8,7 +8,7 @@
  * the settings store and the audit log are passed in.
  */
 
-import { modeRank, type ModeInForce } from "../../shared/approvals";
+import { APPROVAL_MODES, modeRank, type ApprovalMode, type ModeInForce } from "../../shared/approvals";
 import { autonomyHeld, autonomyPermitted, holdAutonomyOff, modeAgreed, modeInForce, modeWithoutHold, releaseAutonomyHold, type ApprovalsSetting, type AutonomyAdmin } from "./autonomy";
 import type { AuditEntry } from "./audit";
 
@@ -147,22 +147,36 @@ export class ModeRecord {
 const WITHDRAWN: ApprovalsSetting = { mode: "interactive", consent: { interactive: { version: 0, at: null }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } } };
 
 /**
- * What the host's "work without asking" and "ask me first again" do to the mode (agent/autonomy-intent.ts plans them,
- * and says each reply): the first takes effect only with Interactive's card already agreed to in Settings, and then
- * only has to be recorded (a mode that couldn't be before); the second takes Ember below Interactive by withdrawing
- * every card's agreement, for anyone. Built on the user's own setting, never the one with the policy applied.
+ * What the host's mode intents do to the setting (agent/autonomy-intent.ts plans them, and says each reply): a mode
+ * named is chosen as it is in Home, but only ever with its card already agreed to there (a switch can't agree to a
+ * card); "asking" (ask me first again) takes Ember below Interactive by withdrawing every card's agreement. Built on
+ * the user's own setting, never the one with the policy applied. `voiceMatch`: main's Voice Match switch, for the plan.
  */
-export function modeIntents(o: { settings: ModeRecordDeps["settings"]; modes: ModeRecord; admin: () => AutonomyAdmin | null }): {
-  state(): { on: boolean; consented: boolean; managed: boolean };
-  /** True once it is as asked and recorded (a mode that asks less whose audit entry can't be written is undone: say so, not "Okay"). */
-  set(on: boolean, how: { via: "voice" | "typed"; verified: boolean }): boolean;
+export function modeIntents(o: { settings: ModeRecordDeps["settings"]; modes: ModeRecord; admin: () => AutonomyAdmin | null; voiceMatch: () => "off" | "on" | "unready" }): {
+  state(): { inForce: ModeInForce; agreed: ApprovalMode[]; managed: boolean; cap: ApprovalMode | null; checkOff: boolean; voiceMatch: "off" | "on" | "unready" };
+  /**
+   * True once it is as asked and recorded: the mode asked for is in force, or, for a mode that asks more, one that asks
+   * at least as much. A mode that asks less whose audit entry can't be written is undone: say so, not "Okay".
+   */
+  set(to: ApprovalMode | "asking", how: { via: "voice" | "typed"; verified: boolean }): boolean;
 } {
-  const inForce = () => modeInForce(o.settings.own().approvals, o.admin()) !== "asking";
+  const inForce = () => modeInForce(o.settings.own().approvals, o.admin());
   return {
-    state: () => ({ on: inForce(), consented: modeAgreed(o.settings.own().approvals, "interactive"), managed: !autonomyPermitted(o.admin()) }),
-    set: (on, how) => {
-      o.modes.as(how, () => o.settings.update({ approvals: on ? o.settings.own().approvals : WITHDRAWN }));
-      return inForce() === on;
+    state: () => {
+      const own = o.settings.own().approvals;
+      const admin = o.admin();
+      return {
+        inForce: inForce(), agreed: APPROVAL_MODES.filter(m => modeAgreed(own, m)), managed: !autonomyPermitted(admin),
+        cap: admin?.approvals?.maxMode ?? null, checkOff: admin?.features.aiReview === false, voiceMatch: o.voiceMatch(),
+      };
+    },
+    set: (to, how) => {
+      const before = inForce();
+      const own = o.settings.own().approvals;
+      // Never a card's agreement: only the mode, so a mode whose card isn't agreed to can't come into force this way.
+      o.modes.as(how, () => o.settings.update({ approvals: to === "asking" ? WITHDRAWN : { ...own, mode: to } }));
+      const after = inForce();
+      return to === "asking" ? after === "asking" : modeRank(to) > modeRank(before) ? after === to : modeRank(after) <= modeRank(to);
     },
   };
 }

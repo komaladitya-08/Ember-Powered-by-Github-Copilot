@@ -18,13 +18,23 @@ export const LATEST_ANSWER = "latest-answer";
 const CONTROLS: Readonly<Record<string, string>> = {
   "conversation:latest": LATEST_ANSWER, "conversation:message": "conversation-message", "conversation:stop": "conversation-stop",
   "computers:host": "host-add", "computers:wsl": "wsl-on", "access:ask": "p-ask", "access:stop": "p-stop",
-  // "Work without asking" by voice (autonomy-intent.ts): Interactive's row in How Ember asks, or its card's agree button
-  // (the card shown first).
+  // A mode asked for by voice or typed words (autonomy-intent.ts): its row in How Ember asks, or its card's agree button
+  // (the card shown first: modeCardRequested). Interactive's keep the names of Work without asking's.
   "privacy:autonomy-on": "mode-interactive", "privacy:autonomy-yes": "approvals-yes",
+  "privacy:assisted-on": "mode-assisted", "privacy:assisted-yes": "approvals-yes",
+  "privacy:autopilot-on": "mode-autopilot", "privacy:autopilot-yes": "approvals-yes",
   // Memory: its search for a forget request, its note's words for "get to know me" or Open Memory, never the note's
   // "I agree, remember", where a stray Enter or Space would agree; asked for by that name, the words (memory-r7).
   "memory:memory-query": "memory-query", "memory:memory-consent-text": "memory-consent-text", "memory:memory-yes": "memory-consent-text",
 };
+
+/** The requests that show a mode's card: the mode, or null for any other request. */
+const MODE_CARDS: Readonly<Record<string, "interactive" | "assisted" | "autopilot">> = {
+  "privacy:autonomy-yes": "interactive", "privacy:assisted-yes": "assisted", "privacy:autopilot-yes": "autopilot",
+};
+
+/** The mode whose card `value` asks Home to show (main's mode intents), or null. */
+export const modeCardRequested = (value: string): "interactive" | "assisted" | "autopilot" | null => MODE_CARDS[value] ?? null;
 
 /** A request as the page acts on it: the section's id (its heading is `${section}-h`) and the control's id, if any. */
 export interface SectionRequest {
