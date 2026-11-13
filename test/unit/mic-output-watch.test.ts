@@ -103,15 +103,37 @@ describe("whether other sound is playing (Windows' output level, while Ember may
     expect(told).toEqual([false]);
   });
 
-  it("keeps what played up to Ember's voice as playing through it and for its hold after, though nothing sounds at the first look then (V2-S1)", () => {
-    // The far side of a call talked right up to the read-out: over Ember's voice nothing can be told, so the last sound
-    // counts from its end. Forgotten, the first look after Ember said "quiet", and the far side's "Okay." was anyone's.
+  it("keeps what played up to Ember's voice as playing through it and until a word begun right after it has been judged, though nothing sounds at the first look then (V2-S1)", () => {
+    // The far side of a call talked right up to the read-out: over Ember's voice nothing can be told, and its "Okay." may
+    // be over before the watch's second look after it. Forgotten, the first look after Ember said "quiet", and that
+    // "Okay." was anyone's.
     const { told, busy } = watch();
     for (let t = 0; t < 2000; t += 200) busy.look(0.1, false, t);
     for (let t = 2000; t < 4000; t += 200) busy.look(0.2, true, t);
-    for (let t = 4000; t < 6200; t += 200) busy.look(0, false, t);
+    for (let t = 4000; t < 5000; t += 200) busy.look(0, false, t);
     expect(told).toEqual([true]);
-    busy.look(0, false, 6400);
+  });
+
+  it("lets what played before Ember's voice go 1.3 s after its last look at Ember speaking, when nothing has sounded since: a video paused before the read-out kept “other sound” on for 2.5 s after it, and the user's own prompt “Okay.” was dropped (voice-safety-x9-3)", () => {
+    const { told, busy } = watch();
+    for (let t = 0; t < 1600; t += 200) busy.look(0.1, false, t); // a video, paused 0.4 s before Ember reads the question out
+    for (let t = 1600; t < 2000; t += 200) busy.look(0, false, t);
+    for (let t = 2000; t < 4000; t += 200) busy.look(0.2, true, t);
+    for (let t = 4000; t < 5200; t += 200) busy.look(0, false, t + 2);
+    expect(told).toEqual([true]);
+    busy.look(0, false, 5202); // 1.4 s after the last look that found Ember speaking (3800)
+    expect(told).toEqual([true, false]);
+  });
+
+  it("still holds a video that goes on after Ember's voice for its 2.5 s, from its own last sound (voice-safety-x9-3)", () => {
+    const { told, busy } = watch();
+    for (let t = 0; t < 2000; t += 200) busy.look(0.1, false, t);
+    for (let t = 2000; t < 4000; t += 200) busy.look(0.2, true, t);
+    busy.look(0.2, false, 4000);
+    busy.look(0.1, false, 4200); // the video's next sentence, seen by its own sound
+    for (let t = 4400; t < 6600; t += 200) busy.look(0, false, t);
+    expect(told).toEqual([true]);
+    busy.look(0, false, 6800);
     expect(told).toEqual([true, false]);
   });
 
