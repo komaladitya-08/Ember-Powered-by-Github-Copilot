@@ -1280,7 +1280,8 @@ Ember needs a GitHub account with Copilot. **Sign in with GitHub** uses Ember's 
 enter the code Ember shows on GitHub's page). The app's public client id is checked in at
 `app/main/agent/github-app.ts` and built into `main.cjs`; `EMBER_GITHUB_CLIENT_ID` overrides it at run time. ci.yml's
 `checks` job asks GitHub for a device code with the built-in id, so a client id GitHub doesn't accept (or the app's
-device flow turned off) fails CI. Ember renews its own sign-in before the app's 8-hour token runs out. A build
+device flow turned off) fails CI at once; GitHub's own passing trouble (a 5xx, no answer, `request_failed`,
+`slow_down`, a body that isn't JSON) is asked again, four times at most over 50 s (`scripts/check-client-id.mjs`). Ember renews its own sign-in before the app's 8-hour token runs out. A build
 without a client id (a fork) shows **Connect with GitHub CLI** instead, and signs in through the GitHub CLI:
 
 ```bash
