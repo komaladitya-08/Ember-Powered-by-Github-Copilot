@@ -22,7 +22,8 @@
  * a page gathers ("12 comments", "5 minutes ago"; never one that names money, and never a count of anything else: "12
  * recipients"), comments arriving in a feed, and another control's own counter ("Like 10"). The names of the page's
  * other links, buttons, tabs and menu items outside its feeds bind too: a breadcrumb may be what names the thing
- * (modes-y9-x9-5).
+ * (modes-y9-x9-5). Inside a list or a table only text that names money binds (a currency's sign or word: a summary's
+ * "Amount: $50" or a total's cell; modes-y9-y9-8); a recipient or a selected file named only there does not.
  *
  * The rest of the page may change: pictures, lists, and for an ordinary control the text and buttons outside its own
  * group. Anything that
@@ -163,6 +164,10 @@ export function pageBinding(nodes: readonly AxNode[], at: number, title: string,
     // (Fields aside: a field binds above, exactly. Another control binds by its name, its own counter let through.)
     ...(risky ? {
       prose: nodes.flatMap((n, j) => (j !== doc && j !== at && !isField(n) && !FEED.test(n.role) && !MOVES.test(n.role) && (n.name.trim() || n.text?.trim()) && within(j, doc) && !inFeed(j)
+        ? [`${n.role}: ${prose(n)}`] : [])),
+      // And an amount wherever it stands, in a list or a table too: an order's or a transfer's summary is often one
+      // (modes-y9-y9-8: "Amount: $50" in a list item beside Send became "$5000" and the yes held).
+      amounts: nodes.flatMap((n, j) => (j !== doc && j !== at && !isField(n) && !MOVES.test(n.role) && within(j, doc) && (FEED.test(n.role) || inFeed(j)) && MONEY.test(`${n.name} ${n.text ?? ""}`)
         ? [`${n.role}: ${prose(n)}`] : [])),
     } : {}),
   });
