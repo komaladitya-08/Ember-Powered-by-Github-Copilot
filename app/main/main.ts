@@ -123,6 +123,7 @@ import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
 import { registerApprovalsIpc } from "./approvals-ipc";
 import { registerFirstRunIpc } from "./first-run";
+import { firstRunAllowsVoice } from "../shared/first-run";
 import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
 import { APPROVALS_IPC, modeCardVersion, modeRank } from "../shared/approvals";
@@ -2879,7 +2880,7 @@ function start(): void {
         returning: agreed > 0 && agreed < CONSENT_VERSION,
         locked: !!admin.error || !!admin.held,
         allowed: {
-          commands: commandMode(admin, "local") !== "off", memory: memoryAllowed(), voice: policy.features.voice !== false,
+          commands: commandMode(admin, "local") !== "off", memory: memoryAllowed(), voice: firstRunAllowsVoice(policy.features),
           screenshots: policy.features.screenImages !== false, interactive: autonomyPermitted(policy),
         },
         modelsReady: voice?.modelsReady ?? false,

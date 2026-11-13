@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { agreeFirstRun, firstRunView, registerFirstRunIpc, type FirstRunDeps } from "../../app/main/first-run";
 import { SettingsStore, hasConsent, type Settings, type SettingsPatch } from "../../app/main/settings";
 import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
-import { FIRST_RUN_IPC, FIRST_RUN_ROWS, firstRunDefaults, firstRunPlan, firstRunRows, type FirstRunChoice, type FirstRunFacts, type FirstRunRow } from "../../app/shared/first-run";
+import { FIRST_RUN_IPC, FIRST_RUN_ROWS, firstRunAllowsVoice, firstRunDefaults, firstRunPlan, firstRunRows, type FirstRunChoice, type FirstRunFacts, type FirstRunRow } from "../../app/shared/first-run";
 import { firstRunRowText } from "../../app/renderer/home/welcome-copy";
 import { AUTONOMY_CONSENT_TEXT, MEMORY_CONSENT_TEXT, MODE_CARD_TEXT, SCREEN_IMAGES_TEXT } from "../../app/renderer/home/copy";
 
@@ -99,13 +99,14 @@ describe("first run's rows", () => {
     expect(rows.filter(r => r.row !== row).every(r => r.offered)).toBe(true);
     expect(firstRunDefaults(rows)[row]).toBe(false);
     expect(firstRunPlan(f, ALL).on).not.toContain(row);
-    expect(firstRunPlan(f, ALL).off).not.toContain(row);
+    // Listening and screenshots, which a fresh file starts on, are written off as the row says (slice4-x9-2).
+    expect(firstRunPlan(f, ALL).off).toEqual(row === "voice" || row === "screenshots" ? [row] : []);
   });
 
   it("shows every row off and managed under a lockdown, and turns nothing on (slice4-4)", () => {
     const f = facts({ locked: true, allowed: { commands: false, memory: false, voice: false, screenshots: false, interactive: false } });
     expect(firstRunRows(f).every(r => !r.offered && r.why === "locked")).toBe(true);
-    expect(firstRunPlan(f, ALL)).toEqual({ on: [], off: [] });
+    expect(firstRunPlan(f, ALL)).toEqual({ on: [], off: ["voice", "screenshots"] });
     // A lockdown wins even where a feature would read as allowed.
     expect(firstRunRows(facts({ locked: true })).every(r => r.why === "locked")).toBe(true);
   });
@@ -114,7 +115,7 @@ describe("first run's rows", () => {
     const f = facts({ modelsReady: false });
     expect(firstRunRows(f).find(r => r.row === "voice")).toEqual({ row: "voice", offered: false, why: "models" });
     expect(firstRunPlan(f, ALL).on).toEqual(["commands", "memory", "screenshots", "interactive"]);
-    expect(firstRunPlan(f, ALL).off).toEqual([]);
+    expect(firstRunPlan(f, ALL).off).toEqual(["voice"]);
   });
 
   it("offers no commands row it can't show the card for (slice4-6)", () => {
@@ -184,6 +185,23 @@ describe("first run's agreement", () => {
     expect(agreeFirstRun(ok.d, NONE, SHA)).toEqual({ ok: true, failed: [] });
     expect([ok.store.own().screenImages, ok.store.own().speak, ok.store.own().wakeWord]).toEqual([false, false, false]);
     expect(ok.order).toEqual(["consent"]);
+  });
+
+  it.each([
+    ["without the speech models", { modelsReady: false }],
+    ["when the organisation turned listening off", { allowed: { ...ALL, voice: false } }],
+    ["under a lockdown", { locked: true }],
+  ] as const)("leaves spoken replies off with listening, as its row says, %s (slice4-x9-2)", (_name, f) => {
+    const r = rig({ facts: f });
+    expect(agreeFirstRun(r.d, ALL, SHA).ok).toBe(true);
+    const s = r.store.own();
+    expect([s.wakeWord, s.speak, s.voice.consent]).toEqual([false, false, false]);
+  });
+
+  it("shows the listening row managed when the organisation turned spoken replies off, as it can't speak them (slice4-x9-2)", () => {
+    expect(firstRunAllowsVoice({})).toBe(true);
+    expect(firstRunAllowsVoice({ voice: false })).toBe(false);
+    expect(firstRunAllowsVoice({ speak: false })).toBe(false);
   });
 
   it("doesn't turn commands on for a card other than the one the row showed (slice4-11)", () => {

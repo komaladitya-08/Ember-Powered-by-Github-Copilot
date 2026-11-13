@@ -63,18 +63,26 @@ export function firstRunDefaults(rows: readonly FirstRunRowState[]): FirstRunCho
 
 /**
  * What the agreement does, from the facts as they are when it is pressed (read again then, not taken from the page):
- * `on`, the rows to turn on with their own consent, in order; `off`, the rows a new user turned off that a fresh
- * settings file would otherwise start on (spoken replies and screenshots). A row that isn't shown,
- * isn't offered or was turned off gets nothing, and a returning user's own settings are never touched but for
- * Interactive's row.
+ * `on`, the rows to turn on with their own consent, in order; `off`, a new user's rows that a fresh settings file
+ * would otherwise start on (spoken replies and screenshots) and that aren't turned on here, switched off or not
+ * offered, so each stays off as its row says. A row that isn't shown, isn't offered or was turned off gets no consent,
+ * and a returning user's own settings are never touched but for Interactive's row.
  */
 export function firstRunPlan(f: FirstRunFacts, choice: FirstRunChoice): { on: FirstRunRow[]; off: FirstRunRow[] } {
   const rows = firstRunRows(f);
   const on = rows.filter(r => r.offered && choice[r.row] === true).map(r => r.row);
-  // Only a new user's rows that start on in a fresh file and that they turned off here. One not offered is left as it
-  // is: the organisation's policy keeps it off already, and without the speech models nothing listens anyway.
-  const off = f.returning ? [] : rows.filter(r => r.offered && choice[r.row] !== true && (r.row === "voice" || r.row === "screenshots")).map(r => r.row);
+  // One not offered is written off too: its row says it stays off, and spoken replies would otherwise speak through the
+  // system's voices without the speech models (slice4-x9-2).
+  const off = f.returning ? [] : rows.filter(r => !on.includes(r.row) && (r.row === "voice" || r.row === "screenshots")).map(r => r.row);
   return { on, off };
+}
+
+/**
+ * Whether the organisation leaves the listening row's two parts to the user: it turns on listening and spoken replies
+ * together, so a policy that turned either off shows it managed (slice4-x9-2).
+ */
+export function firstRunAllowsVoice(features: { voice?: boolean; speak?: boolean }): boolean {
+  return features.voice !== false && features.speak !== false;
 }
 
 /** Main's answer to the agreement. */
