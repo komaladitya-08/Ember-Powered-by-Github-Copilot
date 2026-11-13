@@ -578,7 +578,8 @@ const INLINE_LEAD = /^([^:：\n]{1,80}[:：])\s+(\S[\s\S]*)$/u;
  * else outside what it quotes is still said in Ember's own voice (voice-speaking-c7-3, voice-speaking-x7-1), however
  * the answer opened ("Sure.", "José wrote:": voice-speaking-y7-1). And the answer is judged in passages: after a lead-in
  * said in Ember's own voice (a piece ending with a colon), and where an answer that looked English so far first may be
- * another language's, what follows is judged by itself, from its first DECIDE_LETTERS letters (voice-speaking-r9-2).
+ * another language's, what follows is judged by itself, from its first DECIDE_LETTERS letters (voice-speaking-r9-2), and
+ * without the clearly English pieces it ends with (beforeClosing: product-platform-x9-1).
  */
 export class AnswerLanguage {
   private text = "";
@@ -628,7 +629,7 @@ export class AnswerLanguage {
       // What Ember's voice has said of this answer already looked English, and isn't counted against what may be another
       // language's: a passage after "Okay, reading it now." is judged from its first such sentence.
       if (this.spoken && piece !== null && another(this.held.join(" "))) this.passageFromHeld();
-      const found = speechLanguage(this.text, this.asked);
+      const found = speechLanguage(this.text, this.asked) ?? this.beforeClosing(end);
       if ((this.text.match(/\p{L}/gu) ?? []).length >= DECIDE_LETTERS) lang = this.lang = found;
       else if (end) {
         lang = found ?? this.followsRequest();
@@ -663,6 +664,24 @@ export class AnswerLanguage {
       this.passage = true;
     }
     return out;
+  }
+
+  /**
+   * The language of a passage that waits to be said, less the clearly English pieces it ends with, or null (also for
+   * an answer that isn't read out after a lead-in: "C'est la vie, as they say." stays English): a short message read
+   * out is judged without Ember's own closing question ("Shall I reply to it?"), whose English short words outnumber
+   * the message's, so that a chat message of two sentences was Kitten's for 15 of 15 (product-platform-x9-1). The
+   * question is then said in Ember's own voice, as any English-only piece of such an answer is. At the `end` of a
+   * passage too short for two short words of its language, Spanish's opening marks tell: English never writes them.
+   */
+  private beforeClosing(end: boolean): string | null {
+    if (!this.passage) return null;
+    let n = this.held.length;
+    while (n > 1 && englishClearly(this.held[n - 1].replace(QUOTED, " "))) n--;
+    const rest = this.held.slice(0, n).join(" ");
+    if (!rest.trim()) return null;
+    const found = n < this.held.length ? speechLanguage(rest, this.asked) : null;
+    return found ?? (end && /[¿¡]/u.test(outsideQuotes(rest)) && !englishClearly(rest) ? "es" : null);
   }
 
   /** What waits to be said is judged by itself from here on, without what was said before it. */

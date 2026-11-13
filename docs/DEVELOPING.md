@@ -1185,7 +1185,10 @@ be another language's in an answer that looked English so far ("Okay, reading it
 itself, from its own first 60 letters, and waits until then unless it is clearly English: counted with the lead-in, whose
 English short words outnumber a first sentence's, a Spanish, Italian or Portuguese email was read by Kitten for 14 of
 16 ordinary lead-ins and layouts (now none; an Italian or Portuguese passage's first sentence with no accent still is,
-after a lead-in without a colon or on the same line). Until then a piece that may be another language's ("Bien sûr !", with letters
+after a lead-in without a colon or on the same line). A passage is judged without the clearly English pieces it ends
+with: counted with Ember's own "Shall I reply to it?", a chat message of two sentences was Kitten's for 15 of 15 (now
+6: a passage under 60 letters still needs two different short words of its language, or Spanish's "¿" or "¡", so
+"Ciao Alex, come stai? Ci vediamo domani." and "Olá Alex, tudo bem? Até amanhã no escritório." are Kitten's). Until then a piece that may be another language's ("Bien sûr !", with letters
 English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
 typed in another language (three different short words of it outside quotes, and none only English writes:
 `requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer, unless its words outside quotes are clearly English. A reply too short to tell follows that

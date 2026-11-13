@@ -547,6 +547,35 @@ describe("AnswerLanguage judges a passage read out after an English lead-in by t
     expect(said.some(p => p.lang === lang)).toBe(true);
   });
 
+  // A chat message is seldom 60 letters: counted with the closing question, whose English short words outnumber its
+  // own, a short one was Kitten's for 15 of 15 (product-platform-x9-1).
+  const SHORT: Record<string, string> = {
+    es: "Hola Alex, ¿cómo estás? Nos vemos mañana.",
+    fr: "Salut Alex, ça va ? On se voit demain à midi.",
+    de: "Hallo Alex, wie geht's? Bis morgen im Büro.",
+  };
+  const SHORT_LEADS = ["The message reads:", "Here is the latest message from José:", "I found it. It says:"];
+  it.each(Object.keys(SHORT).flatMap(lang => SHORT_LEADS.flatMap(lead => ["\n\nShall I reply to it?", ""].map(close => [lang, lead, close] as const))))("reads a short %s message in that language's voice after “%s”, judged without the closing question (%j) (product-platform-x9-1)", (lang, lead, close) => {
+    const said = streamed(`${lead}\n\n${SHORT[lang]}${close}`, "read me the latest message");
+    const passage = said.filter(p => !flat(lead).includes(flat(p.text)) && flat(p.text) !== "Shall I reply to it?");
+    expect(passage.map(p => [flat(p.text), p.lang])).toEqual(passage.map(p => [flat(p.text), lang]));
+    expect(flat(passage.map(p => p.text).join(" "))).toBe(flat(SHORT[lang]));
+    expect(said.filter(p => !passage.includes(p)).map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
+
+  it("reads a message that reaches 60 letters only with the closing question in its own voice, and asks the question in Ember's (product-platform-x9-1)", () => {
+    const said = streamed("The message reads:\nHola Alex, ¿cómo estás? Nos vemos mañana en la oficina.\nShall I reply to it?", "read me the latest message");
+    expect(said.map(p => p.lang)).toEqual([null, "es", "es", null]);
+  });
+
+  it.each([
+    ["Your note says:\n\nBuy jalapeños.\n\nShall I add it to your list?"],
+    ["The message reads:\n\nSee you at Café Nero.\n\nShall I reply to it?"],
+    ["It says:\n\nRunning late!\n\nDo you want to answer it?"],
+  ])("still says a short English message and its closing question wholly in Ember's own voice (%j) (product-platform-x9-1)", answer => {
+    expect(streamed(answer, "read me the latest message").map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
+
   it("reads the passage in its own voice from its second sentence at the latest where the lead-in ends without a colon", () => {
     const said = streamed(`Okay, reading it now.\n\n${PASSAGES.es}\n\nShall I reply to it?`);
     expect(said.map(p => p.lang)).toEqual([null, "es", "es", "es", "es", null]);
