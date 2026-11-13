@@ -252,9 +252,10 @@ export interface HostOptions {
   health?: () => Pick<Health, "mic" | "speaks">;
   /**
    * Says `text` (Ember's last answer) aloud now, for "read it out" (voice-speaking-r6-1). False where Ember isn't
-   * speaking replies (speaking off, the organisation, no voice at all): nothing is said. Absent: never said.
+   * speaking replies (speaking off, the organisation): nothing is said. "no-voice" where no voice here can say it
+   * (voice-speaking-r9-3): nothing is said either, and the conversation says so. Absent: never said.
    */
-  readOut?: (text: string) => boolean;
+  readOut?: (text: string) => boolean | "no-voice";
   /**
    * Which tasks the owner asked for in a verified voice (voice-answer.ts TaskVoiceTrust): a task started in a turn whose
    * request Voice Match verified is granted it, and a task changed by a request it didn't verify loses it. Absent: none.
@@ -3138,10 +3139,10 @@ export class AgentHost {
     // over Ember's voice doesn't count, so the request is the conversation's as any other is then (voice-speaking-x7-4).
     if (readOutRequest(text) && this.betweenTurns() && !this.confirmer?.waiting) {
       const last = this.lastAnswer({ readable: true });
-      let said = false;
+      let said: boolean | "no-voice" = false;
       try { said = !!last && (this.o.readOut?.(last) ?? false); } catch (err) { this.o.log.warn("agent.read_out_failed", { err }); }
       this.o.log.info("agent.read_out", { said, answer: !!last });
-      if (!said) this.answerLocally(text, last ? READ_OUT_REPLY.silent : READ_OUT_REPLY.none, how);
+      if (said !== true) this.answerLocally(text, !last ? READ_OUT_REPLY.none : said === "no-voice" ? READ_OUT_REPLY.noVoice : READ_OUT_REPLY.silent, how);
       // No line and no turn of the model's come for it: Home is told it was answered, or its composer says
       // "Thinking…" for good (voice-speaking-x7-2). With a turn told and not yet over, that turn's end says it.
       else if (this.turnTold === "idle" && !this.turnEnding) {

@@ -1246,12 +1246,16 @@ function start(): void {
    * "Read it out": Ember's last answer said once, as it would have been said (code and addresses left to the bubble, its
    * language's voice), in place of whatever Ember is saying. False, and nothing said, where Ember may not speak now
    * (voice-speaking-r6-1), or while a question is up, as no answer is said then: its own voice isn't cut
-   * (voice-speaking-x7-4).
+   * (voice-speaking-x7-4). "no-voice", and nothing said, where no voice can say any of it: the system's voice was last
+   * found not to speak, and Ember's own, which reads only English, isn't there or has none of it to read. Home said
+   * "Reading the last answer out." over silence (voice-speaking-r9-3).
    */
-  const readOut = (answer: string): boolean => {
+  const readOut = (answer: string): boolean | "no-voice" => {
     if (!voice || !maySpeak() || confirmer?.waiting) return false;
     const pieces = answerPieces(answer);
     if (!pieces.length) return false;
+    const own = voice.nextVoice !== "system";
+    if (speechHeard === false && !pieces.some(p => own && !p.lang)) return "no-voice";
     resetAnswerSpeech();
     pieces.forEach((p, i) => voice?.speak(p.text, { append: i > 0, lang: p.lang }));
     return true;
