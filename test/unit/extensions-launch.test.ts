@@ -9,6 +9,8 @@ import crypto from "node:crypto";
 import http from "node:http";
 import { build } from "esbuild";
 import { appEnv } from "../../app/main/hands/system";
+import { PassThrough } from "node:stream";
+import { BRIDGE_WORDS, bridge } from "../../app/main/extensions/launch";
 
 let dir: string;
 let launcher: string;
@@ -174,6 +176,33 @@ describe("the launcher between the runtime and a remote server (integrations-c9-
     expect(seen.filter(s => s.at === "other")).toEqual([]);
     expect(lines.find(l => l.id === 3)).toMatchObject({ error: { message: expect.stringMatching(/sent Ember to another address/) } });
     expect(JSON.stringify(lines)).not.toContain("from the other host");
+  });
+});
+
+describe("the bridge's event stream from a remote server (r10-integrations-x10-2)", () => {
+  it("drops an event longer than the cap, as a stdio server's line, and tells the runtime the call failed instead of growing without bound", async () => {
+    // One event of 200 data lines of 100 characters: 20 KB, with the cap at 1,000.
+    const parts = ['data: {"jsonrpc":"2.0","id":1,"result":{"t":['];
+    for (let i = 0; i < 200; i++) parts.push(`data: "${"x".repeat(100)}",`);
+    parts.push('data: "end"]}}', "", "");
+    let pulled = 0;
+    const fakeFetch = (async () => {
+      const enc = new TextEncoder();
+      const body = new ReadableStream({ pull(c) { if (pulled < parts.length) c.enqueue(enc.encode(`${parts[pulled++]}\n`)); else c.close(); } });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }) as unknown as typeof fetch;
+    const input = new PassThrough(), output = new PassThrough();
+    let out = "";
+    output.on("data", d => { out += String(d); });
+    const done = bridge({ url: "https://a.example/mcp", headers: {} }, { input, output }, { fetch: fakeFetch, signal: new AbortController().signal, max: 1000 });
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: {} })}\n`);
+    input.end();
+    await done;
+    const lines = out.split("\n").filter(Boolean);
+    expect(Math.max(...lines.map(l => l.length))).toBeLessThan(1000);
+    expect(lines.map(l => JSON.parse(l) as unknown)).toEqual([{ jsonrpc: "2.0", id: 1, error: { code: -32000, message: BRIDGE_WORDS.failed } }]);
+    // The reader stopped soon after the cap rather than taking the whole event.
+    expect(pulled).toBeLessThan(30);
   });
 });
 

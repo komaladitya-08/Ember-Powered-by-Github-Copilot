@@ -232,19 +232,22 @@ export function bridge(remote: RemoteSpec, ends: { input: NodeJS.ReadableStream;
       const decoder = new TextDecoder();
       let held = "";
       let data: string[] = [];
+      // What an event's data lines hold so far: an event is one message, capped as a stdio server's line is
+      // (r10-integrations-x10-2: `held` empties line by line, so an endless event grew without bound).
+      let dataSize = 0;
       for (;;) {
         const { done, value } = await reader.read();
         if (done || !value) break;
         held += decoder.decode(value, { stream: true });
-        if (held.length > max) { try { await reader.cancel(); } catch { /* already closed */ } held = ""; break; }
+        if (held.length + dataSize > max) { try { await reader.cancel(); } catch { /* already closed */ } held = ""; data = []; break; }
         if (!sse) continue;
         // An event stream: each event's data lines, joined, are one message; a blank line ends the event.
         let nl: number;
         while ((nl = held.indexOf("\n")) >= 0) {
           const line = held.slice(0, nl).replace(/\r$/, "");
           held = held.slice(nl + 1);
-          if (line === "") { if (data.length) pass(data.join("\n"), waiting); data = []; }
-          else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+          if (line === "") { if (data.length) pass(data.join("\n"), waiting); data = []; dataSize = 0; }
+          else if (line.startsWith("data:")) { const d = line.slice(5).replace(/^ /, ""); data.push(d); dataSize += d.length + 1; }
         }
       }
       if (sse) { if (data.length) pass(data.join("\n"), waiting); }
