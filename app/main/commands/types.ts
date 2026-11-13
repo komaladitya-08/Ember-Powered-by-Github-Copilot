@@ -292,6 +292,13 @@ export interface CommandStamp {
    * on the PC when the request is sent (no clock is compared across machines: critique integration-6). null: no yes.
    */
   approval: { ageMs: number } | null;
+  /**
+   * Autopilot on the PC announced the command with its Stop countdown instead of asking, and the user didn't stop it:
+   * how long ago the countdown ended, measured as an approval's age is. Never a yes: gate 2 lets it stand in for one
+   * only where its own administrator allows Autopilot, and never for a command that would read or print secrets,
+   * outlive the kill switch or that it can't tell the effect of (commands/autopilot.ts askedOfFinding).
+   */
+  announced?: { ageMs: number };
 }
 
 /** How a run ended. */

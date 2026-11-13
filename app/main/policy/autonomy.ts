@@ -5,7 +5,8 @@
  * another window is announced instead (a line in the bubble and the task's card, and an audit entry marked `autonomy`):
  * what Work without asking did with every scope on, plus the app switch. It never touches what policy finds risky
  * (sending, deleting, paying, security settings, destructive keys, secrets…), which asks every time with no "Always",
- * nor any hard "never".
+ * nor any hard "never". Assisted adds a check of such a question against the user's own words; Autopilot announces
+ * every question instead of asking it, but for the few commands that still ask there, and keeps every "never".
  *
  * Fail closed: a mode is in force only with its own card agreed to as it reads now (FEATURE_CONSENT_VERSION) and only
  * where the administrator allows it; otherwise Ember is below Interactive ("asking") and asks as it did before the
@@ -49,17 +50,18 @@ export const autonomyPermitted = (admin: AutonomyAdmin | null | undefined): bool
   !admin || (admin.features.autonomy !== false && admin.allowGrants !== false && !admin.confirmEveryAction && admin.features.actions !== false);
 
 /**
- * The modes Home offers a row and a card for, and the only ones its choice may name (chooseMode). Assisted and
- * Autopilot join as each is built.
+ * May Autopilot be in force under this administrator's policy at all: its switches for a mode, and its cap? What a
+ * computer reached over SSH asks of its own policy before it lets the PC's Autopilot stand in for the user's yes
+ * (app/remote/gate.ts): that policy holds there as the organisation's.
  */
-export const OFFERED_MODES: readonly ApprovalMode[] = ["interactive"];
+export const autopilotPermitted = (admin: AutonomyAdmin | null | undefined): boolean =>
+  autonomyPermitted(admin) && (admin?.approvals?.maxMode ?? "autopilot") === "autopilot";
 
-/**
- * The modes that can be in force. Until Assisted's check is built, Assisted is Interactive plus the command reviewer,
- * as the old "Ask only about dangerous commands" switch was; Autopilot isn't built, so a settings.json that names it
- * (by hand: Home doesn't offer it) is Interactive at most.
- */
-const BUILT: readonly ApprovalMode[] = ["interactive", "assisted"];
+/** The modes Home offers a row and a card for, and the only ones its choice may name (chooseMode). */
+export const OFFERED_MODES: readonly ApprovalMode[] = ["interactive", "assisted", "autopilot"];
+
+/** The modes that can be in force: a mode named in settings.json that isn't one of these is Interactive at most. */
+const BUILT: readonly ApprovalMode[] = ["interactive", "assisted", "autopilot"];
 
 /**
  * Held below Interactive in memory (PR #193 review): a mode that asks less that couldn't be audited and couldn't be
@@ -113,21 +115,33 @@ export interface ApprovalInputs {
   scopes: AutonomyScopes | null;
   /** PolicyInputs.trustAskedApps: no "Let me work in …?" in an app the user asked for help in. */
   askedApps: boolean;
-  /** A command that would ask goes to the reviewer first (commands/review.ts). */
-  reviewCommands: boolean;
+  /**
+   * Assisted's check (PolicyInputs.assisted, PolicyEngine.assist; for commands the reviewer, commands/review.ts): a step
+   * or a command that would ask goes to it first, and goes ahead announced when it finds it in the user's own words.
+   */
+  check: boolean;
+  /**
+   * Autopilot (PolicyInputs.autopilot, the command flow's and the extensions gate's): a question is announced instead of
+   * asked, a risky one included. What still asks there is each consumer's own to keep (a command that would read or
+   * print secrets or outlive the kill switch, the organisation's and the user's "ask every command"), and so is every
+   * refusal.
+   */
+  autopilot: boolean;
 }
 
-const ASKING: Readonly<ApprovalInputs> = Object.freeze({ scopes: null, askedApps: false, reviewCommands: false });
-const INTERACTIVE: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, reviewCommands: false });
-const ASSISTED: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, reviewCommands: true });
+const ASKING: Readonly<ApprovalInputs> = Object.freeze({ scopes: null, askedApps: false, check: false, autopilot: false });
+const INTERACTIVE: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, check: false, autopilot: false });
+const ASSISTED: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, check: true, autopilot: false });
+const AUTOPILOT: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, check: false, autopilot: true });
 
 /**
  * The inputs `mode` gives: below Interactive, what all three of the old switches off gave; in Interactive, what Work
  * without asking with every scope and the app switch gave, so the policy engine decides exactly as it did; in
- * Assisted, the command reviewer too, as the old switch ran it.
+ * Assisted, the same with its check on top, which can only turn a question into an announced step; in Autopilot, the
+ * same as Interactive with every remaining question announced instead (never Assisted's check: no model decides there).
  */
 export function approvalInputs(mode: ModeInForce): Readonly<ApprovalInputs> {
-  return mode === "asking" ? ASKING : mode === "assisted" ? ASSISTED : INTERACTIVE;
+  return mode === "asking" ? ASKING : mode === "assisted" ? ASSISTED : mode === "autopilot" ? AUTOPILOT : INTERACTIVE;
 }
 
 /** The scopes in force now (approvalInputs' view of modeInForce): every one, or null below Interactive. */
@@ -147,6 +161,7 @@ export function approvalsState(own: ApprovalsSetting, admin: AutonomyAdmin | nul
     offered: [...OFFERED_MODES],
     agreed: APPROVAL_MODES.filter(m => modeAgreed(own, m)),
     cap: admin?.approvals?.maxMode ?? null,
+    ...(admin?.features.aiReview === false ? { checkOff: true as const } : {}),
   };
 }
 

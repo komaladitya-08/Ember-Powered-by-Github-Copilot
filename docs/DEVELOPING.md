@@ -473,10 +473,14 @@ yours; it asks before dangerous ones ([COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md)
 
 **How Ember asks** (Apps & privacy; owner decision of 2026-11-12, PLAN.md §2 "Approvals"). One choice of approval
 modes replaces "Work without asking" and the two switches that sat beside it ("Don't ask before working in an app I
-asked for help with" and "Ask only about dangerous commands"). **Interactive** is the mode built so far; Assisted and
-Autopilot join it as they are built. Pressing a mode shows its card first: what is announced instead of asked, what
-still asks every time, what never happens, that a stop always works, and that anyone near the computer can answer a
-question by voice while Voice Match is off. **I agree** records the agreement and chooses the mode in one step
+asked for help with" and "Ask only about dangerous commands"): **Interactive**, **Assisted** and **Autopilot**.
+Pressing a mode shows its card first: for Interactive, what is announced
+instead of asked, what still asks every time, what never happens, that a stop always works, and that anyone near the
+computer can answer a question by voice while Voice Match is off; for Assisted, that a lighter AI model decides
+whether a step matches what you asked, what it is sent, that it can be wrong, what it never clears, and that what it
+clears is announced and recorded; for Autopilot, in four short paragraphs, that Ember doesn't ask before it acts and
+that you accept that risk, what it still tells you and still asks, what it never does, and how to stop it and that
+your organisation can turn it off. **I agree** records the agreement and chooses the mode in one step
 (`APPROVALS_IPC.choose`: main checks the sender, the mode and the card's version, and Home's other settings changes
 never carry the mode); **Not now** leaves the mode as it was. The arrow keys move between the modes without choosing
 one, and the keyboard goes back to the mode's row when its card closes. Until Interactive's card is agreed to
@@ -487,11 +491,68 @@ app's message box and before moving text between apps. The choice is kept in `se
 and under `consent` each mode's card as agreed to); the `autonomy` and `trust` keys of an earlier `settings.json` are
 read once and gone with Ember's next save, and nothing in them chooses a mode or agrees to a card. A mode is in force
 only with its own card agreed to as it reads now and where the organisation allows it, so a `settings.json` edited by
-hand gets no more than Home gives: a mode Ember doesn't offer yet works as Interactive at most (`"assisted"` with its
-own card's record runs the command reviewer of [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md) §2.5a, as the old switch did,
-and is otherwise Interactive). Where the organisation keeps Ember below Interactive (`features.autonomy: false`,
-`allowGrants: false`, `confirmEveryAction`, `features.actions: false`, a lockdown) the modes are locked and the note
-under them says so in one sentence; where it caps the mode (`approvals.maxMode`) a higher choice works as the cap.
+hand gets no more than Home gives: Assisted needs its own card's record (`FEATURE_CONSENT_VERSION.assisted`) and
+Autopilot its own (`FEATURE_CONSENT_VERSION.autopilot`), each working as the next mode down that is agreed to
+without it. Autopilot is never the default and is chosen only in Home: a `settings.json` changed to it while Ember
+runs is put back as it was (the log says `autonomy.autopilot_by_file`), since a program that edited the file could
+write the agreement too; one found at start is taken as the last run left it and recorded (`via: "file"`). While
+Autopilot is in force the note under the modes says so first: "Autopilot is on: Ember sends, deletes, pays and
+installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it." Where the organisation keeps Ember below
+Interactive (`features.autonomy: false`, `allowGrants: false`, `confirmEveryAction`, `features.actions: false`, a
+lockdown) the modes are locked and the note under them says so in one sentence; where it caps the mode
+(`approvals.maxMode`) a higher choice works as the cap and the rows above it are locked ("Your organisation allows
+Interactive at most."); and where it turned the check off (`features.aiReview: false`) Assisted's row is locked, the
+note says "Your organisation turned off the check Assisted needs, so Assisted can't be chosen.", and an Assisted
+chosen earlier works as Interactive.
+
+**Assisted** is Interactive with one thing more: where Ember would ask, it first checks the step against what you
+asked (`PolicyEngine.assist` for an app step, reached from the worker right before the question would be put up; the
+reviewer of [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md) §2.5a for a command). The check is a Copilot session of its
+own with no tools, deleted once it has answered, on the conversation's lighter model. It is sent your own words for
+the task (typed or spoken, also where Ember can't tell your voice from its speakers; never a suggestion you clicked,
+words heard over Ember's own voice or a routine's saved steps, for which the request that ran the routine counts) and
+Ember's own description of the step, a line for each part: what kind of step it is, the app, the window's title, the
+control's role and name, a dialog's words, the text to type or the option chosen, where carried text came from, and
+why Ember's rules would ask. Every part that came from the screen, an app or the task's model is quoted as untrusted
+data; the check never sees the screen, a read or a command's output. It answers with one of two fixed words. A match
+lets the step go ahead, a risky one included: the bubble and the task's card say "…, without asking: I checked it
+against what you asked.", the audit entry carries `autonomy: true` and `review: "match"`, and What Ember did shows
+"Without asking" with "Ember's check found this step in what you asked." No match, any other answer, an error or no
+answer within 20 seconds puts the question up as before (`review: "no-match"` or `"none"` on its entry). While the
+check runs the task's bubble says "Checking this step against what you asked…"; Ember never shows a question and then
+withdraws it, and a Stop ends the wait at once. It asks without the check: in a task with no words of yours; where
+your organisation asks you to confirm every action; before borrowing again once you took the mouse or keyboard back
+in that task; and for a step it can't show the check whole (a name the screen reader withheld, a dialog read in part,
+a name over 200 characters, typed text over 1,500, a request over 6,000). It never checks what Ember refuses, and a
+step you said no to stays refused without reaching it. A task that text on screen tried to steer, that went off-task
+or where you said no has its steps checked too, the check being told so. On another computer reached over SSH every
+step still asks (its own policy asks for each one), and steps in WSL apps ask as below Interactive.
+
+**Autopilot** never asks about a step in an app. Every question Interactive would put up goes ahead instead,
+announced, a risky one included (`PolicyEngine.autopilotStep`, at the end of the engine's own judgement, on
+`PolicyInputs.autopilot`): sending, deleting, paying, installing, a security or system setting, a dialog's answer, a
+destructive key, a step you didn't ask for. The bubble and the task's card say the kind of step, the app and a size,
+never a control's name, typed or screen text ("Clicking in Thunderbird, without asking: Autopilot is on."), the audit
+entry carries `autonomy: true` and `mode: "autopilot"` with why the step would have asked, and What Ember did shows
+"Without asking" with "Autopilot was on, so Ember didn't ask." A task that text on screen or in a command's output
+tried to steer, that went off-task or where you said no stays announced too, each such step recorded as Autopilot's;
+the step you said no to is still refused before anything else, however it is reached. Once you take the mouse or
+keyboard back from a task, Ember borrows nothing more in that task: Interactive asks before the next borrow, and
+Autopilot, which has no question to put, refuses it ("the user took the mouse back earlier in this task, and
+Autopilot doesn't ask before using it again"). Commands are in [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md) §2.5b. A
+call to an extension's tool that would ask is said in the conversation's bubble instead ("Using a tool from
+<extension>, without asking: Autopilot is on.", never the tool's name or its arguments; audited as `verdict:
+"announce"`, `mode: "autopilot"`), and asks where that can't be said. On a computer reached over SSH each step that
+would ask is announced where neither administrator asks for a click before every action or forbids "Always" or
+acting; the step's stamp says it was announced, never that you said yes, and the remote's own check accepts that only
+where its own administrator allows Autopilot (it refuses the step otherwise). Autopilot keeps every refusal exactly
+as Interactive has it (password, card and secret fields, your terminals, never-look and Ember's own windows, the
+system's sign-in and password prompts, desktop-level keys and Ember's own shortcuts, making a file executable),
+consent and each first-use card, masked screenshots, the audit log (a step that can't be recorded isn't taken), Stop,
+the limits on tasks, steps, time and actions a minute, and your organisation's policy: `confirmEveryAction`,
+`features.autonomy: false`, `allowGrants: false`, `features.actions: false` and a lockdown keep it out of force, and
+`approvals.maxMode` caps it. `features.aiReview: false` doesn't touch it: no model decides anything in Autopilot.
+The vault isn't built, so nothing is filled into a password, card or secret field or a sign-in window in any mode.
 
 In Interactive, Ember doesn't ask before its first step in an app (in an app you asked for help in, the one you were
 in or one your request names, that step isn't announced either),
@@ -1516,9 +1577,9 @@ reads the new policy whole. Every key is optional:
 | `features.updates` | `false`: Ember never asks GitHub about new versions ("Tell me when a new version is out" off, managed) |
 | `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left unused (signing out still deletes it). An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
-| `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user (the Assisted mode's check is off, so a chosen Assisted works as Interactive) |
+| `features.aiReview` | `false`: Assisted's check is off. No step and no command is sent to a model to be checked against the user's words; what it would have checked asks the user. Assisted can't be chosen (its row in How Ember asks is locked and says why), and an Assisted chosen earlier works as Interactive |
 | `features.autonomy` | `false`: no approval mode is in force (How Ember asks shows managed); Ember asks before a first step in an app, a borrow and moving text between apps, as it did before the modes. `allowGrants: false`, `confirmEveryAction: true`, `features.actions: false` and LOCKDOWN do the same. `true` turns nothing on. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
-| `approvals.maxMode` | The highest approval mode users may choose: `"interactive"`, `"assisted"` or `"autopilot"`. It can only lower the mode: a user's higher choice works as this one at most (How Ember asks says "Your organisation allows Interactive at most…"), a mode above it can't be chosen, and it puts no mode in force by itself. To keep Ember below Interactive, use `features.autonomy: false`. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
+| `approvals.maxMode` | The highest approval mode users may choose: `"interactive"`, `"assisted"` or `"autopilot"`. It can only lower the mode: a user's higher choice works as this one at most (How Ember asks says "Your organisation allows Interactive at most…"), a mode above it can't be chosen, and it puts no mode in force by itself. `"interactive"` or `"assisted"` forbids Autopilot, in which Ember sends, deletes, pays, installs and runs dangerous commands without asking; on a computer reached over SSH, that computer's own policy is asked too, so a cap there keeps the PC's Autopilot from standing in for a yes on it. To keep Ember below Interactive, use `features.autonomy: false`. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`). It always wins over a user's own provider, which Home then shows as managed |
 | `features.userProvider` | `false`: users can't point Ember at a model service of their own ("Use my own model provider" in Home › Models & connections is off and managed; a key already saved stays unused until signing out or Remove deletes it). Allowed when absent; the organisation's own `provider` and LOCKDOWN turn it off too, and `models.allowed` and pinned models still hold for the user's model ids. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
@@ -1700,6 +1761,15 @@ clips without the TTS voice (`node scripts/voice/prepare.mjs --tts-voice` fetche
 is "not measured". With the voice it adds 75 synthesized renderings, made in memory on every run (nothing is written
 to `test/fixtures`). The takeover and kill-switch trials give up after 2 s each, and every CI job has a timeout. The
 nightly workflow passes its secrets to the eval step only and installs dependencies with `npm ci --ignore-scripts`.
+
+**Assisted's check has a gate of its own**, run by hand because it needs a real model: `npm run eval:review`
+(`node eval/review/run.mjs [--repeat N] [--only id,id] [--commands | --steps]`, with `EMBER_EVAL_MODEL` and
+`COPILOT_GITHUB_TOKEN` or `GH_TOKEN`, or `EMBER_EVAL_PROVIDER_URL` with `EMBER_EVAL_API_KEY`). It gives the check
+`eval/review/commands.json` (116 labelled commands: 56 the request asks for, 60 it must not clear) and
+`eval/review/steps.json` (23 labelled app steps, each shown as Ember shows the check a step: 10 the request asks for,
+13 it must not clear, steering text in a control's name and in typed text among them), three times each by default.
+It fails on any case cleared that must ask, and reports how many of the others were cleared every time. Run it on the
+model the check uses, the conversation's lighter one, before a release; no CI job runs it.
 
 ## 9. Troubleshooting
 

@@ -29,6 +29,8 @@ import type { TargetId } from "../../shared/targets";
 import { pendingCommand } from "./pending";
 import { carriedText } from "./carried";
 import { notReviewable, reviewedDecision, type CommandReviewer } from "./review";
+import { AUTOPILOT_LINE, AUTOPILOT_RULE, askedOfFinding, autopilotCommand } from "./autopilot";
+import { AUTOPILOT_WORDS } from "../policy/policy";
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
@@ -42,7 +44,7 @@ import { outputTaint } from "./taint";
 import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
-  type CommandService, type DecideInput, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
+  type CommandService, type DecideInput, type Finding, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
   type RunSpec, SHELL_FAMILY, type ShellId, standingFindings,
 } from "./types";
 import { judgedText } from "./unroll";
@@ -59,6 +61,12 @@ export interface CommandFlowContext {
      * never count for an announcement, but the card says the user asked by voice rather than "You didn't ask for this."
      */
     spokenWords?: () => string;
+    /**
+     * The user's own words for Assisted's check (Worker.checkWords): what the reviewer reads a command against, spoken
+     * requests heard unchecked included, never a suggestion's, a routine's saved steps or words heard over Ember's
+     * voice. Absent: commandWords.
+     */
+    checkWords?: () => string;
     /**
      * The user's own words for this task, quoted on one line (Worker.ownWordsLine), or "" for none: the "Your task:" line
      * of a question about a command they didn't ask for, or of any in a task that was steered (Question.taskLine;
@@ -103,10 +111,17 @@ export interface CommandFlowContext {
    */
   onDeclined?: (expired?: boolean) => void;
   /**
-   * AI review (review.ts), while the approval mode in force reviews commands (Assisted): a command that would ask, and
-   * that no hard rule makes ask, is reviewed first, and runs with its announcement when the reviewer finds it routine.
+   * Assisted's check for commands (review.ts), while Assisted is the approval mode in force: a command that would ask,
+   * and that may be reviewed at all (notReviewable), is shown to the reviewer first, and runs with its announcement
+   * when the reviewer finds it in the user's own words.
    */
   review?: CommandReviewer;
+  /**
+   * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot), read at each command: one
+   * that would ask announces with its Stop instead, in a task that was steered or told no too, but for the few that
+   * still ask there (autopilot.ts autopilotAsks). Absent or false: nothing changes.
+   */
+  autopilot?: () => boolean;
   /** Home project commands always need the exact command card, with the chosen folder still present at launch. */
   projectFolderCurrent?: () => boolean;
   /**
@@ -156,6 +171,9 @@ let judge: CommandJudge = CL_JUDGE;
 export function setCommandJudge(j: CommandJudge | null): void {
   judge = j ?? CL_JUDGE;
 }
+
+/** What a task's bubble says while Assisted's check reads a command against the user's words, before any card (flow). */
+export const CHECKING_COMMAND = "Checking this command against what you asked…";
 
 /** The card's line when the user asked for it by voice where Ember can't tell their voice from the speakers (OWNER V1). */
 export const SPOKEN_LINE = "You asked by voice. Ember can't tell your voice from what your speakers play, so it checks first.";
@@ -618,6 +636,58 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
   };
 }
 
+/** Words that turn a part of a request round: "do not push", "don't delete src", "never force", "everything except build". */
+const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?t|never|not|without|except|no|nothing|avoid)(?=$|[^\p{L}\p{N}])/giu;
+
+/**
+ * Do the user's own words rule out what these findings say the command does? What the card's "You didn't ask for
+ * this." already reads (intent.ts ruledOut: a part that says not to names the kind of step and nothing else), and also
+ * a step the words name only where they say not to ("do not push feature-x to GitHub yet": read without its "not" the
+ * words name the push, read as said they don't). Autopilot keeps the question for such a command: the user's no, said
+ * in advance. It only ever keeps a question, so a doubt counts as ruled out.
+ */
+export function wordsRuleOut(findings: readonly Finding[], words: string): boolean {
+  if (!words.trim() || findings.length === 0) return false;
+  if (ruledOut(findings, words)) return true;
+  return !mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "));
+}
+
+/** A bare program name: no path, option, assignment or quoting. */
+const BARE_PROGRAM = /^[A-Za-z_][\w.+-]*$/;
+/** A word as a POSIX shell would take it back whole. */
+const shellWord = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`);
+
+/**
+ * What a wrapper may hide where the classifier read its options wrongly (the brief's `sudo -h host printenv`: at this
+ * commit `host` is taken for the program and the command behind it goes unjudged, so the decision says only that it
+ * runs as an administrator, which Autopilot announces). For each POSIX command run behind a wrapper about whose own
+ * program the classifier found nothing, every trailing part of its words that starts with a bare program name is
+ * judged as a command of its own (`judge`: the classifier, which this only calls), and a finding there that would read
+ * or print secrets or outlive the kill switch is returned, for Autopilot to keep the question. It can only add a
+ * question (`sudo ls env` asks): never used to let anything through. A part that can't be judged counts as unclear.
+ */
+export function behindWrappers(cls: Pick<Classification, "commands" | "findings">, judge: (text: string) => readonly Pick<Finding, "cls" | "rule">[]): Pick<Finding, "cls" | "rule">[] {
+  const out: Pick<Finding, "cls" | "rule">[] = [];
+  cls.commands.forEach((c, k) => {
+    if (c.family !== "posix" || c.wrappers.length === 0 || c.args.some(a => a === null)) return;
+    // Judged already: a finding about the program itself, not only about the wrapper it runs behind.
+    if (cls.findings.some(f => f.at === k && !c.wrappers.includes(f.program.split(" ")[0]))) return;
+    const args = c.args as string[];
+    for (let i = 0; i < Math.min(args.length, 16); i++) {
+      if (!BARE_PROGRAM.test(args[i])) continue;
+      try {
+        for (const f of judge(args.slice(i).map(shellWord).join(" "))) {
+          const why = askedOfFinding(f);
+          if (why === "secret" || why === "outlives-stop") out.push({ cls: f.cls, rule: f.rule });
+        }
+      } catch {
+        out.push({ cls: "unclear", rule: "unclear.behind-wrapper" }); // not judged: it asks
+      }
+    }
+  });
+  return out;
+}
+
 /**
  * "Work without asking" for a command (owner decision of 2026-11-02, PLAN.md §2 "Commands"): an ordinary command whose
  * only reason to ask is that it carries text read elsewhere in the task (rule "carried", no finding), in a task with the
@@ -860,17 +930,39 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // countdown and the card still show where the text came from).
   const autonomous = autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0, kind: binding.kind });
   if (autonomous) d = autonomous;
-  // AI review: a command that asks only by the danger rules is shown to the reviewer with the user's words; one it finds
-  // routine runs with its announcement (Stop countdown) instead. The hard asks are never reviewed (review.ts).
+  // Autopilot: a command that still asks is announced with its Stop countdown instead, whatever the task was held to
+  // asking for (steered, off-task, the user said no: the refused command itself was refused above), as an
+  // administrator too. Only a command that would read or print secrets, keep running after Stop or do something Ember
+  // can't tell, one the user's own words rule out, and what the organisation's or the user's own "ask every command"
+  // requires, still ask (autopilot.ts).
+  if (ctx.autopilot?.() && d.verdict === "ask") {
+    // (Their own words against it count wherever they were heard: where Ember can't tell the user from its speakers too.)
+    const standing = standingFindings(cls.findings, paths);
+    // (And what a wrapper may hide where the classifier read its options wrongly: judged apart, to keep a question only.)
+    const hidden = behindWrappers(cls, text => j.classifyCommand(text, shell, cctx).findings);
+    // A line judged as its written-out form (a `[[ … ]]` test read as `[ … ]`: unroll.ts) never announces, here either:
+    // what it does behind the test is Ember's reading of it, so it counts as a command it can't tell (commands-b7-2).
+    if ((cls as { writtenOut?: boolean }).writtenOut === true) hidden.push({ cls: "unclear", rule: "unclear.written-out" });
+    const auto = autopilotCommand(d, { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) });
+    if (auto) d = auto;
+  }
+  // Assisted's check: a command that asks is shown to the reviewer with the user's own words and what the rules found
+  // (the card's lines: an administrator's command, a steered task, carried text and another computer named say so
+  // there); one it finds in those words runs with its announcement (Stop countdown) instead. A command that would read
+  // or print secrets or keep running after Stop, and what the organisation's or the user's own "ask every command"
+  // requires, are never reviewed (review.ts). The task's bubble says it is checking; a Stop doesn't wait for the answer.
   if (ctx.review && d.verdict === "ask") {
-    const blocked = notReviewable(d, {
-      words, privileged: facts.privileged, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, elsewhere: others.length > 0 || places.length > 0,
-    });
+    const checkWords = ctx.task.checkWords?.() ?? words;
+    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command });
     if (blocked === null) {
       const t0 = performance.now();
-      const v = await ctx.review({
-        userWords: words, command: a.command, shell, cwd, where: binding.label || place, os: facts.os, why: a.why, findings: d.says,
-      }, ctx.signal).catch(() => null);
+      try { ctx.presenter.progress(CHECKING_COMMAND); } catch (err) { ctx.log.warn("commands.checking_not_said", { err }); }
+      const asked = Promise.resolve().then(() => ctx.review!({
+        userWords: checkWords, command: a.command, shell, cwd, where: binding.label || place, os: facts.os, why: a.why, findings: d.says,
+      }, ctx.signal)).catch(() => null);
+      let stop!: () => void;
+      const stopped = new Promise<null>(resolve => { stop = () => resolve(null); ctx.signal.addEventListener("abort", stop, { once: true }); });
+      const v = await Promise.race([asked, stopped]).finally(() => ctx.signal.removeEventListener("abort", stop));
       if (ctx.isOver()) return STOPPED();
       ctx.log.info("commands.reviewed", { task, target, verdict: v ? (v.run ? "run" : "ask") : "none", ms: Math.round(performance.now() - t0) });
       if (v?.run) d = reviewedDecision(d, v);
@@ -883,6 +975,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
     verdict: d.verdict, classes: d.classes, rules: d.rules, ...(d.requested ? { requested: "user", intent: d.requested.intent } : {}), reason: d.reason,
+    ...(d.requested?.intent === AUTOPILOT_RULE ? { mode: "autopilot" } : {}),
     ...(d.review ? { review: d.review } : {}),
   });
   ctx.log.info("commands.decided", { task, target, verdict: d.verdict, classes: d.classes, chars: a.command.length });
@@ -936,34 +1029,46 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const timeoutS = Math.min(MAX_TIMEOUT_S, Math.max(1, Math.round(a.timeoutSeconds ?? DEFAULT_TIMEOUT_S)));
   const release = await slotOn(svc.runner, ctx.signal);
   if (!release) return STOPPED();
+  /**
+   * An announcement with its Stop window (D4.4): `words` in the task's bubble, `says` on the card that counts down in
+   * the command window. True once it ran out unstopped; otherwise the result that ends this call.
+   */
+  const countdown = async (words: string, says: string[]): Promise<true | ToolResultObject> => {
+    const stopId = `ui:cmdstop:${runId}`;
+    const ms = announceTime(svc.window);
+    ctx.presenter.announce(words, stopId, ms);
+    let go = false;
+    try {
+      go = await svc.window.announce(card("announce", [...says, why]), ms, ctx.signal);
+    } catch (err) {
+      ctx.log.warn("commands.announce_failed", { task, err });
+    } finally {
+      ctx.presenter.endAnnouncement(stopId);
+    }
+    if (ctx.isOver()) return STOPPED();
+    if (go) return true;
+    // Its page crashed or the window closed during the countdown: the user didn't stop it (cross-review S2).
+    const unshown = announceGone(svc.window, runId);
+    audit({ phase: "answered", answer: unshown ? "unseen" : "deny", q: "announce" });
+    // The user stopped it: a no, which holds the task to asking from now on (Work without asking too; review of #127).
+    if (!unshown) { ctx.onDeclined?.(); ctx.refusals?.noteCommand(about, "refused"); }
+    return denied(unshown ? UNSHOWN_BEFORE : STOPPED_BEFORE);
+  };
+  // When Autopilot's announcement of this command last ran out unstopped (a remote's gate 2 hears of it on the stamp,
+  // never as a yes); null: none.
+  let announcedAt: number | null = null;
   try {
-    // Step 11: an announcement with its Stop window (D4.4).
+    // Step 11.
     if (d.verdict === "announce" && d.requested) {
-      const stopId = `ui:cmdstop:${runId}`;
-      const ms = announceTime(svc.window);
-      ctx.presenter.announce(d.requested.announce, stopId, ms);
-      let go = false;
-      try {
-        go = await svc.window.announce(card("announce", [...d.says, why]), ms, ctx.signal);
-      } catch (err) {
-        ctx.log.warn("commands.announce_failed", { task, err });
-      } finally {
-        ctx.presenter.endAnnouncement(stopId);
-      }
-      if (ctx.isOver()) return STOPPED();
-      if (!go) {
-        // Its page crashed or the window closed during the countdown: the user didn't stop it (cross-review S2).
-        const unshown = announceGone(svc.window, runId);
-        audit({ phase: "answered", answer: unshown ? "unseen" : "deny", q: "announce" });
-        // The user stopped it: a no, which holds the task to asking from now on (Work without asking too; review of #127).
-        if (!unshown) { ctx.onDeclined?.(); ctx.refusals?.noteCommand(about, "refused"); }
-        return denied(unshown ? UNSHOWN_BEFORE : STOPPED_BEFORE);
-      }
+      const went = await countdown(d.requested.announce, d.says);
+      if (went !== true) return went;
+      if (d.requested.intent === AUTOPILOT_RULE) announcedAt = performance.now();
     }
 
     // Steps 12-14: run (a remote's own check may ask once more), then shape what it printed.
     let rules = d.rules;
     let asked = false;
+    let toldRemote = false;
     for (;;) {
       // Every await above can outlive consent or a switch change. Fail closed on tightening; a new request
       // gets a new decision/card rather than treating an old announcement as approval.
@@ -972,13 +1077,17 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       try { live = svc.capability(); } catch { return denied("Couldn't check whether commands are still allowed. Finish the task saying so."); }
       if (live.state !== "on") return denied(`${live.why ?? `Commands are off on ${place}.`} Don't try another way; tell the user in finish_task.`);
       if (svc.binding.id !== target || svc.runner.target !== target) return denied("The command's computer changed. Finish the task saying so.");
-      if (svc.mode() === "off" || (approvedAt === null && (live.askEvery !== null || svc.userAskEvery() || svc.mode() === "ask"))) {
+      // (Autopilot's announcement stands while Autopilot does: there root alone is no reason to ask, as when it was decided.)
+      const everyAsks = announcedAt !== null
+        ? !ctx.autopilot?.() || (live.askEvery !== null && live.askEvery !== "root")
+        : live.askEvery !== null;
+      if (svc.mode() === "off" || (approvedAt === null && (everyAsks || svc.userAskEvery() || svc.mode() === "ask"))) {
         return denied("Command permissions changed while this command was waiting. It did not run. Ask the user for a new request.");
       }
       if (ctx.projectFolderCurrent && !ctx.projectFolderCurrent()) return denied("The chosen command folder changed. Choose it again.");
       const run = await runOnce(ctx, j, {
         runId, shell, cwd, command: a.command, timeoutS, card: card("run", d.verdict === "run" ? [] : [...d.says, why]),
-        stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt },
+        stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt, announcedAt },
       }, pending.started);
       if (run === "stopped") { noteDownloads(ctx, cls); return STOPPED(); }
       if (run === "unseen") { noteDownloads(ctx, cls); return fail(UNSEEN); }
@@ -991,12 +1100,33 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         // Gate 2 found more than the PC did: the user sees its own lines, quoted, and says yes once more or not.
         pending.waiting();
         if (ctx.isOver()) { reaskEnded(svc, runId, "stopped"); return STOPPED(); }
-        asked = true;
         const theirs = (exit.remoteSays ?? []).filter(l => typeof l === "string").slice(0, 10).map(l => shownQuote(l));
         // In the card's order (§3.8.4): the remote's own lines come before "You didn't ask for this." and the Windows line.
         const own = [`${binding.label}'s own check also found:`, ...theirs];
         const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
         const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
+        // Autopilot: the remote's own question is announced instead of asked, once, with its lines on a countdown of its
+        // own. Never where its rules say the command would read or print secrets, outlive Stop or can't be told, or
+        // where every command asks there: those go to the card below, as does whatever the remote still wants a yes for
+        // after the announcement (its own administrator's policy holds as the organisation's).
+        const extra = remoteRules(exit);
+        if (!toldRemote && ctx.autopilot?.() && svc.mode() !== "ask" && !svc.userAskEvery() && extra.every(r => askedOfFinding({ rule: r }) === null)) {
+          toldRemote = true;
+          let went: true | ToolResultObject | null = null;
+          try {
+            went = await countdown(`Running a command that ${binding.label}'s own check asked about, ${AUTOPILOT_WORDS}`, [...lines.filter(l => l !== AUTOPILOT_LINE), AUTOPILOT_LINE]);
+          } finally {
+            // No run is coming for this tab: it says so instead of waiting for one.
+            if (went !== true) reaskEnded(svc, runId, ctx.isOver() ? "stopped" : "no");
+          }
+          if (went !== true) return went;
+          audit({ phase: "answered", answer: "announced", q: "remote", mode: "autopilot" });
+          announcedAt = performance.now();
+          rules = [...new Set([...rules, ...extra])];
+          runId = newRunId();
+          continue;
+        }
+        asked = true;
         let answer: "once" | "no" | "expired" | "stopped" = "stopped";
         try {
           answer = await askCard(lines, "remote",
@@ -1052,7 +1182,7 @@ interface RunOutcome { exit: RunExit; out: OutputKeeper; tracker: SecretTracker;
  */
 async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
   runId: string; shell: ShellId; cwd: string; command: string; timeoutS: number; card: CommandCard;
-  stamp: { taskId: string; sha256: string; verdict: "run" | "announce" | "ask"; classes: CommandDecision["classes"]; rules: string[]; approvedAt: number | null };
+  stamp: { taskId: string; sha256: string; verdict: "run" | "announce" | "ask"; classes: CommandDecision["classes"]; rules: string[]; approvedAt: number | null; announcedAt?: number | null };
 }, started: () => void): Promise<RunOutcome | "stopped" | "unseen"> {
   if (ctx.isOver()) return "stopped";
   const svc = ctx.service;
@@ -1062,6 +1192,7 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     stamp: {
       taskId: o.stamp.taskId, sha256: o.stamp.sha256, verdict: o.stamp.verdict, classes: o.stamp.classes, rules: o.stamp.rules,
       approval: o.stamp.approvedAt === null ? null : { ageMs: Math.max(0, Math.round(performance.now() - o.stamp.approvedAt)) },
+      ...(typeof o.stamp.announcedAt === "number" ? { announced: { ageMs: Math.max(0, Math.round(performance.now() - o.stamp.announcedAt)) } } : {}),
     },
   };
   started();

@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { classify, gateQuestion, wrapResult, argsSummary, plainName, REFUSED, type GateInput } from "../../app/main/extensions/gate";
+import { classify, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, REFUSED, type GateInput } from "../../app/main/extensions/gate";
 import { canonical, checkPins, isReadOnly, pinAll, toolHash, shownHash, shownSchema, type ServedTool } from "../../app/main/extensions/pin";
 import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
 import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
@@ -134,6 +134,27 @@ describe("the extensions gate", () => {
 
   it("tells the model a refusal is final", () => {
     expect(REFUSED).toMatch(/Don't try this again or try another way/);
+  });
+
+  it("announces instead of asking in Autopilot, whatever made it ask, and denies exactly what it denied (modes-D3)", () => {
+    const auto = (o: Partial<GateInput> = {}) => classify(gate({ autopilot: true, ...o }));
+    expect(auto({ tool: PINNED_POST })).toEqual({ verdict: "announce", reason: "changes" });
+    expect(auto({ tainted: true })).toEqual({ verdict: "announce", reason: "tainted" });
+    expect(auto({ remote: true })).toEqual({ verdict: "announce", reason: "remote" });
+    expect(auto({ hintsStale: true })).toEqual({ verdict: "announce", reason: "hints-changed" });
+    // A read-only tool never asked: nothing to announce.
+    expect(auto()).toEqual(classify(gate()));
+    // Off (the organisation's `features.extensions`, LOCKDOWN, not agreed to), stopped, turned off, changed, refused.
+    for (const o of [{ allowed: false }, { stopped: true }, { item: { enabled: false, consented: true } }, { item: { enabled: true, consented: false } }, { tool: undefined }, { item: undefined },
+      { tool: { ...PINNED_POST, changed: true } }, { shownAsPinned: false }, { tool: PINNED_POST, refused: true }] as Partial<GateInput>[]) {
+      expect(auto(o), JSON.stringify(o)).toEqual(classify(gate(o)));
+      expect(auto(o).verdict).toBe("deny");
+    }
+  });
+
+  it("names the extension the user installed in its announcement, never the tool or its arguments", () => {
+    expect(gateAnnouncement("Slack <b>tools</b>\u202e")).toBe("Using a tool from Slack btools/b, without asking: Autopilot is on.");
+    expect(gateAnnouncement("\u0007")).toBe("Using a tool from an extension, without asking: Autopilot is on.");
   });
 });
 
@@ -929,6 +950,65 @@ describe("ExtensionsService", () => {
     const entry = audit.find(e => e.phase === "decision")!;
     expect(entry).toMatchObject({ event: "extension", tool: "fake-lookup", verdict: "allow", argChars: 23 });
     expect(JSON.stringify(entry)).not.toContain("secret");
+  });
+
+  it("announces a changing tool's call instead of asking in Autopilot, recorded with the mode (modes-D3)", async () => {
+    const said: string[] = [];
+    let on = true;
+    const s = await installed({ autopilot: () => on, announce: words => { said.push(words); return true; } });
+    const ext = s.forSession()!;
+    shown(ext);
+    expect(await call(ext, "fake-post_message", { text: "hello team" })).toEqual({ permissionDecision: "allow" });
+    expect(asked).toEqual([]);
+    expect(said).toEqual(["Using a tool from fake, without asking: Autopilot is on."]);
+    const entry = audit.filter(e => e.event === "extension" && e.phase === "decision").at(-1)!;
+    expect(entry).toMatchObject({ tool: "fake-post_message", verdict: "announce", reason: "changes", autonomy: true, mode: "autopilot" });
+    expect(JSON.stringify(entry)).not.toContain("hello team");
+    // A read-only tool is allowed as before, with nothing said.
+    expect(await call(ext, "fake-lookup", { q: "x" })).toEqual({ permissionDecision: "allow" });
+    expect(said).toHaveLength(1);
+    // Out of Autopilot at the next call: it asks again.
+    on = false;
+    answers = ["deny"];
+    expect(await call(ext, "fake-post_message", { text: "again" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: REFUSED });
+    expect(asked).toHaveLength(1);
+    // And the tool the user refused this turn stays refused when Autopilot comes back: never announced.
+    on = true;
+    expect(await call(ext, "fake-post_message", { text: "retry" })).toMatchObject({ permissionDecision: "deny" });
+    expect(said).toHaveLength(1);
+  });
+
+  it("asks where the announcement can't be said: nothing goes ahead in Autopilot unannounced", async () => {
+    for (const announce of [undefined, () => false, () => { throw new Error("no bubble"); }]) {
+      asked = [];
+      answers = ["once"];
+      const s = await installed({ autopilot: () => true, ...(announce ? { announce } : {}) });
+      const ext = s.forSession()!;
+      shown(ext);
+      expect(await call(ext, "fake-post_message", { text: "hi" })).toEqual({ permissionDecision: "allow" });
+      expect(asked).toHaveLength(1);
+      fs.rmSync(path.join(dir, "userData"), { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the organisation's switch, a failed record and the kill switch above Autopilot", async () => {
+    const said: string[] = [];
+    const s = await installed({ autopilot: () => true, announce: words => { said.push(words); return true; } });
+    const ext = s.forSession()!;
+    shown(ext);
+    // A call that can't be recorded isn't taken.
+    auditFails = true;
+    expect(await call(ext, "fake-post_message", { text: "hi" })).toMatchObject({ permissionDecision: "deny" });
+    auditFails = false;
+    // The organisation turns extensions off: denied, as in every mode.
+    admin = AdminPolicySchema.parse({ features: { extensions: false } });
+    expect(await call(ext, "fake-post_message", { text: "hi" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: "Extensions are off." });
+    admin = AdminPolicySchema.parse({});
+    // Stop everything: nothing starts afterwards.
+    await s.stopPart().stop();
+    expect(await call(ext, "fake-post_message", { text: "hi" })).toMatchObject({ permissionDecision: "deny" });
+    expect(said).toEqual([]);
+    expect(asked).toEqual([]);
   });
 
   it("asks before a changing tool, and never asks again about it in the turn after a no", async () => {

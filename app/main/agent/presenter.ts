@@ -1423,7 +1423,8 @@ export class Presenter {
   /**
    * Ember went ahead without asking (Work without asking): policy's announcement (Decision.announce, built from the
    * request), shown with the bubble's own "Without asking" tag (BubbleState.autonomous). Only the worker calls it, with
-   * policy's words: a task's note (progress) can never carry the tag.
+   * policy's words, and the host for the extensions gate's own announcement in Autopilot (announceUnasked): a task's
+   * note (progress) can never carry the tag.
    */
   workedWithoutAsking(text: string): void {
     const said = text.replace(/\s+/g, " ").trim();

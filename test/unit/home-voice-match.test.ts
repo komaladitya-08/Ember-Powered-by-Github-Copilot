@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { MANAGED_TEXT, MATCH_SAID, MATCH_TEXT, matchAnnouncement, matchRefusalHolds, matchView } from "../../app/renderer/home/match-copy";
-import { APPROVALS_HEADING, MODE_LINE, MODE_NAME, approvalsView, grantsEmptyText, modeCard, modeRefusal } from "../../app/renderer/home/copy";
+import { APPROVALS_HEADING, AUTOPILOT_CONSENT_TEXT, MODE_LINE, MODE_NAME, approvalsView, grantsEmptyText, modeCard, modeRefusal } from "../../app/renderer/home/copy";
 import { AdminPolicySchema, managedKeys } from "../../app/main/admin";
 import { approvalsState } from "../../app/main/policy/autonomy";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
@@ -248,14 +248,21 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
   /** As main tells Home: the pure state for a setting and a policy. */
   const state = (approvals = DEFAULT_SETTINGS.approvals, policy: Record<string, unknown> | null = null): ApprovalsState => approvalsState(approvals, policy ? AdminPolicySchema.parse(policy) : null);
   const ROW = { mode: "interactive", name: "Interactive", line: MODE_LINE.interactive };
+  const ASSISTED = { mode: "assisted", name: "Assisted", line: MODE_LINE.assisted };
+  const AUTOPILOT = { mode: "autopilot", name: "Autopilot", line: MODE_LINE.autopilot };
+  const FREE = { checked: false, locked: false, title: "" };
 
   it("shows one row per mode that is built, each with one plain sentence, and marks the one in force", () => {
-    expect(approvalsView(state(agreed), false).rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }]);
+    expect(approvalsView(state(agreed), false).rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }, { ...ASSISTED, ...FREE }, { ...AUTOPILOT, ...FREE }]);
     expect(approvalsView(state(agreed), false).inForce).toBe("interactive");
-    expect(approvalsView(state(), false).rows).toEqual([{ ...ROW, checked: false, locked: false, title: "" }]);
+    expect(approvalsView(state(), false).rows).toEqual([{ ...ROW, ...FREE }, { ...ASSISTED, ...FREE }, { ...AUTOPILOT, ...FREE }]);
     expect(MODE_LINE.interactive).toBe("Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying.");
-    // A mode with no row yet is never drawn, whatever main offers; before main's state has come, nothing is marked.
-    expect(approvalsView({ ...state(agreed), offered: ["interactive", "assisted", "autopilot"] }, false).rows.map(r => r.mode)).toEqual(["interactive"]);
+    expect(MODE_LINE.assisted).toBe("As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.");
+    // Assisted in force is the row marked (modes-C5).
+    const assisted = { mode: "assisted" as const, consent: { ...agreed.consent, assisted: { version: modeCardVersion("assisted"), at: AT } } };
+    expect(approvalsView(state(assisted), false)).toMatchObject({ inForce: "assisted", card: null, rows: [{ mode: "interactive", checked: false }, { mode: "assisted", checked: true }, { mode: "autopilot", checked: false }] });
+    // Only the modes main offers are drawn, in their order; before main's state has come, nothing is marked.
+    expect(approvalsView({ ...state(agreed), offered: ["assisted", "interactive"] }, false).rows.map(r => r.mode)).toEqual(["interactive", "assisted"]);
     expect(approvalsView(null, false)).toEqual({ rows: [{ ...ROW, checked: false, locked: false, title: "" }], note: "", card: null, inForce: null });
   });
 
@@ -277,7 +284,7 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
       const keys = new Set(managedKeys(AdminPolicySchema.parse(policy)));
       expect(keys.has("autonomy")).toBe(true);
       for (const v of [approvalsView(state(agreed, policy), keys.has("autonomy")), approvalsView(state(agreed, policy), false), approvalsView(state(agreed), true)]) {
-        expect(v.rows).toEqual([{ ...ROW, checked: false, locked: true, title: MANAGED_TEXT }]);
+        expect(v.rows).toEqual([ROW, ASSISTED, AUTOPILOT].map(r => ({ ...r, checked: false, locked: true, title: MANAGED_TEXT })));
         expect(v.card).toBeNull();
         expect(v.inForce).toBeNull();
         expect(v.note).toBe("Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps.");
@@ -287,6 +294,59 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     expect(page).toContain(`<div class="modes" id="approvals" role="radiogroup" aria-labelledby="approvals-h" aria-describedby="approvals-note"></div>`);
     expect(main).toMatch(/el\.disabled = r\.locked;\s*el\.classList\.toggle\("locked", r\.locked\);\s*el\.title = r\.title;/);
     expect(css).toMatch(/\.locked \{ opacity: 0\.5; \}/);
+  });
+
+  it("locks Assisted's row alone where the organisation turned its check off or caps the mode, and says why in the note and the tooltip (modes-C5)", () => {
+    const off = approvalsView(state(agreed, { features: { aiReview: false } }), false);
+    expect(off.rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }, { ...ASSISTED, checked: false, locked: true, title: "Your organisation turned off the check Assisted needs" }, { ...AUTOPILOT, ...FREE }]);
+    expect(off.note).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. Your organisation turned off the check Assisted needs, so Assisted can't be chosen.");
+    const capped = approvalsView(approvalsState(agreed, { ...AdminPolicySchema.parse({}), approvals: { maxMode: "interactive" } }), false);
+    expect(capped.rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }, { ...ASSISTED, checked: false, locked: true, title: MANAGED_TEXT }, { ...AUTOPILOT, checked: false, locked: true, title: MANAGED_TEXT }]);
+    expect(capped.note).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. Your organisation allows Interactive at most.");
+    // Said once: where Assisted is the mode chosen, the note's own sentence says it already.
+    const both = { mode: "assisted" as const, consent: { ...agreed.consent, assisted: { version: modeCardVersion("assisted"), at: AT } } };
+    expect(approvalsView(state(both, { features: { aiReview: false } }), false).note.match(/turned off the check/g)).toHaveLength(1);
+    // Before Interactive is agreed to, its card still shows ready, and the locked row still says why.
+    const fresh = approvalsView(state(DEFAULT_SETTINGS.approvals, { features: { aiReview: false } }), false);
+    expect(fresh.card).toBe("interactive");
+    expect(fresh.note).toMatch(/^Until you agree to Interactive, .* Your organisation turned off the check Assisted needs, so Assisted can't be chosen\.$/);
+    // A cap at Assisted locks Autopilot's row alone, and says so; one at Autopilot, or none, locks nothing.
+    const atAssisted = approvalsView(approvalsState(agreed, { ...AdminPolicySchema.parse({}), approvals: { maxMode: "assisted" } }), false);
+    expect(atAssisted.rows.map(r => r.locked)).toEqual([false, false, true]);
+    expect(atAssisted.note).toMatch(/ Your organisation allows Assisted at most\.$/);
+    expect(approvalsView(approvalsState(agreed, { ...AdminPolicySchema.parse({}), approvals: { maxMode: "autopilot" } }), false).rows.every(r => !r.locked)).toBe(true);
+    expect(approvalsView(state(agreed), false).rows.every(r => !r.locked)).toBe(true);
+  });
+
+  it("offers Autopilot with a sentence and a card that say plainly what the user accepts, and says so while it is in force (modes-D5)", () => {
+    expect(MODE_LINE.autopilot).toBe("Ember doesn't ask: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it.");
+    const card = modeCard("autopilot");
+    expect(card).toMatchObject({ title: "Before you choose Autopilot", yes: "I agree, use Autopilot", no: "Not now", text: AUTOPILOT_CONSENT_TEXT });
+    // The risk, unmistakably; what it still asks; what it never does; how to stop it; that the organisation may forbid it.
+    for (const said of [
+      "Ember doesn't ask before it acts.",
+      "It sends, posts, shares, deletes, overwrites, pays, installs, signs out, changes settings, answers dialogs and runs dangerous commands, also as an administrator, without asking you first.",
+      "By choosing Autopilot you accept that risk: what it does may be impossible to undo.",
+      "It still asks before a command that would show passwords or keys, one that would keep running after you stop Ember, one whose effect it can't tell, wherever you or your organisation set commands to ask every time, and before it turns on something you haven't agreed to yet.",
+      "It never repeats a step you said no to, never types passwords or card numbers, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop.",
+      "“Ember, stop” or Ember's stop shortcut stops everything at once.",
+      "Your organisation can turn Autopilot off.",
+    ]) expect(AUTOPILOT_CONSENT_TEXT).toContain(said);
+    // Nothing of the vault, which isn't built: it fills no password, card or sign-in window.
+    expect(AUTOPILOT_CONSENT_TEXT).not.toMatch(/vault|fills? |saved (login|password|card)/i);
+    expect(AUTOPILOT_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(260);
+    // In force: its row is the one marked, nothing is offered to agree to, and the note says it is on and how to stop it.
+    const on = { mode: "autopilot" as const, consent: { ...agreed.consent, autopilot: { version: modeCardVersion("autopilot"), at: AT } } };
+    const v = approvalsView(state(on), false);
+    expect(v).toMatchObject({ inForce: "autopilot", card: null, rows: [{ mode: "interactive", checked: false }, { mode: "assisted", checked: false }, { mode: "autopilot", checked: true, locked: false }] });
+    expect(v.note).toBe("Autopilot is on: Ember sends, deletes, pays and installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it. You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later.");
+    // Chosen but capped or without its own card: the note says what is in use instead, never that Autopilot is on.
+    expect(approvalsView(approvalsState(on, { ...AdminPolicySchema.parse({}), approvals: { maxMode: "interactive" } }), false)).toMatchObject({ inForce: "interactive", note: expect.stringMatching(/^Your organisation allows Interactive at most, so Interactive is in use\. /) });
+    const unread = approvalsView(state({ ...on, consent: agreed.consent }), false);
+    expect(unread).toMatchObject({ inForce: "interactive" });
+    expect(unread.note).not.toContain("Autopilot is on");
+    // The pane is found by its name.
+    expect(read("search-copy.ts")).toMatch(/"privacy-h": "[^"]*\bautopilot\b/);
   });
 
   it("says why the mode in force isn't the one chosen: the organisation's cap, its check turned off, a choice that couldn't be recorded", () => {

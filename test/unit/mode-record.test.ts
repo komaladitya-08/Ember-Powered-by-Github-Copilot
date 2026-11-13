@@ -72,6 +72,71 @@ const click = { taskId: "t", kind: "click" as const, app: "mousepad", window: "n
 const canChmod = process.platform !== "win32" && process.getuid?.() !== 0;
 const FAULTS = canChmod ? (["ENOSPC", "permissions"] as const) : (["ENOSPC"] as const);
 
+const AUTOPILOT: ApprovalsSetting = { mode: "autopilot", consent: { ...ASSISTED.consent, autopilot: { version: modeCardVersion("autopilot"), at: AT } } };
+
+describe("Autopilot and the record (modes-D5)", () => {
+  it("is recorded as every change of the mode is when Home chooses it, and when the user goes back", () => {
+    const c = setup(INTERACTIVE);
+    c.record.as({ via: "home", verified: false }, () => c.settings.update({ approvals: AUTOPILOT }));
+    expect(c.inForce()).toBe("autopilot");
+    c.record.as({ via: "home", verified: false }, () => c.settings.update({ approvals: INTERACTIVE }));
+    expect(c.entries().slice(1)).toEqual([
+      { mode: "autopilot", before: "interactive", via: "home", verified: false },
+      { mode: "interactive", before: "autopilot", via: "home", verified: false },
+    ]);
+    expect(describeEntry({ t: AT, event: "autonomy", mode: "autopilot", before: "interactive", via: "home" } as never)).toMatchObject({ tag: "Setting", what: "How Ember asks: Autopilot" });
+  });
+
+  it("is never chosen by a settings.json changed outside Ember while it runs: the file is put back, and nothing is in force that wasn't", () => {
+    for (const from of [ASKING, INTERACTIVE, ASSISTED]) {
+      const c = setup(from);
+      const before = c.inForce();
+      const written = c.entries().length;
+      // By hand, or by a program that edited the file: the mode and its card's agreement, both forged.
+      fs.writeFileSync(c.file, JSON.stringify({ ...base, approvals: AUTOPILOT }));
+      expect(c.settings.reloadIfChanged()).toBe(true);
+      expect(c.inForce()).toBe(before);
+      expect(c.settings.own().approvals).toEqual(from);
+      expect(JSON.parse(fs.readFileSync(c.file, "utf8")).approvals).toEqual(from);
+      expect(c.entries()).toHaveLength(written);
+      expect(autonomyHeld()).toBe(false);
+      // Home's own choice still works afterwards.
+      c.record.as({ via: "home", verified: false }, () => c.settings.update({ approvals: AUTOPILOT }));
+      expect(c.inForce()).toBe("autopilot");
+    }
+    // A file edit to a mode below it is taken as before (the file's, recorded), and one that asks more always is.
+    const c = setup(ASKING);
+    fs.writeFileSync(c.file, JSON.stringify({ ...base, approvals: ASSISTED }));
+    c.settings.reloadIfChanged();
+    expect(c.inForce()).toBe("assisted");
+    const down = setup(AUTOPILOT);
+    expect(down.inForce()).toBe("autopilot");
+    fs.writeFileSync(down.file, JSON.stringify({ ...base, approvals: INTERACTIVE }));
+    down.settings.reloadIfChanged();
+    expect(down.inForce()).toBe("interactive");
+    expect(down.entries().at(-1)).toEqual({ mode: "interactive", before: "autopilot", via: "file", verified: false });
+  });
+
+  it("is held below Interactive where the file can't be put back either", () => {
+    const c = setup(INTERACTIVE);
+    fs.writeFileSync(c.file, JSON.stringify({ ...base, approvals: AUTOPILOT }));
+    breakStorage("ENOSPC", c);
+    expect(c.settings.reloadIfChanged()).toBe(true);
+    expect(c.inForce()).toBe("asking");
+    expect(autonomyHeld()).toBe(true);
+    mend(c);
+  });
+
+  it("is what the organisation's policy and the kept record let it be when Ember starts with it chosen", () => {
+    const c = setup(AUTOPILOT);
+    expect(c.entries()).toEqual([{ mode: "autopilot", via: "file", verified: false, atStart: true }]);
+    c.setPolicy(AdminPolicySchema.parse({ approvals: { maxMode: "interactive" } }));
+    c.record.changed({ via: "policy", verified: false });
+    expect(c.inForce()).toBe("interactive");
+    expect(c.entries().at(-1)).toEqual({ mode: "interactive", before: "autopilot", via: "policy", verified: false });
+  });
+});
+
 describe("the record of the mode in force (modes-A7)", () => {
   it("writes an entry for every change of the mode in force: the mode, the one before, how, and whether the voice was verified", () => {
     const c = setup(ASKING);
@@ -137,10 +202,11 @@ describe("the record of the mode in force (modes-A7)", () => {
     expect(main).toContain("autonomy: () => approvalsNow().scopes,");
     expect(main).not.toMatch(/settings\.get\(\)\.(trust|autonomy)\b/);
     const host = fs.readFileSync("app/main/agent/host.ts", "utf8");
-    expect(host).toContain("reviewCommands: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).reviewCommands,");
+    expect(main).toContain("assisted: () => approvalsNow().check,");
+    expect(host).toContain("check: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).check,");
     expect(host).toContain("autonomy: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).scopes,");
     expect(fs.readFileSync("app/main/targets/runtime.ts", "utf8")).toContain("trustAskedApps: () => approvalInputs(modeInForce(settings.get().approvals, admin().policy)).askedApps,");
-    expect(approvalInputs("interactive").reviewCommands).toBe(false);
+    expect(approvalInputs("interactive").check).toBe(false);
   });
 });
 

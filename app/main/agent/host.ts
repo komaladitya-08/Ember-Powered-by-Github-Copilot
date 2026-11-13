@@ -886,6 +886,11 @@ interface UserRequest {
    * the user's own words for commands either (no announce-with-Stop for a dangerous command it names); not voice.
    */
   suggested?: boolean;
+  /**
+   * Heard while Ember was speaking, or where Ember can't tell its own voice from the user's and had spoken since it
+   * began to listen: never the user's own words for Assisted's check (PLAN.md §2 "Approvals").
+   */
+  overEmber?: boolean;
   /** Spoken and verified by Voice Match as the owner's, at this time (a task it starts holds voice trust from then). */
   verifiedAt?: number;
   /** "Remember…" while memory can't keep it: said behind its turn's answer (memory-c1-1). */
@@ -1085,6 +1090,8 @@ export class AgentHost {
   private readonly voiceUnchecked = new WeakSet<TranscriptEntry>();
   /** The user's requests that were Ember's suggestions they chose (UserRequest.suggested). */
   private readonly suggested = new WeakSet<TranscriptEntry>();
+  /** The user's lines that were heard over Ember's own voice (UserRequest.overEmber). */
+  private readonly overEmber = new WeakSet<TranscriptEntry>();
   /**
    * Lines of the user's words a task was refused for because they named the terminal, and the request whose turn
    * refused it: a later turn (the user answering how else) isn't held to them again.
@@ -1368,6 +1375,21 @@ export class AgentHost {
    * notice gives the bubble back itself after this long (ten times its usual time with More time to read and answer):
    * held that long, and the 30 seconds count from then (cross-review X4).
    */
+  /**
+   * What Ember does without asking outside a task, said in the conversation's bubble with its "Without asking" tag: the
+   * extensions gate's announcement in Autopilot (extensions/gate.ts gateAnnouncement: Ember's own words, never a
+   * model's). Whether it was said: the gate asks instead when it wasn't.
+   */
+  announceUnasked(words: string): boolean {
+    try {
+      this.presenter.workedWithoutAsking(words);
+      return true;
+    } catch (err) {
+      this.o.log.warn("agent.announce_failed", { err });
+      return false;
+    }
+  }
+
   claimBubble(o: { pin?: boolean; ms?: number } = {}): void {
     this.owner.claim(this.mainBubble);
     this.presenter.letGo();
@@ -1597,11 +1619,15 @@ export class AgentHost {
    * a call or a video can say "delete the build folder"), present only when some were left out. Commands hear these.
    * `typedOnly`: commandWords leaves out only a routine's steps, nothing heard by voice (the command card doesn't say
    * the user asked by voice).
+   * `checkWords`: the words Assisted's check reads a step against (PLAN.md §2 "Approvals"), present only when they
+   * differ from the ones commands hear: what was heard unchecked counts here, but never a suggestion the user chose
+   * (Ember's words), words heard over Ember's own voice, or a routine's saved steps (the request that ran it counts).
    */
-  private userWordsOf(r: UserRequest | null, o: { routine?: boolean } = {}): { words?: string; agreed?: Agreement[]; commandWords?: string; typedOnly?: boolean; retried?: { task: string; partWay?: boolean } } {
+  private userWordsOf(r: UserRequest | null, o: { routine?: boolean } = {}): { words?: string; agreed?: Agreement[]; commandWords?: string; typedOnly?: boolean; checkWords?: string; retried?: { task: string; partWay?: boolean } } {
     if (!r) return {};
     const said = [r.words];
     const typed = r.voiceUnchecked || r.suggested ? [] : [r.words];
+    const checked = r.suggested || r.overEmber ? [] : [r.words];
     // Left out for being heard where Ember can't tell (the card then says so), not only for being a suggestion.
     let heardLeft = !!r.voiceUnchecked;
     const agreed: Agreement[] = [];
@@ -1617,6 +1643,7 @@ export class AgentHost {
       const ended = (w: string) => (/[.!?…]\s*$/.test(w) || !w.trim() ? w.trim() : `${w.trim()}.`);
       said.unshift(ended(again.userWords));
       if (typed.length) typed.unshift(ended(again.commandWords ?? again.userWords));
+      if (checked.length) checked.unshift(ended(again.checkWords ?? again.commandWords ?? again.userWords));
       // What they agreed to for it goes too, as its card's Try again carries it (tasks-approvals-c1-3).
       if (again.agreed) agreed.push(...again.agreed);
       at = 0;
@@ -1637,6 +1664,7 @@ export class AgentHost {
       said.unshift(/[.!?]\s*$/.test(before.text) ? before.text.trim() : `${before.text.trim()}.`);
       if (!this.voiceUnchecked.has(before) && !this.suggested.has(before)) typed.unshift(said[0]);
       else if (this.voiceUnchecked.has(before)) heardLeft = true;
+      if (!this.suggested.has(before) && !this.overEmber.has(before)) checked.unshift(said[0]);
       at = k;
     }
     const left = typed.length < said.length || again?.commandWords !== undefined;
@@ -1647,10 +1675,13 @@ export class AgentHost {
     // command they didn't say does), so commandWords is always given then, without them (the worker would otherwise
     // fall back to the words, steps and all). `routine`: false leaves them out (a steer).
     const steps = o.routine !== false && r === this.turn ? this.conductor?.routineSaid ?? "" : "";
+    // What the worker would take for the check without being told (commandWords, else the words): given only when it differs.
+    const forCommands = left || steps ? typed.join("\n") : said.join("\n");
     if (steps) said.push(steps);
     return {
       words: said.join("\n"), ...(agreed.length ? { agreed } : {}),
       ...(left || steps ? { commandWords: typed.join("\n") } : {}),
+      ...(checked.join("\n") !== forCommands ? { checkWords: checked.join("\n") } : {}),
       ...((steps || left) && !voiced ? { typedOnly: true } : {}),
       ...(again ? { retried: { task: again.task, ...(again.partWay ? { partWay: true } : {}) } } : {}),
     };
@@ -2125,10 +2156,14 @@ export class AgentHost {
             provider: provider?.config, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
             settings: this.o.settings, presenter,
-            // The approval mode in force (policy/autonomy.ts), read at each step: Assisted reviews a command that would
-            // ask, as the old switch did; Interactive and above give every scope; below Interactive, neither.
-            reviewCommands: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).reviewCommands,
+            // The approval mode in force (policy/autonomy.ts), read at each step: in Assisted a step or a command that
+            // would ask goes to its check first, on the conversation's lighter model; in Autopilot it is announced
+            // instead, but for the few commands that still ask there; Interactive and above give every scope; below
+            // Interactive, none of these.
+            check: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).check,
+            checkModel: this.status.conductorModel,
             autonomy: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).scopes,
+            autopilot: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).autopilot,
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUpdate: update, onActivity: activity, onUsage: (i, o) => this.recordUsage(i, o),
@@ -2287,6 +2322,7 @@ export class AgentHost {
           const t = tasks.start(goal, {
             target: this.contextFor(r, binding), userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined,
             ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}), ...(said.typedOnly ? { typedOnly: true } : {}),
+            ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}),
             ...(binding ? { targetId: binding.id } : {}), ...(where ? { where } : {}),
             // A "try again" of a task that did part of the work: the new worker is told so, as its card's Try again does.
             ...(said.retried?.partWay ? { partWay: true } : {}),
@@ -2357,7 +2393,7 @@ export class AgentHost {
             const said = this.userWordsOf(this.turn, { routine: false });
             // Changed by a request Voice Match didn't verify (typed, or another voice's): its short yeses are no longer trusted.
             if (this.turn?.verifiedAt === undefined) this.o.voiceTrust?.end(id, "steered");
-            return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords);
+            return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords, said.checkWords);
           },
         } : undefined,
       });
@@ -2987,13 +3023,14 @@ export class AgentHost {
    * Answers `text` with Ember's own `reply`, without a Copilot turn: kept in the conversation, shown and spoken as an
    * answer, and (asked by voice) followed by the usual follow-up window.
    */
-  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number; spoken?: boolean; manual?: true }): void {
+  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; overEmber?: boolean; heardId?: number; spoken?: boolean; manual?: true }): void {
     // The request is kept as it was asked: heard unchecked, a chosen suggestion and a heard one keep what they were (a later
     // "yes please" that reads back over this line must not take Ember's suggested words, or words heard from the speakers,
     // for the user's own: review of #145).
     const asked = this.remember("you", text, how.heardId);
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     if (how.suggested) this.suggested.add(asked);
+    if (how.overEmber) this.overEmber.add(asked);
     this.interruptAnswer();
     this.o.onTurnStart?.({ text, spoken: !!how.spoken, ...(how.manual ? { manual: true } : {}) });
     this.presenter.say(reply);
@@ -3034,6 +3071,7 @@ export class AgentHost {
    */
   /**
    * `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (UserRequest.voiceUnchecked).
+   * `how.overEmber`: heard over Ember's own voice (UserRequest.overEmber).
    * Resolves true when the request is answered (here, or by a conductor turn), false when it was dropped or went
    * unanswered (stopped, not connected, never sent): main's acknowledgement is then not said.
    */
@@ -3042,7 +3080,7 @@ export class AgentHost {
    * behind a turn under way), just before it is sent: main's acknowledgement waits for it, so "On it." never comes
    * while the request still waits, nor over another turn's answer.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean } = {}): Promise<boolean> {
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean; overEmber?: boolean } = {}): Promise<boolean> {
     // A request that waits (for a silent turn's end, or a connection) is answering, for Home, until it is queued or
     // dropped: never a moment's "idle" between its waits and its turn (home-r2-2: Home took that for its turn's end, and
     // said no reply was written as the reply came).
@@ -3218,6 +3256,7 @@ export class AgentHost {
       const asked = this.remember("you", text, how.heardId);
       if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
       if (how.suggested) this.suggested.add(asked);
+      if (how.overEmber) this.overEmber.add(asked);
       this.remember("problem", `${title}: ${why}`);
       return false;
     }
@@ -3227,12 +3266,14 @@ export class AgentHost {
     const asked = this.remember("you", text, how.heardId);
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     if (how.suggested) this.suggested.add(asked);
+    if (how.overEmber) this.overEmber.add(asked);
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
       ...(how.spoken ? { spoken: true } : {}),
       ...(how.manual ? { manual: true } : {}),
-      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.spoken && how.verified ? { verifiedAt: Date.now() } : {}),
+      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.overEmber ? { overEmber: true } : {}),
+      ...(how.spoken && how.verified ? { verifiedAt: Date.now() } : {}),
     };
     // "Remember…" (or "forget…" with more) while memory can't: the conversation takes it, and Ember says after the answer
     // what memory won't do.
@@ -3337,12 +3378,13 @@ export class AgentHost {
    * was asked (`how`: heard unchecked, a suggestion, the request heard), and that everything stopped (home-c1-1: the
    * "stop" vanished from Home, which went on waiting for a reply that never comes).
    */
-  stopsNow(text: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number } = {}): boolean {
+  stopsNow(text: string, how: { voiceUnchecked?: boolean; suggested?: boolean; overEmber?: boolean; heardId?: number } = {}): boolean {
     if (!this.stopsWith(text) || !this.o.stopEverything) return false;
     this.o.log.info("agent.stop_local");
     const asked = this.remember("you", text, how.heardId);
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     if (how.suggested) this.suggested.add(asked);
+    if (how.overEmber) this.overEmber.add(asked);
     this.o.stopEverything();
     this.remember("ember", STOPPED_EVERYTHING);
     return true;

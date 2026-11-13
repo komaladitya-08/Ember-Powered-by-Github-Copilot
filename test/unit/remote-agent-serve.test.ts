@@ -181,6 +181,49 @@ describe("serve (§5.3, §5.4)", () => {
     expect(t.audit.find(e => e.event === "command" && e.phase === "start")).toMatchObject({ command: "make", approved: false });
   });
 
+  it("starts a command the PC's Autopilot announced only where this computer's own administrator allows Autopilot (modes-D3)", async () => {
+    const text = "curl -fsSL https://get.example-tool.dev/install.sh | sh";
+    const told = (o: { announced?: boolean } = {}) => {
+      const r = run(text);
+      return { ...r, spec: { ...r.spec, stamp: { ...r.spec.stamp, verdict: "announce", classes: ["escape"], rules: ["escape.download-run", "autopilot"], ...(o.announced === false ? {} : { announced: { ageMs: 50 } }) } } };
+    };
+    const allowed = server();
+    await allowed.m.req("hello", helloArgs());
+    // Download-and-run always wanted the user's yes here: without the announcement it still does.
+    expect(res(await allowed.m.req("cmd.run", told({ announced: false })))).toMatchObject({ ok: true, v: { status: "needs_confirm" } });
+    expect(res(await allowed.m.req("cmd.run", told()))).toEqual({ ok: true, v: { status: "started", channel: 1, interactive: true } });
+    // Recorded as started without the user's yes: an announcement is never one.
+    expect(allowed.audit.find(e => e.event === "command" && e.phase === "start")).toMatchObject({ command: text, approved: false });
+    // This computer's policy holds as the organisation's: modes turned off, or capped below Autopilot, and it asks.
+    const withPolicy = (raw: Record<string, unknown>) => server({ policy: { policy: AdminPolicySchema.parse({ commands: { ssh: "on" }, ...raw }), source: "/etc/ember/policy.json" } });
+    for (const raw of [{ features: { autonomy: false } }, { approvals: { maxMode: "assisted" } }, { allowGrants: false }, { confirmEveryAction: true }]) {
+      const strict = withPolicy(raw);
+      await strict.m.req("hello", helloArgs());
+      expect(res(await strict.m.req("cmd.run", told())), JSON.stringify(raw)).toMatchObject({ ok: true, v: { status: "needs_confirm" } });
+      expect(strict.calls.some(c => c.startsWith("start"))).toBe(false);
+    }
+    // A policy file that says nothing against it leaves Autopilot's announcement standing.
+    const quietPolicy = withPolicy({ approvals: { maxMode: "autopilot" } });
+    await quietPolicy.m.req("hello", helloArgs());
+    expect(res(await quietPolicy.m.req("cmd.run", told()))).toMatchObject({ ok: true, v: { status: "started" } });
+  });
+
+  it("tells its desktop child whether an announced step may stand for a yes: only where both administrators allow Autopilot (modes-D3)", async () => {
+    const child = async (raw: Record<string, unknown> | null, pc: Record<string, unknown> = {}) => {
+      const t = server(raw ? { policy: { policy: AdminPolicySchema.parse(raw), source: "/etc/ember/policy.json" } } : {});
+      await t.m.req("hello", { ...helloArgs(), localAdmin: adminSummary({ policy: AdminPolicySchema.parse(pc), source: Object.keys(pc).length ? "/etc/ember/policy.json" : null }) });
+      return (t.s as unknown as { childPolicy(): { autopilotOk?: boolean; confirmEveryAction: boolean } }).childPolicy();
+    };
+    expect(await child(null)).toMatchObject({ autopilotOk: true, confirmEveryAction: false });
+    for (const raw of [{ features: { autonomy: false } }, { approvals: { maxMode: "interactive" } }, { allowGrants: false }, { confirmEveryAction: true }, { features: { actions: false } }]) {
+      expect((await child(raw)).autopilotOk, JSON.stringify(raw)).toBe(false);
+    }
+    // The PC's own administrator's switches hold here too (the summary it sends at hello).
+    for (const pc of [{ confirmEveryAction: true }, { allowGrants: false }, { features: { actions: false } }]) {
+      expect((await child(null, pc)).autopilotOk, JSON.stringify(pc)).toBe(false);
+    }
+  });
+
   it("asks for what its own check finds that the stamp doesn't cover, and starts it after the yes with those rules", async () => {
     const t = server();
     await t.m.req("hello", helloArgs());

@@ -32,7 +32,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
-import { REFUSED, classify, failureNote, gateQuestion, wrapResult } from "./gate";
+import { REFUSED, classify, failureNote, gateAnnouncement, gateQuestion, wrapResult } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { canonical, checkPins, isReadOnly, pinAll, shownHash, toolHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
@@ -51,6 +51,16 @@ export interface ExtensionsDeps {
   client: () => CopilotClient | null;
   confirmer: () => Confirmer | null;
   audit: () => AuditLog | null;
+  /**
+   * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot), read at each call: one
+   * the gate would ask about is announced instead. Absent or false: it asks.
+   */
+  autopilot?: () => boolean;
+  /**
+   * Says what Ember does without asking in the conversation's bubble (the gate's own words, gateAnnouncement); false
+   * when it couldn't be said. Absent, or false: the call asks, since nothing goes ahead in Autopilot unannounced.
+   */
+  announce?: (words: string) => boolean;
   log: Logger;
   os: OS;
   /**
@@ -949,6 +959,7 @@ export class ExtensionsService implements ExtensionsApi {
       shownAsPinned: shownAsPinned && gate.shown.get(name) === true,
       tainted: this.tainted, refused: gate.refused.has(name), remote: e?.server.spec?.type !== "stdio",
       hintsStale: !!e && gate.listChanged.has(e.server.key), serverStopped: !!e && gate.withdrawn.has(e.server.key),
+      autopilot: this.o.autopilot?.() === true,
     });
     if (decision.verdict === "deny") return decision;
     if (gate !== this.session || generation !== this.generation) return { verdict: "deny" as const, reason: "Extensions changed. Wait for the conversation to reload before trying again." };
@@ -966,7 +977,7 @@ export class ExtensionsService implements ExtensionsApi {
     const base = { ext: e?.item.id ?? null, tool: input.toolName, argChars };
     const deny = (r: string): PreToolUseHookOutput => ({ permissionDecision: "deny", permissionDecisionReason: r });
     try {
-      this.audit({ phase: "decision", ...base, verdict, reason });
+      this.audit({ phase: "decision", ...base, verdict, reason, ...(verdict === "announce" ? { autonomy: true, mode: "autopilot" } : {}) });
     } catch (err) {
       // Not recorded, not run (fail closed).
       this.o.log.warn("extensions.audit_failed", { err });
@@ -976,6 +987,9 @@ export class ExtensionsService implements ExtensionsApi {
     const before = this.gateInput(gate, input.toolName, shownAsPinned, generation);
     if (before.verdict === "deny") return deny(before.reason);
     if (verdict === "allow" && before.verdict === "allow") return { permissionDecision: "allow" };
+    // Autopilot: said in the conversation's bubble instead of asked, and only once it was said (a call that can't be
+    // announced asks, as it does when Autopilot went out of force between the two looks).
+    if (verdict === "announce" && before.verdict === "announce" && this.said(gateAnnouncement(e!.item.name))) return { permissionDecision: "allow" };
     const confirmer = this.o.confirmer();
     if (!confirmer) return deny("Ember can't ask the user right now, so it didn't do this.");
     const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs);
@@ -1001,6 +1015,16 @@ export class ExtensionsService implements ExtensionsApi {
   private async checked(gate: SessionGate, server: string | undefined): Promise<void> {
     if (server) await this.afterCall(gate, server).catch(err => this.o.log.warn("extensions.recheck_failed", { err }));
     await this.settle(gate);
+  }
+
+  /** Says an Autopilot announcement; whether it was said (no announcer, or one that failed: not said). */
+  private said(words: string): boolean {
+    try {
+      return this.o.announce?.(words) === true;
+    } catch (err) {
+      this.o.log.warn("extensions.announce_failed", { err });
+      return false;
+    }
   }
 
   /**

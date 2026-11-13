@@ -14,7 +14,7 @@
  * passes neither gets exactly the answers it got before the port.
  */
 
-import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements";
+import { isNeverLook, isSecretLabel, isSheetCell, quoteUntrusted, screenWord } from "../perception/elements";
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
 import { roleWord } from "../../shared/role-words";
@@ -24,6 +24,7 @@ import { ADMIN_APP, OFFICE_APP, OPENS_PROGRAMS, PLAIN_EDITOR, PROMPT_APP, READ_O
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
 import { covers, movingWords, type AutonomyScope, type AutonomyScopes } from "./autonomy";
+import type { StepChecker, StepVerdict } from "../commands/review";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
@@ -222,6 +223,18 @@ export interface Decision {
   /** What Ember says as it goes ahead without asking (bubble and card), built from the request, never model text. */
   announce?: string;
   /**
+   * Assisted's check was asked about this step (PolicyEngine.assist), and what it said: `match` (the step goes ahead,
+   * announced), `no-match`, or `none` (no answer in time, an answer that isn't one of the two asked for, an error): the
+   * question stays up. Audited with the decision, as a command's review is. Absent: the check wasn't asked.
+   */
+  review?: StepVerdict | "none";
+  /**
+   * Autopilot let it go ahead (PolicyEngine.autopilotStep): it would have asked in any other mode, a risky step
+   * included, and is announced instead. Audited with the decision, so "What Ember did" and the eval tell such a step
+   * from one that only Interactive's waiver let through. Absent: no mode of its own decided it.
+   */
+  mode?: "autopilot";
+  /**
    * Refused only because the limit on actions a minute is reached (verdict "deny", so nothing acts): the worker waits
    * for the minute to free a slot (paceMs) and asks again, rather than ending the task (tasks-approvals-2).
    */
@@ -260,7 +273,36 @@ export interface PolicyInputs {
    * reason to ask is in those scopes is allowed and announced (Decision.autonomy); risky steps are never touched.
    */
   autonomy?: () => AutonomyScopes | null;
+  /**
+   * Assisted is the approval mode in force (autonomy.ts approvalInputs().check): a question may go to Assisted's check
+   * first (assist). Absent or false, no step is ever checked.
+   */
+  assisted?: () => boolean;
+  /**
+   * Autopilot is the approval mode in force (autonomy.ts approvalInputs().autopilot): every question is announced
+   * instead of asked, a risky one included (autopilotStep); refusals stay refusals. Absent or false, nothing changes.
+   * Its caller says so only where the organisation's policy lets a mode be in force (modeInForce), and the engine
+   * holds that again itself: never while every action is confirmed for the organisation, or acting is off.
+   */
+  autopilot?: () => boolean;
 }
+
+/** What Assisted's check is handed for the steps of one question (PolicyEngine.assist). */
+export interface AssistOptions {
+  /** The user's own words for the task (Worker.checkWords). None: the steps ask without the check. */
+  words: string;
+  /** The check itself: a session of its own on Copilot (agent/reviewer.ts copilotStepChecker); tests script one. */
+  check: StepChecker;
+  /** The task's stop: the check is given up at once, and nothing is cleared. */
+  signal: AbortSignal;
+  /** What holds this task to asking (the worker's), said to the check in Ember's own words. */
+  task?: StepTaskNotes;
+  /** Called once, right before the check is asked (the task's bubble says so): never when the steps ask without it. */
+  onCheck?: () => void;
+}
+
+/** What a task was held to asking for: text on screen tried to steer it, a step came up off the task, the user said no. */
+export interface StepTaskNotes { steered?: boolean; offTask?: boolean; saidNo?: boolean }
 
 /** Latin look-alikes from Cyrillic and Greek, enough to keep "Dеlete" (Cyrillic е) from passing as harmless. */
 const CONFUSABLES: Record<string, string> = {
@@ -1816,6 +1858,83 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
   }
 }
 
+/** What a decision's reason ends with once Assisted's check cleared the step (the audit's, and "What Ember did"). */
+export const CHECK_MATCHED = "Assisted's check found it in what the user asked";
+/** How an announcement ends when Assisted's check cleared the step (PolicyEngine.assist; the worker's batch line too). */
+export const CHECKED_WORDS = "without asking: I checked it against what you asked.";
+/** What a decision's reason ends with when Autopilot let the step go ahead (the audit's, and "What Ember did"). */
+export const AUTOPILOT_REASON = "Autopilot goes ahead without asking";
+/** How an announcement ends when Autopilot let the step go ahead (PolicyEngine.autopilotStep; the worker's batch line too). */
+export const AUTOPILOT_WORDS = "without asking: Autopilot is on.";
+/** How a step that would have asked goes ahead unasked: Interactive's waiver, Assisted's check, or Autopilot. */
+type Unasked = "let" | "checked" | "autopilot";
+/** How each one's announcement ends. */
+const UNASKED_WORDS: Record<Unasked, string> = { let: "without asking as you let me.", checked: CHECKED_WORDS, autopilot: AUTOPILOT_WORDS };
+
+/** What each kind of step does, in Ember's own words, for Assisted's check (stepForCheck): never a name from the screen. */
+const STEP_KIND: Record<ActionKind, string> = {
+  read: "read a window", click: "click a control", toggle: "turn a control on or off", text: "type text into a field", select: "choose an option in a list",
+  value: "set a control to a value", setting: "change one of the computer's comfort settings", open_app: "open an app",
+  cursor_click: "click a control, with the user's mouse", cursor_text: "type text into a field, with the user's keyboard",
+  keys: "press keys, on the user's keyboard", scroll: "scroll, with the user's mouse",
+};
+/** The most of each part Assisted's check is shown (characters): a part longer than its limit isn't cut, the step asks. */
+export const CHECK_LIMITS = { name: 200, title: 300, dialog: 600, typed: 1500, replaced: 200, step: 3500, words: 6000 } as const;
+/** A part read from the screen, an app or the task's model, as Assisted's check is shown it: quoted, with nothing unseen in it. */
+const checkQuote = (s: string, max: number): string => quoteUntrusted(s, max).replace(INVISIBLE, c => `\\u${c.codePointAt(0)!.toString(16).padStart(4, "0")}`);
+
+/**
+ * Ember's own description of one step for Assisted's check (PolicyEngine.assist; PLAN.md §2 "Approvals"): a line for
+ * each part, the labels and the notes Ember's own, and every part that came from the screen, an app or the task's
+ * model (the app's and the window's names, the control's, a dialog's words, the text to type, an option) quoted as
+ * untrusted data (quoteUntrusted). Never the screen itself, a read or a command's output. Null where the check can't be
+ * shown the step whole (a name withheld or secret, a dialog read in part, a part too long): it then asks, unchecked.
+ */
+export function stepForCheck(r: ActionRequest, d: Pick<Decision, "reason" | "carriedFrom">, kc: KeyConventions = KEYS.linux): string | null {
+  const el = r.element;
+  if (el?.secret || el?.withheld || r.dialog?.truncated) return null;
+  const typing = r.kind === "text" || r.kind === "cursor_text";
+  const value = r.value ?? "";
+  // What a cell will hold where that isn't the text typed (keys into a cell, Calc's input line).
+  const holds = r.formula !== undefined && r.formula !== value ? r.formula : "";
+  const whole: [string, number][] = [[r.app, CHECK_LIMITS.name], [r.window, CHECK_LIMITS.title], [el?.name ?? "", CHECK_LIMITS.name], [r.dialog?.name ?? "", CHECK_LIMITS.name],
+    [r.dialog?.text ?? "", CHECK_LIMITS.dialog], [value, typing ? CHECK_LIMITS.typed : CHECK_LIMITS.name], [holds, CHECK_LIMITS.typed],
+    [r.place && "name" in r.place ? r.place.name : "", CHECK_LIMITS.name]];
+  if (whole.some(([text, max]) => text.length > max)) return null;
+  const lines = [`Action: ${STEP_KIND[r.kind]}${r.onDesk ? " (on Ember's own desk, a display of its own: nothing of the user's is borrowed)" : ""}`];
+  if (r.kind === "open_app") lines.push(`App to open: ${checkQuote(value, CHECK_LIMITS.name)}`);
+  else if (r.kind !== "setting" && r.app) lines.push(`App: ${checkQuote(friendlyApp(r.app), CHECK_LIMITS.name)}`);
+  if (r.window) lines.push(`Window: ${checkQuote(r.window, CHECK_LIMITS.title)}${r.onPage || r.inPage ? " (a web page)" : ""}`);
+  if (el) {
+    const at = !r.place ? "" : "at" in r.place ? `, at the ${r.place.at} of the window` : `, on ${screenWord(r.place.role)} ${checkQuote(r.place.name, CHECK_LIMITS.name)}`;
+    lines.push(`Control: ${screenWord(el.role)} ${el.name ? checkQuote(el.name, CHECK_LIMITS.name) : `with no name${at}`}`);
+  }
+  if (r.dialog) lines.push(`In a dialog: ${checkQuote(r.dialog.name, CHECK_LIMITS.name)}, which says: ${checkQuote(r.dialog.text, CHECK_LIMITS.dialog)}`);
+  if (typing) {
+    const current = r.currentText ?? "";
+    lines.push(`Text to type: ${checkQuote(value, CHECK_LIMITS.typed)} (${value.length} ${value.length === 1 ? "character" : "characters"})`);
+    lines.push(r.mode === "append" ? "How: added after what the field holds" : r.mode === "insert" ? "How: put in where the caret is" : current
+      ? `How: in place of what the field holds now, ${checkQuote(current, CHECK_LIMITS.replaced)} (${current.length} ${current.length === 1 ? "character" : "characters"} in all)` : "How: in place of whatever the field holds");
+  } else if (r.kind === "toggle") lines.push(`Turned: ${value === "on" ? "on" : value === "off" ? "off" : "the other way"}`);
+  else if (r.kind === "select") lines.push(`Option: ${checkQuote(value, CHECK_LIMITS.name)}`);
+  else if (r.kind === "value" || r.kind === "setting") lines.push(`${r.kind === "setting" ? "Setting and its new value" : "Value"}: ${checkQuote(value, CHECK_LIMITS.name)}`);
+  else if (r.kind === "keys") lines.push(`Keys: ${keyLabel(value, kc) ?? checkQuote(value, 40)}`);
+  else if (r.kind === "scroll") lines.push(`Direction: ${checkQuote(value, 40)}`);
+  if (holds) lines.push(`The cell will then hold: ${checkQuote(holds, CHECK_LIMITS.typed)}`);
+  if (d.carriedFrom) lines.push(`It carries text Ember read in: ${d.carriedFrom.length ? d.carriedFrom.slice(0, 3).map(a => checkQuote(a, CHECK_LIMITS.name)).join(", ") : "another window"}`);
+  // Why policy asks, in its own words (a reason never holds screen text; the app's name, which one may, is in its line above).
+  const app = r.app ? friendlyApp(r.app) : "";
+  lines.push(`Why Ember would ask first: ${app ? d.reason.split(app).join("this app") : d.reason}.`);
+  return lines.join("\n");
+}
+
+/** What the worker holds a task to asking for, as Assisted's check is told it (Ember's own words). */
+const taskNotes = (t: StepTaskNotes | undefined): string[] => [
+  ...(t?.steered ? ["Ember's note: earlier in this task, text on screen tried to give Ember instructions."] : []),
+  ...(t?.offTask && !t.steered ? ["Ember's note: earlier in this task, a step came up that the request doesn't name."] : []),
+  ...(t?.saidNo ? ["Ember's note: the user said no to another step earlier in this task."] : []),
+];
+
 /**
  * A decision's waivable scopes when the only thing that makes it ask is text carried from another window (Risk.carried)
  * or Ember's doubt about an ordinary step (Risk.plain), and where carried text comes from: crossWindow for carried text,
@@ -2563,7 +2682,33 @@ export class PolicyEngine {
     return withDetail(r, this.judge(r, false));
   }
 
+  /** The decision as every mode's rules give it, then Autopilot's say on what would still ask (autopilotStep). */
   private judge(r: ActionRequest, count: boolean): Decision {
+    return this.autopilotStep(r, this.judgeAsked(r, count));
+  }
+
+  /**
+   * Is Autopilot in force on this engine's screen (PolicyInputs.autopilot)? Never while the organisation asks for a
+   * click before every action, or doesn't let Ember act: its policy holds in every mode.
+   */
+  get autopilot(): boolean {
+    return (this.o.autopilot?.() ?? false) && !this.o.confirmEveryAction?.() && (this.o.actionsAllowed?.() ?? true);
+  }
+
+  /**
+   * Autopilot (PLAN.md §2 "Approvals", §10 "Settled" (3); owner decision of 2026-11-12): it never asks about a step in
+   * an app. `d` is a question about `r` as it would be put up (judge()'s own, or the worker's hold of a step in a task
+   * that text tried to steer, that went off-task or where the user said no): it goes ahead instead, announced
+   * (`autonomy`, `announce`, built from the request: the kind of step, the app and a size) and marked with the mode for
+   * the audit, a risky step included. Only a question: a refusal stays a refusal (every "never" rule holds), and an
+   * allow or a read is left as it is. Outside Autopilot it returns `d` itself.
+   */
+  autopilotStep(r: ActionRequest, d: Decision): Decision {
+    if (d.verdict !== "confirm" || !this.autopilot) return d;
+    return { ...d, verdict: "allow", remember: false, autonomy: true, mode: "autopilot", reason: `${d.reason}; ${AUTOPILOT_REASON}`, announce: this.announcement(r, d, "autopilot") };
+  }
+
+  private judgeAsked(r: ActionRequest, count: boolean): Decision {
     const d = this.decideBase(r, count);
     if (d.verdict === "deny") return d;
     // "Always in this app" is for ordinary steps; a risky or off-task question is answered for this once only.
@@ -2620,14 +2765,64 @@ export class PolicyEngine {
   }
 
   /**
+   * Assisted's check for one step (PLAN.md §2 "Approvals", owner decision of 2026-11-12): the one place a model's
+   * verdict counts. `d` is the question about `r` as it would be put up (decide()'s, or the worker's hold of it: a
+   * steered, off-task or said-no task's steps come here too). It goes to the check only while Assisted is in force, in
+   * a task with words of the user's own, and never where the organisation asks for a click before every action; a
+   * refusal, an allow and a read are never checked. A match turns it into allow, announced (`autonomy`, `announce`), a
+   * risky step included; no match, no answer, an error or a stop leaves the question as it was (`review` says which).
+   */
+  async assist(r: ActionRequest, d: Decision, o: AssistOptions): Promise<Decision> {
+    return (await this.assistAll([{ r, d }], o))[0];
+  }
+
+  /** Assisted's check for the steps of one question (fill_cells): one check for all of them; a match clears each that asks. */
+  async assistAll(steps: readonly { r: ActionRequest; d: Decision }[], o: AssistOptions): Promise<Decision[]> {
+    const asIs = () => steps.map(s => s.d);
+    const may = () => (this.o.assisted?.() ?? false) && !this.o.confirmEveryAction?.() && (this.o.actionsAllowed?.() ?? true);
+    if (!steps.some(s => s.d.verdict === "confirm") || steps.some(s => s.d.verdict === "deny" || s.r.kind === "read")) return asIs();
+    // (Nor the user's words: a request too long to show whole could lose the "but don't…" at its end.)
+    if (!may() || !o.words.trim() || o.words.trim().length > CHECK_LIMITS.words || o.signal.aborted) return asIs();
+    const parts = steps.map(s => stepForCheck(s.r, s.d, this.keys));
+    if (parts.some(p => p === null)) return asIs();
+    const step = [...(steps.length > 1 ? parts.map((p, i) => `Step ${i + 1} of ${steps.length}, taken together:\n${p}`) : parts), ...taskNotes(o.task)].join("\n");
+    // Nothing is cut to fit: a step too long to show the check whole asks.
+    if (step.length > CHECK_LIMITS.step) return asIs();
+    o.onCheck?.();
+    let verdict: StepVerdict | null;
+    let stop!: () => void;
+    const stopped = new Promise<null>(resolve => { stop = () => resolve(null); o.signal.addEventListener("abort", stop, { once: true }); });
+    try {
+      // A Stop doesn't wait for the check's answer: it is given up at once.
+      verdict = await Promise.race([Promise.resolve().then(() => o.check({ userWords: o.words, step }, o.signal)), stopped]);
+    } catch {
+      verdict = null; // a check that failed is no answer: the question goes up
+    } finally {
+      o.signal.removeEventListener("abort", stop);
+    }
+    // Stopped meanwhile, or Assisted no longer holds (the mode or the organisation's policy changed while the check
+    // ran): its answer counts for nothing.
+    if (o.signal.aborted || !may()) return asIs();
+    // Only the two answers asked for count.
+    const review: StepVerdict | "none" = verdict === "match" || verdict === "no-match" ? verdict : "none";
+    return steps.map(({ r, d }) => {
+      if (d.verdict !== "confirm") return d;
+      if (review !== "match") return { ...d, review };
+      return { ...d, verdict: "allow" as const, remember: false, autonomy: true as const, review, reason: `${d.reason}; ${CHECK_MATCHED}`, announce: this.announcement(r, d, "checked") };
+    });
+  }
+
+  /**
    * What Ember says as it goes ahead without asking: the kind of step, the app and, for text, how much (never the text
    * typed, nor any words from the screen: the bubble may be seen by others, and screen text is untrusted; security
-   * review of #127). For text carried from elsewhere: where from, where to and how much.
+   * review of #127). For text carried from elsewhere: where from, where to and how much. `how`: Assisted's check
+   * cleared it, or Autopilot let it through, which the line says instead (and then says the kind of step: such a step
+   * may be risky for more than the text it carries).
    */
-  private announcement(r: ActionRequest, d: Decision): string {
+  private announcement(r: ActionRequest, d: Decision, how: Unasked = "let"): string {
     const here = r.app ? friendlyApp(r.app) : "this app";
     const chars = r.kind === "text" || r.kind === "cursor_text" ? (r.value ?? "").length : undefined;
-    if (d.carriedFrom) return movingWords(d.carriedFrom, here, chars);
+    if (d.carriedFrom && how === "let") return movingWords(d.carriedFrom, here, chars);
     const n = `${chars ?? 0} ${chars === 1 ? "character" : "characters"}`;
     const key = r.kind === "keys" ? keyLabel(r.value ?? "", this.keys) ?? "a key" : "";
     // On Ember's desk the mouse and keyboard are its own: "the", never "your".
@@ -2640,7 +2835,7 @@ export class PolicyEngine {
     const borrowed = !r.onDesk && (r.kind === "cursor_click" || r.kind === "cursor_text" || r.kind === "keys" || r.kind === "scroll");
     // An answer to a message box says that much (never the dialog's words, which are the app's).
     const answering = r.kind === "keys" ? `Using ${whose} keyboard to answer a message box` : r.kind === "cursor_click" ? `Using ${whose} mouse to answer a message box` : "Answering a message box";
-    return `${d.answersDialog ? answering : verb[r.kind]} in ${here}, without asking as you let me.${borrowed ? " Move the mouse or press a key to take it back." : ""}`;
+    return `${d.answersDialog ? answering : verb[r.kind]} in ${here}, ${UNASKED_WORDS[how]}${borrowed ? " Move the mouse or press a key to take it back." : ""}`;
   }
 
   /**

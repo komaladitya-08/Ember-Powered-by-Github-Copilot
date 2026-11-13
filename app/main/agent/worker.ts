@@ -10,7 +10,7 @@
  * was already approved or waiting for its turn.
  */
 
-import { copilotReviewer } from "./reviewer";
+import { copilotReviewer, copilotStepChecker } from "./reviewer";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
@@ -34,7 +34,8 @@ import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import { helperCantRun } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
-import { riskyOnPage } from "../policy/policy";
+import { AUTOPILOT_WORDS, CHECKED_WORDS, riskyOnPage } from "../policy/policy";
+import type { CommandReviewer, StepChecker } from "../commands/review";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
@@ -90,13 +91,28 @@ export const LINUX_WORKER_SYSTEM: WorkerSystem = {
 
 export interface WorkerDeps {
   client: CopilotClient;
-  /** The approval mode in force reviews commands (policy/autonomy.ts approvalInputs: Assisted): commands that would ask are reviewed first. */
-  reviewCommands?: () => boolean;
+  /**
+   * Assisted is the approval mode in force (policy/autonomy.ts approvalInputs().check): a command that would ask goes
+   * to the reviewer first. App steps hear of it through the policy engine (PolicyInputs.assisted).
+   */
+  check?: () => boolean;
+  /** Assisted's check for app steps (default: a session of its own on Copilot, copilotStepChecker); tests script one. */
+  checkStep?: StepChecker;
+  /** Assisted's check for commands (default: a session of its own on Copilot, copilotReviewer); tests script one. */
+  reviewCommand?: CommandReviewer;
+  /** The lighter model Assisted's check and the command reviewer run on (the conversation's); absent: this worker's. */
+  checkModel?: string | null;
   /**
    * The approval mode in force (policy/autonomy.ts approvalInputs): its scopes, or null below Interactive. App steps
    * hear of it through the policy engine; this is for run_command's flow (an ordinary command carrying text from elsewhere).
    */
   autonomy?: () => AutonomyScopes | null;
+  /**
+   * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot): a command that would ask
+   * is announced with its Stop instead, but for the few that still ask there (commands/flow.ts autopilotCommand). App
+   * steps hear of it through the policy engine (PolicyInputs.autopilot, PolicyEngine.autopilotStep).
+   */
+  autopilot?: () => boolean;
   log: Logger;
   model: string | null;
   /** The levels the connected Copilot catalog advertises for this worker's model. */
@@ -212,6 +228,12 @@ export interface TaskSpec {
    */
   typedOnly?: boolean;
   /**
+   * The user's own words for Assisted's check (PLAN.md §2 "Approvals"), when they differ from commandWords: what was
+   * heard where Ember can't tell the user from its speakers counts here, as it doesn't for commands; a suggestion Ember
+   * offered, words heard over Ember's own voice and a routine's saved steps never do. Absent: commandWords, else userWords.
+   */
+  checkWords?: string;
+  /**
    * Ember's questions the user answered in those turns with a yes or a choice: a risky step one of them names isn't
    * flagged as unasked (nor does it make every later step asked), but is asked about all the same (ActionRequest.agreed).
    */
@@ -257,6 +279,8 @@ const REFUSED_BEFORE = "The user already said no to this step in this task, so E
 /** To a step whose question went unanswered, sent again before the user said anything more to the task: not asked twice. */
 const STILL_UNANSWERED = "Ember already asked the user about this step and the question went unanswered; they haven't said anything to this task since, so Ember didn't ask again and the step wasn't taken. Don't retry it or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
 /** The audit's reasons for those two refusals (Ember's own words: "What Ember did" shows them). */
+/** Why a borrow is refused in Autopilot once the user took the mouse or keyboard back from this task (refusedAfterTakeover). */
+const TOOK_BACK_REFUSED = "the user took the mouse back earlier in this task, and Autopilot doesn't ask before using it again";
 const STANDING_REASON: Readonly<Record<Standing, string>> = {
   refused: "the user said no to this step earlier in this task",
   waiting: "the question about this step went unanswered, and the user hasn't said anything to this task since",
@@ -356,6 +380,8 @@ export const ASKING_AGAIN = {
   menuClicked: "Clicking Allow closed the menu, so I'm asking again.",
   menu: "The menu closed while you decided, so I'm asking again.",
 } as const;
+/** What a task's bubble says while Assisted's check reads a step against the user's words, before any question (authorize). */
+export const CHECKING_STEP = "Checking this step against what you asked…";
 /** promptOpen's answer as PROMPT_REASON's and PROMPT_REFUSAL's key (true is a prompt that is open). */
 const promptKey = (open: true | "unchecked" | "helper"): keyof typeof PROMPT_REASON => (open === true ? "open" : open);
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
@@ -1264,10 +1290,16 @@ export class Worker {
   private commandWords: string;
   /** Some of the user's words were heard where Ember can't tell the user from its speakers (TaskSpec.commandWords). */
   private spokenOnly: boolean;
+  /**
+   * The user's own words Assisted's check reads a step or a command against (TaskSpec.checkWords, and their steers'):
+   * never the goal, a suggestion, a routine's saved steps or words heard over Ember's voice. "" when none: nothing is
+   * checked then, and the step asks.
+   */
+  private checkWords: string;
   /** The task's folder and downloads on its target, and whether a command is running (commands/flow.ts). */
   private readonly commandState: CommandFlowContext["state"] = { cwd: null, downloaded: new Set<string>(), running: false };
   /** The latest decision authorize() let through (gate 1's stamp for a remote step, onAuthorized). */
-  private lastAuth: { at: number; verdict: "allow" | "confirm"; approvedAt: number | null } | null = null;
+  private lastAuth: { at: number; verdict: "allow" | "confirm"; approvedAt: number | null; announced?: true } | null = null;
   /**
    * A step Work without asking let through (authorize, authorizeCells): its decisions' audit entries and its
    * announcement, held until the look right before acting has passed (act, system, withCursor: goAhead). So a step a
@@ -1298,6 +1330,13 @@ export class Worker {
   private refusals = new Refusals();
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
+  /**
+   * Assisted's check was asked about the last step (checkFirst): it took time, as a question does, so the step is held
+   * to what was judged before it acts (waited). Never the user's yes: nothing a yes unlocks follows from it.
+   */
+  private checked = false;
+  /** Time passed between the decision and the step, for a question or for Assisted's check: the screen may have changed. */
+  private get waited(): boolean { return this.asked || this.checked; }
   /** The step the user last said yes to (stepKey), and whether by a click on Allow (bubble or prompt window), until the next decision. */
   private yesFor: { key: string; clicked: boolean } | null = null;
   /**
@@ -1370,6 +1409,7 @@ export class Worker {
     this.userWords = (spec.userWords ?? spec.goal).replace(STEERED, "\n$1");
     this.commandWords = (spec.commandWords ?? spec.userWords)?.replace(STEERED, "\n$1") ?? "";
     this.spokenOnly = spec.commandWords !== undefined && !spec.typedOnly;
+    this.checkWords = (spec.checkWords ?? spec.commandWords ?? spec.userWords)?.replace(STEERED, "\n$1") ?? "";
     this.agreed = spec.agreed ?? [];
     // What Ember's conversation read on the user's screen before starting this task (its goal may carry it).
     if (spec.screen) {
@@ -2042,7 +2082,7 @@ export class Worker {
     return {
       task: {
         id: this.spec.id, title: goal.length > 200 ? `${goal.slice(0, 199)}…` : goal,
-        commandWords: () => this.commandWords, agreed: () => this.agreed, tainted: () => this.tainted,
+        commandWords: () => this.commandWords, checkWords: () => this.checkWords, agreed: () => this.agreed, tainted: () => this.tainted,
         spokenWords: () => (this.spokenOnly ? this.userWords : ""),
         ownWords: () => this.ownWordsLine(),
         // Output that reads like instructions: every later step (command or not) is checked with the user (§3.11).
@@ -2057,7 +2097,14 @@ export class Worker {
       refusals: this.refusals,
       // "Work without asking" holds for commands only while this task hasn't been steered or told no (as for app steps).
       autonomy: () => (this.tainted || this.saidNoThisTask ? null : this.d.autonomy?.() ?? null),
-      ...(this.d.reviewCommands?.() ? { review: copilotReviewer({ client: this.d.client, model: this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }) } : {}),
+      // Autopilot never asks: there such a task's commands are announced too, but for the few that still ask (flow.ts).
+      autopilot: () => this.d.autopilot?.() === true,
+      // Assisted's check for commands, on the lighter model: an answer that comes once Assisted is no longer in force
+      // (the mode or the organisation's policy changed while it was asked) counts for nothing.
+      ...(this.d.check?.() ? { review: async (i, signal) => {
+        const v = await (this.d.reviewCommand ?? copilotReviewer({ client: this.d.client, model: this.d.checkModel ?? this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }))(i, signal);
+        return this.d.check?.() ? v : null;
+      } } : {}),
     };
   }
 
@@ -2230,9 +2277,10 @@ export class Worker {
   /**
    * The user's new instruction for this running task ("use Firefox instead"); `userWords`: what the user said in that
    * turn; `screen`: what the conversation read on the screen then; `agreed`: Ember's questions they answered (TaskSpec);
-   * `commandWords`: those words for commands, when some were heard where Ember can't tell the user (TaskSpec).
+   * `commandWords`: those words for commands, when some were heard where Ember can't tell the user (TaskSpec);
+   * `checkWords`: those words for Assisted's check, when they differ from the ones for commands (TaskSpec).
    */
-  async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string): Promise<boolean> {
+  async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string, checkWords?: string): Promise<boolean> {
     if (!this.session || this.halted || this.result) return false;
     // The user is there again: a question nobody answered may be asked once more (what they said no to stays refused).
     this.refusals.userSpoke();
@@ -2251,6 +2299,8 @@ export class Worker {
     const heard = commandWords ?? userWords;
     if (commandWords !== undefined) this.spokenOnly = true;
     if (heard?.trim()) this.commandWords = this.commandWords ? `${this.commandWords}\n${heard}` : heard;
+    const check = checkWords ?? heard;
+    if (check?.trim()) this.checkWords = this.checkWords ? `${this.checkWords}\n${check}` : check;
     await this.session.send({ prompt: `<user_update>The user changed the task: ${said}</user_update>`, mode: "immediate" });
     return true;
   }
@@ -2787,6 +2837,7 @@ export class Worker {
     this.pageBound = null;
     // A question belongs to the step it was asked for: a look before this step's own is never "while the user decided".
     this.asked = false;
+    this.checked = false;
     const held = this.known.get(id);
     if (!held) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window and use its ids.`);
     const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
@@ -2977,12 +3028,12 @@ export class Worker {
 
   /** What must still hold just before input: the whole context, but for a living page's control when no question was asked. */
   private stillApproved(id: number, node: AxNode, context: string, editing: boolean, clickedTextAt?: number): Promise<ToolResultObject | null> {
-    return this.pageTarget === id && !this.asked ? this.checkPageTarget(id, node, editing, clickedTextAt !== undefined) : this.checkActionContext(id, node, context, clickedTextAt);
+    return this.pageTarget === id && !this.waited ? this.checkPageTarget(id, node, editing, clickedTextAt !== undefined) : this.checkActionContext(id, node, context, clickedTextAt);
   }
 
-  /** After a question was up, the element must still be the one the user said yes to. */
+  /** After a question was up (or Assisted's check ran), the element must still be the one that was judged. */
   private async stillSame(id: number, element: Focus): Promise<ToolResultObject | null> {
-    if (!this.asked) return null;
+    if (!this.waited) return null;
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
     const name = live ? this.nameOf(id, live) : null;
@@ -3105,7 +3156,7 @@ export class Worker {
     const changed = await this.stillSame(id, element);
     if (changed) return changed;
     // A switch the user flipped while deciding may already be where it should be: toggling would undo it.
-    if (kind === "toggle" && this.asked) {
+    if (kind === "toggle" && this.waited) {
       const now = await this.sidecar.readElement(id).catch(() => null);
       if (this.isOver) return STOPPED();
       if (now && isOn(now.states) === (value === "on")) return done(`Already ${value}: ${describeAfter(now)}`);
@@ -3333,7 +3384,7 @@ export class Worker {
     }
     // A switch the user flipped while deciding may already be where it should be: a click would undo it.
     const goal = turns ?? (toggle && (value === "on" || value === "off") ? value : undefined);
-    if (goal && this.asked && isOn(live.states) === (goal === "on")) {
+    if (goal && this.waited && isOn(live.states) === (goal === "on")) {
       return done(`Already ${goal}: ${describeAfter(live)}`);
     }
     // The user's clipboard is saved before anything is borrowed: if it can't be saved in time, nothing is touched.
@@ -3733,6 +3784,7 @@ export class Worker {
    */
   private async authorizeCells(jobs: CellJob[]): Promise<ToolResultObject | null | "each"> {
     this.asked = false;
+    this.checked = false;
     this.ahead = null;
     this.yesFor = null;
     if (this.isOver) return STOPPED();
@@ -3744,7 +3796,7 @@ export class Worker {
     if (!await this.pace()) return STOPPED();
     // Judged after what was typed into the window's other fields before, as each cell would be one after the other.
     let typed = this.typedWindows.get(this.windowKey);
-    const judged = jobs.map((job, i) => {
+    let judged = jobs.map((job, i) => {
       const element: Focus = { role: "table cell", name: job.cell };
       const field = this.fieldOf(element);
       const typedHere = typed ? `${typed.text}${typed.field === field ? "" : "\n"}${job.text}` : undefined;
@@ -3752,6 +3804,9 @@ export class Worker {
         ...(job.expected !== undefined ? { currentText: job.expected, ...this.ownText(field, job.expected) } : {}) };
       if (job.text) typed = { field, text: (typedHere ?? job.text).slice(-TYPED_MAX) };
       const d = i === 0 ? this.d.policy.decide(req) : this.d.policy.recheck(req);
+      // Autopilot never asks: its own decision stands in a task the user said no in, and a borrow after the user took the
+      // mouse back is refused, as for one step (authorize).
+      if (this.d.policy.autopilot) return { job, req, d: d.autonomy && this.takenBack(req.kind) ? this.refusedAfterTakeover(d) : d };
       // "Work without asking" is suspended for the rest of a task the user already said no in, as for one step (authorize),
       // and for its borrows once the user took the mouse back.
       if (d.autonomy && !this.saidNoThisTask && this.takenBack(req.kind)) return { job, req, d: this.askedAfterTakeover(d) };
@@ -3767,9 +3822,8 @@ export class Worker {
     const names = judged.flatMap(j => this.namesOf(j.req));
     const stood = no ? null : this.refusals.step(names);
     if (stood) return this.refusedBefore({ ...base, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") } }, { tier: "confirm" }, stood);
-    const asks = judged.find(j => j.d.verdict !== "allow");
+    let asks = judged.find(j => j.d.verdict !== "allow");
     const alone = judged.some(j => j.d.aligned === false) || jobs.some(j => reachesOut(j.text));
-    const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
     // No question while the shell's own password prompt is open (or Ember can't tell), or an authentication prompt has
     // the keyboard: the borrow would refuse the batch once the user answered, as for one step (authorize;
     // safety-privacy-3, safety-privacy-v4-3). A batch going ahead without asking is looked at by the borrow alone.
@@ -3777,10 +3831,16 @@ export class Worker {
       const cells: Focus = { role: "table cell", name: jobs.map(j => j.cell).join(", ") };
       const prompt = await this.beforeBorrowQuestion("cursor_text", cells);
       if (prompt) return prompt;
+      // Assisted: one check for the batch before its one question, as for one step (authorize).
+      const checked = await this.checkFirst(judged.map(j => ({ r: j.req, d: j.d })));
+      if (this.isOver) return STOPPED();
+      judged = judged.map((j, i) => ({ ...j, d: checked[i] }));
+      asks = judged.find(j => j.d.verdict !== "allow");
     }
+    const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
     const entries: AuditEntry[] = judged.map(({ req, d }, i) => {
       const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
-      return { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...batch };
+      return { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...(d.mode ? { mode: d.mode } : {}), ...(d.review ? { review: d.review } : {}), ...batch };
     });
     // A batch going ahead without asking is recorded, and said, once the borrow's look right before acting has passed
     // (goAhead), as one step is (authorize; safety-privacy-v4-2).
@@ -3798,7 +3858,7 @@ export class Worker {
       const waived = judged.filter(j => j.d.autonomy && j.d.announce);
       const app = this.window.app ? friendlyApp(this.window.app) : "this app";
       const words = waived.length === 1 && jobs.length === 1 ? waived[0].d.announce!
-        : waived.length ? `${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, without asking as you let me.${this.place ? "" : " Move the mouse or press a key to take it back."}` : null;
+        : waived.length ? `${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, ${waived.some(j => j.d.mode === "autopilot") ? AUTOPILOT_WORDS : waived.some(j => j.d.review === "match") ? CHECKED_WORDS : "without asking as you let me."}${this.place ? "" : " Move the mouse or press a key to take it back."}` : null;
       if (ahead) this.ahead = { entries, words };
       return null;
     }
@@ -4227,6 +4287,8 @@ export class Worker {
       const verdict = await this.authorize(req, { covered, ...(moves && !covered ? { note: "Keys that only move there after this one won't be asked about." } : {}) });
       if (verdict) return verdict;
       const said = this.asked;
+      // (Assisted's check took time too: the page is held to what was judged, but it is no yes for later keys.)
+      const waited = this.waited;
       const approved = element;
       const turn: { moved?: { to: Focus | undefined }; into?: Focus } = {};
       this.inputValue = { value: keys };
@@ -4250,7 +4312,7 @@ export class Worker {
         if (!now && activating) throw new Error("Ember can't tell what that key would activate in this window (nothing there says it has the keyboard), so nothing was pressed. Click the control you mean instead.");
         // In a living page (a video playing), with no question asked, what has the keyboard is checked just above, and the
         // shell holds what it contains.
-        if (context === null || (this.focusContext !== context && !(this.focusInPage && !said && this.focusShell === shell))) {
+        if (context === null || (this.focusContext !== context && !(this.focusInPage && !waited && this.focusShell === shell))) {
           if (context !== null && this.focusContext !== null && this.spend(this.focusInPage)) throw new Error(spentYes(this.focusInPage ? "the page" : "the window", "nothing was pressed"));
           throw new Error("The window or its contents changed while preparing these keys, so nothing was pressed. Call perceive_window and ask again if it is still needed.");
         }
@@ -4638,6 +4700,7 @@ export class Worker {
       element: element ? { role: element.role, name: element.name } : null,
       ...(req.value !== undefined ? { valueSha256: sha256Hex(req.value) } : {}),
       verdict: auth.verdict, approval: auth.approvedAt !== null ? { given: true } : null,
+      ...(auth.announced ? { announced: true as const } : {}),
       ageMs: Math.max(0, Math.round(now - (auth.approvedAt ?? auth.at))),
     });
   }
@@ -4693,6 +4756,7 @@ export class Worker {
    */
   private async authorize(request: ActionRequest, o: { note?: string; covered?: boolean } = {}): Promise<ToolResultObject | null> {
     this.asked = false;
+    this.checked = false;
     this.lastAuth = null;
     this.ahead = null;
     this.yesFor = null;
@@ -4723,7 +4787,8 @@ export class Worker {
     if (stood) return this.refusedBefore(req, decision, stood);
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
     // as it would have. A task that was steered or went off-task is held to asking just below, as before.
-    if (decision.autonomy && this.saidNoThisTask && !this.tainted) {
+    // (Autopilot's own decision, `mode`, is no waiver of Interactive's: it stands, and is said as Autopilot's below.)
+    if (decision.autonomy && this.saidNoThisTask && !this.tainted && !decision.mode) {
       const { autonomy: _a, announce: _n, ...asked } = decision;
       decision = { ...asked, verdict: "confirm", tier: "confirm", reason: `${decision.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` };
     }
@@ -4735,7 +4800,7 @@ export class Worker {
     // After a step the user didn't ask for came up (a page may have steered Ember, or the model went its own way),
     // nothing more happens without the user's click, and every question says why (one that would have been asked
     // anyway too; the step that was flagged says so itself).
-    if (this.tainted && decision.verdict !== "deny" && decision.tier !== "read" && decision.aligned !== false) {
+    if (this.tainted && decision.verdict !== "deny" && decision.tier !== "read" && decision.aligned !== false && !decision.mode) {
       // An app the user already allowed for this task: the step alone is asked about, not working in the app again.
       const step = decision.stepPrompt && this.allowedApps.has(req.app.toLowerCase()) ? decision.stepPrompt : decision.prompt;
       const prompt = this.steered
@@ -4747,6 +4812,13 @@ export class Worker {
       decision = decision.verdict === "allow"
         ? { ...held, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${base}; ${this.steered ? "text on screen tried to give Ember instructions" : "a step came up that the user didn't ask for"}`, prompt }
         : { ...held, everyTime: true, remember: false, prompt };
+    }
+    // Autopilot never asks (PLAN.md §2 "Approvals"): what this task's holds turned back into a question (the task was
+    // steered, went off-task, or the user said no in it) goes ahead announced instead, recorded as Autopilot's with why
+    // it would have asked. But never a borrow after the user took the mouse or keyboard back: Ember never moves the
+    // pointer again after that, and with no question to put, the borrow is refused for the rest of the task.
+    if (decision.verdict === "confirm" && this.d.policy.autopilot) {
+      decision = this.takenBack(req.kind) ? this.refusedAfterTakeover(decision) : this.d.policy.autopilotStep(req, decision);
     }
     if (o.covered && decision.verdict === "confirm" && !this.tainted && decision.aligned !== false && this.harmlessKeys(req)) {
       decision = { ...decision, verdict: "allow", tier: "reversible", reason: "a key that only moves, after the user said yes to moving there" };
@@ -4764,8 +4836,12 @@ export class Worker {
     if (decision.verdict === "confirm" && !sessionAllowed) {
       const prompt = BORROWED.has(req.kind) ? await this.beforeBorrowQuestion(req.kind, req.element) : await this.promptRefusal(req.kind, req.element);
       if (prompt) return prompt;
+      // Assisted: the question goes to its check first, and is put up only if the check doesn't find the step in the
+      // user's own words (PolicyEngine.assist). The user never sees a question that is then withdrawn.
+      [decision] = await this.checkFirst([{ r: req, d: decision }]);
+      if (this.isOver) return STOPPED();
     }
-    const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}) };
+    const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}), ...(decision.mode ? { mode: decision.mode } : {}), ...(decision.review ? { review: decision.review } : {}) };
     // Going ahead without asking is recorded, and said, once the look right before acting has passed (goAhead), so a
     // step that look refuses is recorded only as refused (safety-privacy-v4-2).
     if (decision.verdict === "allow" && decision.autonomy) this.ahead = { entries: [entry], words: decision.announce ?? null };
@@ -4781,7 +4857,8 @@ export class Worker {
     }
     const decidedAt = performance.now();
     if (decision.verdict === "allow" || sessionAllowed) {
-      this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null };
+      // (A step Autopilot announced instead of asking says so on a remote's stamp: gate 2 wanted a yes for it.)
+      this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null, ...(decision.mode === "autopilot" ? { announced: true as const } : {}) };
       // Going ahead without asking: Ember says what it is doing, in the bubble and on the task's card, once the look right
       // before acting has passed (goAhead).
       return null;
@@ -4822,6 +4899,29 @@ export class Worker {
       return null;
     }
     return this.refused(answer, names);
+  }
+
+  /**
+   * Assisted's check for the steps of one question, before it is put up (PolicyEngine.assist decides whether they may be
+   * checked at all, what the check is shown and what a match becomes). The check reads the user's own words only
+   * (checkWords). A borrow after the user took the mouse or keyboard back is theirs alone to allow: never checked.
+   * While it runs the task's bubble says so, and a Stop ends the wait at once.
+   */
+  private async checkFirst(steps: readonly { r: ActionRequest; d: Decision }[]): Promise<Decision[]> {
+    if (steps.some(s => this.takenBack(s.r.kind))) return steps.map(s => s.d);
+    const check = this.d.checkStep ?? copilotStepChecker({ client: this.d.client, model: this.d.checkModel ?? this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log });
+    const t0 = performance.now();
+    const out = await this.d.policy.assistAll(steps, {
+      words: this.checkWords, check, signal: this.overSignal,
+      task: { steered: this.steered, offTask: this.tainted && !this.steered, saidNo: this.saidNoThisTask },
+      onCheck: () => {
+        this.checked = true;
+        try { this.d.presenter.progress(CHECKING_STEP); } catch (err) { this.d.log.warn("worker.checking_not_said", { err }); }
+      },
+    });
+    // (What it said and how long it took: never the step, its names or the user's words.)
+    if (this.checked) this.d.log.info("worker.step_checked", { task: this.spec.id, kind: steps[0].r.kind, steps: steps.length, review: out.find(d => d.review)?.review ?? "stopped", ms: Math.round(performance.now() - t0) });
+    return out;
   }
 
   /** The names `req`'s step goes by in this task's refusals (stepNames): its window and element, and how it is taken. */
@@ -4923,9 +5023,18 @@ export class Worker {
 
   /** A borrow a mode would announce, turned back into the question it would be below Interactive, saying why it is asked. */
   private askedAfterTakeover(d: Decision): Decision {
-    const { autonomy: _a, announce: _n, ...asked } = d;
+    const { autonomy: _a, announce: _n, mode: _m, ...asked } = d;
     return { ...asked, verdict: "confirm", tier: "confirm", reason: `${d.reason.replace(/; the user lets Ember work without asking$/, "")}; the user took the mouse back earlier in this task`,
       prompt: `${d.prompt} (You took the mouse back earlier, so I'm asking before I use it again.)` };
+  }
+
+  /**
+   * That borrow in Autopilot, which never asks: refused, since Ember never moves the pointer again after the user takes
+   * over (CLAUDE.md "Least intrusive tier first") and there is no question to put. For the rest of the task.
+   */
+  private refusedAfterTakeover(d: Decision): Decision {
+    const { autonomy: _a, announce: _n, mode: _m, ...rest } = d;
+    return { ...rest, verdict: "deny", tier: "never", reason: TOOK_BACK_REFUSED };
   }
 
   /**

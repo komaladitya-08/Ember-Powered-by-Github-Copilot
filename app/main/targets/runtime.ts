@@ -1492,6 +1492,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           confirmEveryAction: () => admin().policy.confirmEveryAction, allowGrants: () => admin().policy.allowGrants,
           // The approval mode in force (policy/autonomy.ts): below Interactive, a first step in an app asks.
           trustAskedApps: () => approvalInputs(modeInForce(settings.get().approvals, admin().policy)).askedApps,
+          // Autopilot never asks: the few steps these hands take themselves (opening an app) are announced there too.
+          autopilot: () => approvalInputs(modeInForce(settings.get().approvals, admin().policy)).autopilot,
           isTerminalApp: name => isTerminalWindowApp(name, deps.sys.apps, deps.os), keys: deps.sys.keys, os: deps.os,
           isSecurityWindow: deps.sys.privacy.isSecurityWindow,
         }),

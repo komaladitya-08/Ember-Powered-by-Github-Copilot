@@ -99,7 +99,7 @@ describe("a settings.json from before the modes (modes-A2)", () => {
         expect(s.approvals.consent.interactive).toEqual(was.version > 0 ? { version: Math.min(was.version, OLD_CARD), at: was.at } : NONE);
         expect(s.approvals.consent.interactive.version).toBeLessThan(FEATURE_CONSENT_VERSION.autonomy);
         expect(modeInForce(s.approvals), JSON.stringify(old)).toBe("asking");
-        expect(approvalInputs(modeInForce(s.approvals))).toEqual({ scopes: null, askedApps: false, reviewCommands: false });
+        expect(approvalInputs(modeInForce(s.approvals))).toEqual({ scopes: null, askedApps: false, check: false, autopilot: false });
       }
     }
     expect(combos).toBe(autonomies.length * trusts.length - 1);
@@ -157,14 +157,12 @@ describe("the mode in force (modes-A3)", () => {
     { name: "features.aiReview false", policy: { features: { aiReview: false } }, below: false, checkOff: true },
     { name: "features.aiReview true", policy: { features: { aiReview: true } }, below: false },
   ];
-  /** Written out again here, apart from the code: the highest agreed mode at or below the choice, the cap and what is built. */
+  /** Written out again here, apart from the code: the highest agreed mode at or below the choice and the cap. */
   const expected = (chosen: ApprovalMode, cards: ApprovalMode[], cap: ApprovalMode | undefined, sw: (typeof SWITCHES)[number], held: boolean): ModeInForce => {
     if (held || sw.below) return "asking";
-    // Autopilot isn't built yet: chosen, it is Interactive at most.
-    const top = chosen === "autopilot" ? "interactive" : chosen;
-    const order: ApprovalMode[] = ["assisted", "interactive"];
+    const order: ApprovalMode[] = ["autopilot", "assisted", "interactive"];
     for (const m of order) {
-      if (modeRank(m) > modeRank(top) || (cap && modeRank(m) > modeRank(cap))) continue;
+      if (modeRank(m) > modeRank(chosen) || (cap && modeRank(m) > modeRank(cap))) continue;
       if (m === "assisted" && sw.checkOff) continue;
       if (cards.includes(m)) return m;
     }
@@ -204,12 +202,29 @@ describe("the mode in force (modes-A3)", () => {
     expect(modeInForce(setting("interactive", "interactive"), null)).toBe("interactive");
   });
 
-  it("gives a hand-edited settings.json no more than what is built: Assisted only with its own card, Autopilot never", () => {
+  it("gives a mode only with its own card: Assisted with Assisted's, Autopilot with Autopilot's, each falling to the next one down that is agreed to", () => {
     expect(modeInForce(setting("assisted", "interactive"))).toBe("interactive");
     expect(modeInForce(setting("assisted", "assisted"))).toBe("assisted");
-    expect(modeInForce(setting("autopilot", "interactive", "assisted", "autopilot"))).toBe("interactive");
-    expect(modeInForce(setting("autopilot", "assisted", "autopilot"))).toBe("asking");
-    expect(OFFERED_MODES).toEqual(["interactive"]);
+    // Autopilot is never in force on another mode's agreement (modes-D5): it needs its own card, as it reads now.
+    expect(modeInForce(setting("autopilot", "interactive", "assisted"))).toBe("assisted");
+    expect(modeInForce(setting("autopilot", "interactive"))).toBe("interactive");
+    expect(modeInForce(setting("autopilot"))).toBe("asking");
+    expect(modeInForce(setting("autopilot", "autopilot"))).toBe("autopilot");
+    expect(modeInForce(setting("autopilot", "interactive", "assisted", "autopilot"))).toBe("autopilot");
+    const older: ApprovalsSetting = { mode: "autopilot", consent: { ...setting("autopilot", "interactive").consent, autopilot: { version: FEATURE_CONSENT_VERSION.autopilot - 1, at: AT } } };
+    expect(modeInForce(older)).toBe("interactive");
+    // It is never the default, and Assisted's check being off doesn't touch it (no model decides there).
+    expect(DEFAULT_SETTINGS.approvals.mode).toBe("interactive");
+    expect(modeInForce(setting("autopilot", "autopilot"), admin({ features: { aiReview: false } }))).toBe("autopilot");
+    // The organisation's switches and its cap hold it as they hold every mode.
+    expect(modeInForce(setting("autopilot", "interactive", "autopilot"), capped({}, "interactive"))).toBe("interactive");
+    expect(modeInForce(setting("autopilot", "autopilot"), capped({}, "assisted"))).toBe("asking");
+    for (const policy of [{ features: { autonomy: false } }, { allowGrants: false }, { confirmEveryAction: true }, { features: { actions: false } }]) {
+      expect(modeInForce(setting("autopilot", "interactive", "assisted", "autopilot"), admin(policy)), JSON.stringify(policy)).toBe("asking");
+    }
+    expect(approvalInputs(modeInForce(setting("autopilot", "autopilot"))).autopilot).toBe(true);
+    // Home offers a row and a card for each mode that is built.
+    expect(OFFERED_MODES).toEqual(["interactive", "assisted", "autopilot"]);
   });
 
   it("is what the settings in force say on their own too: below Interactive no card counts, and the user's own file is left alone", () => {
@@ -307,8 +322,8 @@ describe("what each state gives the policy engine (modes-A4)", () => {
   };
 
   it("gives Interactive exactly what Work without asking with every scope and the app switch gave, and below it what all three switches off gave", () => {
-    expect(approvalInputs("asking")).toEqual({ scopes: null, askedApps: false, reviewCommands: false });
-    expect(approvalInputs("interactive")).toEqual({ scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, askedApps: true, reviewCommands: false });
+    expect(approvalInputs("asking")).toEqual({ scopes: null, askedApps: false, check: false, autopilot: false });
+    expect(approvalInputs("interactive")).toEqual({ scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, askedApps: true, check: false, autopilot: false });
     expect(approvalInputs("interactive").scopes).toEqual(ALL_SCOPES);
     // Decided through the engine, whose inputs keep their shape: the same decisions as the old switches' values.
     const from = (m: ModeInForce) => { const i = approvalInputs(m); return verdicts({ autonomy: i.scopes, trustAskedApps: i.askedApps }); };
@@ -321,22 +336,28 @@ describe("what each state gives the policy engine (modes-A4)", () => {
     expect(from("asking").map(v => v[0])).toEqual(["confirm", "confirm", "confirm", "confirm"]);
   });
 
-  it("runs the command reviewer only in Assisted, as the old switch did, and gives the app steps Interactive's inputs there", () => {
-    expect(approvalInputs("assisted")).toEqual({ ...approvalInputs("interactive"), reviewCommands: true });
-    expect(approvalInputs("autopilot")).toEqual(approvalInputs("interactive"));
-    for (const m of ["asking", "interactive", "autopilot"] as const) expect(approvalInputs(m).reviewCommands).toBe(false);
+  it("turns Assisted's check on only in Assisted, on top of Interactive's inputs (modes-C1)", () => {
+    expect(approvalInputs("assisted")).toEqual({ ...approvalInputs("interactive"), check: true });
+    // Autopilot is Interactive's inputs with its own switch: no model decides there, so never the check (modes-D1).
+    expect(approvalInputs("autopilot")).toEqual({ ...approvalInputs("interactive"), autopilot: true });
+    for (const m of ["asking", "interactive", "autopilot"] as const) expect(approvalInputs(m).check).toBe(false);
   });
 });
 
 describe("what Home is told of the modes (modes-A5)", () => {
   it("says the choice, what is in force and why they differ", () => {
-    expect(approvalsState(DEFAULT_SETTINGS.approvals, null)).toEqual({ chosen: "interactive", inForce: "asking", why: "card", offered: ["interactive"], agreed: [], cap: null });
-    expect(approvalsState(setting("interactive", "interactive"), admin())).toEqual({ chosen: "interactive", inForce: "interactive", why: null, offered: ["interactive"], agreed: ["interactive"], cap: null });
+    expect(approvalsState(DEFAULT_SETTINGS.approvals, null)).toEqual({ chosen: "interactive", inForce: "asking", why: "card", offered: ["interactive", "assisted", "autopilot"], agreed: [], cap: null });
+    expect(approvalsState(setting("interactive", "interactive"), admin())).toEqual({ chosen: "interactive", inForce: "interactive", why: null, offered: ["interactive", "assisted", "autopilot"], agreed: ["interactive"], cap: null });
+    // The organisation turned Assisted's check off: said whatever is chosen, so its row can say why it is locked (modes-C5).
+    expect(approvalsState(setting("interactive", "interactive"), admin({ features: { aiReview: false } }))).toEqual({ chosen: "interactive", inForce: "interactive", why: null, offered: ["interactive", "assisted", "autopilot"], agreed: ["interactive"], cap: null, checkOff: true });
+    expect(approvalsState(setting("assisted", "interactive", "assisted"), admin())).toMatchObject({ chosen: "assisted", inForce: "assisted", why: null });
     expect(approvalsState(setting("interactive", "interactive"), admin({ features: { autonomy: false } }))).toMatchObject({ inForce: "asking", why: "organisation", agreed: ["interactive"] });
     expect(approvalsState(setting("assisted", "interactive", "assisted"), capped({}, "interactive"))).toMatchObject({ chosen: "assisted", inForce: "interactive", why: "cap", cap: "interactive" });
     expect(approvalsState(setting("assisted", "interactive", "assisted"), admin({ features: { aiReview: false } }))).toMatchObject({ inForce: "interactive", why: "check-off" });
     expect(approvalsState(setting("assisted", "interactive"), admin())).toMatchObject({ inForce: "interactive", why: "card" });
-    expect(approvalsState(setting("autopilot", "interactive", "autopilot"), admin())).toMatchObject({ chosen: "autopilot", inForce: "interactive", why: "unavailable" });
+    expect(approvalsState(setting("autopilot", "interactive", "autopilot"), admin())).toMatchObject({ chosen: "autopilot", inForce: "autopilot", why: null, agreed: ["interactive", "autopilot"] });
+    expect(approvalsState(setting("autopilot", "interactive"), admin())).toMatchObject({ chosen: "autopilot", inForce: "interactive", why: "card" });
+    expect(approvalsState(setting("autopilot", "interactive", "assisted", "autopilot"), capped({}, "assisted"))).toMatchObject({ chosen: "autopilot", inForce: "assisted", why: "cap", cap: "assisted" });
     holdAutonomyOff();
     expect(approvalsState(setting("interactive", "interactive"), admin())).toMatchObject({ inForce: "asking", why: "not-recorded" });
     // The organisation's reason comes first: it holds whatever else does.
@@ -360,9 +381,41 @@ describe("choosing a mode from Home (modes-A6)", () => {
     for (const v of [card - 1, card + 1, 0]) expect(chooseMode(own, "interactive", v, null, AT)).toEqual({ ok: false, why: "card" });
   });
 
-  it("refuses a mode Home doesn't offer yet, whatever card comes with it", () => {
-    for (const m of ["assisted", "autopilot"] as const) expect(chooseMode(own, m, modeCardVersion(m), null, AT)).toEqual({ ok: false, why: "unavailable" });
+  it("refuses a mode Home doesn't offer, whatever card comes with it", () => {
     expect(chooseMode(own, "asking" as unknown as ApprovalMode, 1, null, AT)).toEqual({ ok: false, why: "unavailable" });
+    expect(chooseMode(own, "everything" as unknown as ApprovalMode, 1, null, AT)).toEqual({ ok: false, why: "unavailable" });
+  });
+
+  it("chooses Autopilot only with the agreement to Autopilot's own card, and never where the organisation forbids or caps it (modes-D5)", () => {
+    const v = modeCardVersion("autopilot");
+    const was = setting("assisted", "interactive", "assisted");
+    const next = chooseMode(was, "autopilot", v, admin(), AT);
+    expect(next).toEqual({ ok: true, approvals: { mode: "autopilot", consent: { ...was.consent, autopilot: { version: v, at: AT } } } });
+    if (next.ok) expect(modeInForce(next.approvals, admin())).toBe("autopilot");
+    // Another card's version, an older or a newer one of its own: no card, no Autopilot.
+    for (const wrong of [v - 1, v + 1, 0, modeCardVersion("interactive")].filter(x => x !== v)) expect(chooseMode(was, "autopilot", wrong, admin(), AT)).toEqual({ ok: false, why: "card" });
+    expect(chooseMode(was, "autopilot", v, capped({}, "assisted"), AT)).toEqual({ ok: false, why: "cap" });
+    expect(chooseMode(was, "autopilot", v, capped({}, "interactive"), AT)).toEqual({ ok: false, why: "cap" });
+    for (const policy of [{ features: { autonomy: false } }, { allowGrants: false }, { confirmEveryAction: true }, { features: { actions: false } }]) {
+      expect(chooseMode(was, "autopilot", v, admin(policy), AT), JSON.stringify(policy)).toEqual({ ok: false, why: "organisation" });
+    }
+    // Assisted's check being off is no bar to it.
+    expect(chooseMode(was, "autopilot", v, admin({ features: { aiReview: false } }), AT)).toMatchObject({ ok: true });
+  });
+
+  it("chooses Assisted only with the agreement to Assisted's own card, and never where the organisation turned its check off or caps the mode below it (modes-C5)", () => {
+    const v = modeCardVersion("assisted");
+    const was = setting("interactive", "interactive");
+    const next = chooseMode(was, "assisted", v, admin(), AT);
+    expect(next).toEqual({ ok: true, approvals: { mode: "assisted", consent: { ...was.consent, assisted: { version: v, at: AT } } } });
+    if (next.ok) expect(modeInForce(next.approvals, admin())).toBe("assisted");
+    // Interactive's card is no agreement to Assisted's, nor an older or newer version of it.
+    expect(chooseMode(was, "assisted", modeCardVersion("interactive"), admin(), AT).ok).toBe(modeCardVersion("interactive") === v);
+    for (const bad of [v - 1, v + 1]) expect(chooseMode(was, "assisted", bad, admin(), AT)).toEqual({ ok: false, why: "card" });
+    expect(chooseMode(was, "assisted", v, admin({ features: { aiReview: false } }), AT)).toEqual({ ok: false, why: "check-off" });
+    expect(chooseMode(was, "assisted", v, capped({}, "interactive"), AT)).toEqual({ ok: false, why: "cap" });
+    expect(chooseMode(was, "assisted", v, admin({ confirmEveryAction: true }), AT)).toEqual({ ok: false, why: "organisation" });
+    expect(chooseMode(was, "assisted", v, capped({}, "assisted"), AT).ok).toBe(true);
   });
 
   it("refuses where the organisation keeps Ember below Interactive", () => {
