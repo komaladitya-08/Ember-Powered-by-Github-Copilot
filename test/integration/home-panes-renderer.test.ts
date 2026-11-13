@@ -13,6 +13,7 @@ import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { approvalsState, type ApprovalsSetting } from "../../app/main/policy/autonomy";
 import type { ApprovalsState } from "../../app/shared/approvals";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { AGREE_ARM_MS } from "../../app/shared/provider";
 import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
 import type { ActivityEntry, StatusPlatform, UpdateStatus } from "../../app/shared/ipc";
@@ -1297,4 +1298,33 @@ describe.skipIf(gate)("Home's Updates, when a new version is out (2026-11-07 pro
     expect(await dev.locator("#updates-how").isVisible()).toBe(false);
     await dev.close();
   });
+});
+
+describe.skipIf(gate)("Home's consent cards, by keyboard (accessibility-r9-2, home-r9-6)", () => {
+  for (const [pane, sw, card, yes, field] of [
+    ["voice", "wake", "consent", "consent-yes", "wakeWord"],
+    ["memory", "routines-on", "routines-consent", "routines-yes", "routines"],
+    ["checks", "updates-on", "updates-consent", "updates-yes", "updates"],
+  ] as const) {
+    it(`agrees to the card under “${sw}” only with a separate press once it has been up half a second, never a doubled or held key (accessibility-r9-2)`, async () => {
+      const page = await open(pane, { settings: { updates: { on: false, told: null, checkedAt: null, consent: { version: 0, at: null } } }, updates: { phase: "off", latest: null, checkedAt: null } as UpdateStatus });
+      const saves = () => page.evaluate(f => window.__pane.calls.filter(c => c.startsWith("save:") && c.includes(`"${f}"`)), field);
+      await page.locator(`#${sw}`).focus();
+      await page.keyboard.press("Space");
+      await expect.poll(() => page.locator(`#${card}`).isVisible()).toBe(true);
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe(yes);
+      // The doubled press, the second Space of a repeat and Enter's own repeat: nothing agreed, the card still up.
+      await page.keyboard.press("Space");
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(100);
+      expect(await saves()).toEqual([]);
+      expect(await page.locator(`#${card}`).isVisible()).toBe(true);
+      // A deliberate press once it has been up half a second agrees.
+      await page.waitForTimeout(AGREE_ARM_MS);
+      await page.keyboard.press("Enter");
+      await expect.poll(async () => (await saves()).length).toBe(1);
+      expect(page.errors).toEqual([]);
+      await page.close();
+    });
+  }
 });

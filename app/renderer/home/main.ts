@@ -2106,10 +2106,12 @@ $("routines-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   const consent = settings?.routines.consent ?? { version: 0, at: null };
   // First time: the note comes first, and focus moves to it so it is read and answered.
-  if (on && consent.version < ROUTINES_VERSION) { $("routines-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("routines-yes").focus(); return; }
+  if (on && consent.version < ROUTINES_VERSION) { showConsentCard("routines-consent", "routines-yes"); (e.target as HTMLInputElement).checked = false; $("routines-yes").focus(); return; }
   void save({ routines: { consent, on } });
 });
 $("routines-yes").addEventListener("click", () => {
+  // A doubled or held key from the switch agrees to nothing (accessibility-r9-2).
+  if (!agreeArmed("routines-yes")) return;
   $("routines-consent").hidden = true;
   void save({ routines: { on: true, consent: { version: ROUTINES_VERSION, at: new Date().toISOString() } } });
   $("routines-on").focus();
@@ -2147,10 +2149,11 @@ $("updates-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   const own = settings?.updates ?? { on: false, consent: { version: 0, at: null }, told: null, checkedAt: null };
   // First time: the note comes first, and focus moves to it so it is read and answered.
-  if (on && own.consent.version < UPDATES_VERSION) { $("updates-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("updates-yes").focus(); return; }
+  if (on && own.consent.version < UPDATES_VERSION) { showConsentCard("updates-consent", "updates-yes"); (e.target as HTMLInputElement).checked = false; $("updates-yes").focus(); return; }
   void save({ updates: { ...own, on } });
 });
 $("updates-yes").addEventListener("click", () => {
+  if (!agreeArmed("updates-yes")) return;
   $("updates-consent").hidden = true;
   void save({ updates: { on: true, told: settings?.updates.told ?? null, checkedAt: settings?.updates.checkedAt ?? null, consent: { version: UPDATES_VERSION, at: new Date().toISOString() } } });
   $("updates-on").focus();
@@ -2895,7 +2898,7 @@ function applyVoiceSettings(s: Status["settings"]): void {
 $("wake").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // First time: the microphone note comes first, and focus moves to it so it is read and answered.
-  if (on && !voiceSettings.consent) { consentClosed(); $("consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("consent-yes").focus(); return; }
+  if (on && !voiceSettings.consent) { consentClosed(); showConsentCard("consent", "consent-yes"); (e.target as HTMLInputElement).checked = false; $("consent-yes").focus(); return; }
   void save({ wakeWord: on });
 });
 /**
@@ -2909,7 +2912,7 @@ let consentSaving = false;
 const consentError = (text: string) => { $("consent-error").textContent = text; $("consent-error").hidden = !text; if (text) voiceLive(text); };
 const consentClosed = () => { consentRun++; consentSaving = false; consentError(""); $("consent-yes").removeAttribute("aria-busy"); };
 $("consent-yes").addEventListener("click", () => {
-  if ($("consent-yes").getAttribute("aria-disabled") === "true" || consentSaving) return;
+  if ($("consent-yes").getAttribute("aria-disabled") === "true" || consentSaving || !agreeArmed("consent-yes")) return;
   consentSaving = true;
   const run = ++consentRun;
   consentError("");

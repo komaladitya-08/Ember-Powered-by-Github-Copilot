@@ -681,7 +681,9 @@ retryable on failure. An unavailable account hides facts and parks focus on Memo
 switch, where a typed space would turn memory off; it goes back to the search, the draft or the Forgotten line when
 the same account's list returns (memory-c2-1). A request opens Memory at its search ("forget…") or at its note's
 words ("get to know me", Open Memory), never at "I agree, remember", and the note's agree button, like Work without
-asking's, takes no press for `AGREE_ARM_MS` after the card comes up (memory-r7). Correct… opens
+asking's, takes no press for `AGREE_ARM_MS` after the card comes up (memory-r7); so do every other consent card's in
+Home (listening, routines, update notices, and each of Extensions' add, connect and tools cards: accessibility-r9-2),
+so a doubled or held key from the control that opened it agrees to nothing. Correct… opens
 one local draft (up to 400 characters); Save correction is explicit, checks the exact account/revision and saves
 durably before publication. Correction preserves original source/authority and adds Corrected by you. It invalidates
 stale recall/learning/vector work; failures keep the draft and account reset clears it.

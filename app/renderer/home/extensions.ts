@@ -8,6 +8,7 @@
 
 import type { ExtensionsState, Status, EmberExtensionsApi } from "../../shared/ipc";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
+import { AGREE_ARM_MS } from "../../shared/provider";
 import type { Installed, Marketplace, MarketplaceEntry } from "../../shared/extensions";
 import type { SettingsPatch } from "../../main/settings";
 import { marketplaceSource } from "../../shared/extensions-input";
@@ -50,6 +51,12 @@ let connectorsError: string | null = null;
 const pending = new Set<string>();
 /** The consent card up now: before adding or connecting an entry, or agreeing again to an installed item. */
 let asking: { kind: "entry"; entry: MarketplaceEntry } | { kind: "reagree"; item: Installed } | null = null;
+/**
+ * The card drawn last, and when it came up (performance.now()): its agree button takes no press for AGREE_ARM_MS, as
+ * Home's other consent cards don't, so a doubled or held Enter from the button that opened it agrees to nothing
+ * (accessibility-r9-2).
+ */
+let cardShown: { for: typeof asking; at: number } = { for: null, at: 0 };
 /** Requests under way, by the key of the control that started them (its button waits for the answer). */
 const busy = new Set<string>();
 /** Tool lists the user opened or closed (kept across redraws). */
@@ -209,7 +216,8 @@ function consentNode(c: ConsentCard): HTMLElement {
     }
   }
   const actions = el("div", "agent-actions");
-  const yes = button(c.yes, "btn", "consent-yes", () => void agree());
+  if (cardShown.for !== asking) cardShown = { for: asking, at: performance.now() };
+  const yes = button(c.yes, "btn", "consent-yes", () => { if (performance.now() - cardShown.at >= AGREE_ARM_MS) void agree(); });
   yes.setAttribute("aria-describedby", lines.id);
   const no = button(c.no, "btn quiet", "consent-no", () => { const back = askedFrom(); asking = null; draw(); focusKey(back); });
   actions.append(yes, no);
