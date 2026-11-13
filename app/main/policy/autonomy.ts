@@ -5,7 +5,8 @@
  * another window is announced instead (a line in the bubble and the task's card, and an audit entry marked `autonomy`):
  * what Work without asking did with every scope on, plus the app switch. It never touches what policy finds risky
  * (sending, deleting, paying, security settings, destructive keys, secrets…), which asks every time with no "Always",
- * nor any hard "never".
+ * nor any hard "never". Assisted adds a check of such a question against the user's own words; Autopilot announces
+ * every question instead of asking it, but for the few commands that still ask there, and keeps every "never".
  *
  * Fail closed: a mode is in force only with its own card agreed to as it reads now (FEATURE_CONSENT_VERSION) and only
  * where the administrator allows it; otherwise Ember is below Interactive ("asking") and asks as it did before the
@@ -56,17 +57,11 @@ export const autonomyPermitted = (admin: AutonomyAdmin | null | undefined): bool
 export const autopilotPermitted = (admin: AutonomyAdmin | null | undefined): boolean =>
   autonomyPermitted(admin) && (admin?.approvals?.maxMode ?? "autopilot") === "autopilot";
 
-/**
- * The modes Home offers a row and a card for, and the only ones its choice may name (chooseMode). Autopilot joins
- * once it is built.
- */
-export const OFFERED_MODES: readonly ApprovalMode[] = ["interactive", "assisted"];
+/** The modes Home offers a row and a card for, and the only ones its choice may name (chooseMode). */
+export const OFFERED_MODES: readonly ApprovalMode[] = ["interactive", "assisted", "autopilot"];
 
-/**
- * The modes that can be in force. Autopilot isn't built, so a settings.json that names it (by hand: Home doesn't
- * offer it) is Interactive at most.
- */
-const BUILT: readonly ApprovalMode[] = ["interactive", "assisted"];
+/** The modes that can be in force: a mode named in settings.json that isn't one of these is Interactive at most. */
+const BUILT: readonly ApprovalMode[] = ["interactive", "assisted", "autopilot"];
 
 /**
  * Held below Interactive in memory (PR #193 review): a mode that asks less that couldn't be audited and couldn't be

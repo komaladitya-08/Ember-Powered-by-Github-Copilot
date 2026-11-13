@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { adminSummary } from "../../app/main/admin";
-import { createRemotePolicy, lowerAccess, remoteDesktop, remoteNeverLook } from "../../app/main/remote/remote-policy";
+import { createRemotePolicy, lowerAccess, remoteAutopilot, remoteDesktop, remoteNeverLook } from "../../app/main/remote/remote-policy";
+import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { modeCardVersion } from "../../app/shared/approvals";
 import { checkedWelcome, remoteTargetParts } from "../../app/main/remote/target";
 import { agentError, fakeLink, fakeSettings, NO_POLICY, policyOf, recordingLog, settle, welcomeOf } from "./remote-target-fakes";
 import type { ActionRequest } from "../../app/main/policy/policy";
@@ -50,6 +52,44 @@ describe("gate 1 on a remote (§2.6's SSH column)", () => {
     // Keys are named as the remote's OS names them: Cmd+S saves on a Mac, and is the logo key's on Linux.
     const keys = (os: "linux" | "darwin", value: string) => gate1({ os }).policy.decide({ taskId: "t", kind: "keys", app: "TextEdit", window: "Untitled", value }).verdict;
     expect([keys("darwin", "cmd+s"), keys("linux", "cmd+s"), keys("darwin", "cmd+space")]).toEqual(["confirm", "deny", "deny"]);
+  });
+
+  it("announces a remote's steps instead of asking in Autopilot, where both administrators let it be, and still refuses what it refused (modes-D3)", () => {
+    const at = "2026-11-13T09:00:00.000Z";
+    const card = (m: "interactive" | "assisted" | "autopilot") => ({ version: modeCardVersion(m), at });
+    const autopilot = { mode: "autopilot" as const, consent: { interactive: card("interactive"), assisted: card("assisted"), autopilot: card("autopilot") } };
+    const settings = fakeSettings({ approvals: autopilot, privacy: { ...DEFAULT_SETTINGS.privacy, neverLook: ["Signal"] } });
+    const { policy } = gate1({ settings, terminal: name => name === "kgx" });
+    const d = policy.decide(click());
+    expect(d).toMatchObject({ verdict: "allow", autonomy: true, mode: "autopilot", remember: false, announce: "Clicking in gedit, without asking: Autopilot is on." });
+    expect(policy.decide(click({ element: { role: "push button", name: "Delete" } }))).toMatchObject({ verdict: "allow", mode: "autopilot" });
+    // No "Always" there, a read is a read, and every refusal stays one.
+    expect(policy.decide(click({ kind: "read" }))).toMatchObject({ verdict: "allow", tier: "read" });
+    expect(policy.decide(click({ app: "signal", window: "Chats" })).verdict).toBe("deny");
+    expect(policy.decide(click({ app: "gcr-prompter", window: "Unlock private key" })).verdict).toBe("deny");
+    expect(policy.decide(click({ app: "kgx", window: "deploy@build-01: ~" })).verdict).toBe("deny");
+    expect(policy.decide(click({ kind: "text", value: "hunter2", element: { role: "password text", name: "Password" } })).verdict).toBe("deny");
+    // Either administrator asking for a click before every action, forbidding "Always" or acting, a policy that can't
+    // be read, or the PC's own policy keeping it out of Autopilot: every step asks, as before.
+    const asks = (o: Parameters<typeof gate1>[0]) => gate1({ settings, ...o }).policy.decide(click());
+    for (const remote of [remoteAdmin({ confirmEveryAction: true }), remoteAdmin({ allowGrants: false }), { ...adminSummary(NO_POLICY), error: "/etc/ember/policy.json is not valid JSON" }]) {
+      expect(asks({ remote }).verdict, JSON.stringify(remote)).not.toBe("allow");
+    }
+    expect(asks({ remote: remoteAdmin({ confirmEveryAction: true }) })).toMatchObject({ verdict: "confirm", remember: false });
+    for (const local of [{ confirmEveryAction: true }, { allowGrants: false }, { features: { autonomy: false } }, { approvals: { maxMode: "assisted" } }]) {
+      expect(asks({ local }), JSON.stringify(local)).toMatchObject({ verdict: "confirm", remember: false });
+    }
+    expect(asks({ local: { features: { actions: false } } }).verdict).toBe("deny");
+    // In any other mode a remote's steps ask, each one, as they always did.
+    for (const mode of ["interactive", "assisted"] as const) {
+      expect(gate1({ settings: fakeSettings({ approvals: { ...autopilot, mode } }) }).policy.decide(click())).toMatchObject({ verdict: "confirm", remember: false });
+    }
+    expect(remoteAutopilot({ os: "linux", settings, localAdmin: () => NO_POLICY, remoteAdmin: () => adminSummary(NO_POLICY) })).toBe(true);
+    // The policy changing while connected is heard at the very next step.
+    const live = gate1({ settings });
+    expect(live.policy.decide(click()).verdict).toBe("allow");
+    live.setRemote(remoteAdmin({ confirmEveryAction: true }));
+    expect(live.policy.decide(click()).verdict).toBe("confirm");
   });
 
   it("acts only while both administrators allow acting and both policies can be read", () => {

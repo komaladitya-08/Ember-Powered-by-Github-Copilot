@@ -564,6 +564,42 @@ characters). A command you said no to is refused without being reviewed (§2.5).
 computer's own check still asks about what it finds, as before. Choose Interactive to have every such command ask;
 your organisation can turn the check off (`features.aiReview: false`).
 
+### 2.5b When you chose Autopilot
+
+In the **Autopilot** approval mode (Settings › **Apps & privacy** › **How Ember asks**; its card says what you
+accept), a command that would ask runs after an announcement instead: one that deletes or overwrites, pushes or
+publishes, changes the system, downloads and runs a program, runs as root or an administrator (every command, where
+Ember itself runs as one), carries text read in another window, or belongs to a task that something on screen or in a
+command's output tried to steer or that has none of your own words. The bubble says the kind of command and nothing of
+its text ("Running a command that deletes or overwrites data, without asking: Autopilot is on."), and the command
+window shows the exact command, what Ember's checks found, "Autopilot is on, so Ember didn't ask first." and the
+countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
+
+It still asks, with the card of §2.4, before:
+
+- a command that would read or print passwords, keys or other secrets, so that none reaches the model;
+- a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or `tmux`
+  session, `docker run -d`, a process manager, a scheduled job, a program it opens), so that Stop stops everything;
+- a command Ember can't tell the effect of (a loop, code written inline, `eval`, text handed to `xargs` that Ember
+  can't see, a program that waits for typing), since it may be either of those;
+- every command where your organisation asks for that, where you turned on **Ask before every command** for that
+  computer, in a Podman distro, and in a project's chosen command folder;
+- turning commands on for a computer the first time (§2.1).
+
+A command that touches Ember's own settings, records, policy or processes is refused as in every mode (§2.6). **Stop**
+during the countdown counts as your no: that command, sent again or reworded to do the same to the same thing, is
+refused for the rest of the task. A countdown that ends after you left Autopilot, or once every command asks on that
+computer, doesn't run its command.
+
+On a computer reached over SSH the command is checked there again, as always. Ember tells that computer that
+Autopilot announced the command rather than that you said yes. It runs the command only where its own administrator
+allows Autopilot, and still wants your yes for a command it finds would read secrets, keep running after Stop or that
+it can't tell, and wherever its administrator asks for every command. When it finds more than this computer did, the
+bubble says "Running a command that <computer>'s own check asked about, without asking: Autopilot is on.", its lines
+show with a countdown of their own, and anything it still wants a yes for after that gets the card. What Ember did
+records each of these as "Announced" with "Autopilot was on, so Ember didn't ask (…)." Your organisation can forbid
+Autopilot with `approvals.maxMode` or `features.autonomy: false`.
+
 ### 2.6 What Ember never runs
 
 A command that would read or change Ember's own safety settings, records or programs (its organisation policy, audit

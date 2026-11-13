@@ -927,6 +927,21 @@ export const AUTONOMY_CONSENT_TEXT = "In Interactive, Ember does ordinary steps 
  */
 export const ASSISTED_CONSENT_TEXT = "In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked. A lighter AI model makes that check. It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name and any text to type, or the command. If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system. Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record. The model can be wrong: it may let through a step you didn't mean. It never clears a command that would show passwords or keys or keep running after you stop Ember, a step you said no to, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time. If it finds no match or can't tell, Ember asks you. “Ember, stop” or Ember's stop shortcut stops everything at once.";
 
+/**
+ * Autopilot's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autopilot; PolicyEngine.autopilotStep,
+ * commands/autopilot.ts, extensions/gate.ts, app/remote/gate.ts): that Ember doesn't ask and what that takes in, said
+ * as the risk the user accepts; that every step is still announced and recorded; the few things it still asks; what it
+ * never does; how to stop it; and that the organisation can turn it off. It promises nothing of the vault, which isn't
+ * built: passwords and card numbers are never typed. Four short paragraphs, the risk first, so that it can't be read
+ * past (the card keeps a text's line breaks). Change it only with a bump of that version.
+ */
+export const AUTOPILOT_CONSENT_TEXT = [
+  "In Autopilot, Ember doesn't ask before it acts. It sends, posts, shares, deletes, overwrites, pays, installs, signs out, changes settings, answers dialogs and runs dangerous commands, also as an administrator, without asking you first. That includes steps you didn't ask for, a task that a web page, a file or a command's output tried to steer, tools from your extensions and computers you reach over SSH. By choosing Autopilot you accept that risk: what it does may be impossible to undo.",
+  "It tells you what it is doing as it goes, a dangerous command waits a few seconds with a Stop first, and What Ember did keeps a record. It still asks before a command that would show passwords or keys, one that would keep running after you stop Ember, one whose effect it can't tell, wherever you or your organisation set commands to ask every time, and before it turns on something you haven't agreed to yet.",
+  "It never repeats a step you said no to, never types passwords or card numbers, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop.",
+  "“Ember, stop” or Ember's stop shortcut stops everything at once. Once you move your mouse or press a key while Ember is using them, it doesn't take them again in that task. Your organisation can turn Autopilot off.",
+].join("\n\n");
+
 /** Apps & privacy › How Ember asks: the choice's heading, and each mode's name as the window says it. */
 export const APPROVALS_HEADING = "How Ember asks";
 export const MODE_NAME: Readonly<Record<ApprovalMode, string>> = { interactive: "Interactive", assisted: "Assisted", autopilot: "Autopilot" };
@@ -934,9 +949,10 @@ export const MODE_NAME: Readonly<Record<ApprovalMode, string>> = { interactive: 
 export const MODE_LINE: Readonly<Partial<Record<ApprovalMode, string>>> = {
   interactive: "Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying.",
   assisted: "As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.",
+  autopilot: "Ember doesn't ask: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it.",
 };
 /** Each offered mode's card: its text, shown before the mode is chosen, and the version an agreement to it carries. */
-export const MODE_CARD_TEXT: Readonly<Partial<Record<ApprovalMode, string>>> = { interactive: AUTONOMY_CONSENT_TEXT, assisted: ASSISTED_CONSENT_TEXT };
+export const MODE_CARD_TEXT: Readonly<Partial<Record<ApprovalMode, string>>> = { interactive: AUTONOMY_CONSENT_TEXT, assisted: ASSISTED_CONSENT_TEXT, autopilot: AUTOPILOT_CONSENT_TEXT };
 
 /** A mode's card as the window shows it: its title, its text, and its two buttons ("Not now" leaves the mode as it was). */
 export function modeCard(mode: ApprovalMode): { title: string; text: string; yes: string; no: string } {
@@ -947,6 +963,8 @@ export function modeCard(mode: ApprovalMode): { title: string; text: string; yes
 const CHECK_OFF_TEXT = `Your organisation turned off the check ${MODE_NAME.assisted} needs`;
 /** What Ember asks before while no mode is in force: said wherever the window says it is below Interactive. */
 const ASKS_BEFORE = "Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps";
+/** Under the modes while Autopilot is in force: that it is, what that means, and how to stop it (never left unsaid). */
+const AUTOPILOT_ON = `${MODE_NAME.autopilot} is on: Ember sends, deletes, pays and installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it.`;
 /** That a question can be answered by voice (by anyone heard while Voice Match is off, its default: 2026-11-12). */
 const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later.";
 
@@ -964,6 +982,7 @@ export function approvalsNote(state: ApprovalsState | null, managed: boolean, el
     : state.why === "cap" ? `Your organisation allows ${MODE_NAME[state.cap ?? state.inForce]} at most, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
     : state.why === "check-off" ? `${CHECK_OFF_TEXT}, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
     : state.why ? `${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
+    : state.inForce === "autopilot" ? `${AUTOPILOT_ON} ${ANSWER_BY_VOICE}`
     : ANSWER_BY_VOICE;
   if (!base) return base;
   // A row the organisation locks without it being the mode chosen says why here too (the note describes the rows).

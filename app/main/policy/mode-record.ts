@@ -3,7 +3,8 @@
  * asking's switch): every change of it is an `autonomy` audit entry that says the mode, the one before and how it
  * changed (Home's choice, a voice or typed intent, the file, or the organisation's policy), and a change to a mode
  * that asks less that can't be recorded isn't made: the user's setting is put back as it was, and where that can't be
- * saved either, Ember is held below Interactive in memory (autonomy.ts holdAutonomyOff; review of PR #193). Plain Node:
+ * saved either, Ember is held below Interactive in memory (autonomy.ts holdAutonomyOff; review of PR #193). Nor is a
+ * change to Autopilot that came from settings.json while Ember runs: only Ember's own windows choose it. Plain Node:
  * the settings store and the audit log are passed in.
  */
 
@@ -102,6 +103,14 @@ export class ModeRecord {
     // Held, and the setting is still the one that couldn't be recorded: it stays held until the choice is made again.
     else if (autonomyHeld() && same) return;
     if (mode === before) { this.good = own; return; }
+    // Autopilot is never chosen without its card: a settings.json changed outside Ember while it runs can't put it in
+    // force (a model that edited the file through an app could forge the agreement too). Put back, as a change that
+    // can't be recorded is; Home's choice and the host's intents, which Ember marks itself, are how it is chosen.
+    if (up && mode === "autopilot" && by.via === "file") {
+      this.d.log.warn("autonomy.autopilot_by_file", { before });
+      this.undo();
+      return;
+    }
     const entry: ModeEntry = { mode, before, via: by.via, verified: by.verified };
     try {
       // No audit log yet: a mode that asks less is refused (it can't be recorded), one that asks more is kept for the log.
