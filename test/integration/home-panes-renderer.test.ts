@@ -606,10 +606,15 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     expect(await fold.isVisible()).toBe(true);
     await fold.locator("summary").click();
     const shown = await page.locator("#privacy-terms").evaluate(e => e.textContent);
-    const consent = await page.locator("#w-full ul.terms").evaluate(e => e.textContent);
-    // Word for word, but for where the never-look list is: below, in this pane (safety-privacy-r4).
+    const consent = await page.locator("#w-full ul.terms").evaluate(e => { const c = e.cloneNode(true) as HTMLElement; c.querySelector("[data-first-run]")?.remove(); return c.textContent; });
+    // Word for word, but for where the never-look list is: below, in this pane (safety-privacy-r4); and without first
+    // run's own sentences about its rows, which aren't here (slice4-30): what its agreement turns on, the Interactive
+    // and commands switches it offers.
     expect(consent).toContain("The list is in settings");
-    expect(shown).toBe(consent?.replace("The list is in settings", "The list is below, under Never look at"));
+    expect(shown).toBe(consent?.replace("The list is in settings", "The list is below, under Never look at")
+      .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always", " in an app, and always")
+      .replace(" Each asks you first. Commands on this computer have their own switch here.", " Each asks you first."));
+    expect(shown).not.toContain("Agreeing turns on");
     expect(shown).toContain("It sends no usage statistics.");
     expect(shown).toContain("~/.config/ember");
     // The copy keeps no ids: each still names one element.
@@ -709,7 +714,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo\. For ordinary steps it tells you what it's doing instead \(How Ember asks, below\)\. It never types passwords\./);
     // First run's own words are untouched.
     expect(await page.locator("#w-full li[data-icon='plug']").evaluate(e => e.textContent)).toContain("are off until you turn them on");
-    expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app, and always before anything hard to undo.");
+    expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.");
     await evidence(page, "privacy-terms-on");
     // Both turned off again (main tells Home the settings changed): word for word as before it started, still open.
     const base = { ...structuredClone(DEFAULT_SETTINGS), onboarded: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
