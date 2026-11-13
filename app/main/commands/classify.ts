@@ -6708,17 +6708,30 @@ function venvClear(h: H, args: readonly Arg[], wrapper: string): void {
 }
 
 /**
+ * The words after `-m <module>`, which belong to the module, wherever `-m` sat: alone, with the module attached
+ * (`-mtwine`) or at the end of a cluster of python's own flags (`-Im twine`, `-OOmtwine`): GNU-style, as python reads
+ * it (commands-remote-r10-1). Null when no `-m` was parsed.
+ */
+function afterModule(h: H, p: Parsed): Arg[] | null {
+  const o = p.opts.find(x => x.name === "-m" && x.value !== undefined);
+  const word = o ? h.args[o.at]?.v : undefined;
+  if (!o || word === null || word === undefined) return null;
+  // The module is attached when anything follows the cluster's m; else it is the next word.
+  const attached = word.slice(word.indexOf("m", 1) + 1) !== "";
+  return h.args.slice(o.at + (attached ? 1 : 2));
+}
+
+/**
  * `python -m <module> …` runs a tool by its name (commands-remote-r9-3): the tool's own row decides, as if the line
  * were `<module> …` (`python3 -m twine upload dist/*` publishes, `python3 -m keyring get …` prints a password,
  * `python3 -m sqlite3 a.db 'drop table x'` changes a database), and a tool Ember doesn't know asks as that program
  * would (`unknown.program`, named by the module for the user's words to match). Python's own everyday modules and the
  * project's test and build tools run as before; what the interpreter's row asks for is kept beside it.
  */
-function pythonModule(h: H, mod: string): void {
+function pythonModule(h: H, p: Parsed, mod: string): void {
   if (h.e.readsAsMain) return;
-  const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
-  if (at < 0) return;
-  const rest = h.args.slice(at + (h.args[at].v === "-m" ? 2 : 1));
+  const rest = afterModule(h, p);
+  if (rest === null) return;
   if (mod === "venv") { venvClear(h, rest, "python -m venv"); return; }
   if (PY_OWN_MODULES.has(mod) || PY_TOOL_MODULES.has(mod)) return;
   // The command a module's tool goes by: its own name, or with dashes for underscores (`pre_commit`, `pip_audit`).
@@ -6776,17 +6789,14 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   const mod = values(p, "m")[0];
   if (mod !== undefined && /^python|^pypy|^py$/.test(h.key)) {
     if (mod === "pip" || mod === "pip3") {
-      const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
-      const rest = h.args.slice(at + (h.args[at]?.v === "-m" ? 2 : 1));
-      pip({ ...h, key: "pip", args: rest });
+      pip({ ...h, key: "pip", args: afterModule(h, p) ?? [] });
       return;
     }
     if (mod === "timeit" || mod === "code" || mod === "pdb") { h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return; }
     if (mod === "ensurepip") { h.e.add("system", "pkg.language", "Installs packages (they can run their own setup code)."); return; }
     if (mod === "http.server" || mod === "SimpleHTTPServer" || mod === "CGIHTTPServer") {
       // A web server for a folder (this one by default) on every address unless --bind says otherwise (review #178).
-      const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
-      const q = parseOpts(h.args.slice(at + (h.args[at]?.v === "-m" ? 2 : 1)), { shortValue: "bdp", longValue: ["bind", "directory", "protocol"] });
+      const q = parseOpts(afterModule(h, p) ?? [], { shortValue: "bdp", longValue: ["bind", "directory", "protocol"] });
       const bind = values(q, "b", "bind").pop();
       listens(h, bind === undefined ? "" : bind, servedRoot(values(q, "d", "directory").pop()));
       return;
@@ -6798,7 +6808,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       else writeInto(h, to.v);
     }
     if (mod) nameCheck(h, mod);
-    if (mod) pythonModule(h, mod);
+    if (mod) pythonModule(h, p, mod);
     // A module of this task's download (`curl … > x.py; python3 -m x`), or tests it downloaded that pytest or unittest
     // finds (conftest.py, test_x.py): it runs the download (commands-remote-c2-2).
     if (mod && /^[A-Za-z_][\w.]*$/.test(mod)) {
