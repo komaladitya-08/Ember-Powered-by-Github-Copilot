@@ -2574,12 +2574,24 @@ that can't be taken says which of four reasons holds (`projectCommandProblem`: n
 more than one line or hidden characters, or what looks like a password, token or key), and a request of several lines
 that looks like it holds a secret names the line (`projectRequestSecret`; integrations-i6).
 
-**Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or connected
-provider configuration. Saving requires the system keyring and stores encrypted paths and the last
+**Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or the connected
+model service. Saving requires the system keyring and stores encrypted paths and the last
 completed request and answer. Opening a workspace restores its file selection and command folder. On
 the next explicit Send, Ember reads the selected files again and includes the previous exchange if its
 checkbox is selected. Patch approvals, command text, running processes and command output are never
 restored. **Forget workspace** removes the checkpoint and leaves the project files in place.
+
+The library belongs to the GitHub account, or to the model service by whose it is (yours, the organisation's), its
+type and its address, never its key (`workspaceOwners`' `library`, app/main/agent/project-workspaces.ts;
+integrations-r9-3: owned by a hash of the provider's whole config, a replaced or removed key or another wire API left
+every saved workspace in a file nothing listed or removed). A saved answer is still only its holder's (the account,
+or that whole config with its key): opened after the key or the provider's settings changed, a workspace restores its
+files and folder and says “Its last answer was saved before this provider's key or settings changed, so Ember left it
+out.”, and the next save or forget drops such answers for good; with the earlier key back before that, they are
+there again. A provider's file holds its `holder` beside its `scope`; a GitHub account's file is as it was. A library
+from an earlier build is named for the whole config: while the key it was saved with is in force it is found and
+becomes the service's. One whose key was already replaced on an earlier build can't be told from any other
+service's, and stays where it is (`project-workspaces-<hash>.bin` in the data folder).
 
 With a build ready, run `EMBER_PROJECT_TEST=1 npm run test:integration -- test/integration/project-live.test.ts`
 to exercise the Home workflow through Electron and the Copilot runtime against an offline mock model.

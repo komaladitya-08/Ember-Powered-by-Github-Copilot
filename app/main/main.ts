@@ -70,7 +70,7 @@ import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERY
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
 import { projectAfterStatus, projectChoice, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectRefusedText, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
-import { projectUnavailable } from "../renderer/home/project-copy";
+import { projectUnavailable, workspaceOpened } from "../renderer/home/project-copy";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, readProjectPatch, type ProjectPatch } from "./agent/project-patch";
@@ -2627,12 +2627,15 @@ function start(): void {
     const host = agent;
     const owner = home;
     if (!host || !owner || !projectAvailable() || projectPicking || projectJob) return { message: projectRefusal() };
+    // Whose the library is (the account or the model service, never its key: integrations-r9-3), and whose a saved
+    // answer is (`scope`: the account, or the provider's whole config with its key), which goes to no other.
     const scope = host.projectWorkspaceScope();
-    if (!scope) return { message: "Connect with a verified GitHub account or model provider to use saved workspaces." };
+    const library = host.projectLibraryScope();
+    if (!scope || !library) return { message: "Connect with a verified GitHub account or model provider to use saved workspaces." };
     const run = projectJob = new AbortController();
-    const current = () => !run.signal.aborted && home === owner && agent === host && projectAvailable() === true && host.projectWorkspaceScope() === scope;
+    const current = () => !run.signal.aborted && home === owner && agent === host && projectAvailable() === true && host.projectWorkspaceScope() === scope && host.projectLibraryScope() === library;
     try {
-      const entries = await projectWorkspaces.list(scope);
+      const { entries, left } = await projectWorkspaces.read(library, scope);
       if (!current()) return { message: "Workspace request cancelled." };
       const names = entries.map(entry => entry.name);
       const request = input.data;
@@ -2641,8 +2644,8 @@ function start(): void {
       const other = entries.filter(entry => entry.name !== name);
       if (request.action === "save") {
         if (!projectFiles.length && !projectFolder?.current()) return { names, message: "Choose project files or a command folder first." };
-        const entry = { name, files: projectFiles, folder: projectFolder?.current() ? projectFolder.path : null, exchange: projectExchange };
-        await projectWorkspaces.write(scope, [entry, ...other], current);
+        const entry = { name, files: projectFiles, folder: projectFolder?.current() ? projectFolder.path : null, exchange: projectExchangeScope === scope ? projectExchange : null };
+        await projectWorkspaces.write(library, [entry, ...other], current, scope);
         return { names: [name, ...other.map(saved => saved.name)], message: `Saved workspace “${name}”.` };
       }
       const entry = entries.find(saved => saved.name === name);
@@ -2653,7 +2656,7 @@ function start(): void {
           buttons: ["Cancel", "Forget workspace"], defaultId: 0, cancelId: 0, signal: run.signal,
         });
         if (response !== 1 || !current()) return { names, message: "Workspace kept." };
-        await projectWorkspaces.write(scope, other, current);
+        await projectWorkspaces.write(library, other, current, scope);
         return { names: other.map(saved => saved.name), message: `Forgot workspace “${name}”.` };
       }
       const selection = await projectSelection(entry.files);
@@ -2671,7 +2674,7 @@ function start(): void {
       projectPatch = null;
       return {
         names, opened: { files: selection.names, sizes: selection.sizes, folder: folder?.path ?? null, previous: projectExchange },
-        message: entry.folder && !folder ? `Opened workspace “${name}”. Choose the command folder again.` : `Opened workspace “${name}”.`,
+        message: workspaceOpened(name, { folderGone: !!entry.folder && !folder, answerLeft: left.includes(name) }),
       };
     } catch (err) {
       return { message: run.signal.aborted ? "Workspace request cancelled." : err instanceof ProjectInputError ? err.message : "Couldn't read or save the workspace library." };
